@@ -1,6 +1,6 @@
 # JustSearch
 
-**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Cloud-grade hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine, in any language.**
+**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Cloud-grade hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine, in 70+ languages.**
 
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -58,8 +58,9 @@ missing cell: **semantic *and* fully offline.** No surveyed alternative occupies
 
 ## Benchmarks
 
-Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json` — commit
-`691d5c5a0`, RTX 4070, ~300 queries/corpus). Numbers are the **default `hybrid` config** unless noted:
+Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
+~300 queries/corpus; measured on the canonical 2026-06-21 release tree in pre-public development). Numbers are
+the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
@@ -67,7 +68,7 @@ Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/r
 | Enron-QA | 0.740 | |
 | MIRACL-de (German) | 0.725 | multilingual — no per-language tuning |
 | MIRACL-fr (French) | 0.701 | |
-| CourtListener (legal) | **0.97** (`full`) | hybrid default ≈0.62; legal benefits from `full` mode (all retrievers + rerank) |
+| CourtListener (legal) | 0.62 | hybrid default; legal rises to **0.97** in `full` mode (all retrievers + rerank) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
@@ -120,7 +121,7 @@ Nothing leaves your machine, and you can check:
 
 ## Status
 
-**Alpha** (`2.0.0-alpha.27`), **Windows-only** (macOS/Linux are not in the current scope). The installer is currently **unsigned**,
+**Alpha** (`0.1.0`), **Windows-only** (macOS/Linux are not in the current scope). The installer is currently **unsigned**,
 so Windows SmartScreen shows an "unknown publisher" warning on first run — signing is in progress. In active
 development since 2025; published 2026. Built in the open with heavy AI-agent assistance — the development
 tooling, the governance/discipline gates, and the design history (`docs/tempdocs/`) all live in this repo, and
