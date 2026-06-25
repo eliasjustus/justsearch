@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "tempdoc": 560,
+  "note": "Negative self-test fixture — the barrel reintroduces hand-authored wire shapes (a bare interface + a bare object-literal type) AND imports a hand type from a non-generated module. The gate must FAIL (registry-barrel-purity + registry-barrel-import-purity).",
+  "scan": {
+    "barrel": "modules/ui-web/src/api/types/registry.ts",
+    "generatedDir": "modules/ui-web/src/api/generated/schema-types",
+    "registryController": "modules/ui/src/main/java/io/justsearch/ui/api/RegistryController.java",
+    "barrelImportAllow": ["../generated/", "zod"]
+  },
+  "surfaces": [],
+  "grandfatheredPending": [],
+  "registryAllowlist": []
+}

@@ -1,0 +1,8 @@
+# OnnxSessionCache artifacts (generated at runtime, machine-specific)
+*.onnx.optimized
+*.onnx.opt-meta
+*.onnx.sha256
+# CUDA-EP variant caches (tempdoc 402 follow-up; patterns above don't match
+# *.onnx.cuda.optimized — the .cuda. infix shifts the suffix)
+*.cuda.optimized
+*.cuda.opt-meta

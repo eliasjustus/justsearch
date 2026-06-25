@@ -1,0 +1,136 @@
+app:
+  package_base: io.justsearch
+  # data_dir: Resolved automatically via PlatformPaths (platform-specific defaults).
+  #   - Windows: %LOCALAPPDATA%\JustSearch
+  #   - macOS: ~/Library/Application Support/JustSearch  
+  #   - Linux: ~/.justsearch
+  # Override with: JUSTSEARCH_DATA_DIR env var or -Djustsearch.data.dir system property
+  timezone: Europe/Berlin
+
+llm:
+  enabled: true
+  mode: local
+  # model_path: override via JUSTSEARCH_LLM_MODEL_PATH if needed (defaults resolved from models dir)
+  backend: llama
+
+workers:
+  ai:
+    enabled: true
+    host: 127.0.0.1
+    port: 50061
+    deadlineMs: 1500
+    features:
+      embed: true
+      classify: true
+
+translator:
+  health:
+    refreshIntervalMs: 300000
+    maxBackoffMs: 30000
+    stalenessAlertSeconds: 1800
+
+telemetry:
+  metrics:
+    flush_ms: 15000
+    retention:
+      days: 7
+  pipeline:
+    stage_metrics:
+      enabled: true
+  capabilities:
+    refresh_interval_ms: 60000
+
+plugins:
+  pipeline:
+    enabled: true
+    egress:
+      default_policy: deny
+
+infra:
+  health:
+    poll_interval_ms: 5000
+    thresholds:
+      nrt_stale_ms: 30000
+      translator_handshake_stale_ms: 120000
+      ann_cache_ready_percent: 75
+    grpc:
+      host: 127.0.0.1
+      port: 7443
+
+search:
+  default_language_policy: explicit_or_default
+  pipeline:
+    profile: desktop-default
+  tiebreak_field: doc_uid
+  paging:
+    strategy: pit
+    pit_ttl_ms: 300000
+  cursor:
+    legacy_enabled: true
+  rerank:
+    enabled: false
+    k: 50
+  facets:
+    enabled: true
+    fields:
+      - mime
+      - language
+  corrections:
+    enabled: true
+    df_threshold: 5
+    max_edit_distance: 1
+    zero_hit_retry_enabled: true
+    index_fallback_enabled: false
+  hybrid:
+    bm25_k: 200
+    ann_k: 200
+    auto_embed: true
+
+index:
+  default_language: en-US
+  auto_recovery: true  # Automatically delete corrupted index and rebuild (data loss on recovery)
+  language_detection:
+    enabled: true
+  commit:
+    policy: per_batch
+    debounce_ms: 0
+  pipeline:
+    profile: desktop-default
+  soft_deletes:
+    field: "_soft_delete"
+    retention:
+      enabled: true
+      days: 7
+      # max_versions: 3
+  watcher:
+    strategy: auto
+    debounce_ms: 50
+    overflow:
+      rescan_on_overflow: true
+    queue:
+      max_entries: 2048
+    polling:
+      interval_ms: 2000
+  ocr:
+    enabled: true
+    languages: []
+    trigger:
+      min_image_pixels: 524288
+    limits:
+      per_file_timeout_ms: 5000
+      max_pages: 10
+      max_image_dimension: 4096
+      # max_image_pixels: 50000000
+  export:
+    otlp:
+      traces:
+        enabled: false
+        endpoint: http://collector:4317
+        tls:
+          insecure: true
+      metrics:
+        enabled: false
+        endpoint: http://collector:4318/v1/metrics
+      logs:
+        enabled: false
+        endpoint: http://collector:4317

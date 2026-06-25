@@ -1,0 +1,35 @@
+{
+  "schema": "pit-strength-baseline.v1",
+  "generated_at": "2026-06-03T00:00:00.000Z",
+  "note": "Per-seam mutation test-strength floors (mutants killed / mutants covered, integer percent). The test-efficacy gate (tempdoc 555 Pillar C) ratchets these UPWARD: a PR that lowers a seam below its floor fails unless a changeset covers it. Floors are grandfathered from the current measured strength and rebalanced upward via `--rebalance`. Seam ids match governance/logic-seams.v1.json.",
+  "seams": {
+    "hybrid-fusion": {
+      "minStrength": 75,
+      "maxNoCoverage": 10
+    },
+    "chunk-offset-math": {
+      "minStrength": 88,
+      "maxNoCoverage": 0
+    },
+    "file-freshness": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "admission-policy": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "splade-backoff": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "worker-supervision": {
+      "minStrength": 88,
+      "maxNoCoverage": 1
+    },
+    "worker-liveness-suicide": {
+      "minStrength": 93,
+      "maxNoCoverage": 0
+    }
+  }
+}

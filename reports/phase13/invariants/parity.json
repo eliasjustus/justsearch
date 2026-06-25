@@ -1,0 +1,8 @@
+{
+  "captured_at": "2025-11-08T05:14:11.493552+00:00",
+  "suite": "Parity guard",
+  "description": "InvariantSuiteIT covers IndexMetadataParityGuard read-only enforcement",
+  "gradle_task": ":modules:indexing:integrationTest --tests *InvariantSuiteIT",
+  "report_html": "reports/phase13/invariants/parity-suite.html",
+  "status": "pass"
+}

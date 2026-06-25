@@ -1,0 +1,6 @@
+# Placeholder synonyms (Phase 0 bootstrap). Source of truth will move to SSOT catalogs in Phase 0.5.
+# Format: comma-separated synonyms per line
+# Example:
+# usa, united states, u.s.a., america
+
+

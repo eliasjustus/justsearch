@@ -1,0 +1,29 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "contributorId" : {
+      "type" : "string"
+    },
+    "identity" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "signature" : {
+          "type" : [ "string", "null" ]
+        },
+        "verified" : {
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "signature", "verified" ]
+    },
+    "tier" : {
+      "type" : "string",
+      "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+    },
+    "version" : {
+      "type" : "string"
+    }
+  },
+  "required" : [ "contributorId", "identity", "tier", "version" ]
+}

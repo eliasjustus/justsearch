@@ -1,0 +1,38 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "batches" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "batchId" : {
+            "type" : [ "string", "null" ]
+          },
+          "explanation" : {
+            "type" : [ "string", "null" ]
+          },
+          "failedCount" : {
+            "type" : [ "integer", "null" ]
+          },
+          "finalized" : {
+            "type" : [ "boolean", "null" ]
+          },
+          "operationCount" : {
+            "type" : [ "integer", "null" ]
+          },
+          "skippedCount" : {
+            "type" : [ "integer", "null" ]
+          },
+          "successCount" : {
+            "type" : [ "integer", "null" ]
+          },
+          "timestamp" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+Garbage Collection Tuning Strategies for JVM Applications
+
+Garbage collection tuning is essential for JVM applications that require predictable latency and
+high throughput. The choice of collector and its configuration directly impacts pause times,
+allocation throughput, and overall application responsiveness.
+
+Key GC tuning strategies include:
+
+Collector selection: Choose a collector that matches your latency requirements. G1 is the default
+and works well for most workloads. ZGC and Shenandoah offer sub-millisecond pause times for
+latency-sensitive applications. Parallel GC maximizes throughput for batch processing workloads.
+
+Heap sizing: Set initial and maximum heap sizes (-Xms, -Xmx) to the same value to avoid resize
+pauses. Size the heap to allow the live data set to occupy no more than 50-60% of the old
+generation, leaving room for allocation bursts and garbage collection overhead.
+
+Young generation tuning: Adjust the young generation size (-Xmn or -XX:NewRatio) based on
+allocation rate and object lifetime. Short-lived objects should be collected in minor GCs without
+promoting to the old generation. Monitor promotion rates to detect premature tenuring.
+
+Pause time targets: Use -XX:MaxGCPauseMillis to set a target maximum pause time. The collector
+will adapt its behavior to meet this target, trading throughput for lower latency when necessary.
+
+GC logging: Enable GC logging (-Xlog:gc* for modern JVMs) to capture pause durations, heap
+occupancy, and collector activity. Analyze logs to identify tuning opportunities such as
+excessive full GCs, long young GC pauses, or allocation stalls.
+
+Monitoring: Track GC metrics in production using JMX or Java Flight Recorder. Key indicators
+include GC pause time distribution, allocation rate, promotion rate, and heap occupancy after
+collection. Alert on sustained high GC overhead (>5% of wall-clock time).

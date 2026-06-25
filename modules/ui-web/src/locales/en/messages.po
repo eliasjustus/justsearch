@@ -1,0 +1,3453 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-02-12 16:16+0100\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Plural-Forms: \n"
+
+#: src/components/views/LibraryView.tsx:466
+msgid " (results capped)"
+msgstr " (results capped)"
+
+#: src/components/ui/ModeIndicator.tsx:70
+msgid " Full summaries may take minutes; consider enabling \"Pause indexing while summarizing\"."
+msgstr " Full summaries may take minutes; consider enabling \"Pause indexing while summarizing\"."
+
+#: src/components/views/HealthView.tsx:803
+msgid " in demo mode"
+msgstr " in demo mode"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:745
+msgid " layers"
+msgstr " layers"
+
+#: src/components/ui/ModeIndicator.tsx:68
+msgid " Summaries and chat require an NVIDIA GPU."
+msgstr " Summaries and chat require an NVIDIA GPU."
+
+#. placeholder {0}: Math.round((typeof llm.maxTokens === 'number' ? llm.maxTokens : 1024) * 0.75)
+#: src/components/views/brain/BrainRuntimeSection.tsx:720
+msgid " tokens (~{0} words)"
+msgstr " tokens (~{0} words)"
+
+#. placeholder {0}: Math.round(((typeof llm.contextWindow === 'number' ? llm.contextWindow : 4096) * 0.75) / 1000)
+#: src/components/views/brain/BrainRuntimeSection.tsx:710
+msgid " tokens (~{0}k words)"
+msgstr " tokens (~{0}k words)"
+
+#: src/components/views/HealthView.tsx:663
+msgid "(FAILED)"
+msgstr "(FAILED)"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:142
+#: src/components/views/brain/PolicyHelperPanel.tsx:182
+msgid "(unknown)"
+msgstr "(unknown)"
+
+#. placeholder {0}: badge.title
+#: src/components/zones/StatusDeck.tsx:163
+msgid "{0} — click to activate AI"
+msgstr "{0} — click to activate AI"
+
+#. placeholder {0}: tools.length
+#. placeholder {1}: pluralize(tools.length, 'tool')
+#: src/components/views/AgentView.tsx:149
+msgid "{0} {1}"
+msgstr "{0} {1}"
+
+#. placeholder {0}: status.indexedDocuments.toLocaleString()
+#. placeholder {1}: pluralize(status.indexedDocuments, 'file')
+#: src/components/zones/StatusDeck.tsx:203
+msgid "{0} {1} in the search index"
+msgstr "{0} {1} in the search index"
+
+#. placeholder {0}: status.indexedDocuments.toLocaleString()
+#. placeholder {1}: pluralize(status.indexedDocuments, 'file')
+#: src/components/search/LaunchpadGrid.tsx:131
+msgid "{0} {1} indexed and ready"
+msgstr "{0} {1} indexed and ready"
+
+#. placeholder {0}: status.pendingNerCount ?? 0
+#. placeholder {1}: pluralize(status.pendingNerCount ?? 0, 'document')
+#: src/components/zones/StatusDeck.tsx:229
+msgid "{0} {1} pending entity extraction"
+msgstr "{0} {1} pending entity extraction"
+
+#. placeholder {0}: status.pendingJobs
+#. placeholder {1}: pluralize(status.pendingJobs, 'file')
+#: src/components/zones/StatusDeck.tsx:219
+msgid "{0} {1} waiting to be indexed"
+msgstr "{0} {1} waiting to be indexed"
+
+#. placeholder {0}: chunkDocCount.toLocaleString()
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:50
+msgid "{0} chunks indexed with vectors"
+msgstr "{0} chunks indexed with vectors"
+
+#. placeholder {0}: failedCount.toLocaleString()
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:103
+msgid "{0} failed"
+msgstr "{0} failed"
+
+#. placeholder {0}: root.fileCount.toLocaleString()
+#: src/components/views/LibraryView.tsx:593
+msgid "{0} files"
+msgstr "{0} files"
+
+#. placeholder {0}: indexedDocuments.toLocaleString()
+#: src/components/views/LibraryView.tsx:509
+msgid "{0} files indexed. Add a folder to keep your library fresh."
+msgstr "{0} files indexed. Add a folder to keep your library fresh."
+
+#. placeholder {0}: status.indexedDocuments.toLocaleString()
+#: src/components/zones/StatusDeck.tsx:205
+msgid "{0} indexed"
+msgstr "{0} indexed"
+
+#. placeholder {0}: status.pendingJobs
+#: src/components/zones/StatusDeck.tsx:221
+msgid "{0} jobs"
+msgstr "{0} jobs"
+
+#. placeholder {0}: pendingCount.toLocaleString()
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:98
+msgid "{0} pending"
+msgstr "{0} pending"
+
+#. placeholder {0}: totalResults.toLocaleString()
+#: src/components/zones/StatusDeck.tsx:189
+msgid "{0} results"
+msgstr "{0} results"
+
+#. placeholder {0}: inference.llmContextTokens.toLocaleString()
+#: src/components/views/brain/BrainSimplePanel.tsx:296
+msgid "{0} tokens"
+msgstr "{0} tokens"
+
+#. placeholder {0}: progress.pct
+#: src/components/views/brain/BrainSimplePanel.tsx:130
+msgid "{0}% complete"
+msgstr "{0}% complete"
+
+#. placeholder {0}: Math.round(citation.score * 100)
+#: src/components/ui/CitationHoverCard.tsx:83
+msgid "{0}% match"
+msgstr "{0}% match"
+
+#. placeholder {0}: Math.floor(diff / 3600000)
+#: src/components/views/LibraryView.tsx:269
+msgid "{0}h ago"
+msgstr "{0}h ago"
+
+#. placeholder {0}: Math.floor(diff / 60000)
+#: src/components/views/LibraryView.tsx:268
+msgid "{0}m ago"
+msgstr "{0}m ago"
+
+#. placeholder {0}: pluralize(embeddingQueueSize, 'file')
+#: src/components/ui/IndexingOverlay.tsx:99
+msgid "{embeddingQueueSize} {0}"
+msgstr "{embeddingQueueSize} {0}"
+
+#. placeholder {0}: pluralize(embeddingQueueSize, 'file')
+#: src/components/ui/ModeIndicator.tsx:160
+msgid "{embeddingQueueSize} {0} embedding"
+msgstr "{embeddingQueueSize} {0} embedding"
+
+#: src/components/ErrorBoundary.tsx:161
+msgid "{message}. Make sure the JustSearch backend is running."
+msgstr "{message}. Make sure the JustSearch backend is running."
+
+#. placeholder {0}: selectedCount > 1 ? "s" : ""
+#: src/components/HUD/InspectorTabBar.tsx:75
+msgid "{selectedCount} file{0}"
+msgstr "{selectedCount} file{0}"
+
+#: src/components/HUD/InspectionPane.tsx:205
+msgid "{selectedCount} files"
+msgstr "{selectedCount} files"
+
+#: src/components/HUD/InspectorAIInput.tsx:214
+msgid "{selectedCount} files selected — ready for batch summarize"
+msgstr "{selectedCount} files selected — ready for batch summarize"
+
+#: src/components/HUD/InspectorAIInput.tsx:219
+msgid "{selectedCount} files selected — this may take longer. Consider selecting ≤ 3 files for faster results."
+msgstr "{selectedCount} files selected — this may take longer. Consider selecting ≤ 3 files for faster results."
+
+#: src/components/search/SearchFiltersBar.tsx:295
+msgid "{selectionCount} selected"
+msgstr "{selectionCount} selected"
+
+#. placeholder {0}: pluralize(vduQueueSize, 'file')
+#: src/components/ui/IndexingOverlay.tsx:86
+msgid "{vduQueueSize} {0}"
+msgstr "{vduQueueSize} {0}"
+
+#. placeholder {0}: pluralize(vduQueueSize, 'file')
+#: src/components/ui/ModeIndicator.tsx:152
+msgid "{vduQueueSize} {0} analyzing"
+msgstr "{vduQueueSize} {0} analyzing"
+
+#: src/components/HUD/InspectorPreview.tsx:114
+msgid "⏳ VDU pending"
+msgstr "⏳ VDU pending"
+
+#: src/components/HUD/InspectorPreview.tsx:116
+msgid "⚠️ VDU failed"
+msgstr "⚠️ VDU failed"
+
+#: src/components/HUD/InspectorPreview.tsx:115
+msgid "🔄 VDU processing"
+msgstr "🔄 VDU processing"
+
+#: src/components/HUD/InspectorPreview.tsx:113
+msgid "🔍 VDU"
+msgstr "🔍 VDU"
+
+#: src/components/views/HealthView.tsx:965
+msgid "30-minute trend of GPU utilization (%)"
+msgstr "30-minute trend of GPU utilization (%)"
+
+#: src/components/views/HealthView.tsx:954
+msgid "30-minute trend of indexing rate (docs/sec)"
+msgstr "30-minute trend of indexing rate (docs/sec)"
+
+#: src/components/views/HealthView.tsx:941
+msgid "30-minute trend of pending indexing jobs"
+msgstr "30-minute trend of pending indexing jobs"
+
+#: src/utils/errorMessages.ts:40
+msgid "A file system error occurred."
+msgstr "A file system error occurred."
+
+#: src/utils/errorMessages.ts:90
+msgid "A pack import is already in progress."
+msgstr "A pack import is already in progress."
+
+#: src/utils/errorMessages.ts:120
+msgid "A question is required."
+msgstr "A question is required."
+
+#: src/utils/errorMessages.ts:170
+msgid "A tool failed temporarily. The agent will retry."
+msgstr "A tool failed temporarily. The agent will retry."
+
+#: src/utils/errorMessages.ts:173
+msgid "A tool returned an unexpected result."
+msgstr "A tool returned an unexpected result."
+
+#: src/components/zones/StatusDeck.tsx:299
+msgid "Actions"
+msgstr "Actions"
+
+#: src/components/views/HealthView.tsx:803
+msgid "Actions unavailable"
+msgstr "Actions unavailable"
+
+#: src/components/search/SearchFiltersBar.tsx:326
+msgid "Actions…"
+msgstr "Actions…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:384
+msgid "Activate"
+msgstr "Activate"
+
+#: src/components/zones/StatusDeck.tsx:163
+#: src/components/zones/StatusDeck.tsx:171
+msgid "Activating AI…"
+msgstr "Activating AI…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:142
+#: src/components/views/HealthView.tsx:587
+msgid "Active"
+msgstr "Active"
+
+#: src/components/views/brain/BrainUIComponents.tsx:74
+msgid "ACTIVE"
+msgstr "ACTIVE"
+
+#: src/components/views/LibraryView.tsx:352
+msgid "Add"
+msgstr "Add"
+
+#: src/components/views/LibraryView.tsx:515
+msgid "Add a folder to begin searching your files"
+msgstr "Add a folder to begin searching your files"
+
+#: src/components/search/LaunchpadGrid.tsx:265
+msgid "Add a folder to index"
+msgstr "Add a folder to index"
+
+#: src/components/search/LaunchpadGrid.tsx:252
+msgid "Add a watched folder"
+msgstr "Add a watched folder"
+
+#: src/components/views/LibraryView.tsx:430
+msgid "Add at least one pattern first"
+msgstr "Add at least one pattern first"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:383
+msgid "Add digest to user policy allowlist"
+msgstr "Add digest to user policy allowlist"
+
+#: src/components/views/LibraryView.tsx:323
+msgid "Add Folder"
+msgstr "Add Folder"
+
+#: src/components/views/BrowseView.tsx:693
+msgid "Add folders in the Library view to browse their contents here."
+msgstr "Add folders in the Library view to browse their contents here."
+
+#: src/components/views/brain/BrainPackImportSection.tsx:380
+msgid "Add this digest to the existing user policy allowlist"
+msgstr "Add this digest to the existing user policy allowlist"
+
+#: src/components/views/LibraryView.tsx:352
+msgid "Adding..."
+msgstr "Adding..."
+
+#: src/components/views/SettingsView.tsx:200
+msgid "Advanced"
+msgstr "Advanced"
+
+#: src/components/views/SettingsView.tsx:205
+msgid "Advanced mode unlocks AI runtime configuration, GPU controls, Lucene search syntax, and library management tools."
+msgstr "Advanced mode unlocks AI runtime configuration, GPU controls, Lucene search syntax, and library management tools."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:372
+msgid "Advanced settings"
+msgstr "Advanced settings"
+
+#: src/components/views/AgentView.tsx:146
+#: src/components/zones/ActivityRail.tsx:56
+msgid "Agent"
+msgstr "Agent"
+
+#: src/components/views/AgentView.tsx:237
+msgid "Agent tools are not available. Check that inference is running."
+msgstr "Agent tools are not available. Check that inference is running."
+
+#: src/components/HUD/InspectorTabBar.tsx:58
+msgid "AI"
+msgstr "AI"
+
+#: src/components/views/brain/BrainHeader.tsx:21
+#: src/components/zones/ActivityRail.tsx:55
+msgid "AI Brain"
+msgstr "AI Brain"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:530
+msgid "AI cannot start"
+msgstr "AI cannot start"
+
+#: src/utils/errorMessages.ts:169
+msgid "AI encountered a temporary error. Please try again."
+msgstr "AI encountered a temporary error. Please try again."
+
+#: src/components/ui/ModeIndicator.tsx:115
+msgid "AI engine is active — chat, Q&A, and summarization available"
+msgstr "AI engine is active — chat, Q&A, and summarization available"
+
+#: src/components/ui/ModeIndicator.tsx:118
+msgid "AI engine is idle — enable in AI Brain view"
+msgstr "AI engine is idle — enable in AI Brain view"
+
+#: src/components/ui/ModeIndicator.tsx:116
+msgid "AI engine is processing embeddings for semantic search"
+msgstr "AI engine is processing embeddings for semantic search"
+
+#: src/components/ui/ModeIndicator.tsx:113
+msgid "AI engine is switching modes"
+msgstr "AI engine is switching modes"
+
+#: src/components/ui/IndexingOverlay.tsx:51
+msgid "AI features temporarily unavailable"
+msgstr "AI features temporarily unavailable"
+
+#: src/components/zones/status/deriveHeadlineStatus.ts:77
+msgid "AI features unavailable — keyword search still works"
+msgstr "AI features unavailable — keyword search still works"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:445
+msgid "AI Home"
+msgstr "AI Home"
+
+#: src/components/ui/ModeIndicator.tsx:104
+msgid "AI idle"
+msgstr "AI idle"
+
+#: src/utils/errorMessages.ts:50
+msgid "AI installation failed."
+msgstr "AI installation failed."
+
+#: src/utils/errorMessages.ts:55
+msgid "AI installation is already in progress."
+msgstr "AI installation is already in progress."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:127
+msgid "AI is initializing"
+msgstr "AI is initializing"
+
+#: src/utils/errorMessages.ts:114
+msgid "AI is not available. Check that models are installed."
+msgstr "AI is not available. Check that models are installed."
+
+#: src/utils/errorMessages.ts:131
+msgid "AI is overloaded. Please wait and try again."
+msgstr "AI is overloaded. Please wait and try again."
+
+#: src/utils/errorMessages.ts:113
+msgid "AI is starting up. Please wait a moment."
+msgstr "AI is starting up. Please wait a moment."
+
+#: src/utils/errorMessages.ts:63
+msgid "AI model download failed. Check your network connection and try again."
+msgstr "AI model download failed. Check your network connection and try again."
+
+#: src/components/views/HelpView.tsx:214
+msgid "AI model downloads occur only when you explicitly install models."
+msgstr "AI model downloads occur only when you explicitly install models."
+
+#: src/utils/errorMessages.ts:58
+msgid "AI model manifest is invalid or has no assets."
+msgstr "AI model manifest is invalid or has no assets."
+
+#: src/utils/errorMessages.ts:59
+msgid "AI model manifest is not configured."
+msgstr "AI model manifest is not configured."
+
+#: src/utils/errorMessages.ts:57
+msgid "AI model manifest is unavailable. Check your network connection."
+msgstr "AI model manifest is unavailable. Check your network connection."
+
+#: src/utils/errorMessages.ts:64
+msgid "AI model verification failed. The download may be corrupted."
+msgstr "AI model verification failed. The download may be corrupted."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:137
+msgid "AI Offline"
+msgstr "AI Offline"
+
+#: src/components/ui/ModeIndicator.tsx:91
+#: src/components/views/brain/BrainSimplePanel.tsx:122
+msgid "AI Online"
+msgstr "AI Online"
+
+#: src/utils/errorMessages.ts:84
+msgid "AI pack archive contains duplicate files."
+msgstr "AI pack archive contains duplicate files."
+
+#: src/utils/errorMessages.ts:83
+msgid "AI pack archive is invalid."
+msgstr "AI pack archive is invalid."
+
+#: src/utils/errorMessages.ts:81
+msgid "AI pack file was not found."
+msgstr "AI pack file was not found."
+
+#: src/utils/errorMessages.ts:85
+msgid "AI pack is missing its manifest file."
+msgstr "AI pack is missing its manifest file."
+
+#: src/utils/errorMessages.ts:86
+msgid "AI pack manifest is invalid."
+msgstr "AI pack manifest is invalid."
+
+#: src/utils/errorMessages.ts:82
+msgid "AI pack path is invalid."
+msgstr "AI pack path is invalid."
+
+#: src/utils/errorMessages.ts:70
+msgid "AI runtime activation is already in progress."
+msgstr "AI runtime activation is already in progress."
+
+#: src/utils/errorMessages.ts:62
+msgid "AI runtime is not installed. Run the AI installer first."
+msgstr "AI runtime is not installed. Run the AI installer first."
+
+#: src/utils/errorMessages.ts:159
+msgid "AI runtime variant is required."
+msgstr "AI runtime variant is required."
+
+#: src/utils/errorMessages.ts:67
+msgid "AI smoke test failed. The installation may be incomplete."
+msgstr "AI smoke test failed. The installation may be incomplete."
+
+#: src/utils/errorMessages.ts:115
+msgid "AI summarization is not available."
+msgstr "AI summarization is not available."
+
+#: src/components/HUD/InspectorAnswer.tsx:197
+msgid "ai summary"
+msgstr "ai summary"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:141
+msgid "AI was shut down. Start again to enable chat and summaries."
+msgstr "AI was shut down. Start again to enable chat and summaries."
+
+#: src/components/search/SearchFiltersBar.tsx:400
+msgid "All files"
+msgstr "All files"
+
+#: src/components/views/HealthView.tsx:406
+#: src/components/views/HealthView.tsx:893
+msgid "All systems operational"
+msgstr "All systems operational"
+
+#: src/components/search/SearchFiltersBar.tsx:413
+msgid "All types"
+msgstr "All types"
+
+#. placeholder {0}: (effectivePolicy?.allowlistedPackManifestSha256?.length ?? 0).toString()
+#: src/components/views/brain/BrainPackImportSection.tsx:286
+msgid "Allowlist source: <0>{packAllowlistSource}</0> • allowlisted digests: <1>{0}</1>"
+msgstr "Allowlist source: <0>{packAllowlistSource}</0> • allowlisted digests: <1>{0}</1>"
+
+#: src/components/search/ZeroResultsView.tsx:45
+msgid "Also tried <0>{correctedQuery}</0> — no matches found."
+msgstr "Also tried <0>{correctedQuery}</0> — no matches found."
+
+#: src/utils/errorMessages.ts:182
+msgid "An internal error occurred. Please try again."
+msgstr "An internal error occurred. Please try again."
+
+#: src/components/ErrorBoundary.tsx:78
+msgid "An unexpected error occurred. This has been logged for debugging."
+msgstr "An unexpected error occurred. This has been logged for debugging."
+
+#. placeholder {0}: pluralize(vduQueueSize, 'document')
+#: src/components/ui/ModeIndicator.tsx:150
+msgid "Analyzing visual content in {vduQueueSize} {0}"
+msgstr "Analyzing visual content in {vduQueueSize} {0}"
+
+#: src/components/HUD/InspectorAnswer.tsx:63
+msgid "answer"
+msgstr "answer"
+
+#: src/components/search/SearchFiltersBar.tsx:464
+msgid "Any language"
+msgstr "Any language"
+
+#: src/components/search/SearchFiltersBar.tsx:451
+msgid "Any time"
+msgstr "Any time"
+
+#: src/components/views/SettingsView.tsx:210
+msgid "Appearance"
+msgstr "Appearance"
+
+#. placeholder {0}: applyExcludesResult.patterns
+#. placeholder {1}: pluralize(applyExcludesResult.patterns, 'pattern')
+#. placeholder {2}: applyExcludesResult.rootsProcessed
+#. placeholder {3}: pluralize(applyExcludesResult.rootsProcessed, 'root')
+#. placeholder {4}: applyExcludesResult.deletedById
+#. placeholder {5}: pluralize(applyExcludesResult.deletedById, 'file')
+#. placeholder {6}: applyExcludesResult.deletedByPathJobs
+#. placeholder {7}: pluralize(applyExcludesResult.deletedByPathJobs, 'job')
+#: src/components/views/LibraryView.tsx:485
+msgid "Applied {0} {1} across {2} {3}: deleted {4} {5} + {6} dir {7}."
+msgstr "Applied {0} {1} across {2} {3}: deleted {4} {5} + {6} dir {7}."
+
+#: src/components/views/LibraryView.tsx:432
+msgid "Apply excludes"
+msgstr "Apply excludes"
+
+#: src/components/views/LibraryView.tsx:138
+msgid "Apply excludes failed"
+msgstr "Apply excludes failed"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:598
+msgid "Apply model/context/GPU settings to the running inference runtime"
+msgstr "Apply model/context/GPU settings to the running inference runtime"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:600
+msgid "Apply settings"
+msgstr "Apply settings"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:600
+#: src/components/views/LibraryView.tsx:432
+msgid "Applying…"
+msgstr "Applying…"
+
+#: src/components/zones/Stage.tsx:380
+msgid "Ask a question"
+msgstr "Ask a question"
+
+#: src/components/zones/GlobalCommand.tsx:351
+msgid "Ask a question about your files..."
+msgstr "Ask a question about your files..."
+
+#. placeholder {0}: selectedCount === 1 ? t`this file` : t`${selectedCount} files`
+#: src/components/HUD/InspectionPane.tsx:205
+msgid "Ask a question or summarize {0}"
+msgstr "Ask a question or summarize {0}"
+
+#: src/components/HUD/InspectionPane.tsx:207
+msgid "Ask a question or summarize this document"
+msgstr "Ask a question or summarize this document"
+
+#: src/components/HUD/InspectorAIInput.tsx:63
+#: src/components/HUD/InspectorAIInput.tsx:69
+msgid "Ask about {name}..."
+msgstr "Ask about {name}..."
+
+#: src/components/HUD/InspectorAIInput.tsx:71
+msgid "Ask about {selectedCount} files..."
+msgstr "Ask about {selectedCount} files..."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:351
+msgid "Ask questions about your files"
+msgstr "Ask questions about your files"
+
+#: src/components/views/AgentView.tsx:240
+msgid "Ask the agent to search, browse, ingest files, or manage your knowledge base."
+msgstr "Ask the agent to search, browse, ingest files, or manage your knowledge base."
+
+#: src/utils/errorMessages.ts:100
+msgid "Asset references an unknown file in pack manifest."
+msgstr "Asset references an unknown file in pack manifest."
+
+#: src/utils/errorMessages.ts:107
+msgid "Asset variant does not match pack variant."
+msgstr "Asset variant does not match pack variant."
+
+#: src/components/views/HealthView.tsx:413
+msgid "Attention needed"
+msgstr "Attention needed"
+
+#: src/utils/errorMessages.ts:158
+msgid "Authentication is required."
+msgstr "Authentication is required."
+
+#: src/components/search/SearchFiltersBar.tsx:250
+msgid "Author: {v}"
+msgstr "Author: {v}"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:736
+msgid "Auto GPU layers (CPU-only)"
+msgstr "Auto GPU layers (CPU-only)"
+
+#: src/components/views/HealthView.tsx:424
+msgid "Auto-refresh"
+msgstr "Auto-refresh"
+
+#: src/components/views/HealthView.tsx:408
+msgid "Backend disconnected"
+msgstr "Backend disconnected"
+
+#. placeholder {0}: connectedBaseUrl == null ? '(unresolved)' : connectedBaseUrl === '' ? '(proxy)' : connectedBaseUrl
+#. placeholder {1}: connectedPort != null ? ( <> {' '} • port: <span className="text-[var(--text-tertiary)]">{String(connectedPort)}</span> </> ) : null
+#. placeholder {2}: connectedSource ? ( <> {' '} • source: <span className="text-[var(--text-tertiary)]">{connectedSource}</span> </> ) : null
+#. placeholder {3}: policyLastFetchedAtEpochMs ? ( <> {' '} • last refresh:{' '} <span className="text-[var(--text-tertiary)]"> {new Date(policyLastFetchedAtEpochMs).toLocaleTimeString()} </span> </> ) : null
+#: src/components/views/brain/PolicyHelperPanel.tsx:88
+msgid "Backend: <0>{0}</0>{1}{2}{3}"
+msgstr "Backend: <0>{0}</0>{1}{2}{3}"
+
+#: src/components/search/SearchFiltersBar.tsx:376
+msgid "Basic"
+msgstr "Basic"
+
+#: src/components/ui/IndexingOverlay.tsx:48
+msgid "Batch Processing Active"
+msgstr "Batch Processing Active"
+
+#: src/components/views/SettingsView.tsx:242
+msgid "Better visibility"
+msgstr "Better visibility"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:380
+msgid "Blocked by administrator policy"
+msgstr "Blocked by administrator policy"
+
+#: src/components/zones/GlobalCommand.tsx:560
+msgid "Boost factor"
+msgstr "Boost factor"
+
+#: src/components/zones/GlobalCommand.tsx:554
+msgid "Both required"
+msgstr "Both required"
+
+#: src/components/views/SettingsView.tsx:233
+msgid "Bright theme"
+msgstr "Bright theme"
+
+#: src/components/views/BrowseView.tsx:864
+#: src/components/zones/ActivityRail.tsx:54
+msgid "Browse"
+msgstr "Browse"
+
+#: src/components/views/BrowseView.tsx:725
+msgid "Browse indexed files"
+msgstr "Browse indexed files"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:678
+msgid "Browse model…"
+msgstr "Browse model…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:648
+msgid "Browse…"
+msgstr "Browse…"
+
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:73
+msgid "Building semantic search"
+msgstr "Building semantic search"
+
+#: src/components/search/SearchFiltersBar.tsx:441
+msgid "By date"
+msgstr "By date"
+
+#: src/components/search/SearchFiltersBar.tsx:440
+msgid "By folder"
+msgstr "By folder"
+
+#: src/components/search/SearchFiltersBar.tsx:439
+msgid "By type"
+msgstr "By type"
+
+#: src/components/views/LibraryView.tsx:343
+msgid "C:\\Users\\YourName\\Documents"
+msgstr "C:\\Users\\YourName\\Documents"
+
+#: src/components/HUD/InspectorAIInput.tsx:193
+#: src/components/ui/ConfirmDialog.tsx:30
+#: src/components/views/AgentView.tsx:208
+#: src/components/views/brain/BrainInstallSection.tsx:137
+#: src/components/views/brain/BrainSimplePanel.tsx:163
+#: src/components/views/brain/BrainSimplePanel.tsx:179
+#: src/components/views/BrainView.tsx:50
+#: src/components/views/HealthView.tsx:93
+#: src/components/views/HealthView.tsx:101
+#: src/components/views/HealthView.tsx:109
+#: src/components/views/LibraryView.tsx:359
+#: src/components/views/SettingsView.tsx:99
+#: src/components/views/SettingsView.tsx:107
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/components/views/brain/BrainInstallSection.tsx:133
+msgid "Cancel the current install job"
+msgstr "Cancel the current install job"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:117
+msgid "Cannot reach backend for policy. Error: {policyFetchError}"
+msgstr "Cannot reach backend for policy. Error: {policyFetchError}"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:83
+msgid "Cannot reach local JustSearch service"
+msgstr "Cannot reach local JustSearch service"
+
+#: src/utils/errorMessages.ts:176
+msgid "Cannot resume this agent session."
+msgstr "Cannot resume this agent session."
+
+#: src/components/search/SearchFiltersBar.tsx:257
+msgid "Category: {v}"
+msgstr "Category: {v}"
+
+#: src/components/views/AgentView.tsx:185
+#: src/components/views/brain/BrainRuntimeSection.tsx:669
+msgid "Chat"
+msgstr "Chat"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:122
+msgid "Chat and summaries ready"
+msgstr "Chat and summaries ready"
+
+#: src/components/search/ZeroResultsView.tsx:57
+msgid "Check spelling"
+msgstr "Check spelling"
+
+#: src/components/views/AgentView.tsx:239
+msgid "Checking agent availability..."
+msgstr "Checking agent availability..."
+
+#: src/components/views/brain/BrainInstallSection.tsx:45
+#: src/components/views/brain/BrainPackImportSection.tsx:276
+msgid "Checking…"
+msgstr "Checking…"
+
+#: src/components/search/SearchFiltersBar.tsx:357
+#: src/components/views/HealthView.tsx:108
+#: src/components/zones/GlobalCommand.tsx:466
+msgid "Clear"
+msgstr "Clear"
+
+#: src/components/views/HealthView.tsx:873
+msgid "Clear all failures"
+msgstr "Clear all failures"
+
+#: src/components/views/HealthView.tsx:106
+msgid "Clear all failures?"
+msgstr "Clear all failures?"
+
+#: src/components/zones/GlobalCommand.tsx:389
+msgid "Clear search"
+msgstr "Clear search"
+
+#: src/components/views/HelpView.tsx:42
+msgid "Clear selection / close panel"
+msgstr "Clear selection / close panel"
+
+#: src/components/views/HealthView.tsx:873
+msgid "Clearing…"
+msgstr "Clearing…"
+
+#. placeholder {0}: selectedCount > 1 ? t`these ${selectedCount} files` : t`this file`
+#: src/components/HUD/InspectorAnswer.tsx:221
+msgid "Click \"Summarize\" or ask a question about {0}"
+msgstr "Click \"Summarize\" or ask a question about {0}"
+
+#: src/components/ui/IndexingOverlay.tsx:153
+msgid "Click to enable Chat, Q&A, and Summarization."
+msgstr "Click to enable Chat, Q&A, and Summarization."
+
+#: src/components/ui/CitationHoverCard.tsx:111
+msgid "Click to jump to source"
+msgstr "Click to jump to source"
+
+#: src/components/ui/ConfirmDialog.tsx:115
+msgid "Close"
+msgstr "Close"
+
+#: src/components/HUD/InspectorTabBar.tsx:84
+msgid "Close inspector (drag edge to resize)"
+msgstr "Close inspector (drag edge to resize)"
+
+#: src/components/views/SettingsView.tsx:297
+msgid "Closes the app and wipes local data on next start"
+msgstr "Closes the app and wipes local data on next start"
+
+#: src/components/views/SettingsView.tsx:300
+msgid "Closing…"
+msgstr "Closing…"
+
+#: src/components/views/HealthView.tsx:829
+msgid "Collapse"
+msgstr "Collapse"
+
+#: src/components/search/ResultRow.tsx:207
+msgid "Collapse snippet"
+msgstr "Collapse snippet"
+
+#: src/components/search/DensityToggle.tsx:16
+msgid "Comfort"
+msgstr "Comfort"
+
+#: src/components/search/DensityToggle.tsx:15
+msgid "Compact"
+msgstr "Compact"
+
+#: src/components/HUD/InspectorAnswer.tsx:183
+#: src/components/HUD/InspectorAnswer.tsx:184
+msgid "Complete"
+msgstr "Complete"
+
+#: src/components/ErrorBoundary.tsx:167
+msgid "Component Status"
+msgstr "Component Status"
+
+#: src/components/views/brain/BrainHeader.tsx:22
+msgid "Configure local language models"
+msgstr "Configure local language models"
+
+#: src/components/ui/ConfirmDialog.tsx:29
+msgid "Confirm"
+msgstr "Confirm"
+
+#: src/utils/errorMessages.ts:126
+msgid "Confirmation required before proceeding."
+msgstr "Confirmation required before proceeding."
+
+#: src/components/ErrorBoundary.tsx:226
+msgid "Connecting to local index..."
+msgstr "Connecting to local index..."
+
+#: src/components/ErrorBoundary.tsx:248
+msgid "Connection attempt {attempt}/{maxAttempts}..."
+msgstr "Connection attempt {attempt}/{maxAttempts}..."
+
+#: src/components/ErrorBoundary.tsx:157
+msgid "Connection Error"
+msgstr "Connection Error"
+
+#: src/components/HUD/InspectorAIInput.tsx:199
+msgid "Consider selecting fewer files"
+msgstr "Consider selecting fewer files"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:294
+msgid "Context"
+msgstr "Context"
+
+#: src/components/HUD/InspectorAIInput.tsx:205
+msgid "Context too large"
+msgstr "Context too large"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:705
+msgid "Context Window"
+msgstr "Context Window"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:396
+msgid "Copy a machine policy JSON template including this manifest digest"
+msgstr "Copy a machine policy JSON template including this manifest digest"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:169
+msgid "Copy a policy.v1.json template to clipboard"
+msgstr "Copy a policy.v1.json template to clipboard"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:389
+msgid "Copy a user policy JSON template including this manifest digest"
+msgstr "Copy a user policy JSON template including this manifest digest"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:214
+msgid "Copy a user policy.v1.json template to clipboard"
+msgstr "Copy a user policy.v1.json template to clipboard"
+
+#: src/components/HUD/InspectorAnswer.tsx:77
+msgid "Copy answer"
+msgstr "Copy answer"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:392
+msgid "Copy exe"
+msgstr "Copy exe"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:390
+msgid "Copy llama-server.exe path"
+msgstr "Copy llama-server.exe path"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:151
+msgid "Copy machine policy path"
+msgstr "Copy machine policy path"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:398
+msgid "Copy machine policy snippet"
+msgstr "Copy machine policy snippet"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:344
+msgid "Copy manifest SHA"
+msgstr "Copy manifest SHA"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:342
+msgid "Copy manifest SHA-256 to clipboard"
+msgstr "Copy manifest SHA-256 to clipboard"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:153
+#: src/components/views/brain/PolicyHelperPanel.tsx:198
+msgid "Copy path"
+msgstr "Copy path"
+
+#: src/components/search/SearchFiltersBar.tsx:309
+msgid "Copy paths"
+msgstr "Copy paths"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:171
+#: src/components/views/brain/PolicyHelperPanel.tsx:216
+msgid "Copy template"
+msgstr "Copy template"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:196
+msgid "Copy user policy path"
+msgstr "Copy user policy path"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:391
+msgid "Copy user policy snippet"
+msgstr "Copy user policy snippet"
+
+#: src/components/views/LibraryView.tsx:415
+msgid "Count matched files without deleting"
+msgstr "Count matched files without deleting"
+
+#: src/components/ui/ModeIndicator.tsx:59
+msgid "CPU only"
+msgstr "CPU only"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:360
+msgid "Create a user policy file under AI Home (only if missing) to allowlist this pack"
+msgstr "Create a user policy file under AI Home (only if missing) to allowlist this pack"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:363
+msgid "Create user policy (enable this pack)"
+msgstr "Create user policy (enable this pack)"
+
+#: src/components/views/HealthView.tsx:450
+msgid "critical issue"
+msgstr "critical issue"
+
+#: src/components/search/SearchFiltersBar.tsx:402
+msgid "Custom…"
+msgstr "Custom…"
+
+#: src/components/views/SettingsView.tsx:156
+msgid "Customize your experience"
+msgstr "Customize your experience"
+
+#: src/components/views/SettingsView.tsx:225
+msgid "Dark"
+msgstr "Dark"
+
+#: src/components/views/SettingsView.tsx:280
+msgid "Data"
+msgstr "Data"
+
+#: src/components/search/SearchFiltersBar.tsx:228
+msgid "Date"
+msgstr "Date"
+
+#. placeholder {0}: filters.dateRange
+#: src/components/search/SearchFiltersBar.tsx:221
+msgid "Date: {0}"
+msgstr "Date: {0}"
+
+#: src/components/search/SearchFiltersBar.tsx:216
+msgid "Date: 24h"
+msgstr "Date: 24h"
+
+#: src/components/search/SearchFiltersBar.tsx:220
+msgid "Date: 30d"
+msgstr "Date: 30d"
+
+#: src/components/search/SearchFiltersBar.tsx:218
+msgid "Date: 7d"
+msgstr "Date: 7d"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:366
+msgid "Deactivate"
+msgstr "Deactivate"
+
+#: src/components/views/SettingsView.tsx:252
+msgid "Default action when pressing Enter"
+msgstr "Default action when pressing Enter"
+
+#: src/components/views/SettingsView.tsx:226
+msgid "Default theme"
+msgstr "Default theme"
+
+#: src/components/views/SettingsView.tsx:98
+msgid "Delete & Close"
+msgstr "Delete & Close"
+
+#: src/components/views/SettingsView.tsx:96
+msgid "Delete all data?"
+msgstr "Delete all data?"
+
+#: src/components/views/SettingsView.tsx:300
+msgid "Delete all local data"
+msgstr "Delete all local data"
+
+#: src/components/views/LibraryView.tsx:430
+msgid "Deletes already-indexed docs that match the patterns"
+msgstr "Deletes already-indexed docs that match the patterns"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:74
+msgid "Demo mode"
+msgstr "Demo mode"
+
+#: src/components/search/LaunchpadGrid.tsx:129
+msgid "Demo mode — simulated results and AI responses."
+msgstr "Demo mode — simulated results and AI responses."
+
+#: src/components/search/SearchFiltersBar.tsx:299
+msgid "Deselect"
+msgstr "Deselect"
+
+#: src/components/HUD/InspectorAIInput.tsx:204
+msgid "Deselect some files to continue"
+msgstr "Deselect some files to continue"
+
+#: src/components/views/SettingsView.tsx:269
+msgid "Desktop"
+msgstr "Desktop"
+
+#: src/components/views/HealthView.tsx:631
+msgid "Devices"
+msgstr "Devices"
+
+#: src/components/views/HealthView.tsx:812
+msgid "Diagnostics bundle written to:"
+msgstr "Diagnostics bundle written to:"
+
+#: src/components/views/HelpView.tsx:90
+msgid "Diagnostics export and local-first transparency."
+msgstr "Diagnostics export and local-first transparency."
+
+#: src/components/views/HelpView.tsx:68
+msgid "Diagnostics export failed"
+msgstr "Diagnostics export failed"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:82
+msgid "Disconnected"
+msgstr "Disconnected"
+
+#: src/components/zones/status/deriveHeadlineStatus.ts:57
+msgid "Disk critically low — indexing may fail"
+msgstr "Disk critically low — indexing may fail"
+
+#: src/components/zones/status/deriveHeadlineStatus.ts:60
+msgid "Disk space is running low"
+msgstr "Disk space is running low"
+
+#: src/components/views/LibraryView.tsx:381
+msgid "Dismiss error"
+msgstr "Dismiss error"
+
+#: src/utils/errorMessages.ts:119
+msgid "Document ID is required."
+msgstr "Document ID is required."
+
+#: src/components/ui/IndexingOverlay.tsx:83
+msgid "Document Vision"
+msgstr "Document Vision"
+
+#: src/components/views/BrainView.tsx:46
+msgid "Download AI models?"
+msgstr "Download AI models?"
+
+#: src/components/views/brain/BrainInstallSection.tsx:116
+msgid "Download and install the recommended model files (requires internet)"
+msgstr "Download and install the recommended model files (requires internet)"
+
+#: src/components/views/agent/AgentSessionDetail.tsx:102
+msgid "Download transcript"
+msgstr "Download transcript"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:130
+msgid "Downloading models"
+msgstr "Downloading models"
+
+#: src/utils/errorMessages.ts:60
+msgid "Downloads are disabled by administrator policy."
+msgstr "Downloads are disabled by administrator policy."
+
+#: src/components/views/brain/BrainAlerts.tsx:33
+msgid "Downloads are disabled by administrator policy. Use <0>AI Pack import</0> instead of \"Install AI\"."
+msgstr "Downloads are disabled by administrator policy. Use <0>AI Pack import</0> instead of \"Install AI\"."
+
+#: src/components/views/brain/BrainInstallSection.tsx:115
+msgid "Downloads are disabled by administrator policy. Use AI Pack import."
+msgstr "Downloads are disabled by administrator policy. Use AI Pack import."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:334
+msgid "Downloads disabled by policy. Use Advanced for offline packs."
+msgstr "Downloads disabled by policy. Use Advanced for offline packs."
+
+#: src/components/views/HealthView.tsx:628
+msgid "Driver"
+msgstr "Driver"
+
+#: src/utils/errorMessages.ts:96
+msgid "Duplicate file ID in pack manifest."
+msgstr "Duplicate file ID in pack manifest."
+
+#: src/utils/errorMessages.ts:97
+msgid "Duplicate file path in pack manifest."
+msgstr "Duplicate file path in pack manifest."
+
+#: src/utils/errorMessages.ts:106
+msgid "Duplicate file reference in pack assets."
+msgstr "Duplicate file reference in pack assets."
+
+#: src/components/zones/GlobalCommand.tsx:555
+msgid "Either matches"
+msgstr "Either matches"
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:43
+msgid "Embedding model fingerprint missing"
+msgstr "Embedding model fingerprint missing"
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:44
+msgid "Embedding model mismatch detected"
+msgstr "Embedding model mismatch detected"
+
+#: src/components/ui/IndexingOverlay.tsx:96
+msgid "Embeddings"
+msgstr "Embeddings"
+
+#: src/components/views/SettingsView.tsx:251
+#: src/components/views/SettingsView.tsx:257
+msgid "Enter Action"
+msgstr "Enter Action"
+
+#: src/components/views/HelpView.tsx:37
+msgid "Enter AI chat mode"
+msgstr "Enter AI chat mode"
+
+#: src/components/views/HelpView.tsx:36
+msgid "Enter command mode (when search is focused)"
+msgstr "Enter command mode (when search is focused)"
+
+#: src/components/zones/GlobalCommand.tsx:368
+msgid "Enter command..."
+msgstr "Enter command..."
+
+#: src/components/views/AgentView.tsx:357
+#: src/components/views/HealthView.tsx:271
+msgid "Error"
+msgstr "Error"
+
+#. placeholder {0}: entry.errorCode
+#: src/components/views/AgentView.tsx:357
+msgid "Error ({0})"
+msgstr "Error ({0})"
+
+#. placeholder {0}: effectivePolicy.machine.error
+#. placeholder {0}: effectivePolicy.user.error
+#: src/components/views/brain/PolicyHelperPanel.tsx:144
+#: src/components/views/brain/PolicyHelperPanel.tsx:184
+msgid "Error: {0}"
+msgstr "Error: {0}"
+
+#: src/components/search/LaunchpadGrid.tsx:146
+msgid "Everything runs on your machine — your files never leave this device."
+msgstr "Everything runs on your machine — your files never leave this device."
+
+#: src/components/zones/GlobalCommand.tsx:556
+msgid "Exclude B"
+msgstr "Exclude B"
+
+#: src/components/views/LibraryView.tsx:398
+msgid "Exclude patterns"
+msgstr "Exclude patterns"
+
+#: src/components/search/ResultRow.tsx:207
+msgid "Expand snippet"
+msgstr "Expand snippet"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:173
+msgid "Explicitly disabled via environment variable"
+msgstr "Explicitly disabled via environment variable"
+
+#: src/components/views/BrowseView.tsx:907
+msgid "Explore indexed files by folder structure."
+msgstr "Explore indexed files by folder structure."
+
+#: src/components/views/HelpView.tsx:106
+msgid "Export a diagnostics bundle (zip)"
+msgstr "Export a diagnostics bundle (zip)"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:501
+msgid "Export a diagnostics bundle for support"
+msgstr "Export a diagnostics bundle for support"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:504
+#: src/components/views/HealthView.tsx:797
+#: src/components/views/HelpView.tsx:109
+msgid "Export diagnostics"
+msgstr "Export diagnostics"
+
+#: src/components/views/HealthView.tsx:797
+#: src/components/views/HelpView.tsx:109
+msgid "Exporting…"
+msgstr "Exporting…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:306
+msgid "External inference servers are disallowed by policy. If a separate llama-server is already running on the configured port, Online mode/activation may fail until it is stopped."
+msgstr "External inference servers are disallowed by policy. If a separate llama-server is already running on the configured port, Online mode/activation may fail until it is stopped."
+
+#: src/utils/errorMessages.ts:137
+msgid "External server connection is disallowed by policy."
+msgstr "External server connection is disallowed by policy."
+
+#: src/components/views/HealthView.tsx:823
+msgid "Failed Files ({failedJobCount})"
+msgstr "Failed Files ({failedJobCount})"
+
+#: src/utils/errorMessages.ts:129
+msgid "Failed to answer question."
+msgstr "Failed to answer question."
+
+#: src/utils/errorMessages.ts:66
+msgid "Failed to apply AI installation."
+msgstr "Failed to apply AI installation."
+
+#: src/utils/errorMessages.ts:53
+msgid "Failed to cancel installation."
+msgstr "Failed to cancel installation."
+
+#: src/utils/errorMessages.ts:136
+msgid "Failed to compute effective policy."
+msgstr "Failed to compute effective policy."
+
+#: src/utils/errorMessages.ts:56
+msgid "Failed to create AI directories. Check disk space and permissions."
+msgstr "Failed to create AI directories. Check disk space and permissions."
+
+#: src/utils/errorMessages.ts:148
+msgid "Failed to create user policy directory."
+msgstr "Failed to create user policy directory."
+
+#: src/utils/errorMessages.ts:140
+msgid "Failed to create user policy."
+msgstr "Failed to create user policy."
+
+#: src/utils/errorMessages.ts:77
+msgid "Failed to detach AI inference engine."
+msgstr "Failed to detach AI inference engine."
+
+#: src/utils/errorMessages.ts:78
+msgid "Failed to detect GPU capabilities."
+msgstr "Failed to detect GPU capabilities."
+
+#: src/utils/errorMessages.ts:157
+msgid "Failed to export diagnostics."
+msgstr "Failed to export diagnostics."
+
+#: src/utils/errorMessages.ts:128
+msgid "Failed to generate summary."
+msgstr "Failed to generate summary."
+
+#: src/utils/errorMessages.ts:65
+msgid "Failed to move AI files into place. Check disk space and permissions."
+msgstr "Failed to move AI files into place. Check disk space and permissions."
+
+#: src/utils/errorMessages.ts:87
+msgid "Failed to read AI pack files."
+msgstr "Failed to read AI pack files."
+
+#: src/utils/errorMessages.ts:76
+msgid "Failed to reload AI inference engine."
+msgstr "Failed to reload AI inference engine."
+
+#: src/utils/errorMessages.ts:54
+msgid "Failed to repair AI installation."
+msgstr "Failed to repair AI installation."
+
+#: src/utils/errorMessages.ts:155
+msgid "Failed to restart worker process."
+msgstr "Failed to restart worker process."
+
+#: src/utils/errorMessages.ts:161
+msgid "Failed to resume agent session."
+msgstr "Failed to resume agent session."
+
+#: src/utils/errorMessages.ts:149
+msgid "Failed to serialize user policy."
+msgstr "Failed to serialize user policy."
+
+#: src/utils/errorMessages.ts:52
+msgid "Failed to start AI installation. Please try again."
+msgstr "Failed to start AI installation. Please try again."
+
+#: src/utils/errorMessages.ts:71
+msgid "Failed to start AI runtime."
+msgstr "Failed to start AI runtime."
+
+#: src/components/views/brain/BrainCompatibilitySection.tsx:44
+msgid "Failed to start force reindex"
+msgstr "Failed to start force reindex"
+
+#: src/utils/errorMessages.ts:91
+msgid "Failed to start pack import."
+msgstr "Failed to start pack import."
+
+#: src/utils/errorMessages.ts:72
+msgid "Failed to stop AI runtime."
+msgstr "Failed to stop AI runtime."
+
+#: src/utils/errorMessages.ts:75
+msgid "Failed to switch AI mode."
+msgstr "Failed to switch AI mode."
+
+#: src/utils/errorMessages.ts:141
+msgid "Failed to update user policy."
+msgstr "Failed to update user policy."
+
+#: src/utils/errorMessages.ts:142
+msgid "Failed to write user policy."
+msgstr "Failed to write user policy."
+
+#: src/components/zones/GlobalCommand.tsx:557
+msgid "Field search"
+msgstr "Field search"
+
+#: src/components/HUD/InspectorAIInput.tsx:62
+#: src/components/HUD/InspectorAIInput.tsx:68
+msgid "file"
+msgstr "file"
+
+#: src/components/views/HealthView.tsx:472
+msgid "files"
+msgstr "files"
+
+#: src/components/search/SearchFiltersBar.tsx:456
+msgid "Filter by date"
+msgstr "Filter by date"
+
+#: src/components/search/SearchFiltersBar.tsx:470
+msgid "Filter by language"
+msgstr "Filter by language"
+
+#: src/components/search/SearchFiltersBar.tsx:418
+msgid "Filter by type"
+msgstr "Filter by type"
+
+#: src/components/search/SearchFiltersBar.tsx:346
+msgid "Filters"
+msgstr "Filters"
+
+#: src/components/views/HelpView.tsx:35
+msgid "Focus search bar"
+msgstr "Focus search bar"
+
+#: src/components/search/SearchFiltersBar.tsx:228
+msgid "Folder"
+msgstr "Folder"
+
+#: src/components/views/SettingsView.tsx:219
+msgid "Follow OS"
+msgstr "Follow OS"
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:71
+msgid "Force Rebuild Index"
+msgstr "Force Rebuild Index"
+
+#: src/components/views/HelpView.tsx:133
+msgid "frequently asked questions"
+msgstr "frequently asked questions"
+
+#: src/components/views/SettingsView.tsx:201
+msgid "Full controls & diagnostics"
+msgstr "Full controls & diagnostics"
+
+#: src/components/HUD/InspectorAnswer.tsx:207
+msgid "Full document"
+msgstr "Full document"
+
+#: src/components/views/HelpView.tsx:215
+msgid "Future \"Online\" features will be clearly labeled and opt-in."
+msgstr "Future \"Online\" features will be clearly labeled and opt-in."
+
+#: src/components/zones/GlobalCommand.tsx:558
+msgid "Fuzzy (edit dist 1)"
+msgstr "Fuzzy (edit dist 1)"
+
+#: src/components/HUD/InspectorAnswer.tsx:174
+msgid "Generating"
+msgstr "Generating"
+
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:80
+msgid "Generating chunk embeddings for improved Q&A retrieval"
+msgstr "Generating chunk embeddings for improved Q&A retrieval"
+
+#: src/components/HUD/InspectorAnswer.tsx:92
+msgid "Generating response..."
+msgstr "Generating response..."
+
+#. placeholder {0}: pluralize(embeddingQueueSize, 'file')
+#: src/components/ui/ModeIndicator.tsx:158
+msgid "Generating search embeddings for {embeddingQueueSize} {0}"
+msgstr "Generating search embeddings for {embeddingQueueSize} {0}"
+
+#: src/components/HUD/InspectorAIInput.tsx:177
+msgid "Generating..."
+msgstr "Generating..."
+
+#: src/components/HUD/InspectorAnswer.tsx:69
+msgid "Generating…"
+msgstr "Generating…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:663
+msgid "Generative Engine"
+msgstr "Generative Engine"
+
+#: src/components/ui/IndexingOverlay.tsx:144
+msgid "Go Online"
+msgstr "Go Online"
+
+#: src/components/views/HelpView.tsx:13
+msgid "Go to Library and click \"Add folder\" to index a directory. JustSearch will automatically scan and index all supported files."
+msgstr "Go to Library and click \"Add folder\" to index a directory. JustSearch will automatically scan and index all supported files."
+
+#: src/components/search/LaunchpadGrid.tsx:104
+msgid "Good afternoon"
+msgstr "Good afternoon"
+
+#: src/components/search/LaunchpadGrid.tsx:105
+msgid "Good evening"
+msgstr "Good evening"
+
+#: src/components/search/LaunchpadGrid.tsx:103
+msgid "Good morning"
+msgstr "Good morning"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:302
+msgid "GPU"
+msgstr "GPU"
+
+#: src/components/ui/ModeIndicator.tsx:57
+msgid "GPU (unknown)"
+msgstr "GPU (unknown)"
+
+#: src/components/ui/ModeIndicator.tsx:55
+msgid "GPU <8GB"
+msgstr "GPU <8GB"
+
+#: src/components/ui/ModeIndicator.tsx:51
+msgid "GPU 12GB+"
+msgstr "GPU 12GB+"
+
+#: src/components/ui/ModeIndicator.tsx:53
+msgid "GPU 8–12GB"
+msgstr "GPU 8–12GB"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:287
+msgid "GPU Acceleration"
+msgstr "GPU Acceleration"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:301
+msgid "GPU acceleration has been disabled by your administrator."
+msgstr "GPU acceleration has been disabled by your administrator."
+
+#: src/utils/errorMessages.ts:74
+msgid "GPU acceleration is disabled by administrator policy."
+msgstr "GPU acceleration is disabled by administrator policy."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:312
+msgid "GPU capabilities"
+msgstr "GPU capabilities"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:741
+msgid "GPU Layers"
+msgstr "GPU Layers"
+
+#: src/components/search/SearchFiltersBar.tsx:443
+msgid "Group results by"
+msgstr "Group results by"
+
+#: src/components/search/SearchFiltersBar.tsx:229
+msgid "Group: {groupLabel}"
+msgstr "Group: {groupLabel}"
+
+#. placeholder {0}: gpu?.vramDescription ? ` (${gpu.vramDescription})` : ''
+#: src/components/ui/ModeIndicator.tsx:75
+msgid "Hardware: {tierLabel}{0}."
+msgstr "Hardware: {tierLabel}{0}."
+
+#: src/components/ErrorBoundary.tsx:170
+msgid "Head (UI Host)"
+msgstr "Head (UI Host)"
+
+#: src/components/zones/ActivityRail.tsx:57
+msgid "Health"
+msgstr "Health"
+
+#: src/components/views/HealthView.tsx:647
+msgid "Healthy"
+msgstr "Healthy"
+
+#: src/components/zones/ActivityRail.tsx:58
+msgid "Help"
+msgstr "Help"
+
+#: src/components/views/HelpView.tsx:87
+msgid "Help & Support"
+msgstr "Help & Support"
+
+#: src/utils/errorMessages.ts:123
+msgid "Hierarchical summary generation failed."
+msgstr "Hierarchical summary generation failed."
+
+#: src/components/views/SettingsView.tsx:241
+msgid "High Contrast"
+msgstr "High Contrast"
+
+#: src/components/views/AgentView.tsx:191
+msgid "History"
+msgstr "History"
+
+#: src/components/zones/StatusDeck.tsx:310
+msgid "Hold <0>Alt</0> for shortcuts"
+msgstr "Hold <0>Alt</0> for shortcuts"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:465
+msgid "Home"
+msgstr "Home"
+
+#: src/components/views/HelpView.tsx:12
+msgid "How do I add files to search?"
+msgstr "How do I add files to search?"
+
+#: src/components/views/HelpView.tsx:28
+msgid "How do I use the AI chat feature?"
+msgstr "How do I use the AI chat feature?"
+
+#: src/components/views/HelpView.tsx:20
+msgid "How does AI summarization work?"
+msgstr "How does AI summarization work?"
+
+#: src/components/views/BrainView.tsx:49
+msgid "I Accept & Download"
+msgstr "I Accept & Download"
+
+#: src/components/views/HealthView.tsx:536
+msgid "Idle"
+msgstr "Idle"
+
+#: src/components/views/HelpView.tsx:169
+msgid "If indexing seems stuck, try \"Restart worker\" in Health."
+msgstr "If indexing seems stuck, try \"Restart worker\" in Health."
+
+#: src/components/views/HelpView.tsx:168
+msgid "If search results look stale, use \"Reindex\" in Library (Advanced) or Health."
+msgstr "If search results look stale, use \"Reindex\" in Library (Advanced) or Health."
+
+#: src/components/views/SettingsView.tsx:282
+msgid "If you want to uninstall JustSearch or start fresh, you can delete all local data from inside the app."
+msgstr "If you want to uninstall JustSearch or start fresh, you can delete all local data from inside the app."
+
+#: src/components/search/SearchFiltersBar.tsx:416
+msgid "Images"
+msgstr "Images"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:513
+msgid "Import .zip"
+msgstr "Import .zip"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:509
+msgid "Import a .zip AI Pack (models-only in v2)"
+msgstr "Import a .zip AI Pack (models-only in v2)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:274
+msgid "Import AI Pack"
+msgstr "Import AI Pack"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:528
+msgid "Import an extracted AI Pack folder (models-only in v2)"
+msgstr "Import an extracted AI Pack folder (models-only in v2)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:532
+msgid "Import folder"
+msgstr "Import folder"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:142
+msgid "Inactive"
+msgstr "Inactive"
+
+#: src/utils/errorMessages.ts:24
+msgid "Index error. The search index may be corrupted."
+msgstr "Index error. The search index may be corrupted."
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:66
+msgid "Index rebuilding in progress"
+msgstr "Index rebuilding in progress"
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:87
+msgid "Index schema fingerprint missing"
+msgstr "Index schema fingerprint missing"
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:88
+msgid "Index schema mismatch detected"
+msgstr "Index schema mismatch detected"
+
+#: src/components/views/HealthView.tsx:410
+msgid "Index unhealthy"
+msgstr "Index unhealthy"
+
+#: src/components/ui/ModeIndicator.tsx:97
+msgid "Indexing"
+msgstr "Indexing"
+
+#: src/components/search/LaunchpadGrid.tsx:136
+msgid "Indexing your files…"
+msgstr "Indexing your files…"
+
+#: src/components/views/HealthView.tsx:270
+msgid "Indexing..."
+msgstr "Indexing..."
+
+#: src/components/ErrorBoundary.tsx:172
+msgid "Inference (AI)"
+msgstr "Inference (AI)"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:702
+msgid "Inference settings"
+msgstr "Inference settings"
+
+#: src/components/views/HelpView.tsx:25
+msgid "Initial indexing can take time for large folders. Once complete, incremental updates are fast. Check Health view for indexing status."
+msgstr "Initial indexing can take time for large folders. Once complete, incremental updates are fast. Check Health view for indexing status."
+
+#: src/components/zones/StatusDeck.tsx:301
+msgid "Inspector"
+msgstr "Inspector"
+
+#: src/components/views/brain/BrainInstallSection.tsx:38
+#: src/components/views/brain/BrainInstallSection.tsx:121
+#: src/components/views/brain/BrainSimplePanel.tsx:155
+msgid "Install AI"
+msgstr "Install AI"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:146
+msgid "Install AI models to get started"
+msgstr "Install AI models to get started"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:270
+msgid "Installation failed"
+msgstr "Installation failed"
+
+#. placeholder {0}: installedPacks?.packs?.length ?? 0
+#: src/components/views/brain/BrainPackImportSection.tsx:537
+msgid "Installed packs: {0}"
+msgstr "Installed packs: {0}"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:137
+msgid "Installed with limitations"
+msgstr "Installed with limitations"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:130
+msgid "Installing..."
+msgstr "Installing..."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:669
+msgid "Intent"
+msgstr "Intent"
+
+#: src/components/views/SettingsView.tsx:187
+msgid "Interface"
+msgstr "Interface"
+
+#: src/utils/errorMessages.ts:99
+msgid "Invalid asset entry in pack manifest."
+msgstr "Invalid asset entry in pack manifest."
+
+#: src/utils/errorMessages.ts:98
+msgid "Invalid file checksum in pack manifest."
+msgstr "Invalid file checksum in pack manifest."
+
+#: src/utils/errorMessages.ts:95
+msgid "Invalid file entry in pack manifest."
+msgstr "Invalid file entry in pack manifest."
+
+#: src/utils/errorMessages.ts:108
+msgid "Invalid path in pack manifest."
+msgstr "Invalid path in pack manifest."
+
+#: src/utils/errorMessages.ts:30
+msgid "Invalid request. Please check your input."
+msgstr "Invalid request. Please check your input."
+
+#: src/utils/errorMessages.ts:104
+msgid "Invalid runtime variant in pack manifest."
+msgstr "Invalid runtime variant in pack manifest."
+
+#: src/components/views/AgentView.tsx:159
+msgid "Iter"
+msgstr "Iter"
+
+#: src/components/views/LibraryView.tsx:267
+msgid "Just now"
+msgstr "Just now"
+
+#: src/components/search/LaunchpadGrid.tsx:268
+msgid "JustSearch indexes your files so you can search them instantly."
+msgstr "JustSearch indexes your files so you can search them instantly."
+
+#: src/components/views/HelpView.tsx:17
+msgid "JustSearch supports PDFs, Markdown, plain text, code files (JS, TS, Python, etc.), images (with OCR), and many more. Check the Library view for the full list."
+msgstr "JustSearch supports PDFs, Markdown, plain text, code files (JS, TS, Python, etc.), images (with OCR), and many more. Check the Library view for the full list."
+
+#: src/components/views/LibraryView.tsx:628
+msgid "Keep"
+msgstr "Keep"
+
+#: src/components/views/SettingsView.tsx:248
+msgid "Keyboard"
+msgstr "Keyboard"
+
+#: src/components/views/HelpView.tsx:181
+msgid "keyboard shortcuts"
+msgstr "keyboard shortcuts"
+
+#. placeholder {0}: filters.language
+#: src/components/search/SearchFiltersBar.tsx:202
+msgid "Lang: {0}"
+msgstr "Lang: {0}"
+
+#: src/components/search/SearchFiltersBar.tsx:452
+msgid "Last 24h"
+msgstr "Last 24h"
+
+#: src/components/search/SearchFiltersBar.tsx:454
+msgid "Last 30d"
+msgstr "Last 30d"
+
+#: src/components/search/SearchFiltersBar.tsx:453
+msgid "Last 7d"
+msgstr "Last 7d"
+
+#: src/components/views/SettingsView.tsx:273
+msgid "Launch on startup"
+msgstr "Launch on startup"
+
+#: src/components/search/ResultRow.tsx:211
+msgid "Less"
+msgstr "Less"
+
+#: src/components/views/LibraryView.tsx:291
+#: src/components/zones/ActivityRail.tsx:53
+msgid "Library"
+msgstr "Library"
+
+#: src/components/views/SettingsView.tsx:232
+msgid "Light"
+msgstr "Light"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:113
+msgid "Limited"
+msgstr "Limited"
+
+#. placeholder {0}: citation.startLine
+#. placeholder {1}: citation.endLine && citation.endLine !== citation.startLine ? `-${citation.endLine}` : ""
+#: src/components/ui/CitationHoverCard.tsx:103
+msgid "Line {0}{1}"
+msgstr "Line {0}{1}"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:752
+msgid "llama library path"
+msgstr "llama library path"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:638
+msgid "llama-server executable"
+msgstr "llama-server executable"
+
+#. placeholder {0}: remaining.toLocaleString()
+#: src/components/zones/Stage.tsx:475
+msgid "Load {0} more"
+msgstr "Load {0} more"
+
+#: src/components/HUD/InspectorPreview.tsx:185
+#: src/components/zones/Stage.tsx:475
+msgid "Load more"
+msgstr "Load more"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:256
+msgid "Loading model into memory..."
+msgstr "Loading model into memory..."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:127
+msgid "Loading model... {startupProgress}%"
+msgstr "Loading model... {startupProgress}%"
+
+#: src/components/views/agent/AgentSessionsList.tsx:87
+msgid "Loading sessions..."
+msgstr "Loading sessions..."
+
+#: src/components/views/agent/WorkspaceTimeline.tsx:116
+msgid "Loading timeline..."
+msgstr "Loading timeline..."
+
+#: src/components/views/agent/AgentSessionDetail.tsx:70
+msgid "Loading transcript..."
+msgstr "Loading transcript..."
+
+#: src/components/HUD/InspectorPreview.tsx:185
+msgid "Loading..."
+msgstr "Loading..."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:466
+#: src/components/views/brain/PolicyHelperPanel.tsx:65
+#: src/components/views/HealthView.tsx:837
+#: src/components/zones/Stage.tsx:475
+msgid "Loading…"
+msgstr "Loading…"
+
+#: src/components/views/HelpView.tsx:213
+msgid "Local app traffic uses loopback (not a network service)."
+msgstr "Local app traffic uses loopback (not a network service)."
+
+#: src/components/zones/status/deriveBadgeStatus.ts:101
+msgid "Local service is starting up"
+msgstr "Local service is starting up"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:125
+#: src/components/zones/status/deriveBadgeStatus.ts:142
+msgid "Local service ready"
+msgstr "Local service ready"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:134
+msgid "Local service reported an unrecognized state: {ws}"
+msgstr "Local service reported an unrecognized state: {ws}"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:93
+msgid "Local service stopped or crashed — try restarting"
+msgstr "Local service stopped or crashed — try restarting"
+
+#: src/components/views/HelpView.tsx:199
+msgid "Local-first"
+msgstr "Local-first"
+
+#: src/components/search/SearchFiltersBar.tsx:279
+msgid "Location: {v}"
+msgstr "Location: {v}"
+
+#: src/components/search/SearchFiltersBar.tsx:376
+msgid "Lucene"
+msgstr "Lucene"
+
+#: src/components/zones/GlobalCommand.tsx:550
+msgid "Lucene Syntax"
+msgstr "Lucene Syntax"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:137
+msgid "Machine policy"
+msgstr "Machine policy"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:189
+msgid "Machine policy absent: user policy can enable offline pack import for this user."
+msgstr "Machine policy absent: user policy can enable offline pack import for this user."
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:162
+msgid "Machine policy folder unavailable"
+msgstr "Machine policy folder unavailable"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:130
+msgid "Machine policy is present and pack import is deny-by-default unless allowlisted by machine policy (empty allowlist blocks all packs)."
+msgstr "Machine policy is present and pack import is deny-by-default unless allowlisted by machine policy (empty allowlist blocks all packs)."
+
+#: src/utils/errorMessages.ts:144
+msgid "Machine policy is present. User policy changes are blocked."
+msgstr "Machine policy is present. User policy changes are blocked."
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:188
+msgid "Machine policy present: user policy can only further restrict (intersection)."
+msgstr "Machine policy present: user policy can only further restrict (intersection)."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:664
+msgid "Main Process (GPU Accelerated). Handles chat, summarization, and intent translation."
+msgstr "Main Process (GPU Accelerated). Handles chat, summarization, and intent translation."
+
+#: src/components/views/LibraryView.tsx:292
+msgid "Manage your indexed folders"
+msgstr "Manage your indexed folders"
+
+#. placeholder {0}: packPreflight.manifestSha256
+#: src/components/views/brain/BrainPackImportSection.tsx:335
+msgid "Manifest SHA-256 (allowlist key): <0>{0}</0>"
+msgstr "Manifest SHA-256 (allowlist key): <0>{0}</0>"
+
+#: src/components/HUD/InspectorPreview.tsx:71
+#: src/components/search/SearchFiltersBar.tsx:415
+msgid "Markdown"
+msgstr "Markdown"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:715
+msgid "Max tokens"
+msgstr "Max tokens"
+
+#: src/components/views/HealthView.tsx:500
+msgid "memory"
+msgstr "memory"
+
+#: src/components/search/SearchFiltersBar.tsx:235
+msgid "MIME: {mb}"
+msgstr "MIME: {mb}"
+
+#: src/components/ui/IndexingOverlay.tsx:59
+msgid "Minimize"
+msgstr "Minimize"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:200
+#: src/components/views/brain/BrainPackImportSection.tsx:220
+msgid "Missing manifest SHA-256"
+msgstr "Missing manifest SHA-256"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:280
+msgid "Model"
+msgstr "Model"
+
+#: src/components/views/brain/BrainInstallSection.tsx:99
+msgid "Model manifest not configured. Configure AI models in Advanced settings."
+msgstr "Model manifest not configured. Configure AI models in Advanced settings."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:152
+msgid "Model not found at standard locations"
+msgstr "Model not found at standard locations"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:628
+msgid "Models"
+msgstr "Models"
+
+#: src/components/views/HealthView.tsx:388
+msgid "Monitor index and API status"
+msgstr "Monitor index and API status"
+
+#: src/components/search/ResultRow.tsx:211
+msgid "More"
+msgstr "More"
+
+#: src/components/views/HelpView.tsx:39
+msgid "Navigate results"
+msgstr "Navigate results"
+
+#: src/components/HUD/InspectorAIInput.tsx:200
+msgid "Near context limit"
+msgstr "Near context limit"
+
+#: src/components/views/HelpView.tsx:210
+msgid "Network activity"
+msgstr "Network activity"
+
+#: src/utils/errorMessages.ts:179
+msgid "Network request failed. Check your connection and try again."
+msgstr "Network request failed. Check your connection and try again."
+
+#: src/components/views/LibraryView.tsx:262
+msgid "Never"
+msgstr "Never"
+
+#: src/components/search/SearchFiltersBar.tsx:427
+msgid "Newest"
+msgstr "Newest"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:294
+msgid "No allowlist configured. Use preflight below to compute the manifest SHA-256, then add it to your user policy allowlists.packManifestSha256."
+msgstr "No allowlist configured. Use preflight below to compute the manifest SHA-256, then add it to your user policy allowlists.packManifestSha256."
+
+#: src/components/views/brain/BrainNoConnection.tsx:14
+#: src/components/views/LibraryView.tsx:278
+msgid "No API Connection"
+msgstr "No API Connection"
+
+#: src/components/views/HealthView.tsx:841
+msgid "No details available"
+msgstr "No details available"
+
+#: src/components/HUD/InspectorEmptyState.tsx:19
+msgid "No files selected"
+msgstr "No files selected"
+
+#: src/utils/errorMessages.ts:122
+msgid "No files selected for processing."
+msgstr "No files selected for processing."
+
+#: src/components/views/HealthView.tsx:636
+msgid "No GPU detected. Inference runs on CPU."
+msgstr "No GPU detected. Inference runs on CPU."
+
+#: src/components/search/SearchFiltersBar.tsx:438
+msgid "No grouping"
+msgstr "No grouping"
+
+#: src/components/views/BrowseView.tsx:692
+msgid "No indexed folders"
+msgstr "No indexed folders"
+
+#: src/components/views/HealthView.tsx:894
+msgid "No issues detected"
+msgstr "No issues detected"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:131
+msgid "No machine policy detected. You can enable offline pack import for this user by creating a user policy allowlist."
+msgstr "No machine policy detected. You can enable offline pack import for this user by creating a user policy allowlist."
+
+#: src/components/views/LibraryView.tsx:473
+msgid "no matches"
+msgstr "no matches"
+
+#: src/components/zones/Stage.tsx:373
+msgid "No matching command"
+msgstr "No matching command"
+
+#: src/components/views/agent/AgentSessionDetail.tsx:108
+msgid "No messages in this session."
+msgstr "No messages in this session."
+
+#: src/components/ui/CitationHoverCard.tsx:43
+msgid "No preview available"
+msgstr "No preview available"
+
+#: src/components/HUD/InspectorPreview.tsx:173
+msgid "No preview available."
+msgstr "No preview available."
+
+#: src/components/zones/Stage.tsx:395
+msgid "No results"
+msgstr "No results"
+
+#: src/components/search/ZeroResultsView.tsx:40
+msgid "No results for <0>“{query}”</0>"
+msgstr "No results for <0>“{query}”</0>"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:403
+msgid "No runtime variants installed yet. Import a runtime pack via <0>Import AI Pack (v2)</0> (kind=runtime) first."
+msgstr "No runtime variants installed yet. Import a runtime pack via <0>Import AI Pack (v2)</0> (kind=runtime) first."
+
+#: src/components/views/agent/AgentSessionsList.tsx:114
+msgid "No sessions yet."
+msgstr "No sessions yet."
+
+#: src/components/views/agent/AgentSessionDetail.tsx:82
+msgid "No snapshot available."
+msgstr "No snapshot available."
+
+#: src/utils/errorMessages.ts:165
+msgid "No tools are available for the agent."
+msgstr "No tools are available for the agent."
+
+#: src/components/views/agent/WorkspaceTimeline.tsx:143
+msgid "No workspace activity yet."
+msgstr "No workspace activity yet."
+
+#: src/components/views/HelpView.tsx:106
+msgid "Not available in demo mode"
+msgstr "Not available in demo mode"
+
+#: src/components/views/HealthView.tsx:274
+#: src/components/views/HealthView.tsx:547
+msgid "Not connected"
+msgstr "Not connected"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:146
+msgid "Not Installed"
+msgstr "Not Installed"
+
+#: src/components/views/HealthView.tsx:273
+msgid "Not started"
+msgstr "Not started"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:142
+#: src/components/views/brain/BrainPackImportSection.tsx:165
+msgid "Offline pack import is disabled until an allowlist is configured."
+msgstr "Offline pack import is disabled until an allowlist is configured."
+
+#: src/components/views/brain/BrainPackImportSection.tsx:282
+msgid "Offline-friendly import for enterprise/air-gapped setups. Packs are accepted only when allowlisted by manifest digest."
+msgstr "Offline-friendly import for enterprise/air-gapped setups. Packs are accepted only when allowlisted by manifest digest."
+
+#: src/components/search/SearchFiltersBar.tsx:428
+msgid "Oldest"
+msgstr "Oldest"
+
+#: src/components/views/LibraryView.tsx:400
+msgid "One glob per line. Bare names like <0>node_modules</0> or <1>dist/</1> match at any depth."
+msgstr "One glob per line. Bare names like <0>node_modules</0> or <1>dist/</1> match at any depth."
+
+#: src/utils/errorMessages.ts:61
+msgid "One or more AI models are not allowed by policy."
+msgstr "One or more AI models are not allowed by policy."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:339
+msgid "Online AI disabled by policy."
+msgstr "Online AI disabled by policy."
+
+#: src/utils/errorMessages.ts:73
+msgid "Online AI is disabled by administrator policy."
+msgstr "Online AI is disabled by administrator policy."
+
+#: src/components/views/brain/BrainAlerts.tsx:39
+msgid "Online AI is disabled by administrator policy. Assets can still be installed/imported for staging."
+msgstr "Online AI is disabled by administrator policy. Assets can still be installed/imported for staging."
+
+#: src/components/views/SettingsView.tsx:259
+#: src/components/zones/StatusDeck.tsx:297
+msgid "Open"
+msgstr "Open"
+
+#: src/components/search/SearchFiltersBar.tsx:324
+msgid "Open Action Panel (Ctrl/Cmd+Shift+P)"
+msgstr "Open Action Panel (Ctrl/Cmd+Shift+P)"
+
+#: src/components/search/SearchFiltersBar.tsx:323
+msgid "Open actions ({selectionCount} selected)"
+msgstr "Open actions ({selectionCount} selected)"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:453
+msgid "Open AI Home folder"
+msgstr "Open AI Home folder"
+
+#: src/components/search/SearchFiltersBar.tsx:314
+msgid "Open all"
+msgstr "Open all"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:455
+#: src/components/views/brain/PolicyHelperPanel.tsx:164
+#: src/components/views/brain/PolicyHelperPanel.tsx:209
+msgid "Open folder"
+msgstr "Open folder"
+
+#: src/components/search/LaunchpadGrid.tsx:287
+#: src/components/views/BrowseView.tsx:695
+#: src/components/views/HealthView.tsx:753
+msgid "Open Library"
+msgstr "Open Library"
+
+#: src/components/views/HelpView.tsx:38
+msgid "Open selected file"
+msgstr "Open selected file"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:640
+msgid "Optional. If set, JustSearch will launch this binary on-demand (loopback-only)."
+msgstr "Optional. If set, JustSearch will launch this binary on-demand (loopback-only)."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:758
+msgid "Optional. Overrides llama native library path (advanced)."
+msgstr "Optional. Overrides llama native library path (advanced)."
+
+#. placeholder {0}: ONNX_PATH_ENV[f.id]
+#: src/components/views/brain/BrainRuntimeSection.tsx:164
+msgid "Or set <0>{0}</0> to the directory path."
+msgstr "Or set <0>{0}</0> to the directory path."
+
+#: src/components/search/SearchFiltersBar.tsx:272
+msgid "Org: {v}"
+msgstr "Org: {v}"
+
+#. placeholder {0}: (effectivePolicy?.allowlistedPackManifestSha256?.length ?? 0).toString()
+#: src/components/views/brain/PolicyHelperPanel.tsx:223
+msgid "Pack allowlist source: <0>{packAllowlistSource}</0> • allowlisted digests: <1>{0}</1>"
+msgstr "Pack allowlist source: <0>{packAllowlistSource}</0> • allowlisted digests: <1>{0}</1>"
+
+#: src/utils/errorMessages.ts:103
+msgid "Pack contains unreferenced files."
+msgstr "Pack contains unreferenced files."
+
+#. placeholder {0}: packAllowlistSource ?? ''
+#: src/components/views/brain/PolicyHelperPanel.tsx:68
+msgid "Pack import disabled ({0})"
+msgstr "Pack import disabled ({0})"
+
+#. placeholder {0}: packAllowlistSource ?? ''
+#: src/components/views/brain/PolicyHelperPanel.tsx:67
+msgid "Pack import enabled ({0})"
+msgstr "Pack import enabled ({0})"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:293
+msgid "Pack import is controlled by machine policy and is currently deny-all (empty allowlist). Add digest(s) to machine policy allowlists.packManifestSha256."
+msgstr "Pack import is controlled by machine policy and is currently deny-all (empty allowlist). Add digest(s) to machine policy allowlists.packManifestSha256."
+
+#: src/components/views/brain/BrainPackImportSection.tsx:508
+#: src/components/views/brain/BrainPackImportSection.tsx:527
+msgid "Pack import is disabled until an allowlist is configured"
+msgstr "Pack import is disabled until an allowlist is configured"
+
+#: src/utils/errorMessages.ts:139
+msgid "Pack manifest SHA-256 is invalid."
+msgstr "Pack manifest SHA-256 is invalid."
+
+#: src/utils/errorMessages.ts:138
+msgid "Pack manifest SHA-256 is required."
+msgstr "Pack manifest SHA-256 is required."
+
+#: src/utils/errorMessages.ts:110
+msgid "Pack path is required."
+msgstr "Pack path is required."
+
+#: src/utils/errorMessages.ts:92
+msgid "Pack verification failed."
+msgstr "Pack verification failed."
+
+#. placeholder {0}: packPreflight.packId
+#. placeholder {1}: packPreflight.packVersion
+#: src/components/views/brain/BrainPackImportSection.tsx:331
+msgid "Pack: <0>{0}</0> • version: <1>{1}</1>"
+msgstr "Pack: <0>{0}</0> • version: <1>{1}</1>"
+
+#: src/components/views/brain/BrainUIComponents.tsx:87
+msgid "Paste absolute path to .gguf model..."
+msgstr "Paste absolute path to .gguf model..."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:657
+msgid "Path to llama-server.exe"
+msgstr "Path to llama-server.exe"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:771
+msgid "Pause indexing while summarizing"
+msgstr "Pause indexing while summarizing"
+
+#: src/components/search/SearchFiltersBar.tsx:414
+msgid "PDF"
+msgstr "PDF"
+
+#: src/components/search/LaunchpadGrid.tsx:139
+msgid "pending"
+msgstr "pending"
+
+#: src/components/search/SearchFiltersBar.tsx:265
+msgid "Person: {v}"
+msgstr "Person: {v}"
+
+#: src/components/zones/GlobalCommand.tsx:553
+msgid "Phrase match"
+msgstr "Phrase match"
+
+#. placeholder {0}: f.id.replace('_', '-')
+#: src/components/views/brain/BrainRuntimeSection.tsx:156
+msgid "Place <0>model.onnx</0> and <1>tokenizer.json</1> in the app data folder under <2>models/onnx/{0}/</2>"
+msgstr "Place <0>model.onnx</0> and <1>tokenizer.json</1> in the app data folder under <2>models/onnx/{0}/</2>"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:60
+msgid "Policy (v2 helper)"
+msgstr "Policy (v2 helper)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:244
+msgid "Policy & Packs"
+msgstr "Policy & Packs"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:123
+msgid "Policy data is not loaded yet. Click Refresh if this does not resolve."
+msgstr "Policy data is not loaded yet. Click Refresh if this does not resolve."
+
+#: src/utils/errorMessages.ts:143
+msgid "Policy information is unavailable."
+msgstr "Policy information is unavailable."
+
+#: src/utils/errorMessages.ts:135
+msgid "Policy validation failed."
+msgstr "Policy validation failed."
+
+#: src/components/views/brain/BrainPackImportSection.tsx:312
+msgid "Preflight .zip"
+msgstr "Preflight .zip"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:300
+msgid "Preflight (compute allowlist key)"
+msgstr "Preflight (compute allowlist key)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:324
+msgid "Preflight folder"
+msgstr "Preflight folder"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:240
+msgid "Preparing"
+msgstr "Preparing"
+
+#. placeholder {0}: String(effectivePolicy?.machine?.present)
+#. placeholder {0}: String(effectivePolicy?.user?.present)
+#. placeholder {1}: String(effectivePolicy?.machine?.loaded)
+#. placeholder {1}: String(effectivePolicy?.user?.loaded)
+#: src/components/views/brain/PolicyHelperPanel.tsx:139
+#: src/components/views/brain/PolicyHelperPanel.tsx:179
+msgid "present: <0>{0}</0> • loaded: <1>{1}</1>"
+msgstr "present: <0>{0}</0> • loaded: <1>{1}</1>"
+
+#: src/components/HUD/InspectorTabBar.tsx:41
+#: src/components/views/LibraryView.tsx:417
+#: src/components/views/SettingsView.tsx:261
+msgid "Preview"
+msgstr "Preview"
+
+#: src/components/views/LibraryView.tsx:154
+msgid "Preview failed"
+msgstr "Preview failed"
+
+#: src/components/HUD/InspectorPreview.tsx:173
+msgid "Preview requires a backend connection."
+msgstr "Preview requires a backend connection."
+
+#: src/components/HUD/InspectorAnswer.tsx:207
+msgid "Preview-only"
+msgstr "Preview-only"
+
+#. placeholder {0}: previewResult.matchedFiles ?? 0
+#. placeholder {1}: pluralize(previewResult.matchedFiles ?? 0, 'match', 'matches')
+#. placeholder {2}: previewResult.rootsProcessed
+#. placeholder {3}: pluralize(previewResult.rootsProcessed, 'root')
+#: src/components/views/LibraryView.tsx:465
+msgid "Preview: {0} {1} across {2} {3}"
+msgstr "Preview: {0} {1} across {2} {3}"
+
+#: src/components/views/LibraryView.tsx:417
+msgid "Previewing…"
+msgstr "Previewing…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:613
+msgid "Process queue"
+msgstr "Process queue"
+
+#: src/components/views/HealthView.tsx:536
+msgid "Processing"
+msgstr "Processing"
+
+#: src/components/ui/IndexingOverlay.tsx:120
+msgid "Processing complete. You can now go online."
+msgstr "Processing complete. You can now go online."
+
+#: src/components/ui/IndexingOverlay.tsx:75
+msgid "Processing Queue"
+msgstr "Processing Queue"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:613
+msgid "Processing…"
+msgstr "Processing…"
+
+#: src/components/ui/IndexingOverlay.tsx:152
+msgid "Progress will be saved. Remaining files process next time."
+msgstr "Progress will be saved. Remaining files process next time."
+
+#: src/components/zones/GlobalCommand.tsx:528
+msgid "Query syntax help"
+msgstr "Query syntax help"
+
+#: src/components/search/SearchFiltersBar.tsx:369
+msgid "Query syntax: Basic (click for Lucene)"
+msgstr "Query syntax: Basic (click for Lucene)"
+
+#: src/components/search/SearchFiltersBar.tsx:369
+msgid "Query syntax: Lucene (click for Basic)"
+msgstr "Query syntax: Lucene (click for Basic)"
+
+#: src/components/views/HealthView.tsx:531
+msgid "queue"
+msgstr "queue"
+
+#: src/components/views/LibraryView.tsx:520
+msgid "Quick add"
+msgstr "Quick add"
+
+#: src/components/views/HelpView.tsx:166
+msgid "Quick troubleshooting"
+msgstr "Quick troubleshooting"
+
+#: src/components/HUD/InspectorPreview.tsx:83
+msgid "Raw"
+msgstr "Raw"
+
+#: src/components/HUD/InspectorAIInput.tsx:119
+#: src/components/HUD/InspectorEmptyState.tsx:37
+#: src/components/views/brain/BrainInstallSection.tsx:45
+#: src/components/views/brain/BrainPackImportSection.tsx:276
+#: src/components/views/HealthView.tsx:269
+#: src/components/zones/status/deriveBadgeStatus.ts:124
+#: src/components/zones/status/deriveBadgeStatus.ts:141
+msgid "Ready"
+msgstr "Ready"
+
+#. placeholder {0}: reindexReason.replace(/_/g, ' ')
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:102
+msgid "Reason: {0}"
+msgstr "Reason: {0}"
+
+#: src/components/views/HealthView.tsx:100
+msgid "Rebuild"
+msgstr "Rebuild"
+
+#: src/components/views/HealthView.tsx:785
+msgid "Rebuild index"
+msgstr "Rebuild index"
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:125
+msgid "Rebuild Index"
+msgstr "Rebuild Index"
+
+#: src/components/views/HealthView.tsx:98
+msgid "Rebuild index?"
+msgstr "Rebuild index?"
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:71
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:125
+msgid "Rebuilding Index…"
+msgstr "Rebuilding Index…"
+
+#: src/components/views/HealthView.tsx:785
+msgid "Rebuilding…"
+msgstr "Rebuilding…"
+
+#: src/components/search/ZeroResultsView.tsx:77
+#: src/components/zones/GlobalCommand.tsx:469
+msgid "Recent searches"
+msgstr "Recent searches"
+
+#: src/components/zones/GlobalCommand.tsx:456
+msgid "Recent Searches"
+msgstr "Recent Searches"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:82
+msgid "Refresh"
+msgstr "Refresh"
+
+#: src/components/views/BrowseView.tsx:871
+#: src/components/views/BrowseView.tsx:872
+msgid "Refresh folder tree"
+msgstr "Refresh folder tree"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:79
+msgid "Refresh policy + pack status"
+msgstr "Refresh policy + pack status"
+
+#: src/components/views/brain/BrainHeader.tsx:27
+msgid "Refresh status"
+msgstr "Refresh status"
+
+#: src/components/views/LibraryView.tsx:307
+msgid "Reindex All"
+msgstr "Reindex All"
+
+#: src/components/views/HealthView.tsx:765
+msgid "Reindex now"
+msgstr "Reindex now"
+
+#: src/components/zones/status/deriveHeadlineStatus.ts:73
+msgid "Reindex recommended"
+msgstr "Reindex recommended"
+
+#: src/components/views/HealthView.tsx:765
+msgid "Reindexing…"
+msgstr "Reindexing…"
+
+#: src/components/search/SearchFiltersBar.tsx:426
+msgid "Relevance"
+msgstr "Relevance"
+
+#: src/components/ErrorBoundary.tsx:214
+msgid "Reload"
+msgstr "Reload"
+
+#: src/components/views/AgentView.tsx:162
+msgid "Remain"
+msgstr "Remain"
+
+#: src/components/views/LibraryView.tsx:627
+msgid "Remove"
+msgstr "Remove"
+
+#. placeholder {0}: pendingRemove.path
+#: src/components/views/LibraryView.tsx:626
+msgid "Remove \"{0}\" from the index? The files will not be deleted, but they will no longer be searchable."
+msgstr "Remove \"{0}\" from the index? The files will not be deleted, but they will no longer be searchable."
+
+#: src/components/search/ZeroResultsView.tsx:67
+msgid "Remove active filters"
+msgstr "Remove active filters"
+
+#: src/components/views/LibraryView.tsx:625
+msgid "Remove Folder"
+msgstr "Remove Folder"
+
+#: src/components/views/LibraryView.tsx:610
+msgid "Remove from index"
+msgstr "Remove from index"
+
+#: src/components/HUD/InspectorPreview.tsx:69
+msgid "Render Markdown"
+msgstr "Render Markdown"
+
+#: src/components/views/brain/BrainInstallSection.tsx:151
+msgid "Repair AI"
+msgstr "Repair AI"
+
+#: src/components/views/brain/BrainInstallSection.tsx:147
+msgid "Repair: re-verify and redownload missing/corrupt files"
+msgstr "Repair: re-verify and redownload missing/corrupt files"
+
+#: src/utils/errorMessages.ts:102
+msgid "Required asset roles are missing from the pack."
+msgstr "Required asset roles are missing from the pack."
+
+#: src/components/views/SettingsView.tsx:106
+msgid "Reset"
+msgstr "Reset"
+
+#: src/components/views/SettingsView.tsx:172
+msgid "Reset to Defaults"
+msgstr "Reset to Defaults"
+
+#: src/components/views/SettingsView.tsx:104
+msgid "Reset to defaults?"
+msgstr "Reset to defaults?"
+
+#: src/components/views/HealthView.tsx:92
+#: src/components/zones/status/deriveHeadlineStatus.ts:68
+msgid "Restart"
+msgstr "Restart"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:693
+msgid "Restart the worker process so it picks up the embedding model path"
+msgstr "Restart the worker process so it picks up the embedding model path"
+
+#: src/components/views/HealthView.tsx:775
+msgid "Restart worker"
+msgstr "Restart worker"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:696
+msgid "Restart worker to apply embedding model"
+msgstr "Restart worker to apply embedding model"
+
+#: src/components/views/HealthView.tsx:90
+msgid "Restart worker?"
+msgstr "Restart worker?"
+
+#: src/components/views/HealthView.tsx:775
+msgid "Restarting…"
+msgstr "Restarting…"
+
+#: src/components/search/DensityToggle.tsx:33
+msgid "Result density"
+msgstr "Result density"
+
+#: src/components/views/agent/AgentSessionsList.tsx:187
+msgid "Resume"
+msgstr "Resume"
+
+#: src/components/HUD/InspectorPreview.tsx:130
+#: src/components/views/agent/AgentSessionsList.tsx:103
+#: src/components/views/agent/WorkspaceTimeline.tsx:132
+msgid "Retry"
+msgstr "Retry"
+
+#: src/components/ErrorBoundary.tsx:183
+msgid "Retry Connection"
+msgstr "Retry Connection"
+
+#: src/components/views/SettingsView.tsx:260
+msgid "Reveal"
+msgstr "Reveal"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:489
+msgid "Reveal headless-backend.log"
+msgstr "Reveal headless-backend.log"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:482
+msgid "Reveal llama-server.log"
+msgstr "Reveal llama-server.log"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:475
+msgid "Reveal logs"
+msgstr "Reveal logs"
+
+#: src/components/search/DensityToggle.tsx:17
+msgid "Rich"
+msgstr "Rich"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:381
+msgid "Run self-test and activate this runtime variant"
+msgstr "Run self-test and activate this runtime variant"
+
+#: src/components/views/LibraryView.tsx:335
+msgid "Running in browser mode. Native folder picker not available - enter paths manually."
+msgstr "Running in browser mode. Native folder picker not available - enter paths manually."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:515
+msgid "Runtime"
+msgstr "Runtime"
+
+#: src/utils/errorMessages.ts:109
+msgid "Runtime pack has an unexpected executable filename."
+msgstr "Runtime pack has an unexpected executable filename."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:338
+msgid "Runtime variants"
+msgstr "Runtime variants"
+
+#: src/components/views/HelpView.tsx:115
+msgid "Saved to:"
+msgstr "Saved to:"
+
+#: src/components/views/SettingsView.tsx:165
+msgid "Saving..."
+msgstr "Saving..."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:774
+msgid "Saving…"
+msgstr "Saving…"
+
+#: src/components/search/SearchFiltersBar.tsx:404
+msgid "Scope"
+msgstr "Scope"
+
+#. placeholder {0}: filters.pathPrefix.trim()
+#: src/components/search/SearchFiltersBar.tsx:225
+msgid "Scope: {0}"
+msgstr "Scope: {0}"
+
+#: src/components/zones/ActivityRail.tsx:52
+#: src/components/zones/StatusDeck.tsx:298
+msgid "Search"
+msgstr "Search"
+
+#: src/components/zones/StatusDeck.tsx:195
+msgid "Search completed in {processingTime}ms"
+msgstr "Search completed in {processingTime}ms"
+
+#: src/components/zones/Stage.tsx:353
+msgid "Search failed"
+msgstr "Search failed"
+
+#. placeholder {0}: localizeError(error).message
+#: src/components/zones/Stage.tsx:405
+msgid "Search failed: {0}. Showing previous results."
+msgstr "Search failed: {0}. Showing previous results."
+
+#: src/components/zones/GlobalCommand.tsx:54
+msgid "Search files...  (/ commands, ?? ask AI)"
+msgstr "Search files...  (/ commands, ?? ask AI)"
+
+#: src/components/zones/Stage.tsx:435
+msgid "Search instead for"
+msgstr "Search instead for"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:124
+msgid "Search Quality Features"
+msgstr "Search Quality Features"
+
+#. placeholder {0}: totalResults.toLocaleString()
+#. placeholder {1}: pluralize(totalResults, 'result')
+#: src/components/zones/StatusDeck.tsx:187
+msgid "Search returned {0} {1}"
+msgstr "Search returned {0} {1}"
+
+#: src/components/zones/status/deriveHeadlineStatus.ts:66
+msgid "Search service is down"
+msgstr "Search service is down"
+
+#: src/components/search/LaunchpadGrid.tsx:144
+msgid "Search your files, docs, and code."
+msgstr "Search your files, docs, and code."
+
+#: src/components/zones/StatusDeck.tsx:240
+msgid "Searching..."
+msgstr "Searching..."
+
+#: src/components/zones/GlobalCommand.tsx:413
+msgid "Searching…"
+msgstr "Searching…"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:309
+msgid "Select a .zip pack to compute manifest SHA-256"
+msgstr "Select a .zip pack to compute manifest SHA-256"
+
+#: src/components/views/HelpView.tsx:21
+msgid "Select a file and click \"Summarize\" in the Inspector panel. The AI runs locally on your machine using the configured model. No data is sent externally."
+msgstr "Select a file and click \"Summarize\" in the Inspector panel. The AI runs locally on your machine using the configured model. No data is sent externally."
+
+#: src/components/HUD/InspectionPane.tsx:208
+msgid "Select a file to get started"
+msgstr "Select a file to get started"
+
+#: src/components/HUD/InspectorAnswer.tsx:222
+msgid "Select a file, then click \"Summarize\" to get started"
+msgstr "Select a file, then click \"Summarize\" to get started"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:249
+msgid "Select a GGUF model (.gguf)"
+msgstr "Select a GGUF model (.gguf)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:108
+#: src/components/views/brain/BrainPackImportSection.tsx:146
+msgid "Select AI Pack (.zip)"
+msgstr "Select AI Pack (.zip)"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:125
+#: src/components/views/brain/BrainPackImportSection.tsx:169
+msgid "Select AI Pack folder"
+msgstr "Select AI Pack folder"
+
+#: src/components/search/SearchFiltersBar.tsx:304
+msgid "Select all"
+msgstr "Select all"
+
+#: src/components/views/HelpView.tsx:41
+msgid "Select all results"
+msgstr "Select all results"
+
+#: src/components/views/brain/BrainPackImportSection.tsx:321
+msgid "Select an extracted pack folder to compute manifest SHA-256"
+msgstr "Select an extracted pack folder to compute manifest SHA-256"
+
+#: src/components/HUD/InspectorAIInput.tsx:65
+msgid "Select files to ask..."
+msgstr "Select files to ask..."
+
+#: src/components/views/LibraryView.tsx:173
+msgid "Select folder to index"
+msgstr "Select folder to index"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:242
+msgid "Select llama-server.exe"
+msgstr "Select llama-server.exe"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:353
+msgid "Semantic search across your library"
+msgstr "Semantic search across your library"
+
+#: src/components/views/brain/ChunkVectorStatusCard.tsx:47
+msgid "Semantic search ready"
+msgstr "Semantic search ready"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:92
+msgid "Service down"
+msgstr "Service down"
+
+#: src/components/views/SettingsView.tsx:161
+msgid "Session-only"
+msgstr "Session-only"
+
+#: src/components/views/AgentView.tsx:187
+msgid "Sessions"
+msgstr "Sessions"
+
+#: src/components/views/SettingsView.tsx:155
+#: src/components/zones/ActivityRail.tsx:59
+msgid "Settings"
+msgstr "Settings"
+
+#: src/utils/errorMessages.ts:32
+msgid "Settings are session-only in this mode. Changes won't persist after restart."
+msgstr "Settings are session-only in this mode. Changes won't persist after restart."
+
+#: src/utils/errorMessages.ts:156
+msgid "Settings are temporarily unavailable."
+msgstr "Settings are temporarily unavailable."
+
+#: src/components/views/HelpView.tsx:43
+msgid "Show all keyboard hints"
+msgstr "Show all keyboard hints"
+
+#: src/components/views/HealthView.tsx:829
+msgid "Show details"
+msgstr "Show details"
+
+#: src/components/HUD/InspectorPreview.tsx:81
+msgid "Show raw extracted text (includes query highlighting)"
+msgstr "Show raw extracted text (includes query highlighting)"
+
+#. placeholder {0}: results.length
+#. placeholder {1}: totalHits > 0 ? ` of ${totalHits}` : ""
+#: src/components/zones/Stage.tsx:467
+msgid "Showing {0}{1}."
+msgstr "Showing {0}{1}."
+
+#. placeholder {0}: previewNextOffsetChars.toLocaleString()
+#: src/components/HUD/InspectorPreview.tsx:178
+msgid "Showing partial preview ({0} chars loaded)"
+msgstr "Showing partial preview ({0} chars loaded)"
+
+#: src/components/zones/Stage.tsx:434
+msgid "Showing results for"
+msgstr "Showing results for"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:569
+#: src/components/views/brain/BrainSimplePanel.tsx:187
+msgid "Shut Down AI"
+msgstr "Shut Down AI"
+
+#: src/components/views/SettingsView.tsx:193
+msgid "Simple"
+msgstr "Simple"
+
+#: src/components/zones/GlobalCommand.tsx:566
+msgid "Simple Mode"
+msgstr "Simple Mode"
+
+#: src/components/views/brain/BrainCompatibilitySection.tsx:59
+msgid "Simple view"
+msgstr "Simple view"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:75
+msgid "Simulated results and AI responses"
+msgstr "Simulated results and AI responses"
+
+#: src/components/views/HealthView.tsx:486
+msgid "size"
+msgstr "size"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:139
+msgid "Some packages were skipped on this hardware."
+msgstr "Some packages were skipped on this hardware."
+
+#: src/components/zones/status/deriveBadgeStatus.ts:116
+msgid "Some services are unavailable — search and indexing may still work"
+msgstr "Some services are unavailable — search and indexing may still work"
+
+#. placeholder {0}: reasons.join(', ')
+#: src/components/zones/status/deriveBadgeStatus.ts:115
+msgid "Some services are unavailable: {0}"
+msgstr "Some services are unavailable: {0}"
+
+#: src/components/ErrorBoundary.tsx:74
+msgid "Something went wrong"
+msgstr "Something went wrong"
+
+#: src/components/ErrorBoundary.tsx:207
+msgid "Something went wrong in this panel."
+msgstr "Something went wrong in this panel."
+
+#: src/components/search/SearchFiltersBar.tsx:430
+msgid "Sort by"
+msgstr "Sort by"
+
+#. placeholder {0}: filters.sort
+#: src/components/search/SearchFiltersBar.tsx:210
+msgid "Sort: {0}"
+msgstr "Sort: {0}"
+
+#: src/components/search/SearchFiltersBar.tsx:207
+msgid "Sort: Newest"
+msgstr "Sort: Newest"
+
+#: src/components/search/SearchFiltersBar.tsx:209
+msgid "Sort: Oldest"
+msgstr "Sort: Oldest"
+
+#: src/components/search/SearchFiltersBar.tsx:243
+msgid "Source: {v}"
+msgstr "Source: {v}"
+
+#: src/components/views/SettingsView.tsx:194
+msgid "Standard view"
+msgstr "Standard view"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:583
+#: src/components/views/brain/BrainSimplePanel.tsx:171
+msgid "Start AI"
+msgstr "Start AI"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:142
+msgid "Start AI to enable chat and summaries"
+msgstr "Start AI to enable chat and summaries"
+
+#: src/components/views/LibraryView.tsx:514
+msgid "Start building your library"
+msgstr "Start building your library"
+
+#: src/components/views/SettingsView.tsx:274
+msgid "Start minimized in the system tray"
+msgstr "Start minimized in the system tray"
+
+#: src/components/views/LibraryView.tsx:279
+msgid "Start the backend to manage library"
+msgstr "Start the backend to manage library"
+
+#: src/components/views/brain/BrainNoConnection.tsx:15
+msgid "Start the JustSearch backend to configure AI"
+msgstr "Start the JustSearch backend to configure AI"
+
+#: src/components/zones/status/deriveBadgeStatus.ts:100
+msgid "Starting"
+msgstr "Starting"
+
+#: src/components/HUD/InspectorAIInput.tsx:104
+#: src/components/HUD/InspectorEmptyState.tsx:27
+#: src/components/views/brain/BrainSimplePanel.tsx:126
+msgid "Starting..."
+msgstr "Starting..."
+
+#: src/components/zones/status/deriveBadgeStatus.ts:133
+msgid "Status unknown"
+msgstr "Status unknown"
+
+#. placeholder {0}: aiProgress.stage
+#. placeholder {1}: aiProgress.totalStages
+#: src/components/HUD/InspectorAnswer.tsx:112
+msgid "Step {0} of {1}"
+msgstr "Step {0} of {1}"
+
+#. placeholder {0}: storedFp.substring(0, 12)
+#. placeholder {1}: currentFp.substring(0, 12)
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:53
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:107
+msgid "Stored: {0}… → Current: {1}…"
+msgstr "Stored: {0}… → Current: {1}…"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:669
+msgid "Streaming"
+msgstr "Streaming"
+
+#: src/utils/errorMessages.ts:124
+msgid "Streaming failed. Please try again."
+msgstr "Streaming failed. Please try again."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:669
+msgid "Summarization"
+msgstr "Summarization"
+
+#: src/components/HUD/InspectorAIInput.tsx:182
+msgid "Summarize"
+msgstr "Summarize"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:352
+msgid "Summarize documents instantly"
+msgstr "Summarize documents instantly"
+
+#: src/utils/errorMessages.ts:127
+msgid "Summary synthesis failed."
+msgstr "Summary synthesis failed."
+
+#: src/components/zones/GlobalCommand.tsx:568
+msgid "Switch to Lucene mode for phrases, boolean operators, and field queries."
+msgstr "Switch to Lucene mode for phrases, boolean operators, and field queries."
+
+#: src/components/ui/IndexingOverlay.tsx:140
+#: src/components/ui/ModeIndicator.tsx:82
+msgid "Switching..."
+msgstr "Switching..."
+
+#: src/components/views/SettingsView.tsx:218
+msgid "System"
+msgstr "System"
+
+#: src/components/views/HealthView.tsx:387
+msgid "System Health"
+msgstr "System Health"
+
+#: src/components/ErrorBoundary.tsx:256
+msgid "Taking longer than expected. Make sure the backend is running."
+msgstr "Taking longer than expected. Make sure the backend is running."
+
+#: src/components/ErrorBoundary.tsx:85
+#: src/components/HUD/InspectorAnswer.tsx:150
+#: src/components/zones/Stage.tsx:360
+#: src/components/zones/Stage.tsx:421
+msgid "Technical Details"
+msgstr "Technical Details"
+
+#. placeholder {0}: a.termsUrl
+#: src/components/views/brain/BrainInstallSection.tsx:86
+msgid "Terms: <0>{0}</0>"
+msgstr "Terms: <0>{0}</0>"
+
+#: src/utils/errorMessages.ts:116
+msgid "Text translation is not available."
+msgstr "Text translation is not available."
+
+#: src/utils/errorMessages.ts:174
+msgid "The agent entered a repetitive loop and was stopped automatically."
+msgstr "The agent entered a repetitive loop and was stopped automatically."
+
+#: src/utils/errorMessages.ts:164
+msgid "The agent is not available. Check that inference is running."
+msgstr "The agent is not available. Check that inference is running."
+
+#: src/utils/errorMessages.ts:171
+msgid "The agent ran out of token budget for this session."
+msgstr "The agent ran out of token budget for this session."
+
+#: src/utils/errorMessages.ts:167
+msgid "The agent requested an unknown tool."
+msgstr "The agent requested an unknown tool."
+
+#: src/utils/errorMessages.ts:168
+msgid "The agent returned an empty response. Try rephrasing your request."
+msgstr "The agent returned an empty response. Try rephrasing your request."
+
+#: src/utils/errorMessages.ts:175
+msgid "The agents entered a handoff loop and were stopped automatically."
+msgstr "The agents entered a handoff loop and were stopped automatically."
+
+#: src/utils/errorMessages.ts:125
+msgid "The AI response was cut short. Please try again."
+msgstr "The AI response was cut short. Please try again."
+
+#: src/utils/errorMessages.ts:130
+msgid "The content is too large. Try selecting fewer files."
+msgstr "The content is too large. Try selecting fewer files."
+
+#: src/utils/errorMessages.ts:43
+msgid "The disk is full. Free up space and try again."
+msgstr "The disk is full. Free up space and try again."
+
+#: src/utils/errorMessages.ts:121
+msgid "The document has no content to process."
+msgstr "The document has no content to process."
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:49
+msgid "The embedding model has changed since vectors were last written. Vector and hybrid search are disabled to prevent mixed results."
+msgstr "The embedding model has changed since vectors were last written. Vector and hybrid search are disabled to prevent mixed results."
+
+#: src/components/HUD/InspectorPreview.tsx:134
+msgid "The file may have been moved or deleted. Try reindexing from Library."
+msgstr "The file may have been moved or deleted. Try reindexing from Library."
+
+#: src/utils/errorMessages.ts:33
+msgid "The file path is invalid."
+msgstr "The file path is invalid."
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:69
+msgid "The index is being rebuilt to match the current schema version. This may take a while depending on your document collection size."
+msgstr "The index is being rebuilt to match the current schema version. This may take a while depending on your document collection size."
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:93
+msgid "The index schema has changed since the index was last built. A full rebuild is required to access all features."
+msgstr "The index schema has changed since the index was last built. A full rebuild is required to access all features."
+
+#: src/components/HUD/InspectorAnswer.tsx:179
+msgid "The model reached its token limit and stopped mid-response"
+msgstr "The model reached its token limit and stopped mid-response"
+
+#: src/utils/errorMessages.ts:31
+msgid "The operation cannot be completed in the current state."
+msgstr "The operation cannot be completed in the current state."
+
+#: src/utils/errorMessages.ts:166
+msgid "The operation was cancelled."
+msgstr "The operation was cancelled."
+
+#: src/utils/errorMessages.ts:132
+msgid "The operation was interrupted."
+msgstr "The operation was interrupted."
+
+#: src/utils/errorMessages.ts:34
+msgid "The request body is not valid JSON."
+msgstr "The request body is not valid JSON."
+
+#: src/utils/errorMessages.ts:160
+msgid "The request could not be processed."
+msgstr "The request could not be processed."
+
+#: src/utils/errorMessages.ts:35
+msgid "The request schema is invalid."
+msgstr "The request schema is invalid."
+
+#: src/utils/errorMessages.ts:27
+msgid "The request timed out. Please try again."
+msgstr "The request timed out. Please try again."
+
+#: src/utils/errorMessages.ts:36
+msgid "The requested resource was not found."
+msgstr "The requested resource was not found."
+
+#: src/utils/errorMessages.ts:23
+msgid "The search cursor expired. Please search again."
+msgstr "The search cursor expired. Please search again."
+
+#: src/utils/errorMessages.ts:46
+msgid "The search index format is incompatible. A reindex is required."
+msgstr "The search index format is incompatible. A reindex is required."
+
+#: src/utils/errorMessages.ts:44
+msgid "The search index is corrupted. Rebuild it from the Health view."
+msgstr "The search index is corrupted. Rebuild it from the Health view."
+
+#: src/utils/errorMessages.ts:45
+msgid "The search index is locked by another process. Close other instances and try again."
+msgstr "The search index is locked by another process. Close other instances and try again."
+
+#: src/utils/errorMessages.ts:25
+msgid "The search index is not available."
+msgstr "The search index is not available."
+
+#: src/utils/errorMessages.ts:47
+msgid "The search index is overloaded. Please wait and try again."
+msgstr "The search index is overloaded. Please wait and try again."
+
+#: src/utils/errorMessages.ts:26
+msgid "The search service is not available. Please wait and try again."
+msgstr "The search service is not available. Please wait and try again."
+
+#: src/components/ui/IndexingOverlay.tsx:68
+msgid "The system is generating embeddings for your indexed files. Chat, Q&A, and summarization are paused to prevent GPU memory conflicts."
+msgstr "The system is generating embeddings for your indexed files. Chat, Q&A, and summarization are paused to prevent GPU memory conflicts."
+
+#: src/components/HUD/InspectorAnswer.tsx:221
+msgid "these {selectedCount} files"
+msgstr "these {selectedCount} files"
+
+#: src/utils/errorMessages.ts:172
+msgid "This action is denied by policy."
+msgstr "This action is denied by policy."
+
+#: src/utils/errorMessages.ts:89
+msgid "This AI pack is blocked by administrator policy."
+msgstr "This AI pack is blocked by administrator policy."
+
+#: src/utils/errorMessages.ts:88
+msgid "This AI pack is not in your allowed list. Add it to your user policy to continue."
+msgstr "This AI pack is not in your allowed list. Add it to your user policy to continue."
+
+#: src/components/HUD/InspectionPane.tsx:205
+#: src/components/HUD/InspectorAnswer.tsx:221
+msgid "this file"
+msgstr "this file"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:461
+msgid "This is where JustSearch stores BYO AI assets (models, llama-server.exe) and logs."
+msgstr "This is where JustSearch stores BYO AI assets (models, llama-server.exe) and logs."
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:97
+msgid "This may include chunk vector fields for improved semantic search."
+msgstr "This may include chunk vector fields for improved semantic search."
+
+#: src/utils/errorMessages.ts:37
+msgid "This operation is not supported."
+msgstr "This operation is not supported."
+
+#: src/components/views/SettingsView.tsx:97
+msgid "This will close JustSearch. On the next launch, your local index, settings, and logs will be deleted. Your BYO AI assets (models and llama-server.exe) in AI Home are preserved."
+msgstr "This will close JustSearch. On the next launch, your local index, settings, and logs will be deleted. Your BYO AI assets (models and llama-server.exe) in AI Home are preserved."
+
+#: src/components/views/HealthView.tsx:99
+msgid "This will create a new search index from scratch. The current index stays active until the rebuild completes. In-progress indexing will be interrupted."
+msgstr "This will create a new search index from scratch. The current index stays active until the rebuild completes. In-progress indexing will be interrupted."
+
+#: src/components/views/BrainView.tsx:48
+msgid "This will download the recommended model files into AI Home. These files can be several GB. You must accept the upstream model terms before downloading."
+msgstr "This will download the recommended model files into AI Home. These files can be several GB. You must accept the upstream model terms before downloading."
+
+#: src/components/views/HealthView.tsx:107
+msgid "This will remove all failed file entries from the indexing queue. The files will not be retried unless you trigger a reindex."
+msgstr "This will remove all failed file entries from the indexing queue. The files will not be retried unless you trigger a reindex."
+
+#: src/components/views/SettingsView.tsx:105
+msgid "This will reset all settings (theme, keyboard, LLM configuration) back to their default values."
+msgstr "This will reset all settings (theme, keyboard, LLM configuration) back to their default values."
+
+#: src/components/views/HealthView.tsx:91
+msgid "This will stop the knowledge server process and restart it. Any in-progress indexing will be interrupted."
+msgstr "This will stop the knowledge server process and restart it. Any in-progress indexing will be interrupted."
+
+#: src/components/views/brain/BrainSimplePanel.tsx:288
+msgid "Tier"
+msgstr "Tier"
+
+#: src/components/views/AgentView.tsx:189
+msgid "Timeline"
+msgstr "Timeline"
+
+#: src/components/views/HelpView.tsx:40
+msgid "Toggle file selection"
+msgstr "Toggle file selection"
+
+#: src/components/search/SearchFiltersBar.tsx:343
+msgid "Toggle filters"
+msgstr "Toggle filters"
+
+#: src/components/HUD/InspectorAnswer.tsx:180
+msgid "Token limit reached"
+msgstr "Token limit reached"
+
+#: src/components/views/AgentView.tsx:161
+msgid "Tokens"
+msgstr "Tokens"
+
+#: src/components/views/AgentView.tsx:160
+msgid "Tools"
+msgstr "Tools"
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:611
+msgid "Trigger offline processing (VDU + embeddings)"
+msgstr "Trigger offline processing (VDU + embeddings)"
+
+#: src/components/zones/Stage.tsx:396
+msgid "Try a different query."
+msgstr "Try a different query."
+
+#: src/components/HUD/InspectorAnswer.tsx:144
+#: src/components/zones/Stage.tsx:414
+msgid "Try again"
+msgstr "Try again"
+
+#: src/components/ErrorBoundary.tsx:99
+msgid "Try Again"
+msgstr "Try Again"
+
+#: src/components/search/ZeroResultsView.tsx:53
+msgid "Try broader or different search terms"
+msgstr "Try broader or different search terms"
+
+#: src/components/HUD/InspectorAnswer.tsx:129
+msgid "Try selecting fewer files to reduce context size."
+msgstr "Try selecting fewer files to reduce context size."
+
+#: src/components/search/SearchFiltersBar.tsx:228
+msgid "Type"
+msgstr "Type"
+
+#: src/components/views/HelpView.tsx:29
+msgid "Type ?? followed by your question in the search bar to ask the AI about your selected files or general questions."
+msgstr "Type ?? followed by your question in the search bar to ask the AI about your selected files or general questions."
+
+#: src/components/zones/Stage.tsx:374
+msgid "Type a command name after the / prefix. Try /help to see available commands."
+msgstr "Type a command name after the / prefix. Try /help to see available commands."
+
+#: src/components/zones/GlobalCommand.tsx:567
+msgid "Type naturally. Partial words auto-complete. Typos are auto-corrected."
+msgstr "Type naturally. Partial words auto-complete. Typos are auto-corrected."
+
+#: src/components/zones/Stage.tsx:381
+msgid "Type your question after ?? to ask about your indexed files."
+msgstr "Type your question after ?? to ask about your indexed files."
+
+#. placeholder {0}: filters.type
+#: src/components/search/SearchFiltersBar.tsx:198
+msgid "Type: {0}"
+msgstr "Type: {0}"
+
+#: src/components/search/SearchFiltersBar.tsx:197
+msgid "Type: Images"
+msgstr "Type: Images"
+
+#: src/components/search/SearchFiltersBar.tsx:195
+msgid "Type: Markdown"
+msgstr "Type: Markdown"
+
+#: src/components/search/SearchFiltersBar.tsx:193
+msgid "Type: PDF"
+msgstr "Type: PDF"
+
+#: src/components/ErrorBoundary.tsx:149
+msgid "Unable to connect to the backend"
+msgstr "Unable to connect to the backend"
+
+#: src/components/HUD/InspectorAIInput.tsx:112
+#: src/components/HUD/InspectorEmptyState.tsx:32
+#: src/components/views/AgentView.tsx:154
+#: src/components/views/HealthView.tsx:272
+#: src/components/views/HealthView.tsx:587
+msgid "Unavailable"
+msgstr "Unavailable"
+
+#: src/components/views/HealthView.tsx:647
+msgid "Unhealthy"
+msgstr "Unhealthy"
+
+#: src/components/ui/CitationHoverCard.tsx:48
+msgid "Unknown document"
+msgstr "Unknown document"
+
+#: src/components/views/HealthView.tsx:856
+msgid "Unknown error"
+msgstr "Unknown error"
+
+#: src/utils/errorMessages.ts:101
+msgid "Unsupported asset role in pack manifest."
+msgstr "Unsupported asset role in pack manifest."
+
+#: src/utils/errorMessages.ts:105
+msgid "Unsupported file type in runtime pack."
+msgstr "Unsupported file type in runtime pack."
+
+#: src/utils/errorMessages.ts:94
+msgid "Unsupported pack kind."
+msgstr "Unsupported pack kind."
+
+#: src/utils/errorMessages.ts:93
+msgid "Unsupported pack manifest version."
+msgstr "Unsupported pack manifest version."
+
+#: src/utils/errorMessages.ts:152
+msgid "Unsupported user policy schema version."
+msgstr "Unsupported user policy schema version."
+
+#: src/components/views/HealthView.tsx:571
+msgid "uptime"
+msgstr "uptime"
+
+#: src/components/views/HelpView.tsx:170
+msgid "Use \"Export diagnostics\" above before reporting a bug."
+msgstr "Use \"Export diagnostics\" above before reporting a bug."
+
+#: src/components/HUD/InspectorEmptyState.tsx:20
+msgid "Use the checkboxes next to search results to select files for AI analysis"
+msgstr "Use the checkboxes next to search results to select files for AI analysis"
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:177
+msgid "User policy (restrictive-only)"
+msgstr "User policy (restrictive-only)"
+
+#: src/utils/errorMessages.ts:146
+msgid "User policy already exists."
+msgstr "User policy already exists."
+
+#: src/utils/errorMessages.ts:150
+msgid "User policy does not exist. Create it first."
+msgstr "User policy does not exist. Create it first."
+
+#: src/utils/errorMessages.ts:151
+msgid "User policy file contains invalid JSON."
+msgstr "User policy file contains invalid JSON."
+
+#: src/utils/errorMessages.ts:145
+msgid "User policy file path could not be determined."
+msgstr "User policy file path could not be determined."
+
+#: src/utils/errorMessages.ts:147
+msgid "User policy file path is invalid."
+msgstr "User policy file path is invalid."
+
+#: src/components/views/brain/PolicyHelperPanel.tsx:207
+msgid "User policy folder unavailable"
+msgstr "User policy folder unavailable"
+
+#: src/components/views/HealthView.tsx:618
+msgid "Utilization"
+msgstr "Utilization"
+
+#: src/components/views/brain/BrainInstallSection.tsx:51
+msgid "v1 installs the recommended <0>text-only</0> models (chat + embeddings). VDU/vision is deferred."
+msgstr "v1 installs the recommended <0>text-only</0> models (chat + embeddings). VDU/vision is deferred."
+
+#: src/components/views/brain/BrainRuntimeSection.tsx:725
+msgid "v1 ships a <0>CPU-only</0> <1>llama-server</1> runtime by default. Manual GPU layer offloading requires a GPU-capable runtime."
+msgstr "v1 ships a <0>CPU-only</0> <1>llama-server</1> runtime by default. Manual GPU layer offloading requires a GPU-capable runtime."
+
+#: src/components/HUD/InspectorPreview.tsx:110
+msgid "VDU failed – showing Tika extraction (may be low quality)"
+msgstr "VDU failed – showing Tika extraction (may be low quality)"
+
+#: src/components/HUD/InspectorPreview.tsx:109
+msgid "VDU in progress – text will improve when complete"
+msgstr "VDU in progress – text will improve when complete"
+
+#: src/components/HUD/InspectorPreview.tsx:107
+msgid "VDU pending – showing Tika extraction (may be low quality)"
+msgstr "VDU pending – showing Tika extraction (may be low quality)"
+
+#. placeholder {0}: vduPageCount != null ? ` (${vduPageCount} page${vduPageCount > 1 ? 's' : ''})` : ''
+#: src/components/HUD/InspectorPreview.tsx:105
+msgid "VDU-processed text{0}"
+msgstr "VDU-processed text{0}"
+
+#: src/components/views/HealthView.tsx:596
+msgid "VRAM"
+msgstr "VRAM"
+
+#: src/components/search/LaunchpadGrid.tsx:124
+msgid "Welcome to JustSearch"
+msgstr "Welcome to JustSearch"
+
+#: src/components/views/HelpView.tsx:16
+msgid "What file types are supported?"
+msgstr "What file types are supported?"
+
+#: src/components/views/brain/BrainSimplePanel.tsx:348
+msgid "What you get"
+msgstr "What you get"
+
+#: src/components/views/HelpView.tsx:24
+msgid "Why is indexing slow?"
+msgstr "Why is indexing slow?"
+
+#: src/components/zones/GlobalCommand.tsx:559
+msgid "Wildcard prefix"
+msgstr "Wildcard prefix"
+
+#: src/components/ErrorBoundary.tsx:171
+msgid "Worker (Search)"
+msgstr "Worker (Search)"
+
+#: src/utils/errorMessages.ts:51
+msgid "You must accept the model terms before downloading."
+msgstr "You must accept the model terms before downloading."
+
+#: src/components/views/HelpView.tsx:202
+msgid "Your files stay on this machine. Search and indexing run locally, and the UI only talks to the local backend over loopback."
+msgstr "Your files stay on this machine. Search and indexing run locally, and the UI only talks to the local backend over loopback."
+
+#. placeholder {0}: status.indexedDocuments.toLocaleString()
+#. placeholder {1}: pluralize(status.indexedDocuments, 'file')
+#: src/components/search/LaunchpadGrid.tsx:255
+msgid "Your index has {0} {1} from built-in help. Add a folder to index your own files."
+msgstr "Your index has {0} {1} from built-in help. Add a folder to index your own files."
+
+#: src/components/views/brain/EmbeddingCompatibilityCard.tsx:48
+msgid "Your index was created before embedding fingerprinting was enabled. Vector and hybrid search are disabled until you rebuild the index."
+msgstr "Your index was created before embedding fingerprinting was enabled. Vector and hybrid search are disabled until you rebuild the index."
+
+#: src/components/views/brain/SchemaCompatibilityCard.tsx:92
+msgid "Your index was created before schema fingerprinting was enabled. A full rebuild is required to ensure compatibility with the current version."
+msgstr "Your index was created before schema fingerprinting was enabled. A full rebuild is required to ensure compatibility with the current version."
+
+#: src/components/views/LibraryView.tsx:507
+msgid "Your library is ready to grow"
+msgstr "Your library is ready to grow"
+
+#: src/components/zones/StatusDeck.tsx:300
+msgid "Zones"
+msgstr "Zones"

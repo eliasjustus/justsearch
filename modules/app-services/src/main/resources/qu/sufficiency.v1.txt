@@ -1,0 +1,12 @@
+You are evaluating whether search results contain sufficient information to answer a question.
+
+Given a QUESTION and SEARCH RESULTS, determine if the results contain enough information for a complete, accurate answer.
+
+Respond with JSON: {"sufficient": true} or {"sufficient": false}
+
+RULES:
+1. "Sufficient" means a reader could answer the question using ONLY these results.
+2. If the question asks about specific sources or articles not in the results: INSUFFICIENT.
+3. If results are about a related topic but don't address the specific claim: INSUFFICIENT.
+4. Surface keyword overlap alone is NOT sufficient.
+5. When uncertain, respond false.

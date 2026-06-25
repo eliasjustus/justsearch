@@ -1,0 +1,148 @@
+{
+  "totalHits" : 2,
+  "matchCount" : 0,
+  "tookMs" : 42,
+  "results" : [ {
+    "id" : "doc-1",
+    "score" : 0.95,
+    "fields" : {
+      "collection" : "docs",
+      "content_preview" : "Overview of the system architecture...",
+      "file_kind" : "markdown",
+      "filename" : "architecture.md",
+      "language" : "en",
+      "meta_author" : "engineering",
+      "meta_category" : "architecture",
+      "meta_published_at" : "2025-06-01T00:00:00Z",
+      "meta_source" : "documentation",
+      "mime" : "text/markdown",
+      "mime_base" : "text",
+      "modified_at" : "2025-06-15T10:30:00Z",
+      "path" : "C:/docs/architecture.md",
+      "size_bytes" : "12345",
+      "title" : "System Architecture",
+      "vdu_demand_kind" : "visual_enrichment",
+      "visual_extraction_evidence" : "{\"schemaVersion\":1,\"route\":\"structured\",\"textQualityScore\":0.95}"
+    },
+    "matchedFields" : [ "title", "content_preview" ],
+    "matchSpans" : [ {
+      "field" : "title",
+      "startChar" : 7,
+      "endChar" : 19,
+      "term" : "architecture"
+    } ],
+    "excerptRegions" : [ {
+      "text" : "Overview of the system architecture and its components.",
+      "startChar" : 0,
+      "endChar" : 55,
+      "approxLine" : 1,
+      "matchSpans" : [ ]
+    } ],
+    "trace" : [ {
+      "id" : "sparse-retrieval",
+      "rank" : 1,
+      "score" : 12.5
+    }, {
+      "id" : "dense-retrieval",
+      "rank" : 2,
+      "score" : 0.8
+    }, {
+      "id" : "cross-encoder",
+      "rank" : 1,
+      "score" : 0.95,
+      "detail" : {
+        "score" : 0.95
+      }
+    } ]
+  }, {
+    "id" : "doc-2",
+    "score" : 0.72,
+    "fields" : {
+      "path" : "C:/docs/design.pdf",
+      "title" : "Design Document"
+    },
+    "matchedFields" : [ "title" ],
+    "matchSpans" : [ ],
+    "excerptRegions" : [ ]
+  } ],
+  "nextCursor" : null,
+  "facets" : {
+    "file_kind" : {
+      "markdown" : 5,
+      "pdf" : 3
+    },
+    "language" : {
+      "de" : 1,
+      "en" : 7
+    }
+  },
+  "facetsTruncated" : false,
+  "entityFacetVariants" : {
+    "person" : [ {
+      "canonicalForm" : "John Doe",
+      "totalCount" : 3,
+      "variants" : {
+        "J. Doe" : 1,
+        "John" : 2
+      }
+    } ]
+  },
+  "indexCapabilities" : {
+    "embeddingCoverage" : 0.95,
+    "spladeCoverage" : 0.8,
+    "chunkEmbeddingCoverage" : 0.9,
+    "crossEncoderAvailable" : true
+  },
+  "queryUnderstanding" : {
+    "appliedBoosts" : {
+      "meta_source" : [ "techcrunch" ]
+    },
+    "latencyMs" : 42,
+    "expectedAnswerType" : "COMPARISON"
+  },
+  "filterNormalization" : null,
+  "searchTrace" : {
+    "version" : 1,
+    "effectiveMode" : "hybrid",
+    "decisionKind" : "multi_leg",
+    "qpp" : {
+      "maxIdf" : 8.5,
+      "avgIctf" : 0.42,
+      "queryScope" : 0.73
+    },
+    "degradation" : {
+      "vectorBlocked" : false,
+      "hybridFallback" : false,
+      "spladeExecuted" : true
+    },
+    "stages" : [ {
+      "id" : "query-understanding",
+      "status" : "executed",
+      "detail" : "COMPARISON"
+    }, {
+      "id" : "sparse-retrieval",
+      "status" : "executed",
+      "ms" : 3,
+      "detail" : "bm25"
+    }, {
+      "id" : "dense-retrieval",
+      "status" : "executed",
+      "ms" : 4
+    }, {
+      "id" : "fusion",
+      "status" : "executed",
+      "detail" : "cc"
+    }, {
+      "id" : "chunk-merge",
+      "status" : "executed",
+      "ms" : 5
+    }, {
+      "id" : "cross-encoder",
+      "status" : "executed",
+      "ms" : 8
+    }, {
+      "id" : "freshness",
+      "status" : "disabled"
+    } ]
+  }
+}

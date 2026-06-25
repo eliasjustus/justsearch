@@ -1,0 +1,21 @@
+# JustSearch wire-Category contract substrate.
+# See `docs/decisions/0039-contract-substrate.md`
+# (architectural commitment) and `09a-wire-contract-format.md` (format choice).
+# Phase 2 of slice 3a-1-8 establishes this module.
+
+version: v2
+modules:
+  - path: .
+deps:
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    # Files live at contracts/wire/*.proto (flat layout) but use package
+    # justsearch.wire.v1. STANDARD's PACKAGE_DIRECTORY_MATCH rule expects
+    # contracts/wire/justsearch/wire/v1/*.proto; we keep the flat layout.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

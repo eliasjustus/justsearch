@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "description": "NEGATIVE fixture register — exercises every failable rule: (a) contributor-unresolved (core.phantom); (b) concept-canonical-source (canonicalSource not in contributors); (c) contributor-shared (core.health-events in two concepts); (d) operator-trace-must-be-channel (core.bad-log Resource declares an origin) + kind-mismatch (concept 'd' declares diagnostic-channel but its source is a Resource) + projection-unresolved (jf-missing-surface) + stateful-requires-liveness (stateful with no livenessOwner); (e) stream-uncovered — core.action-ledger is declared in the catalog but is no concept's contributor and is not in outOfFamily (575 §13 L1 reverse-coverage); and (f) live-concept-unprojected (575 §17 Face B) — concept 'e' is stateful with NO projection (it carries a livenessOwner so it isolates the new rule rather than re-tripping stateful-requires-liveness). The gate must FAIL all remaining rules (liveness-window-coherent was RETIRED in 575 §17 Face A — the window is now generated, not drift-checked).",
+  "scan": {
+    "resourceCatalogRoots": ["catalog"],
+    "diagnosticChannelCatalogRoots": ["catalog"],
+    "surfaceCatalog": "catalog/FixtureCoreSurfaceCatalog.java",
+    "javaInclude": ""
+  },
+  "concepts": [
+    {
+      "id": "a",
+      "kind": "event-stream",
+      "canonicalSource": "core.phantom",
+      "contributors": ["core.phantom"]
+    },
+    {
+      "id": "b",
+      "kind": "event-stream",
+      "canonicalSource": "core.action-ledger",
+      "contributors": ["core.health-events"]
+    },
+    {
+      "id": "c",
+      "kind": "event-stream",
+      "canonicalSource": "core.health-events",
+      "contributors": ["core.health-events"]
+    },
+    {
+      "id": "d",
+      "kind": "diagnostic-channel",
+      "canonicalSource": "core.bad-log",
+      "contributors": ["core.bad-log"],
+      "projections": ["jf-missing-surface"],
+      "stateful": true,
+      "liveness": { "heartbeatMs": 90000, "displayStaleMs": 30000, "reaperStaleMs": 10000 }
+    },
+    {
+      "id": "e",
+      "kind": "state",
+      "canonicalSource": "core.phantom-live",
+      "contributors": ["core.phantom-live"],
+      "stateful": true,
+      "livenessOwner": "fixture: a stateful concept that declares NO projection — isolates live-concept-unprojected (575 §17 Face B). Its contributor is also a phantom, so it adds to contributor-unresolved; it has a livenessOwner so it does NOT trip stateful-requires-liveness, keeping the new rule's demonstration clean."
+    }
+  ]
+}

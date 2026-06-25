@@ -1,0 +1,156 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "Audience" : {
+      "type" : "string",
+      "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "audience" : {
+      "$ref" : "#/$defs/Audience"
+    },
+    "availability" : {
+      "type" : "object",
+      "properties" : {
+        "argumentDefaultsJson" : { },
+        "expression" : { }
+      }
+    },
+    "consumers" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "audience" : {
+            "$ref" : "#/$defs/Audience"
+          },
+          "consumerId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [ "audience", "consumerId" ]
+      }
+    },
+    "executors" : {
+      "type" : "array",
+      "items" : {
+        "type" : "string",
+        "enum" : [ "UI", "AGENT", "CLI" ]
+      }
+    },
+    "id" : {
+      "type" : "string"
+    },
+    "intf" : {
+      "type" : "object",
+      "properties" : {
+        "errors" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "inputs" : { },
+        "result" : { },
+        "uiHints" : {
+          "type" : "object",
+          "additionalProperties" : { }
+        }
+      },
+      "required" : [ "errors", "inputs", "result", "uiHints" ]
+    },
+    "lineage" : {
+      "type" : "object",
+      "properties" : {
+        "affects" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "supersedes" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          }
+        }
+      },
+      "required" : [ "affects", "supersedes" ]
+    },
+    "policy" : {
+      "type" : "object",
+      "properties" : {
+        "audit" : {
+          "type" : "string",
+          "enum" : [ "NONE", "METADATA_ONLY", "FULL_PAYLOAD" ]
+        },
+        "confirm" : {
+          "type" : "object",
+          "properties" : {
+            "confirmTextKey" : {
+              "type" : "string"
+            },
+            "kind" : {
+              "type" : "string"
+            }
+          },
+          "required" : [ "kind" ]
+        },
+        "inverseOperationId" : {
+          "type" : [ "string", "null" ]
+        },
+        "rateLimitMs" : {
+          "type" : "integer"
+        },
+        "risk" : {
+          "type" : "string",
+          "enum" : [ "LOW", "MEDIUM", "HIGH" ]
+        },
+        "undoSupported" : {
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "audit", "confirm", "inverseOperationId", "risk", "undoSupported" ]
+    },
+    "presentation" : {
+      "type" : "object",
+      "properties" : {
+        "category" : {
+          "type" : "string"
+        },
+        "descriptionKey" : {
+          "type" : "string"
+        },
+        "iconHint" : {
+          "type" : "string"
+        },
+        "labelKey" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "descriptionKey", "labelKey" ]
+    },
+    "provenance" : {
+      "type" : "object",
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "tier", "version" ]
+    },
+    "type" : {
+      "type" : "string"
+    }
+  },
+  "required" : [ "audience", "availability", "consumers", "executors", "id", "intf", "lineage", "policy", "presentation", "provenance", "type" ]
+}

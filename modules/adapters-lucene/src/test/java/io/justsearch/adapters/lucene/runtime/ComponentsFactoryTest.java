@@ -1,0 +1,509 @@
+package io.justsearch.adapters.lucene.runtime;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SoftDeletesMetrics;
+import io.justsearch.configuration.FieldCatalogDef;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import org.apache.lucene.codecs.KnnVectorsFormat;
+import org.apache.lucene.codecs.lucene104.Lucene104HnswScalarQuantizedVectorsFormat;
+import org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.MergePolicy;
+import org.apache.lucene.index.SoftDeletesRetentionMergePolicy;
+import org.apache.lucene.index.TieredMergePolicy;
+import org.apache.lucene.store.MMapDirectory;
+import org.apache.lucene.store.NIOFSDirectory;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.dataformat.yaml.YAMLFactory;
+
+class ComponentsFactoryTest {
+
+  @TempDir Path tempDir;
+
+  private FieldMapper fieldMapper;
+  private SsotAnalyzerRegistry analyzerRegistry;
+
+  @BeforeEach
+  void setUp() {
+    fieldMapper = new FieldMapper(FieldCatalogDef.forTesting(4));
+    analyzerRegistry = new SsotAnalyzerRegistry();
+  }
+
+  private static ResolvedConfig resolveForTest(String yaml) {
+    ResolvedConfigBuilder builder = ResolvedConfig.builder();
+    builder.contributeEnvRegistry();
+    try {
+      JsonNode root = new ObjectMapper(new YAMLFactory()).readTree(yaml);
+      builder.contributeYaml(root);
+    } catch (Exception ignored) {
+    }
+    return builder.build();
+  }
+
+  private Components buildComponents(
+      String yaml, Path path, boolean readOnly, KnnVectorsFormat knnOverride) throws IOException {
+    ResolvedConfig rc = resolveForTest(yaml);
+    return ComponentsFactory.build(
+        rc, null, path, readOnly, fieldMapper, analyzerRegistry,
+        knnOverride, null, null, new AtomicLong(), 500L, Long.MAX_VALUE);
+  }
+
+  private void closeComponents(Components c) {
+    if (c == null) return;
+    try {
+      if (c.crtrt() != null) c.crtrt().close();
+    } catch (Exception e) {
+      /* best-effort */
+    }
+    try {
+      if (c.searcherManager() != null) c.searcherManager().close();
+    } catch (Exception e) {
+      /* best-effort */
+    }
+    try {
+      if (c.writer() != null) c.writer().close();
+    } catch (Exception e) {
+      /* best-effort */
+    }
+    try {
+      if (c.directory() != null) c.directory().close();
+    } catch (Exception e) {
+      /* best-effort */
+    }
+  }
+
+  private Components buildComponentsWithMetrics(
+      String yaml,
+      Path path,
+      boolean readOnly,
+      KnnVectorsFormat knnOverride,
+      SoftDeletesMetrics metrics)
+      throws IOException {
+    ResolvedConfig rc = resolveForTest(yaml);
+    return ComponentsFactory.build(
+        rc, null, path, readOnly, fieldMapper, analyzerRegistry,
+        knnOverride, metrics, null, new AtomicLong(), 500L, Long.MAX_VALUE);
+  }
+
+  // -- Directory type tests --
+
+  @Test
+  void buildWithDefaultConfigCreatesMmapDirectory() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("mmap-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertInstanceOf(MMapDirectory.class, c.directory());
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithNiofsDirectoryType() throws Exception {
+    String yaml = "index:\n  directory:\n    type: niofs";
+    Path idx = tempDir.resolve("niofs-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertInstanceOf(NIOFSDirectory.class, c.directory());
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Vector format tests --
+
+  @Test
+  void buildWithQuantizationEnabledUsesQuantizedFormat() throws Exception {
+    String yaml = "index:\n  vector:\n    quantization:\n      enabled: true";
+    Path idx = tempDir.resolve("quant-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertInstanceOf(Lucene104HnswScalarQuantizedVectorsFormat.class, c.knnVectorsFormat());
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithQuantizationDisabledUsesFloat32Format() throws Exception {
+    String yaml = "index:\n  vector:\n    quantization:\n      enabled: false";
+    Path idx = tempDir.resolve("float32-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertInstanceOf(Lucene99HnswVectorsFormat.class, c.knnVectorsFormat());
+      assertFalse(
+          c.knnVectorsFormat() instanceof Lucene104HnswScalarQuantizedVectorsFormat,
+          "should be plain Float32, not quantized");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithKnnFormatOverrideIgnoresConfig() throws Exception {
+    String yaml = "index:\n  vector:\n    quantization:\n      enabled: true";
+    KnnVectorsFormat override = JustSearchCodec.float32Format();
+    Path idx = tempDir.resolve("override-idx");
+    Components c = buildComponents(yaml, idx, false, override);
+    try {
+      assertSame(override, c.knnVectorsFormat(), "override should take precedence over config");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Read-only vs read-write tests --
+
+  @Test
+  void buildReadOnlyReturnsNullWriterAndCrtrt() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("ro-idx");
+
+    // First create an index so read-only open succeeds
+    Components writeC = buildComponents(yaml, idx, false, null);
+    writeC.writer().commit();
+    closeComponents(writeC);
+
+    // Re-open read-only
+    Components c = buildComponents(yaml, idx, true, null);
+    try {
+      assertNull(c.writer(), "writer should be null in read-only mode");
+      assertNull(c.crtrt(), "crtrt should be null in read-only mode");
+      assertNotNull(c.searcherManager(), "searcherManager should exist in read-only mode");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildReadWriteReturnsNonNullWriterAndCrtrt() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("rw-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertNotNull(c.writer(), "writer should exist in read-write mode");
+      assertNotNull(c.crtrt(), "crtrt should exist in read-write mode");
+      assertNotNull(c.searcherManager(), "searcherManager should exist in read-write mode");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Merge policy test --
+
+  @Test
+  void buildWithRetentionEnabledUsesSoftDeletesMergePolicy() throws Exception {
+    String yaml =
+        """
+        index:
+          soft_deletes:
+            retention:
+              enabled: true
+              days: 7
+        """;
+    Path idx = tempDir.resolve("retention-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      MergePolicy mp = c.writer().getConfig().getMergePolicy();
+      assertInstanceOf(
+          SoftDeletesRetentionMergePolicy.class,
+          mp,
+          "retention enabled without metrics should use SoftDeletesRetentionMergePolicy");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithRetentionDisabledUsesBaseMergePolicy() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("base-mp-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      MergePolicy mp = c.writer().getConfig().getMergePolicy();
+      assertInstanceOf(
+          TieredMergePolicy.class,
+          mp,
+          "no retention + no metrics should use base TieredMergePolicy");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- NRT configuration tests --
+
+  @Test
+  void buildReturnsConfiguredNrtValues() throws Exception {
+    String yaml =
+        """
+        index:
+          nrt:
+            target_max_stale_ms: 200
+            max_stale_ms: 5000
+        """;
+    Path idx = tempDir.resolve("nrt-cfg-idx");
+    Components c = buildComponents(yaml, idx, false, null);
+    try {
+      assertEquals(200L, c.nrtTargetMaxStaleMs(), "target stale should come from config");
+      assertEquals(5000L, c.nrtHardMaxStaleMs(), "hard stale should come from config");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithNullNrtConfigUsesDefaults() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("nrt-default-idx");
+    ResolvedConfig rc = resolveForTest(yaml);
+    Components c =
+        ComponentsFactory.build(
+            rc, null, idx, false, fieldMapper, analyzerRegistry,
+            null, null, null, new AtomicLong(), 750L, 15_000L);
+    try {
+      assertEquals(750L, c.nrtTargetMaxStaleMs(), "target stale should use default");
+      assertEquals(15_000L, c.nrtHardMaxStaleMs(), "hard stale should use default");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Merge policy with metrics tests --
+
+  @Test
+  void buildWithRetentionEnabledAndMetricsUsesTelemetryMergePolicy() throws Exception {
+    String yaml =
+        """
+        index:
+          soft_deletes:
+            retention:
+              enabled: true
+              days: 7
+        """;
+    SoftDeletesMetrics metrics =
+        new SoftDeletesMetrics() {
+          @Override
+          public void onDocsKept(long count) {}
+
+          @Override
+          public void onDocsPurged(long count) {}
+        };
+    Path idx = tempDir.resolve("retention-metrics-idx");
+    Components c = buildComponentsWithMetrics(yaml, idx, false, null, metrics);
+    try {
+      MergePolicy mp = c.writer().getConfig().getMergePolicy();
+      assertInstanceOf(
+          TelemetrySoftDeletesMergePolicy.class,
+          mp,
+          "retention enabled + metrics should use TelemetrySoftDeletesMergePolicy");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
+  void buildWithRetentionDisabledAndMetricsUsesTelemetryMergePolicy() throws Exception {
+    String yaml = "index:\n  directory: {}";
+    SoftDeletesMetrics metrics =
+        new SoftDeletesMetrics() {
+          @Override
+          public void onDocsKept(long count) {}
+
+          @Override
+          public void onDocsPurged(long count) {}
+        };
+    Path idx = tempDir.resolve("no-retention-metrics-idx");
+    Components c = buildComponentsWithMetrics(yaml, idx, false, null, metrics);
+    try {
+      MergePolicy mp = c.writer().getConfig().getMergePolicy();
+      assertInstanceOf(
+          TelemetrySoftDeletesMergePolicy.class,
+          mp,
+          "no retention + metrics should still use TelemetrySoftDeletesMergePolicy");
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  // -- Negative test --
+
+  @Test
+  void buildReadOnlyOnNonExistentIndexThrows() {
+    String yaml = "index:\n  directory: {}";
+    Path idx = tempDir.resolve("does-not-exist");
+    assertThrows(
+        IndexRuntimeIOException.class,
+        () -> buildComponents(yaml, idx, true, null),
+        "read-only open on non-existent index should throw IndexRuntimeIOException");
+  }
+
+  // -- commitMetadataEnabled wiring --
+
+  @Test
+  void buildPassesCommitMetadataEnabledThroughToComponents() throws Exception {
+    String yamlEnabled =
+        """
+        index:
+          commit_metadata:
+            enabled: true
+        """;
+    Path idx1 = tempDir.resolve("meta-enabled-idx");
+    Components c1 = buildComponents(yamlEnabled, idx1, false, null);
+    try {
+      assertTrue(c1.commitMetadataEnabled(), "commitMetadataEnabled should be true when configured");
+    } finally {
+      closeComponents(c1);
+    }
+
+    String yamlDisabled =
+        """
+        index:
+          commit:
+            meta:
+              enabled: false
+        """;
+    Path idx2 = tempDir.resolve("meta-disabled-idx");
+    Components c2 = buildComponents(yamlDisabled, idx2, false, null);
+    try {
+      assertFalse(
+          c2.commitMetadataEnabled(),
+          "commitMetadataEnabled should be false when explicitly disabled");
+    } finally {
+      closeComponents(c2);
+    }
+  }
+
+  // -- Schema compatibility tests --
+
+  /**
+   * Creates a FieldCatalogDef with a multi-valued keyword field (produces SORTED_SET docValues) and
+   * a single-valued keyword field (produces SORTED docValues). This exercises the schema
+   * compatibility check's multiValued branch.
+   */
+  private static FieldCatalogDef catalogWithMultiValuedField() {
+    return new FieldCatalogDef(
+        "schema-test",
+        List.of(
+            new FieldCatalogDef.FieldDef(
+                "doc_id", "keyword", true, true, List.of("id"), null, null, false),
+            new FieldCatalogDef.FieldDef(
+                "tags", "keyword", true, true, List.of("filter"), null, null, true),
+            new FieldCatalogDef.FieldDef(
+                "status", "keyword", true, true, List.of("filter"), null, null, false)));
+  }
+
+  @Test
+  void schemaCheckPassesForMultiValuedKeywordField() throws Exception {
+    FieldMapper mapper = new FieldMapper(catalogWithMultiValuedField());
+    Path idx = tempDir.resolve("schema-mv-idx");
+
+    // Write a document with multi-valued and single-valued keyword fields
+    try (MMapDirectory dir = new MMapDirectory(idx);
+        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+      Document doc =
+          mapper.toDocument(Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"));
+      writer.addDocument(doc);
+      writer.commit();
+    }
+
+    // Re-open and verify schema compatibility — should NOT throw
+    try (MMapDirectory dir = new MMapDirectory(idx)) {
+      assertDoesNotThrow(
+          () -> ComponentsFactory.checkFieldSchemaCompatibility(dir, idx, mapper),
+          "Multi-valued field with SORTED_SET should pass schema check");
+    }
+  }
+
+  @Test
+  void schemaCheckDetectsMismatchWhenMultiValuedChanges() throws Exception {
+    // Write with multi-valued field (produces SORTED_SET on disk)
+    FieldMapper multiMapper = new FieldMapper(catalogWithMultiValuedField());
+    Path idx = tempDir.resolve("schema-mismatch-idx");
+
+    try (MMapDirectory dir = new MMapDirectory(idx);
+        IndexWriter writer =
+            new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+      Document doc =
+          multiMapper.toDocument(
+              Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"));
+      writer.addDocument(doc);
+      writer.commit();
+    }
+
+    // Re-check with a mapper where "tags" is now single-valued (expects SORTED, finds SORTED_SET)
+    FieldCatalogDef singleCatalog =
+        new FieldCatalogDef(
+            "schema-test",
+            List.of(
+                new FieldCatalogDef.FieldDef(
+                    "doc_id", "keyword", true, true, List.of("id"), null, null, false),
+                new FieldCatalogDef.FieldDef(
+                    "tags", "keyword", true, true, List.of("filter"), null, null, false),
+                new FieldCatalogDef.FieldDef(
+                    "status", "keyword", true, true, List.of("filter"), null, null, false)));
+    FieldMapper singleMapper = new FieldMapper(singleCatalog);
+
+    try (MMapDirectory dir = new MMapDirectory(idx)) {
+      IndexRuntimeIOException ex =
+          assertThrows(
+              IndexRuntimeIOException.class,
+              () -> ComponentsFactory.checkFieldSchemaCompatibility(dir, idx, singleMapper),
+              "Should detect SORTED_SET vs SORTED mismatch for 'tags' field");
+      assertTrue(
+          ex.getMessage().contains("tags"),
+          "Error message should reference the mismatched field: " + ex.getMessage());
+    }
+  }
+
+  @Test
+  void schemaCheckDetectsMismatchWhenSingleValuedBecomesMultiValued() throws Exception {
+    // Write with single-valued field (produces SORTED on disk)
+    FieldCatalogDef singleCatalog =
+        new FieldCatalogDef(
+            "schema-test",
+            List.of(
+                new FieldCatalogDef.FieldDef(
+                    "doc_id", "keyword", true, true, List.of("id"), null, null, false),
+                new FieldCatalogDef.FieldDef(
+                    "tags", "keyword", true, true, List.of("filter"), null, null, false)));
+    FieldMapper singleMapper = new FieldMapper(singleCatalog);
+    Path idx = tempDir.resolve("schema-reverse-mismatch-idx");
+
+    try (MMapDirectory dir = new MMapDirectory(idx);
+        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+      Document doc = singleMapper.toDocument(Map.of("doc_id", "d1", "tags", "solo"));
+      writer.addDocument(doc);
+      writer.commit();
+    }
+
+    // Re-check with a mapper where "tags" is now multi-valued (expects SORTED_SET, finds SORTED)
+    FieldMapper multiMapper = new FieldMapper(catalogWithMultiValuedField());
+
+    try (MMapDirectory dir = new MMapDirectory(idx)) {
+      IndexRuntimeIOException ex =
+          assertThrows(
+              IndexRuntimeIOException.class,
+              () -> ComponentsFactory.checkFieldSchemaCompatibility(dir, idx, multiMapper),
+              "Should detect SORTED vs SORTED_SET mismatch for 'tags' field");
+      assertTrue(
+          ex.getMessage().contains("tags"),
+          "Error message should reference the mismatched field: " + ex.getMessage());
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "decision_kind" : "multi_leg",
+  "facet_source" : "absent",
+  "effective_mode" : "TEXT",
+  "legs" : "splade_only",
+  "chunk_merge_kind" : "eligible_apply",
+  "legs_detail" : {
+    "kind" : "splade_only",
+    "effective_mode_label" : "TEXT",
+    "retrieval_limit" : 20,
+    "splade_term_count" : 2
+  },
+  "facets_requested" : false,
+  "hybrid_fallback" : null,
+  "splade_skip" : null,
+  "chunk_merge_inputs_present" : true
+}

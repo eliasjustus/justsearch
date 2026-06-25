@@ -1,0 +1,24 @@
+## 358: gte-multilingual-base FP16 quality test
+dataset: scifact
+modes: [lexical, bm25_splade, full]
+embedding: true
+splade: true
+pipeline: true
+output_dir: tmp/eval-results
+
+gpu:
+  enabled: true
+  embed:
+    enabled: true
+  splade:
+    enabled: true
+  ner:
+    enabled: true
+
+backend:
+  clean: true
+
+env:
+  JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY: REINDEX
+  JUSTSEARCH_EMBED_ONNX_MODEL_PATH: D:\code\JustSearch\models\onnx\gte-multilingual-base
+  JUSTSEARCH_EMBED_GPU_MEM_MB: "3072"

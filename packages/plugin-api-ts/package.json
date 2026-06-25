@@ -1,0 +1,50 @@
+{
+  "name": "@justsearch/plugin-api",
+  "version": "1.5.1-alpha.0",
+  "description": "TypeScript SDK for authoring JustSearch plugins (V1.5 contract).",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eliasjustus/JustSearch.git",
+    "directory": "packages/plugin-api-ts"
+  },
+  "homepage": "https://github.com/eliasjustus/JustSearch/blob/main/docs/how-to/write-a-plugin.md",
+  "bugs": {
+    "url": "https://github.com/eliasjustus/JustSearch/issues"
+  },
+  "keywords": [
+    "justsearch",
+    "plugin",
+    "ses",
+    "compartment",
+    "lit",
+    "web-components"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "sync-types": "node scripts/sync-types.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run sync-types && npm run build && npm run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

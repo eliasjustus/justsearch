@@ -1,0 +1,6 @@
+{
+  "cpu": "model_fp16.onnx",
+  "gpu": "model_fp16.onnx",
+  "tokenizer": "tokenizer.json",
+  "pooling_config": "pooling_config.json"
+}

@@ -1,0 +1,11 @@
+{
+  "kind": "capability-availability-surfaces.v1",
+  "note": "Tempdoc 613 §10 — capability-availability coherence. A surface that DISPLAYS whether an AI affordance is available (its reason + remedy) must PROJECT that from the ONE authority `projectAvailability` (state/availability.ts), which words the reason/remedy from the shared `readinessNotice.CAUSE_ROWS` vocabulary. Reading raw `aiState.capabilities.*` booleans and hardcoding the wording/remedy is the fork-class (the prior CapabilityPills: 'Chat unavailable' / 'Embedding blocked' diverged from the Health map's 'The local AI model is offline'). This positive-coverage gate (scripts/ci/check-capability-availability.mjs) fails if a REGISTERED capability-availability display surface stops consuming `projectAvailability`, so a registered surface cannot silently re-fork. Honest limit (like verdict-derivation/declared-surfaces): positive coverage — it guards the registered surfaces' projection seam, NOT a brand-new unregistered fork surface (which is a discovery-step register row) nor free-text wording judgment (prose-tier per 613 §8).",
+  "authority": {
+    "file": "modules/ui-web/src/shell-v0/state/availability.ts",
+    "symbol": "projectAvailability"
+  },
+  "surfaces": [
+    "modules/ui-web/src/shell-v0/components/CapabilityMap.ts"
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "declaration-kinds-register.v1",
+  "tempdoc": "560",
+  "description": "The coverage universe for the NonEmpty<ConsumerHook> keystone (consumer-presence + runtime-witness gates). Every declaration kind is enumerated here with HOW its consumers are witnessed. The runtime-witness gate PROJECTS its coverage from this register (the 548 §5.2 / execution-surface pattern): a kind that appears in the registry snapshot but is absent here fails (unregistered-kind), and a kind declared staticCatalog=POPULATED that produces zero snapshot entries fails (missing-populated-kind). So a NEW declaration kind cannot silently escape the keystone — it must be registered here, declaring its witness channel.",
+  "witnessChannels": {
+    "AGENT_OFFERING": "Witnessed by the real AgentOperationEmitter (prompt-construction): the declared agent-loop consumer must equal what the model's tool list actually offers (bidirectional).",
+    "FE_WIRE": "Witnessed by wire-delivery: the declaration is served on its /api/registry/<kind> endpoint that the FE catalog client boots.",
+    "INLINE_ONLY": "Inline-only ConsumerDeclaring kind: NonEmpty<ConsumerHook> is UNREPRESENTABLE at construction (Phase 0.2) — a zero-consumer instance cannot be built, so no runtime witness is needed beyond construction."
+  },
+  "kinds": [
+    {
+      "kind": "operation",
+      "witnessChannel": "AGENT_OFFERING",
+      "staticCatalog": "POPULATED",
+      "note": "Core + agent-tools operation catalogs; bidirectional declared<->delivered against the emitter."
+    },
+    {
+      "kind": "resource",
+      "witnessChannel": "FE_WIRE",
+      "staticCatalog": "POPULATED",
+      "servedAt": "/api/registry/resources",
+      "note": "Surface-derived + inline consumers; served on the endpoint the FE ResourceCatalogClient boots."
+    },
+    {
+      "kind": "prompt",
+      "witnessChannel": "INLINE_ONLY",
+      "staticCatalog": "EMPTY",
+      "note": "Inline-only; NonEmpty unrepresentable. Static PromptCatalog is empty today."
+    },
+    {
+      "kind": "workflow",
+      "witnessChannel": "INLINE_ONLY",
+      "staticCatalog": "POPULATED",
+      "note": "Inline-only; NonEmpty unrepresentable. The demo workflow declares workflow-shape-runner."
+    },
+    {
+      "kind": "plugin",
+      "witnessChannel": "INLINE_ONLY",
+      "staticCatalog": "RUNTIME",
+      "note": "Inline-only; NonEmpty unrepresentable. Plugins are runtime (MCP-host / loader), not in the static snapshot."
+    },
+    {
+      "kind": "diagnostic-channel",
+      "witnessChannel": "FE_WIRE",
+      "staticCatalog": "EMPTY",
+      "servedAt": "/api/registry/diagnostic-channels"
+    },
+    {
+      "kind": "surface",
+      "witnessChannel": "FE_WIRE",
+      "staticCatalog": "EMPTY",
+      "servedAt": "/api/registry/surfaces",
+      "note": "Manifest tier; consumers are inverse (a surface consumes resources/operations). Not yet emitted into the snapshot."
+    },
+    {
+      "kind": "conversation-shape",
+      "witnessChannel": "FE_WIRE",
+      "staticCatalog": "EMPTY",
+      "servedAt": "/api/registry/shapes"
+    },
+    {
+      "kind": "intent-source",
+      "witnessChannel": "INLINE_ONLY",
+      "staticCatalog": "EMPTY",
+      "note": "Registers an intent ingress; consumed by the per-process IntentRouter."
+    }
+  ]
+}

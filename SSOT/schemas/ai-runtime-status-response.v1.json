@@ -1,0 +1,119 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "activation" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "errorCode" : {
+          "type" : [ "string", "null" ]
+        },
+        "message" : {
+          "type" : [ "string", "null" ]
+        },
+        "phase" : {
+          "type" : [ "string", "null" ]
+        },
+        "result" : {
+          "type" : [ "string", "null" ]
+        },
+        "selfTestPort" : {
+          "type" : [ "integer", "null" ]
+        },
+        "startedAtEpochMs" : {
+          "type" : "integer"
+        },
+        "state" : {
+          "type" : [ "string", "null" ]
+        },
+        "updatedAtEpochMs" : {
+          "type" : "integer"
+        },
+        "variantId" : {
+          "type" : [ "string", "null" ]
+        },
+        "vramUsedAfterBytes" : {
+          "type" : [ "integer", "null" ]
+        },
+        "vramUsedBeforeBytes" : {
+          "type" : [ "integer", "null" ]
+        },
+        "vramUsedDeltaBytes" : {
+          "type" : [ "integer", "null" ]
+        }
+      }
+    },
+    "active" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "activeVariantId" : {
+          "type" : [ "string", "null" ]
+        },
+        "effectiveVramFlags" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "gpuLayers" : {
+          "type" : [ "integer", "null" ]
+        },
+        "serverExecutablePath" : {
+          "type" : [ "string", "null" ]
+        },
+        "vramDetectionSource" : {
+          "type" : [ "string", "null" ]
+        },
+        "vramFreeBytes" : {
+          "type" : [ "integer", "null" ]
+        },
+        "vramTierDetected" : {
+          "type" : [ "string", "null" ]
+        },
+        "vramTotalBytes" : {
+          "type" : [ "integer", "null" ]
+        }
+      }
+    },
+    "installedVariants" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "exePath" : {
+            "type" : [ "string", "null" ]
+          },
+          "variantId" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    },
+    "onnxFeatures" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : [ "string", "null" ]
+          },
+          "label" : {
+            "type" : [ "string", "null" ]
+          },
+          "modelActive" : {
+            "type" : "boolean"
+          },
+          "modelPath" : {
+            "type" : [ "string", "null" ]
+          },
+          "reason" : {
+            "type" : [ "string", "null" ]
+          },
+          "status" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    }
+  }
+}

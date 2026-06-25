@@ -1,0 +1,25 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "category" : {
+      "type" : [ "string", "null" ]
+    },
+    "descriptionKey" : {
+      "$ref" : "#/$defs/I18nKey"
+    },
+    "iconHint" : {
+      "type" : [ "string", "null" ]
+    },
+    "labelKey" : {
+      "$ref" : "#/$defs/I18nKey"
+    }
+  },
+  "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+}

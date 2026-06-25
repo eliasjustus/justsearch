@@ -1,0 +1,195 @@
+import java.io.RandomAccessFile
+
+plugins {
+  `java-library`
+  `java-test-fixtures`
+  id("jvm-test-suite")
+  id("conventions.jvm-base")
+  id("conventions.mutation")  // PIT scoped to registered seams (governance/logic-seams.v1.json) — tempdoc 555
+}
+
+dependencies {
+  api(project(":modules:worker-core"))
+  api(project(":modules:adapters-lucene"))
+  api(project(":modules:ipc-common"))
+  api(project(":modules:indexing"))
+  api(project(":modules:telemetry"))
+  api(project(":modules:configuration"))
+  api(project(":modules:ort-common"))
+  api(project(":modules:reranker")) {
+    exclude(group = "com.microsoft.onnxruntime", module = "onnxruntime")
+  }
+  // Tempdoc 518 Appendix F W4.3 — shared ObservableNotifier substrate.
+  implementation(project(":modules:core-contracts"))
+  // Tempdoc 560 §4.3 — the ONE shared contribution composer (same class the Head uses). Pure JDK
+  // module (no Lucene), so the Worker reuses the four substrates instead of re-deriving them.
+  implementation(project(":modules:extension-substrate"))
+
+  api(libs.grpc.stub)
+  implementation(libs.jackson.databind)
+  implementation(libs.commonmark)
+  api(libs.slf4j.api)
+  api(libs.opentelemetry.api)
+  implementation(libs.logstash.logback.encoder)
+
+  // Lucene query parser for search orchestrator
+  api(libs.lucene.core)
+  implementation(libs.lucene.queryparser)
+  implementation(libs.lucene.memory)
+
+  // Tika for content extraction
+  implementation(libs.tika.core)
+  implementation("org.apache.pdfbox:pdfbox:3.0.6")
+  // Tempdoc 632 — exclude junrar (UnRar License, field-of-use restricted, non-OSI). RAR content
+  // extraction is dropped; Tika core still detects the RAR MIME from magic bytes (used only as a
+  // classifier at IndexingDocumentOps.java). This removes the product's only non-OSI dependency.
+  runtimeOnly(libs.tika.parsers.standard) {
+    exclude(group = "com.github.junrar", module = "junrar")
+  }
+
+  // Tempdoc 418 Phase B — Worker-side file watcher (native OS events via Methvin).
+  // Replaces the Head-side watcher in modules/app-indexing; Phase C cleanup deletes
+  // the Head-side dependency once production has soaked.
+  implementation(libs.directory.watcher)
+
+  // testFixtures: TestDocumentBuilder uses indexing types
+  testFixturesApi(project(":modules:indexing"))
+  testFixturesApi(project(":modules:worker-core"))
+
+  testImplementation("io.opentelemetry:opentelemetry-sdk-common:1.60.1")
+  testRuntimeOnly(libs.opentelemetry.sdk.testing)
+}
+
+configurations.configureEach {
+  resolutionStrategy.eachDependency {
+    if (requested.group == "com.fasterxml.jackson" && requested.name == "jackson-bom") {
+      useVersion("2.18.6")
+      because("Lock convergence for worker classpaths")
+    }
+    if (requested.group == "com.fasterxml.jackson.core" && requested.name == "jackson-core") {
+      useVersion("2.18.6")
+      because("Lock convergence for worker classpaths")
+    }
+    if (requested.group == "com.fasterxml.jackson.core" && requested.name == "jackson-databind") {
+      useVersion("2.18.6")
+      because("Lock convergence for worker classpaths")
+    }
+    if (requested.group == "com.fasterxml.jackson.core" && requested.name == "jackson-annotations") {
+      useVersion("2.21")
+      because("Jackson 3 requires jackson-annotations 2.21+ (JsonSerializeAs)")
+    }
+    if (requested.group == "com.fasterxml.jackson.dataformat" && requested.name == "jackson-dataformat-yaml") {
+      useVersion("2.18.6")
+      because("Lock convergence for worker classpaths")
+    }
+    if (requested.group == "org.slf4j" && requested.name == "slf4j-api") {
+      useVersion("2.0.17")
+      because("Lock convergence for worker classpaths")
+    }
+  }
+}
+
+// Dev hot-reload: push bytecode + signal the Worker after successful recompilation.
+// Chain: compile → HotSwapPush (updates bytecode via JDWP) → MMF signal (restarts services).
+// Only fires when JUSTSEARCH_DEV_HOTRELOAD=true and compileJava actually runs (not UP-TO-DATE).
+// Usage: JUSTSEARCH_DEV_HOTRELOAD=true ./gradlew -t :modules:worker-services:classes
+tasks.named<JavaCompile>("compileJava") {
+  // Capture paths at configuration time (configuration-cache safe — Provider values)
+  val classesOutput = destinationDirectory
+  doLast {
+    if (System.getenv("JUSTSEARCH_DEV_HOTRELOAD") != "true") return@doLast
+
+    val classesDir = classesOutput.get().asFile.absolutePath
+    val debugPort = System.getenv("JUSTSEARCH_DEV_DEBUG_PORT") ?: "5005"
+
+    // Derive project root from classes dir: .../modules/worker-services/build/classes/java/main
+    val projectRoot = File(classesDir).resolve("../../../../../..").canonicalFile
+
+    // Step 1: Push updated bytecode to the running Worker via JDWP (HotSwapPush.java).
+    val hotSwapScript = File(projectRoot, "scripts/dev/HotSwapPush.java")
+    if (hotSwapScript.exists()) {
+      val result = ProcessBuilder(
+        "java", "--add-modules", "jdk.jdi",
+        hotSwapScript.absolutePath, debugPort, classesDir
+      )
+        .directory(projectRoot)
+        .redirectErrorStream(true)
+        .start()
+      val output = result.inputStream.bufferedReader().readText().trim()
+      val exitCode = result.waitFor()
+      if (exitCode == 0) {
+        if (output.isNotBlank()) logger.lifecycle("HotSwapPush: $output")
+      } else {
+        logger.warn("HotSwapPush failed (exit $exitCode): $output")
+      }
+    } else {
+      logger.warn("HotSwapPush.java not found at ${hotSwapScript.absolutePath}, skipping bytecode push")
+    }
+
+    // Step 2: Write MMF reload signal to trigger service reconstruction.
+    val signalPath = System.getenv("JUSTSEARCH_SIGNAL_PATH")
+      ?: (System.getenv("LOCALAPPDATA")?.let { "$it/JustSearch/worker_signal.lock" })
+    if (signalPath == null) {
+      logger.warn("Cannot determine signal file path (LOCALAPPDATA not set)")
+      return@doLast
+    }
+    val signalFile = File(signalPath)
+    if (!signalFile.exists()) {
+      logger.warn("Signal file not found: $signalPath (Worker not running?)")
+      return@doLast
+    }
+    RandomAccessFile(signalFile, "rw").use {
+      it.seek(29) // MmfWorkerSignalLayoutV1.OFFSET_RELOAD_SIGNAL
+      it.writeByte(1)
+    }
+    logger.lifecycle("Hot-reload: bytecode pushed + reload signal written")
+  }
+}
+
+testing {
+  suites {
+    val test by getting(JvmTestSuite::class) {
+      useJUnitJupiter()
+      dependencies {
+        implementation(project())
+        implementation(project(":modules:ai-backend"))
+        implementation(platform(libs.junit.bom))
+        implementation(libs.junit.jupiter.api)
+        implementation("org.junit.jupiter:junit-jupiter-params:5.14.3")
+        implementation(libs.archunit.junit5)
+        implementation(libs.mockito.core)
+        implementation(libs.mockito.junit.jupiter)
+        // Tempdoc 517 — OTel SDK testing for span-topology assertions
+        // (SearchExecutorOtelTopologyTest). Mirrors the telemetry module's pattern.
+        implementation(libs.opentelemetry.sdk)
+        implementation(libs.opentelemetry.sdk.trace)
+        runtimeOnly(libs.junit.jupiter.engine)
+        runtimeOnly(libs.junit.platform.launcher)
+        // Tempdoc 417 F8: TestMetricRegistry from telemetry's testFixtures.
+        implementation(testFixtures(project(":modules:telemetry")))
+        // Phase 3b: MetricSurfaceContractTest reflectively validates surfacedAt fieldNames
+        // against API records in app-api.
+        implementation(project(":modules:app-api"))
+      }
+      targets {
+        all {
+          testTask.configure {
+            jvmArgs("-Dnet.bytebuddy.experimental=true")
+            // Tempdoc 408 Tier 2: shard worker-services tests across 2 JVM forks.
+            // worker-services:test was the slowest single-task in the profile
+            // (27s, single JVM). Tests are fork-safe: no static singleton mutation,
+            // no shared file paths (all use @TempDir), no port bindings, and the
+            // System.setProperty("justsearch.config", ...) usage is per-test with
+            // save/restore — each fork gets its own JVM properties.
+            // Each fork uses ~384 MB heap (JvmBaseConventionsPlugin default), so
+            // 2 forks = ~768 MB total per worker-services:test invocation.
+            // Empirically: 1 fork → 27.2s; 2 forks → 21.9s; 3 forks → 26.95s
+            // (3-fork JVM-startup overhead overwhelms the parallelism gain on this
+            // workload distribution). 2 forks is the local optimum.
+            maxParallelForks = 2
+          }
+        }
+      }
+    }
+  }
+}

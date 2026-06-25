@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Slice 450 §1.6 — Framework-agnostic folder-picker abstraction.
+ *
+ * In Tauri runtime: opens the native plugin-dialog directory picker.
+ * In browser runtime: returns null and the caller should fall back to
+ * a manual text input UX (the React LibraryView pattern).
+ *
+ * Lazy-imports `@tauri-apps/plugin-dialog` to avoid pulling Tauri-only
+ * code into browser bundles.
+ */
+
+import { isTauriRuntime } from './tauriRuntime';
+
+export interface PickFolderOptions {
+  title?: string;
+  /** Optional starting directory for the dialog. */
+  defaultPath?: string;
+}
+
+/**
+ * Open a native folder-picker dialog.
+ *
+ * @returns the selected absolute path, or `null` when:
+ *   - the user cancelled
+ *   - the runtime isn't Tauri (browser dev mode)
+ *   - the dialog plugin failed to load
+ */
+export async function pickFolder(
+  options: PickFolderOptions = {},
+): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  try {
+    const mod = await import('@tauri-apps/plugin-dialog');
+    const chosen = await mod.open({
+      title: options.title ?? 'Select folder',
+      multiple: false,
+      directory: true,
+      defaultPath: options.defaultPath,
+    });
+    if (Array.isArray(chosen)) return chosen[0] ?? null;
+    if (typeof chosen === 'string' && chosen.length > 0) return chosen;
+    return null;
+  } catch {
+    return null;
+  }
+}

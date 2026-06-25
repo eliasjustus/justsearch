@@ -1,0 +1,9 @@
+{
+  "$comment": "Grandfathered zero-consumer registry declarations (tempdoc 560 §5/§6 — the NonEmpty<ConsumerHook> keystone). Each exemption is {id, reason} (or a bare id string). The gate covers the Operation + Resource + Prompt + Workflow + Plugin axes; merged consumers = inline ConsumerHooks union executor-derived (Operations: AGENT->agent-loop / UI->ui-host / CLI->cli) union surface-derived (Resources: a Surface that declares the ref in consumes.resources). A NEW declaration with zero merged consumers fails the gate until a real consumer is declared or it is grandfathered here with justification. The gate flags stale exemptions so this list ratchets DOWN as real consumers land (this IS the §6 freeze-at-reserved mechanism). Tempdoc 560 Fix D retracted the unsound 'SSE_STREAM endpoint = consumer' heuristic (an endpoint is a publication capability, not proof a subscriber reads it — the 543 counting-substrate-as-consumer trap): core.indexing-jobs + core.server-capabilities now declare their real FE-bridge consumers inline; core.runtime-context has NO live subscriber and is honestly frozen-at-reserved below.",
+  "exemptions": [
+    {
+      "id": "core.runtime-context",
+      "reason": "Frozen-at-reserved: the /api/runtime-context/stream SSE endpoint is published but has NO live subscriber (verified: no FE EventSource opens it; the runtime context reaches consumers embedded in API responses per ADR-0023, not via this stream). The Resource declaration is reserved; the exemption is retracted the moment a real subscriber (a surface consumes.resources entry or an inline ConsumerHook naming the reader) lands."
+    }
+  ]
+}

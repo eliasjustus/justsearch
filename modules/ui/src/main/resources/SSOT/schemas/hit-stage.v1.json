@@ -1,0 +1,22 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "detail" : {
+      "type" : "object",
+      "additionalProperties" : {
+        "type" : "number"
+      }
+    },
+    "id" : {
+      "type" : "string",
+      "enum" : [ "query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness" ]
+    },
+    "rank" : {
+      "type" : "integer"
+    },
+    "score" : {
+      "type" : "number"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_comment": "Tempdoc 632 — the native-binary disposition acceptance ledger. The dependency-tree analogue is config/allowed-licenses.json (jk1 checkLicense); this is the native-binary equivalent. gen-notices.mjs nativeDispositionCheck reads the disposition declared on every native artifact (packaging/runtime/tesseract-bundled-libraries.v1.json rows + scripts/codegen/license-overrides.json nativeRuntimes) and FAILS the build if any artifact whose disposition is FIRING (strong-copyleft | restricted) lacks a dated acceptance here. The check is symmetric: a stale acceptance (no matching firing artifact) also fails, so a waiver cannot outlive its artifact. Each acceptance is an explicit, dated founder/legal decision — not a silent prose flag. To REMOVE a firing artifact (e.g. rebuild Tesseract without JBIG), delete its manifest row AND its acceptance here together.",
+  "acceptances": [
+    {
+      "artifact": "JBIG-KIT",
+      "disposition": "strong-copyleft",
+      "decision": "KEEP under GPL-2.0-or-later (founder decision 2026-06-23 — supersedes the earlier open 3-way: commercial license rejected as too costly for a negligible codec; full rebuild-without-JBIG deferred as an optional future purity step, not required). GPL-2.0 compliance is wired into the BINARY distribution: the full GPL-2.0 text (LICENSE-GPL-2.0.txt) + a jbigkit written source offer (NOTICE-JBIGKIT.txt) are staged into native-bin/tesseract/ next to libjbig-0.dll by modules/ui/build.gradle.kts (satisfies GPL-2.0 §1 license text + §3 written offer); the codec is dynamically linked and separately replaceable. Only the binary distribution carries the GPL codec — the public SOURCE repo never does (native-bin/ is gitignored). If the optional rebuild is later done, drop this entry + the manifest row + NOTICE-JBIGKIT.txt + LICENSE-GPL-2.0.txt + the two build.gradle.kts staging lines together.",
+      "date": "2026-06-23",
+      "ref": "tempdoc 632 — libjbig KEEP decision (compliant GPL bundling; rebuild optional/deferred)"
+    },
+    {
+      "artifact": "NVIDIA CUDA runtime (cudart, cuBLAS, cuBLAS Lt)",
+      "disposition": "restricted",
+      "decision": "CUDA Toolkit EULA (Attachment A) permits redistribution when 'accessed only by your application'. Delivered via the initial AI-brain install (AiInstallService) which downloads the model-registry cuda-runtime package from the project's release assets on a GPU hardware profile — the application initiates and consumes the runtime. Founder ACCEPTED this app-driven download as the redistribution posture (2026-06-23). [Correction: an earlier note cited an 'offline GPU-pack import' path; that pack is legacy and is NOT the live mechanism.]",
+      "date": "2026-06-23",
+      "ref": "tempdoc 632 — NVIDIA accept-and-document (founder, app-driven AI-brain download)"
+    },
+    {
+      "artifact": "NVIDIA cuDNN runtime",
+      "disposition": "restricted",
+      "decision": "cuDNN SLA — SEPARATE from the CUDA Toolkit EULA. Delivered via the same AI-brain install: the cuda-runtime package's cudnn-9-runtime-12.4.zip is downloaded from the project's release assets on a GPU profile. Founder ACCEPTED this app-driven download as the redistribution posture (2026-06-23). The separate-SLA attribution attaches to cudnn-9-runtime-12.4.zip (the artifact that actually ships cuDNN). [Correction: an earlier note cited an 'offline GPU-pack' path; that pack is legacy.]",
+      "date": "2026-06-23",
+      "ref": "tempdoc 632 — cuDNN separate SLA; accept-and-document (app-driven AI-brain download)"
+    }
+  ]
+}

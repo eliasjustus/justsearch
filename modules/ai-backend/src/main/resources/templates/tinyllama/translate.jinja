@@ -1,0 +1,16 @@
+{% set chat_messages = messages if messages is defined else [] %}
+{% if chat_messages|length > 0 %}
+{% for m in chat_messages %}
+<|{{ m.role }}|>
+{{ m.content }}</s>
+{% endfor %}
+<|assistant|>
+{% else %}
+{% if system %}
+<|system|>
+{{ system }}</s>
+{% endif -%}
+<|user|>
+{{ user }}</s>
+<|assistant|>
+{% endif %}

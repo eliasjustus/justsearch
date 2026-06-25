@@ -1,0 +1,21 @@
+{
+  "readiness_passed": false,
+  "readiness_reasons": [
+    "dense_requested_but_embedding_compat_blocked(BLOCKED_LEGACY)",
+    "dense_requested_but_embedding_coverage_low"
+  ],
+  "config_cohort_key": "90c8b818e68b009689476af7fbae27ec85d4305a93ee9a8ac79ec5829158f0b8",
+  "timeout_s": 195,
+  "concurrency": 8,
+  "retained_query_indices": [
+    1,
+    3,
+    4,
+    6,
+    7
+  ],
+  "n_dropped_contaminated": 5,
+  "n_cells": 30,
+  "cost_estimate_usd": 3.51,
+  "time_estimate_min": 6.1
+}

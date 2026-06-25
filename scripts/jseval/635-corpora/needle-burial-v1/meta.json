@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "636-needle-probe",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "en",
+    "seed": 636,
+    "hops": 1,
+    "distractor_ratio": 6,
+    "semantic": true,
+    "templated": true
+  }
+}

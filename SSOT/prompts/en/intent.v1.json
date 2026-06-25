@@ -1,0 +1,17 @@
+{
+  "$schema": "https://ssot.justsearch/v1/schemas/llm/prompt-pack.schema.json",
+  "task_id": "intent_v1",
+  "mode": "JSON",
+  "gbnf_ref": "https://ssot.justsearch/v1/artifacts/grammars/intent.v1.en.gbnf",
+  "defaults": {
+    "sampling": { "temperature": 0.0, "top_k": 1, "top_p": 1.0, "seed": 42 },
+    "gen": { "max_new_tokens": 128, "deadline_ms": 500 }
+  },
+  "system": "You convert a natural language search request into a compact JSON object named SearchIntent. Only output valid JSON that conforms to the provided schema.",
+  "user": "{query}",
+  "vars": {
+    "locale": "en-US",
+    "date_format": "yyyy-MM-dd"
+  }
+}
+

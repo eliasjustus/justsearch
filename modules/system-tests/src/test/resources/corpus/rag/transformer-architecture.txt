@@ -1,0 +1,38 @@
+The Transformer Architecture: Attention Is All You Need
+
+The Transformer architecture was introduced in 2017 by Vaswani et al. in the landmark paper
+"Attention Is All You Need" published at NeurIPS. It replaced recurrent neural networks (RNNs)
+as the dominant architecture for sequence modeling tasks.
+
+Core Components:
+1. Multi-Head Self-Attention: Instead of processing tokens sequentially like RNNs, the
+   Transformer computes attention scores between all pairs of tokens simultaneously. Each
+   attention head uses three learned projections: Query (Q), Key (K), and Value (V).
+   The attention formula is: Attention(Q,K,V) = softmax(QK^T / sqrt(d_k)) * V
+   where d_k is the dimension of the key vectors.
+
+2. Positional Encoding: Since the Transformer has no inherent notion of token order, positional
+   information is injected using sinusoidal functions. The original paper uses:
+   PE(pos, 2i) = sin(pos / 10000^(2i/d_model))
+   PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+
+3. Feed-Forward Networks: Each layer contains a position-wise feed-forward network with two
+   linear transformations and a ReLU activation: FFN(x) = max(0, xW1 + b1)W2 + b2.
+   The inner dimension is typically 4x the model dimension (e.g., 2048 for d_model=512).
+
+4. Layer Normalization: Applied before each sub-layer (pre-norm variant) or after (post-norm,
+   as in the original paper). Pre-norm training is more stable for deep models.
+
+Architecture Parameters (Original Base Model):
+- d_model: 512 (embedding dimension)
+- Number of layers: 6 encoder + 6 decoder
+- Number of attention heads: 8
+- d_ff: 2048 (feed-forward inner dimension)
+- Total parameters: approximately 65 million
+- Training data: WMT 2014 English-to-German (4.5 million sentence pairs)
+
+Notable Variants:
+- BERT (2018): Encoder-only, bidirectional, 110M parameters (base), 340M (large)
+- GPT (2018-2024): Decoder-only, autoregressive, scaled from 117M to over 1 trillion parameters
+- T5 (2019): Text-to-Text framework, encoder-decoder, treats all NLP tasks as text generation
+- Vision Transformer/ViT (2020): Applies Transformer to image patches for classification

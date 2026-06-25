@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Tempdoc 561 surface tier — the placement-keyed one-interaction-window invariant. At most ONE visible (USER-audience, RAIL/STAGE) surface may consume a core user-interaction shape, and that surface is the canonical one window; DEEPLINK surfaces route into it (exempt). The authority for the core interaction-shape set is CoreConversationShapeCatalog.CORE_USER_INTERACTION_SHAPES (Java); this gate projects it and forbids a second visible interaction surface or a second per-shape FE view.",
+  "canonicalSurface": "core.unified-chat-surface",
+  "canonicalMountTag": "jf-unified-chat-view",
+  "visiblePlacements": ["RAIL", "STAGE"],
+  "scan": {
+    "surfaceCatalog": "modules/app-observability/src/main/java/io/justsearch/app/observability/surface/CoreSurfaceCatalog.java",
+    "shapeCatalog": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreConversationShapeCatalog.java",
+    "feMirror": "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts",
+    "feRoots": ["modules/ui-web/src/shell-v0"],
+    "feExcludeSuffixes": [".test.ts", ".test.tsx"],
+    "expectedMinPopulation": 3,
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass floor: the core interaction-shape set parsed from the shape catalog must be >= this many (the size-0 case is the verdictForEmptyCoreSet hard-stop). Live count is 5 (2026-06-15); floor 3 catches a parser-breaking refactor that drops most shapes. Lower with any change that legitimately shrinks the core shape set."
+  }
+}

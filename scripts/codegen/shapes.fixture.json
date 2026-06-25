@@ -1,0 +1,1085 @@
+[
+  {
+    "id": "core.agent-run",
+    "eventSchema": [
+      {
+        "name": "session_started",
+        "fields": [
+          {
+            "name": "sessionId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "chunk",
+        "fields": [
+          {
+            "name": "text",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": [
+          {
+            "name": "text",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_call_proposed",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toolName",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "arguments",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "risk",
+            "type": "ENUM",
+            "optional": false,
+            "enumValues": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_batch_proposed",
+        "fields": [
+          {
+            "name": "calls",
+            "type": "ARRAY",
+            "optional": false,
+            "enumValues": [],
+            "elementType": "OBJECT",
+            "objectType": "ProposedCall"
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_call_pending",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toolName",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "arguments",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "risk",
+            "type": "ENUM",
+            "optional": false,
+            "enumValues": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "gateBehavior",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_call_approved",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "directive_acknowledged",
+        "fields": [
+          {
+            "name": "directiveText",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_exec_started",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toolName",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_exec_completed",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "success",
+            "type": "BOOLEAN",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "output",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "executionId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "structuredData",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": ""
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_call_rejected",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "reason",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "tool_call_virtual",
+        "fields": [
+          {
+            "name": "callId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "wireName",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "arguments",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "done",
+        "fields": [
+          {
+            "name": "finalResponse",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "iterationsUsed",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toolCallsExecuted",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "totalTokensUsed",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "sources",
+            "type": "ARRAY",
+            "optional": true,
+            "enumValues": [],
+            "elementType": "OBJECT",
+            "objectType": "AgentSource"
+          },
+          {
+            "name": "citations",
+            "type": "ARRAY",
+            "optional": true,
+            "enumValues": [],
+            "elementType": "OBJECT",
+            "objectType": "AgentSentenceCite"
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "error",
+        "fields": [
+          {
+            "name": "error",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "errorCode",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "errorClass",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "retryAction",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "retryAttempt",
+            "type": "NUMBER",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "i18nKey",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "progress",
+        "fields": [
+          {
+            "name": "phase",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "message",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "iteration",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "maxIterations",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "severity",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "budget_update",
+        "fields": [
+          {
+            "name": "phase",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "tokensConsumed",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "tokensRemaining",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "totalTokensConsumed",
+            "type": "NUMBER",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "promptTokens",
+            "type": "NUMBER",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "contextWindow",
+            "type": "NUMBER",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "budget_gate",
+        "fields": [
+          {
+            "name": "tokensNeeded",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "tokensRemaining",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "totalTokensConsumed",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "context_gate",
+        "fields": [
+          {
+            "name": "promptTokens",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "contextWindow",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "context_compacted",
+        "fields": [
+          {
+            "name": "droppedMessages",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "handoff_proposed",
+        "fields": [
+          {
+            "name": "fromAgentId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toAgentId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "reason",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "handoff_executed",
+        "fields": [
+          {
+            "name": "fromAgentId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toAgentId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "state_snapshot",
+        "fields": [
+          {
+            "name": "iteration",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "budgetRemaining",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "toolCallsExecuted",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "messageCount",
+            "type": "NUMBER",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "activeAgentId",
+            "type": "STRING",
+            "optional": false,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "trace",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "TracePayload"
+          }
+        ]
+      },
+      {
+        "name": "intent.resolution",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.summarize",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "rag.citations",
+        "fields": []
+      },
+      {
+        "name": "rag.citation_delta",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.batch-summarize",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "progress",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.hierarchical-summarize",
+    "eventSchema": [
+      {
+        "name": "progress",
+        "fields": []
+      },
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.rag-ask",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "rag.meta",
+        "fields": []
+      },
+      {
+        "name": "rag.citations",
+        "fields": []
+      },
+      {
+        "name": "rag.citation_delta",
+        "fields": []
+      },
+      {
+        "name": "rag.rewrite",
+        "fields": []
+      },
+      {
+        "name": "rag.citation_matches",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.navigate-chat",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      },
+      {
+        "name": "navigate.url_extracted",
+        "fields": []
+      },
+      {
+        "name": "navigate.url_dispatched",
+        "fields": []
+      },
+      {
+        "name": "navigate.url_rejected",
+        "fields": []
+      },
+      {
+        "name": "intent.resolution",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.free-chat",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.extract",
+    "eventSchema": [
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "reasoning_chunk",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "core.workflow-run",
+    "eventSchema": [
+      {
+        "name": "session_started",
+        "fields": []
+      },
+      {
+        "name": "workflow_started",
+        "fields": []
+      },
+      {
+        "name": "node_started",
+        "fields": []
+      },
+      {
+        "name": "chunk",
+        "fields": []
+      },
+      {
+        "name": "tool_call_pending",
+        "fields": []
+      },
+      {
+        "name": "tool_call_approved",
+        "fields": []
+      },
+      {
+        "name": "tool_call_rejected",
+        "fields": []
+      },
+      {
+        "name": "tool_exec_started",
+        "fields": []
+      },
+      {
+        "name": "tool_exec_completed",
+        "fields": []
+      },
+      {
+        "name": "node_completed",
+        "fields": []
+      },
+      {
+        "name": "done",
+        "fields": []
+      },
+      {
+        "name": "error",
+        "fields": []
+      }
+    ]
+  }
+]

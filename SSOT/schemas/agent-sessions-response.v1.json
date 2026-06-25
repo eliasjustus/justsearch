@@ -1,0 +1,58 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "sessions" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "activeAgentId" : {
+            "type" : [ "string", "null" ]
+          },
+          "iterationsUsed" : {
+            "type" : [ "integer", "null" ]
+          },
+          "preview" : {
+            "type" : [ "string", "null" ]
+          },
+          "resumable" : {
+            "type" : [ "boolean", "null" ]
+          },
+          "sessionId" : {
+            "type" : [ "string", "null" ]
+          },
+          "startedAt" : {
+            "type" : [ "string", "null" ]
+          },
+          "state" : {
+            "type" : [ "string", "null" ]
+          },
+          "terminationReason" : {
+            "type" : [ "object", "null" ],
+            "properties" : {
+              "cancelTrigger" : {
+                "type" : [ "string", "null" ]
+              },
+              "disposition" : {
+                "type" : [ "string", "null" ]
+              },
+              "errorCode" : {
+                "type" : [ "string", "null" ]
+              }
+            }
+          },
+          "toolCallsExecuted" : {
+            "type" : [ "integer", "null" ]
+          },
+          "totalTokensUsed" : {
+            "type" : [ "integer", "null" ]
+          },
+          "updatedAt" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    }
+  }
+}

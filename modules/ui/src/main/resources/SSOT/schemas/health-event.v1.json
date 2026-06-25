@@ -1,0 +1,154 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "MetricRef" : {
+      "type" : "object",
+      "properties" : {
+        "hint" : {
+          "anyOf" : [ {
+            "type" : "null"
+          }, {
+            "type" : "string",
+            "enum" : [ "SPARK", "GAUGE", "HISTOGRAM" ]
+          } ]
+        },
+        "label" : {
+          "type" : [ "string", "null" ],
+          "minLength" : 1
+        },
+        "resourceId" : {
+          "type" : "string",
+          "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+        }
+      }
+    },
+    "OperationInvocation-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "defaultArgsJson" : {
+          "type" : "string"
+        },
+        "target" : {
+          "type" : "string",
+          "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+        }
+      }
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "body" : {
+      "anyOf" : [ {
+        "type" : "object",
+        "properties" : {
+          "attributes" : {
+            "type" : "object"
+          },
+          "recovery" : {
+            "$ref" : "#/$defs/OperationInvocation-nullable"
+          },
+          "kind" : {
+            "const" : "lifecycle"
+          }
+        },
+        "required" : [ "kind" ]
+      }, {
+        "type" : "object",
+        "properties" : {
+          "lastTransitionTime" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "message" : {
+            "type" : [ "string", "null" ]
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "recovery" : {
+            "$ref" : "#/$defs/OperationInvocation-nullable"
+          },
+          "relatedMetrics" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/$defs/MetricRef"
+            }
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "TRUE", "FALSE", "UNKNOWN" ]
+          },
+          "subject" : {
+            "type" : "string"
+          },
+          "kind" : {
+            "const" : "condition"
+          }
+        },
+        "required" : [ "kind" ]
+      }, {
+        "type" : "object",
+        "properties" : {
+          "lastTransitionTime" : {
+            "type" : "string",
+            "format" : "date-time"
+          },
+          "magnitudes" : {
+            "type" : "object"
+          },
+          "message" : {
+            "type" : [ "string", "null" ]
+          },
+          "phase" : {
+            "type" : "string",
+            "enum" : [ "PENDING", "FIRING", "RESOLVED" ]
+          },
+          "recovery" : {
+            "$ref" : "#/$defs/OperationInvocation-nullable"
+          },
+          "relatedMetrics" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/$defs/MetricRef"
+            }
+          },
+          "subject" : {
+            "type" : "string"
+          },
+          "kind" : {
+            "const" : "threshold"
+          }
+        },
+        "required" : [ "kind" ]
+      } ]
+    },
+    "i18nKey" : {
+      "type" : [ "string", "null" ]
+    },
+    "id" : {
+      "type" : "string"
+    },
+    "severity" : {
+      "type" : "string",
+      "enum" : [ "INFO", "WARNING", "ERROR" ]
+    },
+    "source" : {
+      "type" : "object",
+      "properties" : {
+        "serviceInstanceId" : {
+          "type" : "string"
+        },
+        "serviceName" : {
+          "type" : "string"
+        },
+        "serviceVersion" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "timestamp" : {
+      "type" : "string",
+      "format" : "date-time"
+    }
+  }
+}

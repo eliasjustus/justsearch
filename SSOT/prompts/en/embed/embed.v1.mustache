@@ -1,0 +1,39 @@
+{
+  "template_id": "embed.v1",
+  "schema_ver": "embed_v1",
+  "default_locale": "en-US",
+  "task_id": "embed_v1",
+  "template_ver": "2025-11-18",
+  "token_budget": 512,
+  "owner": "platform",
+  "required_params": [
+    "query",
+    "locale",
+    "target_dimension",
+    "stub_vector",
+    "stub_vector_json",
+    "metadata",
+    "schema_uri"
+  ]
+}
+---
+You run the JustSearch embedding stage. Produce a normalized floating-point vector that captures
+the semantic meaning of the input query while following these rules:
+
+1. Respond with a JSON document that validates against `{{schema_uri}}`.
+2. `vector` MUST contain `{{target_dimension}}` entries and be unit length. Use high-precision decimals.
+3. `dimension` MUST equal `{{target_dimension}}`.
+4. `metadata` MUST include:
+   - `generator`: `"embed_v1"`
+   - `locale`: the BCP-47 locale inferred from the query (default `{{locale}}`)
+   - `reason_code`: snake_case summary such as `ok`, `normalized`, or `degraded`
+   - `degraded`: boolean indicating whether you reused the fallback vector
+   - `notes`: short human-readable rationale
+5. If the query is empty, unsafe, or you cannot produce a vector, emit the fallback vector
+   stored in `{{stub_vector_json}}`, set `degraded` to true, and use `reason_code` `"fallback"`.
+
+Context:
+- Locale hint: `{{locale}}`
+- Query: `{{query}}`
+
+Return JSON only. Do not emit prose, commentary, or Markdown.

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="JustSearch PMD Ruleset"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+  <description>
+    JustSearch PMD ruleset - Focus on bug prevention and thread safety.
+  </description>
+
+  <!-- Codestyle (existing) -->
+  <rule ref="category/java/codestyle.xml/UnnecessaryFullyQualifiedName"/>
+
+  <!-- Error-prone patterns -->
+  <!-- AvoidBranchingStatementAsLastInLoop removed: flags valid patterns like break-after-find and early return -->
+  <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+  <!-- CompareObjectsWithEquals removed: too many intentional identity comparisons (Thread, Throwable cause checks) -->
+  <rule ref="category/java/errorprone.xml/DoNotTerminateVM"/>
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+      <property name="allowExceptionNameRegex" value="^expected$"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/errorprone.xml/EqualsNull"/>
+  <rule ref="category/java/errorprone.xml/ImplicitSwitchFallThrough"/>
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+  <rule ref="category/java/errorprone.xml/ReturnFromFinallyBlock"/>
+  <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+  <rule ref="category/java/errorprone.xml/UselessOperationOnImmutable"/>
+
+  <!-- Multithreading -->
+  <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+  <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+  <rule ref="category/java/multithreading.xml/NonThreadSafeSingleton"/>
+
+  <!-- Security -->
+  <rule ref="category/java/security.xml/HardCodedCryptoKey"/>
+  <rule ref="category/java/security.xml/InsecureCryptoIv"/>
+
+  <!-- Best practices - unused code detection -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UnusedAssignment"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+
+  <!-- Logging hygiene: all output should go through SLF4J -->
+  <rule ref="category/java/bestpractices.xml/SystemPrintln"/>
+</ruleset>

@@ -1,0 +1,448 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.indexerworker.ner;
+
+import ai.djl.huggingface.tokenizers.Encoding;
+import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import ai.onnxruntime.OnnxTensor;
+import ai.onnxruntime.OrtException;
+import ai.onnxruntime.OrtSession;
+import io.justsearch.indexerworker.metrics.EncoderOrtRunSpans;
+import io.justsearch.ort.ModelManifest;
+import io.justsearch.ort.OrtCudaStatus;
+import io.justsearch.ort.SessionHandle;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.LongBuffer;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * ONNX Runtime wrapper for NER inference with optional GPU acceleration.
+ *
+ * <p>Supports any BERT/DistilBERT token-classification model (e.g.,
+ * Davlan/distilbert-base-multilingual-cased-ner-hrl). Auto-detects whether the model expects
+ * token_type_ids by inspecting the ONNX graph inputs. Thread-safe — ONNX sessions are shared,
+ * tensors are per-request.
+ *
+ * <p>Session lifecycle (CPU session, GPU session, GPU arbitration, teardown) is delegated to a
+ * {@link SessionHandle}. NER uses {@code gpuRetryEnabled(false)} — permanent CPU fallback on GPU
+ * failure.
+ *
+ * <p>Tempdoc 397 §14.24 FD-NER: encoder is a pure inference transformer. Constructor accepts a
+ * pre-built {@link NerShape} (input-schema facts) and {@link HuggingFaceTokenizer} (pre-loaded
+ * by the composition root). Zero filesystem I/O in the body. The {@link #buildAssembly} factory
+ * exposes the metadata-loading logic for dev-mode fallback paths that don't go through the
+ * composition root.
+ */
+public final class BertNerInference implements Closeable {
+
+  private static final Logger log = LoggerFactory.getLogger(BertNerInference.class);
+
+  // --- Session management (delegated to SessionHandle — tempdoc 397 §7.4) ---
+  private final SessionHandle sessions;
+  private final HuggingFaceTokenizer tokenizer;
+  private final int maxSequenceLength;
+  private final boolean useTokenTypeIds;
+
+  /** Raw inference output suitable for {@link BioTagDecoder#decode}. */
+  public record InferenceOutput(float[][] logits, String[] tokens, long[] wordIds) {}
+
+  // --- Per-call profiling (356->357: shared accumulator, pull model) ---
+  private final io.justsearch.indexerworker.metrics.EncoderProfileAccumulator profiler =
+      new io.justsearch.indexerworker.metrics.EncoderProfileAccumulator(
+          "tokenize", "tensor", "ort", "extract");
+  private static final int PROFILE_LOG_INTERVAL = 100;
+
+  // --- Per-ORT-call span tracer (tempdoc 400 LR2-a) ---
+  private static final Tracer ORT_TRACER = EncoderOrtRunSpans.encoderTracer("ner");
+
+  /**
+   * Tempdoc 397 §14.24 FD-NER primary constructor. All construction inputs are pre-built by
+   * the composition root (or by {@link #buildAssembly} for dev-mode fallback paths). Encoder
+   * performs zero filesystem I/O.
+   *
+   * @param sessions pre-configured session handle
+   * @param shape model-intrinsic facts ({@code maxSeqLen} + {@code needsTokenTypeIds})
+   * @param tokenizer pre-loaded DJL HuggingFace tokenizer (caller owns lifecycle)
+   */
+  public BertNerInference(
+      SessionHandle sessions, NerShape shape, HuggingFaceTokenizer tokenizer) {
+    this.sessions = sessions;
+    this.tokenizer = tokenizer;
+    this.maxSequenceLength = shape.maxSequenceLength();
+    this.useTokenTypeIds = shape.needsTokenTypeIds();
+    log.info(
+        "BertNerInference initialized: maxSeqLen={}, tokenTypeIds={}",
+        maxSequenceLength,
+        useTokenTypeIds);
+    io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
+        .registerEncoder("ner", profiler);
+  }
+
+  /**
+   * Builds a complete {@link NerAssembly} from a session handle + model directory + max
+   * sequence length. Tempdoc 397 §14.24 FD-NER: shared helper called by
+   * {@code InferenceCompositionRoot.composeNer} (variant-driven path) and by
+   * {@link NerService} fallback (dev-mode path). Loads manifest, tokenizer, and label mapping
+   * eagerly; reads input names from the session to populate {@link NerShape}.
+   *
+   * @throws OrtException if session input-name probe fails
+   * @throws UncheckedIOException if tokenizer load fails
+   */
+  public static NerAssembly buildAssembly(
+      SessionHandle sessions, Path modelDir, int maxSequenceLength) throws OrtException {
+    ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
+    Path tokenizerPath = modelDir.resolve(manifest.tokenizer());
+    HuggingFaceTokenizer tokenizer;
+    try {
+      tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to load NER tokenizer from " + tokenizerPath, e);
+    }
+    // Tempdoc 397 §14.24 FD-ProbeDeletion: probe input names via the assembler helper;
+    // SessionHandle no longer exposes inputNames().
+    // Tempdoc 374 alpha.22 Bug S: route through resolveExistingModelFile so the probe
+    // works on GPU_FULL where Install AI downloads only model_fp16.onnx (no model.onnx).
+    // Pre-alpha.22 this called resolveModelPath(_, false) which unconditionally returns
+    // manifest.cpu() = "model.onnx" — file doesn't exist on GPU_FULL → ORT_NO_SUCHFILE
+    // → composeNerRole catches → NER unavailable. Round 12 evidence: every alpha 13-21
+    // shipped this regression but rounds 7-11 used pre-staged models (which have
+    // model.onnx) so it stayed hidden. Round 12 first true-fresh-install caught it.
+    // This is the 7th encoder site to be migrated through resolveExistingModelFile —
+    // matches alpha.16 Bug C (EmbeddingFingerprint), alpha.19 Bug J-2 (OnnxModelDiscovery
+    // fp16 fallback), alpha.20 Bug L (EmbeddingFingerprint cold-restart). Migration now
+    // complete across all known encoder sites.
+    Path probePath = manifest.resolveExistingModelFile(modelDir);
+    io.justsearch.ort.OrtSessionAssembler.ProbedNames probed =
+        io.justsearch.ort.OrtSessionAssembler.probeModelNames(sessions.environment(), probePath);
+    boolean needsTokenTypeIds = probed.inputs().contains("token_type_ids");
+    NerShape shape = new NerShape(maxSequenceLength, needsTokenTypeIds);
+    BioTagDecoder.LabelMapping labelMapping = loadLabelMapping(modelDir, manifest.labelConfig());
+    return new NerAssembly(sessions, shape, tokenizer, labelMapping);
+  }
+
+  /**
+   * Loads label mapping from the manifest-declared config file's {@code id2label} field, falling
+   * back to the legacy dslim/bert-base-NER default if the config file is absent. Moved from
+   * {@link NerService} in tempdoc 397 §14.24 FD-NER so {@link #buildAssembly} can populate the
+   * {@link NerAssembly} in a single pass.
+   */
+  private static BioTagDecoder.LabelMapping loadLabelMapping(
+      Path modelDir, String labelConfigFile) {
+    Path configFile = modelDir.resolve(labelConfigFile);
+    if (!java.nio.file.Files.exists(configFile)) {
+      log.debug(
+          "No {} in NER model dir, using legacy default label mapping", labelConfigFile);
+      return BioTagDecoder.LabelMapping.bertBaseNer();
+    }
+    try {
+      JsonNode root = new ObjectMapper().readTree(configFile.toFile());
+      JsonNode id2label = root.get("id2label");
+      if (id2label == null || !id2label.isObject()) {
+        log.debug("No id2label in {}, using default label mapping", labelConfigFile);
+        return BioTagDecoder.LabelMapping.bertBaseNer();
+      }
+      Map<String, String> mapping = new HashMap<>();
+      for (var entry : id2label.properties()) {
+        mapping.put(entry.getKey(), entry.getValue().asText());
+      }
+      BioTagDecoder.LabelMapping result = BioTagDecoder.LabelMapping.fromId2Label(mapping);
+      log.info(
+          "NER label mapping loaded from {}: {} labels",
+          labelConfigFile,
+          result.id2label().length);
+      return result;
+    } catch (Exception e) {
+      log.warn("Failed to load NER label mapping from {}, using default", labelConfigFile, e);
+      return BioTagDecoder.LabelMapping.bertBaseNer();
+    }
+  }
+
+  /**
+   * Runs NER inference on a text chunk.
+   *
+   * @param text input text (should be pre-chunked to fit within maxSequenceLength)
+   * @return raw logits, token strings, and word IDs for BioTagDecoder
+   * @throws OrtException if inference fails
+   */
+  public InferenceOutput infer(String text) throws OrtException {
+    long t0 = System.nanoTime();
+    Encoding encoding = tokenizer.encode(text);
+    long[] inputIds = encoding.getIds();
+    long[] attentionMask = encoding.getAttentionMask();
+    String[] tokens = encoding.getTokens();
+    long[] wordIds = encoding.getWordIds();
+
+    // Truncate to maxSequenceLength if needed
+    int seqLen = Math.min(inputIds.length, maxSequenceLength);
+    if (seqLen < inputIds.length) {
+      inputIds = truncate(inputIds, seqLen);
+      attentionMask = truncate(attentionMask, seqLen);
+      tokens = truncateStr(tokens, seqLen);
+      wordIds = truncate(wordIds, seqLen);
+    }
+    long t1 = System.nanoTime();
+
+    long[] shape = {1, seqLen};
+
+    try (var lease = sessions.acquire()) {
+      OrtSession activeSession = lease.session();
+
+      try (OnnxTensor inputIdsTensor =
+              OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(inputIds), shape);
+          OnnxTensor attentionMaskTensor =
+              OnnxTensor.createTensor(
+                  sessions.environment(), LongBuffer.wrap(attentionMask), shape)) {
+
+        Map<String, OnnxTensor> inputs;
+        OnnxTensor tokenTypeIdsTensor = null;
+        try {
+          if (useTokenTypeIds) {
+            long[] tokenTypeIds = new long[seqLen];
+            tokenTypeIdsTensor =
+                OnnxTensor.createTensor(
+                    sessions.environment(), LongBuffer.wrap(tokenTypeIds), shape);
+            inputs =
+                Map.of(
+                    "input_ids", inputIdsTensor,
+                    "attention_mask", attentionMaskTensor,
+                    "token_type_ids", tokenTypeIdsTensor);
+          } else {
+            inputs = Map.of("input_ids", inputIdsTensor, "attention_mask", attentionMaskTensor);
+          }
+          long t2 = System.nanoTime();
+
+          // Tempdoc 400 LR2-a: per-ORT-call span. Single-doc NER path, batch=1.
+          // LR2-b: lease is already acquired at the outer try — the
+          // lease.acquire span emitted by NativeSessionHandle is parented under
+          // whatever is current at acquire time (typically enrichment.batch
+          // in backfill, or no parent elsewhere). This NER single-doc path
+          // keeps encoder.ort_run as a sibling of lease.acquire; batched path
+          // below + OnnxEmbed/SPLADE/BgeM3 achieve LR2-b's child-parent
+          // pattern via pre-acquire span start.
+          Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(ORT_TRACER, "ner", 1, seqLen);
+          ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
+          try {
+            try (Scope _ = ortSpan.makeCurrent();
+                 OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
+            long t3 = System.nanoTime();
+            // NER output shape: [1, seqLen, numLabels]
+            float[][][] output3d = (float[][][]) result.get(0).getValue();
+            float[][] logits = output3d[0]; // Remove batch dimension
+            long t4 = System.nanoTime();
+
+            // Aggregate profiling
+            profiler.addPhaseNs("tokenize", t1 - t0);
+            profiler.addPhaseNs("tensor", t2 - t1);
+            long ortElapsed = t3 - t2;
+            profiler.addPhaseNs("extract", t4 - t3);
+            profiler.recordOrtCall(ortElapsed);
+            // callCount() is approximate — concurrent threads may skip or double-fire
+            // at interval boundaries. Acceptable for periodic diagnostic logging.
+            long calls = profiler.callCount();
+            if (calls % PROFILE_LOG_INTERVAL == 0) {
+              var snap = profiler.snapshot();
+              if (snap != null) {
+                log.info(
+                    "NER per-call profile ({}calls): {}, ort=[{}], seqLen={}",
+                    calls, snap.formatAvgPhases(calls), snap.formatOrtDist(), seqLen);
+              }
+            }
+
+            return new InferenceOutput(logits, tokens, wordIds);
+            }
+          } finally {
+            ortSpan.end();
+          }
+        } finally {
+          if (tokenTypeIdsTensor != null) {
+            tokenTypeIdsTensor.close();
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Maximum NER batch size for GPU inference. NER output is tiny (batch × seqLen × 9 labels × 4
+   * bytes = 288 KB at batch=16/seq=512), so batch size is not VRAM-limited like SPLADE.
+   */
+  private static final int MAX_NER_BATCH_SIZE = 16;
+
+  /** SeqLen buckets for consistent tensor shapes — avoids ORT dynamic shape cache invalidation. */
+  private static final int[] NER_SEQ_LEN_BUCKETS = {64, 128, 256, 512};
+
+  private static int bucketSeqLen(int seqLen) {
+    for (int bucket : NER_SEQ_LEN_BUCKETS) {
+      if (seqLen <= bucket) return bucket;
+    }
+    return seqLen;
+  }
+
+  /**
+   * Runs batched NER inference on multiple text chunks. Sorts by token count, groups into
+   * sub-batches by sequence length bucket, pads to bucket boundary (not max-in-batch) to minimize
+   * padding waste while keeping consistent tensor shapes for ORT caching.
+   *
+   * @param texts list of text chunks (each should be pre-chunked to fit within maxSequenceLength)
+   * @return list of inference outputs, one per input text (original order preserved)
+   * @throws OrtException if inference fails
+   */
+  public List<InferenceOutput> inferBatch(List<String> texts) throws OrtException {
+    if (texts.isEmpty()) {
+      return List.of();
+    }
+    if (texts.size() == 1) {
+      return List.of(infer(texts.get(0)));
+    }
+
+    // Tokenize all texts
+    int n = texts.size();
+    long[][] allInputIds = new long[n][];
+    long[][] allAttentionMask = new long[n][];
+    String[][] allTokens = new String[n][];
+    long[][] allWordIds = new long[n][];
+    int[] tokenCounts = new int[n];
+
+    for (int i = 0; i < n; i++) {
+      Encoding enc = tokenizer.encode(texts.get(i));
+      int seqLen = Math.min(enc.getIds().length, maxSequenceLength);
+      allInputIds[i] = truncate(enc.getIds(), seqLen);
+      allAttentionMask[i] = truncate(enc.getAttentionMask(), seqLen);
+      allTokens[i] = truncateStr(enc.getTokens(), seqLen);
+      allWordIds[i] = truncate(enc.getWordIds(), seqLen);
+      tokenCounts[i] = seqLen;
+    }
+
+    // Sort by token count (ascending) to group similar-length sequences
+    Integer[] sortedIndices = new Integer[n];
+    for (int i = 0; i < n; i++) sortedIndices[i] = i;
+    java.util.Arrays.sort(sortedIndices, java.util.Comparator.comparingInt(i -> tokenCounts[i]));
+
+    // Process in sub-batches, grouped by bucket
+    InferenceOutput[] resultsByIdx = new InferenceOutput[n];
+    int pos = 0;
+    while (pos < n) {
+      int batchStart = pos;
+      int batchBucket = bucketSeqLen(tokenCounts[sortedIndices[pos]]);
+
+      // Collect docs that fit in this bucket (up to MAX_NER_BATCH_SIZE)
+      while (pos < n
+          && (pos - batchStart) < MAX_NER_BATCH_SIZE
+          && bucketSeqLen(tokenCounts[sortedIndices[pos]]) == batchBucket) {
+        pos++;
+      }
+      int batchSize = pos - batchStart;
+      int padLen = batchBucket;
+
+      // Flatten into batched tensors padded to bucket boundary
+      long[] flatIds = new long[batchSize * padLen];
+      long[] flatMask = new long[batchSize * padLen];
+      long[] flatTypes = useTokenTypeIds ? new long[batchSize * padLen] : null;
+      for (int j = 0; j < batchSize; j++) {
+        int origIdx = sortedIndices[batchStart + j];
+        int srcLen = allInputIds[origIdx].length;
+        System.arraycopy(allInputIds[origIdx], 0, flatIds, j * padLen, srcLen);
+        System.arraycopy(allAttentionMask[origIdx], 0, flatMask, j * padLen, srcLen);
+      }
+
+      long[] shape = {batchSize, padLen};
+
+      try (var lease = sessions.acquire()) {
+        OrtSession activeSession = lease.session();
+
+        try (OnnxTensor inputIdsTensor =
+                OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(flatIds), shape);
+            OnnxTensor attentionMaskTensor =
+                OnnxTensor.createTensor(
+                    sessions.environment(), LongBuffer.wrap(flatMask), shape)) {
+
+          Map<String, OnnxTensor> inputs = new HashMap<>();
+          inputs.put("input_ids", inputIdsTensor);
+          inputs.put("attention_mask", attentionMaskTensor);
+          OnnxTensor tokenTypeIdsTensor = null;
+          try {
+            if (useTokenTypeIds && flatTypes != null) {
+              tokenTypeIdsTensor =
+                  OnnxTensor.createTensor(
+                      sessions.environment(), LongBuffer.wrap(flatTypes), shape);
+              inputs.put("token_type_ids", tokenTypeIdsTensor);
+            }
+
+            // Tempdoc 400 LR2-a/LR2-b: per-ORT-call span for batched NER path.
+            // Same sibling-to-lease note as single-doc path above — NER path
+            // has the lease as an outer try-with-resources that predates this
+            // site's refactoring.
+            Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(
+                ORT_TRACER, "ner", batchSize, padLen);
+            ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
+            try {
+              try (Scope _ = ortSpan.makeCurrent();
+                   OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
+                float[][][] output3d = (float[][][]) result.get(0).getValue();
+                for (int j = 0; j < batchSize; j++) {
+                  int origIdx = sortedIndices[batchStart + j];
+                  int srcLen = allInputIds[origIdx].length;
+                  float[][] logits = new float[srcLen][];
+                  System.arraycopy(output3d[j], 0, logits, 0, srcLen);
+                  resultsByIdx[origIdx] =
+                      new InferenceOutput(logits, allTokens[origIdx], allWordIds[origIdx]);
+                }
+              }
+            } finally {
+              ortSpan.end();
+            }
+          } finally {
+            if (tokenTypeIdsTensor != null) {
+              tokenTypeIdsTensor.close();
+            }
+          }
+        }
+      }
+    }
+
+    return java.util.Arrays.asList(resultsByIdx);
+  }
+
+  /** Returns true if GPU is configured and available (for callers to decide batch vs per-doc). */
+  public boolean isGpuAvailable() {
+    return sessions.isGpuAvailable();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Observability (delegated to SessionHandle)
+  // ---------------------------------------------------------------------------
+
+  /** Returns the current ORT CUDA status for observability. */
+  public OrtCudaStatus getOrtCudaStatus() {
+    return sessions.status();
+  }
+
+  private static long[] truncate(long[] arr, int len) {
+    long[] result = new long[len];
+    System.arraycopy(arr, 0, result, 0, len);
+    return result;
+  }
+
+  private static String[] truncateStr(String[] arr, int len) {
+    String[] result = new String[len];
+    System.arraycopy(arr, 0, result, 0, len);
+    return result;
+  }
+
+  @Override
+  public void close() {
+    sessions.close();
+    tokenizer.close();
+  }
+}

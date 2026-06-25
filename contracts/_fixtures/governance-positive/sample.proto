@@ -1,0 +1,16 @@
+// Self-test fixture: governance-positive.
+// Slice 3a-1-8f §A.17 + Phase 4.
+//
+// Mutation: optional field added; classification declares additive-optional;
+// VERSION patch-bumped. Expected verdict: pass (declared-additive).
+syntax = "proto3";
+
+package justsearch.fixtures.gov_positive;
+
+option java_package = "io.justsearch.fixtures.gov_positive";
+
+message SampleMessage {
+  string id = 1;
+  optional string description = 2;
+  optional int32 added_optional_field = 3;
+}

@@ -1,0 +1,21 @@
+# 343 Phase 2.2: EnronQA with chunk merge DISABLED for A/B comparison
+dataset: mixed/enron-qa
+modes: [lexical, bm25_splade]
+splade: true
+output_dir: tmp/eval-results
+
+gpu:
+  enabled: true
+  embed:
+    enabled: true
+  splade:
+    enabled: true
+  ner:
+    enabled: true
+
+# BM25-dom CC weights (matching enron-qa-final-A production defaults)
+# Do NOT set CC weights — let them default to BM25-dom (0.60/0.20/0.20)
+env:
+  JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY: REINDEX
+  # 343 Phase 2: Disable chunk-aware merge for A/B comparison
+  JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED: "false"

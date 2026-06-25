@@ -1,0 +1,482 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Title: justsearch_search_pipeline_annotated_v2 Pages: 1 -->
+<svg width="1983pt" height="1281pt"
+ viewBox="0.00 0.00 1983.00 1280.72" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 1276.72)">
+<title>justsearch_search_pipeline_annotated_v2</title>
+<polygon fill="white" stroke="transparent" points="-4,4 -4,-1276.72 1979,-1276.72 1979,4 -4,4"/>
+<g id="clust1" class="cluster">
+<title>cluster_ingestion</title>
+<path fill="none" stroke="#4f86a3" stroke-width="1.2" d="M20,-428C20,-428 636,-428 636,-428 642,-428 648,-434 648,-440 648,-440 648,-1252.72 648,-1252.72 648,-1258.72 642,-1264.72 636,-1264.72 636,-1264.72 20,-1264.72 20,-1264.72 14,-1264.72 8,-1258.72 8,-1252.72 8,-1252.72 8,-440 8,-440 8,-434 14,-428 20,-428"/>
+<text text-anchor="middle" x="328" y="-1251.12" font-family="Helvetica,sans-Serif" font-size="12.00">Ingestion Time (Body / Worker)</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_head</title>
+<path fill="none" stroke="#5f9f5f" stroke-width="1.2" d="M684,-218C684,-218 1040,-218 1040,-218 1046,-218 1052,-224 1052,-230 1052,-230 1052,-1169.36 1052,-1169.36 1052,-1175.36 1046,-1181.36 1040,-1181.36 1040,-1181.36 684,-1181.36 684,-1181.36 678,-1181.36 672,-1175.36 672,-1169.36 672,-1169.36 672,-230 672,-230 672,-224 678,-218 684,-218"/>
+<text text-anchor="middle" x="862" y="-1167.76" font-family="Helvetica,sans-Serif" font-size="12.00">Query Time — Head (Main Process)</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_worker</title>
+<path fill="none" stroke="#b07f3a" stroke-width="1.2" d="M1072,-8C1072,-8 1693,-8 1693,-8 1699,-8 1705,-14 1705,-20 1705,-20 1705,-1068.36 1705,-1068.36 1705,-1074.36 1699,-1080.36 1693,-1080.36 1693,-1080.36 1072,-1080.36 1072,-1080.36 1066,-1080.36 1060,-1074.36 1060,-1068.36 1060,-1068.36 1060,-20 1060,-20 1060,-14 1066,-8 1072,-8"/>
+<text text-anchor="middle" x="1382.5" y="-1066.76" font-family="Helvetica,sans-Serif" font-size="12.00">Query Time — Worker (Body Process)</text>
+</g>
+<!-- ANCH_ING -->
+<!-- ANCH_HEAD -->
+<!-- ANCH_ING&#45;&gt;ANCH_HEAD -->
+<!-- A -->
+<g id="node4" class="node">
+<title>A</title>
+<path fill="#ffffff" stroke="#444444" d="M593.5,-1170C593.5,-1170 524.5,-1170 524.5,-1170 518.5,-1170 512.5,-1164 512.5,-1158 512.5,-1158 512.5,-1146 512.5,-1146 512.5,-1140 518.5,-1134 524.5,-1134 524.5,-1134 593.5,-1134 593.5,-1134 599.5,-1134 605.5,-1140 605.5,-1146 605.5,-1146 605.5,-1158 605.5,-1158 605.5,-1164 599.5,-1170 593.5,-1170"/>
+<text text-anchor="middle" x="559" y="-1149.2" font-family="Helvetica,sans-Serif" font-size="11.00">File Discovery</text>
+</g>
+<!-- ANCH_ING&#45;&gt;A -->
+<!-- ANCH_WORK -->
+<!-- ANCH_HEAD&#45;&gt;ANCH_WORK -->
+<!-- Q1 -->
+<g id="node15" class="node">
+<title>Q1</title>
+<path fill="#ffffff" stroke="#444444" d="M890,-1069C890,-1069 834,-1069 834,-1069 828,-1069 822,-1063 822,-1057 822,-1057 822,-1045 822,-1045 822,-1039 828,-1033 834,-1033 834,-1033 890,-1033 890,-1033 896,-1033 902,-1039 902,-1045 902,-1045 902,-1057 902,-1057 902,-1063 896,-1069 890,-1069"/>
+<text text-anchor="middle" x="862" y="-1048.2" font-family="Helvetica,sans-Serif" font-size="11.00">User Query</text>
+</g>
+<!-- ANCH_HEAD&#45;&gt;Q1 -->
+<!-- W1 -->
+<g id="node24" class="node">
+<title>W1</title>
+<path fill="#ffffff" stroke="#444444" d="M1407,-938C1407,-938 1337,-938 1337,-938 1331,-938 1325,-932 1325,-926 1325,-926 1325,-914 1325,-914 1325,-908 1331,-902 1337,-902 1337,-902 1407,-902 1407,-902 1413,-902 1419,-908 1419,-914 1419,-914 1419,-926 1419,-926 1419,-932 1413,-938 1407,-938"/>
+<text text-anchor="middle" x="1372" y="-917.2" font-family="Helvetica,sans-Serif" font-size="11.00">gRPC Request</text>
+</g>
+<!-- ANCH_WORK&#45;&gt;W1 -->
+<!-- LEGEND -->
+<g id="node35" class="node">
+<title>LEGEND</title>
+<polygon fill="#f7f7f7" stroke="#888888" points="1969,-968 1713,-968 1713,-872 1975,-872 1975,-962 1969,-968"/>
+<polyline fill="none" stroke="#888888" points="1969,-968 1969,-962 "/>
+<polyline fill="none" stroke="#888888" points="1975,-962 1969,-962 "/>
+<text text-anchor="middle" x="1844" y="-956" font-family="Helvetica,sans-Serif" font-size="10.00">Legend / Constraints</text>
+<text text-anchor="middle" x="1844" y="-945" font-family="Helvetica,sans-Serif" font-size="10.00">• Retrieval legs: BM25 | Dense KNN | SPLADE</text>
+<text text-anchor="middle" x="1844" y="-934" font-family="Helvetica,sans-Serif" font-size="10.00">• Fusion: RRF default; CC alternative</text>
+<text text-anchor="middle" x="1844" y="-923" font-family="Helvetica,sans-Serif" font-size="10.00">• Reranking: LambdaMART → Cross-Encoder (cascade)</text>
+<text text-anchor="middle" x="1844" y="-912" font-family="Helvetica,sans-Serif" font-size="10.00">• Pipeline control:</text>
+<text text-anchor="middle" x="1844" y="-901" font-family="Helvetica,sans-Serif" font-size="10.00">  - PipelineConfig flags (not mode enum)</text>
+<text text-anchor="middle" x="1844" y="-890" font-family="Helvetica,sans-Serif" font-size="10.00">  - Expansion: gated by expansionEnabled flag</text>
+<text text-anchor="middle" x="1844" y="-879" font-family="Helvetica,sans-Serif" font-size="10.00">  - Stemming fallback then fuzzy (not both)</text>
+</g>
+<!-- ANCH_WORK&#45;&gt;LEGEND -->
+<!-- B -->
+<g id="node5" class="node">
+<title>B</title>
+<path fill="#ffffff" stroke="#444444" d="M605.5,-1069C605.5,-1069 474.5,-1069 474.5,-1069 468.5,-1069 462.5,-1063 462.5,-1057 462.5,-1057 462.5,-1045 462.5,-1045 462.5,-1039 468.5,-1033 474.5,-1033 474.5,-1033 605.5,-1033 605.5,-1033 611.5,-1033 617.5,-1039 617.5,-1045 617.5,-1045 617.5,-1057 617.5,-1057 617.5,-1063 611.5,-1069 605.5,-1069"/>
+<text text-anchor="middle" x="540" y="-1048.2" font-family="Helvetica,sans-Serif" font-size="11.00">Content Extraction (Tika)</text>
+</g>
+<!-- A&#45;&gt;B -->
+<g id="edge3" class="edge">
+<title>A&#45;&gt;B</title>
+<path fill="none" stroke="#444444" d="M559,-1133.94C559,-1133.94 559,-1077.24 559,-1077.24"/>
+<polygon fill="#444444" stroke="#444444" points="561.8,-1077.24 559,-1069.24 556.2,-1077.24 561.8,-1077.24"/>
+</g>
+<!-- C -->
+<g id="node6" class="node">
+<title>C</title>
+<path fill="#ffffff" stroke="#444444" d="M628,-938C628,-938 408,-938 408,-938 402,-938 396,-932 396,-926 396,-926 396,-914 396,-914 396,-908 402,-902 408,-902 408,-902 628,-902 628,-902 634,-902 640,-908 640,-914 640,-914 640,-926 640,-926 640,-932 634,-938 628,-938"/>
+<text text-anchor="middle" x="518" y="-923.2" font-family="Helvetica,sans-Serif" font-size="11.00">Text Analysis (ICU Tokenizer)</text>
+<text text-anchor="middle" x="518" y="-911.2" font-family="Helvetica,sans-Serif" font-size="11.00">ICUTokenizer → NFC → lower → synonyms</text>
+</g>
+<!-- B&#45;&gt;C -->
+<g id="edge4" class="edge">
+<title>B&#45;&gt;C</title>
+<path fill="none" stroke="#444444" d="M540,-1032.79C540,-1032.79 540,-946.06 540,-946.06"/>
+<polygon fill="#444444" stroke="#444444" points="542.8,-946.06 540,-938.06 537.2,-946.06 542.8,-946.06"/>
+</g>
+<!-- D -->
+<g id="node7" class="node">
+<title>D</title>
+<path fill="#ffffff" stroke="#444444" d="M390.5,-807C390.5,-807 219.5,-807 219.5,-807 213.5,-807 207.5,-801 207.5,-795 207.5,-795 207.5,-775 207.5,-775 207.5,-769 213.5,-763 219.5,-763 219.5,-763 390.5,-763 390.5,-763 396.5,-763 402.5,-769 402.5,-775 402.5,-775 402.5,-795 402.5,-795 402.5,-801 396.5,-807 390.5,-807"/>
+<text text-anchor="middle" x="305" y="-794.2" font-family="Helvetica,sans-Serif" font-size="11.00">Chunking</text>
+<text text-anchor="middle" x="305" y="-782.2" font-family="Helvetica,sans-Serif" font-size="11.00">&gt;2000 chars → ~500 tok chunks</text>
+<text text-anchor="middle" x="305" y="-770.2" font-family="Helvetica,sans-Serif" font-size="11.00">50&#45;tok overlap; parent_doc_id</text>
+</g>
+<!-- C&#45;&gt;D -->
+<g id="edge5" class="edge">
+<title>C&#45;&gt;D</title>
+<path fill="none" stroke="#444444" d="M414.75,-901.79C414.75,-866.23 414.75,-791 414.75,-791 414.75,-791 410.59,-791 410.59,-791"/>
+<polygon fill="#444444" stroke="#444444" points="410.59,-788.2 402.59,-791 410.59,-793.8 410.59,-788.2"/>
+</g>
+<!-- E -->
+<g id="node8" class="node">
+<title>E</title>
+<path fill="#ffffff" stroke="#444444" d="M627.5,-803C627.5,-803 454.5,-803 454.5,-803 448.5,-803 442.5,-797 442.5,-791 442.5,-791 442.5,-779 442.5,-779 442.5,-773 448.5,-767 454.5,-767 454.5,-767 627.5,-767 627.5,-767 633.5,-767 639.5,-773 639.5,-779 639.5,-779 639.5,-791 639.5,-791 639.5,-797 633.5,-803 627.5,-803"/>
+<text text-anchor="middle" x="541" y="-788.2" font-family="Helvetica,sans-Serif" font-size="11.00">BM25 Indexing (Lucene)</text>
+<text text-anchor="middle" x="541" y="-776.2" font-family="Helvetica,sans-Serif" font-size="11.00">content analyzed; preview ~4KB</text>
+</g>
+<!-- C&#45;&gt;E -->
+<g id="edge6" class="edge">
+<title>C&#45;&gt;E</title>
+<path fill="none" stroke="#444444" d="M541,-901.79C541,-901.79 541,-811.35 541,-811.35"/>
+<polygon fill="#444444" stroke="#444444" points="543.8,-811.35 541,-803.35 538.2,-811.35 543.8,-811.35"/>
+</g>
+<!-- F -->
+<g id="node9" class="node">
+<title>F</title>
+<path fill="#ffffff" stroke="#444444" d="M206.5,-698C206.5,-698 27.5,-698 27.5,-698 21.5,-698 15.5,-692 15.5,-686 15.5,-686 15.5,-666 15.5,-666 15.5,-660 21.5,-654 27.5,-654 27.5,-654 206.5,-654 206.5,-654 212.5,-654 218.5,-660 218.5,-666 218.5,-666 218.5,-686 218.5,-686 218.5,-692 212.5,-698 206.5,-698"/>
+<text text-anchor="middle" x="117" y="-685.2" font-family="Helvetica,sans-Serif" font-size="11.00">Dense Embedding (nomic&#45;embed)</text>
+<text text-anchor="middle" x="117" y="-673.2" font-family="Helvetica,sans-Serif" font-size="11.00">nomic&#45;embed&#45;text&#45;v1.5; 768&#45;d</text>
+<text text-anchor="middle" x="117" y="-661.2" font-family="Helvetica,sans-Serif" font-size="11.00">Q8_0 GGUF (llama.cpp)</text>
+</g>
+<!-- D&#45;&gt;F -->
+<g id="edge7" class="edge">
+<title>D&#45;&gt;F</title>
+<path fill="none" stroke="#444444" d="M213,-762.94C213,-762.94 213,-706.02 213,-706.02"/>
+<polygon fill="#444444" stroke="#444444" points="215.8,-706.02 213,-698.02 210.2,-706.03 215.8,-706.02"/>
+</g>
+<!-- G -->
+<g id="node10" class="node">
+<title>G</title>
+<path fill="#ffffff" stroke="#444444" d="M415,-698C415,-698 271,-698 271,-698 265,-698 259,-692 259,-686 259,-686 259,-666 259,-666 259,-660 265,-654 271,-654 271,-654 415,-654 415,-654 421,-654 427,-660 427,-666 427,-666 427,-686 427,-686 427,-692 421,-698 415,-698"/>
+<text text-anchor="middle" x="343" y="-685.2" font-family="Helvetica,sans-Serif" font-size="11.00">SPLADE Encoding</text>
+<text text-anchor="middle" x="343" y="-673.2" font-family="Helvetica,sans-Serif" font-size="11.00">SPLADE&#45;v3 (BERT&#45;base)</text>
+<text text-anchor="middle" x="343" y="-661.2" font-family="Helvetica,sans-Serif" font-size="11.00">256 tokens; sparse weights</text>
+</g>
+<!-- D&#45;&gt;G -->
+<g id="edge8" class="edge">
+<title>D&#45;&gt;G</title>
+<path fill="none" stroke="#444444" d="M330.75,-762.94C330.75,-762.94 330.75,-706.02 330.75,-706.02"/>
+<polygon fill="#444444" stroke="#444444" points="333.55,-706.02 330.75,-698.02 327.95,-706.03 333.55,-706.02"/>
+</g>
+<!-- H -->
+<g id="node11" class="node">
+<title>H</title>
+<path fill="#ffffff" stroke="#444444" d="M585.5,-585C585.5,-585 474.5,-585 474.5,-585 468.5,-585 462.5,-579 462.5,-573 462.5,-573 462.5,-561 462.5,-561 462.5,-555 468.5,-549 474.5,-549 474.5,-549 585.5,-549 585.5,-549 591.5,-549 597.5,-555 597.5,-561 597.5,-561 597.5,-573 597.5,-573 597.5,-579 591.5,-585 585.5,-585"/>
+<text text-anchor="middle" x="530" y="-564.2" font-family="Helvetica,sans-Serif" font-size="11.00">Chunk BM25 Indexing</text>
+</g>
+<!-- D&#45;&gt;H -->
+<g id="edge9" class="edge">
+<title>D&#45;&gt;H</title>
+<path fill="none" stroke="#444444" d="M402.68,-779C421.11,-779 434.75,-779 434.75,-779 434.75,-779 434.75,-567 434.75,-567 434.75,-567 454.3,-567 454.3,-567"/>
+<polygon fill="#444444" stroke="#444444" points="454.3,-569.8 462.3,-567 454.3,-564.2 454.3,-569.8"/>
+</g>
+<!-- K -->
+<g id="node14" class="node">
+<title>K</title>
+<path fill="#ffffff" stroke="#444444" d="M512,-480C512,-480 350,-480 350,-480 344,-480 338,-474 338,-468 338,-468 338,-448 338,-448 338,-442 344,-436 350,-436 350,-436 512,-436 512,-436 518,-436 524,-442 524,-448 524,-448 524,-468 524,-468 524,-474 518,-480 512,-480"/>
+<text text-anchor="middle" x="431" y="-467.2" font-family="Helvetica,sans-Serif" font-size="11.00">Commit to Lucene</text>
+<text text-anchor="middle" x="431" y="-455.2" font-family="Helvetica,sans-Serif" font-size="11.00">&gt;10s | &gt;1000 docs | shutdown</text>
+<text text-anchor="middle" x="431" y="-443.2" font-family="Helvetica,sans-Serif" font-size="11.00">NRT refresh</text>
+</g>
+<!-- E&#45;&gt;K -->
+<g id="edge12" class="edge">
+<title>E&#45;&gt;K</title>
+<path fill="none" stroke="#444444" d="M452.5,-766.95C452.5,-766.95 452.5,-488.2 452.5,-488.2"/>
+<polygon fill="#444444" stroke="#444444" points="455.3,-488.2 452.5,-480.2 449.7,-488.2 455.3,-488.2"/>
+</g>
+<!-- I -->
+<g id="node12" class="node">
+<title>I</title>
+<path fill="#ffffff" stroke="#444444" d="M190,-589C190,-589 28,-589 28,-589 22,-589 16,-583 16,-577 16,-577 16,-557 16,-557 16,-551 22,-545 28,-545 28,-545 190,-545 190,-545 196,-545 202,-551 202,-557 202,-557 202,-577 202,-577 202,-583 196,-589 190,-589"/>
+<text text-anchor="middle" x="109" y="-576.2" font-family="Helvetica,sans-Serif" font-size="11.00">HNSW Vector Indexing</text>
+<text text-anchor="middle" x="109" y="-564.2" font-family="Helvetica,sans-Serif" font-size="11.00">M=16; efC=200</text>
+<text text-anchor="middle" x="109" y="-552.2" font-family="Helvetica,sans-Serif" font-size="11.00">Int8 optional (~75% storage↓)</text>
+</g>
+<!-- F&#45;&gt;I -->
+<g id="edge10" class="edge">
+<title>F&#45;&gt;I</title>
+<path fill="none" stroke="#444444" d="M109,-653.94C109,-653.94 109,-597.02 109,-597.02"/>
+<polygon fill="#444444" stroke="#444444" points="111.8,-597.02 109,-589.02 106.2,-597.03 111.8,-597.02"/>
+</g>
+<!-- J -->
+<g id="node13" class="node">
+<title>J</title>
+<path fill="#ffffff" stroke="#444444" d="M410,-585C410,-585 254,-585 254,-585 248,-585 242,-579 242,-573 242,-573 242,-561 242,-561 242,-555 248,-549 254,-549 254,-549 410,-549 410,-549 416,-549 422,-555 422,-561 422,-561 422,-573 422,-573 422,-579 416,-585 410,-585"/>
+<text text-anchor="middle" x="332" y="-564.2" font-family="Helvetica,sans-Serif" font-size="11.00">SPLADE FeatureField Indexing</text>
+</g>
+<!-- G&#45;&gt;J -->
+<g id="edge11" class="edge">
+<title>G&#45;&gt;J</title>
+<path fill="none" stroke="#444444" d="M340.5,-653.94C340.5,-653.94 340.5,-593.06 340.5,-593.06"/>
+<polygon fill="#444444" stroke="#444444" points="343.3,-593.06 340.5,-585.06 337.7,-593.06 343.3,-593.06"/>
+</g>
+<!-- H&#45;&gt;K -->
+<g id="edge13" class="edge">
+<title>H&#45;&gt;K</title>
+<path fill="none" stroke="#444444" d="M493.25,-548.51C493.25,-548.51 493.25,-488.36 493.25,-488.36"/>
+<polygon fill="#444444" stroke="#444444" points="496.05,-488.36 493.25,-480.36 490.45,-488.36 496.05,-488.36"/>
+</g>
+<!-- I&#45;&gt;K -->
+<g id="edge14" class="edge">
+<title>I&#45;&gt;K</title>
+<path fill="none" stroke="#444444" d="M109,-544.94C109,-513.09 109,-458 109,-458 109,-458 329.86,-458 329.86,-458"/>
+<polygon fill="#444444" stroke="#444444" points="329.86,-460.8 337.86,-458 329.86,-455.2 329.86,-460.8"/>
+</g>
+<!-- J&#45;&gt;K -->
+<g id="edge15" class="edge">
+<title>J&#45;&gt;K</title>
+<path fill="none" stroke="#444444" d="M380,-548.51C380,-548.51 380,-488.36 380,-488.36"/>
+<polygon fill="#444444" stroke="#444444" points="382.8,-488.36 380,-480.36 377.2,-488.36 382.8,-488.36"/>
+</g>
+<!-- Q2 -->
+<g id="node16" class="node">
+<title>Q2</title>
+<path fill="#ffffff" stroke="#444444" d="M963,-942C963,-942 761,-942 761,-942 755,-942 749,-936 749,-930 749,-930 749,-910 749,-910 749,-904 755,-898 761,-898 761,-898 963,-898 963,-898 969,-898 975,-904 975,-910 975,-910 975,-930 975,-930 975,-936 969,-942 963,-942"/>
+<text text-anchor="middle" x="862" y="-929.2" font-family="Helvetica,sans-Serif" font-size="11.00">Pipeline Config Resolution</text>
+<text text-anchor="middle" x="862" y="-917.2" font-family="Helvetica,sans-Serif" font-size="11.00">TEXT / VECTOR / HYBRID / SPLADE</text>
+<text text-anchor="middle" x="862" y="-905.2" font-family="Helvetica,sans-Serif" font-size="11.00">flags: sparse/dense/splade/CE/expand</text>
+</g>
+<!-- Q1&#45;&gt;Q2 -->
+<g id="edge17" class="edge">
+<title>Q1&#45;&gt;Q2</title>
+<path fill="none" stroke="#444444" d="M862,-1032.79C862,-1032.79 862,-950.45 862,-950.45"/>
+<polygon fill="#444444" stroke="#444444" points="864.8,-950.45 862,-942.45 859.2,-950.45 864.8,-950.45"/>
+</g>
+<!-- Q3 -->
+<g id="node17" class="node">
+<title>Q3</title>
+<path fill="#ffffff" stroke="#444444" d="M888,-807C888,-807 692,-807 692,-807 686,-807 680,-801 680,-795 680,-795 680,-775 680,-775 680,-769 686,-763 692,-763 692,-763 888,-763 888,-763 894,-763 900,-769 900,-775 900,-775 900,-795 900,-795 900,-801 894,-807 888,-807"/>
+<text text-anchor="middle" x="790" y="-794.2" font-family="Helvetica,sans-Serif" font-size="11.00">LLM Query Expansion (async)</text>
+<text text-anchor="middle" x="790" y="-782.2" font-family="Helvetica,sans-Serif" font-size="11.00">~1500ms budget; gated by expansionEnabled</text>
+<text text-anchor="middle" x="790" y="-770.2" font-family="Helvetica,sans-Serif" font-size="11.00">timeout → base results</text>
+</g>
+<!-- Q2&#45;&gt;Q3 -->
+<g id="edge18" class="edge">
+<title>Q2&#45;&gt;Q3</title>
+<path fill="none" stroke="#444444" d="M824.5,-897.71C824.5,-897.71 824.5,-815.33 824.5,-815.33"/>
+<polygon fill="#444444" stroke="#444444" points="827.3,-815.33 824.5,-807.33 821.7,-815.33 827.3,-815.33"/>
+</g>
+<!-- Q4 -->
+<g id="node18" class="node">
+<title>Q4</title>
+<path fill="#ffffff" stroke="#444444" d="M1031.5,-803C1031.5,-803 952.5,-803 952.5,-803 946.5,-803 940.5,-797 940.5,-791 940.5,-791 940.5,-779 940.5,-779 940.5,-773 946.5,-767 952.5,-767 952.5,-767 1031.5,-767 1031.5,-767 1037.5,-767 1043.5,-773 1043.5,-779 1043.5,-779 1043.5,-791 1043.5,-791 1043.5,-797 1037.5,-803 1031.5,-803"/>
+<text text-anchor="middle" x="992" y="-782.2" font-family="Helvetica,sans-Serif" font-size="11.00">gRPC to Worker</text>
+</g>
+<!-- Q2&#45;&gt;Q4 -->
+<g id="edge19" class="edge">
+<title>Q2&#45;&gt;Q4</title>
+<path fill="none" stroke="#444444" d="M957.75,-897.71C957.75,-897.71 957.75,-811 957.75,-811"/>
+<polygon fill="#444444" stroke="#444444" points="960.55,-811 957.75,-803 954.95,-811 960.55,-811"/>
+</g>
+<!-- Q5 -->
+<g id="node19" class="node">
+<title>Q5</title>
+<path fill="#ffffff" stroke="#444444" d="M869,-694C869,-694 711,-694 711,-694 705,-694 699,-688 699,-682 699,-682 699,-670 699,-670 699,-664 705,-658 711,-658 711,-658 869,-658 869,-658 875,-658 881,-664 881,-670 881,-670 881,-682 881,-682 881,-688 875,-694 869,-694"/>
+<text text-anchor="middle" x="790" y="-673.2" font-family="Helvetica,sans-Serif" font-size="11.00">Expansion Merge + Re&#45;search</text>
+</g>
+<!-- Q3&#45;&gt;Q5 -->
+<g id="edge20" class="edge">
+<title>Q3&#45;&gt;Q5</title>
+<path fill="none" stroke="#444444" d="M790,-762.94C790,-762.94 790,-702.06 790,-702.06"/>
+<polygon fill="#444444" stroke="#444444" points="792.8,-702.06 790,-694.06 787.2,-702.06 792.8,-702.06"/>
+</g>
+<!-- Q4&#45;&gt;W1 -->
+<g id="edge39" class="edge">
+<title>Q4&#45;&gt;W1</title>
+<path fill="none" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,2" d="M1009.25,-803.21C1009.25,-840.06 1009.25,-920 1009.25,-920 1009.25,-920 1316.95,-920 1316.95,-920"/>
+<polygon fill="#666666" stroke="#666666" stroke-width="1.2" points="1316.95,-922.8 1324.95,-920 1316.95,-917.2 1316.95,-922.8"/>
+<text text-anchor="middle" x="1083.2" y="-923.2" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#666666">request</text>
+</g>
+<!-- Q12 -->
+<g id="node20" class="node">
+<title>Q12</title>
+<path fill="#ffffff" stroke="#444444" d="M828,-585C828,-585 752,-585 752,-585 746,-585 740,-579 740,-573 740,-573 740,-561 740,-561 740,-555 746,-549 752,-549 752,-549 828,-549 828,-549 834,-549 840,-555 840,-561 840,-561 840,-573 840,-573 840,-579 834,-585 828,-585"/>
+<text text-anchor="middle" x="790" y="-564.2" font-family="Helvetica,sans-Serif" font-size="11.00">Worker Results</text>
+</g>
+<!-- Q5&#45;&gt;Q12 -->
+<g id="edge21" class="edge">
+<title>Q5&#45;&gt;Q12</title>
+<path fill="none" stroke="#444444" d="M790,-657.51C790,-657.51 790,-593.22 790,-593.22"/>
+<polygon fill="#444444" stroke="#444444" points="792.8,-593.22 790,-585.22 787.2,-593.22 792.8,-593.22"/>
+</g>
+<!-- Q13 -->
+<g id="node21" class="node">
+<title>Q13</title>
+<path fill="#ffffff" stroke="#444444" d="M884,-480C884,-480 696,-480 696,-480 690,-480 684,-474 684,-468 684,-468 684,-448 684,-448 684,-442 690,-436 696,-436 696,-436 884,-436 884,-436 890,-436 896,-442 896,-448 896,-448 896,-468 896,-468 896,-474 890,-480 884,-480"/>
+<text text-anchor="middle" x="790" y="-467.2" font-family="Helvetica,sans-Serif" font-size="11.00">LambdaMART Reranking</text>
+<text text-anchor="middle" x="790" y="-455.2" font-family="Helvetica,sans-Serif" font-size="11.00">2 features (sparse + vector debug)</text>
+<text text-anchor="middle" x="790" y="-443.2" font-family="Helvetica,sans-Serif" font-size="11.00">currently quality caveat</text>
+</g>
+<!-- Q12&#45;&gt;Q13 -->
+<g id="edge22" class="edge">
+<title>Q12&#45;&gt;Q13</title>
+<path fill="none" stroke="#444444" d="M790,-548.51C790,-548.51 790,-488.36 790,-488.36"/>
+<polygon fill="#444444" stroke="#444444" points="792.8,-488.36 790,-480.36 787.2,-488.36 792.8,-488.36"/>
+</g>
+<!-- Q14 -->
+<g id="node22" class="node">
+<title>Q14</title>
+<path fill="#ffffff" stroke="#444444" d="M855,-371C855,-371 725,-371 725,-371 719,-371 713,-365 713,-359 713,-359 713,-339 713,-339 713,-333 719,-327 725,-327 725,-327 855,-327 855,-327 861,-327 867,-333 867,-339 867,-339 867,-359 867,-359 867,-365 861,-371 855,-371"/>
+<text text-anchor="middle" x="790" y="-358.2" font-family="Helvetica,sans-Serif" font-size="11.00">Cross&#45;Encoder Reranking</text>
+<text text-anchor="middle" x="790" y="-346.2" font-family="Helvetica,sans-Serif" font-size="11.00">MiniLM&#45;L6&#45;v2 (ONNX)</text>
+<text text-anchor="middle" x="790" y="-334.2" font-family="Helvetica,sans-Serif" font-size="11.00">deadline&#45;budgeted skip</text>
+</g>
+<!-- Q13&#45;&gt;Q14 -->
+<g id="edge23" class="edge">
+<title>Q13&#45;&gt;Q14</title>
+<path fill="none" stroke="#444444" d="M790,-435.94C790,-435.94 790,-379.02 790,-379.02"/>
+<polygon fill="#444444" stroke="#444444" points="792.8,-379.02 790,-371.02 787.2,-379.03 792.8,-379.02"/>
+</g>
+<!-- Q15 -->
+<g id="node23" class="node">
+<title>Q15</title>
+<path fill="#ffffff" stroke="#444444" d="M880.5,-262C880.5,-262 699.5,-262 699.5,-262 693.5,-262 687.5,-256 687.5,-250 687.5,-250 687.5,-238 687.5,-238 687.5,-232 693.5,-226 699.5,-226 699.5,-226 880.5,-226 880.5,-226 886.5,-226 892.5,-232 892.5,-238 892.5,-238 892.5,-250 892.5,-250 892.5,-256 886.5,-262 880.5,-262"/>
+<text text-anchor="middle" x="790" y="-247.2" font-family="Helvetica,sans-Serif" font-size="11.00">Result Trim + Response Assembly</text>
+<text text-anchor="middle" x="790" y="-235.2" font-family="Helvetica,sans-Serif" font-size="11.00">trim to limit + provenance</text>
+</g>
+<!-- Q14&#45;&gt;Q15 -->
+<g id="edge24" class="edge">
+<title>Q14&#45;&gt;Q15</title>
+<path fill="none" stroke="#444444" d="M790,-326.99C790,-326.99 790,-270.14 790,-270.14"/>
+<polygon fill="#444444" stroke="#444444" points="792.8,-270.14 790,-262.14 787.2,-270.14 792.8,-270.14"/>
+</g>
+<!-- W2 -->
+<g id="node25" class="node">
+<title>W2</title>
+<path fill="#ffffff" stroke="#444444" d="M1449.5,-807C1449.5,-807 1294.5,-807 1294.5,-807 1288.5,-807 1282.5,-801 1282.5,-795 1282.5,-795 1282.5,-775 1282.5,-775 1282.5,-769 1288.5,-763 1294.5,-763 1294.5,-763 1449.5,-763 1449.5,-763 1455.5,-763 1461.5,-769 1461.5,-775 1461.5,-775 1461.5,-795 1461.5,-795 1461.5,-801 1455.5,-807 1449.5,-807"/>
+<text text-anchor="middle" x="1372" y="-794.2" font-family="Helvetica,sans-Serif" font-size="11.00">QPP Computation</text>
+<text text-anchor="middle" x="1372" y="-782.2" font-family="Helvetica,sans-Serif" font-size="11.00">maxIdf / avgIctf / queryScope</text>
+<text text-anchor="middle" x="1372" y="-770.2" font-family="Helvetica,sans-Serif" font-size="11.00">computed; currently unused</text>
+</g>
+<!-- W1&#45;&gt;W2 -->
+<g id="edge26" class="edge">
+<title>W1&#45;&gt;W2</title>
+<path fill="none" stroke="#444444" d="M1372,-901.79C1372,-901.79 1372,-815.4 1372,-815.4"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-815.4 1372,-807.4 1369.2,-815.4 1374.8,-815.4"/>
+</g>
+<!-- W3 -->
+<g id="node26" class="node">
+<title>W3</title>
+<path fill="#ffffff" stroke="#444444" d="M1458,-694C1458,-694 1286,-694 1286,-694 1280,-694 1274,-688 1274,-682 1274,-682 1274,-670 1274,-670 1274,-664 1280,-658 1286,-658 1286,-658 1458,-658 1458,-658 1464,-658 1470,-664 1470,-670 1470,-670 1470,-682 1470,-682 1470,-688 1464,-694 1458,-694"/>
+<text text-anchor="middle" x="1372" y="-673.2" font-family="Helvetica,sans-Serif" font-size="11.00">Filter Parsing + Entity Expansion</text>
+</g>
+<!-- W2&#45;&gt;W3 -->
+<g id="edge27" class="edge">
+<title>W2&#45;&gt;W3</title>
+<path fill="none" stroke="#444444" d="M1372,-762.94C1372,-762.94 1372,-702.06 1372,-702.06"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-702.06 1372,-694.06 1369.2,-702.06 1374.8,-702.06"/>
+</g>
+<!-- W4 -->
+<g id="node27" class="node">
+<title>W4</title>
+<path fill="#ffffff" stroke="#444444" d="M1440,-585C1440,-585 1304,-585 1304,-585 1298,-585 1292,-579 1292,-573 1292,-573 1292,-561 1292,-561 1292,-555 1298,-549 1304,-549 1304,-549 1440,-549 1440,-549 1446,-549 1452,-555 1452,-561 1452,-561 1452,-573 1452,-573 1452,-579 1446,-585 1440,-585"/>
+<text text-anchor="middle" x="1372" y="-564.2" font-family="Helvetica,sans-Serif" font-size="11.00">Staged Retrieval Dispatch</text>
+</g>
+<!-- W3&#45;&gt;W4 -->
+<g id="edge28" class="edge">
+<title>W3&#45;&gt;W4</title>
+<path fill="none" stroke="#444444" d="M1372,-657.51C1372,-657.51 1372,-593.22 1372,-593.22"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-593.22 1372,-585.22 1369.2,-593.22 1374.8,-593.22"/>
+</g>
+<!-- W5 -->
+<g id="node28" class="node">
+<title>W5</title>
+<path fill="#ffffff" stroke="#444444" d="M1224,-480C1224,-480 1080,-480 1080,-480 1074,-480 1068,-474 1068,-468 1068,-468 1068,-448 1068,-448 1068,-442 1074,-436 1080,-436 1080,-436 1224,-436 1224,-436 1230,-436 1236,-442 1236,-448 1236,-448 1236,-468 1236,-468 1236,-474 1230,-480 1224,-480"/>
+<text text-anchor="middle" x="1152" y="-467.2" font-family="Helvetica,sans-Serif" font-size="11.00">BM25 Search</text>
+<text text-anchor="middle" x="1152" y="-455.2" font-family="Helvetica,sans-Serif" font-size="11.00">k1=0.9; b=0.4</text>
+<text text-anchor="middle" x="1152" y="-443.2" font-family="Helvetica,sans-Serif" font-size="11.00">SIMPLE: last&#45;term prefix ≥3</text>
+</g>
+<!-- W4&#45;&gt;W5 -->
+<g id="edge29" class="edge">
+<title>W4&#45;&gt;W5</title>
+<path fill="none" stroke="#444444" d="M1291.95,-561C1229.05,-561 1152,-561 1152,-561 1152,-561 1152,-488.1 1152,-488.1"/>
+<polygon fill="#444444" stroke="#444444" points="1154.8,-488.1 1152,-480.1 1149.2,-488.1 1154.8,-488.1"/>
+</g>
+<!-- W6 -->
+<g id="node29" class="node">
+<title>W6</title>
+<path fill="#ffffff" stroke="#444444" d="M1455.5,-480C1455.5,-480 1288.5,-480 1288.5,-480 1282.5,-480 1276.5,-474 1276.5,-468 1276.5,-468 1276.5,-448 1276.5,-448 1276.5,-442 1282.5,-436 1288.5,-436 1288.5,-436 1455.5,-436 1455.5,-436 1461.5,-436 1467.5,-442 1467.5,-448 1467.5,-448 1467.5,-468 1467.5,-468 1467.5,-474 1461.5,-480 1455.5,-480"/>
+<text text-anchor="middle" x="1372" y="-467.2" font-family="Helvetica,sans-Serif" font-size="11.00">Dense KNN Search</text>
+<text text-anchor="middle" x="1372" y="-455.2" font-family="Helvetica,sans-Serif" font-size="11.00">KnnFloatVectorQuery</text>
+<text text-anchor="middle" x="1372" y="-443.2" font-family="Helvetica,sans-Serif" font-size="11.00">vector or chunk_vector; ef=100</text>
+</g>
+<!-- W4&#45;&gt;W6 -->
+<g id="edge30" class="edge">
+<title>W4&#45;&gt;W6</title>
+<path fill="none" stroke="#444444" d="M1372,-548.51C1372,-548.51 1372,-488.36 1372,-488.36"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-488.36 1372,-480.36 1369.2,-488.36 1374.8,-488.36"/>
+</g>
+<!-- W7 -->
+<g id="node30" class="node">
+<title>W7</title>
+<path fill="#ffffff" stroke="#444444" d="M1684.5,-480C1684.5,-480 1519.5,-480 1519.5,-480 1513.5,-480 1507.5,-474 1507.5,-468 1507.5,-468 1507.5,-448 1507.5,-448 1507.5,-442 1513.5,-436 1519.5,-436 1519.5,-436 1684.5,-436 1684.5,-436 1690.5,-436 1696.5,-442 1696.5,-448 1696.5,-448 1696.5,-468 1696.5,-468 1696.5,-474 1690.5,-480 1684.5,-480"/>
+<text text-anchor="middle" x="1602" y="-467.2" font-family="Helvetica,sans-Serif" font-size="11.00">SPLADE Search</text>
+<text text-anchor="middle" x="1602" y="-455.2" font-family="Helvetica,sans-Serif" font-size="11.00">FeatureField query</text>
+<text text-anchor="middle" x="1602" y="-443.2" font-family="Helvetica,sans-Serif" font-size="11.00">optional IDF&#45;weighted encoding</text>
+</g>
+<!-- W4&#45;&gt;W7 -->
+<g id="edge31" class="edge">
+<title>W4&#45;&gt;W7</title>
+<path fill="none" stroke="#444444" d="M1452.12,-567C1518.5,-567 1602,-567 1602,-567 1602,-567 1602,-488.06 1602,-488.06"/>
+<polygon fill="#444444" stroke="#444444" points="1604.8,-488.06 1602,-480.06 1599.2,-488.06 1604.8,-488.06"/>
+</g>
+<!-- W8 -->
+<g id="node31" class="node">
+<title>W8</title>
+<path fill="#ffffff" stroke="#444444" d="M1467.5,-371C1467.5,-371 1276.5,-371 1276.5,-371 1270.5,-371 1264.5,-365 1264.5,-359 1264.5,-359 1264.5,-339 1264.5,-339 1264.5,-333 1270.5,-327 1276.5,-327 1276.5,-327 1467.5,-327 1467.5,-327 1473.5,-327 1479.5,-333 1479.5,-339 1479.5,-339 1479.5,-359 1479.5,-359 1479.5,-365 1473.5,-371 1467.5,-371"/>
+<text text-anchor="middle" x="1372" y="-358.2" font-family="Helvetica,sans-Serif" font-size="11.00">RRF / CC Fusion</text>
+<text text-anchor="middle" x="1372" y="-346.2" font-family="Helvetica,sans-Serif" font-size="11.00">RRF: K=60; vecWeight=0.75</text>
+<text text-anchor="middle" x="1372" y="-334.2" font-family="Helvetica,sans-Serif" font-size="11.00">CC: min&#45;max normalized alternative</text>
+</g>
+<!-- W5&#45;&gt;W8 -->
+<g id="edge32" class="edge">
+<title>W5&#45;&gt;W8</title>
+<path fill="none" stroke="#444444" d="M1236.28,-458C1254.92,-458 1269.25,-458 1269.25,-458 1269.25,-458 1269.25,-379.06 1269.25,-379.06"/>
+<polygon fill="#444444" stroke="#444444" points="1272.05,-379.06 1269.25,-371.06 1266.45,-379.06 1272.05,-379.06"/>
+</g>
+<!-- W6&#45;&gt;W8 -->
+<g id="edge33" class="edge">
+<title>W6&#45;&gt;W8</title>
+<path fill="none" stroke="#444444" d="M1372,-435.94C1372,-435.94 1372,-379.02 1372,-379.02"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-379.02 1372,-371.02 1369.2,-379.03 1374.8,-379.02"/>
+</g>
+<!-- W7&#45;&gt;W8 -->
+<g id="edge34" class="edge">
+<title>W7&#45;&gt;W8</title>
+<path fill="none" stroke="#444444" d="M1507.19,-458C1488.61,-458 1474.75,-458 1474.75,-458 1474.75,-458 1474.75,-379.06 1474.75,-379.06"/>
+<polygon fill="#444444" stroke="#444444" points="1477.55,-379.06 1474.75,-371.06 1471.95,-379.06 1477.55,-379.06"/>
+</g>
+<!-- W9 -->
+<g id="node32" class="node">
+<title>W9</title>
+<path fill="#ffffff" stroke="#444444" d="M1457,-262C1457,-262 1287,-262 1287,-262 1281,-262 1275,-256 1275,-250 1275,-250 1275,-238 1275,-238 1275,-232 1281,-226 1287,-226 1287,-226 1457,-226 1457,-226 1463,-226 1469,-232 1469,-238 1469,-238 1469,-250 1469,-250 1469,-256 1463,-262 1457,-262"/>
+<text text-anchor="middle" x="1372" y="-247.2" font-family="Helvetica,sans-Serif" font-size="11.00">Fuzzy Correction (zero&#45;hit retry)</text>
+<text text-anchor="middle" x="1372" y="-235.2" font-family="Helvetica,sans-Serif" font-size="11.00">only when zero hits</text>
+</g>
+<!-- W8&#45;&gt;W9 -->
+<g id="edge35" class="edge">
+<title>W8&#45;&gt;W9</title>
+<path fill="none" stroke="#444444" d="M1372,-326.99C1372,-326.99 1372,-270.14 1372,-270.14"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-270.14 1372,-262.14 1369.2,-270.14 1374.8,-270.14"/>
+</g>
+<!-- W10 -->
+<g id="node33" class="node">
+<title>W10</title>
+<path fill="#ffffff" stroke="#444444" d="M1474,-161C1474,-161 1270,-161 1270,-161 1264,-161 1258,-155 1258,-149 1258,-149 1258,-137 1258,-137 1258,-131 1264,-125 1270,-125 1270,-125 1474,-125 1474,-125 1480,-125 1486,-131 1486,-137 1486,-137 1486,-149 1486,-149 1486,-155 1480,-161 1474,-161"/>
+<text text-anchor="middle" x="1372" y="-140.2" font-family="Helvetica,sans-Serif" font-size="11.00">Chunk&#45;Aware Merge + Parent Collapse</text>
+</g>
+<!-- W9&#45;&gt;W10 -->
+<g id="edge36" class="edge">
+<title>W9&#45;&gt;W10</title>
+<path fill="none" stroke="#444444" d="M1372,-225.94C1372,-225.94 1372,-169.24 1372,-169.24"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-169.24 1372,-161.24 1369.2,-169.24 1374.8,-169.24"/>
+</g>
+<!-- W11 -->
+<g id="node34" class="node">
+<title>W11</title>
+<path fill="#ffffff" stroke="#444444" d="M1470.5,-60C1470.5,-60 1273.5,-60 1273.5,-60 1267.5,-60 1261.5,-54 1261.5,-48 1261.5,-48 1261.5,-28 1261.5,-28 1261.5,-22 1267.5,-16 1273.5,-16 1273.5,-16 1470.5,-16 1470.5,-16 1476.5,-16 1482.5,-22 1482.5,-28 1482.5,-28 1482.5,-48 1482.5,-48 1482.5,-54 1476.5,-60 1470.5,-60"/>
+<text text-anchor="middle" x="1372" y="-47.2" font-family="Helvetica,sans-Serif" font-size="11.00">Match Spans + Excerpts + Facets</text>
+<text text-anchor="middle" x="1372" y="-35.2" font-family="Helvetica,sans-Serif" font-size="11.00">snippets + spans; facets page&#45;1 only</text>
+<text text-anchor="middle" x="1372" y="-23.2" font-family="Helvetica,sans-Serif" font-size="11.00">entity canonical merge</text>
+</g>
+<!-- W10&#45;&gt;W11 -->
+<g id="edge37" class="edge">
+<title>W10&#45;&gt;W11</title>
+<path fill="none" stroke="#444444" d="M1372,-124.71C1372,-124.71 1372,-68.08 1372,-68.08"/>
+<polygon fill="#444444" stroke="#444444" points="1374.8,-68.08 1372,-60.08 1369.2,-68.08 1374.8,-68.08"/>
+</g>
+<!-- W11&#45;&gt;Q12 -->
+<g id="edge40" class="edge">
+<title>W11&#45;&gt;Q12</title>
+<path fill="none" stroke="#666666" stroke-width="1.2" stroke-dasharray="5,2" d="M1261.32,-37C1149.14,-37 992,-37 992,-37 992,-37 992,-573 992,-573 992,-573 848.19,-573 848.19,-573"/>
+<polygon fill="#666666" stroke="#666666" stroke-width="1.2" points="848.19,-570.2 840.19,-573 848.19,-575.8 848.19,-570.2"/>
+<text text-anchor="middle" x="973" y="-245.44" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#666666">results</text>
+</g>
+</g>
+</svg>

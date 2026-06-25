@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+  <!-- Exclude generated code (protobuf, gRPC stubs) -->
+  <Match>
+    <Source name="~.*[\\/]build[\\/]generated[\\/].*"/>
+  </Match>
+  <!-- Exclude test classes -->
+  <Match>
+    <Class name="~.*Test$"/>
+  </Match>
+  <Match>
+    <Class name="~.*Tests$"/>
+  </Match>
+  <!-- Exclude test fixtures -->
+  <Match>
+    <Package name="~.*\.testfixtures\..*"/>
+  </Match>
+</FindBugsFilter>

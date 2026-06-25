@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/domain/result.schema.json",
+  "title": "Search Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hits"],
+  "properties": {
+    "hits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Hit" }
+    },
+    "facets": {
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    },
+    "cursor": { "$ref": "#/$defs/Cursor" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "Hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["doc_id", "score"],
+      "properties": {
+        "doc_id": { "type": "string" },
+        "score": { "type": "number" },
+        "highlights": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "Cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "token"],
+      "properties": {
+        "mode": { "type": "string" },
+        "token": { "type": "string" },
+        "expiresAtEpochMs": {
+          "anyOf": [
+            { "type": "integer" },
+            { "type": "null" }
+          ]
+        },
+        "extras": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
+
+

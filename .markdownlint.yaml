@@ -1,0 +1,27 @@
+default: true
+MD013: false       # line-length: disabled (hundreds of existing violations, low CI value)
+MD025: { front_matter_title: false }   # ignore FM title; enforce single H1 in content
+MD041: true        # first line should be a top-level heading
+MD040: true        # fenced code blocks should have a language tag
+MD031: true        # fenced code blocks should be surrounded by blank lines
+MD046: { style: fenced }
+
+# Explicitly disable other noisy rules for Week-0
+MD001: false
+MD004: false   # ul-style (mix of asterisk/dash in existing docs)
+MD005: false   # list-indent (1 violation in existing docs)
+MD007: false   # ul-indent (conflicts with existing doc style)
+MD012: false   # no-multiple-blanks (cosmetic, many existing violations)
+MD022: false
+MD024: false
+MD026: false   # no-trailing-punctuation (2 violations in existing docs)
+MD029: false
+MD030: false   # list-marker-space (conflicts with existing doc style)
+MD032: false   # blanks-around-lists (conflicts with existing doc style)
+MD033: false
+MD036: false
+MD055: false   # table-pipe-style (conflicts with existing doc style)
+MD056: false
+MD058: false   # blanks-around-tables (conflicts with existing doc style)
+MD059: false   # table-column-count (conflicts with some existing tables)
+MD060: false   # table-column-style (conflicts with existing doc style)

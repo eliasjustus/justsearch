@@ -1,0 +1,24 @@
+{
+  "note": "Tempdoc 594 Move 2 (rung-Gate backstop) — a DeclaredAdaptiveItem chip that asserts a runtime/build FACT (a dimension / accelerator / precision token) MUST use a `fact`-ref projected by the ONE Display-value authority (projectFact, modules/ui-web/src/shell-v0/display/facts.ts), NOT a baked `label` literal. The structural close is Move 1b (the factual form carries a fact-ref, so a wrong literal is unrepresentable); this gate is the backstop that catches an author who hand-types a fact-shaped literal in a chip declaration. Decorative labels (matching no fact-shape) pass untouched — the rule is not 'no static labels', it is 'a static label may not STATE a runtime fact' (594 §4 Move 2 / §9.3).",
+  "scope": [
+    "modules/ui-web/src/shell-v0/themes/builtinPresentations.ts",
+    "modules/ui-web/src/shell-v0/demo/presentation-demo.ts"
+  ],
+  "factShapes": [
+    { "id": "dimension", "pattern": "\\b\\d+-?d\\b", "flags": "i", "why": "an embedding/vector dimension (e.g. 768-d) — derive from core.embed.dim" },
+    { "id": "accelerator-cuda", "pattern": "\\bcuda ?\\d+\\b", "flags": "i", "why": "a CUDA accelerator version (e.g. cuda12) — derive from core.gpu.accel" },
+    { "id": "accelerator-rocm", "pattern": "\\brocm\\b", "flags": "i", "why": "an accelerator family — derive from core.gpu.accel" },
+    { "id": "precision-float", "pattern": "\\bfloat ?(16|32)\\b", "flags": "i", "why": "a vector precision (e.g. Float32) — derive from core.vector.precision" },
+    { "id": "precision-fp", "pattern": "\\bfp ?(16|32)\\b", "flags": "i", "why": "a vector precision (e.g. fp16) — derive from core.vector.precision" },
+    { "id": "precision-int8", "pattern": "\\bint8\\b", "flags": "i", "why": "a vector precision (int8) — derive from core.vector.precision" }
+  ],
+  "factCatalog": "modules/ui-web/src/shell-v0/display/facts.ts",
+  "factIds": [
+    "core.embed.dim",
+    "core.gpu.accel",
+    "core.splade",
+    "core.ner",
+    "core.reranker",
+    "core.vector.precision"
+  ]
+}

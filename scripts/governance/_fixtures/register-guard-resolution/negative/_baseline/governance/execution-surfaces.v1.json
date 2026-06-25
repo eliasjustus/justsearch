@@ -1,0 +1,8 @@
+{
+  "$comment": "Baseline (prior) state for the negative fixture (tempdoc 576 §5). downgraded-consumer here carries a REAL test: guard; the live negative register weakens it to exempt: — a strength decrease the shared detectBaselineTamper flags as a silent guard downgrade. (dangling-projection / bare-self-source are present in both so they are not themselves downgrades.)",
+  "surfaces": [
+    { "id": "dangling-projection", "kind": "projection", "guard": "test:DoesNotExistConformanceTest" },
+    { "id": "bare-self-source", "kind": "source", "guard": "self" },
+    { "id": "downgraded-consumer", "kind": "consumer", "guard": "test:FooConformanceTest" }
+  ]
+}

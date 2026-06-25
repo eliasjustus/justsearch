@@ -1,0 +1,24 @@
+{
+  "kind": "justsearch-stress-suite-policy.v1",
+  "version": 1,
+  "modules": [
+    {
+      "modulePath": "modules/ort-common",
+      "gradleTask": ":modules:ort-common:test",
+      "owner": "inference runtime",
+      "reason": "NativeSessionHandle concurrency and lifecycle stress coverage",
+      "expectedStressTests": [
+        "modules/ort-common/src/test/java/io/justsearch/ort/NativeSessionHandleConcurrentStressTest.java"
+      ]
+    },
+    {
+      "modulePath": "modules/adapters-lucene",
+      "gradleTask": ":modules:adapters-lucene:test",
+      "owner": "Lucene runtime lifecycle",
+      "reason": "Phase-typed Lucene runtime holder-swap and drain stress coverage",
+      "expectedStressTests": [
+        "modules/adapters-lucene/src/test/java/io/justsearch/adapters/lucene/runtime/LifecycleStressTest.java"
+      ]
+    }
+  ]
+}

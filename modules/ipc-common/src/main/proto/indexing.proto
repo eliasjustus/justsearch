@@ -1,0 +1,1514 @@
+syntax = "proto3";
+
+package io.justsearch.ipc;
+
+option java_multiple_files = true;
+option java_package = "io.justsearch.ipc";
+
+// --- Search Service ---
+
+// Search mode determines which algorithm is used
+enum SearchMode {
+  SEARCH_MODE_TEXT = 0;    // BM25 text search (default)
+  SEARCH_MODE_VECTOR = 1;  // KNN vector similarity search
+  SEARCH_MODE_HYBRID = 2;  // Combined BM25 + KNN with RRF fusion
+  SEARCH_MODE_SPLADE = 3;  // Standalone SPLADE sparse retrieval (no dense fusion)
+}
+
+// Sort mode determines ordering for TEXT search results.
+// NOTE: VECTOR/HYBRID modes currently ignore this field.
+enum SearchSort {
+  SEARCH_SORT_RELEVANCE = 0;       // score desc, doc_id asc (stable tie-break)
+  SEARCH_SORT_MODIFIED_DESC = 1;   // modified_at desc, doc_id asc
+  SEARCH_SORT_MODIFIED_ASC = 2;    // modified_at asc, doc_id asc
+  SEARCH_SORT_SIZE_DESC = 3;       // size_bytes desc, doc_id asc
+  SEARCH_SORT_SIZE_ASC = 4;        // size_bytes asc, doc_id asc
+  SEARCH_SORT_PATH_ASC = 5;        // doc_id asc
+  SEARCH_SORT_PATH_DESC = 6;       // doc_id desc
+}
+
+// Query syntax determines how the Worker should parse the query string for TEXT/HYBRID modes.
+enum SearchQuerySyntax {
+  // Default: treat user input as plain text (escape Lucene operators).
+  SEARCH_QUERY_SYNTAX_SIMPLE = 0;
+  // Advanced: Lucene QueryParser syntax (phrases, boolean operators, field qualifiers).
+  SEARCH_QUERY_SYNTAX_LUCENE = 1;
+}
+
+// Component activation for the search pipeline (256: Phase A).
+// When set on SearchRequest, overrides any preset derived from the deprecated mode field.
+message PipelineConfig {
+  bool sparse_enabled = 1;         // BM25 retrieval active
+  bool dense_enabled = 2;          // Dense KNN retrieval active
+  bool splade_enabled = 3;         // SPLADE sparse retrieval active
+  string fusion_algorithm = 4;     // "rrf", "cc", or "none"
+  bool lambdamart_enabled = 5;     // LambdaMART re-ranking active
+  bool cross_encoder_enabled = 6;  // Cross-encoder re-ranking active
+  int32 cross_encoder_window = 7;  // Top-K docs fed to cross-encoder (0 = default)
+  bool expansion_enabled = 8;      // LLM query expansion active (256: Phase I)
+  // MDC observability context (298): set by Head, read by Worker for log correlation.
+  // Note: pipeline_hash (field 10) and budget_profile (field 11) are orphan fields —
+  // they tracked PipelineDefinition identity, which ADR 0014 (2026-03-16) removed.
+  // Retired by tempdoc 400 LR2-d. Readers must not assume these fields are populated.
+  string pipeline_name = 9;        // Pipeline identity (e.g., "search.desktop-default")
+  string pipeline_hash = 10 [deprecated = true];   // Orphan per ADR 0014; retired by 400 LR2-d
+  string budget_profile = 11 [deprecated = true];  // Orphan per ADR 0014; retired by 400 LR2-d
+  bool freshness_enabled = 12;    // Multiplicative recency decay on scores (309 §9)
+  // Tempdoc 598 R1: capability-derived default. When true, the caller does NOT assert the
+  // dense leg — the Worker resolves it from the embedding-compat boundary at query time (run
+  // dense iff the index is COMPATIBLE and the query embedder is available, else keyword),
+  // generalizing the RAG retrieveMode="auto" rule to the general search wire. Distinct from
+  // dense_enabled=true (explicit assertion) and dense_enabled=false (explicit keyword-only).
+  bool dense_auto = 13;
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+  SearchMode mode = 3 [deprecated = true]; // Use PipelineConfig pipeline (field 13) instead
+  repeated float vector = 4;  // Query vector (for VECTOR/HYBRID mode)
+  bool debug = 5 [deprecated = true];  // Tempdoc 549 Phase D2: superseded by include_detail (16). Still honored as a transitional alias for the numeric detail tier until removed.
+  SearchFilters filters = 6;        // Optional structured filters (Worker-side)
+  FacetSpec facets = 7;             // Optional facet counts (off unless include=true)
+  repeated string projection = 8;   // Optional field projection for result hit fields
+  SearchSort sort = 9;              // Optional sort mode (TEXT mode only)
+  string cursor = 10;               // Optional opaque cursor for pagination (TEXT mode only)
+  SearchQuerySyntax query_syntax = 11; // Parsing mode for the query string (TEXT/HYBRID)
+  bool include_excerpts = 12;            // When true, compute query-focused excerpt regions for top-N results
+  PipelineConfig pipeline = 13;    // Component activation (256). Wins over mode when set.
+  SearchFilters boost_filters = 14; // Optional soft-boost filters (SHOULD clause, no exclusion). (363)
+  // 525: Include the SearchIntrospection aggregate on the response. Optional / absent
+  // is treated as "include" (default-on per slice decision #1 — the app is pre-production
+  // and explain UX is a first-class affordance). Clients that need to suppress it for
+  // payload reasons set this to false explicitly.
+  optional bool include_introspection = 15;
+  // Tempdoc 549 Phase D2 (principle 6): request the optional NUMERIC detail tier inside the
+  // per-hit trace (HitStage.detail — fusion weights / modifiers / norms; the LTR feature tier
+  // GPL collects). The structural per-hit slice (stage id + rank + score) is always-on and
+  // privacy-safe regardless; this gates only the heavyweight numeric map. Replaces the
+  // debug=true universe — `debug` (5) is honored as a transitional alias. Absent/false omits it.
+  optional bool include_detail = 16;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+  int64 total_hits = 2;
+  int64 took_ms = 3;
+  map<string, FacetCounts> facets = 4; // Present when facets were requested
+  bool facets_truncated = 5;           // True if facet counting was capped (counts may be approximate)
+  string next_cursor = 6;              // Optional cursor to fetch the next page (TEXT mode only)
+
+  // Tempdoc 549 Phase E5: the flat query-trace fields (effective_mode 7, vector_blocked 8,
+  // vector_blocked_reason 9, hybrid_fallback 10, hybrid_fallback_reason 11, correction_applied 12,
+  // corrected_query 13, chunk_merge_applied 15, chunk_merge_reason 16, max_idf 17, avg_ictf 18,
+  // query_scope 19, splade_executed 20, splade_skip_reason 21, branch_fusion_strategy 23,
+  // branch_fusion_contributed 24) are RETIRED — they duplicated the SearchTrace scalars
+  // (effective_mode / decision_kind / qpp / degradation) + per-stage nodes (field 26).
+  reserved 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 23, 24;
+  reserved "effective_mode", "vector_blocked", "vector_blocked_reason", "hybrid_fallback",
+      "hybrid_fallback_reason", "correction_applied", "corrected_query", "chunk_merge_applied",
+      "chunk_merge_reason", "max_idf", "avg_ictf", "query_scope", "splade_executed",
+      "splade_skip_reason", "branch_fusion_strategy", "branch_fusion_contributed";
+
+  // Phase C: Entity disambiguation variant breakdowns (per entity facet field)
+  map<string, EntityFacetVariants> entity_facet_variants = 14;
+
+  // Tempdoc 549 Phase E3: ComponentTiming (the PipelineExecution timing source) retired —
+  // per-stage timing now lives on the trace's TraceStage.ms (e.g. FUSION.ms = retrieval phase).
+  reserved 22;
+  reserved "component_timing";
+
+  // Tempdoc 549 Phase E4: SearchIntrospection retired — the unified stage-keyed trace (field 26)
+  // is the single source.
+  reserved 25;
+  reserved "introspection";
+
+  // 549: the unified canonical stage-keyed trace — the single source for query + per-hit
+  // ranking decisions. Subsumes introspection (E4) + component_timing (E3).
+  SearchTrace search_trace = 26;
+
+  // Tempdoc 597: the TRUE matched-document count (searcher.count over the chunk-excluded query),
+  // distinct from total_hits (the bounded fused-candidate-union / retrieval window). The FE
+  // headline binds to this ("Top N of M matches"); total_hits stays for telemetry / the trace.
+  int64 match_count = 27;
+}
+
+// === 549: Unified stage-keyed search trace ===
+
+// The single canonical trace: an ordered list of stage nodes over one closed StageId
+// vocabulary spanning both processes. `stage.id` is the stable wireId string (the Java
+// SearchTrace.StageId enum owns the closed set). Per-hit slices are SearchResult.trace.
+message SearchTrace {
+  int32 version = 1;
+  repeated TraceStage stages = 2;
+  // 549: query-level scalars carried on the trace (so consumers read only the trace and
+  // SearchIntrospection can retire). Genuinely whole-query, not per-stage.
+  string effective_mode = 3;
+  string decision_kind = 4;   // empty_query | blocked | sparse_shortcut | multi_leg
+  TraceQpp qpp = 5;
+  TraceDegradation degradation = 6;
+}
+
+message TraceQpp {
+  float max_idf = 1;
+  float avg_ictf = 2;
+  float query_scope = 3;
+}
+
+message TraceDegradation {
+  bool vector_blocked = 1;
+  string vector_blocked_reason = 2;
+  bool hybrid_fallback = 3;
+  string hybrid_fallback_reason = 4;
+  bool splade_executed = 5;
+  string splade_skip_reason = 6;
+}
+
+// One query-level stage node.
+message TraceStage {
+  string id = 1;             // StageId wireId, e.g. "sparse-retrieval", "cross-encoder"
+  string status = 2;         // "executed" | "skipped" | "disabled" | "failed"
+  string reason = 3;         // why-not when skipped/disabled/failed
+  optional int64 ms = 4;     // stage cost when measured
+  string detail = 5;         // short stage-specific structured note
+  // Tempdoc 597: the document cardinality at this stage (the funnel rung) — matched docs on the
+  // lexical retrieval stage, the ranked-union size on a fusion/merge stage. Present when known.
+  optional int64 cardinality = 6;
+}
+
+// A per-hit slice of one stage: this doc's placement (rank/score) + optional numeric detail
+// tier (the former debug_scores long-tail). detail is elided unless requested.
+message HitStage {
+  string id = 1;                     // StageId wireId
+  optional int32 rank = 2;
+  optional float score = 3;
+  map<string, float> detail = 4;     // numeric detail tier (fusion weights/modifiers/norms, etc.)
+}
+
+// Tempdoc 549 Phase E4: SearchIntrospection + all Introspection* companions retired —
+// superseded by the unified SearchTrace (above). Per-stage timing is on TraceStage.ms (E3).
+
+message SearchResult {
+  string id = 1;
+  float score = 2;
+  map<string, string> fields = 3;
+  // Tempdoc 549 Phase E1: debug_scores (map<string,float>) retired — the per-hit numeric detail
+  // tier is now carried by HitStage.detail (field 9, trace), gated by include_detail. The
+  // internal worker score map still feeds that detail tier; only the wire field is gone.
+  reserved 4;
+  reserved "debug_scores";
+  // Best-effort match reasoning for UI ("Why this matched").
+  // Values are schema field IDs (e.g., "content", "content_preview") or algorithm keys (e.g., "vector").
+  repeated string matched_fields = 5;
+  // Optional precise match spans for UI rendering (char offsets into the corresponding stored field value).
+  repeated MatchSpan match_spans = 6;
+  // Query-focused excerpt regions extracted from full content (when include_excerpts=true).
+  repeated ExcerptRegion excerpt_regions = 7;
+  // Tempdoc 549 Phase E2: hit_provenance (the leg-keyed HitProvenance message) retired — per-hit
+  // ranking provenance is now the per-doc slice of the unified stage vocabulary (trace, field 9).
+  reserved 8;
+  reserved "hit_provenance";
+
+  // 549: per-hit slice of the unified stage vocabulary — the single per-hit ranking-decision
+  // record. Subsumes the retired debug_scores (E1) + hit_provenance (E2).
+  repeated HitStage trace = 9;
+}
+
+// A single match span for a specific field (char offsets are relative to the stored field string).
+message MatchSpan {
+  string field = 1;      // Schema field id (e.g., "content_preview", "title")
+  int32 start_char = 2;  // Inclusive
+  int32 end_char = 3;    // Exclusive
+  string term = 4;       // Normalized matched token/term (best-effort)
+}
+
+// A query-focused excerpt region extracted from the full document content.
+// Each region is a text window around a cluster of query matches, with match spans relative to the excerpt text.
+message ExcerptRegion {
+  string text = 1;                     // Excerpt text (~200-400 chars)
+  int32 start_char = 2;               // Offset of excerpt start in full document content
+  int32 end_char = 3;                 // Offset of excerpt end in full document content
+  int32 approx_line = 4;              // Approximate 1-based line number of excerpt start
+  repeated MatchSpan match_spans = 5; // Match spans with offsets relative to this excerpt's text
+}
+
+// --- Search Filters / Facets ---
+
+message TimeRangeMs {
+  // Inclusive bounds. Zero means "unset".
+  int64 from_ms = 1;
+  int64 to_ms = 2;
+}
+
+message SearchFilters {
+  repeated string mime = 1;        // Exact mime values (e.g., "application/pdf")
+  repeated string language = 2;    // Exact language codes (e.g., "en")
+  string path_prefix = 3;          // Prefix match on path/doc_id (OS path semantics handled by Worker)
+  TimeRangeMs modified_at = 4;     // Range filter on modified_at (epoch millis)
+  bool include_chunks = 5;         // Default false when filters are supplied; omit filters for legacy behavior
+  repeated string file_kind = 6;   // Canonical file buckets (e.g., "pdf", "markdown", "image")
+  repeated string mime_base = 7;   // Normalized base mime without parameters (e.g., "text/plain")
+  repeated string entity_persons = 8;       // Filter by person entity values
+  repeated string entity_organizations = 9; // Filter by organization entity values
+  repeated string entity_locations = 10;    // Filter by location entity values
+  repeated string meta_source = 11;         // Filter by frontmatter source (lowercased)
+  repeated string meta_author = 12;         // Filter by frontmatter author (lowercased)
+  repeated string meta_category = 13;       // Filter by frontmatter category (lowercased)
+  TimeRangeMs meta_published_at = 14;       // Range filter on frontmatter published_at (epoch millis)
+  repeated string doc_ids = 15;              // Exact match on document path/ID (TermInSetQuery on PATH field)
+  repeated string collection = 16;           // Tempdoc 585 D4b — scope to Lucene collection tag(s) (e.g. "agent-history")
+}
+
+message FacetFieldSpec {
+  string field = 1;  // Field name (e.g., "mime", "language")
+  int32 size = 2;    // Top N values to return (default 10)
+}
+
+message FacetSpec {
+  bool include = 1;                     // When true, compute facets
+  repeated FacetFieldSpec fields = 2;   // Facet fields to compute
+  int32 max_docs_scanned = 3;           // Safety valve (0 = runtime default)
+}
+
+message FacetCounts {
+  map<string, int64> counts = 1; // value -> count
+}
+
+// Phase C: Entity disambiguation variant breakdown.
+// Shows how a canonical entity form's total count breaks down by raw variant.
+message EntityVariantBreakdown {
+  string canonical_form = 1;
+  int64 total_count = 2;
+  map<string, int64> variants = 3; // raw_form -> count
+}
+
+// Phase C: Per-field entity facet variant breakdowns.
+message EntityFacetVariants {
+  repeated EntityVariantBreakdown entries = 1;
+}
+
+message SuggestRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
+message SuggestResponse {
+  repeated string suggestions = 1;
+}
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Suggest(SuggestRequest) returns (SuggestResponse);
+  // Fetch document content via Worker (avoids index locking issues in Main process)
+  rpc FetchDocuments(FetchDocumentsRequest) returns (FetchDocumentsResponse);
+  // Fetch a slice of a document's extracted text (paged; avoids hard caps in Head)
+  rpc FetchDocumentSlice(FetchDocumentSliceRequest) returns (FetchDocumentSliceResponse);
+  // RAG context retrieval - searches chunks with BM25, falls back to full docs
+  rpc RetrieveContext(RetrieveContextRequest) returns (RetrieveContextResponse);
+  // Post-hoc citation matching: embed answer sentences, compare against chunk embeddings
+  rpc MatchCitations(MatchCitationsRequest) returns (MatchCitationsResponse);
+  // Browse indexed content by folder structure
+  rpc ListFolders(ListFoldersRequest) returns (ListFoldersResponse);
+  rpc ListFolderFiles(ListFolderFilesRequest) returns (ListFolderFilesResponse);
+  // Paginated iteration over all indexed document IDs (used by GPL job)
+  rpc ListAllDocumentIds(ListAllDocumentIdsRequest) returns (ListAllDocumentIdsResponse);
+  // Cross-encoder reranking (360: migrated from Head to Worker for GPU access)
+  rpc Rerank(RerankRequest) returns (RerankResponse);
+}
+
+// === Fetch Documents ===
+// Used by Main process to retrieve document content without direct index access.
+// This avoids MMapDirectory/write.lock conflicts between Main and Worker processes.
+
+message FetchDocumentsRequest {
+  repeated string doc_ids = 1;
+}
+
+message DocumentContent {
+  string doc_id = 1;
+  string content = 2;
+  bool found = 3;
+  string error = 4;
+  map<string, string> metadata = 5;
+}
+
+message FetchDocumentsResponse {
+  repeated DocumentContent documents = 1;
+}
+
+// === Fetch Document Slice ===
+// Used by Head to page through extracted/indexed content for preview and full-coverage summarization.
+// This avoids the fixed-size trimming applied by FetchDocuments.
+
+message FetchDocumentSliceRequest {
+  string doc_id = 1;
+  int32 offset_chars = 2; // 0-based
+  int32 max_chars = 3;    // server-capped
+}
+
+message FetchDocumentSliceResponse {
+  string doc_id = 1;
+  string content = 2;
+  bool found = 3;
+  string error = 4;
+  map<string, string> metadata = 5;
+  bool truncated = 6;         // true if there is more content beyond this slice
+  int32 next_offset_chars = 7; // where to resume; equals offset_chars + content.length()
+}
+
+// === RAG Context Retrieval ===
+// Used by Q&A to get relevant chunks/context using BM25 search.
+// Searches chunk_content field first, falls back to full document search.
+
+message RetrieveContextRequest {
+  string question = 1;           // The user's question for BM25 ranking
+  repeated string doc_ids = 2;   // Document IDs to search within
+  int32 top_k = 3;               // Number of chunks/docs to retrieve (default: 5)
+  int32 max_context_tokens = 4;  // Token budget for context (0 = use char budget fallback)
+
+  // Entity filters (same pattern as SearchFilters fields 8-10)
+  repeated string entity_persons = 10;
+  repeated string entity_organizations = 11;
+  repeated string entity_locations = 12;
+
+  // Temporal filters
+  TimeRangeMs modified_at = 13;
+  bool freshness_enabled = 14;
+
+  // Content filters
+  string path_prefix = 15;
+  repeated string file_kind = 16;
+
+  // When true, Worker extracts entities from question text via NER
+  // and applies them as pre-filters before chunk retrieval
+  bool auto_entity_extract = 17;
+
+  // Context assembly format
+  ContextFormat context_format = 18;
+
+  // Metadata filters (frontmatter-extracted, lowercased)
+  repeated string meta_source = 19;
+  repeated string meta_author = 20;
+  repeated string meta_category = 21;
+  TimeRangeMs meta_published_at = 22;
+
+  // When true, return full document text instead of chunks.
+  // Uses ContextBudgeter for token-budget truncation.
+  bool return_full_documents = 23;
+
+  // Tempdoc 610 §J.3 — retrieved sources the user has hidden from this conversation's context.
+  // The Worker drops these chunks BEFORE ranking (a MUST_NOT pre-search filter), so over-retrieval
+  // refills top-K from the remaining candidates. Empty = no exclusion (backward-compatible default).
+  repeated ChunkRef excluded_chunks = 24;
+}
+
+// Tempdoc 610 §J.3 — a structured (parentDocId, chunkIndex) reference to one retrieved chunk.
+// Structured (not a "docId:chunkIndex" string) because parentDocId is a path that may contain colons.
+message ChunkRef {
+  string parent_doc_id = 1;
+  int64 chunk_index = 2;
+}
+
+// Format for assembled RAG context string.
+enum ContextFormat {
+  CONTEXT_FORMAT_LABELED = 0;  // [From: filename]\ncontent\n---
+  CONTEXT_FORMAT_XML = 1;      // <source file="..." lines="..." score="...">content</source>
+  CONTEXT_FORMAT_PLAIN = 2;    // Plain content, no source labels
+}
+
+// Structured chunk citation metadata for click-to-verify UI.
+// Offsets are 0-based character offsets into the parent document's extracted text.
+message ContextChunk {
+  string parent_doc_id = 1;
+  int32 chunk_index = 2;
+  int32 chunk_total = 3;
+  int32 start_char = 4;
+  int32 end_char = 5;
+  float score = 6;
+  // Short excerpt (best-effort) to render in UI without additional preview fetches.
+  string excerpt = 7;
+
+  // Surrounding context fields (Phase 2 RAG improvements)
+  // Extended context window around the chunk (e.g., ±500 chars) for verification.
+  string surrounding_context = 10;
+  // Start offset of surrounding_context within the parent document.
+  int32 context_start_char = 11;
+  // End offset of surrounding_context within the parent document.
+  int32 context_end_char = 12;
+
+  // F8 Tier 2: In-Document Navigation fields
+  // 1-based line numbers for citation display (e.g., "file.java:42")
+  int32 start_line = 13;
+  int32 end_line = 14;
+  // Markdown heading context (empty if N/A or not markdown)
+  string heading_text = 15;
+  // Heading level 1-6 for markdown, 0 otherwise
+  int32 heading_level = 16;
+}
+
+// A section in the assembled RAG context, linking content to citation metadata.
+// Phase 4: Structured context assembly for proper citation filtering.
+message ContextSection {
+  string source_label = 1;      // Filename/label used in "[From: ...]" header
+  string content = 2;           // The actual chunk content (may be truncated)
+  bool truncated = 3;           // True if content was truncated to fit budget
+  int32 section_index = 4;      // Position in sections list (0-based)
+  int32 chunk_index = 5;        // Index into chunks array for citation linkage
+}
+
+message RetrieveContextResponse {
+  string context = 1;            // Formatted context string with relevant chunks
+  bool used_chunks = 2;          // True if chunks were found, false if fell back to full docs
+  int32 chunks_found = 3;        // Total chunks/docs matching the query (may exceed the returned chunks list)
+  repeated ContextChunk chunks = 4; // Chunks included in context (empty for fallback)
+
+  // Phase 3: Degradation signaling for RAG retrieval
+  string retrieval_mode = 5;        // Mode used: BM25, HYBRID, CHUNK_HYBRID, FULLTEXT_FALLBACK
+  string retrieval_mode_reason = 6; // Reason code explaining mode choice
+  bool context_truncated = 7;       // True if context was truncated due to budget
+
+  // Phase 4: Structured sections for citation filtering on truncation
+  repeated ContextSection sections = 8;
+
+  // Quality signals for CRAG-style retrieval confidence assessment
+  QualitySignals quality = 10;
+}
+
+// Retrieval quality signals enabling agents to assess confidence
+// and implement corrective RAG (CRAG) patterns.
+message QualitySignals {
+  float best_chunk_score = 1;    // Highest score in the result set (CE if reranked, fusion otherwise)
+  float score_gap = 2;           // Difference between #1 and #2 scores (large = confident, small = ambiguous)
+  float retrieval_coverage = 3;  // Fraction of token budget filled (0.0-1.0; low = sparse results)
+  int32 chunks_considered = 4;   // Candidates before reranking/diversification
+  int32 chunks_included = 5;     // Chunks that made it into assembled context
+}
+
+// === Post-hoc Citation Matching ===
+// Used by Q&A to match LLM answer sentences to source chunks via embedding similarity.
+// Worker splits answer into sentences, embeds them, looks up chunk content, embeds chunks,
+// and computes cosine similarity to find the best-matching source for each sentence.
+
+message MatchCitationsRequest {
+  string answer_text = 1;                // Full LLM answer to split into sentences
+  repeated string chunk_doc_ids = 2;     // Parent doc IDs of chunks used as context
+  repeated int32 chunk_indices = 3;      // Chunk indices within their parent docs
+  double similarity_threshold = 4;       // Min cosine similarity (default 0.5 if 0)
+}
+
+message CitationMatchEntry {
+  int32 sentence_index = 1;       // 0-based sentence position in answer
+  string sentence_text = 2;       // The sentence text
+  int32 chunk_index = 3;          // Which context chunk matched (index into request arrays)
+  double similarity = 4;          // Cosine similarity score
+  string parent_doc_id = 5;       // Parent document ID for the matched chunk
+}
+
+message MatchCitationsResponse {
+  repeated CitationMatchEntry matches = 1;
+  int32 sentences_total = 2;           // Total sentences in the answer
+  int32 sentences_matched = 3;         // Sentences that had at least one match above threshold
+  int64 took_ms = 4;                   // Processing time
+  string error = 5;                    // Non-empty if matching failed (graceful degradation)
+}
+
+// === Folder Browse ===
+// Used by the UI to browse indexed content by folder structure.
+// Folder hierarchy is derived from stored file paths (no separate folder index).
+
+message ListFoldersRequest {
+  string parent_path = 1;     // Parent folder path (e.g., "D:\Documents\")
+  int32 max_folders = 2;      // Max child folders to return (0 = default 200)
+}
+
+message FolderEntry {
+  string path = 1;            // Full normalized folder path
+  string name = 2;            // Folder basename (last path segment)
+  int64 file_count = 3;       // Number of indexed files under this folder (recursive)
+  int64 total_size_bytes = 4; // Sum of size_bytes for files under this folder
+  int64 last_indexed_at = 5;  // Max indexed_at across files under this folder (epoch millis)
+}
+
+message ListFoldersResponse {
+  repeated FolderEntry folders = 1;
+  int64 took_ms = 2;
+  bool truncated = 3;         // True if more folders exist than max_folders
+}
+
+message ListFolderFilesRequest {
+  string folder_path = 1;          // Exact folder path (e.g., "D:\Documents\Reports\")
+  int32 limit = 2;                 // Max files to return (0 = default 100)
+  repeated string projection = 3;  // Optional field projection (empty = all standard metadata)
+}
+
+message FolderFileEntry {
+  string doc_id = 1;
+  map<string, string> fields = 2;  // Projected stored fields (same format as SearchResult.fields)
+}
+
+message ListFolderFilesResponse {
+  repeated FolderFileEntry files = 1;
+  int64 total_count = 2;      // Total files in folder (may exceed limit)
+  int64 took_ms = 3;
+}
+
+// === List All Document IDs ===
+// Paginated corpus iteration used by the GPL offline training job.
+// Returns a page of document IDs from the full index, independent of folder hierarchy.
+
+message ListAllDocumentIdsRequest {
+  int32 offset = 1;  // Zero-based page start
+  int32 limit  = 2;  // Max IDs to return (0 = default 1000)
+}
+
+message ListAllDocumentIdsResponse {
+  repeated string doc_ids    = 1;
+  int64           total_count = 2;  // Total docs in index (may exceed limit)
+  int64           took_ms     = 3;
+}
+
+// === Rerank (360: Cross-Encoder Reranking in Worker) ===
+// Used by Head to rerank search results via the Worker's GPU-capable cross-encoder.
+// Document texts are sent directly (title + snippet, ~2KB each) to avoid a re-fetch round-trip.
+
+message RerankRequest {
+  string query = 1;                    // Search query
+  repeated string document_texts = 2;  // Pre-built document texts (title + snippet)
+  int64 deadline_ms = 3;               // Budget for inference (0 = use server default)
+  int32 top_k = 4;                     // Max docs to return (0 = rerank all)
+}
+
+message RerankResponse {
+  repeated int32 sorted_indices = 1;   // Indices into document_texts, sorted by descending CE score
+  repeated float scores = 2;           // CE scores for each input document (indexed by original position)
+  bool skipped = 3;                    // True if reranking was skipped (deadline, error)
+  int64 elapsed_ms = 4;               // Wall-clock time for reranking
+  string skip_reason = 5;             // Reason code when skipped (DEADLINE_EXCEEDED, MODEL_NOT_LOADED, ERROR)
+}
+
+// --- Ingest Service ---
+
+message BatchRequest {
+  repeated string file_paths = 1;
+  bool force_reindex = 2;  // Bypass "file unchanged" check, force re-extraction
+  string target_collection = 3;  // Optional: tag indexed docs with this collection (empty = default)
+}
+
+message BatchResponse {
+  int32 accepted_count = 1;
+  string error_message = 2;
+}
+
+message StatusRequest {}
+
+// --- Status Sub-Messages (341: StatusResponse Decomposition) ---
+// Each sub-message owns its own field number space, preventing collisions.
+
+message CoreStatus {
+  int64 queue_depth = 1;
+  int64 doc_count = 2;
+  bool is_healthy = 3;
+  string state = 4;                   // IDLE, INDEXING, ERROR
+  int64 last_commit_timestamp = 5;
+  int64 signal_bus_activity_ts = 6;
+  int64 signal_bus_heartbeat_ts = 7;
+  int64 uptime_ms = 8;
+  int64 index_size_bytes = 9;
+  int32 pending_embedding_count = 10;
+  int32 pending_vdu_count = 11;
+  // Tempdoc 406 runtime gauges — sourced from RunningRuntime.session() so
+  // jseval's timeline / status snapshot can observe Lucene runtime state.
+  int64 writer_queue_depth = 12;      // session.queueDepth.get()
+  int64 writer_pending_docs = 13;     // session.pendingDocs.get()
+  int64 commit_count = 14;            // session.commitCount.get()
+  int64 refresh_lag_ms = 15;          // commitOps.refreshLagMs()
+  // Tempdoc 419 C3 V1: 30-min trend of worker.job_queue.depth (curated RRD metric)
+  // — backs frontend HealthView sparklines for index-throughput-stalled events.
+  repeated int64 recent_job_queue_depth = 16;
+  // Tempdoc 419 C3 V2 P2: 30-min trend of worker.documents.indexed.rate_per_sec
+  // (curated RRD metric) — complementary to recent_job_queue_depth, rendered as a
+  // second sparkline next to firing throughput events.
+  repeated double recent_docs_per_sec = 17;
+  // Next available field number: 18
+}
+
+// Failure tracking and search quality signals.
+// search_zero_result_count and failed_by_file_kind are quality signals rather than
+// strict failures, but they share the same "what went wrong?" diagnostic purpose
+// and are always consumed together in health derivation.
+message FailureStatus {
+  int64 failed_count = 1;
+  string last_failed_path = 2;
+  string last_failed_error_message = 3;
+  int64 last_failed_at_ms = 4;
+  int64 next_retry_at_ms = 5;
+  int64 searches_zero_result_count = 6;
+  map<string, int64> failed_by_file_kind = 7;
+  // Next available field number: 8
+}
+
+message EnumeratorProgress {
+  bool running = 1;
+  bool done = 2;
+  int64 roots_total = 3;
+  int64 roots_done = 4;
+  int64 files_seen = 5;
+  int64 files_enqueued = 6;
+  int64 started_at_ms = 7;
+  int64 finished_at_ms = 8;
+  string last_path = 9;
+  // Next available field number: 10
+}
+
+message MigrationStatus {
+  string active_generation_id = 1;
+  string migration_state = 2;         // IDLE, MIGRATING, SWITCHING, FAILED
+  string building_generation_id = 3;
+  string previous_generation_id = 4;
+  int64 active_doc_count = 5;
+  int64 building_doc_count = 6;
+  string serving_search_generation_id = 7;
+  string serving_ingest_generation_id = 8;
+  EnumeratorProgress enumerator = 9;
+  int64 switch_buffer_depth = 10;
+  int64 pending_jobs_count = 11;
+  int64 processing_jobs_count = 12;
+  int64 pending_ready_jobs_count = 13;
+  int64 pending_backoff_jobs_count = 14;
+  int64 switching_age_ms = 15;
+  int64 switching_max_duration_ms = 16;
+  bool paused = 17;
+  string pause_reason = 18;
+  int64 paused_at_ms = 19;
+  // tempdoc 628 Stage C: WHY this migration is running (the generation manifest source label, e.g.
+  // "corrupt_index_rebuild", "schema_mismatch", "embedding_model_change") so the UI can word the cause.
+  string migration_source = 20;
+  // Next available field number: 21
+}
+
+message CompatibilityStatus {
+  // Embedding model ↔ index compatibility
+  string embedding_fingerprint_current = 1;
+  string embedding_fingerprint_stored = 2;
+  string embedding_compat_state = 3;   // COMPATIBLE | BLOCKED_LEGACY | BLOCKED_MISMATCH | REBUILDING | UNAVAILABLE
+  string embedding_compat_reason = 4;
+  // Index schema compatibility
+  string schema_fp_current = 5;
+  string schema_fp_stored = 6;
+  string schema_compat_state = 7;      // COMPATIBLE | BLOCKED_LEGACY | BLOCKED_MISMATCH | REBUILDING | UNAVAILABLE
+  bool reindex_required = 8;
+  string reindex_required_reason = 9;
+  // Next available field number: 10
+}
+
+message QueueDbHealth {
+  bool healthy = 1;
+  int64 last_backup_at_ms = 2;
+  int64 last_quick_check_at_ms = 3;
+  bool last_quick_check_ok = 4;
+  int64 last_error_at_ms = 5;
+  // Next available field number: 6
+}
+
+// Reusable coverage message for embedding and SPLADE feature tracking.
+message FeatureCoverage {
+  int64 doc_count = 1;
+  int64 completed_count = 2;
+  int64 pending_count = 3;
+  int64 failed_count = 4;
+  double coverage_percent = 5;
+  // Next available field number: 6
+}
+
+message ChunkCoverage {
+  int64 doc_count = 1;
+  int64 completed_count = 2;
+  int64 pending_count = 3;
+  int64 failed_count = 4;
+  double coverage_percent = 5;
+  bool vectors_ready = 6;             // True when coverage >= 95% (RAG hybrid threshold)
+  // Next available field number: 7
+}
+
+// Map-based accumulated per-batch timing for enrichment phases (354).
+// All values are cumulative since JVM start. Keys are phase names
+// (embed, splade, ner, fetch, write, total). Per-stage batch counts
+// only increment when that stage processed > 0 docs, so
+// total_ms / batch_count gives meaningful per-batch averages.
+message PipelineBatchTiming {
+  map<string, int64> batch_count = 1;
+  map<string, int64> total_ms = 2;
+}
+
+// Per-encoder profiling snapshot (357: raw cumulative totals for delta-capable analysis).
+message EncoderProfile {
+  int64 calls = 1;
+  map<string, int64> phase_total_us = 2; // Cumulative us per sub-phase (keys vary per encoder)
+  int64 ort_min_us = 3;
+  int64 ort_max_us = 4;
+  int64 ort_p50_us = 5;
+  int64 ort_p95_us = 6;
+  int64 ort_p99_us = 7;
+}
+
+message EnrichmentCoverage {
+  FeatureCoverage embedding = 1;
+  FeatureCoverage splade = 2;
+  ChunkCoverage chunk = 3;
+  int32 pending_ner_count = 4;
+  int32 completed_ner_count = 5;
+  reserved 6, 7, 8; // Were individual enrichment_*_completed int64 fields (354 Phase 2)
+  // Accumulated per-batch timing (354 Phase 1)
+  PipelineBatchTiming batch_timing = 9;
+  // Map-based cumulative enrichment doc counts, keyed by stage name (354 Phase 2)
+  map<string, int64> enrichment_completed = 10;
+  // Per-encoder profiling snapshots (357: pull model from OperationalMetrics)
+  map<string, EncoderProfile> encoder_profiles = 11;
+  // Per-stage enabled state — consumers polling for completion must skip
+  // disabled stages (their coverage stays at 0 forever). Populated from the
+  // Worker's resolved config at status-build time.
+  bool embedding_enabled = 12;
+  bool splade_enabled = 13;
+  bool ner_enabled = 14;
+  // Next available field number: 15
+}
+
+// Reusable ORT CUDA probe result for per-subsystem GPU diagnostics.
+message OrtCudaProbeResult {
+  bool attempted = 1;
+  bool available = 2;
+  string variant_id = 3;
+  string native_path = 4;
+  string failure_reason = 5;
+  repeated string missing_dlls = 6;
+  bool configured = 7;           // GPU was requested in config (gpuEnabled=true)
+  // Next available field number: 8
+}
+
+message GpuDiagnostics {
+  OrtCudaProbeResult reranker_ort_cuda = 1;
+  OrtCudaProbeResult splade_ort_cuda = 2;
+  OrtCudaProbeResult embed_ort_cuda = 3;
+  string embed_backend = 4;           // always "onnx" (llama backend removed)
+  int32 embed_gpu_layers = 5;
+  string splade_model_path = 6;
+  string reranker_model_path = 7;
+  string ner_model_path = 8;
+  bool ner_gpu_enabled = 9;
+  // Tempdoc 422: per-encoder OrtCuda probes for the remaining 3 encoders so the
+  // /api/inference/encoders explainer covers all 6 encoders, not just 3 of 6.
+  OrtCudaProbeResult ner_ort_cuda = 10;
+  OrtCudaProbeResult citation_ort_cuda = 11;
+  OrtCudaProbeResult bge_m3_ort_cuda = 12;
+  // Next available field number: 13
+}
+
+message VectorQuantization {
+  string format_config = 1;           // Writer's configured format: "float32" | "int8_sq"
+  string format_stored = 2;           // Stored format from commit metadata
+  string format_actual = 3;           // Actual state: "FLOAT32" | "INT8_SQ" | "MIXED" | "UNKNOWN"
+  int64 segments_float32 = 4;
+  int64 segments_quantized = 5;
+  // Next available field number: 6
+}
+
+// Operational telemetry: corpus-level stats (content length) and processing
+// rate (throughput). Both are small field groups consumed by the same UI
+// dashboard section, so they share a message rather than two 2-3 field messages.
+message TelemetryStatus {
+  int64 content_length_avg_chars = 1;
+  int64 content_length_min_chars = 2;
+  int64 content_length_max_chars = 3;
+  double throughput_docs_per_sec = 4;  // Rolling 3-min average (0.0 when unknown)
+  string throughput_window_state = 5;  // HEALTHY, DEGRADED, STALLED, UNKNOWN
+  // Next available field number: 6
+}
+
+// 343: Active search pipeline configuration. Exposed for eval provenance —
+// jseval snapshots this at run start so runs are reproducible.
+message SearchConfig {
+  bool chunk_aware_enabled = 1;
+  double cc_weight_sparse = 2;
+  double cc_weight_dense = 3;
+  double cc_weight_splade = 4;
+  double branch_cc_weight_whole = 5;
+  double branch_cc_weight_chunk = 6;
+  double branch_chunk_min_weight_multiplier = 7;
+  double title_boost = 8;
+  double entity_boost = 9;
+  bool query_classification_enabled = 10;
+  // Next available field number: 11
+}
+
+message VisualExtractionStatus {
+  bool ocr_enabled = 1;
+  bool ocr_engine_available = 2;
+  string ocr_engine = 3;
+  string ocr_blocked_reason = 4;
+  int64 visual_text_needed_count = 5;
+  string vdu_blocked_reason = 6;
+  int64 visual_enrichment_needed_count = 7;
+  // Next available field number: 8
+}
+
+// 341: Decomposed into nested sub-messages. Each sub-message owns its own
+// field number space, eliminating collision risk as subsystems grow.
+message StatusResponse {
+  CoreStatus core = 1;
+  FailureStatus failure = 2;
+  MigrationStatus migration = 3;
+  CompatibilityStatus compatibility = 4;
+  QueueDbHealth queue_db = 5;
+  EnrichmentCoverage enrichment = 6;
+  GpuDiagnostics gpu = 7;
+  VectorQuantization vector_quantization = 8;
+  TelemetryStatus telemetry = 9;
+  // Raw Lucene commit user data map (best-effort; empty if unavailable).
+  map<string, string> commit_user_data = 10;
+  // 343: Active search pipeline configuration for eval provenance.
+  SearchConfig search_config = 11;
+  // 371: Content hash of the Worker distribution (stale-JVM detection).
+  string build_stamp = 12;
+  VisualExtractionStatus visual_extraction = 13;
+  // Next available field number: 14
+}
+
+// === Delete by Path (Prefix) ===
+// Deletes all documents whose path starts with the given prefix.
+// Used when removing a watched folder.
+
+message DeleteByPathRequest {
+  string path = 1;
+}
+
+message DeleteByPathResponse {
+  int64 deleted_jobs = 1;
+  string error = 2;
+}
+
+// === Delete by Exact ID ===
+// Deletes a single document by exact doc_id (normalized path).
+// Used by file watcher to handle single file deletions.
+
+message DeleteByIdRequest {
+  string doc_id = 1;  // Exact document ID (normalized path, e.g., "d:\docs\file.txt")
+}
+
+message DeleteByIdResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// === Prune Missing Files ===
+// Deletes documents whose backing files no longer exist on disk.
+// Used during reindex to clean up orphaned documents.
+
+message PruneRequest {
+  string path_prefix = 1;  // Path prefix to check (e.g., "D:\docs\")
+}
+
+message PruneResponse {
+  int32 pruned_count = 1;  // Number of orphan documents deleted
+  bool aborted = 2;        // True if aborted due to user activity
+  string error = 3;
+}
+
+// === SyncDirectory (Bidirectional Sync) ===
+// Replaces PruneMissing with full bidirectional sync:
+// 1. Delete orphaned documents (file deleted from disk)
+// 2. Add missing documents (file exists on disk but not indexed)
+// Used for: OVERFLOW events, periodic maintenance, Windows DELETE workaround
+
+message SyncDirectoryRequest {
+  string root_path = 1;    // Root directory to sync (e.g., "D:\docs")
+  bool force = 2;          // true = run regardless of user activity (OVERFLOW/manual)
+                           // false = skip if user is active (periodic maintenance)
+}
+
+message SyncDirectoryResponse {
+  int32 files_added = 1;    // Number of files enqueued for indexing
+  int32 files_deleted = 2;  // Number of orphan documents deleted
+  bool skipped = 3;         // True if skipped due to user activity (force=false)
+  string error = 4;
+  bool deferred_to_switch_buffer = 5; // True if accepted but deferred due to SWITCHING cutover fence
+  // Tempdoc 626 §Axis-B/C — true when missing-file (delete) detection could NOT run for this root
+  // (indexed-path set exceeded the scan cap). The reconcile pruned orphans it could see, but the
+  // root's index-vs-disk delete correspondence is UNVERIFIED. Distinct from `skipped` (transient
+  // user-activity yield): this is a real "we couldn't verify" the FE surfaces, never silently "✓".
+  bool delete_detection_unverified = 6;
+}
+
+// === VDU (Vision Document Understanding) Result Update ===
+// Used by Main process to update documents after VDU processing
+
+// Explicit VDU update outcome (replaces ambiguous vdu_status string)
+enum VduUpdateOutcome {
+  VDU_UPDATE_OUTCOME_UNSPECIFIED = 0;    // Legacy: fall back to vdu_status string parsing
+  VDU_UPDATE_OUTCOME_SUCCESS_TEXT = 1;   // VDU succeeded and extracted non-empty text
+  VDU_UPDATE_OUTCOME_SUCCESS_EMPTY = 2;  // VDU succeeded but no text was extractable (e.g., blank image)
+  VDU_UPDATE_OUTCOME_FAILED = 3;         // VDU processing failed (error or timeout)
+}
+
+message UpdateVduResultRequest {
+  string doc_id = 1;                        // Document ID (normalized path)
+  optional string extracted_content = 2;    // VDU-extracted text content (presence-aware; absent vs empty distinguishable)
+  string vdu_status = 3 [deprecated = true]; // DEPRECATED: Use 'outcome' instead. Kept for back-compat ("COMPLETED" or "FAILED")
+  string vdu_enrichment = 4;                // JSON: {summary, doc_type, entities}
+  int32 page_count = 5;                     // Number of pages processed
+  VduUpdateOutcome outcome = 6;             // Explicit outcome (preferred over vdu_status)
+}
+
+message UpdateVduResultResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// === Query Pending VDU Documents ===
+// Returns document IDs that need VDU processing
+
+message QueryPendingVduRequest {
+  int32 limit = 1;  // Max documents to return (default 100)
+}
+
+message QueryPendingVduResponse {
+  repeated string doc_ids = 1;  // Document IDs with vdu_status=PENDING
+  int32 total_count = 2;        // Total pending (may be > returned)
+}
+
+// === Mark VDU Processing (Poison Pill Protection) ===
+// Atomically marks a document as PROCESSING and increments retry count
+
+message MarkVduProcessingRequest {
+  string doc_id = 1;       // Document ID to mark
+  int32 max_retries = 2;   // Max retry attempts (e.g., 3)
+}
+
+message MarkVduProcessingResponse {
+  bool success = 1;
+  int32 retry_count = 2;   // Current retry count after increment (-1 if max exceeded)
+  string error = 3;
+}
+
+// === Recover VDU Processing (Startup Recovery) ===
+// Resets documents stuck in PROCESSING state back to PENDING
+
+message RecoverVduProcessingRequest {}
+
+message RecoverVduProcessingResponse {
+  int32 recovered_count = 1;  // Number of docs reset from PROCESSING to PENDING
+}
+
+// === Migration Control (Phase H) ===
+// Operator controls for Blue/Green migration lifecycle.
+
+message MigrationStartRequest {
+  // Optional human-readable reason/source (e.g., "manual", "test", "schema_mismatch").
+  string reason = 1;
+  // When true, the worker will restart itself after persisting state to apply the change.
+  bool restart_worker = 2;
+}
+
+message MigrationStartResponse {
+  bool accepted = 1;
+  string error = 2;
+  string migration_state = 3;
+  string active_generation_id = 4;
+  string building_generation_id = 5;
+  bool restart_scheduled = 6;
+}
+
+message MigrationCutoverRequest {
+  // When true, request entering SWITCHING immediately (even if queue depth is above the auto threshold).
+  bool force_switching = 1;
+}
+
+message MigrationCutoverResponse {
+  bool accepted = 1;
+  string error = 2;
+  string migration_state = 3;
+}
+
+message MigrationPauseRequest {
+  string reason = 1;
+}
+
+message MigrationPauseResponse {
+  bool accepted = 1;
+  string error = 2;
+  bool migration_paused = 3;
+}
+
+message MigrationResumeRequest {}
+
+message MigrationResumeResponse {
+  bool accepted = 1;
+  string error = 2;
+  bool migration_paused = 3;
+}
+
+message IndexGcRequest {
+  // Keep this many newest unreferenced generations/backups (best-effort).
+  int32 keep_latest = 1;
+  // When true, only prune directories already marked for deletion (.del-* or DELETEME).
+  bool prune_marked_only = 2;
+}
+
+message IndexGcResponse {
+  bool accepted = 1;
+  string error = 2;
+  int32 marked_count = 3;
+  int32 pruned_count = 4;
+}
+
+message MigrationRollbackRequest {
+  // When true, the worker will restart itself after updating the active generation pointer.
+  bool restart_worker = 1;
+}
+
+message MigrationRollbackResponse {
+  bool accepted = 1;
+  string error = 2;
+  string active_generation_id = 3;
+  string previous_generation_id = 4;
+  bool restart_scheduled = 5;
+}
+
+// --- Path update messages (Phase 4: agent file operations) ---
+
+message PathMapping {
+  string old_path = 1;  // Normalized absolute path of the existing document
+  string new_path = 2;  // Normalized absolute path after MOVE/RENAME
+}
+
+message UpdatePathsRequest {
+  repeated PathMapping mappings = 1;
+}
+
+message UpdatePathsResponse {
+  int32 updated_count = 1;       // Number of parent documents successfully updated
+  repeated string failed_paths = 2;  // old_paths where the document was not found
+}
+
+service IngestService {
+  // NOT idempotent: may re-enqueue files, side effects on queue state
+  rpc SubmitBatch(BatchRequest) returns (BatchResponse);
+
+  // Idempotent: read-only status query - safe to retry on UNAVAILABLE
+  rpc IndexStatus(StatusRequest) returns (StatusResponse);
+
+  // NOT strictly idempotent: deletes are one-shot, but retry-safe (no harm if already deleted)
+  rpc DeleteByPath(DeleteByPathRequest) returns (DeleteByPathResponse);
+  // Delete single document by exact ID (for file watcher DELETE events)
+  // NOT strictly idempotent: deletes are one-shot, but retry-safe
+  rpc DeleteById(DeleteByIdRequest) returns (DeleteByIdResponse);
+
+  // Idempotent: best-effort deletion, files either exist or don't - safe to retry on UNAVAILABLE
+  // DEPRECATED: use SyncDirectory
+  rpc PruneMissing(PruneRequest) returns (PruneResponse) {
+    option deprecated = true;
+  }
+
+  // Idempotent: bidirectional sync is safe to re-run - safe to retry on UNAVAILABLE
+  rpc SyncDirectory(SyncDirectoryRequest) returns (SyncDirectoryResponse);
+
+  // NOT idempotent: updates document state, may cause duplicate writes on retry
+  rpc UpdateVduResult(UpdateVduResultRequest) returns (UpdateVduResultResponse);
+
+  // Idempotent: read-only query - safe to retry on UNAVAILABLE
+  rpc QueryPendingVdu(QueryPendingVduRequest) returns (QueryPendingVduResponse);
+
+  // NOT idempotent: increments retry counter atomically, retry can cause premature exhaustion
+  rpc MarkVduProcessing(MarkVduProcessingRequest) returns (MarkVduProcessingResponse);
+
+  // Idempotent: resets stuck PROCESSING docs to PENDING - safe to retry on UNAVAILABLE
+  rpc RecoverVduProcessing(RecoverVduProcessingRequest) returns (RecoverVduProcessingResponse);
+
+  // Phase H: migration lifecycle controls
+  rpc StartMigration(MigrationStartRequest) returns (MigrationStartResponse);
+  rpc RequestCutover(MigrationCutoverRequest) returns (MigrationCutoverResponse);
+  rpc PauseMigration(MigrationPauseRequest) returns (MigrationPauseResponse);
+  rpc ResumeMigration(MigrationResumeRequest) returns (MigrationResumeResponse);
+  rpc RunIndexGc(IndexGcRequest) returns (IndexGcResponse);
+  rpc RollbackMigration(MigrationRollbackRequest) returns (MigrationRollbackResponse);
+
+  // NOT idempotent: updates document paths (DOC_ID, PATH, FILENAME) and chunk PARENT_DOC_ID.
+  // Used by agent file operations tool after MOVE/RENAME to keep index consistent.
+  rpc UpdateDocumentPaths(UpdatePathsRequest) returns (UpdatePathsResponse);
+
+  // Idempotent: read-only query - safe to retry on UNAVAILABLE
+  rpc ListFailedJobs(ListFailedJobsRequest) returns (ListFailedJobsResponse);
+
+  // Tempdoc 599 §9.2 — per-folder job counts under a path prefix. Idempotent (read-only).
+  // Backs the per-folder indexing-status projection: Head folds in-flight (PENDING+PROCESSING)
+  // and FAILED counts under a watched root's prefix onto the folder row.
+  rpc CountJobsByPathPrefix(CountJobsByPathPrefixRequest) returns (CountJobsByPathPrefixResponse);
+
+  // Tempdoc 599 §16/B1 — FAILED jobs under a path prefix (the per-folder twin of ListFailedJobs).
+  // Idempotent (read-only). Backs the per-folder "failed files" drill-down; reuses ListFailedJobsResponse.
+  rpc ListFailedJobsByPathPrefix(ListFailedJobsByPathPrefixRequest) returns (ListFailedJobsResponse);
+
+  // NOT idempotent: deletes FAILED rows from queue
+  rpc ClearFailedJobs(ClearFailedJobsRequest) returns (ClearFailedJobsResponse);
+
+  // Slice 445: subscribe to per-row changes on the jobs queue. First frame is a
+  // SUBSCRIBE-time snapshot carrying all current jobs; subsequent frames are deltas
+  // (Insert / Update / Delete) per row mutation observed via the SQLite update_hook.
+  // The seq field is monotonic across snapshot+deltas — Head-side bridge uses it for
+  // resume support. Privacy: paths are SHA-256 hashed at the worker boundary; raw paths
+  // never appear on this stream. Caller resolves path_hash via core.resolve-path-hash
+  // Operation when a user gesture demands it.
+  rpc SubscribeIndexingJobs(SubscribeIndexingJobsRequest) returns (stream IndexingJobsFrame);
+
+  // Slice 445: cancel an in-flight job by its path_hash. Marks the job as a
+  // terminal-state CANCELLED via the existing markDone pathway with an
+  // outcome_class=CANCELLED ledger annotation. Idempotent on already-cancelled jobs.
+  rpc CancelIndexingJob(CancelIndexingJobRequest) returns (CancelIndexingJobResponse);
+
+  // Slice 445: retry a failed or stuck job by its path_hash. Sets state PENDING
+  // and clears retry_after so the next pollPending cycle picks it up.
+  rpc RetryIndexingJob(RetryIndexingJobRequest) returns (RetryIndexingJobResponse);
+
+  // NOT idempotent: wipes all documents, queue, and metrics for profiling reset
+  rpc ResetIndex(ResetIndexRequest) returns (ResetIndexResponse);
+
+  // Idempotent: Worker-side diagnostic — returns the PolicySnapshot from the InferenceSurface
+  // built at boot. Read by /api/debug/session-policies in Head (tempdoc 397 §14.28 U4).
+  // Replaces Head's re-resolve path, which could diverge from Worker's actual snapshot if
+  // Head and Worker observed different hardware state at boot.
+  rpc GetSessionPolicies(SessionPoliciesRequest) returns (SessionPoliciesResponse);
+
+  // Tempdoc 406 — admin-triggered runtime swap. Drains current ingest runtime,
+  // opens a fresh one on the same path, and atomically replaces holder fields.
+  // NOT idempotent (each call performs a real swap); safe to retry only at the
+  // operator level. Returns swap duration in ms.
+  rpc ReloadRuntime(ReloadRuntimeRequest) returns (ReloadRuntimeResponse);
+
+  // Tempdoc 410 §12 — privacy-safe ingestion ledger read APIs.
+  // Both rpc methods are idempotent (read-only) and return path-hash-only rows; raw paths
+  // never leave the Worker process boundary. Used by Head /api/diagnostics/ingestion endpoints.
+  rpc RecentIngestionEvents(RecentIngestionEventsRequest) returns (RecentIngestionEventsResponse);
+  rpc IngestionOutcomeSummary(IngestionOutcomeSummaryRequest) returns (IngestionOutcomeSummaryResponse);
+
+  // ADR-0028 / tempdoc 419 T5.3 — scoped reverse path-hash lookup.
+  // Returns the resolved path for a given pathHash IF the file is still under a watched root
+  // and within retention; returns found=false otherwise. Reachable from exactly one HTTP
+  // endpoint (POST /api/library/resolve-hash); the diagnostic export endpoints MUST NOT call
+  // this RPC. The ArchUnit pin LibraryResolveHashOnlyCallerPin enforces the separation.
+  rpc LookupPathByHash(LookupPathByHashRequest) returns (LookupPathByHashResponse);
+
+  // Tempdoc 418 Phase A — Worker-owned filesystem traversal (additive scaffolding).
+  //
+  // ScanRoot: server-streaming. Worker walks the root and admits each discovered path through
+  // WorkerIngestionAuthority. Streams ScanRootProgress so Head sees walk progress without
+  // polling. Cancellation is gRPC-native (gRPC Context.cancel on the client side terminates
+  // the walk). Replaces the Head-side directory-walk pattern in handleIngest /
+  // RootLifecycleOps.walkAndSubmit when callers migrate (Phase B).
+  rpc ScanRoot(ScanRootRequest) returns (stream ScanRootProgress);
+
+  // WatchRoot: subscribes the Worker-side watcher registry to filesystem events under the root.
+  // Idempotent: calling twice for the same root replaces the prior subscription. Phase A places
+  // the subscription in the registry; Phase B migrates the actual Methvin watcher events from
+  // Head to Worker.
+  rpc WatchRoot(WatchRootRequest) returns (WatchRootResponse);
+  rpc UnwatchRoot(UnwatchRootRequest) returns (UnwatchRootResponse);
+}
+
+// --- Failed Jobs ---
+
+message ListFailedJobsRequest {
+  int32 limit = 1;  // max rows to return; 0 = server default (100)
+}
+
+message FailedJob {
+  string path = 1;
+  string error_message = 2;
+  int32 attempts = 3;
+  int64 last_updated_ms = 4;
+  string collection = 5;
+}
+
+message ListFailedJobsResponse {
+  repeated FailedJob jobs = 1;
+  int64 total_count = 2;  // total FAILED count (may exceed limit)
+}
+
+message ListFailedJobsByPathPrefixRequest {
+  string path_prefix = 1;  // watched-root path; normalized + boundary-matched on the worker
+  int32 limit = 2;         // max rows; 0 = server default (100)
+}
+
+// --- Per-folder job counts (tempdoc 599 §9.2) ---
+
+message CountJobsByPathPrefixRequest {
+  string path_prefix = 1;  // watched-root path; normalized + boundary-matched on the worker
+}
+
+message IndexingJobCounts {
+  int64 pending_count = 1;     // PENDING (ready + backoff)
+  int64 processing_count = 2;  // PROCESSING (in-flight; reaper-bounded, no zombies)
+  int64 failed_count = 3;      // permanently FAILED
+}
+
+message CountJobsByPathPrefixResponse {
+  IndexingJobCounts counts = 1;
+}
+
+// --- Session policies diagnostic (tempdoc 397 §14.28 U4) ---
+// Carries the PolicySnapshot Worker built at boot via InferenceCompositionRoot.compose.
+// Head's SessionPoliciesController reads this instead of re-resolving from its own
+// ConfigStore + detected hardware — the Worker-side snapshot is authoritative since
+// Worker is the JVM that actually constructed the ORT sessions.
+//
+// JSON payloads (runtime_policy_json, model_policies_json) mirror today's REST response
+// bytewise. Using JSON strings rather than typed protobuf messages avoids tight coupling
+// between the .proto wire format and the actively-evolving policy records — adding a field
+// to RuntimePolicy requires no .proto change.
+
+message SessionPoliciesRequest {
+}
+
+message SessionPoliciesResponse {
+  string config_status = 1;              // "ok" | "config-unavailable" | "surface-unavailable"
+  string runtime_policy_json = 2;        // Jackson-serialised RuntimePolicy
+  map<string, string> model_policies_json = 3;  // EncoderRole name → ModelSessionPolicy JSON
+}
+
+message ClearFailedJobsRequest {}
+
+message ClearFailedJobsResponse {
+  int32 deleted_count = 1;
+}
+
+// --- Indexing-jobs TABULAR Resource (slice 445) ---
+
+message SubscribeIndexingJobsRequest {
+  // Empty for V1. Future: filter by state, since cursor, etc.
+}
+
+// Per-row payload on the SubscribeIndexingJobs stream. Mirrors the head-side
+// IndexingJobView record. path_hash is SHA-256 hex of the absolute normalized path.
+// Raw paths NEVER appear on this wire — resolve via core.resolve-path-hash Operation.
+message IndexingJobView {
+  string path_hash = 1;
+  string state = 2;            // PENDING | PROCESSING | DONE | FAILED
+  int32 attempts = 3;
+  int64 last_updated_ms = 4;
+  string error_message = 5;    // empty when not FAILED
+  int64 retry_after_ms = 6;    // 0 when no backoff scheduled
+  string collection = 7;
+}
+
+// Snapshot frame: full collection at the point of subscription. Only one snapshot
+// frame per stream (the first frame); subsequent frames are deltas.
+message IndexingJobsSnapshot {
+  repeated IndexingJobView items = 1;
+}
+
+// Delta frame: per-row INSERT / UPDATE / DELETE captured by SQLite update_hook.
+message IndexingJobsDelta {
+  oneof change {
+    IndexingJobView insert = 1;
+    IndexingJobView update = 2;
+    string delete_path_hash = 3;  // PK only for deletes (the row is gone)
+  }
+}
+
+message IndexingJobsFrame {
+  oneof body {
+    IndexingJobsSnapshot snapshot = 1;
+    IndexingJobsDelta delta = 2;
+  }
+  // Monotonic across snapshot + deltas. Used by head-side bridge for resume.
+  int64 seq = 3;
+}
+
+// --- Indexing-jobs Operations (slice 445 §A.9 composed Operations) ---
+
+message CancelIndexingJobRequest {
+  string path_hash = 1;
+}
+
+message CancelIndexingJobResponse {
+  bool cancelled = 1;
+  string previous_state = 2;  // diagnostic: state before cancel attempt
+}
+
+message RetryIndexingJobRequest {
+  string path_hash = 1;
+}
+
+message RetryIndexingJobResponse {
+  bool retried = 1;
+  string previous_state = 2;
+}
+
+// --- Index Reset (profiling) ---
+
+message ResetIndexRequest {}
+
+message ResetIndexResponse {
+  bool success = 1;
+}
+
+// --- Tempdoc 406 — Runtime reload (admin-triggered swap) ---
+
+message ReloadRuntimeRequest {
+  // Low-cardinality reason tag for telemetry: "admin_triggered" / "config_reload" /
+  // "blue_green_cutover" / "deferred_upgrade" / etc. May be empty.
+  string reason = 1;
+}
+
+message ReloadRuntimeResponse {
+  // Total swap duration: drain old + open new + reconstruct app services.
+  int64 swap_duration_ms = 1;
+}
+
+// --- Ingestion Ledger (tempdoc 410 §12) ---
+// Privacy-safe read APIs. All path identifiers are SHA-256 hashes; raw paths never appear.
+
+message RecentIngestionEventsRequest {
+  int32 limit = 1;  // max rows to return; 0 = server default (100), capped at 1000
+}
+
+message IngestionEvent {
+  int64 id = 1;
+  string path_hash = 2;
+  string collection = 3;
+  string outcome_class = 4;
+  string reason_code = 5;
+  string retry_policy = 6;
+  string diagnostic_summary = 7;
+  int64 observed_at_ms = 8;
+  int64 source_size_bytes = 9;
+  int64 source_modified_at_ms = 10;
+  string source_kind = 11;
+  string artifact_status = 12;
+  string policy_id = 13;
+  string parser_id = 14;
+}
+
+message RecentIngestionEventsResponse {
+  repeated IngestionEvent events = 1;
+}
+
+message IngestionOutcomeSummaryRequest {
+  int64 since_ms = 1;  // only events observed at or after this epoch ms; 0 = all retained
+}
+
+message IngestionOutcomeRollup {
+  string outcome_class = 1;
+  string reason_code = 2;
+  string retry_policy = 3;
+  int64 count = 4;
+  int64 last_observed_at_ms = 5;
+}
+
+message IngestionOutcomeSummaryResponse {
+  repeated IngestionOutcomeRollup rollups = 1;
+}
+
+// --- ADR-0028 / tempdoc 419 T5.3 — scoped reverse path-hash lookup ---
+
+message LookupPathByHashRequest {
+  // SHA-256 hex over the normalized absolute path. Lowercase, 64 chars.
+  string path_hash = 1;
+}
+
+message LookupPathByHashResponse {
+  // True if the hash mapped to a known path. False if never seen, hash retention expired,
+  // or the file's watched root has been unwatched (immediate prune per ADR-0028).
+  bool found = 1;
+  // The resolved normalized absolute path. Empty when found=false. NEVER set on the
+  // diagnostic-export endpoints — those continue to return path_hash only.
+  string path = 2;
+  // Epoch ms of the most recent admission for this hash. 0 when found=false.
+  int64 last_seen_at_ms = 3;
+  // Epoch ms when a deletion was observed for this hash; 0 when the file is still believed
+  // present (or when found=false).
+  int64 removed_at_ms = 4;
+}
+
+// --- Worker-owned filesystem traversal (tempdoc 418 Phase A) ---
+
+enum ScanMode {
+  SCAN_MODE_INITIAL = 0;       // First scan of a newly-added root.
+  SCAN_MODE_RESCAN = 1;        // Periodic resync; matches force=false today.
+  SCAN_MODE_FORCE_REINDEX = 2; // User-triggered force-reindex; matches force=true today.
+}
+
+message ScanRootRequest {
+  string root_path = 1;          // absolute, normalized at admission
+  string collection = 2;         // optional; empty = default collection
+  ScanMode mode = 3;
+  // Operator overrides; the WorkerIngestionAuthority skip policy applies in addition.
+  repeated string exclude_globs = 4;
+}
+
+message ScanRootProgress {
+  int64 files_walked = 1;
+  int64 files_admitted = 2;
+  int64 files_skipped = 3;
+  int64 bytes_walked = 4;
+  // The requested root is emitted verbatim (the client supplied it). Every nested directory
+  // under the root is emitted as a SHA-256 hex hash of its absolute path, so progress streams
+  // do not leak user folder names. Privacy property mirrors the ingestion ledger.
+  string current_directory = 5;
+  bool complete = 6;
+  // Populated when complete=true and the walk did not finish cleanly. Empty on success.
+  string terminal_reason_code = 7;
+  // Tempdoc 419 / T2 — Per-scan identity. Worker allocates a UUID at ScanRoot RPC entry and
+  // sets the same value on every emitted progress event for the scan. Callers that subscribe
+  // to live progress (T4 SSE bridge: GET /api/scans/{scanId}/progress) read this field from
+  // the first event to obtain the scanId. Stable across cancel and retry.
+  string scan_id = 8;
+}
+
+message WatchRootRequest {
+  string root_path = 1;
+  string collection = 2;
+}
+
+message WatchRootResponse {
+  bool watching = 1;
+  string error_message = 2;
+}
+
+message UnwatchRootRequest {
+  string root_path = 1;
+}
+
+message UnwatchRootResponse {
+  bool unwatched = 1;
+}
+
+// --- Health Service ---
+
+message HealthCheckRequest {}
+
+message OnnxDiscoveredModel {
+  string model_name = 1;      // e.g. "reranker", "citation-scorer"
+  bool found = 2;
+  string path = 3;            // Discovered path, or empty if not found
+  bool auto_discovered = 4;   // true if found at a standard location (not explicit path)
+  bool session_active = 5;    // true if ORT session is loaded and serving (runtime state)
+}
+
+message HealthCheckResponse {
+  bool serving = 1;
+  string version = 2;
+  int64 pid = 3;              // Worker process ID (for zombie/watchdog tests)
+  string worker_state = 4;    // Worker state: RUNNING, PAUSED, IDLE (for time-lord tests)
+  // DEPRECATED: actually reports embedding readiness, not LLM readiness.
+  // Use embedding_ready (field 6) instead. Kept for wire compatibility.
+  // The LLM (llama-server) runs in the Head process and is not visible to the Worker.
+  bool ai_ready = 5;
+  bool embedding_ready = 6;   // Embedding service readiness (non-critical for serving)
+  repeated OnnxDiscoveredModel onnx_models = 7;  // Startup-time ONNX discovery, cached
+  // Effective config values for Head→Worker divergence detection (tempdoc 329).
+  // Populated with a curated set of critical keys from ConfigStore.
+  map<string, string> effective_config = 8;
+}
+
+service HealthService {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}

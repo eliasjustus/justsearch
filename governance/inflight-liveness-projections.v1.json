@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "description": "Tempdoc 575 §15 + §17 Face C — the in-flight liveness projection register (Pillar 3b's anti-drift teeth), GENERALIZED across liveness domains. Every in-flight record's displayed RUNNING/'stalled' state must derive from its domain's ONE liveness authority, never from raw stream membership or an inline timestamp comparison. Each `domains` entry names an authority (module + exported symbol) + its registered render sites. The check enforces (1) positive coverage — every registered render site imports its domain's authority symbol; (2) a negative early-warning (indexing-job domain only) — an unregistered site mapping a job 'PROCESSING' state to a 'running' presentation without the authority is flagged. HONEST SCOPE (565 §12.10): import-visible early-warning over the ui-web shell tree — a re-model that computes the state name or maps a different literal is import-invisible and slips; register + discipline, the same ceiling as check-run-renderers / check-controls-a11y. The cross-domain generalization (each in-flight thing — indexing job (heartbeat-lease) / brain install (polled-state) — derives from a DECLARED liveness owner) is 575 §17 Face C, replacing the old single-domain scope note.",
+  "scan": {
+    "feRoot": "modules/ui-web/src/shell-v0",
+    "excludeSuffixes": [".test.ts", ".test.tsx"]
+  },
+  "domains": {
+    "indexing-job": {
+      "_doc": "Heartbeat-lease model: a PROCESSING job is RUNNING only while its heartbeat is fresh.",
+      "authority": {
+        "module": "modules/ui-web/src/shell-v0/substrates/tasks/inFlightLiveness.ts",
+        "symbol": "isInFlightLive"
+      },
+      "renderSites": ["modules/ui-web/src/shell-v0/substrates/tasks/indexingJobsBridge.ts"],
+      "phantomCheck": true
+    },
+    "brain-install": {
+      "_doc": "Polled-state model: a running install/pack with a stale backend timestamp shows 'stalled'.",
+      "authority": {
+        "module": "modules/ui-web/src/shell-v0/substrates/ai/aiInstallLiveness.ts",
+        "symbol": "isAiInstallLive"
+      },
+      "renderSites": [
+        "modules/ui-web/src/shell-v0/views/BrainSurface.ts",
+        "modules/ui-web/src/shell-v0/substrates/ai/aiInstallBridge.ts"
+      ],
+      "phantomCheck": false
+    }
+  }
+}

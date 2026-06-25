@@ -1,0 +1,121 @@
+// HealthEvent + body discriminator family (slice 430 + 444a).
+//
+// AXIS 1 (shape): single-message-with-discriminator pattern resolves SE-1
+// (flat JSON wire shape preserved). Per ADR-09a's "Future Agents Must Not":
+// the `kind` discriminator field carries NO closed-set constraint at the
+// protovalidate enforcement layer (forward-compat for unknown variants).
+// Catalog-Category constraint (slice 3a-1-8d) documents the closed set as
+// reference, not enforcement.
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+import "metrics.proto";
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+// Wire payload for a single health event.
+//
+// Wire dedup tuples (per slice 430 §"Pattern reference"):
+//   - Conditions: (source.service_instance_id, id, last_transition_time)
+//   - Occurrences: (source, id, idempotency_key)
+message HealthEvent {
+  string id = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z][a-z0-9.-]*$",
+    min_len: 1
+  }];
+  // ISO-8601 string on the wire (matches existing format), not Timestamp.
+  string timestamp = 2 [(buf.validate.field).string.min_len = 1];
+  Source source = 3 [(buf.validate.field).required = true];
+  // Severity carries no enum.defined_only constraint per ADR-09a §"Future
+  // Agents Must Not" — forward-compat for future severity variants
+  // (e.g., DEBUG, FATAL) without breaking older consumers.
+  Severity severity = 4;
+  optional string i18n_key = 5;
+  HealthEventBody body = 6 [(buf.validate.field).required = true];
+}
+
+// Sealed body carrying one of three structural variants
+// (lifecycle / condition / threshold) plus a forward-compat unknown variant.
+//
+// Single-message-with-discriminator pattern per ADR-09a §"Decision".
+// Per-`kind` required-field invariants enforced via CEL.
+message HealthEventBody {
+  // Discriminator. Free string at the enforcement layer per ADR-09a's
+  // "Future Agents Must Not" (forward-compat for unknown variants).
+  // Known values documented in the health-event-ids catalog Category
+  // (slice 3a-1-8d).
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+
+  // condition variant (k8s metav1.Condition shape)
+  optional string subject = 2;
+  optional ConditionStatus condition_status = 3;
+  optional string reason = 4 [(buf.validate.field).string = {
+    // k8s upstream regex (per apimachinery/pkg/apis/meta/v1/types.go).
+    pattern: "^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$"
+  }];
+  optional string last_transition_time = 5;
+  optional string message = 6;
+  optional string recovery_operation_id = 7;
+  repeated MetricRef related_metrics = 8;
+
+  // threshold variant (Prometheus-shaped lifecycle state)
+  optional ThresholdPhase threshold_phase = 9;
+  map<string, double> magnitudes = 10;
+
+  // lifecycle variant (one-shot occurrence). Java type is
+  // Map<String, Object> — production emits Long values (atMs, durationMs,
+  // iterationsUsed, contextSizeBytes per WorkerSnapshotTap +
+  // HeadHealthEventsEmitter), so map<string, string> would lose type fidelity.
+  // google.protobuf.Value carries any JSON-shaped attribute losslessly.
+  map<string, google.protobuf.Value> attributes = 11;
+
+  // Cross-field invariants per `kind`.
+  option (buf.validate.message).cel = {
+    id: "health_event_body.condition_requires_fields",
+    expression:
+      "this.kind != 'condition' || (has(this.subject) && has(this.condition_status) && has(this.reason) && has(this.last_transition_time))",
+    message: "condition body requires subject, condition_status, reason, last_transition_time"
+  };
+  option (buf.validate.message).cel = {
+    id: "health_event_body.threshold_requires_fields",
+    expression:
+      "this.kind != 'threshold' || (has(this.subject) && has(this.threshold_phase) && has(this.last_transition_time))",
+    message: "threshold body requires subject, threshold_phase, last_transition_time"
+  };
+}
+
+// OTel Resource semconv-aligned provenance (per slice 430 §B.I).
+message Source {
+  string service_name = 1 [(buf.validate.field).string.min_len = 1];
+  string service_instance_id = 2 [(buf.validate.field).string.min_len = 1];
+  optional string service_version = 3;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+}
+
+enum ConditionStatus {
+  CONDITION_STATUS_UNSPECIFIED = 0;
+  CONDITION_STATUS_TRUE = 1;
+  CONDITION_STATUS_FALSE = 2;
+  CONDITION_STATUS_UNKNOWN = 3;
+}
+
+enum ThresholdPhase {
+  THRESHOLD_PHASE_UNSPECIFIED = 0;
+  THRESHOLD_PHASE_PENDING = 1;
+  THRESHOLD_PHASE_FIRING = 2;
+  THRESHOLD_PHASE_RESOLVED = 3;
+}
+
+// MetricRef + RenderHint live in metrics.proto (slice 3a-1-4 substrate).
+// HealthEventBody.related_metrics references MetricRef directly.

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "note": "Self-test fixture (positive): the one referencing file is declared AND names a resolvable consumesProjection → gate passes all checks (undeclared / orphan / dangling-guard / projection-lineage).",
+  "scan": {
+    "javaImportPatterns": [],
+    "javaMainRoots": [],
+    "javaInclude": "/src/main/java/",
+    "tsRefPattern": "IndexingJobView",
+    "tsRoots": ["modules/ui-web/src"],
+    "tsExcludeSuffixes": [".test.ts", ".test.tsx"]
+  },
+  "surfaces": [
+    { "id": "declared-rail", "kind": "projection", "lang": "ts", "path": "modules/ui-web/src/declared.ts", "guard": "self", "consumesProjection": "canonical-record" }
+  ]
+}

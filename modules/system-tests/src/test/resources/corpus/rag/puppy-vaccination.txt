@@ -1,0 +1,35 @@
+Puppy Vaccination Schedule and Health Guide
+
+Vaccinations are critical for protecting puppies from potentially fatal diseases. A complete
+vaccination program follows a specific schedule based on the puppy's age.
+
+Core Vaccines (Required):
+1. DHPP (Distemper, Hepatitis, Parainfluenza, Parvovirus):
+   - First dose: 6-8 weeks of age
+   - Second dose: 10-12 weeks of age
+   - Third dose: 14-16 weeks of age
+   - Booster: 1 year after last puppy dose, then every 3 years
+
+2. Rabies:
+   - First dose: 12-16 weeks of age (required by law in most jurisdictions)
+   - Booster: 1 year after first dose, then every 1-3 years depending on local law
+   - The rabies vaccine is the only pet vaccine required by law in all 50 US states
+
+Non-Core Vaccines (Based on Risk):
+- Bordetella (kennel cough): Recommended for dogs in group settings like daycare or
+  boarding. Given as early as 8 weeks, with boosters every 6-12 months.
+- Leptospirosis: Recommended for dogs exposed to wildlife or standing water. Initial
+  series of 2 doses 2-4 weeks apart, starting at 12 weeks.
+- Lyme disease: Recommended in tick-endemic areas. Two-dose series starting at 12 weeks.
+- Canine influenza (H3N2/H3N8): Two-dose series for dogs in group settings.
+
+Important Guidelines:
+- Puppies should NOT visit public areas or interact with unvaccinated dogs until 2 weeks
+  after their final DHPP booster (around 18 weeks of age).
+- Maternal antibodies from the mother's milk can interfere with vaccine effectiveness,
+  which is why multiple doses are needed during the puppy series.
+- Side effects are generally mild: lethargy, reduced appetite, slight fever for 24-48 hours.
+  Severe reactions (facial swelling, vomiting, collapse) are rare but require immediate
+  veterinary attention.
+- The cost of a complete puppy vaccination series ranges from 75 to 200 dollars depending
+  on the veterinary clinic and geographic location.

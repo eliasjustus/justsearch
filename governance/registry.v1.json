@@ -1,0 +1,567 @@
+{
+  "$schema": "./registry.v1.schema.json",
+  "$comment": "Discipline-gate registry — tempdoc 530. Each entry is a gate class with its own enforcer + classification vocabulary + truth-table. The substrate shell at scripts/governance/run.mjs dispatches; gate-class semantics live under scripts/governance/gates/<id>/.",
+  "kind": "discipline-gate-registry.v1",
+  "version": 1,
+  "gates": [
+    {
+      "id": "test-efficacy",
+      "title": "Per-seam mutation test-strength ratchet (tempdoc 555 Pillar C)",
+      "enforcer": "scripts/governance/gates/test-efficacy/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/test-efficacy/rule-descriptions.mjs",
+      "changesetsDir": "gates/test-efficacy/.changesets",
+      "classifications": "scripts/governance/gates/test-efficacy/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/test-efficacy/strength-baseline.v1.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/pit-strength-report.v1.json",
+        "registerPath": "governance/logic-seams.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/test-efficacy"
+    },
+    {
+      "id": "hook-integrity",
+      "title": "Hook-layer enforcement integrity — wiring + cwd-invariant + load + bite (tempdoc 592)",
+      "kind": "meta-loop",
+      "enforcer": "scripts/governance/gates/hook-integrity/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/hook-integrity/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "governance/agent-hooks.v1.json"
+      },
+      "config": {
+        "manifest": "governance/agent-hooks.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/hook-integrity"
+    },
+    {
+      "id": "register-guard-resolution",
+      "title": "Guard-integrity meta-pass — every register guard resolves (tempdoc 576 §3.1/§5)",
+      "enforcer": "scripts/governance/gates/register-guard-resolution/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/register-guard-resolution/rule-descriptions.mjs",
+      "changesetsDir": "gates/register-guard-resolution/.changesets",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "registry": "governance/registry.v1.json",
+        "registers": [
+          {
+            "path": "governance/execution-surfaces.v1.json",
+            "requireGuardedKinds": [
+              "projection",
+              "producer"
+            ]
+          },
+          {
+            "path": "governance/operation-surfaces.v1.json"
+          }
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/register-guard-resolution"
+    },
+    {
+      "id": "npm-audit",
+      "title": "npm audit severity-count ratchet (high/critical)",
+      "enforcer": "scripts/governance/gates/npm-audit/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/npm-audit/rule-descriptions.mjs",
+      "changesetsDir": "gates/npm-audit/.changesets",
+      "classifications": "scripts/governance/gates/npm-audit/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "scripts/ci/npm-audit-ratchet-baseline.v1.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/npm-audit-report.json",
+        "trackedSeverities": [
+          "high",
+          "critical"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/npm-audit"
+    },
+    {
+      "id": "prose-tier-register",
+      "title": "Meta-loop: every load-bearing prose rule names a tier",
+      "enforcer": "scripts/governance/gates/prose-tier-register/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/prose-tier-register/rule-descriptions.mjs",
+      "changesetsDir": "gates/prose-tier-register/.changesets",
+      "classifications": "scripts/governance/gates/prose-tier-register/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": ".claude/rules/tier-register.md",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "registryPath": "governance/registry.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/prose-tier-register"
+    },
+    {
+      "id": "todo-fixme",
+      "title": "TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
+      "enforcer": "scripts/governance/gates/todo-fixme/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/todo-fixme/rule-descriptions.mjs",
+      "changesetsDir": "gates/todo-fixme/.changesets",
+      "classifications": "scripts/governance/gates/todo-fixme/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/todo-fixme/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "sourceGlobs": [
+          "modules/**/src/main/**/*.java",
+          "modules/ui-web/src/**/*.{ts,tsx}"
+        ],
+        "excludeGlobs": [
+          "**/build/**",
+          "**/generated/**",
+          "**/node_modules/**"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/todo-fixme"
+    },
+    {
+      "id": "ts-any",
+      "title": "TypeScript `any` cast per-file ratchet (tempdoc 530 §2.5)",
+      "enforcer": "scripts/governance/gates/ts-any/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/ts-any/rule-descriptions.mjs",
+      "changesetsDir": "gates/ts-any/.changesets",
+      "classifications": "scripts/governance/gates/ts-any/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/ts-any/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "sourceGlobs": [
+          "modules/ui-web/src/**/*.{ts,tsx}"
+        ],
+        "excludeGlobs": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/generated/**"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/ts-any"
+    },
+    {
+      "id": "style-literal-ratchet",
+      "title": "Presentation style-literal per-file ratchet (z-index/transition/font-size) — tempdoc 574 §25 Phase 4",
+      "enforcer": "scripts/governance/gates/style-literal-ratchet/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/style-literal-ratchet/rule-descriptions.mjs",
+      "changesetsDir": "gates/style-literal-ratchet/.changesets",
+      "classifications": "scripts/governance/gates/style-literal-ratchet/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "scripts/ci/style-literal-ratchet-baseline.v1.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "sourceGlobs": [
+          "modules/ui-web/src/**/*.ts"
+        ],
+        "excludeGlobs": [
+          "**/node_modules/**",
+          "**/generated/**",
+          "**/*.test.ts",
+          "**/*.spec.ts"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/style-literal-ratchet"
+    },
+    {
+      "id": "atom-fork-ratchet",
+      "title": "Atom-fork per-file ratchet (raw .badge/.chip/.dot CSS outside the @atom authority) — tempdoc 574 §25 Phase 4",
+      "enforcer": "scripts/governance/gates/atom-fork-ratchet/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/atom-fork-ratchet/rule-descriptions.mjs",
+      "changesetsDir": "gates/atom-fork-ratchet/.changesets",
+      "classifications": "scripts/governance/gates/atom-fork-ratchet/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "scripts/ci/atom-fork-ratchet-baseline.v1.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "sourceGlobs": [
+          "modules/ui-web/src/shell-v0/**/*.ts"
+        ],
+        "excludeGlobs": [
+          "**/node_modules/**",
+          "**/generated/**",
+          "**/*.test.ts",
+          "**/*.spec.ts"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/atom-fork-ratchet"
+    },
+    {
+      "id": "transient-arbitration",
+      "title": "Transient single-open arbitration — every governance/transients.v1.json adopter composes the one TransientController (tempdoc 574 §22.F / §25 Phase 4)",
+      "enforcer": "scripts/governance/gates/transient-arbitration/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/transient-arbitration/rule-descriptions.mjs",
+      "config": {
+        "register": "governance/transients.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/transient-arbitration"
+    },
+    {
+      "id": "modal-arbitration",
+      "title": "Modal contract arbitration — every governance/modals.v1.json host composes the one ModalController (tempdoc 574 §22.G / §25 Phase 4)",
+      "enforcer": "scripts/governance/gates/modal-arbitration/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/modal-arbitration/rule-descriptions.mjs",
+      "config": {
+        "register": "governance/modals.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/modal-arbitration"
+    },
+    {
+      "id": "modality-contract",
+      "title": "Modality contract backstop — every .showModal() composes a ModalityController (tempdoc 574 Move 4 / §25 Phase 4)",
+      "enforcer": "scripts/governance/gates/modality-contract/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/modality-contract/rule-descriptions.mjs",
+      "config": {
+        "tree": "modules/ui-web/src/shell-v0"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/modality-contract"
+    },
+    {
+      "id": "ambient-purity",
+      "title": "Ambient authority purity — Class-B facets only in the authority sheet + JfElement base, catalog-projected (tempdoc 574 §22.F / §25 Phase 4)",
+      "enforcer": "scripts/governance/gates/ambient-purity/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/ambient-purity/rule-descriptions.mjs",
+      "config": {
+        "register": "governance/ambient-facets.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/ambient-purity"
+    },
+    {
+      "id": "test-to-code",
+      "title": "Per-module test-to-code ratio ratchet (tempdoc 530 §2.10)",
+      "enforcer": "scripts/governance/gates/test-to-code/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/test-to-code/rule-descriptions.mjs",
+      "changesetsDir": "gates/test-to-code/.changesets",
+      "classifications": "scripts/governance/gates/test-to-code/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/test-to-code/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {},
+      "selfTestFixturesDir": "scripts/governance/_fixtures/test-to-code"
+    },
+    {
+      "id": "module-deps",
+      "title": "Per-module cross-module dependency-count ratchet (tempdoc 530 §2.8)",
+      "enforcer": "scripts/governance/gates/module-deps/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/module-deps/rule-descriptions.mjs",
+      "changesetsDir": "gates/module-deps/.changesets",
+      "classifications": "scripts/governance/gates/module-deps/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/module-deps/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/arch-preflight/module-deps.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/module-deps"
+    },
+    {
+      "id": "adr-coverage",
+      "title": "ADR Covers: path-validation gate (tempdoc 530 §2.7)",
+      "enforcer": "scripts/governance/gates/adr-coverage/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/adr-coverage/rule-descriptions.mjs",
+      "changesetsDir": "gates/adr-coverage/.changesets",
+      "classifications": "scripts/governance/gates/adr-coverage/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "docs/decisions",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "adrDir": "docs/decisions"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/adr-coverage"
+    },
+    {
+      "id": "tempdoc-wiring",
+      "title": "Tempdoc → gate auto-wiring validator (tempdoc 530 §4.1)",
+      "enforcer": "scripts/governance/gates/tempdoc-wiring/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/tempdoc-wiring/rule-descriptions.mjs",
+      "changesetsDir": "gates/tempdoc-wiring/.changesets",
+      "classifications": "scripts/governance/gates/tempdoc-wiring/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "docs/tempdocs",
+        "diffStrategy": "none"
+      },
+      "config": {
+        "tempdocsDir": "docs/tempdocs",
+        "registryPath": "governance/registry.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/tempdoc-wiring"
+    },
+    {
+      "id": "wire",
+      "title": "Wire-Category protobuf-evolution gate (tempdoc 530 §4.3, kind: protobuf-evolution)",
+      "kind": "protobuf-evolution",
+      "enforcer": "scripts/governance/gates/wire/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/wire/rule-descriptions.mjs",
+      "changesetsDir": "contracts/wire/.changesets",
+      "classifications": "scripts/governance/gates/wire/classifications.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "specDir": "contracts/wire",
+        "versionFile": "contracts/wire/VERSION"
+      }
+    },
+    {
+      "id": "dead-code",
+      "title": "Knip dead-code ratchet (tempdoc 530 §2.9)",
+      "enforcer": "scripts/governance/gates/dead-code/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/dead-code/rule-descriptions.mjs",
+      "changesetsDir": "gates/dead-code/.changesets",
+      "classifications": "scripts/governance/gates/dead-code/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/dead-code/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/knip-report.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code"
+    },
+    {
+      "id": "dead-code-jvm",
+      "title": "Whole-program JVM dead-class ratchet (tempdoc 638)",
+      "enforcer": "scripts/governance/gates/dead-code-jvm/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/dead-code-jvm/rule-descriptions.mjs",
+      "changesetsDir": "gates/dead-code-jvm/.changesets",
+      "classifications": "scripts/governance/gates/dead-code-jvm/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/dead-code-jvm/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/dead-code-jvm-report.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code-jvm"
+    },
+    {
+      "id": "consumer-drift",
+      "title": "Substrate consumer-drift floor (tempdoc 531; generalizes the 527 C-018 audit)",
+      "enforcer": "scripts/governance/gates/consumer-drift/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/consumer-drift/rule-descriptions.mjs",
+      "changesetsDir": "gates/consumer-drift/.changesets",
+      "classifications": "scripts/governance/gates/consumer-drift/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/consumer-drift/slots.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {},
+      "selfTestFixturesDir": "scripts/governance/_fixtures/consumer-drift"
+    },
+    {
+      "id": "consumer-presence",
+      "title": "NonEmpty<ConsumerHook> — every registry declaration has >=1 consumer (tempdoc 560 §5/§6)",
+      "enforcer": "scripts/governance/gates/consumer-presence/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/consumer-presence/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/consumer-presence/exemptions.json",
+        "diffStrategy": "none"
+      },
+      "config": {
+        "snapshotPath": "tmp/consumer-presence/registry-snapshot.json"
+      }
+    },
+    {
+      "id": "host-owns-truth",
+      "title": "Host owns truth — core namespace ⟺ CORE provenance (tempdoc 560 §4.5 / kernel decision 05)",
+      "enforcer": "scripts/governance/gates/host-owns-truth/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/host-owns-truth/rule-descriptions.mjs",
+      "config": {
+        "snapshotPath": "tmp/consumer-presence/registry-snapshot.json"
+      }
+    },
+    {
+      "id": "runtime-witness",
+      "title": "Runtime-witness — declared agent consumers are actually delivered (tempdoc 560 §5 keystone, second half)",
+      "enforcer": "scripts/governance/gates/runtime-witness/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/runtime-witness/rule-descriptions.mjs",
+      "config": {
+        "snapshotPath": "tmp/consumer-presence/registry-snapshot.json"
+      }
+    },
+    {
+      "id": "stage-completeness",
+      "title": "Search-trace stage-completeness (tempdoc 549 Phase F / principle 9)",
+      "enforcer": "scripts/governance/gates/stage-completeness/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/stage-completeness/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "stageIdEnum": "modules/app-api/src/main/java/io/justsearch/app/api/knowledge/SearchTrace.java",
+        "rendererLabels": "modules/ui-web/src/shell-v0/aggregate-substrate/strategies/searchTraceExplain.ts",
+        "producers": [
+          "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/respond/SearchTraceProjector.java",
+          "modules/app-services/src/main/java/io/justsearch/app/services/worker/KnowledgeHttpApiAdapter.java",
+          "modules/app-services/src/main/java/io/justsearch/app/services/worker/SearchTraceMapper.java"
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/stage-completeness"
+    },
+    {
+      "id": "execution-surface",
+      "title": "Execution-surface register completeness (tempdoc 553 pillar c — anti-fragmentation meta-gate)",
+      "enforcer": "scripts/governance/gates/execution-surface/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/execution-surface/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/execution-surfaces.v1.json",
+        "registry": "governance/registry.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/execution-surface"
+    },
+    {
+      "id": "operation-surface",
+      "title": "Operation-surface register completeness (tempdoc 550 Thesis III — anti-fragmentation gate for the indexing-job lifecycle; sibling of execution-surface)",
+      "enforcer": "scripts/governance/gates/operation-surface/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/operation-surface/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/operation-surfaces.v1.json",
+        "registry": "governance/registry.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/operation-surface"
+    },
+    {
+      "id": "interaction-surface",
+      "title": "Interaction-surface cardinality (tempdoc 561 surface tier — the one-interaction-window gate; placement-keyed sibling of execution/operation-surface)",
+      "enforcer": "scripts/governance/gates/interaction-surface/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/interaction-surface/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/interaction-surfaces.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/interaction-surface"
+    },
+    {
+      "id": "surface-altitude",
+      "title": "Surface-altitude governing axis (tempdoc 571 — altitude DERIVED from consumed Resource roles; forecloses derivation CONFLICT + non-CORE TRUST + non-CORE DIAGNOSTIC; sibling of interaction/execution/operation-surface)",
+      "enforcer": "scripts/governance/gates/surface-altitude/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/surface-altitude/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/surface-altitude.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/surface-altitude"
+    },
+    {
+      "id": "observed-happening",
+      "title": "Observed-happening register (tempdoc 575 — the projection spine at the observability-authority tier; the observability stream family declared as concepts with one canonical source + contributors; forecloses contributor-unresolved + sourceless-concept + shared-contributor (the F-2 re-fragmentation class) + operator-trace-on-Resource (ADR-0036); the data-tier sibling of surface-altitude)",
+      "enforcer": "scripts/governance/gates/observed-happening/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/observed-happening/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/observed-happening.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/observed-happening"
+    },
+    {
+      "id": "ssot-catalog-sync",
+      "title": "SSOT catalog root↔classpath-copy sync (mechanizes the 'Classpath catalog drift' pitfall)",
+      "enforcer": "scripts/governance/gates/ssot-catalog-sync/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/ssot-catalog-sync/rule-descriptions.mjs",
+      "changesetsDir": "gates/ssot-catalog-sync/.changesets",
+      "classifications": "scripts/governance/gates/ssot-catalog-sync/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/ssot-catalog-sync/mirrors.json",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {},
+      "selfTestFixturesDir": "scripts/governance/_fixtures/ssot-catalog-sync"
+    },
+    {
+      "id": "contract-projection",
+      "title": "Contract-projection single-authority (tempdoc 564 facet 4e — the meta-substrate gate)",
+      "enforcer": "scripts/governance/gates/contract-projection/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/contract-projection/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {}
+    },
+    {
+      "id": "contribution-surface",
+      "title": "Contribution-surface register (tempdoc 560 §5 — the prevention keystone that locks in §4c: a NEW hand-authored second shape authority in the registry barrel fails the build)",
+      "enforcer": "scripts/governance/gates/contribution-surface/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/contribution-surface/rule-descriptions.mjs",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/contribution-surfaces.v1.json",
+        "registry": "governance/registry.v1.json"
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/contribution-surface"
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/config/capabilities-view.schema.json",
+  "title": "Capabilities View",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_versions", "prompt_templates", "plugins", "source", "serverCapabilities"],
+  "properties": {
+    "serverCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primitives",
+        "catalogVersion",
+        "protocolVersion",
+        "i18n",
+        "streamingEnvelope"
+      ],
+      "properties": {
+        "primitives": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["current", "endpoint", "messageCatalogUrl", "dynamicRegistration"],
+            "properties": {
+              "current": { "type": "string", "pattern": "^v\\d+$" },
+              "endpoint": { "type": "string" },
+              "messageCatalogUrl": { "type": "string" },
+              "dynamicRegistration": { "type": "boolean" }
+            }
+          }
+        },
+        "catalogVersion": { "type": "integer", "minimum": 0 },
+        "protocolVersion": { "type": "string" },
+        "i18n": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "availableLocales"],
+          "properties": {
+            "version": { "type": "integer", "minimum": 1 },
+            "availableLocales": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "streamingEnvelope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "schema_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_ver": { "type": "string" },
+        "grammar_ver": { "type": "string" },
+        "template_ver": { "type": ["integer", "string"] }
+      }
+    },
+    "prompt_templates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_id", "template_ver", "hash"],
+        "properties": {
+          "task_id": { "type": "string" },
+          "template_ver": { "type": ["integer", "string"] },
+          "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version"],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "spis": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "schema_ver", "generated_at"],
+      "properties": {
+        "phase": { "type": "string" },
+        "schema_ver": { "type": "string" },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

@@ -1,0 +1,57 @@
+[ {
+  "step" : "selector-missing",
+  "method" : "POST",
+  "endpoint" : "/ui/act",
+  "status" : 404,
+  "request" : {
+    "type" : "focus",
+    "selector" : {
+      "fxId" : "missing-node"
+    }
+  },
+  "response" : {
+    "code" : "selector_not_found",
+    "message" : "No node matched selector (fxId=missing-node)",
+    "details" : {
+      "selector" : {
+        "fxId" : "missing-node"
+      }
+    }
+  }
+}, {
+  "step" : "selector-ambiguous",
+  "method" : "POST",
+  "endpoint" : "/ui/act",
+  "status" : 400,
+  "request" : {
+    "type" : "focus",
+    "selector" : {
+      "role" : "button",
+      "name" : "Search"
+    }
+  },
+  "response" : {
+    "code" : "selector_ambiguous",
+    "message" : "Selector matched multiple nodes",
+    "details" : {
+      "selector" : {
+        "role" : "button",
+        "name" : "Search"
+      },
+      "matches" : [ {
+        "fxId" : "searchButton",
+        "role" : "button",
+        "name" : "Search",
+        "visible" : true,
+        "disabled" : false,
+        "focused" : true
+      }, {
+        "role" : "button",
+        "name" : "Search",
+        "visible" : true,
+        "disabled" : false,
+        "focused" : false
+      } ]
+    }
+  }
+} ]

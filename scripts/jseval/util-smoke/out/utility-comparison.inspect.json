@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "status": "success",
+  "eval": {
+    "task": "justsearch/agent-utility",
+    "model": "haiku",
+    "created": "2026-06-22T05:16:18.338332+00:00",
+    "metadata": {
+      "cohort": {
+        "agent_cohort_key": "634cccedbb0f2e44e826dd4d04dda953c8e78223d7b84e164a2acabe68b958cc",
+        "git_sha": "2b95ba9db3a27a4d80933c9d3de888571ecae273",
+        "cli_version": "2.1.183 (Claude Code)",
+        "mcp_tool_surface_hash": "3d94d456ba3a80a0fcb79e014e015aae58e20a0c5c31d6dee70d845df6eb2212",
+        "judge": {
+          "kind": "substring-em"
+        },
+        "prompt_template_hash": "3230d3bd2e826752f900687dfdb4231ca265c355149d3948dc06ea29800d83ba",
+        "decoding": {
+          "temperature": 0,
+          "max_tokens": null
+        },
+        "eval_limits": {},
+        "search_config_cohort_key": "live-smoke-backend",
+        "hardware": null
+      },
+      "conditions": {
+        "baseline": "A (file tools only)",
+        "with_tool": "C (JustSearch only)",
+        "addition": "B (file tools + JustSearch)"
+      },
+      "coverage": {
+        "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+        "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+        "contamination_class": "private-synthetic"
+      },
+      "confidence_tier": "C",
+      "external_baselines": {
+        "retrieval_tool_utility": [
+          {
+            "name": "FRAMES",
+            "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+            "value": {
+              "no_retrieval": 0.4,
+              "with_retrieval": 0.66
+            },
+            "source_url": "https://arxiv.org/abs/2409.12941",
+            "version": "Google, NAACL 2025",
+            "self_reproduced": false
+          },
+          {
+            "name": "BFCL-V4 web-search",
+            "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+            "value": null,
+            "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+            "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+            "self_reproduced": false
+          },
+          {
+            "name": "Sourcegraph CodeScaleBench",
+            "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+            "value": null,
+            "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+            "version": "Sourcegraph (2025)",
+            "self_reproduced": false
+          },
+          {
+            "name": "PHMForge",
+            "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+            "value": null,
+            "source_url": "https://arxiv.org/html/2604.01532",
+            "version": "2026",
+            "self_reproduced": false
+          },
+          {
+            "name": "A-RAG",
+            "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+            "value": null,
+            "source_url": "https://arxiv.org/html/2602.03442v1",
+            "version": "2026",
+            "self_reproduced": false
+          }
+        ]
+      },
+      "source_schema": "utility-comparison.v1"
+    }
+  },
+  "results": {
+    "scores": [
+      {
+        "name": "agent_utility[golden/util-smoke/haiku]",
+        "scorer": "justsearch.utility_comparison",
+        "metrics": {
+          "accuracy_baseline": 1.0,
+          "accuracy_with_tool": 1.0,
+          "accuracy_delta": 0.0,
+          "mcnemar_p": 1.0,
+          "unique_tokens_delta_mean": 9931.5,
+          "cost_usd_delta_mean": 0.02016985
+        }
+      }
+    ]
+  },
+  "stats": {
+    "seed_count": 1,
+    "total_paired_observations": 2
+  }
+}

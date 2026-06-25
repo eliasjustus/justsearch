@@ -1,0 +1,1664 @@
+mod platform_paths;
+
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
+use tokio::sync::Notify;
+
+/// Windows CREATE_NO_WINDOW flag - prevents console window from appearing.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const RESET_MARKER_FILE: &str = ".justsearch-reset-requested";
+
+#[derive(serde::Serialize)]
+struct FileMetadata {
+    #[serde(rename = "isDir")]
+    is_dir: bool,
+}
+
+#[derive(serde::Serialize)]
+struct JustSearchPaths {
+    home: String,
+    models_dir: String,
+    llama_server_dir: String,
+    logs_dir: String,
+    llama_log: String,
+    headless_backend_log: String,
+}
+
+#[derive(Default)]
+struct BackendState {
+    port: Mutex<Option<u16>>,
+    port_ready: Arc<Notify>,
+    session_token: Mutex<Option<String>>,
+    session_token_ready: Arc<Notify>,
+    child: Mutex<Option<Child>>,
+    spawn_error: Mutex<Option<String>>,
+    killed: Mutex<bool>,
+    /// Tempdoc 637 #1: the backend's last-seen per-boot `instanceId` (a fresh UUID minted on
+    /// every Head start). A change means the backend RESTARTED — almost always on a new ephemeral
+    /// port — so the shell must override the cached port and tell the webview to re-resolve, else
+    /// it strands the FE on a dead port (the silent-staleness #1 masquerade; in production there
+    /// is no Vite proxy to mask it).
+    instance_id: Mutex<Option<String>>,
+    /// Single-use token for confirming destructive operations (factory reset).
+    delete_token: Mutex<Option<String>>,
+    /// Tempdoc 501 Phase 17: the tray icon's registered id. The manifest watcher
+    /// uses the AppHandle (set separately in `init_tray_context`) to look up the
+    /// live `TrayIcon` via `app.tray_by_id(...)`. Direct caching of `TrayIcon` or
+    /// `AppHandle` as a field of `BackendState` pulls the Tauri runtime into the
+    /// test binary and fails on Windows with `STATUS_ENTRYPOINT_NOT_FOUND`; the
+    /// indirection via the global `TRAY_CONTEXT` keeps the runtime out of test
+    /// linkage.
+    tray_id: Mutex<Option<String>>,
+}
+
+/// Tempdoc 501 Phase 17: globally-stored AppHandle for tray-tooltip updates.
+/// `OnceLock` lets the production binary set it exactly once at app setup; tests
+/// never touch it. Stored separately from BackendState so the type doesn't appear
+/// in BackendState's struct layout (which would force the Tauri runtime to link
+/// into the test binary on Windows; see `tray_id` docs above).
+static TRAY_CONTEXT: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+impl BackendState {
+    fn set_port(&self, port: u16) {
+        {
+            let mut guard = self.port.lock().expect("port mutex poisoned");
+            if guard.is_some() {
+                return;
+            }
+            *guard = Some(port);
+        }
+        self.port_ready.notify_waiters();
+    }
+
+    fn get_port(&self) -> Option<u16> {
+        *self.port.lock().expect("port mutex poisoned")
+    }
+
+    /// Tempdoc 637 #1: record the backend's per-boot `instanceId`; return true iff it CHANGED from
+    /// a previously-seen id (the backend process restarted — a new incarnation). The first
+    /// observation (None -> Some) is establishment, NOT a restart, so it returns false.
+    fn note_instance_and_detect_restart(&self, new_id: &str) -> bool {
+        let mut guard = self.instance_id.lock().expect("instance_id mutex poisoned");
+        match guard.as_deref() {
+            Some(prev) if prev == new_id => false,
+            Some(_) => {
+                *guard = Some(new_id.to_string());
+                true
+            }
+            None => {
+                *guard = Some(new_id.to_string());
+                false
+            }
+        }
+    }
+
+    /// Tempdoc 637 #1: a restart lands on a fresh ephemeral port. `set_port` is first-write-wins (a
+    /// startup race guard), so a restart must override the cached port explicitly.
+    fn force_set_port(&self, port: u16) {
+        *self.port.lock().expect("port mutex poisoned") = Some(port);
+        self.port_ready.notify_waiters();
+    }
+
+    fn set_session_token(&self, token: String) {
+        {
+            let mut guard = self.session_token.lock().expect("session_token mutex poisoned");
+            if guard.is_some() {
+                return;
+            }
+            *guard = Some(token);
+        }
+        self.session_token_ready.notify_waiters();
+    }
+
+    fn get_session_token(&self) -> Option<String> {
+        self.session_token.lock().expect("session_token mutex poisoned").clone()
+    }
+
+    fn has_spawn_error(&self) -> bool {
+        self.spawn_error.lock().expect("spawn_error mutex poisoned").is_some()
+    }
+
+    fn kill_child(&self) {
+        // Prevent double kill (event handler + Drop race)
+        {
+            let mut killed = self.killed.lock().expect("killed mutex poisoned");
+            if *killed {
+                return;
+            }
+            *killed = true;
+        }
+
+        let mut guard = self.child.lock().expect("child mutex poisoned");
+        let mut child = match guard.take() {
+            Some(c) => c,
+            None => return,
+        };
+
+        #[cfg(windows)]
+        {
+            let pid = child.id();
+
+            // Step 1: Graceful termination (allows JVM shutdown hooks to run)
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+
+            // Step 2: Wait for graceful shutdown
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Step 3: Force kill if still alive
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
+
+        // Fallback (also used on non-Windows): kill the direct child.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+impl Drop for BackendState {
+    fn drop(&mut self) {
+        // Best-effort cleanup on app shutdown.
+        self.kill_child();
+    }
+}
+
+/// Recursively copy a directory tree from src to dest.
+/// Creates dest if it doesn't exist. Overwrites files if force_update is true,
+/// otherwise only copies missing or empty files.
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path, force_update: bool) -> std::io::Result<usize> {
+    let mut copied = 0usize;
+    if !src.is_dir() {
+        return Ok(0);
+    }
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let p = entry.path();
+        let fname = match p.file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+        let dest_path = dest.join(fname);
+        if p.is_dir() {
+            // Recurse into subdirectory
+            copied += copy_dir_recursive(&p, &dest_path, force_update)?;
+        } else if p.is_file() {
+            let should_copy = force_update
+                || match std::fs::metadata(&dest_path) {
+                    Ok(m) => m.len() == 0,
+                    Err(_) => true,
+                };
+            if should_copy {
+                std::fs::copy(&p, &dest_path)?;
+                copied += 1;
+            }
+        }
+    }
+    Ok(copied)
+}
+
+/// Validate a user-supplied path before filesystem operations.
+/// Blocks dangerous patterns that could be exploited via XSS-driven IPC calls.
+fn validate_user_path(path: &str, block_executables: bool) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+
+    // Block UNC / network paths (prevents remote code execution via network shares)
+    if path.starts_with("\\\\") || path.starts_with("//") {
+        return Err("Network paths are not allowed".into());
+    }
+
+    // Block path traversal
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("Path traversal (..) is not allowed".into());
+        }
+    }
+
+    // Block executable extensions (open_file only — prevents launching malware via XSS)
+    if block_executables {
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            const BLOCKED: &[&str] = &[
+                "exe", "bat", "cmd", "ps1", "vbs", "msi", "scr", "com", "lnk", "pif", "wsh",
+                "wsf",
+            ];
+            if BLOCKED.iter().any(|b| ext.eq_ignore_ascii_case(b)) {
+                return Err(format!("Opening .{ext} files is not allowed"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn classpath_sep() -> &'static str {
+    if cfg!(windows) {
+        ";"
+    } else {
+        ":"
+    }
+}
+
+fn resolve_headless_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
+    // Tauri bundles resources under a platform-specific resource directory.
+    //
+    // IMPORTANT: On Windows/NSIS the final resource layout can differ depending on how the
+    // resource globs are specified. We have historically used:
+    //   bundle.resources = ["resources/headless/**/*"]
+    // which may end up as:
+    //   <resource_dir>/headless/**
+    // OR:
+    //   <resource_dir>/resources/headless/**
+    //
+    // We treat `ui-headless.jar` as the anchor file and locate its parent directory.
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resource_dir() failed: {e}"))?;
+
+    // Strip Windows extended-length path prefix (\\?\) that Tauri adds.
+    // Java's Files.isDirectory() returns false for \\?\ paths on some versions.
+    #[cfg(windows)]
+    let resource_dir = {
+        let s = resource_dir.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            std::path::PathBuf::from(stripped.to_string())
+        } else {
+            resource_dir
+        }
+    };
+
+    let candidates = [
+        resource_dir.join("headless"),
+        resource_dir.join("resources").join("headless"),
+    ];
+
+    for cand in candidates {
+        if cand.join("ui-headless.jar").exists() {
+            return Ok(cand);
+        }
+    }
+
+    // Fallback: best-effort search within the resource dir (bounded depth) for ui-headless.jar.
+    fn find_ui_jar_dir(dir: &std::path::Path, depth: usize, max_depth: usize) -> Option<PathBuf> {
+        if depth > max_depth {
+            return None;
+        }
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|s| s.to_str()) == Some("ui-headless.jar") {
+                    return p.parent().map(|pp| pp.to_path_buf());
+                }
+            } else if p.is_dir() {
+                if let Some(found) = find_ui_jar_dir(&p, depth + 1, max_depth) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    if let Some(found) = find_ui_jar_dir(&resource_dir, 0, 4) {
+        return Ok(found);
+    }
+
+    Err(format!(
+        "Unable to locate headless bundle under resource dir {} (expected to find ui-headless.jar)",
+        resource_dir.display()
+    ))
+}
+
+fn resolve_app_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir() failed: {e}"))
+}
+
+fn maybe_run_factory_reset<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let app_data_dir = resolve_app_data_dir(app)?;
+    let marker = app_data_dir.join(RESET_MARKER_FILE);
+    if !marker.exists() {
+        return Ok(());
+    }
+
+    // Locked choice (Option A): preserve BYO AI assets by default.
+    // - Keep: {appDataDir}/models/**
+    // - Keep: {appDataDir}/native-bin/llama-server/**
+    // - Delete: everything else (settings, index, logs, telemetry, etc)
+    eprintln!("Factory reset marker detected at: {}", marker.display());
+
+    // Best-effort: delete everything except the AI asset folders.
+    let models_dir = app_data_dir.join("models");
+    let native_bin_dir = app_data_dir.join("native-bin");
+    let native_llama_dir = native_bin_dir.join("llama-server");
+
+    // Ensure the kept dirs exist (so path comparisons are stable).
+    let _ = std::fs::create_dir_all(&models_dir);
+    let _ = std::fs::create_dir_all(&native_llama_dir);
+
+    // Delete all top-level entries except models/ and native-bin/ (handled specially).
+    if let Ok(entries) = std::fs::read_dir(&app_data_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p == marker {
+                continue;
+            }
+            if p == models_dir {
+                continue;
+            }
+            if p == native_bin_dir {
+                // Delete everything in native-bin except llama-server/.
+                if let Ok(nentries) = std::fs::read_dir(&native_bin_dir) {
+                    for nentry in nentries.flatten() {
+                        let np = nentry.path();
+                        if np == native_llama_dir {
+                            continue;
+                        }
+                        let _ = if np.is_dir() {
+                            std::fs::remove_dir_all(&np)
+                        } else {
+                            std::fs::remove_file(&np)
+                        };
+                    }
+                }
+                continue;
+            }
+
+            let _ = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+        }
+    }
+
+    // Clear the marker after attempting the reset to avoid boot loops.
+    let _ = std::fs::remove_file(&marker);
+    eprintln!("Factory reset completed (AI assets preserved).");
+    Ok(())
+}
+
+fn spawn_headless_backend<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: Arc<BackendState>,
+) -> Result<(), String> {
+    // Resolve app data dir and open the headless backend log FIRST so we can record spawn failures.
+    let app_data_dir = resolve_app_data_dir(app)?;
+    // Ensure app data directory exists (user-writable).
+    std::fs::create_dir_all(&app_data_dir)
+        .map_err(|e| format!("Failed to create app data dir {}: {e}", app_data_dir.display()))?;
+
+    let logs_dir = app_data_dir.join("logs");
+    std::fs::create_dir_all(&logs_dir)
+        .map_err(|e| format!("Failed to create logs dir {}: {e}", logs_dir.display()))?;
+
+    // Persist backend stdout/stderr to a log file for release builds (no console).
+    let headless_log_path = logs_dir.join("headless-backend.log");
+
+    // Rotate the previous boot's log on every launch so post-mortem evidence
+    // survives a single restart (tempdoc 374 sandbox round 4 issue F: install
+    // crash lines were unrecoverable after the next boot under the previous
+    // size-based rotation policy). Move headless-backend.log → .log.1, then
+    // .log.1 → .log.2 for one extra generation before discarding.
+    if headless_log_path.exists() {
+        let log1 = logs_dir.join("headless-backend.log.1");
+        let log2 = logs_dir.join("headless-backend.log.2");
+        if log1.exists() {
+            let _ = std::fs::remove_file(&log2);
+            let _ = std::fs::rename(&log1, &log2);
+        }
+        let _ = std::fs::rename(&headless_log_path, &log1);
+    }
+
+    let headless_log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&headless_log_path)
+        .map_err(|e| format!("Failed to open headless log {}: {e}", headless_log_path.display()))?;
+    let headless_log = Arc::new(Mutex::new(headless_log_file));
+
+    let headless_dir = match resolve_headless_dir(app) {
+        Ok(p) => p,
+        Err(err) => {
+            if let Ok(mut f) = headless_log.lock() {
+                let _ = writeln!(f, "[shell] Failed to resolve headless bundle dir: {err}");
+            }
+            return Err(err);
+        }
+    };
+    if !headless_dir.is_dir() {
+        if let Ok(mut f) = headless_log.lock() {
+            let _ = writeln!(
+                f,
+                "[shell] headless dir not found or not a directory: {}",
+                headless_dir.display()
+            );
+        }
+        return Err(format!("headless dir not found: {}", headless_dir.display()));
+    }
+
+    // Use javaw.exe on Windows to avoid opening a console window (java.exe creates one).
+    let java_bin = headless_dir
+        .join("runtime")
+        .join("bin")
+        .join(if cfg!(windows) { "javaw.exe" } else { "java" });
+    let ui_jar = headless_dir.join("ui-headless.jar");
+    let lib_glob = headless_dir.join("lib").join("*");
+
+    if !java_bin.exists() {
+        return Err(format!("java runtime not found: {}", java_bin.display()));
+    }
+    if !ui_jar.exists() {
+        return Err(format!("ui-headless.jar not found: {}", ui_jar.display()));
+    }
+
+    let cp = format!(
+        "{}{}{}",
+        ui_jar.to_string_lossy(),
+        classpath_sep(),
+        lib_glob.to_string_lossy()
+    );
+
+    // Contract A: AI Home is a well-known, user-writable folder. Use app_data_dir as JUSTSEARCH_HOME.
+    // Create the expected BYO folders so the UI can guide users to drop files.
+    let models_dir = app_data_dir.join("models");
+    let native_bin_dir = app_data_dir.join("native-bin");
+    let native_llama_dir = native_bin_dir.join("llama-server");
+    let native_tesseract_dir = native_bin_dir.join("tesseract");
+    for d in [&models_dir, &native_llama_dir, &native_tesseract_dir] {
+        std::fs::create_dir_all(d)
+            .map_err(|e| format!("Failed to create directory {}: {e}", d.display()))?;
+    }
+
+    // v1 Simple Mode contract: ship llama-server payload with the app and restore it into AI Home.
+    //
+    // IMPORTANT: On Windows, llama-server.exe may be dynamically linked and require adjacent DLLs
+    // (llama.dll / ggml*.dll / mtmd.dll / etc). Restore the *directory payload*, not just the exe.
+    //
+    // Upgrade safety: If the bundled runtime version differs from what's already in AI Home, overwrite
+    // the on-disk payload so users don't stay stuck on a crashing runtime.
+    //
+    // Best-effort: do not fail app startup if the copy fails (app can still run without AI).
+    let bundled_llama_dir = headless_dir.join("native-bin").join("llama-server");
+    if bundled_llama_dir.is_dir() {
+        let version_file = "runtime-version.txt";
+        let bundled_version =
+            std::fs::read_to_string(bundled_llama_dir.join(version_file))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        let installed_version =
+            std::fs::read_to_string(native_llama_dir.join(version_file))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        let force_update = bundled_version.is_some() && bundled_version != installed_version;
+        if force_update {
+            if let Ok(mut f) = headless_log.lock() {
+                let _ = writeln!(
+                    f,
+                    "[shell] llama-server runtime version changed (installed={:?}, bundled={:?}); overwriting AI Home payload",
+                    installed_version,
+                    bundled_version
+                );
+            }
+        }
+        let mut copied = 0usize;
+        if let Ok(entries) = std::fs::read_dir(&bundled_llama_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                let fname = match p.file_name() {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let dest = native_llama_dir.join(fname);
+
+                if p.is_dir() {
+                    // Recursively copy subdirectories (e.g., variants/cuda12/)
+                    match copy_dir_recursive(&p, &dest, force_update) {
+                        Ok(n) => copied += n,
+                        Err(e) => {
+                            if let Ok(mut f) = headless_log.lock() {
+                                let _ = writeln!(
+                                    f,
+                                    "[shell] Failed to restore llama-server subdirectory ({} -> {}): {e}",
+                                    p.display(),
+                                    dest.display()
+                                );
+                            }
+                        }
+                    }
+                } else if p.is_file() {
+                    // Copy missing/empty files, or overwrite everything when the bundled runtime version changes.
+                    let should_copy = force_update
+                        || match std::fs::metadata(&dest) {
+                            Ok(m) => m.len() == 0,
+                            Err(_) => true,
+                        };
+                    if !should_copy {
+                        continue;
+                    }
+                    if let Err(e) = std::fs::copy(&p, &dest) {
+                        if let Ok(mut f) = headless_log.lock() {
+                            let _ = writeln!(
+                                f,
+                                "[shell] Failed to restore llama-server payload file ({} -> {}): {e}",
+                                p.display(),
+                                dest.display()
+                            );
+                        }
+                    } else {
+                        copied += 1;
+                    }
+                }
+            }
+        }
+        if copied > 0 {
+            if let Ok(mut f) = headless_log.lock() {
+                let _ = writeln!(
+                    f,
+                    "[shell] Restored llama-server payload into AI Home (copied {copied} file(s)) to {}",
+                    native_llama_dir.display()
+                );
+            }
+        }
+    } else {
+        if let Ok(mut f) = headless_log.lock() {
+            let _ = writeln!(
+                f,
+                "[shell] Bundled llama-server dir not found at {} (AI runtime restore skipped)",
+                bundled_llama_dir.display()
+            );
+        }
+    }
+
+    // OCR baseline: restore an optional bundled Tesseract payload into AI Home.
+    //
+    // The payload is directory-shaped because tesseract.exe needs adjacent DLLs and tessdata/*.traineddata.
+    // Best-effort mirrors llama-server: OCR can degrade honestly if the payload is absent.
+    let bundled_tesseract_dir = headless_dir.join("native-bin").join("tesseract");
+    if bundled_tesseract_dir.is_dir() {
+        let version_file = "runtime-version.txt";
+        let bundled_version =
+            std::fs::read_to_string(bundled_tesseract_dir.join(version_file))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        let installed_version =
+            std::fs::read_to_string(native_tesseract_dir.join(version_file))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        let force_update = bundled_version.is_some() && bundled_version != installed_version;
+        match copy_dir_recursive(&bundled_tesseract_dir, &native_tesseract_dir, force_update) {
+            Ok(copied) if copied > 0 => {
+                if let Ok(mut f) = headless_log.lock() {
+                    let _ = writeln!(
+                        f,
+                        "[shell] Restored Tesseract OCR payload into AI Home (copied {copied} file(s)) to {}",
+                        native_tesseract_dir.display()
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if let Ok(mut f) = headless_log.lock() {
+                    let _ = writeln!(
+                        f,
+                        "[shell] Failed to restore Tesseract OCR payload ({} -> {}): {e}",
+                        bundled_tesseract_dir.display(),
+                        native_tesseract_dir.display()
+                    );
+                }
+            }
+        }
+    }
+
+    // Prefer explicit overrides to avoid CWD-based discovery in bundled mode.
+    let config_path = headless_dir.join("config").join("application.yaml");
+    let ssot_path = headless_dir.join("SSOT");
+    let plugins_manifest = headless_dir
+        .join("SSOT")
+        .join("manifests")
+        .join("plugins")
+        .join("pipeline-stage-plugins.v1.json");
+
+    let crash_dir = app_data_dir.join("crashes");
+    let mut cmd = Command::new(&java_bin);
+    // Use AOT cache if present (JEP 514 — built at compile time, bundled in aot/).
+    let aot_cache = headless_dir.join("aot").join("head.aot");
+    cmd.current_dir(&headless_dir)
+        // Cap Head heap — the UI host is lightweight (REST API + SSE + static files).
+        // Without this, the JVM defaults to 1/4 physical RAM which is excessive.
+        .arg("-Xmx512m")
+        // SerialGC: small heap, no throughput need. TieredStopAtLevel=1: faster JIT warmup.
+        // -XX:-UsePerfData: skip hsperfdata temp file (avoids Defender scan on Windows).
+        .arg("-XX:+UseSerialGC")
+        .arg("-XX:TieredStopAtLevel=1")
+        .arg("-XX:-UsePerfData")
+        .arg("--sun-misc-unsafe-memory-access=warn");
+    if aot_cache.exists() {
+        cmd.arg(format!("-XX:AOTCache={}", aot_cache.to_string_lossy()));
+    }
+    cmd
+        // JVM crash diagnostics — write to <dataDir>/crashes/
+        .arg(format!(
+            "-XX:ErrorFile={}/hs_err_pid%p.log",
+            crash_dir.to_string_lossy()
+        ))
+        .arg("-XX:+HeapDumpOnOutOfMemoryError")
+        .arg(format!(
+            "-XX:HeapDumpPath={}/",
+            crash_dir.to_string_lossy()
+        ))
+        // Prod mode: CORS restricts to tauri:// origins, session token enforced on POST.
+        // Disabled for alpha/prototype to allow browser-based testing from localhost.
+        // TODO: re-enable for production release.
+        .arg("-Djustsearch.prod=false")
+        .arg(format!("-Djustsearch.data.dir={}", app_data_dir.to_string_lossy()))
+        .arg(format!("-Djustsearch.config={}", config_path.to_string_lossy()))
+        .arg(format!("-Djustsearch.repo.root={}", headless_dir.to_string_lossy()))
+        .arg(format!("-Djustsearch.ssot.path={}", ssot_path.to_string_lossy()))
+        .arg(format!(
+            "-Djustsearch.plugins.manifest={}",
+            plugins_manifest.to_string_lossy()
+        ))
+        .arg("-cp")
+        .arg(cp)
+        .arg("io.justsearch.ui.HeadlessApp")
+        .env("JUSTSEARCH_HOME", &app_data_dir);
+
+    // GPU acceleration: if bundled ORT CUDA DLLs are present, set the native path
+    // so GpuAutoDetection and OrtCudaHelper find them without conventional-path search.
+    let ort_cuda_dir = headless_dir.join("native-bin").join("onnxruntime").join("cuda12");
+    if ort_cuda_dir
+        .join("onnxruntime_providers_cuda.dll")
+        .exists()
+    {
+        cmd.env("JUSTSEARCH_ONNXRUNTIME_NATIVE_PATH", &ort_cuda_dir);
+        cmd.env("JUSTSEARCH_GPU_ENABLED", "true");
+    }
+
+    // OCR baseline: make app-owned Tesseract discoverable to Tika's external-process parser.
+    // Tika 3.x carries executable/tessdata paths on the parser instance built from process
+    // configuration, so the packaged app must project the restored runtime through env.
+    let tesseract_exe = native_tesseract_dir.join(if cfg!(windows) {
+        "tesseract.exe"
+    } else {
+        "tesseract"
+    });
+    let tessdata_dir = native_tesseract_dir.join("tessdata");
+    if tesseract_exe.exists() && tessdata_dir.is_dir() {
+        cmd.env("TESSDATA_PREFIX", &tessdata_dir);
+        let existing_path = std::env::var_os("PATH").unwrap_or_default();
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        let mut path_value = native_tesseract_dir.as_os_str().to_os_string();
+        if !existing_path.is_empty() {
+            path_value.push(separator);
+            path_value.push(existing_path);
+        }
+        cmd.env("PATH", path_value);
+    }
+
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // On Windows, prevent a console window from appearing (belt-and-suspenders with javaw.exe).
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = cmd.spawn().map_err(|e| format!("spawn java failed: {e}"))?;
+
+    // Tempdoc 501 Phase 7: manifest-watcher thread reads
+    // <dataDir>/runtime/manifest.json — the producer's self-published runtime
+    // identity — and signals port + session token without depending on stdout
+    // parsing. Stdout parse stays as a backup until Phase 8 fully deprecates
+    // it. Whichever fires first wins (set_port / set_session_token are
+    // idempotent — the second call returns immediately).
+    {
+        let state_clone = state.clone();
+        let manifest_path = app_data_dir.join("runtime").join("manifest.json");
+        thread::spawn(move || watch_manifest(state_clone, manifest_path));
+    }
+
+    // Drain stdout/stderr to avoid pipe backpressure.
+    if let Some(stdout) = child.stdout.take() {
+        let state_clone = state.clone();
+        let log_clone = headless_log.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                // Security: do NOT write JUSTSEARCH_SESSION_TOKEN= lines to the
+                // log file. The token is a secret that should only be delivered
+                // to the UI in-memory.
+                //
+                // Tempdoc 501 Phase 8: the consumer-side parse is gone —
+                // watch_manifest() now reads sessionToken from the manifest's
+                // head.sessionToken field. This line stays as a redaction
+                // guard so the token never lands on disk even if HeadlessApp
+                // keeps emitting it for human observation.
+                if line.starts_with("JUSTSEARCH_SESSION_TOKEN=") {
+                    continue;
+                }
+
+                // Write all other lines to the log file.
+                // Tempdoc 501 Phase 8: the JUSTSEARCH_API_PORT= and
+                // JUSTSEARCH_SESSION_TOKEN= stdout lines stay in the log for
+                // human observation but the consumer-side parse is gone —
+                // watch_manifest() is the canonical discovery path. set_port /
+                // set_session_token are idempotent, so race-cases between
+                // stdout and manifest fall to whichever fires first.
+                if let Ok(mut f) = log_clone.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+            // Stdout pipe closed — process exited. If no port was ever set and
+            // this isn't a graceful shutdown, signal an error so waiters unblock
+            // immediately instead of blocking until the timeout expires.
+            let killed = *state_clone.killed.lock().expect("killed mutex poisoned");
+            if !killed && state_clone.get_port().is_none() {
+                {
+                    let mut guard = state_clone.spawn_error.lock().expect("spawn_error mutex poisoned");
+                    if guard.is_none() {
+                        *guard = Some("Backend process exited before reporting API port".to_string());
+                    }
+                }
+                state_clone.port_ready.notify_waiters();
+                state_clone.session_token_ready.notify_waiters();
+            }
+        });
+    }
+
+    if let Some(stderr) = child.stderr.take() {
+        let log_clone = headless_log.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().flatten() {
+                if let Ok(mut f) = log_clone.lock() {
+                    let _ = writeln!(f, "[stderr] {line}");
+                }
+            }
+        });
+    }
+
+    {
+        let mut guard = state.child.lock().expect("child mutex poisoned");
+        *guard = Some(child);
+    }
+
+    Ok(())
+}
+
+/// Tempdoc 501 Phase 7: poll the runtime manifest and feed port + session
+/// token into BackendState as soon as the producer publishes them.
+///
+/// Polls every 100ms for up to 60s. Exits when:
+///   * port and token (if any) are both set on state, OR
+///   * the spawned child reports a spawn error, OR
+///   * the deadline elapses (the manifest never appeared — stdout fallback
+///     may still fire).
+///
+/// We poll rather than use OS file-watch APIs because (a) Tauri is currently
+/// tokio-rt-multi-thread without a notify dep, (b) the manifest write is a
+/// single atomic rename so any poll catches it on the next tick, and (c) 100ms
+/// granularity beats the JVM warmup by ~5 orders of magnitude.
+fn watch_manifest(state: Arc<BackendState>, manifest_path: PathBuf) {
+    let initial_deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut last_tooltip: Option<String> = None;
+    // Tempdoc 501 Phase 17: after the initial port-acquisition window, keep polling at a
+    // slower cadence so the tray tooltip stays current as lifecycle transitions land
+    // (worker ready, AI ready, degraded, etc.). The fast 100ms cadence drops to 1s once
+    // the initial phase is over.
+    let mut fast_phase = true;
+    loop {
+        if state.has_spawn_error() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if fast_phase && now >= initial_deadline {
+            fast_phase = false;
+        }
+        if let Some(manifest) = read_manifest_if_present(&manifest_path) {
+            if let Some(port) = manifest.api_port {
+                state.set_port(port);
+            }
+            if let Some(token) = manifest.session_token {
+                if !token.is_empty() {
+                    state.set_session_token(token);
+                }
+            }
+            // Tempdoc 637 #1: self-heal the FE→backend binding on a backend restart. A changed
+            // per-boot instanceId means a new Head incarnation (almost always a new ephemeral
+            // port); override the first-write-wins cached port and emit a restart event so the
+            // webview re-resolves its binding instead of silently failing against a dead port.
+            if let Some(new_id) = manifest.instance_id.as_deref() {
+                if state.note_instance_and_detect_restart(new_id) {
+                    if let Some(port) = manifest.api_port {
+                        state.force_set_port(port);
+                    }
+                    if let Some(app) = TRAY_CONTEXT.get() {
+                        let _ = app.emit("justsearch://backend-restart", manifest.api_port);
+                    }
+                }
+            }
+            // Tempdoc 501 Phase 17: drive the tray tooltip from the manifest's lifecycle
+            // projection. Format: "JustSearch · <LIFECYCLE>". Skips writes when unchanged
+            // to avoid flicker.
+            let next_tooltip = match manifest.lifecycle.as_deref() {
+                Some(l) => format!("JustSearch · {l}"),
+                None => "JustSearch".to_string(),
+            };
+            if last_tooltip.as_deref() != Some(next_tooltip.as_str()) {
+                update_tray_tooltip(&state, &next_tooltip);
+                last_tooltip = Some(next_tooltip);
+            }
+            if fast_phase && state.get_port().is_some() {
+                // Port is the only mandatory field for the initial-acquisition phase;
+                // drop to slow polling for tray-tooltip updates.
+                fast_phase = false;
+            }
+        }
+        let sleep_ms = if fast_phase { 100 } else { 1000 };
+        thread::sleep(Duration::from_millis(sleep_ms));
+    }
+}
+
+/// Tempdoc 501 Phase 17: tooltip update path. Looks up the tray icon by id via the
+/// stored app handle; quietly no-ops if the tray hasn't been built yet or has been
+/// torn down. Keeping the actual `tauri::tray::TrayIcon` out of `BackendState` (using
+/// id-based lookup instead) prevents the tray runtime from being pulled into the test
+/// binary, which fails to link on Windows with STATUS_ENTRYPOINT_NOT_FOUND.
+fn update_tray_tooltip(state: &BackendState, tooltip: &str) {
+    let Some(app) = TRAY_CONTEXT.get() else {
+        return; // tray not yet built
+    };
+    let tray_id = match state.tray_id.lock() {
+        Ok(g) => g.clone(),
+        Err(_) => return,
+    };
+    let Some(id) = tray_id else {
+        return;
+    };
+    if let Some(tray) = app.tray_by_id(&id) {
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+
+#[derive(Default)]
+struct ManifestFields {
+    api_port: Option<u16>,
+    session_token: Option<String>,
+    /// Tempdoc 501 Phase 17: top-level `lifecycle` field used to drive the tray tooltip.
+    lifecycle: Option<String>,
+    /// Tempdoc 637 #1: top-level per-boot `instanceId` — its change signals a backend restart.
+    instance_id: Option<String>,
+}
+
+fn read_manifest_if_present(path: &Path) -> Option<ManifestFields> {
+    let content = fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let head = v.get("head")?;
+    let mut out = ManifestFields::default();
+    if let Some(port) = head.get("apiPort").and_then(|p| p.as_u64()) {
+        if port > 0 && port <= u16::MAX as u64 {
+            out.api_port = Some(port as u16);
+        }
+    }
+    if let Some(t) = head.get("sessionToken").and_then(|s| s.as_str()) {
+        out.session_token = Some(t.to_string());
+    }
+    if let Some(l) = v.get("lifecycle").and_then(|s| s.as_str()) {
+        out.lifecycle = Some(l.to_string());
+    }
+    // Tempdoc 637 #1: top-level per-boot instanceId (sibling of `lifecycle`, not under `head`).
+    if let Some(id) = v.get("instanceId").and_then(|s| s.as_str()) {
+        if !id.is_empty() {
+            out.instance_id = Some(id.to_string());
+        }
+    }
+    Some(out)
+}
+
+#[tauri::command]
+async fn api_port(state: tauri::State<'_, Arc<BackendState>>) -> Result<Option<u16>, String> {
+    if let Some(port) = state.get_port() {
+        return Ok(Some(port));
+    }
+    if state.has_spawn_error() {
+        return Ok(None);
+    }
+
+    // Wait (bounded) for backend to reveal its port on stdout.
+    // Head startup is ~4.5s measured (Mar 2026); 15s gives 3× headroom.
+    let notified = state.port_ready.notified();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), notified).await;
+    Ok(state.get_port())
+}
+
+/// Returns the session token for non-GET request authentication (prod mode only).
+/// This is delivered to the UI so it can include the token in API requests.
+/// Returns None if the token has not been set (dev mode or not yet started).
+#[tauri::command]
+async fn session_token(state: tauri::State<'_, Arc<BackendState>>) -> Result<Option<String>, String> {
+    if let Some(token) = state.get_session_token() {
+        return Ok(Some(token));
+    }
+    if state.has_spawn_error() {
+        return Ok(None);
+    }
+
+    // Wait (bounded) for backend to reveal its token on stdout.
+    // Use a shorter timeout than port since token may not be present in dev mode.
+    let notified = state.session_token_ready.notified();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), notified).await;
+    Ok(state.get_session_token())
+}
+
+#[tauri::command]
+async fn smoke_run_id() -> Option<String> {
+    match std::env::var("JUSTSEARCH_SMOKE_RUN_ID") {
+        Ok(v) => {
+            let trimmed = v.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+#[tauri::command]
+async fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
+    validate_user_path(&path, false)?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|e| format!("Failed to get metadata for '{path}': {e}"))?;
+    Ok(FileMetadata {
+        is_dir: metadata.is_dir(),
+    })
+}
+
+#[tauri::command]
+async fn open_file(path: String) -> Result<(), String> {
+    validate_user_path(&path, true)?;
+    open::that(&path).map_err(|e| format!("Failed to open path '{path}': {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn reveal_in_explorer(path: String) -> Result<(), String> {
+    validate_user_path(&path, false)?;
+    let p = PathBuf::from(&path);
+
+    #[cfg(windows)]
+    {
+        if p.is_dir() {
+            open::that(&path).map_err(|e| format!("Failed to open folder '{path}': {e}"))?;
+            return Ok(());
+        }
+        // Explorer supports: explorer.exe /select,<path>
+        let arg = format!("/select,{}", p.to_string_lossy());
+        Command::new("explorer")
+            .arg(arg)
+            .status()
+            .map_err(|e| format!("Failed to reveal '{path}' in Explorer: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        // Best-effort: open the parent directory.
+        let parent = p.parent().map(|pp| pp.to_path_buf()).unwrap_or(p);
+        open::that(parent).map_err(|e| format!("Failed to reveal '{path}': {e}"))?;
+        Ok(())
+    }
+}
+
+/// Phase 1: Generate a single-use token for confirming factory reset.
+/// The frontend calls this before showing the confirmation dialog.
+#[tauri::command]
+async fn prepare_delete_data(state: tauri::State<'_, Arc<BackendState>>) -> Result<String, String> {
+    let token = uuid::Uuid::new_v4().to_string();
+    *state.delete_token.lock().expect("delete_token mutex poisoned") = Some(token.clone());
+    Ok(token)
+}
+
+/// Phase 2: Execute factory reset only if the caller provides the correct token.
+/// The token is consumed on every attempt (valid or not) to prevent replay.
+#[tauri::command]
+async fn confirm_delete_data(
+    token: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<BackendState>>,
+) -> Result<(), String> {
+    let stored = state
+        .delete_token
+        .lock()
+        .expect("delete_token mutex poisoned")
+        .take(); // consume — single use
+
+    match stored {
+        Some(expected) if expected == token => {}
+        _ => return Err("Invalid or expired confirmation token".into()),
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir() failed: {e}"))?;
+    std::fs::create_dir_all(&app_data_dir)
+        .map_err(|e| format!("Failed to create app data dir {}: {e}", app_data_dir.display()))?;
+
+    let marker = app_data_dir.join(RESET_MARKER_FILE);
+    std::fs::write(&marker, b"reset\n")
+        .map_err(|e| format!("Failed to write reset marker {}: {e}", marker.display()))?;
+
+    // Close the app so the reset runs on next launch, before the backend starts.
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+async fn justsearch_paths(app: tauri::AppHandle) -> Result<JustSearchPaths, String> {
+    let home = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir() failed: {e}"))?;
+    let models_dir = home.join("models");
+    let llama_server_dir = home.join("native-bin").join("llama-server");
+    let logs_dir = home.join("logs");
+    Ok(JustSearchPaths {
+        home: home.to_string_lossy().to_string(),
+        models_dir: models_dir.to_string_lossy().to_string(),
+        llama_server_dir: llama_server_dir.to_string_lossy().to_string(),
+        logs_dir: logs_dir.to_string_lossy().to_string(),
+        llama_log: logs_dir.join("llama-server.log").to_string_lossy().to_string(),
+        headless_backend_log: logs_dir
+            .join("headless-backend.log")
+            .to_string_lossy()
+            .to_string(),
+    })
+}
+
+// Tempdoc 507 §3.5 / §6 Phase 4 + 508 §12.1 — file-based plugin distribution.
+// Scans the plugin directory and returns each plugin's manifest + source so the
+// frontend's PluginRegistry can install them at startup. Hot-reload uses the
+// FE-side @tauri-apps/plugin-fs watcher; this command only handles startup scan
+// + on-demand re-read.
+
+#[derive(serde::Serialize)]
+struct DiscoveredPlugin {
+    id: String,
+    path: String,
+    #[serde(rename = "manifestJson")]
+    manifest_json: String,
+    #[serde(rename = "sourceText")]
+    source_text: String,
+    /// §13 critical-analysis A4: true when manifest.json or plugin.js
+    /// exceeded the per-file size cap. FE skips installation; manifest/
+    /// source are empty strings in that case.
+    #[serde(rename = "tooLarge")]
+    too_large: bool,
+}
+
+// §13 critical-analysis A4: bounded reads for plugin manifest + source.
+// Manifest is structured JSON (KB-scale). Plugin source is JS; 1 MB
+// covers complex plugins with docs and bundled deps, well under what
+// a malicious file would need to exhaust memory.
+const PLUGIN_MANIFEST_MAX_BYTES: u64 = 64 * 1024;
+const PLUGIN_SOURCE_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Read a file as a UTF-8 string but cap by metadata length first.
+/// Returns `Ok(None)` when the file exceeds the cap; caller treats
+/// that as "skip with tooLarge flag." Returns `Err` on real I/O
+/// errors.
+fn read_capped(path: &std::path::Path, max_bytes: u64) -> Result<Option<String>, String> {
+    let meta = std::fs::metadata(path)
+        .map_err(|e| format!("Failed to stat {}: {e}", path.display()))?;
+    if meta.len() > max_bytes {
+        return Ok(None);
+    }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))
+}
+
+fn plugin_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let home = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir() failed: {e}"))?;
+    Ok(home.join("plugins"))
+}
+
+#[tauri::command]
+async fn get_plugin_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = plugin_dir(&app)?;
+    // Create the directory if it doesn't exist — file-based distribution
+    // assumes the user can drop plugins into it without first creating it.
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            format!("Failed to create plugin dir {}: {e}", dir.display())
+        })?;
+    }
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn scan_plugins(app: tauri::AppHandle) -> Result<Vec<DiscoveredPlugin>, String> {
+    let dir = plugin_dir(&app)?;
+    if !dir.exists() {
+        // No plugins directory means no plugins — not an error.
+        return Ok(Vec::new());
+    }
+    let entries = std::fs::read_dir(&dir)
+        .map_err(|e| format!("Failed to read plugin dir {}: {e}", dir.display()))?;
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let manifest_path = entry_path.join("manifest.json");
+        let source_path = entry_path.join("plugin.js");
+        if !manifest_path.is_file() || !source_path.is_file() {
+            // Skip directories that aren't valid plugin layouts. A plugin
+            // requires both manifest.json and plugin.js at the top level.
+            continue;
+        }
+        // §13 critical-analysis A4: cap reads at PLUGIN_MANIFEST_MAX_BYTES
+        // and PLUGIN_SOURCE_MAX_BYTES. Oversize files return a
+        // tooLarge entry so the FE can skip + log without consuming
+        // arbitrary memory.
+        let manifest_opt = read_capped(&manifest_path, PLUGIN_MANIFEST_MAX_BYTES)?;
+        let source_opt = read_capped(&source_path, PLUGIN_SOURCE_MAX_BYTES)?;
+        let too_large = manifest_opt.is_none() || source_opt.is_none();
+        let manifest_json = manifest_opt.unwrap_or_default();
+        let source_text = source_opt.unwrap_or_default();
+        // Extract id from the directory name. We could parse manifest_json for
+        // the id field, but the directory name is the canonical install id and
+        // mismatches are a user error caught later by PluginRegistry.install.
+        let id = entry_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(String::from)
+            .unwrap_or_default();
+        out.push(DiscoveredPlugin {
+            id,
+            path: entry_path.to_string_lossy().to_string(),
+            manifest_json,
+            source_text,
+            too_large,
+        });
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn read_plugin_source(path: String) -> Result<String, String> {
+    // Accept either a full plugin directory path or a direct file path. If a
+    // directory is passed, read plugin.js from within it.
+    let p = PathBuf::from(&path);
+    let target = if p.is_dir() {
+        p.join("plugin.js")
+    } else {
+        p
+    };
+    // §13 critical-analysis A4: same 1 MB source cap as scan_plugins.
+    // Hot-reload reads through this function too; an oversized file
+    // returns a structured error so the caller doesn't OOM.
+    match read_capped(&target, PLUGIN_SOURCE_MAX_BYTES)? {
+        Some(content) => Ok(content),
+        None => Err(format!(
+            "Plugin source at {} exceeds size cap of {} bytes",
+            target.display(),
+            PLUGIN_SOURCE_MAX_BYTES
+        )),
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let state = Arc::new(BackendState::default());
+    let state_for_close = state.clone(); // Clone before setup() moves state
+
+    tauri::Builder::default()
+        .manage(state.clone())
+        .invoke_handler(tauri::generate_handler![
+            api_port,
+            session_token,
+            smoke_run_id,
+            get_file_metadata,
+            open_file,
+            reveal_in_explorer,
+            prepare_delete_data,
+            confirm_delete_data,
+            justsearch_paths,
+            get_plugin_dir,
+            scan_plugins,
+            read_plugin_source
+        ])
+        .setup(move |app| {
+            // Best-effort: spawn the bundled headless backend.
+            // If this fails in dev, the UI can still be pointed at an external backend via ?api_port=...
+            if let Err(err) = maybe_run_factory_reset(app.handle()) {
+                eprintln!("Factory reset failed: {err}");
+            }
+            if let Err(err) = spawn_headless_backend(app.handle(), state.clone()) {
+                {
+                    let mut guard = state.spawn_error.lock().expect("spawn_error mutex poisoned");
+                    *guard = Some(err.clone());
+                }
+                // Notify waiters so they don't block forever on spawn error
+                state.port_ready.notify_waiters();
+                state.session_token_ready.notify_waiters();
+                eprintln!("Failed to spawn headless backend: {err}");
+            }
+
+            // System tray: icon with Show/Quit menu, left-click to show window.
+            let show_i = MenuItem::with_id(app, "show", "Show JustSearch", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            // Tempdoc 501 Phase 17: capture the built TrayIcon into BackendState so the
+            // manifest watcher can drive `set_tooltip` on lifecycle transitions.
+            // Tempdoc 501 Phase 17: register the tray with an explicit id so the
+            // manifest watcher can later look it up via `app.tray_by_id(...)` without
+            // holding a direct `TrayIcon` reference (which would force the tray runtime
+            // into the test binary; see BackendState.tray_id docs).
+            const TRAY_ID: &str = "justsearch-main-tray";
+            let _tray_handle = TrayIconBuilder::with_id(TRAY_ID)
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("JustSearch")
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.unminimize();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(w) = tray.app_handle().get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+            {
+                let mut guard = state.tray_id.lock().expect("tray_id mutex poisoned");
+                *guard = Some(TRAY_ID.to_string());
+            }
+            let _ = TRAY_CONTEXT.set(app.handle().clone());
+
+            // Show the main window unless launched with --minimized (autostart).
+            // Window-state plugin restores position/size but not visibility (VISIBLE
+            // flag is excluded), so we control show/hide here.
+            let start_minimized = std::env::args().any(|a| a == "--minimized");
+            if !start_minimized {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+
+            // Slice 489 §15 — bridge OS deep-link arrivals (warm-launch path:
+            // running instance receives a URL after setup). Cold-launch path
+            // (first invocation arg) is handled in the single-instance
+            // callback above; on macOS the plugin also calls on_open_url for
+            // cold launches because Info.plist routes the URL through the
+            // app's existing event loop.
+            let app_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let url_str = url.to_string();
+                    if url_str.starts_with("justsearch://") {
+                        let _ = app_handle.emit("justsearch://deep-link", url_str);
+                    }
+                }
+            });
+
+            Ok(())
+        })
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Second launch should deterministically focus the existing instance and exit.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            } else if let Some((_label, window)) = app.webview_windows().into_iter().next() {
+                // Fallback: focus the first available window.
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            // Slice 489 §15 — handoff deep-link argv to the running instance.
+            // On Windows/Linux, deep-link URLs arrive as the new process's
+            // command-line args; tauri-plugin-single-instance forwards argv
+            // through this callback. Forward any justsearch:// URLs to the FE
+            // via the `deep-link` Tauri event (subscribed in tauriBridge.ts).
+            for arg in argv.iter().skip(1) {
+                if arg.starts_with("justsearch://") {
+                    let _ = app.emit("justsearch://deep-link", arg.clone());
+                }
+            }
+        }))
+        // Slice 489 §15 — OS-level deep-link plugin (tauri-plugin-deep-link).
+        // Pair with single-instance above so all incoming URLs land in the
+        // running instance, not a fresh process. The plugin is initialized
+        // before single-instance per the plugin's docs (Windows/Linux
+        // registration runs here; macOS uses Info.plist registered at build
+        // time, which the plugin's build script handles automatically when
+        // `plugins.deep-link.desktop.schemes` is declared in tauri.conf.json).
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                // Restore position/size but NOT visibility — we control show/hide
+                // in setup() based on whether --minimized (autostart) is present.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .plugin(tauri_plugin_notification::init())
+        // Close-to-tray: hide the main window instead of exiting so the backend keeps running.
+        .on_window_event(move |window, event| {
+            // Only respond to main window close, not dialogs or devtools
+            if window.label() != "main" {
+                return;
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide to tray instead of exiting — backend keeps running.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Explicit cleanup on app exit — kill backend to prevent orphan processes.
+        // This fires when app.exit() is called (e.g., from tray menu "Quit").
+        .run(move |_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                state_for_close.kill_child();
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_validate_path_rejects_traversal() {
+        let result = validate_user_path("C:\\Users\\..\\etc\\passwd", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("traversal"));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_unc() {
+        let result = validate_user_path("\\\\server\\share\\file.txt", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Network"));
+
+        let result2 = validate_user_path("//server/share/file.txt", false);
+        assert!(result2.is_err());
+    }
+
+    #[test]
+    fn test_validate_path_rejects_executables() {
+        for ext in &["exe", "bat", "cmd", "ps1", "vbs", "msi", "scr", "com", "lnk", "pif"] {
+            let path = format!("C:\\Users\\malware.{ext}");
+            let result = validate_user_path(&path, true);
+            assert!(result.is_err(), "should block .{ext}");
+        }
+        // Case-insensitive
+        assert!(validate_user_path("C:\\file.EXE", true).is_err());
+        assert!(validate_user_path("C:\\file.Bat", true).is_err());
+    }
+
+    #[test]
+    fn test_validate_path_allows_normal_files() {
+        assert!(validate_user_path("C:\\Users\\Docs\\report.pdf", false).is_ok());
+        assert!(validate_user_path("C:\\Users\\Docs\\report.pdf", true).is_ok());
+        assert!(validate_user_path("/home/user/docs/file.txt", false).is_ok());
+    }
+
+    #[test]
+    fn test_validate_path_allows_exe_when_not_blocked() {
+        assert!(validate_user_path("C:\\Program Files\\app.exe", false).is_ok());
+    }
+
+    #[test]
+    fn test_read_manifest_parses_top_level_instance_id() {
+        // Tempdoc 637 #1: instanceId is a TOP-LEVEL field (sibling of `lifecycle`), not under `head`.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        fs::write(
+            &path,
+            r#"{"instanceId":"abc-123","lifecycle":"READY","head":{"apiPort":40404,"sessionToken":"t"}}"#,
+        )
+        .unwrap();
+        let m = read_manifest_if_present(&path).expect("manifest parses");
+        assert_eq!(m.instance_id.as_deref(), Some("abc-123"));
+        assert_eq!(m.api_port, Some(40404));
+    }
+
+    #[test]
+    fn test_detect_restart_on_instance_id_change() {
+        // Tempdoc 637 #1: first observation establishes (not a restart); an unchanged id is not a
+        // restart; a changed id IS a restart (a new Head incarnation on a new port).
+        let state = BackendState::default();
+        assert!(
+            !state.note_instance_and_detect_restart("id-1"),
+            "first observation is establishment, not a restart"
+        );
+        assert!(
+            !state.note_instance_and_detect_restart("id-1"),
+            "unchanged id is not a restart"
+        );
+        assert!(
+            state.note_instance_and_detect_restart("id-2"),
+            "changed id is a restart"
+        );
+        assert!(
+            !state.note_instance_and_detect_restart("id-2"),
+            "stabilized at the new id"
+        );
+    }
+
+    #[test]
+    fn test_force_set_port_overrides_first_write_wins() {
+        // Tempdoc 637 #1: set_port is first-write-wins (a startup race guard); a restart lands on a
+        // new port and must override the cached one, else the webview is stranded on a dead port.
+        let state = BackendState::default();
+        state.set_port(11111);
+        state.set_port(22222); // ignored — first-write-wins
+        assert_eq!(state.get_port(), Some(11111));
+        state.force_set_port(33333); // restart override
+        assert_eq!(state.get_port(), Some(33333));
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_copies_subdirectories() {
+        let src = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+
+        // Create source structure: file.txt, subdir/nested.txt
+        fs::write(src.path().join("file.txt"), "content").unwrap();
+        fs::create_dir(src.path().join("subdir")).unwrap();
+        fs::write(src.path().join("subdir/nested.txt"), "nested").unwrap();
+
+        // Copy with force_update=true
+        let copied = copy_dir_recursive(src.path(), dest.path(), true).unwrap();
+
+        // Verify
+        assert!(dest.path().join("file.txt").exists());
+        assert!(dest.path().join("subdir").is_dir());
+        assert!(dest.path().join("subdir/nested.txt").exists());
+        assert_eq!(copied, 2); // Two files copied
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_skips_existing_when_not_forced() {
+        let src = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+
+        // Create source and dest with same file
+        fs::write(src.path().join("file.txt"), "new content").unwrap();
+        fs::write(dest.path().join("file.txt"), "old content").unwrap();
+
+        // Copy with force_update=false
+        let copied = copy_dir_recursive(src.path(), dest.path(), false).unwrap();
+
+        // Should skip existing non-empty file
+        assert_eq!(copied, 0);
+        assert_eq!(
+            fs::read_to_string(dest.path().join("file.txt")).unwrap(),
+            "old content"
+        );
+    }
+
+    #[test]
+    fn test_copy_dir_recursive_copies_empty_files_when_not_forced() {
+        let src = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+
+        // Create source with content, dest with empty file
+        fs::write(src.path().join("file.txt"), "content").unwrap();
+        fs::write(dest.path().join("file.txt"), "").unwrap();
+
+        // Copy with force_update=false (should copy because dest is empty)
+        let copied = copy_dir_recursive(src.path(), dest.path(), false).unwrap();
+
+        assert_eq!(copied, 1);
+        assert_eq!(
+            fs::read_to_string(dest.path().join("file.txt")).unwrap(),
+            "content"
+        );
+    }
+
+    #[test]
+    fn test_delete_token_roundtrip() {
+        let state = BackendState::default();
+        let token = uuid::Uuid::new_v4().to_string();
+        *state.delete_token.lock().unwrap() = Some(token.clone());
+
+        // Take the token (simulates confirm_delete_data consuming it)
+        let stored = state.delete_token.lock().unwrap().take();
+        assert_eq!(stored, Some(token));
+    }
+
+    #[test]
+    fn test_delete_token_rejects_wrong() {
+        let state = BackendState::default();
+        let token = uuid::Uuid::new_v4().to_string();
+        *state.delete_token.lock().unwrap() = Some(token);
+
+        let stored = state.delete_token.lock().unwrap().take();
+        assert_ne!(stored.as_deref(), Some("wrong-token"));
+    }
+
+    #[test]
+    fn test_delete_token_single_use() {
+        let state = BackendState::default();
+        let token = uuid::Uuid::new_v4().to_string();
+        *state.delete_token.lock().unwrap() = Some(token.clone());
+
+        // First take consumes the token
+        let first = state.delete_token.lock().unwrap().take();
+        assert_eq!(first, Some(token));
+
+        // Second take returns None — token is consumed
+        let second = state.delete_token.lock().unwrap().take();
+        assert_eq!(second, None);
+    }
+
+    // Tempdoc 521 §16.6 — direct verification of the §13 A4 file-size
+    // cap. Earlier follow-up reasoning ("no Tauri env to test") was
+    // wrong: read_capped is plain Rust with no Tauri surface, so a
+    // cargo unit test against this lib crate exercises the cap.
+
+    #[test]
+    fn test_read_capped_returns_some_for_under_cap_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("small.txt");
+        fs::write(&path, "hello").unwrap();
+        let res = read_capped(&path, 1024).unwrap();
+        assert_eq!(res, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_read_capped_returns_none_for_oversized_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("oversized.txt");
+        // 10 KB body, 1 KB cap.
+        let body = vec![b'a'; 10 * 1024];
+        fs::write(&path, &body).unwrap();
+        let res = read_capped(&path, 1024).unwrap();
+        assert!(res.is_none(), "read_capped should return None when meta.len() > cap");
+    }
+
+    #[test]
+    fn test_read_capped_honors_exact_boundary() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("exact.txt");
+        // Exactly at the cap is allowed (the check is strict greater-than).
+        let body = vec![b'b'; 1024];
+        fs::write(&path, &body).unwrap();
+        let res = read_capped(&path, 1024).unwrap();
+        assert!(res.is_some(), "file exactly at cap must be allowed");
+    }
+
+    #[test]
+    fn test_read_capped_errors_on_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.txt");
+        let res = read_capped(&path, 1024);
+        assert!(res.is_err());
+    }
+}

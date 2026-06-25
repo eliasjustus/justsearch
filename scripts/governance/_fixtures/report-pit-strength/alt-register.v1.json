@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "note": "Fixture (tempdoc 576 §15 / G6): a SECOND logic-seam register, distinct from the default governance/logic-seams.v1.json (2 seams, not 5). Used by report-pit-strength.test.mjs to prove the --register flag is honored (the report reads THIS register's seams, not the hardwired default). No PIT is run; only the register-reading path is exercised.",
+  "strengthMetric": "killed/covered",
+  "seams": [
+    {
+      "id": "alt-seam-one",
+      "gradlePath": ":modules:adapters-lucene",
+      "targetClass": "io.justsearch.adapters.lucene.runtime.HybridFusionUtils",
+      "targetTests": ["io.justsearch.adapters.lucene.runtime.HybridFusionUtilsTest"],
+      "pure": true,
+      "law": "fixture-only — not a real registered seam.",
+      "guard": "test:HybridFusionUtilsTest"
+    },
+    {
+      "id": "alt-seam-two",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.services.respond.ChunkOffsetMath",
+      "targetTests": ["io.justsearch.indexerworker.services.respond.ChunkOffsetMathTest"],
+      "pure": true,
+      "law": "fixture-only — not a real registered seam.",
+      "guard": "test:ChunkOffsetMathTest"
+    }
+  ]
+}

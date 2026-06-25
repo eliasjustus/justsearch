@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "description": "POSITIVE fixture register — every contributor resolves, one canonical source per concept, no shared contributor, no operator-trace Resource, every kind matches its source's primitive class, every declared projection resolves to a fixture mount tag, the stateful concept declares a livenessOwner, and every catalog stream (core.action-ledger / core.operation-history / core.health-events / core.head-log) is a declared contributor (stream-uncovered passes — full reverse-coverage, 575 §13 L1). The gate must PASS.",
+  "scan": {
+    "resourceCatalogRoots": ["catalog"],
+    "diagnosticChannelCatalogRoots": ["catalog"],
+    "surfaceCatalog": "catalog/FixtureCoreSurfaceCatalog.java",
+    "javaInclude": ""
+  },
+  "concepts": [
+    {
+      "id": "action-lifecycle",
+      "kind": "event-stream",
+      "canonicalSource": "core.action-ledger",
+      "contributors": ["core.action-ledger", "core.operation-history"],
+      "projections": ["jf-activity-surface"],
+      "stateful": true,
+      "livenessOwner": "the job state machine + reaper"
+    },
+    {
+      "id": "health-conditions",
+      "kind": "event-stream",
+      "canonicalSource": "core.health-events",
+      "contributors": ["core.health-events"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "head-log",
+      "kind": "diagnostic-channel",
+      "canonicalSource": "core.head-log",
+      "contributors": ["core.head-log"],
+      "projections": ["jf-log-surface"],
+      "stateful": false
+    }
+  ]
+}

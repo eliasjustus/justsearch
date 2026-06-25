@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "tempdoc": 629,
+  "note": "Tempdoc 629 #5 — the governed register for the store-recoverability classification. The Java authority is StoreCatalog; this register mirrors it (the gate enforces PARITY so neither can drift). It is promoted from the #1 descriptor list now that THREE obligations read the class (encryption cipher-selection, encrypted backup/export, export-first-uninstall). The gate also enforces NO-HARDCODE: every storeCipher(...) call in a construction site must read the catalog (StoreCatalog.X.recoverability()), never a bare StoreRecoverability literal — so a new store cannot get a cipher without a catalog entry, which is what makes 'a new unclassified store fails the build' true. Conforms to the readiness-reason-codes / execution-surfaces register+gate pattern; not a parallel governance mechanism.",
+  "catalog": {
+    "file": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
+  },
+  "stores": [
+    { "dirName": "conversations", "recoverability": "AUTHORED" },
+    { "dirName": "memories", "recoverability": "AUTHORED" },
+    { "dirName": "agent-runs", "recoverability": "AUTHORED" },
+    { "dirName": "index", "recoverability": "DERIVED" },
+    { "dirName": "jobs.db", "recoverability": "DERIVED" }
+  ],
+  "constructionSites": [
+    "modules/app-services/src/main/java/io/justsearch/app/services/HeadAssembly.java",
+    "modules/ui/src/main/java/io/justsearch/ui/api/ConversationApiAssembly.java"
+  ]
+}

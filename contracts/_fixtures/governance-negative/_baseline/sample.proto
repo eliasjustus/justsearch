@@ -1,0 +1,12 @@
+// Baseline (pre-mutation) of contracts/_fixtures/governance-negative/sample.proto.
+// Self-test diffs the current spec against this directory.
+syntax = "proto3";
+
+package justsearch.fixtures.gov_negative;
+
+option java_package = "io.justsearch.fixtures.gov_negative";
+
+message SampleMessage {
+  string id = 1;
+  optional string description = 2;
+}

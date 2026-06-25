@@ -1,0 +1,92 @@
+# DEPRECATED: use `offline-installer-vmware-steps.txt`
+
+# This file is kept for backward compatibility.
+
+## Goal
+Verify that the NSIS installer works correctly on a clean, offline Windows machine:
+- installer UX + shortcuts
+- WebView2 behavior (offline)
+- Tauri shell launch + backend boot + loopback-only posture
+- core app functionality (search/indexing + shell integrations)
+- BYO AI setup (Option B)
+
+## Recommended VM setup (once)
+1. Create a Windows 10/11 VM.
+2. Install **VMware Tools** (required for Shared Folders).
+3. Install Windows updates.
+4. Take a snapshot named **Clean**.
+
+## Before each run
+1. Revert to snapshot **Clean**.
+2. **Disable networking** in the VM:
+   - VMware Workstation Pro > VM Settings > Network Adapter > uncheck "Connected"
+   - (or disable the adapter inside Windows)
+3. Open the VMware Shared Folder that contains:
+   - `*-setup.exe`
+   - `offline-installer-vmware-start.ps1`
+   - `offline-installer-vmware-verify.ps1`
+   - this file (deprecated; prefer `offline-installer-vmware-steps.txt`)
+
+## Inside the VM (manual + scripted)
+
+### 1) Start the harness
+- Run `offline-installer-vmware-start.ps1`
+  - It opens this checklist and the folder.
+  - It launches the installer UI.
+
+### 2) Install JustSearch (manual)
+- Run through the installer.
+- Confirm install completes successfully (no internet).
+
+### 3) Launch JustSearch (manual)
+- Launch from the Start Menu / Desktop shortcut.
+
+### 4) Run scripted backend verification (recommended)
+- Run `offline-installer-vmware-verify.ps1`
+  - It tries to detect the backend port from `headless-backend.log`
+  - It calls:
+    - `GET /api/status`
+    - `GET /api/health`
+  - It checks loopback bind + prod CORS posture (best-effort)
+  - It writes a PASS/FAIL report file next to the script (or under `%TEMP%\JustSearch-Offline-Installer`).
+
+### 5) UI renders (CRITICAL, manual)
+- Confirm the window is visible and not blank (WebView2 works).
+- Confirm the UI connects automatically (no `?api_port=` needed).
+
+### 6) Basic functionality (manual)
+- Add a small folder with a few text files to the index.
+- Search for content inside those files.
+- Confirm results appear.
+
+### 7) “Open file” / “Reveal in Explorer” (manual)
+- From a search result:
+  - “Open file” opens the file
+  - “Reveal in Explorer” opens File Explorer with the file selected
+
+### 8) BYO AI setup (Option B, manual)
+- Go to Brain settings.
+- Confirm AI Home path + log locations are displayed.
+- Click “Open Folder” to open AI Home.
+- Provide:
+  - `llama-server.exe` (pick it in the UI)
+  - a GGUF model (pick it in the UI)
+- Click “Go Online”
+- Confirm mode becomes ONLINE and Q&A streams a response.
+
+### 9) Single-instance behavior (manual)
+- While JustSearch is running, launch it again.
+- Confirm a second instance does NOT start (existing instance should focus or second launch should refuse).
+
+### 10) Uninstall behavior (manual)
+- Uninstall JustSearch from Windows Settings.
+- Confirm uninstall completes.
+- Confirm default uninstall preserves data.
+- Verify “Delete data” option works (separate action; use with care).
+
+## What to share back if something fails
+- The generated `offline-installer-vmware-report-*.txt`
+- The `offline-installer-vmware-verify-*.log`
+- If available, the path printed for `headless-backend.log` and its last ~200 lines
+
+

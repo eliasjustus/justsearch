@@ -1,0 +1,40 @@
+HikariCP Connection Pool Configuration Guide
+
+HikariCP is the fastest JDBC connection pool available for Java applications. It was created
+by Brett Wooldridge in 2013 and has become the default connection pool in Spring Boot since
+version 2.0. The name "Hikari" comes from the Japanese word for "light" or "radiance".
+
+Recommended Configuration Settings:
+- maximumPoolSize: Set to (2 * CPU cores) + number of disk spindles. For a typical 4-core
+  server with SSD storage, this means a pool size of approximately 10 connections.
+- minimumIdle: Should equal maximumPoolSize for stable workloads. HikariCP recommends NOT
+  setting this lower than maximumPoolSize for production use.
+- connectionTimeout: Default is 30000 milliseconds (30 seconds). This controls how long a
+  client will wait for a connection from the pool before throwing a SQLException.
+- idleTimeout: Default is 600000 milliseconds (10 minutes). Only applies when minimumIdle
+  is less than maximumPoolSize.
+- maxLifetime: Default is 1800000 milliseconds (30 minutes). Must be set several seconds
+  shorter than the database's own connection timeout to avoid broken connections.
+
+Performance Characteristics:
+HikariCP achieves its speed through several design decisions:
+1. ConcurrentBag: A custom lock-free collection for connection tracking
+2. FastList: Replaces ArrayList with an unsynchronized, range-check-free alternative
+3. Bytecode-level engineering: Uses Javassist to generate optimized bytecode at runtime
+4. Zero-overhead connection state tracking
+
+Common Pitfalls:
+- Setting maximumPoolSize too high causes database contention. PostgreSQL performance
+  degrades significantly above 20 connections per server instance.
+- Not configuring maxLifetime leads to stale connections when behind a firewall or
+  load balancer with its own timeout settings.
+- Using HikariCP with auto-commit disabled requires explicit transaction management
+  to prevent connection leaks.
+
+Integration with Spring Boot:
+In application.properties or application.yaml:
+  spring.datasource.hikari.maximum-pool-size=10
+  spring.datasource.hikari.minimum-idle=10
+  spring.datasource.hikari.connection-timeout=30000
+  spring.datasource.hikari.idle-timeout=600000
+  spring.datasource.hikari.max-lifetime=1800000

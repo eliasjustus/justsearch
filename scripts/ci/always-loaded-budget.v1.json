@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "unit": "bytes",
+  "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or verifyGovernanceGates once the doc set stabilizes (582 R3: extend the proven meta-gate, do NOT author a new kernel gate).",
+  "ceilings": {
+    "CLAUDE.md": 25051,
+    ".claude/rules/agent-lessons.md": 8677,
+    ".claude/rules/branch-safety.md": 9763,
+    ".claude/rules/context-efficiency.md": 1960,
+    ".claude/rules/hooks-reference.md": 11906,
+    ".claude/rules/slice-execution.md": 4667,
+    ".claude/rules/tier-register.md": 14456
+  },
+  "totalCeiling": 76480,
+  "bumps": [
+    {
+      "file": "CLAUDE.md",
+      "from": 24846,
+      "to": 25051,
+      "reason": "618 Seam C: log-pre-existing-issues rule now points at note-observation.mjs (per-session inbox shard) instead of echo>>observations.md",
+      "ts": "2026-06-21T12:30:19.732Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 9499,
+      "to": 9763,
+      "reason": "618 Seam C: shared-main inbox note documents note-observation.mjs + fold-observations.mjs",
+      "ts": "2026-06-21T12:30:19.788Z"
+    },
+    {
+      "file": ".claude/rules/agent-lessons.md",
+      "from": 7285,
+      "to": 8677,
+      "reason": "618 Phase 2 promotion: §10a piped-exit + §11d background-server platform bullets + 3 named-principle handles (unreachable-seed-green, subset-isnt-the-suite, green-masked-destructive)",
+      "ts": "2026-06-21T12:32:50.624Z"
+    }
+  ]
+}

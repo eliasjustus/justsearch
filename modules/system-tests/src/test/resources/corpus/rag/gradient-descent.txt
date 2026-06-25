@@ -1,0 +1,42 @@
+Gradient Descent Optimization Algorithms
+
+Gradient descent is the fundamental optimization algorithm used to train machine learning
+models. It iteratively updates model parameters by moving in the direction of steepest
+decrease of the loss function.
+
+Variants of Gradient Descent:
+
+1. Batch Gradient Descent (BGD): Computes the gradient using the entire training dataset.
+   Guarantees convergence to the global minimum for convex functions. Very slow for large
+   datasets as it requires processing all samples before each update.
+
+2. Stochastic Gradient Descent (SGD): Updates parameters after each individual training
+   sample. Much faster per iteration but introduces high variance in gradient estimates.
+   The noisy updates can help escape local minima but make convergence unstable.
+
+3. Mini-Batch Gradient Descent: Processes a fixed number of samples (typically 32, 64,
+   or 128) per update. Balances the stability of batch GD with the speed of SGD. This is
+   the most commonly used variant in deep learning.
+
+Advanced Optimizers:
+
+- Adam (Adaptive Moment Estimation): Combines momentum (first moment) and RMSProp
+  (second moment) to adapt learning rates per parameter. Default learning rate is 0.001.
+  Introduced by Kingma and Ba in 2014. Uses bias correction for the first and second
+  moment estimates. The update rule involves computing exponential moving averages of
+  the gradient (beta1=0.9) and squared gradient (beta2=0.999).
+
+- AdaGrad: Adapts learning rates based on historical gradient magnitudes. Works well for
+  sparse data but can cause premature convergence because the accumulated squared gradients
+  grow monotonically, eventually making the learning rate infinitesimally small.
+
+- RMSProp: Addresses AdaGrad's diminishing learning rate by using exponential moving average
+  of squared gradients instead of accumulation. Uses a decay rate (typically 0.9).
+
+Learning Rate Schedules:
+- Step decay: Reduce learning rate by a factor every N epochs (e.g., halve every 30 epochs)
+- Cosine annealing: Smoothly decreases learning rate following a cosine curve
+- Warmup: Start with a small learning rate and increase linearly for the first few epochs,
+  then apply another schedule. Critical for training large Transformer models.
+- One-cycle policy: Increases learning rate to a maximum then decreases. Proposed by
+  Leslie Smith in 2018. Achieves faster convergence with higher maximum learning rates.

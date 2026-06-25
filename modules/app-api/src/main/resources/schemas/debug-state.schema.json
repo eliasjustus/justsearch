@@ -1,0 +1,138 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "active_doc_count" : {
+      "type" : "integer"
+    },
+    "building_doc_count" : {
+      "type" : "integer"
+    },
+    "doc_count" : {
+      "type" : "integer"
+    },
+    "effective_config" : {
+      "type" : [ "object", "null" ],
+      "additionalProperties" : {
+        "type" : "string"
+      }
+    },
+    "health_check" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "ai_ready" : {
+          "type" : "boolean"
+        },
+        "embedding_ready" : {
+          "type" : "boolean"
+        },
+        "pid" : {
+          "type" : "integer"
+        },
+        "serving" : {
+          "type" : "boolean"
+        },
+        "version" : {
+          "type" : [ "string", "null" ]
+        },
+        "worker_state" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "is_healthy" : {
+      "type" : "boolean"
+    },
+    "last_commit_timestamp" : {
+      "type" : "integer"
+    },
+    "migration_enumerator" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "done" : {
+          "type" : "boolean"
+        },
+        "files_enqueued" : {
+          "type" : "integer"
+        },
+        "files_seen" : {
+          "type" : "integer"
+        },
+        "finished_at_ms" : {
+          "type" : "integer"
+        },
+        "last_path" : {
+          "type" : [ "string", "null" ]
+        },
+        "roots_done" : {
+          "type" : "integer"
+        },
+        "roots_total" : {
+          "type" : "integer"
+        },
+        "running" : {
+          "type" : "boolean"
+        },
+        "started_at_ms" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "migration_pause_reason" : {
+      "type" : [ "string", "null" ]
+    },
+    "migration_paused" : {
+      "type" : "boolean"
+    },
+    "migration_paused_at_ms" : {
+      "type" : "integer"
+    },
+    "migration_switching_age_ms" : {
+      "type" : "integer"
+    },
+    "migration_switching_max_duration_ms" : {
+      "type" : "integer"
+    },
+    "pending_backoff_jobs_count" : {
+      "type" : "integer"
+    },
+    "pending_jobs_count" : {
+      "type" : "integer"
+    },
+    "pending_ready_jobs_count" : {
+      "type" : "integer"
+    },
+    "processing_jobs_count" : {
+      "type" : "integer"
+    },
+    "queue_depth" : {
+      "type" : "integer"
+    },
+    "serving_ingest_generation_id" : {
+      "type" : [ "string", "null" ]
+    },
+    "serving_search_generation_id" : {
+      "type" : [ "string", "null" ]
+    },
+    "signal_bus" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "last_activity_ts" : {
+          "type" : "integer"
+        },
+        "last_heartbeat_ts" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "status" : {
+      "type" : [ "string", "null" ]
+    },
+    "switch_buffer_depth" : {
+      "type" : "integer"
+    },
+    "uptime_ms" : {
+      "type" : "integer"
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "decisionKind" : {
+      "type" : "string"
+    },
+    "degradation" : {
+      "type" : "object",
+      "properties" : {
+        "hybridFallback" : {
+          "type" : "boolean"
+        },
+        "hybridFallbackReason" : {
+          "type" : "string"
+        },
+        "spladeExecuted" : {
+          "type" : "boolean"
+        },
+        "spladeSkipReason" : {
+          "type" : "string"
+        },
+        "vectorBlocked" : {
+          "type" : "boolean"
+        },
+        "vectorBlockedReason" : {
+          "type" : "string"
+        }
+      }
+    },
+    "effectiveMode" : {
+      "type" : "string"
+    },
+    "qpp" : {
+      "type" : "object",
+      "properties" : {
+        "avgIctf" : {
+          "type" : "number"
+        },
+        "maxIdf" : {
+          "type" : "number"
+        },
+        "queryScope" : {
+          "type" : "number"
+        }
+      }
+    },
+    "stages" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "cardinality" : {
+            "type" : "integer"
+          },
+          "detail" : {
+            "type" : "string"
+          },
+          "id" : {
+            "type" : "string",
+            "enum" : [ "query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness" ]
+          },
+          "ms" : {
+            "type" : "integer"
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "status" : {
+            "type" : "string",
+            "enum" : [ "executed", "skipped", "disabled", "failed" ]
+          }
+        }
+      }
+    },
+    "version" : {
+      "type" : "integer"
+    }
+  }
+}

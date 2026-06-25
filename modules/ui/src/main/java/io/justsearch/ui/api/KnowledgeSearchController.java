@@ -1,0 +1,841 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.ui.api;
+
+import io.javalin.http.Context;
+import io.justsearch.app.api.ApiErrorCode;
+import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.justsearch.app.api.knowledge.FolderBrowseRequest;
+import io.justsearch.app.api.knowledge.FolderBrowseResponse;
+import io.justsearch.app.api.knowledge.FolderFilesRequest;
+import io.justsearch.app.api.knowledge.FolderFilesResponse;
+import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
+import io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder;
+import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
+import io.justsearch.app.services.feedback.FeatureSnapshot;
+import io.justsearch.app.services.feedback.FeatureSnapshots;
+import io.justsearch.app.services.feedback.NdjsonAppendStore;
+import io.justsearch.app.services.feedback.ResultDisposition;
+import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.app.api.knowledge.PipelineConfig;
+import io.justsearch.app.api.knowledge.KnowledgeStatus;
+import io.justsearch.app.api.knowledge.KnowledgeStatusView;
+import io.justsearch.app.api.knowledge.KnowledgeStatusViewBuilder;
+import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.gpl.RerankerService;
+import io.justsearch.app.services.observability.HeadApiMetricCatalog;
+import io.justsearch.app.services.observability.HeadApiTags.ApiRequestTags;
+import io.justsearch.app.services.observability.HttpMethod;
+import io.justsearch.app.services.observability.HttpStatusClass;
+import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
+import io.justsearch.telemetry.Telemetry;
+import io.justsearch.app.services.indexing.ExcludeGlobs;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Controller for Knowledge Server search endpoints.
+ *
+ * <p>Provides HTTP API endpoints that delegate to the Knowledge Server via gRPC.
+ * This enables the UI to search content indexed by the background worker process.
+ */
+public class KnowledgeSearchController {
+  private static final Logger log = LoggerFactory.getLogger(KnowledgeSearchController.class);
+
+  // Query redaction for privacy-safe logging
+  private record SensitiveQuery(String value) {}
+  private static String redact(Object x) {
+    return (x instanceof SensitiveQuery) ? "[REDACTED]" : String.valueOf(x);
+  }
+  private final KnowledgeServerBootstrap knowledgeServer;
+  private final Telemetry telemetry;
+  private final HeadApiMetricCatalog apiCatalog;
+  private final KnowledgeHttpApiAdapter adapter;
+  private volatile io.justsearch.app.services.lifecycle.WorkerCapability workerCapability;
+  // Tempdoc 580 §17 P1 — lazily-built per-query feature-snapshot store (the trace-feature capture).
+  private volatile NdjsonAppendStore<FeatureSnapshot> featureSnapshots;
+  // Tempdoc 580 §17 P3 — lazily-built disposition store (the search-interaction contributor sink).
+  private volatile NdjsonAppendStore<ResultDisposition> dispositions;
+
+  // L160: cache the last successful KnowledgeStatusView so the sparse fallback
+  // during migration/Worker-restart serves useful data instead of {state, ready}.
+  private record CachedStatus(KnowledgeStatusView view, long atMs) {}
+
+  private volatile CachedStatus cachedStatus;
+
+  /** Exposes the adapter for facet snapshot access (366 Phase 6 answer normalization). */
+  public KnowledgeHttpApiAdapter getAdapter() {
+    return adapter;
+  }
+
+  public void setWorkerCapability(io.justsearch.app.services.lifecycle.WorkerCapability cap) {
+    this.workerCapability = cap;
+  }
+
+  private boolean isWorkerReady() {
+    var cap = workerCapability;
+    return cap != null ? cap.available() : knowledgeServer.isReady();
+  }
+
+  private String workerStateName() {
+    var cap = workerCapability;
+    return cap != null ? cap.health().name() : knowledgeServer.workerCapability().health().name();
+  }
+
+  /**
+   * Tempdoc 580 §17 P1 — persist this query's per-hit ranking features under {@code interactionId}
+   * so a later result-disposition can join to "what we ranked" (the SearchTrace is otherwise
+   * ephemeral, 580 §17.10). Best-effort: feedback capture must never break search.
+   */
+  private void captureFeatureSnapshot(
+      String interactionId, String query, KnowledgeSearchResponse response) {
+    try {
+      NdjsonAppendStore<FeatureSnapshot> store = featureSnapshots;
+      if (store == null) {
+        synchronized (this) {
+          store = featureSnapshots;
+          if (store == null) {
+            store =
+                new NdjsonAppendStore<>(
+                    PlatformPaths.resolveDataDir()
+                        .resolve("feedback")
+                        .resolve("feature-snapshots.ndjson"),
+                    FeatureSnapshot.class);
+            featureSnapshots = store;
+          }
+        }
+      }
+      store.append(
+          FeatureSnapshots.capture(
+              interactionId, query, java.time.Instant.now().toEpochMilli(), response));
+    } catch (Exception e) {
+      log.debug("feature snapshot capture failed (non-fatal): {}", e.toString());
+    }
+  }
+
+  /**
+   * Tempdoc 580 §17 P3 — the search-interaction contributor endpoint. The FE posts {@code
+   * {interactionId, docId, kind}} when a user opens / dwells-on / refines-without-opening a result;
+   * the disposition lands in the ONE canonical stream and joins its {@link FeatureSnapshot} by
+   * {@code interactionId} (the §17.4 join, working on the HTTP path). Best-effort: feedback never
+   * fails the FE (always 204).
+   */
+  public void handleDisposition(io.javalin.http.Context ctx) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);
+      String interactionId = body.get("interactionId") instanceof String s ? s : null;
+      String docId = body.get("docId") instanceof String s ? s : null;
+      String kindStr = body.get("kind") instanceof String s ? s : null;
+      if (interactionId == null || docId == null || kindStr == null) {
+        ctx.status(400).json(Map.of("error", "interactionId, docId, kind required"));
+        return;
+      }
+      ResultDisposition.Kind kind;
+      try {
+        kind = ResultDisposition.Kind.valueOf(kindStr.trim().toUpperCase(java.util.Locale.ROOT));
+      } catch (IllegalArgumentException e) {
+        ctx.status(400).json(Map.of("error", "unknown disposition kind: " + kindStr));
+        return;
+      }
+      dispositionStore()
+          .append(
+              new ResultDisposition(
+                  interactionId, docId, kind, ResultDisposition.Contributor.SEARCH_INTERACTION,
+                  java.time.Instant.now().toEpochMilli()));
+      ctx.status(204);
+    } catch (Exception e) {
+      log.debug("disposition capture failed (non-fatal): {}", e.toString());
+      ctx.status(204); // never fail the FE on feedback
+    }
+  }
+
+  private NdjsonAppendStore<ResultDisposition> dispositionStore() {
+    NdjsonAppendStore<ResultDisposition> s = dispositions;
+    if (s == null) {
+      synchronized (this) {
+        s = dispositions;
+        if (s == null) {
+          s =
+              new NdjsonAppendStore<>(
+                  PlatformPaths.resolveDataDir()
+                      .resolve("feedback")
+                      .resolve("result-dispositions.ndjson"),
+                  ResultDisposition.class);
+          dispositions = s;
+        }
+      }
+    }
+    return s;
+  }
+
+  public KnowledgeSearchController(KnowledgeServerBootstrap knowledgeServer) {
+    this(knowledgeServer, null);
+  }
+
+  public KnowledgeSearchController(KnowledgeServerBootstrap knowledgeServer, Telemetry telemetry) {
+    this(knowledgeServer, telemetry, OnlineAiService.unavailable());
+  }
+
+  public KnowledgeSearchController(
+      KnowledgeServerBootstrap knowledgeServer, Telemetry telemetry, OnlineAiService onlineAi) {
+    this(knowledgeServer, telemetry, onlineAi, null);
+  }
+
+  public KnowledgeSearchController(
+      KnowledgeServerBootstrap knowledgeServer,
+      Telemetry telemetry,
+      OnlineAiService onlineAi,
+      RerankerService lambdaMartReranker) {
+    this(knowledgeServer, telemetry, onlineAi, lambdaMartReranker, null);
+  }
+
+  public KnowledgeSearchController(
+      KnowledgeServerBootstrap knowledgeServer,
+      Telemetry telemetry,
+      OnlineAiService onlineAi,
+      RerankerService lambdaMartReranker,
+      HeadApiMetricCatalog apiCatalog) {
+    this.knowledgeServer = knowledgeServer;
+    this.telemetry = telemetry;
+    this.apiCatalog = apiCatalog;
+    this.adapter = new KnowledgeHttpApiAdapter(knowledgeServer, onlineAi, lambdaMartReranker);
+  }
+
+  /**
+   * Handles search requests.
+   *
+   * POST /api/knowledge/search
+   * Body: { "query": "search text", "limit": 10 }
+   */
+  public void handleSearch(Context ctx) {
+    long startNs = System.nanoTime();
+    try {
+      // Tempdoc 502: inline state check removed — POST /api/knowledge/search is
+      // behind the WorkerCapability gate (before-handler returns 503 if not READY).
+
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);
+      String query = (String) body.get("query");
+      Integer limit = body.get("limit") instanceof Number n ? n.intValue() : 10;
+      Object modeRaw = body.get("mode");
+      String modeText = modeRaw instanceof String s ? s : null;
+      Object sortRaw = body.get("sort");
+      String sortText = sortRaw instanceof String s ? s : null;
+      Object cursorRaw = body.get("cursor");
+      String cursorText = cursorRaw instanceof String s ? s : null;
+      Object querySyntaxRaw = body.get("querySyntax");
+      if (querySyntaxRaw == null) {
+        querySyntaxRaw = body.get("query_syntax");
+      }
+      String querySyntaxText = querySyntaxRaw instanceof String s ? s : null;
+
+      if (query == null || query.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Query is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+
+      // Foreground responsiveness: mark UI activity so the Worker can breath-hold indexing during interactive use.
+      // This is intentionally best-effort; it must never make search fail.
+      try {
+        knowledgeServer.signalUserActivity();
+      } catch (Exception ignored) {
+        // best-effort
+      }
+
+      log.info("Knowledge search: query='{}', limit={}", redact(new SensitiveQuery(query)), limit);
+
+      // Optional: projection
+      List<String> projection = List.of();
+      Object projectionRaw = body.get("projection");
+      if (projectionRaw instanceof List<?> list) {
+        List<String> p = new ArrayList<>();
+        for (Object v : list) {
+          if (v instanceof String s && !s.isBlank()) {
+            p.add(s);
+          }
+        }
+        projection = List.copyOf(p);
+      }
+
+      // Optional: filters
+      KnowledgeSearchRequest.Filters filters = null;
+      Object filtersRaw = body.get("filters");
+      if (filtersRaw instanceof Map<?, ?> filtersMap) {
+        filters = parseFilters(filtersMap);
+      }
+
+      // Optional: soft-boost filters (363)
+      KnowledgeSearchRequest.Filters boostFilters = null;
+      Object boostFiltersRaw = body.get("boostFilters");
+      if (boostFiltersRaw instanceof Map<?, ?> boostMap) {
+        List<String> bMetaSource = extractStringListAny(boostMap, "metaSource", "meta_source");
+        List<String> bMetaAuthor = extractStringListAny(boostMap, "metaAuthor", "meta_author");
+        List<String> bMetaCategory = extractStringListAny(boostMap, "metaCategory", "meta_category");
+        List<String> bEntityPersons = extractStringListAny(boostMap, "entityPersons", "entity_persons");
+        List<String> bEntityOrganizations = extractStringListAny(boostMap, "entityOrganizations", "entity_organizations");
+        List<String> bEntityLocations = extractStringListAny(boostMap, "entityLocations", "entity_locations");
+        boostFilters = KnowledgeSearchRequestFiltersBuilder.builder()
+            .entityPersons(bEntityPersons)
+            .entityOrganizations(bEntityOrganizations)
+            .entityLocations(bEntityLocations)
+            .metaSource(bMetaSource)
+            .metaAuthor(bMetaAuthor)
+            .metaCategory(bMetaCategory)
+            .build();
+      }
+
+      // Optional: facets
+      KnowledgeSearchRequest.Facets facets = null;
+      Object facetsRaw = body.get("facets");
+      if (facetsRaw instanceof Map<?, ?> facetsMap) {
+        Boolean include = (facetsMap.get("include") instanceof Boolean b) ? b : null;
+        Integer maxDocsScanned = (facetsMap.get("maxDocsScanned") instanceof Number n) ? n.intValue() : null;
+        List<KnowledgeSearchRequest.FieldSpec> fields = List.of();
+        Object fieldsRaw = facetsMap.get("fields");
+        if (fieldsRaw instanceof List<?> list) {
+          List<KnowledgeSearchRequest.FieldSpec> f = new ArrayList<>();
+          for (Object item : list) {
+            if (!(item instanceof Map<?, ?> m)) continue;
+            Object fieldNameRaw = m.get("field");
+            String fieldName = fieldNameRaw instanceof String s ? s : null;
+            if (fieldName == null || fieldName.isBlank()) continue;
+            Integer size = (m.get("size") instanceof Number n) ? n.intValue() : null;
+            f.add(new KnowledgeSearchRequest.FieldSpec(fieldName, size));
+          }
+          fields = List.copyOf(f);
+        }
+        facets = new KnowledgeSearchRequest.Facets(include, maxDocsScanned, fields);
+      }
+
+      // Optional: includeExcerpts
+      Boolean includeExcerpts = (body.get("includeExcerpts") instanceof Boolean b) ? b : null;
+      // Optional: request the numeric per-hit detail tier (HitStage.detail) — tempdoc 549 Phase D2
+      // maps this `debug` flag to include_detail. The structural per-hit trace is always-on.
+      Boolean debug = (body.get("debug") instanceof Boolean b) ? b : null;
+
+      // Optional: pipeline config (256: Phase A)
+      PipelineConfig pipelineConfig = null;
+      Object pipelineRaw = body.get("pipeline");
+      if (pipelineRaw instanceof Map<?, ?> pm) {
+        pipelineConfig =
+            new PipelineConfig(
+                Boolean.TRUE.equals(pm.get("sparseEnabled")),
+                Boolean.TRUE.equals(pm.get("denseEnabled")),
+                Boolean.TRUE.equals(pm.get("spladeEnabled")),
+                pm.get("fusionAlgorithm") instanceof String s ? s : "none",
+                Boolean.TRUE.equals(pm.get("lambdamartEnabled")),
+                Boolean.TRUE.equals(pm.get("crossEncoderEnabled")),
+                pm.get("crossEncoderWindow") instanceof Number n ? n.intValue() : 0,
+                Boolean.TRUE.equals(pm.get("expansionEnabled")),
+                Boolean.TRUE.equals(pm.get("freshnessEnabled")));
+      }
+
+      KnowledgeSearchRequest req =
+          new KnowledgeSearchRequest(
+              query, limit, modeText, sortText, cursorText, projection, filters, boostFilters,
+              facets, querySyntaxText, includeExcerpts, debug, pipelineConfig);
+      KnowledgeSearchResponse response = adapter.search(req);
+
+      // Tempdoc 580 §17 (Track C P1) — stable per-query join key. The FE echoes it back with a
+      // result-disposition (P3) so "what came of a result" joins to the persisted ranking features
+      // (the §17.4 join). Additive field; the FE parse is additive-tolerant (searchState.ts cast).
+      String interactionId = java.util.UUID.randomUUID().toString();
+      captureFeatureSnapshot(interactionId, query, response);
+
+      // Preserve legacy JSON shape (optional fields omitted when empty).
+      Map<String, Object> out = new HashMap<>();
+      out.put("interactionId", interactionId);
+      out.put("totalHits", response.totalHits());
+      // Tempdoc 597: the true matched-document count — the FE headline binds to this.
+      out.put("matchCount", response.matchCount());
+      out.put("tookMs", response.tookMs());
+      out.put("results", response.results());
+      if (response.nextCursor() != null && !response.nextCursor().isBlank()) {
+        out.put("nextCursor", response.nextCursor());
+      }
+      if (response.facets() != null && !response.facets().isEmpty()) {
+        out.put("facets", response.facets());
+        out.put("facetsTruncated", Boolean.TRUE.equals(response.facetsTruncated()));
+      }
+      // Tempdoc 549 U4 (Slice 6): the 15 flat query-trace fields were removed from the response.
+      // The canonical `introspection` trace (+ headStages) carries all of this; it is emitted
+      // below via out.put("introspection", ...). Consumers read the trace, not flat fields.
+      if (response.entityFacetVariants() != null
+          && !response.entityFacetVariants().isEmpty()) {
+        out.put("entityFacetVariants", response.entityFacetVariants());
+      }
+      if (response.indexCapabilities() != null) {
+        out.put("indexCapabilities", response.indexCapabilities());
+      }
+      // Tempdoc 549 Phase E3: pipelineExecution retired — timing/component status on searchTrace.
+      if (response.queryUnderstanding() != null) {
+        out.put("queryUnderstanding", response.queryUnderstanding());
+      }
+      if (response.filterNormalization() != null) {
+        out.put("filterNormalization", response.filterNormalization());
+      }
+      // Tempdoc 549 Phase E4: introspection retired — the unified trace is the single source.
+      if (response.searchTrace() != null) {
+        out.put("searchTrace", response.searchTrace());
+      }
+      ctx.json(out);
+
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      if (isInvalidCursor(e)) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.CURSOR_INVALID, "Invalid cursor", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      ApiErrorCode code = ApiErrorHandler.resolve(e);
+      ctx.status(http).json(ApiErrorHandler.toResponse(code, e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Knowledge search failed", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } finally {
+      recordRequestMetricsBestEffort(ctx, startNs);
+    }
+  }
+
+  private void recordRequestMetricsBestEffort(Context ctx, long startNs) {
+    if (apiCatalog == null || ctx == null) {
+      return;
+    }
+    try {
+      int status = ctx.res() == null ? 0 : ctx.res().getStatus();
+      if (status <= 0) {
+        return;
+      }
+      long durMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
+      apiCatalog.requestMs.record(
+          Math.max(0, durMs),
+          new ApiRequestTags(
+              "/api/knowledge/search",
+              HttpMethod.POST,
+              Integer.toString(status),
+              HttpStatusClass.forStatus(status)));
+    } catch (Exception ignored) {
+      // best-effort
+    }
+  }
+
+
+
+  static boolean isInvalidCursor(StatusRuntimeException e) {
+    if (e == null) return false;
+    Status status = e.getStatus();
+    if (status == null || status.getCode() != Status.Code.INVALID_ARGUMENT) return false;
+    String msg = status.getDescription();
+    if (msg == null) msg = e.getMessage();
+    return msg != null && msg.toLowerCase(java.util.Locale.ROOT).contains("cursor");
+  }
+
+  private static List<String> extractStringList(Object raw) {
+    if (!(raw instanceof List<?> list)) {
+      return List.of();
+    }
+    List<String> out = new ArrayList<>();
+    for (Object v : list) {
+      if (v instanceof String s && !s.isBlank()) {
+        out.add(s);
+      }
+    }
+    return List.copyOf(out);
+  }
+
+  /**
+   * Parse the request {@code filters} block into a {@link KnowledgeSearchRequest.Filters}. Extracted
+   * from the inline handler so the wiring is unit-testable (tempdoc 629 §Open issues #1/#2): the
+   * {@code collection} scope tag was previously dropped here, silently disabling "search your agent
+   * history" — a gap no test could catch while the parsing was inline. Accepts camelCase + snake_case
+   * for the entity/meta keys (MCP compat); {@code collection} uses its record-component wire name.
+   */
+  static KnowledgeSearchRequest.Filters parseFilters(Map<?, ?> filtersMap) {
+    List<String> mime = extractStringList(filtersMap.get("mime"));
+    List<String> language = extractStringList(filtersMap.get("language"));
+    List<String> fileKind = extractStringList(filtersMap.get("fileKind"));
+    List<String> mimeBase = extractStringList(filtersMap.get("mimeBase"));
+    String pathPrefix = (filtersMap.get("pathPrefix") instanceof String s && !s.isBlank()) ? s : null;
+    Boolean includeChunks = (filtersMap.get("includeChunks") instanceof Boolean b) ? b : null;
+
+    KnowledgeSearchRequest.TimeRangeMs modifiedAt = null;
+    Object modifiedAtRaw = filtersMap.get("modifiedAt");
+    if (modifiedAtRaw instanceof Map<?, ?> m) {
+      Long fromMs = (m.get("fromMs") instanceof Number n) ? n.longValue() : null;
+      Long toMs = (m.get("toMs") instanceof Number n) ? n.longValue() : null;
+      if ((fromMs != null && fromMs > 0) || (toMs != null && toMs > 0)) {
+        modifiedAt = new KnowledgeSearchRequest.TimeRangeMs(fromMs, toMs);
+      }
+    }
+    // Parse entity and metadata filters (accept both camelCase and snake_case for MCP compat)
+    List<String> entityPersons = extractStringListAny(filtersMap, "entityPersons", "entity_persons");
+    List<String> entityOrganizations =
+        extractStringListAny(filtersMap, "entityOrganizations", "entity_organizations");
+    List<String> entityLocations =
+        extractStringListAny(filtersMap, "entityLocations", "entity_locations");
+    List<String> metaSource = extractStringListAny(filtersMap, "metaSource", "meta_source");
+    List<String> metaAuthor = extractStringListAny(filtersMap, "metaAuthor", "meta_author");
+    List<String> metaCategory = extractStringListAny(filtersMap, "metaCategory", "meta_category");
+    KnowledgeSearchRequest.TimeRangeMs metaPublishedAt = parseMetaPublishedAt(filtersMap);
+    List<String> docIds = extractStringListAny(filtersMap, "docIds", "doc_ids");
+    // Tempdoc 585 §D Phase 4 (D4b) — the search-scope tag (e.g. "agent-history"). Dropping it here
+    // made the worker's default branch always fire MUST_NOT collection:agent-history, so "search your
+    // agent history" returned nothing (629 §Open issues #1). Wire key = the record component `collection`.
+    List<String> collection = extractStringList(filtersMap.get("collection"));
+    return KnowledgeSearchRequestFiltersBuilder.builder()
+        .mime(mime)
+        .language(language)
+        .fileKind(fileKind)
+        .mimeBase(mimeBase)
+        .pathPrefix(pathPrefix)
+        .includeChunks(includeChunks)
+        .modifiedAt(modifiedAt)
+        .entityPersons(entityPersons)
+        .entityOrganizations(entityOrganizations)
+        .entityLocations(entityLocations)
+        .metaSource(metaSource)
+        .metaAuthor(metaAuthor)
+        .metaCategory(metaCategory)
+        .metaPublishedAt(metaPublishedAt)
+        .docIds(docIds)
+        .collection(collection)
+        .build();
+  }
+
+  /** Extracts a string list trying camelCase key first, then snake_case fallback. */
+  private static List<String> extractStringListAny(Map<?, ?> map, String camelKey, String snakeKey) {
+    Object raw = map.get(camelKey);
+    if (raw == null) raw = map.get(snakeKey);
+    List<String> result = extractStringList(raw);
+    return result.isEmpty() ? null : result;
+  }
+
+  /** Parses meta_published_at from filter map (accepts both camelCase and snake_case date keys). */
+  private static KnowledgeSearchRequest.TimeRangeMs parseMetaPublishedAt(Map<?, ?> map) {
+    // Try structured object first (camelCase from direct API calls)
+    Object metaPubRaw = map.get("metaPublishedAt");
+    if (metaPubRaw instanceof Map<?, ?> mp) {
+      Long from = (mp.get("fromMs") instanceof Number n) ? n.longValue() : null;
+      Long to = (mp.get("toMs") instanceof Number n) ? n.longValue() : null;
+      if ((from != null && from > 0) || (to != null && to > 0)) {
+        return new KnowledgeSearchRequest.TimeRangeMs(from, to);
+      }
+    }
+    // Try ISO date strings (snake_case from MCP)
+    Object afterRaw = map.get("meta_published_after");
+    Object beforeRaw = map.get("meta_published_before");
+    String after = afterRaw instanceof String s ? s : "";
+    String before = beforeRaw instanceof String s ? s : "";
+    if (!after.isEmpty() || !before.isEmpty()) {
+      long from = after.isEmpty() ? 0 : parseIso8601ToEpochMs(after);
+      long to = before.isEmpty() ? 0 : parseIso8601ToEpochMs(before);
+      if (from > 0 || to > 0) {
+        return new KnowledgeSearchRequest.TimeRangeMs(from > 0 ? from : null, to > 0 ? to : null);
+      }
+    }
+    return null;
+  }
+
+  private static long parseIso8601ToEpochMs(String iso) {
+    try {
+      return java.time.Instant.parse(iso + (iso.contains("T") ? "" : "T00:00:00Z")).toEpochMilli();
+    } catch (Exception e) {
+      try {
+        return java.time.LocalDate.parse(iso).atStartOfDay(java.time.ZoneOffset.UTC)
+            .toInstant().toEpochMilli();
+      } catch (Exception e2) {
+        return 0;
+      }
+    }
+  }
+
+  /**
+   * Handles status requests.
+   *
+   * GET /api/knowledge/status
+   */
+  public void handleStatus(Context ctx) {
+    try {
+      if (isWorkerReady()) {
+        try {
+          KnowledgeStatus indexStatus = adapter.status();
+          KnowledgeStatusView view = KnowledgeStatusView.from(indexStatus);
+          cachedStatus = new CachedStatus(view, System.currentTimeMillis());
+          ctx.json(view);
+        } catch (Exception e) {
+          log.warn("Failed to get index status", e);
+          ctx.json(serveStaleOrSparse(workerStateName(), true));
+        }
+      } else {
+        ctx.json(serveStaleOrSparse(workerStateName(), false));
+      }
+
+    } catch (Exception e) {
+      log.error("Knowledge status check failed", e);
+      ApiErrorCode code = ApiErrorHandler.resolve(e);
+      Map<String, Object> errorResponse =
+          new HashMap<>(
+              ApiErrorHandler.toResponse(code, e, telemetry, ApiErrorHandler.routeOf(ctx)));
+      errorResponse.put("state", "ERROR");
+      ctx.status(500).json(errorResponse);
+    }
+  }
+
+  private static final long STALE_CACHE_MAX_MS = 120_000;
+
+  /**
+   * Returns a stale-annotated copy of the last successful status view. If no cache exists
+   * or the cache is older than {@link #STALE_CACHE_MAX_MS}, returns a minimal
+   * {@code KnowledgeStatusView} with only {@code state}, {@code ready}, and the stale markers
+   * populated — consistent JSON shape regardless of cache state.
+   */
+  private KnowledgeStatusView serveStaleOrSparse(String currentState, boolean currentReady) {
+    CachedStatus snapshot = cachedStatus;
+    if (snapshot != null) {
+      long staleMs = System.currentTimeMillis() - snapshot.atMs();
+      if (staleMs <= STALE_CACHE_MAX_MS) {
+        return KnowledgeStatusViewBuilder.builder(snapshot.view())
+            .state(currentState)
+            .ready(currentReady)
+            .healthy(false)
+            .indexState("UNKNOWN")
+            .statusStale(true)
+            .statusStaleMs(staleMs)
+            .build();
+      }
+    }
+    return KnowledgeStatusViewBuilder.builder()
+        .state(currentState)
+        .ready(currentReady)
+        .healthy(false)
+        .indexState("UNKNOWN")
+        .statusStale(true)
+        .statusStaleMs(snapshot != null ? System.currentTimeMillis() - snapshot.atMs() : 0L)
+        .build();
+  }
+
+  /**
+   * Handles ingest requests.
+   *
+   * POST /api/knowledge/ingest
+   * Body: { "paths": ["/path/to/file1", "/path/to/file2"] }
+   */
+  public void handleIngest(Context ctx) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);
+      @SuppressWarnings("unchecked")
+      List<String> paths = (List<String>) body.get("paths");
+
+      if (paths == null || paths.isEmpty()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Paths array is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+
+      log.info("Knowledge ingest request: {} roots", paths.size());
+
+      // Tempdoc 418 Phase B — Worker owns the directory walk. For each requested path:
+      //  - directory: dispatch to ScanRoot RPC; Worker walks + admits via WorkerIngestionAuthority.
+      //  - regular file: keep the legacy submitBatch single-file path (no walk needed).
+      // ExcludeGlobs is no longer applied Head-side; the equivalent is handled by
+      // WorkerIngestionAuthority.shouldSkip plus the per-request exclude_globs supplied here.
+      List<String> excludeGlobs = ExcludeGlobs.fromRawJsonArray(io.justsearch.configuration.EnvRegistry.UI_EXCLUDE_PATTERNS.get().orElse("")).patterns();
+      List<Path> singleFiles = new ArrayList<>();
+      long totalAdmitted = 0L;
+      List<String> terminalReasons = new ArrayList<>();
+      // Per docs/reference/api-contract-map.md: directory inputs get a scanId
+      // for live progress SSE. Generated once per request and returned to the
+      // caller alongside the accepted count.
+      String scanId = null;
+
+      for (String p : paths) {
+          Path input = Path.of(p).toAbsolutePath().normalize();
+          if (!Files.exists(input)) {
+              continue;
+          }
+          if (Files.isDirectory(input)) {
+              if (scanId == null) {
+                  scanId = java.util.UUID.randomUUID().toString();
+              }
+              var scanResp = adapter.scanRoot(input.toString(), null, excludeGlobs);
+              totalAdmitted += scanResp.accepted();
+              if (scanResp.error() != null && !scanResp.error().isEmpty()) {
+                  terminalReasons.add(input + ":" + scanResp.error());
+              }
+          } else if (Files.isRegularFile(input) && Files.isReadable(input)) {
+              singleFiles.add(input);
+          }
+      }
+      if (!singleFiles.isEmpty()) {
+          var ingestResp = adapter.ingest(singleFiles);
+          totalAdmitted += ingestResp.accepted();
+          if (ingestResp.error() != null && !ingestResp.error().isEmpty()) {
+              terminalReasons.add("files:" + ingestResp.error());
+          }
+      }
+
+      log.info("Worker-side scan accepted {} files across {} roots", totalAdmitted, paths.size());
+
+      // B-H.4 defect K — KnowledgeIngestResponse.accepted is int. At desktop scale the cast is a
+      // no-op; the explicit conversion documents the contract and converts overflow into an
+      // ArithmeticException caught by the outer Exception handler (→ 500) instead of silent
+      // truncation in the JSON serializer.
+      Map<String, Object> resp = new java.util.LinkedHashMap<>();
+      resp.put("accepted", Math.toIntExact(totalAdmitted));
+      resp.put("error", String.join("; ", terminalReasons));
+      if (scanId != null) {
+          resp.put("scanId", scanId);
+      }
+      ctx.json(resp);
+
+    } catch (Exception e) {
+      log.error("Knowledge ingest failed", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
+  /**
+   * Handles suggest/autocomplete requests.
+   *
+   * <p>GET /api/knowledge/suggest?query=prefix&amp;limit=5
+   */
+  public void handleSuggest(Context ctx) {
+    try {
+      if (!isWorkerReady()) {
+        Map<String, Object> resp = new java.util.LinkedHashMap<>(
+            ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Knowledge Server not ready", telemetry, ApiErrorHandler.routeOf(ctx)));
+        resp.put("state", workerStateName());
+        ctx.status(503).json(resp);
+        return;
+      }
+
+      String query = ctx.queryParam("query");
+      if (query == null || query.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Query parameter is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+
+      String limitParam = ctx.queryParam("limit");
+      int limit = 5;
+      if (limitParam != null) {
+        try {
+          limit = Math.max(1, Math.min(20, Integer.parseInt(limitParam)));
+        } catch (NumberFormatException ignored) {
+          // use default
+        }
+      }
+
+      log.info("Knowledge suggest: query='{}', limit={}", redact(new SensitiveQuery(query)), limit);
+
+      try {
+        knowledgeServer.signalUserActivity();
+      } catch (Exception ignored) {
+        // best-effort
+      }
+
+      List<String> suggestions = adapter.suggest(query, limit);
+      ctx.json(Map.of("suggestions", suggestions));
+
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ApiErrorCode code = ApiErrorHandler.resolve(e);
+      ctx.status(http).json(ApiErrorHandler.toResponse(code, e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Knowledge suggest failed", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
+  // ========== Folder Browse ==========
+
+  /**
+   * Lists child folders under a parent path.
+   *
+   * <p>POST /api/knowledge/folders
+   * Body: { "parentPath": "D:\\Documents\\", "maxFolders": 200 }
+   */
+  public void handleListFolders(Context ctx) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);
+      String parentPath = body.get("parentPath") instanceof String s ? s : null;
+      if (parentPath == null || parentPath.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "parentPath is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      Integer maxFolders = body.get("maxFolders") instanceof Number n ? n.intValue() : null;
+
+      try {
+        knowledgeServer.signalUserActivity();
+      } catch (Exception ignored) {
+        // best-effort
+      }
+
+      log.info("Knowledge listFolders: parentPath='{}', maxFolders={}",
+          redact(new SensitiveQuery(parentPath)), maxFolders);
+
+      FolderBrowseRequest req = new FolderBrowseRequest(parentPath, maxFolders);
+      FolderBrowseResponse response = adapter.listFolders(req);
+      ctx.json(response);
+
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ctx.status(http).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Knowledge listFolders failed", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
+  /**
+   * Lists files directly within a folder.
+   *
+   * <p>POST /api/knowledge/folder-files
+   * Body: { "folderPath": "D:\\Documents\\Reports\\", "limit": 100 }
+   */
+  public void handleListFolderFiles(Context ctx) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);
+      String folderPath = body.get("folderPath") instanceof String s ? s : null;
+      if (folderPath == null || folderPath.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "folderPath is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      Integer limit = body.get("limit") instanceof Number n ? n.intValue() : null;
+
+      @SuppressWarnings("unchecked")
+      List<String> projection = body.get("projection") instanceof List<?> list
+          ? list.stream().filter(String.class::isInstance).map(String.class::cast).toList()
+          : List.of();
+
+      try {
+        knowledgeServer.signalUserActivity();
+      } catch (Exception ignored) {
+        // best-effort
+      }
+
+      log.info("Knowledge listFolderFiles: folderPath='{}', limit={}",
+          redact(new SensitiveQuery(folderPath)), limit);
+
+      FolderFilesRequest req = new FolderFilesRequest(folderPath, limit, projection);
+      FolderFilesResponse response = adapter.listFolderFiles(req);
+      ctx.json(response);
+
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ctx.status(http).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Knowledge listFolderFiles failed", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "relevance-ratchet-baseline.v1",
+  "tempdoc": 623,
+  "note": "POINTER, not a table (tempdoc 623 T-5). Per-corpus nDCG@10 FLOORS are PROJECTED from `current_release` (a release.v1.json composed from one cohort-identical config/commit/hardware) — they are no longer hand-typed, so the fork that drifted (a `full`@dc4f79a legal number stapled next to a `hybrid`@f91e269bc default number) is structurally impossible. `jseval relevance-gate` loads this pointer, projects floors from the release via relevance_gate.project_release_to_baselines, and gates HEAD's nDCG@10 against (floor - tolerance). `fallback_baselines` is now EMPTY — the canonical release (691d5c5a0) covers all gated corpora at one commit, so outcome ④ is fully realized: every floor projects from the release, none is hand-typed.",
+  "current_release": "release.v1.json",
+  "tolerance_default_abs": 0.02,
+  "per_corpus_tolerance": {
+    "mixed/miracl-de-2k": 0.025,
+    "mixed/miracl-fr-2k": 0.025
+  },
+  "fallback_baselines": {}
+}

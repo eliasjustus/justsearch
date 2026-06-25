@@ -1,0 +1,3413 @@
+package io.justsearch.agent;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import io.justsearch.agent.api.AgentErrorCode;
+import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.AgentProfile;
+import io.justsearch.agent.api.AgentRequest;
+import io.justsearch.agent.api.registry.AuditPolicy;
+import io.justsearch.agent.api.registry.Binding;
+import io.justsearch.agent.api.registry.ConfirmStrategy;
+import io.justsearch.agent.api.registry.ExecutorTag;
+import io.justsearch.agent.api.registry.HandlerRegistry;
+import io.justsearch.agent.api.registry.I18nKey;
+import io.justsearch.agent.api.registry.Interface;
+import io.justsearch.agent.api.registry.Operation;
+import io.justsearch.agent.api.registry.OperationCatalog;
+import io.justsearch.agent.api.registry.OperationDispatcher;
+import io.justsearch.agent.api.registry.OperationHandler;
+import io.justsearch.agent.api.registry.OperationRef;
+import io.justsearch.agent.api.registry.OperationPolicy;
+import io.justsearch.agent.api.registry.OperationAvailability;
+import io.justsearch.agent.api.registry.OperationLineage;
+import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.agent.api.registry.Presentation;
+import io.justsearch.agent.api.registry.Provenance;
+import io.justsearch.agent.api.registry.RetryPolicy;
+import io.justsearch.agent.api.registry.RiskTier;
+import io.justsearch.agent.tools.FileOperationLog;
+import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.SamplingParams;
+import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
+import io.justsearch.telemetry.Telemetry;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+@SuppressWarnings("unchecked")
+class AgentLoopServiceTest {
+  @TempDir Path tempDir;
+
+  // ---------------------------------------------------------------------------
+  // Text-only response
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void textOnlyResponse_emitsAgentDone() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Hello there")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "result"));
+
+    var events = run(service, userMessage("hi"), 1);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    assertEquals("Hello there", done.finalResponse());
+    assertEquals(1, done.iterationsUsed());
+    assertEquals(0, done.toolCallsExecuted());
+    // Agent loop must use AGENT sampling (balanced temp for tool calling + multi-step reasoning)
+    assertEquals(List.of(SamplingParams.AGENT), ai.recordedSampling);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Slice 447 §X.11.5 Phase 5 + 447-followup-live-wiring §X.12.8 Item 1.3 —
+  // agent retrospection: when setConditionContextSupplier wires a non-null
+  // supplier, AgentLoopService prepends its output to the system prompt.
+  // This is the integration test §X.12 noted was missing — the unit test on
+  // renderConditionContext covered the rendering side; this one covers the
+  // wiring through to the actual LLM message stream.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void conditionContextSupplier_appendedToSystemPrompt() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    service.setConditionContextSupplier(
+        () -> "Currently asserted conditions: schema.reindex-required → core.reindex");
+
+    run(service, userMessage("hi"), 1);
+
+    assertEquals(1, ai.recordedMessages.size(), "LLM should be called once");
+    List<Map<String, Object>> firstCall = ai.recordedMessages.get(0);
+    var systemMessage = firstCall.get(0);
+    assertEquals("system", systemMessage.get("role"), "first message should be system");
+    String content = String.valueOf(systemMessage.get("content"));
+    assertTrue(
+        content.contains(
+            "Currently asserted conditions: schema.reindex-required → core.reindex"),
+        "system prompt should include the condition context the supplier returned;"
+            + " actual content: " + content);
+  }
+
+  @Test
+  void conditionContextSupplier_nullSuppressesAppend() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    // Default state: no supplier wired; baseline behavior preserved.
+
+    run(service, userMessage("hi"), 1);
+
+    String content = String.valueOf(ai.recordedMessages.get(0).get(0).get("content"));
+    assertFalse(
+        content.contains("Currently asserted conditions:"),
+        "no supplier wired → no condition section appended");
+  }
+
+  @Test
+  void conditionContextSupplier_emptyStringSuppressesAppend() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    // Empty/blank result short-circuits the append branch in
+    // appendConditionContext (the empty-store renderConditionContext result).
+    service.setConditionContextSupplier(() -> "");
+
+    run(service, userMessage("hi"), 1);
+
+    String content = String.valueOf(ai.recordedMessages.get(0).get(0).get("content"));
+    // Compare against the baseline-with-no-supplier text (a control run would
+    // be redundant). Sufficient to assert no condition-context marker leaked in.
+    assertFalse(
+        content.contains("Currently asserted conditions:"),
+        "blank supplier output → no condition section appended");
+  }
+
+  @Test
+  void conditionContextSupplier_throwingSupplierFailsClosed() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    // Per AgentLoopService.appendConditionContext, supplier exceptions are
+    // logged and swallowed; the agent loop never breaks because retrospection
+    // degraded.
+    service.setConditionContextSupplier(
+        () -> {
+          throw new RuntimeException("synthetic supplier failure");
+        });
+
+    var events = run(service, userMessage("hi"), 1);
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "agent should still complete despite supplier throwing");
+  }
+
+  @Test
+  void emittedEvents_includeTraceIdentityEnvelope() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Hello there")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "result"));
+
+    var events = run(service, userMessage("trace test"), 1);
+
+    assertFalse(events.isEmpty(), "Should emit at least session/progress/done events");
+    String runId = null;
+    String previousSpanId = null;
+    for (int i = 0; i < events.size(); i++) {
+      AgentEvent event = events.get(i);
+      assertNotNull(event.trace(), "Every event should include trace context");
+      assertTrue(event.trace().hasIdentity(), "Trace context should carry identity fields");
+      assertNotNull(event.trace().runId(), "runId should be present");
+      assertNotNull(event.trace().spanId(), "spanId should be present");
+      assertNotNull(event.trace().stepId(), "stepId should be present");
+      assertTrue(event.trace().iteration() >= 0, "iteration should be non-negative");
+      assertEquals("primary", event.trace().agentId(), "agentId should be stable");
+      if (runId == null) {
+        runId = event.trace().runId();
+      } else {
+        assertEquals(runId, event.trace().runId(), "runId should be stable across events");
+      }
+      // Span chain integrity: each event's parentSpanId = previous event's spanId
+      assertEquals(previousSpanId, event.trace().parentSpanId(),
+          "event[" + i + "] parentSpanId should equal previous spanId");
+      previousSpanId = event.trace().spanId();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Telemetry counters fire during empty-response retry path
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void telemetryCounters_incrementOnEmptyResponseRetry() {
+    // Both initial and retry produce empty responses -> triggers retry + exhausted counters.
+    // Tempdoc 417 Phase 2d: AgentTelemetry now wraps typed catalogs; assertions go through
+    // TestMetricRegistry instead of a legacy Telemetry mock.
+    try (var agentRegistry =
+            new io.justsearch.telemetry.catalog.TestMetricRegistry(AgentMetricCatalog.DEFINITIONS);
+        var genAiRegistry =
+            new io.justsearch.telemetry.catalog.TestMetricRegistry(
+                GenAiMetricCatalog.DEFINITIONS)) {
+      var agentTelemetry =
+          new AgentTelemetry(
+              new AgentMetricCatalog(agentRegistry), new GenAiMetricCatalog(genAiRegistry));
+      var ai = new ScriptedAiService(List.of(ScriptedResponse.empty(), ScriptedResponse.empty()));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      run(service, userMessage("trigger empty retry"), 3);
+
+      assertTrue(
+          agentRegistry.counterValue(
+                  AgentMetricCatalog.RETRY_TOTAL,
+                  new AgentTags.AgentRetryTags(
+                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE, "1"))
+              >= 1,
+          "Should record retry on first empty response");
+      assertTrue(
+          agentRegistry.counterValue(
+                  AgentMetricCatalog.RETRY_EXHAUSTED_TOTAL,
+                  new AgentTags.AgentRetryExhaustedTags(
+                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE))
+              >= 1,
+          "Should record retry exhausted after max retries");
+      assertTrue(
+          agentRegistry.counterValue(
+                  AgentMetricCatalog.ERROR_TOTAL,
+                  new AgentTags.AgentErrorTags(
+                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE,
+                      io.justsearch.agent.api.AgentErrorClass.TRANSIENT))
+              >= 1,
+          "Should record error counter on terminal empty response");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tempdoc 415 F3c: per-disposition session-lifecycle tests
+  // ---------------------------------------------------------------------------
+
+  /** Builds a single combined registry holding both Agent + GenAi catalog DEFINITIONS. */
+  private static io.justsearch.telemetry.catalog.TestMetricRegistry combinedRegistry() {
+    var defs = new ArrayList<>(AgentMetricCatalog.DEFINITIONS);
+    defs.addAll(GenAiMetricCatalog.DEFINITIONS);
+    return new io.justsearch.telemetry.catalog.TestMetricRegistry(defs);
+  }
+
+  @Test
+  void sessionEnd_completed_emitsTerminateTotalCompleted() {
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Hello there")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      run(service, userMessage("hi"), 1);
+
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_START_TOTAL,
+              io.justsearch.telemetry.catalog.EmptyTags.INSTANCE));
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
+              new AgentTags.SessionEndedTags(TerminalDisposition.COMPLETED, null, null)));
+      assertEquals(
+          1L,
+          registry.histogramCount(
+              AgentMetricCatalog.SESSION_DURATION_MS,
+              io.justsearch.telemetry.catalog.EmptyTags.INSTANCE));
+    }
+  }
+
+  @Test
+  void sessionEnd_maxIterations_emitsTerminateTotalMaxIterations() {
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      // Model always returns tool calls — never produces a final text response.
+      var ai = new ScriptedAiService(List.of(
+          ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+          ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      run(service, userMessage("loop"), 2);
+
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
+              new AgentTags.SessionEndedTags(TerminalDisposition.MAX_ITERATIONS, null, null)));
+    }
+  }
+
+  @Test
+  void markTerminated_isFirstWins_soACatchPathReMarkCannotCorruptDisposition() {
+    // Tempdoc 415 latent risk L2 / F1 ("state-first, durability-second"): at every terminal return
+    // site runAgent calls session.markTerminated(...) BEFORE checkpoint(...). AgentRunStore
+    // .updateCheckpoint currently catches all exceptions internally, so checkpoint() never throws and
+    // runAgent's catch block (which re-marks ERRORED/INTERNAL_ERROR) is never reached via a checkpoint
+    // failure. The ONLY thing that would keep the real disposition intact if a future change un-caught
+    // updateCheckpoint — letting a throwing terminal checkpoint fall into that catch — is
+    // markTerminated's first-wins guard. Pin it so the F1 ordering stays protective by construction.
+    var session = new AgentSession(List.of(), 1000);
+    session.markTerminated(TerminalDisposition.MAX_ITERATIONS, null, null);
+    // Simulate the catch-path re-mark a throwing terminal checkpoint would trigger.
+    session.markTerminated(
+        TerminalDisposition.ERRORED, io.justsearch.agent.api.AgentErrorCode.INTERNAL_ERROR, null);
+    assertEquals(
+        TerminalDisposition.MAX_ITERATIONS,
+        session.disposition(),
+        "first disposition wins; the catch-path ERRORED re-mark must not overwrite it");
+    assertNull(
+        session.terminationCode(), "the first mark carried no error code; it must be preserved");
+  }
+
+  @Test
+  void toolTurn_emitsToolBatchProposed_beforePerCallProposed() {
+    // Tempdoc 550 N1: the runner announces the turn's tool-call batch ONCE, before the per-call
+    // gate/proposed events — a heads-up plan preview. (Single-call scripted responses → size-1
+    // batches; the ordering + emission are what matter.)
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      var ai =
+          new ScriptedAiService(
+              List.of(
+                  ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+                  ScriptedResponse.textOnly("done")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      List<AgentEvent> events = run(service, userMessage("go"), 3);
+
+      int batchIdx = -1;
+      int proposedIdx = -1;
+      for (int i = 0; i < events.size(); i++) {
+        if (batchIdx < 0 && events.get(i) instanceof AgentEvent.ToolBatchProposed) {
+          batchIdx = i;
+        }
+        if (proposedIdx < 0 && events.get(i) instanceof AgentEvent.ToolCallProposed) {
+          proposedIdx = i;
+        }
+      }
+      assertTrue(batchIdx >= 0, "a ToolBatchProposed is emitted for the tool turn");
+      assertTrue(
+          proposedIdx >= 0 && batchIdx < proposedIdx,
+          "the batch is announced before the first per-call proposed event");
+      var batch = (AgentEvent.ToolBatchProposed) events.get(batchIdx);
+      assertEquals(1, batch.calls().size(), "the batch carries the turn's call");
+      assertEquals("core_search", batch.calls().get(0).toolName());
+    }
+  }
+
+  @Test
+  void sessionEnd_unknownTool_emitsTerminateTotalErrored() {
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      // Model proposes a tool the registry doesn't know about.
+      var ai = new ScriptedAiService(List.of(
+          ScriptedResponse.toolCall("call_1", "nonexistent_tool", "{}")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      run(service, userMessage("call missing"), 2);
+
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
+              new AgentTags.SessionEndedTags(
+                  TerminalDisposition.ERRORED,
+                  io.justsearch.agent.api.AgentErrorCode.UNKNOWN_TOOL,
+                  null)));
+    }
+  }
+
+  @Test
+  void sessionEnd_emptyResponseRetryExhausted_emitsTerminateTotalErrored() {
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      // Both initial + retry produce empty → terminal disposition is ERRORED/EMPTY_RESPONSE.
+      var ai = new ScriptedAiService(List.of(ScriptedResponse.empty(), ScriptedResponse.empty()));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      run(service, userMessage("empty retry exhausted"), 3);
+
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
+              new AgentTags.SessionEndedTags(
+                  TerminalDisposition.ERRORED,
+                  io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE,
+                  null)));
+    }
+  }
+
+  @Test
+  void sessionEnd_userCancelledMidLoop_emitsTerminateTotalCancelled() {
+    // Tempdoc 415 latent risk L1: this test cancels from INSIDE an event consumer running on the loop
+    // thread and relies on cancel() setting a volatile flag that the NEXT iteration's synchronous
+    // isCancelled check observes. It is correct only while event delivery stays single-threaded and
+    // synchronous (the wrapEventConsumer → eventHub.publish fan-out is in-thread today). If a future
+    // refactor moves event delivery off-thread, the cancel may race the loop and this test can go
+    // flaky — at that point switch to a deterministic injection (cancel before run, or a latch).
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      // 1) tool call → executed → loop checks isCancelled at start of iteration 2.
+      // 2) follow-up tool call (never reached because we cancel after the first ToolExecutionCompleted).
+      var ai = new ScriptedAiService(List.of(
+          ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+          ScriptedResponse.textOnly("never reached")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+
+      // Capture sessionId from SessionStarted; cancel after the first ToolExecutionCompleted.
+      var capturedSessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      Consumer<AgentEvent> sink = event -> {
+        if (event instanceof AgentEvent.SessionStarted s) {
+          capturedSessionId.set(s.sessionId());
+        }
+        if (event instanceof AgentEvent.ToolExecutionCompleted) {
+          var sid = capturedSessionId.get();
+          if (sid != null) {
+            service.cancelSession(sid);
+          }
+        }
+      };
+      service.runAgent(new AgentRequest(userMessage("cancel me"), List.of(), 5), sink);
+
+      assertEquals(
+          1L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
+              new AgentTags.SessionEndedTags(
+                  TerminalDisposition.CANCELLED, null, CancelTrigger.USER)));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tempdoc 550 Tier-0 (T0-a): the human safety gate strictly precedes tool
+  // dispatch. The in-process consent-capsule mint lives inside
+  // dispatchToolCall, which is reached only AFTER handleSafetyGate returns
+  // true (AgentStepRunner: the `if (!approved) continue;` guard). These two
+  // tests pin that ordering: a rejected MEDIUM gate must mean the operation is
+  // NEVER dispatched (callCount stays 0), and an approved gate dispatches it
+  // exactly once. A refactor that moved the mint/execute ahead of the gate —
+  // re-opening the "AI self-approves" hole — would flip callCount and fail.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void safetyGate_rejectedMediumRiskCall_isNeverDispatched() throws Exception {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_danger", "{}"),
+        ScriptedResponse.textOnly("acknowledged rejection")));
+    var dangerTool = new StubTool("danger", RiskTier.MEDIUM, "should-not-run");
+    var service = buildService(ai, dangerTool);
+
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var rejected = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var pendingSeen = new java.util.concurrent.CountDownLatch(1);
+    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    Consumer<AgentEvent> sink = event -> {
+      if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
+      if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
+      if (event instanceof AgentEvent.ToolCallRejected) rejected.set(true);
+      if (event instanceof AgentEvent.AgentDone || event instanceof AgentEvent.AgentError) {
+        loopDone.complete(true);
+      }
+    };
+
+    var loopThread = new Thread(() -> service.runAgent(
+        new AgentRequest(userMessage("do the dangerous thing"), List.of(), 3), sink));
+    loopThread.setDaemon(true);
+    loopThread.start();
+
+    // The approval gate is created immediately AFTER ToolCallPendingApproval is emitted, then
+    // the loop thread blocks on it. Poll-reject (a no-op until the gate exists) until the loop
+    // unblocks — bounded state-polling on loopDone, not a fixed-duration coordination sleep.
+    assertTrue(pendingSeen.await(5, java.util.concurrent.TimeUnit.SECONDS),
+        "MEDIUM-risk call must raise a human approval gate");
+    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    while (!loopDone.isDone() && System.nanoTime() < deadlineNanos) {
+      service.rejectToolCall(sessionId.get(), "call_1", "test-reject");
+      try {
+        loopDone.get(20, java.util.concurrent.TimeUnit.MILLISECONDS);
+      } catch (java.util.concurrent.TimeoutException ignored) {
+        // gate not yet completed — re-attempt
+      }
+    }
+    loopThread.join(2000);
+
+    assertTrue(loopDone.isDone(), "loop should unblock once the gate is rejected");
+    assertTrue(rejected.get(), "a rejected gate must emit ToolCallRejected");
+    assertEquals(0, dangerTool.callCount.get(),
+        "a rejected safety gate must mean the operation is NEVER dispatched"
+            + " (T0-a: the human gate strictly precedes the capsule mint / execute)");
+  }
+
+  @Test
+  void safetyGate_backgroundRun_rejectsMediumRiskCallFast_withoutWaitingForAWatcher()
+      throws Exception {
+    // Tempdoc 561 P-D: a BACKGROUND (non-interactive) run is safe-by-default. A MEDIUM/HIGH op has no
+    // watcher to approve it, so the gate rejects it IMMEDIATELY — the run completes on its own, with NO
+    // ToolCallPendingApproval and without blocking for the (5-min) approval timeout an interactive run
+    // would. Contrast safetyGate_rejectedMediumRiskCall_isNeverDispatched, which needs a manual reject.
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_danger", "{}"),
+        ScriptedResponse.textOnly("acknowledged")));
+    var dangerTool = new StubTool("danger", RiskTier.MEDIUM, "should-not-run");
+    var service = buildService(ai, dangerTool);
+
+    var rejected = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var pendingSeen = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    Consumer<AgentEvent> sink = event -> {
+      if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.set(true);
+      if (event instanceof AgentEvent.ToolCallRejected) rejected.set(true);
+      if (event instanceof AgentEvent.AgentDone || event instanceof AgentEvent.AgentError) {
+        loopDone.complete(true);
+      }
+    };
+
+    // background=true. On a daemon thread so a regression (blocking on a non-existent approver) bounds
+    // to the assert timeout instead of hanging the suite for the full approval timeout.
+    var loopThread = new Thread(() -> service.runAgent(
+        new AgentRequest(userMessage("do the dangerous thing"), List.of(), 3), sink, true));
+    loopThread.setDaemon(true);
+    loopThread.start();
+
+    assertTrue(
+        loopDone.get(8, java.util.concurrent.TimeUnit.SECONDS),
+        "a background run must complete WITHOUT a watcher — fail-fast, not a 5-min approval-timeout wait");
+    loopThread.join(2000);
+    assertTrue(rejected.get(), "the MEDIUM op is rejected (safe-by-default for an unwatched run)");
+    assertFalse(pendingSeen.get(), "a background run must NOT raise a human approval gate (no watcher)");
+    assertEquals(0, dangerTool.callCount.get(), "the rejected MEDIUM op is never dispatched");
+  }
+
+  @Test
+  void attachToRun_replaysHistoryThenStreamsToASecondObserverUntilTerminal() throws Exception {
+    // Tempdoc 577 §2.14 Root I (#13) — the run is an OBSERVED entity: a SECOND observer attaches
+    // mid-run, REPLAYS the run's history (SessionStarted, the pending approval), then receives the
+    // ongoing events through to the terminal — exactly what a reattaching tab does. The original
+    // observer is unaffected.
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_danger", "{}"),
+        ScriptedResponse.textOnly("done")));
+    var dangerTool = new StubTool("danger", RiskTier.MEDIUM, "ran");
+    var service = buildService(ai, dangerTool);
+
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var pendingSeen = new java.util.concurrent.CountDownLatch(1);
+    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    Consumer<AgentEvent> primary = event -> {
+      if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
+      if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
+      if (event instanceof AgentEvent.AgentDone || event instanceof AgentEvent.AgentError) {
+        loopDone.complete(true);
+      }
+    };
+
+    var loopThread = new Thread(() -> service.runAgent(
+        new AgentRequest(userMessage("do the thing"), List.of(), 3), primary));
+    loopThread.setDaemon(true);
+    loopThread.start();
+    assertTrue(pendingSeen.await(5, java.util.concurrent.TimeUnit.SECONDS), "run is live + parked");
+
+    // A second observer attaches to the LIVE run on its own thread (the attach blocks until terminal).
+    var attachEvents = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+    var attachReturned = new java.util.concurrent.CompletableFuture<Boolean>();
+    var attachThread = new Thread(() ->
+        attachReturned.complete(service.attachToRun(sessionId.get(), attachEvents::add)));
+    attachThread.setDaemon(true);
+    attachThread.start();
+
+    // The replay must deliver the already-emitted history to the late observer (poll — the attach
+    // runs on another thread). It must include the SessionStarted + the pending approval.
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    while (attachEvents.stream().noneMatch(e -> e instanceof AgentEvent.ToolCallPendingApproval)
+        && System.nanoTime() < deadline) {
+      Thread.onSpinWait();
+    }
+    assertTrue(
+        attachEvents.stream().anyMatch(e -> e instanceof AgentEvent.SessionStarted),
+        "the attach replayed the run's history (SessionStarted)");
+    assertTrue(
+        attachEvents.stream().anyMatch(e -> e instanceof AgentEvent.ToolCallPendingApproval),
+        "the attach replayed the pending approval");
+
+    // Drive the run to terminal; BOTH observers must receive the terminal and the attach must return.
+    long rd = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    while (!loopDone.isDone() && System.nanoTime() < rd) {
+      service.rejectToolCall(sessionId.get(), "call_1", "test-reject");
+      try {
+        loopDone.get(20, java.util.concurrent.TimeUnit.MILLISECONDS);
+      } catch (java.util.concurrent.TimeoutException ignored) {
+        // gate not yet completed — re-attempt
+      }
+    }
+    assertTrue(loopDone.isDone(), "the run terminated");
+    assertEquals(
+        Boolean.TRUE, attachReturned.get(5, java.util.concurrent.TimeUnit.SECONDS),
+        "attachToRun returned true (a live run was observed) and unblocked on the terminal event");
+    assertTrue(
+        attachEvents.stream().anyMatch(
+            e -> e instanceof AgentEvent.AgentDone || e instanceof AgentEvent.AgentError),
+        "the attach observer received the terminal event");
+  }
+
+  @Test
+  void attachToRun_returnsFalseForANonLiveSession() {
+    // The reattach 404 path: an unknown / terminal / evicted session is not a live run, so the
+    // controller falls back to the persisted record instead of holding an empty stream.
+    var service = buildService(new ScriptedAiService(List.of(ScriptedResponse.textOnly("x"))));
+    assertFalse(service.attachToRun("no-such-session", e -> {}));
+  }
+
+  @Test
+  void zeroObserverPark_watchRunWithNoWatcher_parks_andAReattacherReplaysTheNarration()
+      throws Exception {
+    // Tempdoc 577 §2.14 Root I (#13) — the END-TO-END park (the gap the live verification found).
+    // A WATCH run whose only observer's SSE write FAILS is evicted from the hub (exactly what the
+    // AgentController eviction seam now triggers by THROWING on a disconnected write) ⇒
+    // observerCount()==0 ⇒ the loop PARKS at the next iteration boundary and narrates
+    // "run_unobserved_parked". A reattaching observer replays that buffered narration AND, by
+    // restoring observerCount>0, releases the park so the run proceeds to terminal. Before the seam,
+    // the dead observer lingered, observerCount never dropped, and the run proceeded UNWATCHED.
+    String prev = System.getProperty("justsearch.agent.zeroObserverParkTimeoutSec");
+    System.setProperty("justsearch.agent.zeroObserverParkTimeoutSec", "10"); // park HOLDS (test default is 0)
+    try {
+      var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("done")));
+      var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+      var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+      // A DEAD socket: it records the sessionId from SessionStarted, then THROWS on every delivery —
+      // so the hub evicts it on the first event (mirrors AgentSseWriter.SseObserverGoneException on a
+      // false write). After eviction the run has ZERO live observers.
+      Consumer<AgentEvent> deadSocket = event -> {
+        if (event instanceof AgentEvent.SessionStarted s) {
+          sessionId.set(s.sessionId());
+        }
+        throw new RuntimeException("socket closed");
+      };
+      var loopThread = new Thread(() -> service.runAgent(
+          new AgentRequest(userMessage("watch me"), List.of(), 3, List.of(), null, null, null, "watch"),
+          deadSocket));
+      loopThread.setDaemon(true);
+      loopThread.start();
+
+      long sd = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+      while (sessionId.get() == null && System.nanoTime() < sd) {
+        Thread.onSpinWait();
+      }
+      assertNotNull(sessionId.get(), "the run started (SessionStarted emitted before eviction)");
+
+      // Let the loop reach the iteration-0 boundary with observerCount==0 (the dead socket evicted)
+      // so it PARKS, before we attach. The park HOLDS for the 10s timeout, so this delay lands the
+      // reattach safely inside the hold; attaching too early would race the park check and the
+      // observerCount>0 reattacher would (correctly) keep the run PROCEEDing.
+      Thread.sleep(700);
+
+      // Reattach: replays the buffered history INCLUDING the park narration, and releases the park.
+      var replay = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+      var attachReturned = new CompletableFuture<Boolean>();
+      var attachThread = new Thread(() ->
+          attachReturned.complete(service.attachToRun(sessionId.get(), replay::add)));
+      attachThread.setDaemon(true);
+      attachThread.start();
+
+      long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
+      while (replay.stream().noneMatch(AgentLoopServiceTest::isUnobservedPark)
+          && System.nanoTime() < deadline) {
+        Thread.onSpinWait();
+      }
+      assertTrue(
+          replay.stream().anyMatch(AgentLoopServiceTest::isUnobservedPark),
+          "the WATCH run parked (observerCount==0 after the dead-socket eviction) and narrated "
+              + "run_unobserved_parked; the reattacher replayed it. Saw: " + replay);
+      assertEquals(Boolean.TRUE, attachReturned.get(8, java.util.concurrent.TimeUnit.SECONDS),
+          "the reattach restored a watcher, released the park, and the run reached terminal");
+    } finally {
+      if (prev == null) {
+        System.clearProperty("justsearch.agent.zeroObserverParkTimeoutSec");
+      } else {
+        System.setProperty("justsearch.agent.zeroObserverParkTimeoutSec", prev);
+      }
+    }
+  }
+
+  private static boolean isUnobservedPark(AgentEvent e) {
+    return e instanceof AgentEvent.AgentProgress p && "run_unobserved_parked".equals(p.phase());
+  }
+
+  @Test
+  void safetyGate_approvedMediumRiskCall_dispatchesExactlyOnce() throws Exception {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_danger", "{}"),
+        ScriptedResponse.textOnly("done")));
+    var dangerTool = new StubTool("danger", RiskTier.MEDIUM, "ran");
+    var service = buildService(ai, dangerTool);
+
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var approved = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var pendingSeen = new java.util.concurrent.CountDownLatch(1);
+    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    Consumer<AgentEvent> sink = event -> {
+      if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
+      if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
+      if (event instanceof AgentEvent.ToolCallApproved) approved.set(true);
+      if (event instanceof AgentEvent.AgentDone || event instanceof AgentEvent.AgentError) {
+        loopDone.complete(true);
+      }
+    };
+
+    var loopThread = new Thread(() -> service.runAgent(
+        new AgentRequest(userMessage("do the dangerous thing"), List.of(), 3), sink));
+    loopThread.setDaemon(true);
+    loopThread.start();
+
+    assertTrue(pendingSeen.await(5, java.util.concurrent.TimeUnit.SECONDS),
+        "MEDIUM-risk call must raise a human approval gate");
+    long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    while (!loopDone.isDone() && System.nanoTime() < deadlineNanos) {
+      service.approveToolCall(sessionId.get(), "call_1");
+      try {
+        loopDone.get(20, java.util.concurrent.TimeUnit.MILLISECONDS);
+      } catch (java.util.concurrent.TimeoutException ignored) {
+        // gate not yet completed — re-attempt
+      }
+    }
+    loopThread.join(2000);
+
+    assertTrue(loopDone.isDone(), "loop should unblock once the gate is approved");
+    assertTrue(approved.get(), "an approved gate must emit ToolCallApproved");
+    assertEquals(1, dangerTool.callCount.get(),
+        "an approved safety gate dispatches the operation exactly once"
+            + " (the gate is the sole determinant of whether the op runs)");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tempdoc 565 §30 — DIRECTION authority: a mid-run steering directive (interject) is drained at
+  // the step boundary, folded into the next LLM call as a system note, and acknowledged.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void steeringDirective_injectedMidRun_foldsIntoLlmContextAndAcknowledges() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search", "{}"),
+        ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "result"));
+
+    var acknowledged = new java.util.concurrent.atomic.AtomicReference<String>();
+    var done = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var ackedMidRun = new java.util.concurrent.atomic.AtomicBoolean(false);
+    Consumer<AgentEvent> sink = event -> {
+      // Inject synchronously on SessionStarted (the loop thread) so the directive is queued before a
+      // step boundary's drain — deterministic, no race with the blocking loop.
+      if (event instanceof AgentEvent.SessionStarted s) {
+        assertTrue(service.injectSteeringDirective(s.sessionId(), "Focus only on Q3 results."),
+            "injecting into a live session succeeds");
+      }
+      if (event instanceof AgentEvent.DirectiveAcknowledged d) {
+        acknowledged.set(d.directiveText());
+        if (!done.get()) ackedMidRun.set(true);
+      }
+      if (event instanceof AgentEvent.AgentDone) done.set(true);
+    };
+
+    service.runAgent(new AgentRequest(userMessage("hi"), List.of(), 3), sink);
+
+    assertEquals("Focus only on Q3 results.", acknowledged.get(),
+        "the injected directive is acknowledged at the step boundary");
+    assertTrue(ackedMidRun.get(), "the directive is acknowledged MID-run, before AgentDone");
+    assertTrue(
+        ai.recordedMessages.stream().anyMatch(
+            msgs -> msgs.stream().anyMatch(
+                m -> String.valueOf(m.get("content")).contains("Focus only on Q3 results."))),
+        "the steering text is folded into an LLM call's messages — it enters the agent's context");
+  }
+
+  @Test
+  void steeringDirective_unknownSession_returnsFalse() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    assertFalse(service.injectSteeringDirective("no-such-session", "steer"),
+        "injecting into an unknown/finished session returns false (404)");
+  }
+
+  @Test
+  void agentSession_drainInterject_isExactlyOnce() {
+    var session = new AgentSession(List.of(), 8000);
+    assertNull(session.drainInterject(), "no directive queued initially");
+    session.setInterject("steer me");
+    assertEquals("steer me", session.drainInterject(), "drain returns the queued directive");
+    assertNull(session.drainInterject(), "a drained directive is consumed exactly once");
+    session.setInterject("   ");
+    assertNull(session.drainInterject(), "blank directives are ignored");
+  }
+
+  // Tempdoc 565 §33 — a steer queued AFTER the last step boundary (here: during the final answer of a
+  // single-LLM-call run, with no next iteration to drain at) is still recorded via the end-of-run drain.
+  @Test
+  void steeringDirective_afterLastBoundary_drainedAtRunEnd() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("the answer")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
+    var injected = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var acked = new java.util.concurrent.atomic.AtomicReference<String>();
+    Consumer<AgentEvent> sink = event -> {
+      if (event instanceof AgentEvent.SessionStarted s) {
+        sessionId.set(s.sessionId());
+      }
+      // Inject on the FIRST text chunk — this fires AFTER iteration 0's boundary drain (the drain ran at
+      // the start of executeIteration, before the LLM call), and the run is single-iteration, so no later
+      // boundary drains it. Only the end-of-run (finally) drain can catch it.
+      if (event instanceof AgentEvent.TextChunk && !injected.get() && sessionId.get() != null) {
+        injected.set(true);
+        service.injectSteeringDirective(sessionId.get(), "too late to change the answer");
+      }
+      if (event instanceof AgentEvent.DirectiveAcknowledged d) {
+        acked.set(d.directiveText());
+      }
+    };
+
+    service.runAgent(new AgentRequest(userMessage("hi"), List.of(), 3), sink);
+
+    assertTrue(injected.get(), "the directive was injected after iteration 0's boundary drain");
+    assertEquals("too late to change the answer", acked.get(),
+        "the end-of-run drain emits DirectiveAcknowledged so a late steer is recorded, not silently lost");
+  }
+
+  @Test
+  void toolCallEmits_excludeHandoffNames() {
+    try (var registry = combinedRegistry()) {
+      var agentTelemetry =
+          new AgentTelemetry(new AgentMetricCatalog(registry), new GenAiMetricCatalog(registry));
+      // Multi-agent with two profiles; first model response is a handoff_to_secondary call.
+      var profiles = List.of(
+          new AgentProfile("primary", "Primary", null, List.of("core_search")),
+          new AgentProfile("secondary", "Secondary", null, List.of("core_search")));
+      var ai = new ScriptedAiService(List.of(
+          ScriptedResponse.toolCall("call_1", "handoff_to_secondary", "{\"reason\":\"need help\"}"),
+          ScriptedResponse.textOnly("done")));
+      var service =
+          buildServiceWithAgentTelemetry(
+              ai, agentTelemetry, new StubTool("search", RiskTier.LOW, "r"));
+      var request = new AgentRequest(
+          List.of(Map.of("role", "user", "content", "go")),
+          List.of(), 3, profiles, "primary");
+      service.runAgent(request, e -> {});
+
+      // Cardinality invariant: handoff_to_* tool names must not appear on tool_call_total.
+      assertEquals(
+          0L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TOOL_CALL_TOTAL,
+              new AgentTags.ToolCallTags("handoff_to_secondary")));
+      assertEquals(
+          0L,
+          registry.counterValue(
+              AgentMetricCatalog.SESSION_TOOL_CALL_TOTAL,
+              new AgentTags.ToolCallTags("handoff_to_primary")));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message ordering: assistant(tool_calls) before tool results
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void singleToolCall_correctMessageOrder() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search", "{\"query\":\"test\"}"),
+        ScriptedResponse.textOnly("Found it")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "3 results"));
+
+    run(service, userMessage("find docs"), 3);
+
+    // Second LLM call should have correct message order
+    assertEquals(2, ai.recordedMessages.size(), "LLM should be called twice");
+    List<Map<String, Object>> secondCallMessages = ai.recordedMessages.get(1);
+
+    // Expected: [system, user, assistant(tool_calls), tool_result]
+    assertEquals("system", secondCallMessages.get(0).get("role"));
+    assertEquals("user", secondCallMessages.get(1).get("role"));
+    assertEquals("assistant", secondCallMessages.get(2).get("role"));
+    assertNotNull(secondCallMessages.get(2).get("tool_calls"), "Assistant msg should have tool_calls");
+    assertEquals("tool", secondCallMessages.get(3).get("role"));
+    assertEquals("call_1", secondCallMessages.get(3).get("tool_call_id"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multi-step chain
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void multiStepChain_correctMessageOrder() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_browse", "{\"parent_path\":\"/\"}"),
+        ScriptedResponse.toolCall("call_2", "core_search", "{\"query\":\"report\"}"),
+        ScriptedResponse.textOnly("Done")));
+    var service = buildService(ai,
+        new StubTool("browse", RiskTier.LOW, "3 folders"),
+        new StubTool("search", RiskTier.LOW, "5 results"));
+
+    run(service, userMessage("organize"), 5);
+
+    assertEquals(3, ai.recordedMessages.size(), "LLM should be called 3 times");
+
+    // Third call messages: system, user, asst(call_1), tool(call_1), asst(call_2), tool(call_2)
+    List<Map<String, Object>> thirdCall = ai.recordedMessages.get(2);
+    assertEquals(6, thirdCall.size());
+    assertEquals("system", thirdCall.get(0).get("role"));
+    assertEquals("user", thirdCall.get(1).get("role"));
+    assertEquals("assistant", thirdCall.get(2).get("role"));
+    assertEquals("tool", thirdCall.get(3).get("role"));
+    assertEquals("call_1", thirdCall.get(3).get("tool_call_id"));
+    assertEquals("assistant", thirdCall.get(4).get("role"));
+    assertEquals("tool", thirdCall.get(5).get("role"));
+    assertEquals("call_2", thirdCall.get(5).get("tool_call_id"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // System prompt
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void systemPromptPrepended_whenMissing() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    run(service, userMessage("hi"), 1);
+
+    List<Map<String, Object>> firstCall = ai.recordedMessages.get(0);
+    assertEquals("system", firstCall.get(0).get("role"));
+    assertEquals(AgentPromptComposer.DEFAULT_SYSTEM_PROMPT, firstCall.get(0).get("content"));
+  }
+
+  @Test
+  void existingSystemPrompt_notDuplicated() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var messages = new ArrayList<Map<String, Object>>();
+    messages.add(Map.of("role", "system", "content", "Custom system prompt"));
+    messages.add(Map.of("role", "user", "content", "hi"));
+    var request = new AgentRequest(messages, List.of(), 1);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(request, events::add);
+
+    List<Map<String, Object>> firstCall = ai.recordedMessages.get(0);
+    assertEquals("system", firstCall.get(0).get("role"));
+    assertEquals("Custom system prompt", firstCall.get(0).get("content"));
+    // No second system message
+    long systemCount = firstCall.stream()
+        .filter(m -> "system".equals(m.get("role")))
+        .count();
+    assertEquals(1, systemCount, "Should not duplicate system prompt");
+  }
+
+  @Test
+  void systemPromptIncludesRoots_whenSupplied() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            () -> List.of("D:\\Documents", "D:\\Projects"));
+
+    run(service, userMessage("hi"), 1);
+
+    List<Map<String, Object>> firstCall = ai.recordedMessages.get(0);
+    String systemContent = (String) firstCall.get(0).get("content");
+    assertTrue(
+        systemContent.contains("D:\\Documents"),
+        "System prompt should contain root path: " + systemContent);
+    assertTrue(
+        systemContent.contains("D:\\Projects"),
+        "System prompt should contain root path: " + systemContent);
+    assertTrue(
+        systemContent.contains("indexed root folders"),
+        "System prompt should label the roots: " + systemContent);
+  }
+
+  @Test
+  void systemPromptFallsBack_whenRootsSupplierReturnsEmpty() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            List::of);
+
+    run(service, userMessage("hi"), 1);
+
+    List<Map<String, Object>> firstCall = ai.recordedMessages.get(0);
+    assertEquals(AgentPromptComposer.DEFAULT_SYSTEM_PROMPT, firstCall.get(0).get("content"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Approval gate lookup robustness (tempdoc 565 §15.J unified-dispatch enforcement)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void tryApproveReject_withNullOrUnknownSession_returnFalse_noNpe() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var service =
+        new AgentLoopService(
+            ai, stubCatalog(searchTool), stubExecutor(searchTool), stubEmitter(), null, List::of);
+
+    // The unified /api/chat/approve dispatch calls these to decide whether to fall through to the
+    // workflow gate. A null/blank sessionId (a workflow-only approve) must report "no agent gate"
+    // WITHOUT NPEing on ConcurrentHashMap.get(null) — surfaced by a live null-sessionId probe.
+    assertFalse(service.tryApproveToolCall(null, "call-x"));
+    assertFalse(service.tryRejectToolCall(null, "call-x", "reason"));
+    assertFalse(service.tryApproveToolCall("", "call-x"));
+    assertFalse(service.tryRejectToolCall("  ", "call-x", "reason"));
+    // An unknown (non-null) session also reports no gate.
+    assertFalse(service.tryApproveToolCall("no-such-session", "call-x"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Max iterations
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void maxIterationsReached_emitsAgentDone() {
+    // Model always returns tool calls — never stops voluntarily
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search", "{\"q\":\"a\"}"),
+        ScriptedResponse.toolCall("call_2", "core_search", "{\"q\":\"b\"}")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("loop"), 2);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone after max iterations");
+    assertEquals(2, done.iterationsUsed());
+    assertEquals(2, done.toolCallsExecuted());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Empty output retry
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void emptyResponse_retries() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.empty(),
+        ScriptedResponse.textOnly("Success after retry")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("hi"), 3);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    assertEquals("Success after retry", done.finalResponse());
+
+    assertEquals(2, ai.recordedMessages.size(), "LLM should be called twice (original + retry)");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Empty response after retry — emits error
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void emptyResponseAfterRetry_emitsAgentError() {
+    // Both initial and retry produce empty responses (simulates B6 bug)
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.empty(),
+        ScriptedResponse.empty()));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("complex query"), 3);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error, "Should emit AgentError on double-empty response");
+    assertEquals("EMPTY_RESPONSE", error.errorCode());
+    assertEquals("TRANSIENT", error.errorClass());
+    assertEquals("ABORT", error.retryAction());
+    assertEquals(1, error.retryAttempt());
+    assertTrue(error.error().contains("failed to generate"),
+        "Error should describe the failure: " + error.error());
+
+    // Should NOT emit AgentDone with empty text
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNull(done, "Should not emit AgentDone on empty response");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reasoning chunks accumulated without affecting text
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void reasoningChunks_doNotAffectTextResponse() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.withReasoning("Final answer", "Step 1: think... Step 2: decide...")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("think about this"), 1);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    assertEquals("Final answer", done.finalResponse());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Think tag stripping from accumulated text
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void thinkTags_strippedFromFinalResponse() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.textOnly("<think>internal reasoning here</think>Clean answer")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("answer this"), 1);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    assertEquals("Clean answer", done.finalResponse());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tool result truncation
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void truncateForContext_shortOutput_passesThrough() {
+    String shortOutput = "Found 3 results (took 15ms).";
+    assertEquals(shortOutput, AgentContextCompressor.truncate(shortOutput));
+  }
+
+  @Test
+  void truncateForContext_nullOutput_returnsNull() {
+    assertNull(AgentContextCompressor.truncate(null));
+  }
+
+  @Test
+  void truncateForContext_longOutput_isTruncated() {
+    String longOutput = "x".repeat(5000);
+    String result = AgentContextCompressor.truncate(longOutput);
+    assertTrue(result.length() < longOutput.length(), "Should be shorter than original");
+    assertTrue(result.startsWith("x".repeat(4000)), "Should preserve start of output");
+    assertTrue(result.contains("[... truncated,"), "Should include truncation notice");
+    assertTrue(result.contains("1000 chars omitted]"), "Should report omitted char count");
+  }
+
+  @Test
+  void truncateForContext_exactlyAtLimit_passesThrough() {
+    String exactOutput = "x".repeat(4000);
+    assertEquals(exactOutput, AgentContextCompressor.truncate(exactOutput));
+  }
+
+  @Test
+  void contextCompression_enabled_compressesOlderToolOutputs() {
+    withSysProps(
+        Map.of(
+            "justsearch.agent.context_compression.enabled", "true",
+            "justsearch.agent.context_compression.min_chars", "100",
+            "justsearch.agent.context_compression.keep_last_results", "1"),
+        () -> {
+          var ai =
+              new ScriptedAiService(
+                  List.of(
+                      ScriptedResponse.toolCall("call_1", "core_search_one", "{}"),
+                      ScriptedResponse.toolCall("call_2", "core_search_two", "{}"),
+                      ScriptedResponse.textOnly("done")));
+          var service =
+              buildService(
+                  ai,
+                  new StubTool("search_one", RiskTier.LOW, largeToolOutput("first")),
+                  new StubTool("search_two", RiskTier.LOW, largeToolOutput("second")));
+
+          run(service, userMessage("compress please"), 5);
+
+          List<Map<String, Object>> thirdCall = ai.recordedMessages.get(2);
+          String firstToolContent =
+              thirdCall.stream()
+                  .filter(
+                      m ->
+                          "tool".equals(m.get("role"))
+                              && "call_1".equals(String.valueOf(m.get("tool_call_id"))))
+                  .map(m -> String.valueOf(m.get("content")))
+                  .findFirst()
+                  .orElse("");
+          String secondToolContent =
+              thirdCall.stream()
+                  .filter(
+                      m ->
+                          "tool".equals(m.get("role"))
+                              && "call_2".equals(String.valueOf(m.get("tool_call_id"))))
+                  .map(m -> String.valueOf(m.get("content")))
+                  .findFirst()
+                  .orElse("");
+
+          assertTrue(
+              firstToolContent.startsWith("[compressed-tool-output"),
+              "older tool output should be compressed");
+          assertFalse(
+              secondToolContent.startsWith("[compressed-tool-output"),
+              "latest tool output should stay uncompressed");
+        });
+  }
+
+  @Test
+  void contextCompression_disabled_keepsToolOutputsUncompressed() {
+    withSysProps(
+        Map.of(
+            "justsearch.agent.context_compression.enabled", "false",
+            "justsearch.agent.context_compression.min_chars", "100",
+            "justsearch.agent.context_compression.keep_last_results", "1"),
+        () -> {
+          var ai =
+              new ScriptedAiService(
+                  List.of(
+                      ScriptedResponse.toolCall("call_1", "core_search_one", "{}"),
+                      ScriptedResponse.toolCall("call_2", "core_search_two", "{}"),
+                      ScriptedResponse.textOnly("done")));
+          var service =
+              buildService(
+                  ai,
+                  new StubTool("search_one", RiskTier.LOW, largeToolOutput("first")),
+                  new StubTool("search_two", RiskTier.LOW, largeToolOutput("second")));
+
+          run(service, userMessage("no compression"), 5);
+
+          List<Map<String, Object>> thirdCall = ai.recordedMessages.get(2);
+          String firstToolContent =
+              thirdCall.stream()
+                  .filter(
+                      m ->
+                          "tool".equals(m.get("role"))
+                              && "call_1".equals(String.valueOf(m.get("tool_call_id"))))
+                  .map(m -> String.valueOf(m.get("content")))
+                  .findFirst()
+                  .orElse("");
+          assertFalse(firstToolContent.startsWith("[compressed-tool-output"));
+        });
+  }
+
+  @Test
+  void stripSearchExcerpts_removesExcerptLines() {
+    String input =
+        "[1] Architecture Overview (score: 0.95)\n"
+            + "    Path: /docs/architecture.md\n"
+            + "    Excerpt: \"This document describes the system architecture...\"\n"
+            + "[2] Setup Guide (score: 0.80)\n"
+            + "    Path: /docs/setup.md\n"
+            + "    Excerpt: \"Follow these steps to install and configure...\"\n"
+            + "\nFound 2 results (took 15ms).";
+    String result = AgentContextCompressor.stripSearchExcerpts(input);
+    assertFalse(result.contains("Excerpt:"), "Excerpts should be removed");
+    assertTrue(result.contains("[1] Architecture Overview"), "Title should be preserved");
+    assertTrue(result.contains("Path: /docs/architecture.md"), "Path should be preserved");
+    assertTrue(result.contains("[2] Setup Guide"), "Second title should be preserved");
+    assertTrue(result.contains("Found 2 results"), "Footer should be preserved");
+  }
+
+  @Test
+  void stripSearchExcerpts_noExcerpts_passesThrough() {
+    String input = "No matching results found.";
+    assertEquals(input, AgentContextCompressor.stripSearchExcerpts(input));
+  }
+
+  // ---------------------------------------------------------------------------
+  // No tools
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void noToolsAvailable_emitsError() {
+    var ai = new ScriptedAiService(List.of());
+    var service =
+        new AgentLoopService(
+            ai,
+            OperationCatalog.of("core", List.of()),
+            stubExecutor(),
+            stubEmitter(),
+            null,
+            null);
+
+    var events = run(service, userMessage("hi"), 1);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("NO_TOOLS", error.errorCode());
+    assertEquals("PERMANENT", error.errorClass());
+    assertEquals("ABORT", error.retryAction());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tool execution throws exception
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void toolExecutionThrows_returnsFailureResult() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_failing", "{}"),
+        ScriptedResponse.textOnly("ok")));
+    // Per Phase 11 of tempdoc 429: throwing-handler exercises the executor's fallback
+    // branch. We build a custom catalog + executor where the handler raises a
+    // RuntimeException; the agent loop's executeOperationWithPolicy converts it to
+    // an OperationResult.failure(...).
+    var failingOpId = new OperationRef("core.failing");
+    var failingOp = new Operation(
+        failingOpId,
+        new Presentation(
+            new I18nKey("test.failing.label"),
+            new I18nKey("test.failing.description"),
+            Optional.empty(),
+            Optional.empty()),
+        Interface.of("{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
+        new OperationPolicy(
+            RiskTier.LOW, ConfirmStrategy.None.INSTANCE, AuditPolicy.NONE,
+            RetryPolicy.noRetry(), Optional.empty(), Set.of(), false),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(failingOpId),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.AGENT));
+    var catalog = OperationCatalog.of("core", List.of(failingOp));
+    var handlers = new HandlerRegistry();
+    handlers.register(failingOpId, args -> { throw new RuntimeException("Tool crashed"); });
+    var executor =
+        new OperationDispatcher() {
+          @Override
+          public OperationResult dispatch(Operation op, String argumentsJson) {
+            return handlers
+                .resolve(new OperationRef(op.binding().handlerId()))
+                .orElseThrow()
+                .execute(argumentsJson);
+          }
+
+          @Override
+          public OperationResult undo(Operation op, String executionId) {
+            if (!op.policy().undoSupported()) {
+              return OperationResult.failure("Undo not supported by " + op.id().value());
+            }
+            return handlers
+                .resolve(new OperationRef(op.binding().handlerId()))
+                .orElseThrow()
+                .undo(executionId);
+          }
+        };
+    var service = new AgentLoopService(ai, catalog, executor, stubEmitter(), null, null);
+
+    var events = run(service, userMessage("go"), 3);
+
+    var completed = lastEventOfType(events, AgentEvent.ToolExecutionCompleted.class);
+    assertNotNull(completed, "Should emit ToolExecutionCompleted even on exception");
+    assertFalse(completed.result().success());
+    assertTrue(completed.result().message().contains("Tool crashed"),
+        "Should contain exception message: " + completed.result().message());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Assistant text preserved with tool calls
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assistantTextPreserved_withToolCalls() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.textAndToolCall("Let me search", "call_1", "core_search", "{\"q\":\"x\"}"),
+        ScriptedResponse.textOnly("Found it")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "result"));
+
+    run(service, userMessage("find"), 3);
+
+    // Second call: the assistant message should include "Let me search" as content
+    List<Map<String, Object>> secondCall = ai.recordedMessages.get(1);
+    Map<String, Object> assistantMsg = secondCall.stream()
+        .filter(m -> "assistant".equals(m.get("role")) && m.containsKey("tool_calls"))
+        .findFirst().orElse(null);
+    assertNotNull(assistantMsg, "Should have assistant message with tool_calls");
+    assertEquals("Let me search", assistantMsg.get("content"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Budget tracking
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void budgetTracking_normalFlow_tracksTokens() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.textOnly("Hello").withUsage(50, 10)));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("hi"), 1);
+
+    // Verify budget update events emitted
+    var budgetEvents = eventsOfType(events, AgentEvent.AgentBudgetUpdate.class);
+    assertEquals(2, budgetEvents.size(), "Should emit iteration_start + llm_response budget events");
+
+    var iterationStartEvent = budgetEvents.get(0);
+    assertEquals("iteration_start", iterationStartEvent.phase());
+    assertTrue(iterationStartEvent.tokensRemaining() > 0, "Should have budget remaining");
+
+    var llmResponseEvent = budgetEvents.get(1);
+    assertEquals("llm_response", llmResponseEvent.phase());
+    assertEquals(60, llmResponseEvent.tokensConsumed(), "Should consume 50+10=60 tokens");
+
+    // Verify AgentDone includes token metrics
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertEquals(60, done.totalTokensUsed(), "Should track total tokens used");
+  }
+
+  @Test
+  void budgetTracking_multipleIterations_accumulatesTokens() {
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(30, 5),
+        ScriptedResponse.textOnly("Done").withUsage(40, 10)));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("query"), 3);
+
+    // First iteration: 30+5=35, second iteration: 40+10=50
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertEquals(85, done.totalTokensUsed(), "Should accumulate tokens across iterations");
+
+    // Verify budget decreased
+    var budgetEvents = eventsOfType(events, AgentEvent.AgentBudgetUpdate.class);
+    assertTrue(budgetEvents.size() >= 2, "Should have multiple budget events");
+
+    var firstResponse = budgetEvents.get(1); // First llm_response event
+    var lastEvent = budgetEvents.get(budgetEvents.size() - 1);
+    assertTrue(
+        lastEvent.tokensRemaining() < firstResponse.tokensRemaining(),
+        "Budget should decrease over iterations");
+  }
+
+  @Test
+  void budgetTracking_noUsageData_handlesGracefully() {
+    // Simulate llama-server not providing usage data
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("Response")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+
+    var events = run(service, userMessage("hi"), 1);
+
+    // Should still emit AgentDone, with zero totalTokensUsed
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone even without usage data");
+    assertEquals(0, done.totalTokensUsed(), "Should report zero tokens when no usage data");
+  }
+
+  @Test
+  void budgetTracking_exhaustion_terminatesEarly() {
+    // Create AI service that would normally run many iterations
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(50, 30),
+        ScriptedResponse.toolCall("call_2", "core_search", "{}").withUsage(50, 30),
+        ScriptedResponse.toolCall("call_3", "core_search", "{}").withUsage(50, 30),
+        ScriptedResponse.textOnly("Done").withUsage(10, 5)));
+
+    // Override to provide very small context window
+    // Context = 120, budget = 120 - 256 = -136 (becomes 0 due to Math.max)
+    // So we use a context window that gives us a tiny budget
+    var service = buildServiceWithSmallBudget(ai, 100);
+
+    var events = run(service, userMessage("search"), 10);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("BUDGET_EXHAUSTED", error.errorCode());
+    assertEquals("BUDGET", error.errorClass());
+    assertEquals("ABORT", error.retryAction());
+    assertTrue(error.error().contains("budget limit"),
+        "Should mention budget in termination message");
+
+    // Agent should terminate before first LLM call.
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNull(done);
+  }
+
+  @Test
+  void resumeLastSession_unsupportedState_emitsTypedError() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("unused")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs"));
+    var request = new AgentRequest(userMessage("resume"), List.of(), 3);
+    runStore.startRun("session_unsupported", request, request.messages(), 1000);
+    runStore.updateCheckpoint(
+        "session_unsupported",
+        "TOOL_EXECUTING",
+        request.messages(),
+        1,
+        0,
+        12,
+        "tool executing");
+
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.resumeLastSession(events::add);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("UNSUPPORTED_RESUME_STATE", error.errorCode());
+    assertEquals("ABORT", error.retryAction());
+  }
+
+  @Test
+  void resumeLastSession_supportedState_runsAgentFromSnapshot() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("resumed")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs"));
+    var request = new AgentRequest(userMessage("resume"), List.of(), 3);
+    runStore.startRun("session_supported", request, request.messages(), 1000);
+    runStore.updateCheckpoint(
+        "session_supported",
+        "READY_FOR_LLM",
+        request.messages(),
+        0,
+        0,
+        0,
+        "");
+
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.resumeLastSession(events::add);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done);
+    assertEquals("resumed", done.finalResponse());
+  }
+
+  // ---------------------------------------------------------------------------
+  // resumeSession (by id) — tempdoc 415 follow-up (C20)
+  // Mirrors resumeLastSession but addressed by sessionId. Inherits the same
+  // state-gate (WAITING_APPROVAL / READY_FOR_LLM / AFTER_TOOL_RESULT only).
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void resumeSession_byId_runsAgentFromSpecificSnapshot() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("resumed-by-id")));
+    var searchTool = new StubTool("search", RiskTier.LOW, "r");
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs"));
+
+    // Create two persisted sessions; resume the older one explicitly.
+    var olderRequest = new AgentRequest(userMessage("older"), List.of(), 3);
+    runStore.startRun("older_session", olderRequest, olderRequest.messages(), 1000);
+    runStore.updateCheckpoint(
+        "older_session", "READY_FOR_LLM", olderRequest.messages(), 0, 0, 0, "");
+    var newerRequest = new AgentRequest(userMessage("newer"), List.of(), 3);
+    runStore.startRun("newer_session", newerRequest, newerRequest.messages(), 1000);
+    runStore.updateCheckpoint(
+        "newer_session", "READY_FOR_LLM", newerRequest.messages(), 0, 0, 0, "");
+
+    var service =
+        new AgentLoopService(
+            ai,
+            stubCatalog(searchTool),
+            stubExecutor(searchTool),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.resumeSession("older_session", events::add);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Resuming the older session must reach AgentDone");
+    assertEquals("resumed-by-id", done.finalResponse());
+  }
+
+  @Test
+  void resumeSession_unknownId_emitsTypedError() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("nope")));
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs"));
+    var service =
+        new AgentLoopService(
+            ai,
+            OperationCatalog.of("core", List.of()),
+            stubExecutor(),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.resumeSession("does-not-exist", events::add);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error, "Unknown sessionId must emit an AgentError");
+    assertEquals("UNSUPPORTED_RESUME_STATE", error.errorCode());
+    assertEquals("ABORT", error.retryAction());
+  }
+
+  @Test
+  void resumeSession_unsupportedState_emitsTypedError() {
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("nope")));
+    var runStore = new AgentRunStore(tempDir.resolve("agent-runs"));
+    var request = new AgentRequest(userMessage("resume"), List.of(), 3);
+    runStore.startRun("session_unsupported_id", request, request.messages(), 1000);
+    runStore.updateCheckpoint(
+        "session_unsupported_id",
+        "TOOL_EXECUTING",
+        request.messages(),
+        1,
+        0,
+        12,
+        "tool executing");
+
+    var service =
+        new AgentLoopService(
+            ai,
+            OperationCatalog.of("core", List.of()),
+            stubExecutor(),
+            stubEmitter(),
+            null,
+            null,
+            runStore,
+            null);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.resumeSession("session_unsupported_id", events::add);
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("UNSUPPORTED_RESUME_STATE", error.errorCode());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Loop detection — consecutive identical tool calls
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void loopDetection_threeIdenticalCalls_blocksThirdBeforeExecution() {
+    // Calls 1-2 execute normally, call 3 is blocked BEFORE execution (pre-execution guard)
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}"),
+                ScriptedResponse.toolCall("c2", "core_search", "{}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{}"),
+                ScriptedResponse.textOnly("Final answer")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("search"), 5);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone after loop recovery");
+    assertEquals("Final answer", done.finalResponse());
+    assertEquals(2, done.toolCallsExecuted(), "Only 2 calls should execute; 3rd is blocked");
+
+    // Verify the loop-blocked message uses role:"tool" (OpenAI format contract)
+    assertEquals(4, ai.recordedMessages.size(), "LLM should be called 4 times");
+    List<Map<String, Object>> fourthCallMessages = ai.recordedMessages.get(3);
+    boolean hasLoopMessage =
+        fourthCallMessages.stream()
+            .anyMatch(
+                m ->
+                    "tool".equals(m.get("role"))
+                        && m.get("content") != null
+                        && String.valueOf(m.get("content")).contains("Tool call blocked"));
+    assertTrue(hasLoopMessage, "Should inject loop-blocked tool message with tool_call_id");
+  }
+
+  @Test
+  void loopDetection_twoIdenticalThenDifferent_noBlocking() {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}"),
+                ScriptedResponse.toolCall("c2", "core_search", "{}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{\"query\":\"other\"}"),
+                ScriptedResponse.textOnly("Done")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("search"), 5);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    assertEquals("Done", done.finalResponse());
+    assertEquals(3, done.toolCallsExecuted(), "All 3 tool calls should execute without blocking");
+
+    // Verify no loop-blocked message was injected
+    List<Map<String, Object>> fourthCallMessages = ai.recordedMessages.get(3);
+    boolean hasLoopMessage =
+        fourthCallMessages.stream()
+            .anyMatch(
+                m ->
+                    "tool".equals(m.get("role"))
+                        && m.get("content") != null
+                        && String.valueOf(m.get("content")).contains("Tool call blocked"));
+    assertFalse(hasLoopMessage, "Should NOT inject loop-blocked message when args differ");
+  }
+
+  @Test
+  void loopDetection_reorderedJsonArgs_treatedAsIdentical() {
+    // JSON keys in different order should normalize to the same canonical form
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{\"query\":\"test\",\"limit\":10}"),
+                ScriptedResponse.toolCall(
+                    "c2", "core_search", "{\"limit\":10,\"query\":\"test\"}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{\"query\":\"test\",\"limit\":10}"),
+                ScriptedResponse.textOnly("Done")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("search"), 5);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone after loop recovery");
+    assertEquals(2, done.toolCallsExecuted(), "Third call blocked due to JSON normalization");
+  }
+
+  @Test
+  void loopDetection_persistentLoopEscalation_terminatesAfterFiveBlocks() {
+    // Calls 1-2 execute, then calls 3-7 are all blocked (5 blocks), triggering TOOL_LOOP abort
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("c1", "core_search", "{}"),
+                ScriptedResponse.toolCall("c2", "core_search", "{}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{}"),
+                ScriptedResponse.toolCall("c4", "core_search", "{}"),
+                ScriptedResponse.toolCall("c5", "core_search", "{}"),
+                ScriptedResponse.toolCall("c6", "core_search", "{}"),
+                ScriptedResponse.toolCall("c7", "core_search", "{}"),
+                ScriptedResponse.textOnly("Should never reach")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("search"), 10);
+
+    // Should terminate with TOOL_LOOP error, not AgentDone
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error, "Should emit AgentError for persistent loop");
+    assertEquals("TOOL_LOOP", error.errorCode());
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNull(done, "Should NOT emit AgentDone when terminated by loop escalation");
+  }
+
+  @Test
+  void loopDetection_multiBatchWithIdenticalCalls_blocksThirdAcrossBatches() {
+    // Batch 1: two identical calls in one response (consecutive count reaches 2)
+    // Batch 2: one more identical call → would reach 3 → blocked before execution
+    // Batch 3: LLM recovers with text answer
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.multiToolCall(
+                    "c1", "core_search", "{}", "c2", "core_search", "{}"),
+                ScriptedResponse.toolCall("c3", "core_search", "{}"),
+                ScriptedResponse.textOnly("Recovered")));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+    var events = run(service, userMessage("search"), 5);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone after multi-batch loop recovery");
+    assertEquals("Recovered", done.finalResponse());
+    assertEquals(2, done.toolCallsExecuted(), "Only first 2 calls in batch 1 should execute");
+
+    // Verify blocked call got role:"tool" response (maintains OpenAI format)
+    List<Map<String, Object>> thirdCallMessages = ai.recordedMessages.get(2);
+    boolean hasToolBlockMessage =
+        thirdCallMessages.stream()
+            .anyMatch(
+                m ->
+                    "tool".equals(m.get("role"))
+                        && String.valueOf(m.getOrDefault("content", ""))
+                            .contains("Tool call blocked"));
+    assertTrue(hasToolBlockMessage, "Blocked call should have role:tool response");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Budget-edge graceful finalize
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void budgetEdgeFinalize_synthesizesFromToolResults() {
+    // First call: tool call that succeeds (establishes tool results)
+    // Second call: finalize synthesis (text-only, triggered by budget exhaustion)
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.textOnly("Synthesized answer from search results")));
+
+    // Budget math (buildServiceWithSmallBudget uses contextWindow, safetyMargin=256):
+    //   initialBudget = contextWindow - safetyMargin = 400 - 256 = 144
+    // Iteration 1:
+    //   countPromptTokens = messages.size() * 10 = 2 * 10 = 20 (ScriptedAiService simulation)
+    //   20 < 144 → budget OK → LLM call proceeds
+    //   withUsage(100, 50) → consumed 150 tokens → budgetRemaining = 144 - 150 = -6
+    // Iteration 2:
+    //   countPromptTokens = 4 messages * 10 = 40 (system+user+assistant+tool)
+    //   40 >= -6 → budget exhausted → attemptBudgetEdgeFinalize triggered
+    var service = buildServiceWithSmallBudget(ai, 400);
+
+    var events = run(service, userMessage("search"), 5);
+
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone from budget-edge finalize");
+    assertEquals("Synthesized answer from search results", done.finalResponse());
+
+    // Should NOT emit BUDGET_EXHAUSTED error
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNull(error, "Should not emit error when finalize succeeds");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Budget GATE (tempdoc 577 §2.12 Move 2) — interactive runs PARK at the boundary
+  // ---------------------------------------------------------------------------
+
+  // 577 Move 2 — an interactive budget-exhausted run PARKS (BudgetGatePending), then the 0s test
+  // timeout falls through to the legacy finalize (behaviour preserved).
+  @Test
+  void budgetGate_interactiveRun_emitsPendingThenTimesOutToLegacyFinalize() {
+    // Same budget setup as budgetEdgeFinalize_synthesizesFromToolResults: iter 2 exhausts budget.
+    // The test JVM sets justsearch.agent.budgetGateTimeoutSec=0, so the gate emits its park event
+    // then immediately times out → FINALIZE → exactly the legacy behaviour the prior test asserts.
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.textOnly("Synthesized answer from search results")));
+    var service = buildServiceWithSmallBudget(ai, 400);
+
+    var events = run(service, userMessage("search"), 5);
+
+    // The run PARKED: a BudgetGatePending was emitted (the held decision point the FE renders).
+    assertFalse(
+        eventsOfType(events, AgentEvent.BudgetGatePending.class).isEmpty(),
+        "an interactive budget-exhausted run must emit BudgetGatePending (the held gate)");
+    // And the 0s timeout fell through to the legacy finalize — behaviour preserved.
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "the timeout decision finalizes from tool results (legacy fallback)");
+    assertEquals("Synthesized answer from search results", done.finalResponse());
+  }
+
+  // 577 Move 2 — a BACKGROUND budget-exhausted run never parks (no watcher to decide).
+  @Test
+  void budgetGate_backgroundRun_neverParks() throws Exception {
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.textOnly("Synthesized answer from search results")));
+    var service = buildServiceWithSmallBudget(ai, 400);
+
+    var events = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+    var done = new java.util.concurrent.CompletableFuture<Boolean>();
+    Consumer<AgentEvent> sink =
+        e -> {
+          events.add(e);
+          if (e instanceof AgentEvent.AgentDone || e instanceof AgentEvent.AgentError) {
+            done.complete(true);
+          }
+        };
+    var t =
+        new Thread(
+            () -> service.runAgent(new AgentRequest(userMessage("search"), List.of(), 5), sink, true));
+    t.setDaemon(true);
+    t.start();
+    assertTrue(done.get(8, java.util.concurrent.TimeUnit.SECONDS), "background run completes");
+    t.join(2000);
+
+    assertTrue(
+        eventsOfType(events, AgentEvent.BudgetGatePending.class).isEmpty(),
+        "a background run must NOT park at a budget gate (no watcher to decide)");
+  }
+
+  @Test
+  void budgetEdgeFinalize_fallsBackToError_whenFinalizeReturnsEmpty() {
+    // First call: tool call (establishes tool results)
+    // Second call: finalize returns empty (best-effort fails)
+    var ai =
+        new ScriptedAiService(
+            List.of(
+                ScriptedResponse.toolCall("call_1", "core_search", "{}").withUsage(100, 50),
+                ScriptedResponse.empty()));
+
+    var service = buildServiceWithSmallBudget(ai, 400);
+
+    var events = run(service, userMessage("search"), 5);
+
+    // Empty finalize → fall through to BUDGET_EXHAUSTED error
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error, "Should emit BUDGET_EXHAUSTED when finalize fails");
+    assertEquals("BUDGET_EXHAUSTED", error.errorCode());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Budget bypass for forced-tool-call turns (E0a and DECIDING)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void budgetExhausted_e0aBypassesFinalizeAndProceedsToLlmCall() {
+    // Scenario: PRIMARY hands off after consuming nearly all the token budget.
+    // At the Organizer's FIRST turn (E0a), budget is exhausted (projected >= remaining).
+    // Expected: E0a bypass skips attemptBudgetEdgeFinalize; Organizer still gets its LLM call
+    // with tool_choice=required rather than a finalize call with empty tools.
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of("core_search_index")),
+        new AgentProfile("organizer", "Organizer", null, List.of("core_ingest_files")));
+    var ai = new ScriptedAiService(
+        // PRIMARY: handoff_to_organizer, consuming enough tokens to exhaust budget
+        ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"doc.md\"}")
+            .withUsage(35, 5), // 40 tokens → remaining = 34 - 40 = -6
+        // Organizer E0a: ingest_files (should be called, NOT replaced by finalize)
+        ScriptedResponse.toolCall("ic-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
+        // Organizer done
+        ScriptedResponse.textOnly("Ingested doc.md."));
+    // contextWindow=290 → budget = 290 - 256 = 34. PRIMARY consumes 40 → remaining = -6.
+    // Organizer's iteration_start: projected = messages.size() * 10 = some positive value >= -6
+    // → budgetExhausted=true, but shouldForceToolCall=true → bypass → Organizer LLM call fires.
+    var service = buildServiceWithSmallBudgetAndProfiles(ai, 290, profiles);
+    var request = new AgentRequest(
+        userMessage("Ingest doc.md"), List.<String>of(), 10, profiles, "primary");
+    runWithRequest(service, request);
+
+    // Verify: 3 LLM calls made (PRIMARY, Organizer E0a, Organizer done) — NOT 2 (PRIMARY, finalize)
+    assertEquals(3, ai.recordedSampling.size(),
+        "Should make 3 LLM calls; budget-edge finalize should be bypassed for E0a");
+    // Verify: Organizer's E0a call has tool_choice=required (not the default null of finalize)
+    assertEquals("required", ai.recordedSampling.get(1).toolChoice(),
+        "Organizer E0a call must use tool_choice=required, not finalize's null");
+    // Verify: Organizer's E0a call has non-empty tools (not finalize's List.of())
+    assertFalse(ai.recordedTools.get(1).isEmpty(),
+        "Organizer E0a call must receive tool list; finalize uses empty List.of()");
+    // Direction 7a: E0a tool list contains ingest_files but excludes search/browse tools.
+    var e0aToolNames = ai.recordedTools.get(1).stream()
+        .map(t -> getToolFunctionName(t))
+        .toList();
+    assertTrue(e0aToolNames.contains("core_ingest_files"),
+        "E0a must include core_ingest_files");
+    assertFalse(
+        e0aToolNames.stream().anyMatch(
+            n -> n.equals("core_search_index") || n.equals("core_browse_folders") || n.equals("core_file_operations")),
+        "E0a must not include search or browse tools");
+    // Direction D: E0a suppresses thinking.
+    assertEquals(false, ai.recordedSampling.get(1).enableThinking(),
+        "Organizer E0a call must suppress thinking (enableThinking=false)");
+  }
+
+  @Test
+  void budgetExhausted_decidingBypassesFinalizeAndProceedsToLlmCall() {
+    // Scenario: PRIMARY performs 3 searches (triggering DECIDING after the 3rd), with
+    // budget calibrated so that it is exhausted at the DECIDING iteration_start check.
+    // Expected: DECIDING bypass skips attemptBudgetEdgeFinalize; PRIMARY still gets its
+    // forced-handoff LLM call with tool_choice=required.
+    //
+    // Budget math (contextWindow=500 → budget=244):
+    //   Search 1: usage(45,5)=50 → remaining=194. Iter 2 projected=~20 < 194 → OK
+    //   Search 2: usage(55,5)=60 → remaining=134. Iter 3 projected=~40 < 134 → OK
+    //   Search 3: usage(95,5)=100 → remaining=34. DECIDING projected=~40 >= 34 → exhausted!
+    //   DECIDING bypass fires → handoff call proceeds despite budget exhaustion.
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of("core_search_index")),
+        new AgentProfile("organizer", "Organizer", null, List.of("core_ingest_files")));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("sc-1", "core_search_index", "{\"query\":\"doc\"}")
+            .withUsage(45, 5),
+        ScriptedResponse.toolCall("sc-2", "core_search_index", "{\"query\":\"doc\"}")
+            .withUsage(55, 5),
+        ScriptedResponse.toolCall("sc-3", "core_search_index", "{\"query\":\"doc\"}")
+            .withUsage(95, 5),
+        // PRIMARY DECIDING call (budget exhausted but bypass active): forced handoff
+        ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"doc.md\"}"),
+        // Organizer E0a + done
+        ScriptedResponse.toolCall("ic-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
+        ScriptedResponse.textOnly("Done."));
+    var service = buildServiceWithSmallBudgetAndProfiles(ai, 500, profiles);
+    var request = new AgentRequest(
+        userMessage("Ingest doc.md"), List.<String>of(), 10, profiles, "primary");
+    runWithRequest(service, request);
+
+    // Verify: 6 LLM calls (3 searches + DECIDING handoff + Org E0a + Org done)
+    // NOT 4 (3 searches + finalize-that-replaces-DECIDING + truncated)
+    assertEquals(6, ai.recordedSampling.size(),
+        "Should make 6 LLM calls; budget-edge finalize must be bypassed for DECIDING state");
+    // Verify: DECIDING call (index 3) has tool_choice=required
+    assertEquals("required", ai.recordedSampling.get(3).toolChoice(),
+        "DECIDING call must use tool_choice=required, not finalize's null");
+    // Direction D: DECIDING state suppresses thinking.
+    assertEquals(false, ai.recordedSampling.get(3).enableThinking(),
+        "DECIDING call must suppress thinking (enableThinking=false)");
+  }
+
+  // ---------------------------------------------------------------------------
+  // OTel span export (OBS-005)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void otelSpansExported_whenTracingBootstrapActive() throws Exception {
+    // Reset global OTel state so we can install a real SDK
+    io.opentelemetry.api.GlobalOpenTelemetry.resetForTest();
+    try {
+      // TracingBootstrap.close() calls tracerProvider.close() which synchronously flushes
+      // all pending spans via BatchSpanProcessor.shutdown() — no Thread.sleep needed.
+      try (var bootstrap = new io.justsearch.telemetry.TracingBootstrap(tempDir)) {
+        var ai = new ScriptedAiService(List.of(
+            ScriptedResponse.toolCall("call_1", "core_search", "{\"query\":\"test\"}")
+                .withUsage(100, 50),
+            ScriptedResponse.textOnly("Done").withUsage(80, 30)));
+        var service = buildService(ai, new StubTool("search", RiskTier.LOW, "results"));
+
+        run(service, userMessage("test otel"), 5);
+      }
+
+      String traces = java.nio.file.Files.readString(
+          tempDir.resolve("telemetry").resolve("traces.ndjson"));
+
+      // Parse NDJSON lines into JSON objects for structural verification
+      var mapper = new tools.jackson.databind.ObjectMapper();
+      var spans = new java.util.HashMap<String, tools.jackson.databind.JsonNode>();
+      for (String line : traces.strip().split("\n")) {
+        var node = mapper.readTree(line);
+        spans.put(node.get("name").asText(), node);
+      }
+
+      // Verify all 4 expected spans are present (2 chat spans: one per LLM call)
+      assertTrue(spans.containsKey("invoke_agent primary"), "Should export invoke_agent span");
+      assertTrue(spans.containsKey("chat"), "Should export chat span");
+      assertTrue(spans.containsKey("execute_tool core_search"), "Should export execute_tool span");
+
+      // Verify shared trace_id across all spans
+      String traceId = spans.get("invoke_agent primary").get("trace_id").asText();
+      for (var entry : spans.entrySet()) {
+        assertEquals(traceId, entry.getValue().get("trace_id").asText(),
+            "Span '" + entry.getKey() + "' should share the same trace_id");
+      }
+
+      // Verify hierarchy: root span has "0000000000000000" parent
+      String rootParent = spans.get("invoke_agent primary").get("parent_span_id").asText();
+      assertEquals("0000000000000000", rootParent,
+          "Root invoke_agent span should have zero parent_span_id");
+
+      // Verify child spans have the root span's span_id as parent
+      String rootSpanId = spans.get("invoke_agent primary").get("span_id").asText();
+      assertEquals(rootSpanId, spans.get("chat").get("parent_span_id").asText(),
+          "chat span should be child of invoke_agent");
+      assertEquals(rootSpanId, spans.get("execute_tool core_search").get("parent_span_id").asText(),
+          "execute_tool span should be child of invoke_agent");
+
+      // Verify gen_ai attributes
+      assertEquals("invoke_agent",
+          spans.get("invoke_agent primary").get("attrs").get("gen_ai.operation.name").asText());
+      assertEquals("primary",
+          spans.get("invoke_agent primary").get("attrs").get("gen_ai.agent.id").asText());
+      assertEquals("core_search",
+          spans.get("execute_tool core_search").get("attrs").get("gen_ai.tool.name").asText());
+
+      // Verify span status reflects success
+      assertEquals("OK", spans.get("invoke_agent primary").get("status").asText(),
+          "Successful agent run should have OK status");
+      assertEquals("OK", spans.get("chat").get("status").asText(),
+          "Successful chat should have OK status");
+    } finally {
+      // Restore noop state so other tests are unaffected
+      io.opentelemetry.api.GlobalOpenTelemetry.resetForTest();
+    }
+  }
+
+  // ===========================================================================
+  // Helpers
+  // ===========================================================================
+
+  private static List<Map<String, Object>> userMessage(String text) {
+    return List.of(Map.of("role", "user", "content", text));
+  }
+
+  private static String largeToolOutput(String prefix) {
+    var sb = new StringBuilder();
+    for (int i = 0; i < 200; i++) {
+      sb.append(prefix)
+          .append(" result line ")
+          .append(i)
+          .append(" path /abs/path/")
+          .append(i)
+          .append('\n');
+    }
+    return sb.toString();
+  }
+
+  private static void withSysProps(Map<String, String> values, Runnable assertion) {
+    var original = new java.util.HashMap<String, String>();
+    for (var entry : values.entrySet()) {
+      original.put(entry.getKey(), System.getProperty(entry.getKey()));
+      System.setProperty(entry.getKey(), entry.getValue());
+    }
+    // Set up ConfigStore so migrated code reads from the ordinal chain
+    ConfigStore prev = ConfigStore.globalOrNull();
+    TestResolvedConfigHelper.storeFromEnvironment();
+    try {
+      assertion.run();
+    } finally {
+      for (var entry : original.entrySet()) {
+        if (entry.getValue() == null) {
+          System.clearProperty(entry.getKey());
+        } else {
+          System.setProperty(entry.getKey(), entry.getValue());
+        }
+      }
+      TestResolvedConfigHelper.restoreGlobal(prev);
+    }
+  }
+
+  private static AgentLoopService buildService(OnlineAiService ai, StubTool... tools) {
+    return new AgentLoopService(
+        ai,
+        stubCatalog(tools),
+        stubExecutor(tools),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private static AgentLoopService buildServiceWithTelemetry(
+      OnlineAiService ai, Telemetry telemetry, StubTool... tools) {
+    return new AgentLoopService(
+        ai,
+        stubCatalog(tools),
+        stubExecutor(tools),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        telemetry);
+  }
+
+  private static AgentLoopService buildServiceWithAgentTelemetry(
+      OnlineAiService ai, AgentTelemetry agentTelemetry, StubTool... tools) {
+    return AgentLoopService.forTesting(
+        ai,
+        stubCatalog(tools),
+        stubExecutor(tools),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        agentTelemetry);
+  }
+
+  private static AgentLoopService buildServiceWithSmallBudgetAndProfiles(
+      ScriptedAiService baseAi, int contextWindow, List<AgentProfile> profiles) {
+    // Create a wrapper that delegates to baseAi but overrides the context window size.
+    // Tempdoc 491 §C5: streamSummary + streamAnswer overrides removed (deleted from interface).
+    var aiWithSmallContext = new OnlineAiService() {
+      @Override
+      public CompletableFuture<String> summarize(String content) {
+        return baseAi.summarize(content);
+      }
+
+      @Override
+      public CompletableFuture<String> askQuestion(String question, String context) {
+        return baseAi.askQuestion(question, context);
+      }
+
+      @Override
+      public boolean isAvailable() {
+        return baseAi.isAvailable();
+      }
+
+      @Override
+      public boolean isStartingUp() {
+        return baseAi.isStartingUp();
+      }
+
+      @Override
+      public void streamChatWithTools(
+          List<Map<String, Object>> messages,
+          List<Map<String, Object>> tools,
+          int maxTokens,
+          StreamCallbacks callbacks,
+          SamplingParams sampling) {
+        baseAi.streamChatWithTools(messages, tools, maxTokens, callbacks, sampling);
+      }
+
+      @Override
+      public java.util.Optional<Integer> countPromptTokens(
+          List<Map<String, Object>> messages) {
+        return baseAi.countPromptTokens(messages);
+      }
+
+      @Override
+      public Integer llmContextTokens() {
+        return contextWindow;
+      }
+
+      @Override
+      public Integer configuredContextTokens() {
+        return contextWindow;
+      }
+    };
+    var searchTool = new StubTool("search_index", RiskTier.LOW, "results");
+    var ingestTool = new StubTool("ingest_files", RiskTier.LOW, "ok");
+    return new AgentLoopService(
+        aiWithSmallContext,
+        stubCatalog(searchTool, ingestTool),
+        stubExecutor(searchTool, ingestTool),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private static AgentLoopService buildServiceWithSmallBudget(
+      ScriptedAiService baseAi, int contextWindow) {
+    // Create wrapper that delegates to baseAi but overrides context window methods.
+    // Tempdoc 491 §C5: streamSummary + streamAnswer overrides removed.
+    var aiWithSmallContext = new OnlineAiService() {
+      @Override
+      public CompletableFuture<String> summarize(String content) {
+        return baseAi.summarize(content);
+      }
+
+      @Override
+      public CompletableFuture<String> askQuestion(String question, String context) {
+        return baseAi.askQuestion(question, context);
+      }
+
+      @Override
+      public boolean isAvailable() {
+        return baseAi.isAvailable();
+      }
+
+      @Override
+      public boolean isStartingUp() {
+        return baseAi.isStartingUp();
+      }
+
+      @Override
+      public void streamChatWithTools(
+          List<Map<String, Object>> messages,
+          List<Map<String, Object>> tools,
+          int maxTokens,
+          StreamCallbacks callbacks,
+          SamplingParams sampling) {
+        baseAi.streamChatWithTools(messages, tools, maxTokens, callbacks, sampling);
+      }
+
+      @Override
+      public java.util.Optional<Integer> countPromptTokens(
+          List<Map<String, Object>> messages) {
+        return baseAi.countPromptTokens(messages);
+      }
+
+      @Override
+      public Integer llmContextTokens() {
+        return contextWindow;
+      }
+
+      @Override
+      public Integer configuredContextTokens() {
+        return contextWindow;
+      }
+    };
+    var searchTool = new StubTool("search", RiskTier.LOW, "results");
+    return new AgentLoopService(
+        aiWithSmallContext,
+        stubCatalog(searchTool),
+        stubExecutor(searchTool),
+        stubEmitter(),
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private static List<AgentEvent> run(
+      AgentLoopService service, List<Map<String, Object>> messages, int maxIterations) {
+    var request = new AgentRequest(messages, List.of(), maxIterations);
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(request, events::add);
+    return events;
+  }
+
+  private static List<AgentEvent> runWithRequest(AgentLoopService service, AgentRequest request) {
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    service.runAgent(request, events::add);
+    return events;
+  }
+
+  private static String getToolFunctionName(Map<String, Object> tool) {
+    return ((Map<String, Object>) tool.get("function")).get("name").toString();
+  }
+
+  // ===========================================================================
+  // Multi-agent handoff scenarios
+  // ===========================================================================
+
+  @Test
+  void singleHandoff_eventOrderingAndTraceAgentIds() {
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", "You are a planner.", List.of()),
+        new AgentProfile("executor", "Executor", "You are an executor.", List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_executor", "{\"reason\":\"Ready\"}"),
+        ScriptedResponse.textOnly("Execution complete"));
+    var service = buildService(ai);
+    var request = new AgentRequest(
+        userMessage("Do the task"), List.<String>of(), 5, profiles, "planner");
+    var events = runWithRequest(service, request);
+
+    // Filter to significant events (skip AgentProgress / AgentBudgetUpdate)
+    var significant = events.stream()
+        .filter(e -> !(e instanceof AgentEvent.AgentProgress)
+            && !(e instanceof AgentEvent.AgentBudgetUpdate))
+        .toList();
+    // Tempdoc 550 N1 + F2: a handoff-only turn emits NO ToolBatchProposed (handoff calls are
+    // filtered out of the batch — they're control flow, not user-approvable tools), so the
+    // significant-event sequence is unchanged at 9.
+    assertEquals(9, significant.size(), "Expected 9 significant events: " + significant);
+    assertInstanceOf(AgentEvent.SessionStarted.class, significant.get(0));
+    assertInstanceOf(AgentEvent.ToolCallProposed.class, significant.get(1));
+    assertInstanceOf(AgentEvent.ToolCallApproved.class, significant.get(2));
+    assertInstanceOf(AgentEvent.ToolExecutionStarted.class, significant.get(3));
+    assertInstanceOf(AgentEvent.HandoffProposed.class, significant.get(4));
+    assertInstanceOf(AgentEvent.HandoffExecuted.class, significant.get(5));
+    assertInstanceOf(AgentEvent.ToolExecutionCompleted.class, significant.get(6));
+    assertInstanceOf(AgentEvent.TextChunk.class, significant.get(7));
+    assertInstanceOf(AgentEvent.AgentDone.class, significant.get(8));
+
+    // Events 0-5 carry agentId "planner"
+    for (int i = 0; i <= 5; i++) {
+      var tc = significant.get(i).trace();
+      assertNotNull(tc, "event " + i + " should have trace");
+      assertEquals("planner", tc.agentId(), "event " + i + " agentId");
+    }
+    // Events 6-8 carry agentId "executor"
+    for (int i = 6; i <= 8; i++) {
+      var tc = significant.get(i).trace();
+      assertNotNull(tc, "event " + i + " should have trace");
+      assertEquals("executor", tc.agentId(), "event " + i + " agentId");
+    }
+  }
+
+  @Test
+  void multiAgent_handoffToolsArePerActiveAgent() {
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_executor", "{\"reason\":\"Handoff\"}"),
+        ScriptedResponse.textOnly("Done"));
+    var service = buildService(ai);
+    var request = new AgentRequest(
+        userMessage("Task"), List.<String>of(), 5, profiles, "planner");
+    runWithRequest(service, request);
+
+    // Iteration 1 (planner active): has handoff_to_executor, not handoff_to_planner
+    var iter1Tools = ai.recordedTools.get(0);
+    assertTrue(iter1Tools.stream().anyMatch(
+        t -> "handoff_to_executor".equals(getToolFunctionName(t))),
+        "planner iteration should have handoff_to_executor");
+    assertFalse(iter1Tools.stream().anyMatch(
+        t -> "handoff_to_planner".equals(getToolFunctionName(t))),
+        "planner iteration should NOT have handoff_to_planner");
+
+    // Iteration 2 (executor active): has handoff_to_planner, not handoff_to_executor
+    var iter2Tools = ai.recordedTools.get(1);
+    assertFalse(iter2Tools.stream().anyMatch(
+        t -> "handoff_to_executor".equals(getToolFunctionName(t))),
+        "executor iteration should NOT have handoff_to_executor");
+    assertTrue(iter2Tools.stream().anyMatch(
+        t -> "handoff_to_planner".equals(getToolFunctionName(t))),
+        "executor iteration should have handoff_to_planner");
+  }
+
+  @Test
+  void handoff_swapsSystemPrompt() {
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", "You are a planner.", List.of()),
+        new AgentProfile("executor", "Executor", "You are an executor.", List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_executor", "{\"reason\":\"Delegate\"}"),
+        ScriptedResponse.textOnly("Done"));
+    var service = buildService(ai);
+    var request = new AgentRequest(
+        userMessage("Task"), List.<String>of(), 5, profiles, "planner");
+    runWithRequest(service, request);
+
+    // Iteration 1 (planner): system prompt contains profile text
+    var iter1Msgs = ai.recordedMessages.get(0);
+    assertEquals("system", iter1Msgs.get(0).get("role"));
+    assertTrue(iter1Msgs.get(0).get("content").toString().endsWith("You are a planner."),
+        "planner system prompt should contain profile text");
+
+    // Iteration 2 (executor): system prompt contains profile text + merged handoff note
+    var iter2Msgs = ai.recordedMessages.get(1);
+    assertEquals("system", iter2Msgs.get(0).get("role"));
+    String iter2Sys = iter2Msgs.get(0).get("content").toString();
+    assertTrue(iter2Sys.contains("You are an executor."),
+        "executor system prompt should contain profile text");
+    assertTrue(iter2Sys.contains("Handoff from planner to executor"),
+        "executor system prompt should contain merged handoff note");
+  }
+
+  @Test
+  void singleAgent_noHandoffToolsInjected() {
+    var ai = new ScriptedAiService(ScriptedResponse.textOnly("Done"));
+    var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
+    // No agentProfiles — single-agent mode
+    var request = new AgentRequest(userMessage("Task"), List.of(), 1);
+    runWithRequest(service, request);
+
+    var iter1Tools = ai.recordedTools.get(0);
+    assertFalse(iter1Tools.stream().anyMatch(
+        t -> getToolFunctionName(t).startsWith("handoff_to_")),
+        "Single-agent request should have no handoff tools");
+  }
+
+  @Test
+  void handoff_unknownTarget_emitsAgentError() {
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_nonexistent", "{\"reason\":\"Bad\"}"));
+    var service = buildService(ai);
+    var request = new AgentRequest(
+        userMessage("Task"), List.<String>of(), 5, profiles, "planner");
+    var events = runWithRequest(service, request);
+
+    var error = events.stream()
+        .filter(e -> e instanceof AgentEvent.AgentError)
+        .map(e -> (AgentEvent.AgentError) e)
+        .findFirst();
+    assertTrue(error.isPresent(), "Expected AgentError for unknown agent target");
+    assertEquals(AgentErrorCode.UNKNOWN_TOOL.name(), error.get().errorCode());
+  }
+
+  @Test
+  void handoff_approvalBoundaryReset() {
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_executor", "{\"reason\":\"Delegate\"}"),
+        // Executor calls search_index (READ_ONLY) — auto-approved fresh
+        ScriptedResponse.toolCall("tc-2", "core_search_index", "{\"query\":\"q\"}"));
+    var service = buildService(ai, new StubTool("search_index", RiskTier.LOW, "r"));
+    var request = new AgentRequest(
+        userMessage("Task"), List.<String>of(), 5, profiles, "planner");
+    var events = runWithRequest(service, request);
+
+    assertTrue(events.stream().anyMatch(e -> e instanceof AgentEvent.HandoffExecuted),
+        "Expected HandoffExecuted event");
+    // hc-1 (handoff, READ_ONLY auto-approved) + tc-2 (search, READ_ONLY auto-approved)
+    var approved = events.stream()
+        .filter(e -> e instanceof AgentEvent.ToolCallApproved)
+        .toList();
+    assertEquals(2, approved.size(), "Expected 2 ToolCallApproved events");
+  }
+
+  @Test
+  void nullInitialAgentId_usesFirstProfile() {
+    // profiles: [planner, executor]; initialAgentId = null → should start as "planner"
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(ScriptedResponse.textOnly("done"));
+    var service = buildService(ai);
+    var request = new AgentRequest(userMessage("hi"), List.<String>of(), 1, profiles, null);
+    var events = runWithRequest(service, request);
+
+    // All events before AgentDone should carry "planner" as agentId
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Should emit AgentDone");
+    var sessionStarted = events.stream()
+        .filter(e -> e instanceof AgentEvent.SessionStarted)
+        .findFirst();
+    assertTrue(sessionStarted.isPresent(), "Should emit SessionStarted");
+    assertEquals("planner", sessionStarted.get().trace().agentId(),
+        "SessionStarted should carry 'planner' agentId when initialAgentId is null");
+  }
+
+  @Test
+  void handoff_resetsLoopGuardCounters() {
+    // Planner calls search_index twice with identical args, then hands off.
+    // Executor calls search_index with the same args — should NOT be blocked (loop guard reset).
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("tc-1", "core_search_index", "{\"query\":\"q\"}"),
+        ScriptedResponse.toolCall("tc-2", "core_search_index", "{\"query\":\"q\"}"),
+        ScriptedResponse.toolCall("hc-1", "handoff_to_executor", "{\"reason\":\"done\"}"),
+        ScriptedResponse.toolCall("tc-3", "core_search_index", "{\"query\":\"q\"}"),
+        ScriptedResponse.textOnly("Result"));
+    var service = buildService(ai, new StubTool("search_index", RiskTier.LOW, "found"));
+    var request = new AgentRequest(
+        userMessage("search"), List.<String>of(), 10, profiles, "planner");
+    var events = runWithRequest(service, request);
+
+    // tc-3 (executor's search) should complete successfully, not be loop-blocked
+    var completions = events.stream()
+        .filter(e -> e instanceof AgentEvent.ToolExecutionCompleted)
+        .map(e -> (AgentEvent.ToolExecutionCompleted) e)
+        .toList();
+    // Expect: tc-1, tc-2, hc-1 (handoff), tc-3 all completed
+    assertEquals(4, completions.size(),
+        "executor's search should not be loop-blocked; expected tc-1, tc-2, hc-1, tc-3");
+    assertTrue(events.stream().anyMatch(e -> e instanceof AgentEvent.AgentDone),
+        "Session should complete successfully");
+  }
+
+  @Test
+  void handoff_mixedBatch_assistantMessageTrimmedToHandoff() {
+    // Model returns [search_call, handoff_to_executor] in a single batch.
+    // The assistant message sent to context should only include the search_call,
+    // not the handoff call followed by cancelled-before-it tools.
+    var profiles = List.of(
+        new AgentProfile("planner", "Planner", null, List.of()),
+        new AgentProfile("executor", "Executor", null, List.of()));
+    var ai = new ScriptedAiService(
+        // Batch: [search_index, handoff_to_executor] in one LLM response
+        ScriptedResponse.multiToolCall(
+            "sc-1", "core_search_index", "{\"query\":\"q\"}",
+            "hc-1", "handoff_to_executor", "{\"reason\":\"done\"}"),
+        ScriptedResponse.textOnly("Executor done"));
+    var service = buildService(ai, new StubTool("search_index", RiskTier.LOW, "found"));
+    var request = new AgentRequest(
+        userMessage("search then handoff"), List.<String>of(), 10, profiles, "planner");
+    var events = runWithRequest(service, request);
+
+    assertTrue(events.stream().anyMatch(e -> e instanceof AgentEvent.HandoffExecuted),
+        "Expected HandoffExecuted event");
+    assertTrue(events.stream().anyMatch(e -> e instanceof AgentEvent.AgentDone),
+        "Session should complete successfully");
+
+    // Verify executor's iteration messages contain NO "Cancelled" tool results
+    var iter2Msgs = ai.recordedMessages.get(1);
+    boolean hasCancelledMsg = iter2Msgs.stream().anyMatch(m ->
+        "tool".equals(m.get("role"))
+            && m.get("content") != null
+            && String.valueOf(m.get("content")).contains("Cancelled"));
+    assertFalse(hasCancelledMsg,
+        "Executor iteration should not see Cancelled messages for un-executed planner tools");
+  }
+
+  // ===========================================================================
+  // pruneHandoffMessages unit tests
+  // ===========================================================================
+
+  /**
+   * Builds a minimal OpenAI-format assistant message carrying one tool call.
+   * The "tool_calls" structure must match what AgentLoopService's pruneHandoffMessages
+   * loop reads: list of maps, each with a "function" map holding "name" and "arguments".
+   */
+  private static Map<String, Object> assistantCallMsg(String callId, String toolName, String args) {
+    return Map.of(
+        "role", "assistant",
+        "tool_calls", List.of(Map.of(
+            "id", callId,
+            "function", Map.of("name", toolName, "arguments", args))));
+  }
+
+  private static Map<String, Object> toolResultMsg(String callId, String content) {
+    return Map.of("role", "tool", "tool_call_id", callId, "content", content);
+  }
+
+  private static Map<String, Object> systemMsg(String content) {
+    return Map.of("role", "system", "content", content);
+  }
+
+  private static Map<String, Object> userMsg(String content) {
+    return Map.of("role", "user", "content", content);
+  }
+
+  @Test
+  void pruneHandoffMessages_noExploration_isNoOp() {
+    // Layout: [sys][user][handoff-call][handoff-sys][handoff-tool]
+    // handoffAssistantIdx == 2 → early return, list unchanged
+    var session = new AgentSession(List.of(), 1000);
+    List<Map<String, Object>> msgs = session.messages();
+    msgs.add(systemMsg("system"));
+    msgs.add(userMsg("hi"));
+    msgs.add(assistantCallMsg("h1", "handoff_to_organizer", "{\"reason\":\"go\"}"));
+    msgs.add(systemMsg("Handoff from primary to organizer."));
+    msgs.add(toolResultMsg("h1", "Handoff to organizer confirmed."));
+
+    AgentHandoff.pruneHandoffMessages(session);
+
+    assertEquals(5, msgs.size(), "No exploration: list must stay unchanged");
+    assertEquals("assistant", msgs.get(2).get("role"));
+  }
+
+  @Test
+  void pruneHandoffMessages_singleToolPair_strippedAndBriefInjected() {
+    // Layout: [sys][user][browse-call][browse-result][handoff-call][handoff-sys][handoff-tool]
+    // After:  [sys][user][brief-sys][handoff-call][handoff-sys][handoff-tool]
+    var session = new AgentSession(List.of(), 1000);
+    List<Map<String, Object>> msgs = session.messages();
+    msgs.add(systemMsg("system"));
+    msgs.add(userMsg("find stuff"));
+    msgs.add(assistantCallMsg("c1", "browse_folders", "{\"parent_path\":\"/docs\"}"));
+    msgs.add(toolResultMsg("c1", "Folder listing: /docs/a, /docs/b"));
+    msgs.add(assistantCallMsg("h1", "handoff_to_organizer", "{\"reason\":\"done\"}"));
+    msgs.add(systemMsg("Handoff from primary to organizer."));
+    msgs.add(toolResultMsg("h1", "Handoff to organizer confirmed."));
+
+    AgentHandoff.pruneHandoffMessages(session);
+
+    assertEquals(6, msgs.size(), "Single pair stripped: 7 → 6 messages");
+    // Index 0 = system, 1 = user, 2 = brief, 3 = handoff-call, 4 = handoff-sys, 5 = handoff-tool
+    assertEquals("system", msgs.get(2).get("role"), "Index 2 should be brief (system role)");
+    String brief = String.valueOf(msgs.get(2).get("content"));
+    assertTrue(brief.contains("browse_folders"), "Brief should mention browse_folders: " + brief);
+    // Handoff call is still at index 3
+    assertNotNull(msgs.get(3).get("tool_calls"), "Index 3 must still be handoff assistant call");
+    // Handoff tool result at index 5
+    assertEquals("h1", msgs.get(5).get("tool_call_id"), "Handoff tool result must be preserved");
+  }
+
+  @Test
+  void pruneHandoffMessages_multipleToolPairs_allStrippedBriefHasAll() {
+    // Layout: [sys][user][search-call][search-result][browse-call][browse-result]
+    //           [handoff-call][handoff-sys][handoff-tool]  (9 messages)
+    // After:  [sys][user][brief-sys][handoff-call][handoff-sys][handoff-tool]  (6 messages)
+    var session = new AgentSession(List.of(), 1000);
+    List<Map<String, Object>> msgs = session.messages();
+    msgs.add(systemMsg("system"));
+    msgs.add(userMsg("search then browse"));
+    msgs.add(assistantCallMsg("c1", "search_index", "{\"query\":\"cats\"}"));
+    msgs.add(toolResultMsg("c1", "Found 3 results about cats"));
+    msgs.add(assistantCallMsg("c2", "browse_folders", "{\"parent_path\":\"/\"}"));
+    msgs.add(toolResultMsg("c2", "Root folders: /docs, /data"));
+    msgs.add(assistantCallMsg("h1", "handoff_to_organizer", "{\"reason\":\"ready\"}"));
+    msgs.add(systemMsg("Handoff from primary to organizer."));
+    msgs.add(toolResultMsg("h1", "Handoff to organizer confirmed."));
+
+    AgentHandoff.pruneHandoffMessages(session);
+
+    assertEquals(6, msgs.size(), "Both pairs stripped: 9 → 6 messages");
+    String brief = String.valueOf(msgs.get(2).get("content"));
+    assertTrue(brief.contains("search_index"), "Brief should mention search_index: " + brief);
+    assertTrue(brief.contains("browse_folders"), "Brief should mention browse_folders: " + brief);
+    assertNotNull(msgs.get(3).get("tool_calls"), "Index 3 must be handoff assistant call");
+    assertEquals("h1", msgs.get(5).get("tool_call_id"), "Handoff tool result must be preserved");
+  }
+
+  @Test
+  void pruneHandoffMessages_handoffToStarInRange_excludedFromBrief() {
+    // Simulates a second handoff: intermediate range contains a previous handoff_to_organizer call.
+    // That call must NOT appear in the research brief — only real tool calls do.
+    // Layout: [sys][user][prev-brief-sys][old-handoff-call][old-handoff-sys][old-handoff-tool]
+    //           [browse-call][browse-result][new-handoff-call][new-handoff-sys][new-handoff-tool]
+    var session = new AgentSession(List.of(), 1000);
+    List<Map<String, Object>> msgs = session.messages();
+    msgs.add(systemMsg("system"));
+    msgs.add(userMsg("do stuff"));
+    msgs.add(systemMsg("Research findings:\n- search_index: {\"query\":\"x\"}\n  → 5 results"));
+    msgs.add(assistantCallMsg("ho1", "handoff_to_organizer", "{\"reason\":\"first pass\"}"));
+    msgs.add(systemMsg("Handoff from primary to organizer."));
+    msgs.add(toolResultMsg("ho1", "Handoff to organizer confirmed."));
+    msgs.add(assistantCallMsg("c1", "browse_folders", "{\"parent_path\":\"/data\"}"));
+    msgs.add(toolResultMsg("c1", "Data folders: /data/raw, /data/processed"));
+    msgs.add(assistantCallMsg("h2", "handoff_to_primary", "{\"reason\":\"back\"}"));
+    msgs.add(systemMsg("Handoff from organizer to primary."));
+    msgs.add(toolResultMsg("h2", "Handoff to primary confirmed."));
+
+    AgentHandoff.pruneHandoffMessages(session);
+
+    String brief = String.valueOf(msgs.get(2).get("content"));
+    assertFalse(brief.contains("handoff_to_organizer"),
+        "Brief must NOT include previous handoff calls: " + brief);
+    assertTrue(brief.contains("browse_folders"),
+        "Brief must include real tool calls: " + brief);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cycle detection: total handoffs
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void handoff_cycleDetection_firesAfterMaxTotalHandoffs() {
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of()),
+        new AgentProfile("organizer", "Organizer", null, List.of()));
+    // maxHandoffs=2: 3rd total handoff triggers detection
+    var ai = new ScriptedAiService(
+        ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"a\"}"),
+        ScriptedResponse.toolCall("hc-2", "handoff_to_primary",   "{\"reason\":\"b\"}"),
+        ScriptedResponse.toolCall("hc-3", "handoff_to_organizer", "{\"reason\":\"c\"}"));
+    var service = buildService(ai);
+    var request = new AgentRequest(
+        userMessage("cycle"), List.<String>of(), 10, profiles, "primary", 2);
+    var events = runWithRequest(service, request);
+
+    var errors = eventsOfType(events, AgentEvent.AgentError.class);
+    assertFalse(errors.isEmpty(), "Expected AgentError for handoff cycle");
+    assertEquals(AgentErrorCode.HANDOFF_CYCLE_DETECTED.name(), errors.get(0).errorCode());
+    // Exactly 2 HandoffExecuted events before detection fires on the 3rd attempt
+    assertEquals(2, eventsOfType(events, AgentEvent.HandoffExecuted.class).size());
+  }
+
+  @Test
+  void handoff_organizerFirstTurnGetsToolChoiceRequired() {
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of()),
+        new AgentProfile("organizer", "Organizer", null, List.of()));
+    var ai = new ScriptedAiService(
+        // PRIMARY turn 1: handoff to organizer
+        ScriptedResponse.toolCall("hc-1", "handoff_to_organizer", "{\"reason\":\"ingest\"}"),
+        // ORGANIZER turn 1 (E0a — restricted to ingest_files): ingest_files
+        ScriptedResponse.toolCall("tc-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
+        // ORGANIZER turn 2: text confirmation (loop terminates)
+        ScriptedResponse.textOnly("Done"));
+    var service = buildService(ai, new StubTool("ingest_files", RiskTier.LOW, "ok"));
+    var request = new AgentRequest(
+        userMessage("Ingest a file"), List.<String>of(), 10, profiles, "primary");
+    runWithRequest(service, request);
+
+    assertEquals(3, ai.recordedSampling.size(),
+        "expected exactly 3 LLM calls: PRIMARY + 2 Organizer turns");
+    // Call 0 = PRIMARY (should use AGENT sampling, no tool_choice)
+    assertNull(ai.recordedSampling.get(0).toolChoice(),
+        "PRIMARY should not force tool_choice");
+    // Call 1 = ORGANIZER first turn (should force tool_choice=required)
+    assertEquals("required", ai.recordedSampling.get(1).toolChoice(),
+        "Organizer first turn should force tool_choice=required");
+    // Call 2 = ORGANIZER second turn (should NOT force — E0a first-turn-only)
+    assertNull(ai.recordedSampling.get(2).toolChoice(),
+        "Organizer second turn should not force tool_choice (E0a)");
+    // Grammar: Direction I — set on E0a (call 1); absent on normal turns and turns after E0a.
+    // Grammar is stored in SamplingParams but omitted by the server when tools list is non-empty.
+    assertNull(ai.recordedSampling.get(0).grammar(), "PRIMARY should not apply grammar");
+    assertNotNull(ai.recordedSampling.get(1).grammar(),
+        "Organizer first turn (E0a) should carry GBNF grammar in SamplingParams");
+    assertNull(ai.recordedSampling.get(2).grammar(), "Organizer second turn should not apply grammar");
+    // Direction D: E0a suppresses thinking-prompt; non-forced turns don't override.
+    assertNull(ai.recordedSampling.get(0).enableThinking(),
+        "PRIMARY should not set enableThinking");
+    assertEquals(false, ai.recordedSampling.get(1).enableThinking(),
+        "Organizer first turn (E0a) must suppress thinking (enableThinking=false)");
+    assertNull(ai.recordedSampling.get(2).enableThinking(),
+        "Organizer second turn should not set enableThinking");
+    // Direction 7a: E0a tool list contains ingest_files but excludes search/browse tools.
+    var e0aToolNames = ai.recordedTools.get(1).stream()
+        .map(t -> getToolFunctionName(t))
+        .toList();
+    assertTrue(e0aToolNames.contains("core_ingest_files"),
+        "E0a must include core_ingest_files");
+    assertFalse(
+        e0aToolNames.stream().anyMatch(
+            n -> n.equals("core_search_index") || n.equals("core_browse_folders") || n.equals("core_file_operations")),
+        "E0a must not include search or browse tools — only core_ingest_files + handoff");
+  }
+
+  // ===========================================================================
+  // Direction F: tool_choice escalation for PRIMARY text-only after tool use
+  // ===========================================================================
+
+  @Test
+  void primaryTextAfterToolUse_escalatesToForcedHandoff() {
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of("core_search_index")),
+        new AgentProfile("organizer", "Organizer", null, List.of("core_ingest_files")));
+    var ai = new ScriptedAiService(
+        // PRIMARY turn 1: search_index tool call
+        ScriptedResponse.toolCall("sc-1", "core_search_index", "{\"query\":\"architecture\"}"),
+        // PRIMARY turn 2: text-only (triggers Direction F escalation)
+        ScriptedResponse.textOnly("Here are the top candidates: 01-system-overview.md"),
+        // Escalation retry: forced handoff_to_organizer
+        ScriptedResponse.toolCall(
+            "hc-1", "handoff_to_organizer", "{\"reason\":\"01-system-overview.md\"}"),
+        // ORGANIZER turn 1: ingest_files
+        ScriptedResponse.toolCall(
+            "tc-1", "core_ingest_files", "{\"paths\":[\"01-system-overview.md\"]}"),
+        // ORGANIZER turn 2: text confirmation
+        ScriptedResponse.textOnly("Ingested 01-system-overview.md."));
+    var service = buildService(
+        ai,
+        new StubTool("search_index", RiskTier.LOW, "{\"hits\":[]}"),
+        new StubTool("ingest_files", RiskTier.LOW, "ok"));
+    var request = new AgentRequest(
+        userMessage("Find and ingest the architecture overview"),
+        List.<String>of(), 10, profiles, "primary");
+    var events = runWithRequest(service, request);
+
+    // 5 LLM calls: PRIMARY(search) + PRIMARY(text) + escalation(handoff) + ORG(ingest) + ORG(done)
+    assertEquals(5, ai.recordedSampling.size(), "Expected 5 LLM calls");
+    // Calls 0, 1: PRIMARY normal calls — no forced tool_choice
+    assertNull(ai.recordedSampling.get(0).toolChoice(), "PRIMARY turn 1 should not force");
+    assertNull(ai.recordedSampling.get(1).toolChoice(), "PRIMARY turn 2 should not force");
+    // Call 2: escalation retry — forced tool_choice=required
+    assertEquals("required", ai.recordedSampling.get(2).toolChoice(),
+        "Escalation retry should force tool_choice=required");
+    // Call 2 tools: only handoff tool, no search_index
+    var escalationToolNames = ai.recordedTools.get(2).stream()
+        .map(t -> getToolFunctionName(t))
+        .toList();
+    assertEquals(List.of("handoff_to_organizer"), escalationToolNames,
+        "Escalation should offer only handoff tools");
+    // Call 3: ORGANIZER first turn — E0a forces
+    assertEquals("required", ai.recordedSampling.get(3).toolChoice(),
+        "Organizer first turn should force tool_choice (E0a)");
+    // Direction 7a: E0a tool list contains ingest_files but excludes search/browse tools.
+    var e0aToolNames = ai.recordedTools.get(3).stream()
+        .map(t -> getToolFunctionName(t))
+        .toList();
+    assertTrue(e0aToolNames.contains("core_ingest_files"),
+        "E0a must include core_ingest_files");
+    assertFalse(e0aToolNames.contains("core_search_index"),
+        "E0a must not include core_search_index");
+    // Call 4: ORGANIZER second turn — no force
+    assertNull(ai.recordedSampling.get(4).toolChoice(),
+        "Organizer second turn should not force");
+    // Grammar: Direction I — set on escalation (call 2) and E0a (call 3); absent on normal turns.
+    // Grammar is stored in SamplingParams but omitted by the server when tools list is non-empty.
+    assertNull(ai.recordedSampling.get(0).grammar(), "PRIMARY turn 1 should not apply grammar");
+    assertNull(ai.recordedSampling.get(1).grammar(), "PRIMARY turn 2 should not apply grammar");
+    assertNotNull(ai.recordedSampling.get(2).grammar(),
+        "Escalation retry should carry GBNF grammar in SamplingParams");
+    assertNotNull(ai.recordedSampling.get(3).grammar(),
+        "Organizer first turn (E0a) should carry GBNF grammar in SamplingParams");
+    assertNull(ai.recordedSampling.get(4).grammar(), "Organizer second turn should not apply grammar");
+    // Direction D: escalation and E0a suppress thinking; other turns don't override.
+    assertNull(ai.recordedSampling.get(0).enableThinking(),
+        "PRIMARY turn 1 should not set enableThinking");
+    assertNull(ai.recordedSampling.get(1).enableThinking(),
+        "PRIMARY turn 2 should not set enableThinking");
+    assertEquals(false, ai.recordedSampling.get(2).enableThinking(),
+        "Escalation retry (Direction F) must suppress thinking (enableThinking=false)");
+    assertEquals(false, ai.recordedSampling.get(3).enableThinking(),
+        "Organizer first turn (E0a) must suppress thinking (enableThinking=false)");
+    assertNull(ai.recordedSampling.get(4).enableThinking(),
+        "Organizer second turn should not set enableThinking");
+    // Handoff event emitted
+    assertFalse(eventsOfType(events, AgentEvent.HandoffExecuted.class).isEmpty(),
+        "Expected HandoffExecuted event from escalation");
+    // Final event is AgentDone (not error)
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Expected AgentDone at end");
+  }
+
+  @Test
+  void primaryTextOnFirstIteration_noEscalation() {
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of("core_search_index")),
+        new AgentProfile("organizer", "Organizer", null, List.of("core_ingest_files")));
+    var ai = new ScriptedAiService(
+        // PRIMARY turn 1: immediate text-only response (no prior tool use)
+        ScriptedResponse.textOnly("The available tools are search and browse."));
+    var service = buildService(
+        ai, new StubTool("search_index", RiskTier.LOW, "{\"hits\":[]}"));
+    var request = new AgentRequest(
+        userMessage("What tools do you have?"),
+        List.<String>of(), 10, profiles, "primary");
+    var events = runWithRequest(service, request);
+
+    // Only 1 LLM call — no escalation retry
+    assertEquals(1, ai.recordedSampling.size(), "Expected 1 LLM call (no escalation)");
+    assertNull(ai.recordedSampling.get(0).toolChoice(), "Should not force tool_choice");
+    // AgentDone with original text
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Expected AgentDone");
+    assertTrue(done.finalResponse().contains("available tools"),
+        "AgentDone should contain original text");
+    // No handoff
+    assertTrue(eventsOfType(events, AgentEvent.HandoffExecuted.class).isEmpty(),
+        "Should not have any handoff events");
+  }
+
+  @Test
+  void singleAgentTextAfterToolUse_noEscalation() {
+    // Single-agent mode (no profiles) — escalation must not fire
+    var ai = new ScriptedAiService(
+        // Turn 1: tool call
+        ScriptedResponse.toolCall("sc-1", "core_search_index", "{\"query\":\"test\"}"),
+        // Turn 2: text-only
+        ScriptedResponse.textOnly("Found 3 results about testing."));
+    var service = buildService(
+        ai, new StubTool("search_index", RiskTier.LOW, "{\"hits\":[]}"));
+    var events = run(service, userMessage("Search for test docs"), 10);
+
+    // 2 LLM calls — no escalation
+    assertEquals(2, ai.recordedSampling.size(), "Expected 2 LLM calls (no escalation)");
+    // AgentDone with text
+    var done = lastEventOfType(events, AgentEvent.AgentDone.class);
+    assertNotNull(done, "Expected AgentDone");
+    assertTrue(done.finalResponse().contains("Found 3 results"),
+        "AgentDone should contain original text");
+    // No handoff
+    assertTrue(eventsOfType(events, AgentEvent.HandoffExecuted.class).isEmpty(),
+        "Should not have any handoff events");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Direction E: state machine force-commit after search threshold
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void primaryForceCommit_afterThresholdToolRounds_restrictsToHandoffAndForcesToolChoice() {
+    // PRIMARY does PRIMARY_FORCE_COMMIT_ITERATIONS tool calls without handing off.
+    // On the next iteration (DECIDING state), tools must be restricted to handoff_to_organizer
+    // and sampling must apply tool_choice=required.
+    var profiles = List.of(
+        new AgentProfile("primary", "Primary", null, List.of("core_search_index")),
+        new AgentProfile("organizer", "Organizer", null, List.of("core_ingest_files")));
+    int threshold = AgentTurnPolicy.PRIMARY_FORCE_COMMIT_ITERATIONS;
+    // Build responses: threshold search_index calls, then a forced handoff, then Organizer flow
+    var scriptedResponses = new ArrayList<ScriptedResponse>();
+    for (int i = 0; i < threshold; i++) {
+      scriptedResponses.add(ScriptedResponse.toolCall("sc-" + i, "core_search_index", "{\"query\":\"arch\"}"));
+    }
+    scriptedResponses.add(ScriptedResponse.toolCall("hc-0", "handoff_to_organizer", "{\"reason\":\"arch doc\"}"));
+    scriptedResponses.add(ScriptedResponse.toolCall("tc-0", "core_ingest_files", "{\"paths\":[\"arch.md\"]}"));
+    scriptedResponses.add(ScriptedResponse.textOnly("Done."));
+    var ai = new ScriptedAiService(scriptedResponses);
+    var service = buildService(
+        ai,
+        new StubTool("search_index", RiskTier.LOW, "{\"hits\":[]}"),
+        new StubTool("ingest_files", RiskTier.LOW, "ok"));
+    var request = new AgentRequest(
+        userMessage("Find and ingest the architecture overview"),
+        List.<String>of(), 10, profiles, "primary");
+    var events = runWithRequest(service, request);
+
+    // Expected calls: threshold PRIMARY searches + 1 forced handoff + 2 Organizer turns
+    int expectedCalls = threshold + 1 + 2;
+    assertEquals(expectedCalls, ai.recordedSampling.size(),
+        "Expected " + expectedCalls + " LLM calls total");
+
+    // PRIMARY SEARCHING turns (0..threshold-1): no forced tool_choice
+    for (int i = 0; i < threshold; i++) {
+      assertNull(ai.recordedSampling.get(i).toolChoice(),
+          "PRIMARY SEARCHING turn " + i + " should not force tool_choice");
+    }
+
+    // PRIMARY DECIDING turn (index = threshold): tool_choice=required, handoff-only tools
+    assertEquals("required", ai.recordedSampling.get(threshold).toolChoice(),
+        "PRIMARY DECIDING turn should force tool_choice=required");
+    var decidingToolNames = ai.recordedTools.get(threshold).stream()
+        .map(t -> getToolFunctionName(t))
+        .toList();
+    assertEquals(List.of("handoff_to_organizer"), decidingToolNames,
+        "DECIDING state should offer only handoff tools");
+
+    // ORGANIZER turn 1 (E0a): tool_choice=required
+    assertEquals("required", ai.recordedSampling.get(threshold + 1).toolChoice(),
+        "Organizer first turn should force tool_choice (E0a)");
+    // ORGANIZER turn 2: no force
+    assertNull(ai.recordedSampling.get(threshold + 2).toolChoice(),
+        "Organizer second turn should not force");
+
+    // Grammar: Direction I — set on E0a (first Organizer turn); absent on all other calls.
+    // Grammar is stored in SamplingParams but omitted by the server when tools list is non-empty.
+    for (int i = 0; i < threshold; i++) {
+      assertNull(ai.recordedSampling.get(i).grammar(),
+          "Grammar should be null on PRIMARY SEARCHING call " + i);
+    }
+    // DECIDING turn uses callLlmWithTools with explicit sampling — no grammar (not E0a)
+    assertNull(ai.recordedSampling.get(threshold).grammar(),
+        "Grammar should be null on PRIMARY DECIDING call");
+    // Organizer first turn (E0a): Direction I sets grammar
+    assertNotNull(ai.recordedSampling.get(threshold + 1).grammar(),
+        "Grammar should be set on Organizer first turn (E0a)");
+    // Organizer second turn: no forced tool_choice, no grammar
+    assertNull(ai.recordedSampling.get(threshold + 2).grammar(),
+        "Grammar should be null on Organizer second turn");
+
+    // Direction D: DECIDING and E0a suppress thinking; SEARCHING turns don't override.
+    for (int i = 0; i < threshold; i++) {
+      assertNull(ai.recordedSampling.get(i).enableThinking(),
+          "PRIMARY SEARCHING turn " + i + " should not set enableThinking");
+    }
+    assertEquals(false, ai.recordedSampling.get(threshold).enableThinking(),
+        "PRIMARY DECIDING turn must suppress thinking (enableThinking=false)");
+    assertEquals(false, ai.recordedSampling.get(threshold + 1).enableThinking(),
+        "Organizer first turn (E0a) must suppress thinking (enableThinking=false)");
+    assertNull(ai.recordedSampling.get(threshold + 2).enableThinking(),
+        "Organizer second turn should not set enableThinking");
+
+    // Handoff event emitted
+    assertFalse(eventsOfType(events, AgentEvent.HandoffExecuted.class).isEmpty(),
+        "Expected HandoffExecuted event from force-commit");
+    // Final event is AgentDone (not error)
+    assertNotNull(lastEventOfType(events, AgentEvent.AgentDone.class),
+        "Expected AgentDone at end");
+  }
+
+  private static <T extends AgentEvent> T lastEventOfType(List<AgentEvent> events, Class<T> type) {
+    T last = null;
+    for (AgentEvent e : events) {
+      if (type.isInstance(e)) {
+        last = type.cast(e);
+      }
+    }
+    return last;
+  }
+
+  private static <T extends AgentEvent> List<T> eventsOfType(
+      List<AgentEvent> events, Class<T> type) {
+    return events.stream().filter(type::isInstance).map(type::cast).toList();
+  }
+
+  // ===========================================================================
+  // StubTool
+  // ===========================================================================
+
+  /**
+   * Per Phase 11 of tempdoc 429: replaces the legacy {@code stubTool(...)} helper.
+   * Produces an {@link Operation} (substrate type) with the matching {@link RiskTier},
+   * a stable execute callback, and a wireName preserving the LLM-facing surface
+   * ({@code "search"}, {@code "ingest_files"}, etc.). The {@link #execute(String)} method
+   * is invoked by {@link OperationExecutor} via the {@link HandlerRegistry} wiring built
+   * by {@link #buildSubstrate(StubTool...)}.
+   */
+  static final class StubTool {
+    final String wireName;
+    final RiskTier risk;
+    final String returnValue;
+    final java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger();
+
+    StubTool(String wireName, RiskTier risk, String returnValue) {
+      this.wireName = wireName;
+      this.risk = risk;
+      this.returnValue = returnValue;
+    }
+
+    Operation toOperation() {
+      return new Operation(
+          new OperationRef("core." + wireName.replace('_', '-')),
+          new Presentation(
+              new I18nKey("test." + wireName + ".label"),
+              new I18nKey("test." + wireName + ".description"),
+              Optional.empty(),
+              Optional.empty()),
+          Interface.of(
+              "{\"type\":\"object\",\"properties\":{}}", "{\"type\":\"object\"}"),
+          new OperationPolicy(
+              risk,
+              ConfirmStrategy.None.INSTANCE,
+              AuditPolicy.NONE,
+              RetryPolicy.noRetry(),
+              Optional.empty(),
+              Set.of(),
+              false),
+          OperationAvailability.empty(),
+          OperationLineage.empty(),
+          Binding.of(new OperationRef("core." + wireName.replace('_', '-'))),
+          Provenance.core("1.0"),
+          Set.of(ExecutorTag.AGENT));
+    }
+
+    OperationResult execute(String args) {
+      callCount.incrementAndGet();
+      return OperationResult.success(returnValue);
+    }
+  }
+
+  /** Builds the OperationCatalog + OperationExecutor + AgentToolEmitter trio. */
+  static io.justsearch.agent.api.registry.AgentToolEmitter stubEmitter() {
+    // Use the concrete AgentOperationEmitter via reflection-free import path: tests in
+    // app-agent live in the same JVM as app-services classes (test classpath only). To
+    // keep app-agent tests independent of app-services, we provide an inline emitter
+    // mirroring AgentOperationEmitter's deterministic-transliteration + identity-resolver behavior.
+    return (catalog, selectedNames) -> {
+      tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+      List<Map<String, Object>> result = new ArrayList<>();
+      for (Operation op : catalog.definitions()) {
+        if (!op.executors().contains(ExecutorTag.AGENT)) continue;
+        String wire = OperationCatalog.toWireName(op.id());
+        if (selectedNames != null && !selectedNames.isEmpty() && !selectedNames.contains(wire)) {
+          continue;
+        }
+        try {
+          var function = mapper.createObjectNode();
+          function.put("name", wire);
+          function.put("description", op.presentation().descriptionKey().value());
+          function.set("parameters", mapper.readTree(op.intf().inputs()));
+          var toolObj = mapper.createObjectNode();
+          toolObj.put("type", "function");
+          toolObj.set("function", function);
+          @SuppressWarnings("unchecked")
+          Map<String, Object> entry = mapper.convertValue(toolObj, Map.class);
+          result.add(new java.util.LinkedHashMap<>(entry));
+        } catch (Exception e) {
+          throw new IllegalStateException("Failed to emit " + op.id(), e);
+        }
+      }
+      return result;
+    };
+  }
+
+  static OperationCatalog stubCatalog(StubTool... tools) {
+    return OperationCatalog.of(
+        "core",
+        Arrays.stream(tools).map(StubTool::toOperation).toList());
+  }
+
+  /**
+   * Test-local {@link OperationDispatcher} implementation per tempdoc 429 §C decision A:
+   * tests in {@code app-agent} cannot import the production
+   * {@code OperationExecutorImpl} from {@code app-services} without crossing the
+   * type/behavior boundary, so the test provides its own minimal dispatcher that
+   * mirrors the CORE-tier dispatch path (the only path tests exercise here).
+   */
+  static OperationDispatcher stubExecutor(StubTool... tools) {
+    HandlerRegistry handlers = new HandlerRegistry();
+    for (StubTool tool : tools) {
+      OperationHandler handler =
+          new OperationHandler() {
+            @Override
+            public OperationResult execute(String args) {
+              return tool.execute(args);
+            }
+          };
+      handlers.register(new OperationRef("core." + tool.wireName.replace('_', '-')), handler);
+    }
+    return new OperationDispatcher() {
+      @Override
+      public OperationResult dispatch(Operation op, String argumentsJson) {
+        OperationHandler handler =
+            handlers
+                .resolve(new OperationRef(op.binding().handlerId()))
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "No handler registered for binding " + op.binding().handlerId()));
+        return handler.execute(argumentsJson);
+      }
+
+      @Override
+      public OperationResult undo(Operation op, String executionId) {
+        if (!op.policy().undoSupported()) {
+          return OperationResult.failure("Undo not supported by " + op.id().value());
+        }
+        OperationHandler handler =
+            handlers
+                .resolve(new OperationRef(op.binding().handlerId()))
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "No handler registered for binding " + op.binding().handlerId()));
+        return handler.undo(executionId);
+      }
+    };
+  }
+
+  // ===========================================================================
+  // ScriptedAiService — replays pre-defined responses synchronously
+  // ===========================================================================
+
+  private static final class ScriptedAiService implements OnlineAiService {
+    private final List<ScriptedResponse> responses;
+    final List<List<Map<String, Object>>> recordedMessages = new ArrayList<>();
+    final List<SamplingParams> recordedSampling = new ArrayList<>();
+    final List<List<Map<String, Object>>> recordedTools = new ArrayList<>();
+    private int callIndex;
+
+    ScriptedAiService(List<ScriptedResponse> responses) {
+      this.responses = new ArrayList<>(responses);
+    }
+
+    ScriptedAiService(ScriptedResponse... responses) {
+      this.responses = new ArrayList<>(List.of(responses));
+    }
+
+    // Tempdoc 491 §C5: streamSummary + streamAnswer overrides removed (deleted from interface).
+
+    @Override
+    public CompletableFuture<String> summarize(String content) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CompletableFuture<String> askQuestion(String question, String context) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    public boolean isStartingUp() {
+      return false;
+    }
+
+    @Override
+    public void streamChatWithTools(
+        List<Map<String, Object>> messages,
+        List<Map<String, Object>> tools,
+        int maxTokens,
+        StreamCallbacks callbacks,
+        SamplingParams sampling) {
+
+      // Record a snapshot of the messages, tools, and sampling for assertion
+      recordedMessages.add(List.copyOf(messages));
+      recordedTools.add(List.copyOf(tools));
+      recordedSampling.add(sampling);
+
+      if (callIndex >= responses.size()) {
+        callbacks.onError().accept(new IllegalStateException("No more scripted responses"));
+        return;
+      }
+
+      ScriptedResponse response = responses.get(callIndex++);
+
+      // Emit reasoning chunks (before text, matching real model behavior)
+      if (response.reasoning != null && !response.reasoning.isEmpty()) {
+        callbacks.onReasoningChunk().accept(response.reasoning);
+      }
+
+      // Emit text chunks
+      if (response.text != null && !response.text.isEmpty()) {
+        callbacks.onChunk().accept(response.text);
+      }
+
+      // Emit tool call deltas
+      for (String deltaJson : response.toolCallDeltas) {
+        callbacks.onToolCallDelta().accept(deltaJson);
+      }
+
+      // Emit usage if present
+      if (response.usage != null) {
+        callbacks.onUsage().accept(response.usage);
+      }
+
+      callbacks.onComplete().accept(null);
+    }
+
+    @Override
+    public java.util.Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+      // Best-effort simulation: 10 tokens per message
+      return java.util.Optional.of(messages.size() * 10);
+    }
+
+    @Override
+    public Integer llmContextTokens() {
+      return 4096; // Simulated default context window
+    }
+
+    @Override
+    public Integer configuredContextTokens() {
+      return 4096; // Match llmContextTokens for testing
+    }
+  }
+
+  // ===========================================================================
+  // ScriptedResponse — describes what one LLM call returns
+  // ===========================================================================
+
+  private record ScriptedResponse(
+      String text, String reasoning, List<String> toolCallDeltas, OnlineAiService.AiUsage usage) {
+
+    static ScriptedResponse textOnly(String text) {
+      return new ScriptedResponse(text, null, List.of(), null);
+    }
+
+    static ScriptedResponse empty() {
+      return new ScriptedResponse(null, null, List.of(), null);
+    }
+
+    static ScriptedResponse withReasoning(String text, String reasoning) {
+      return new ScriptedResponse(text, reasoning, List.of(), null);
+    }
+
+    static ScriptedResponse toolCall(String callId, String toolName, String arguments) {
+      String delta = buildToolCallDeltaJson(callId, toolName, arguments);
+      return new ScriptedResponse(null, null, List.of(delta), null);
+    }
+
+    static ScriptedResponse textAndToolCall(
+        String text, String callId, String toolName, String arguments) {
+      String delta = buildToolCallDeltaJson(callId, toolName, arguments);
+      return new ScriptedResponse(text, null, List.of(delta), null);
+    }
+
+    /**
+     * Creates a response with multiple tool calls in a single batch. Each triplet of arguments
+     * represents (callId, toolName, arguments). Each tool call gets a unique index for the parser.
+     */
+    static ScriptedResponse multiToolCall(String... callSpecs) {
+      if (callSpecs.length % 3 != 0) {
+        throw new IllegalArgumentException("callSpecs must be triplets of (callId, toolName, args)");
+      }
+      List<String> deltas = new ArrayList<>();
+      for (int i = 0; i < callSpecs.length; i += 3) {
+        deltas.add(
+            buildToolCallDeltaJson(
+                i / 3, callSpecs[i], callSpecs[i + 1], callSpecs[i + 2]));
+      }
+      return new ScriptedResponse(null, null, deltas, null);
+    }
+
+    /** Creates a response with simulated token usage. */
+    ScriptedResponse withUsage(int promptTokens, int completionTokens) {
+      int total = promptTokens + completionTokens;
+      return new ScriptedResponse(
+          this.text, this.reasoning, this.toolCallDeltas,
+          new OnlineAiService.AiUsage(promptTokens, completionTokens, total));
+    }
+
+    /**
+     * Build a JSON string matching the SSE chunk format that ToolCallParser expects:
+     * {"choices":[{"delta":{"tool_calls":[{"index":N,"id":"...","function":{"name":"...","arguments":"..."}}]}}]}
+     */
+    private static String buildToolCallDeltaJson(String callId, String toolName, String arguments) {
+      return buildToolCallDeltaJson(0, callId, toolName, arguments);
+    }
+
+    private static String buildToolCallDeltaJson(
+        int index, String callId, String toolName, String arguments) {
+      // Escape the arguments JSON string for embedding
+      String escapedArgs = arguments.replace("\"", "\\\"");
+      return "{\"choices\":[{\"delta\":{\"tool_calls\":[{"
+          + "\"index\":" + index + ","
+          + "\"id\":\"" + callId + "\","
+          + "\"function\":{\"name\":\"" + toolName + "\","
+          + "\"arguments\":\"" + escapedArgs + "\"}"
+          + "}]}}]}";
+    }
+  }
+
+  // Tempdoc 417 Phase 2d/3e: legacy FakeTelemetry deleted. Counter assertions now go through
+  // a TestMetricRegistry-backed catalog supplied via AgentLoopService.forTesting(...).
+
+  // ---------------------------------------------------------------------------
+  // operationHistory contract — tempdoc 415 follow-up (C44)
+  // Backend now emits "failedCount" (was "failureCount") to match the frontend.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void operationHistory_emitsFailedCountKey() throws Exception {
+    // Write a batch JSON file directly so we don't need package-private FileOperationLog
+    // mutators. The contract under test is the toBatchSummary() projection over
+    // FileOperationLog.listBatches(), reached via AgentLoopService.operationHistory().
+    var fileOpsDir = tempDir.resolve("file-ops");
+    java.nio.file.Files.createDirectories(fileOpsDir);
+    String batchJson =
+        "{"
+            + "\"batchId\":\"batch-c44\","
+            + "\"timestamp\":\"2026-04-28T10:00:00Z\","
+            + "\"explanation\":\"Mixed-status batch\","
+            + "\"operations\":["
+            + "  {\"op\":\"MOVE\",\"src\":\"/a.txt\",\"dst\":\"/b.txt\"},"
+            + "  {\"op\":\"MOVE\",\"src\":\"/c.txt\",\"dst\":\"/d.txt\"},"
+            + "  {\"op\":\"MOVE\",\"src\":\"/e.txt\",\"dst\":\"/f.txt\"}"
+            + "],"
+            + "\"executed\":["
+            + "  {\"index\":0,\"status\":\"OK\"},"
+            + "  {\"index\":1,\"status\":\"FAILED\",\"error\":\"io\"},"
+            + "  {\"index\":2,\"status\":\"SKIPPED\",\"reason\":\"user\"}"
+            + "],"
+            + "\"finalized\":\"2026-04-28T10:00:01Z\""
+            + "}";
+    java.nio.file.Files.writeString(fileOpsDir.resolve("batch-c44.json"), batchJson);
+
+    var ai = new ScriptedAiService(List.of(ScriptedResponse.textOnly("ok")));
+    var fileOpLog = new FileOperationLog(fileOpsDir);
+    var service =
+        new AgentLoopService(
+            ai,
+            OperationCatalog.of("core", List.of()),
+            stubExecutor(),
+            stubEmitter(),
+            fileOpLog,
+            null);
+
+    var summaries = service.operationHistory(10);
+    assertEquals(1, summaries.size(), "Expected exactly one batch summary");
+    var summary = summaries.get(0);
+
+    assertTrue(summary.containsKey("failedCount"),
+        "Summary must carry the renamed 'failedCount' key (tempdoc 415 follow-up C44)");
+    assertFalse(summary.containsKey("failureCount"),
+        "Old 'failureCount' key must not be re-introduced");
+    assertEquals(1L, summary.get("failedCount"));
+    assertEquals(1L, summary.get("successCount"));
+    assertEquals(1L, summary.get("skippedCount"));
+  }
+}

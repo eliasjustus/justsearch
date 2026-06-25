@@ -1,0 +1,1043 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "Component-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "reason_code" : {
+          "type" : [ "string", "null" ]
+        },
+        "state" : {
+          "$ref" : "#/$defs/LifecycleState-nullable"
+        }
+      }
+    },
+    "LifecycleState-nullable" : {
+      "anyOf" : [ {
+        "type" : "null"
+      }, {
+        "type" : "string",
+        "enum" : [ "LIFECYCLE_STATE_UNSPECIFIED", "LIFECYCLE_STATE_STARTING", "LIFECYCLE_STATE_READY", "LIFECYCLE_STATE_DEGRADED", "LIFECYCLE_STATE_ERROR", "LIFECYCLE_STATE_STOPPING", "LIFECYCLE_STATE_STOPPED", "UNRECOGNIZED" ]
+      } ]
+    },
+    "MigrationEnumeratorView-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "done" : {
+          "type" : "boolean"
+        },
+        "filesEnqueued" : {
+          "type" : "integer"
+        },
+        "filesSeen" : {
+          "type" : "integer"
+        },
+        "finishedAtMs" : {
+          "type" : "integer"
+        },
+        "lastPath" : {
+          "type" : [ "string", "null" ]
+        },
+        "rootsDone" : {
+          "type" : "integer"
+        },
+        "rootsTotal" : {
+          "type" : "integer"
+        },
+        "running" : {
+          "type" : "boolean"
+        },
+        "startedAtMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "OrtCudaView-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "attempted" : {
+          "type" : "boolean"
+        },
+        "available" : {
+          "type" : "boolean"
+        },
+        "configured" : {
+          "type" : "boolean"
+        },
+        "failureReason" : {
+          "type" : [ "string", "null" ]
+        },
+        "missingDlls" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "nativePath" : {
+          "type" : [ "string", "null" ]
+        },
+        "variantId" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "agentSessions" : {
+      "type" : "object",
+      "properties" : {
+        "activeCount" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "aiReady" : {
+      "type" : "boolean"
+    },
+    "atRestProtection" : {
+      "type" : "object",
+      "properties" : {
+        "confidence" : {
+          "type" : "string"
+        },
+        "diskEncryption" : {
+          "type" : "string"
+        },
+        "qualityKnown" : {
+          "type" : "boolean"
+        },
+        "source" : {
+          "type" : "string"
+        }
+      }
+    },
+    "catchingUp" : {
+      "type" : "boolean"
+    },
+    "chunkCoverage" : {
+      "type" : "object",
+      "properties" : {
+        "completedCount" : {
+          "type" : "integer"
+        },
+        "coveragePercent" : {
+          "type" : "number"
+        },
+        "docCount" : {
+          "type" : "integer"
+        },
+        "failedCount" : {
+          "type" : "integer"
+        },
+        "observedAtMs" : {
+          "type" : "integer"
+        },
+        "pendingCount" : {
+          "type" : "integer"
+        },
+        "ready" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "components" : {
+      "type" : "object",
+      "properties" : {
+        "head" : {
+          "$ref" : "#/$defs/Component-nullable"
+        },
+        "inference" : {
+          "$ref" : "#/$defs/Component-nullable"
+        },
+        "worker" : {
+          "$ref" : "#/$defs/Component-nullable"
+        }
+      }
+    },
+    "conversationProtection" : {
+      "type" : "object",
+      "properties" : {
+        "state" : {
+          "type" : "string"
+        }
+      }
+    },
+    "diskPressure" : {
+      "type" : "string"
+    },
+    "embedding" : {
+      "type" : "object",
+      "properties" : {
+        "compatReason" : {
+          "type" : [ "string", "null" ]
+        },
+        "compatState" : {
+          "type" : [ "string", "null" ]
+        },
+        "completedCount" : {
+          "type" : "integer"
+        },
+        "coveragePercent" : {
+          "type" : "number"
+        },
+        "docCount" : {
+          "type" : "integer"
+        },
+        "failedCount" : {
+          "type" : "integer"
+        },
+        "fingerprintCurrent" : {
+          "type" : [ "string", "null" ]
+        },
+        "fingerprintStored" : {
+          "type" : [ "string", "null" ]
+        },
+        "observedAtMs" : {
+          "type" : "integer"
+        },
+        "pendingCount" : {
+          "type" : "integer"
+        },
+        "ready" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "embeddingReady" : {
+      "type" : "boolean"
+    },
+    "gpu" : {
+      "type" : "object",
+      "properties" : {
+        "available" : {
+          "type" : "boolean"
+        },
+        "confidence" : {
+          "type" : "string"
+        },
+        "cudaFunctional" : {
+          "type" : "boolean"
+        },
+        "deviceCount" : {
+          "type" : "integer"
+        },
+        "driverVersion" : {
+          "type" : "string"
+        },
+        "freeVramBytes" : {
+          "type" : "integer"
+        },
+        "gpuUtilizationPercent" : {
+          "type" : "integer"
+        },
+        "memoryUtilizationPercent" : {
+          "type" : "integer"
+        },
+        "recentMemoryUtilizationPercent" : {
+          "type" : "array",
+          "items" : {
+            "type" : "number"
+          }
+        },
+        "recentUtilizationPercent" : {
+          "type" : "array",
+          "items" : {
+            "type" : "number"
+          }
+        },
+        "source" : {
+          "type" : "string"
+        },
+        "totalVramBytes" : {
+          "type" : "integer"
+        },
+        "usedVramBytes" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "indexAvailable" : {
+      "type" : "boolean"
+    },
+    "indexBasePath" : {
+      "type" : "string"
+    },
+    "indexStatusReason" : {
+      "type" : "string"
+    },
+    "inference" : {
+      "type" : "object",
+      "properties" : {
+        "counters" : {
+          "type" : "object",
+          "properties" : {
+            "hardRestarts" : {
+              "type" : "integer"
+            },
+            "softRestarts" : {
+              "type" : "integer"
+            },
+            "transitionsTotal" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "identity" : {
+          "type" : "object",
+          "properties" : {
+            "generationId" : {
+              "type" : "integer"
+            },
+            "loadedAtEpochMs" : {
+              "type" : "integer"
+            },
+            "modelId" : {
+              "type" : [ "string", "null" ]
+            },
+            "port" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "lastFailure" : {
+          "type" : "object",
+          "properties" : {
+            "code" : {
+              "type" : "string"
+            },
+            "detail" : {
+              "type" : "string"
+            }
+          }
+        },
+        "phase" : {
+          "type" : "string"
+        },
+        "usingExternal" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "knowledgeServerStartError" : {
+      "type" : "string"
+    },
+    "lifecycle" : {
+      "type" : "object",
+      "properties" : {
+        "message" : {
+          "type" : [ "string", "null" ]
+        },
+        "reason_code" : {
+          "type" : [ "string", "null" ]
+        },
+        "state" : {
+          "$ref" : "#/$defs/LifecycleState-nullable"
+        }
+      }
+    },
+    "memoryMaxBytes" : {
+      "type" : "integer"
+    },
+    "memoryTotalBytes" : {
+      "type" : "integer"
+    },
+    "memoryUsedBytes" : {
+      "type" : "integer"
+    },
+    "meta" : {
+      "type" : "object",
+      "properties" : {
+        "workerRpcAtMs" : {
+          "type" : "integer"
+        },
+        "workerRpcStale" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "migration" : {
+      "type" : "object",
+      "properties" : {
+        "buildingGenerationId" : {
+          "type" : [ "string", "null" ]
+        },
+        "enumerator" : {
+          "$ref" : "#/$defs/MigrationEnumeratorView-nullable"
+        },
+        "migrationSource" : {
+          "type" : [ "string", "null" ]
+        },
+        "observedAtMs" : {
+          "type" : "integer"
+        },
+        "pauseReason" : {
+          "type" : [ "string", "null" ]
+        },
+        "paused" : {
+          "type" : "boolean"
+        },
+        "previousGenerationId" : {
+          "type" : [ "string", "null" ]
+        },
+        "state" : {
+          "type" : [ "string", "null" ]
+        },
+        "switchingAgeMs" : {
+          "type" : "integer"
+        },
+        "switchingMaxDurationMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "modelDistribution" : {
+      "type" : "object",
+      "properties" : {
+        "installProfile" : {
+          "type" : "string"
+        },
+        "modelVariants" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "type" : "object",
+            "properties" : {
+              "degradationReason" : {
+                "type" : "string"
+              },
+              "degraded" : {
+                "type" : "boolean"
+              },
+              "executionProvider" : {
+                "type" : "string"
+              },
+              "filename" : {
+                "type" : "string"
+              },
+              "precision" : {
+                "type" : "string"
+              },
+              "skipReason" : {
+                "type" : "string"
+              },
+              "skipped" : {
+                "type" : "boolean"
+              }
+            }
+          }
+        },
+        "upgradeGuidance" : {
+          "type" : "string"
+        }
+      }
+    },
+    "observed_at" : {
+      "type" : "string"
+    },
+    "power" : {
+      "type" : "object",
+      "properties" : {
+        "energyReduced" : {
+          "type" : "boolean"
+        },
+        "source" : {
+          "type" : "string"
+        }
+      }
+    },
+    "queueHealth" : {
+      "type" : "object",
+      "properties" : {
+        "healthy" : {
+          "type" : "boolean"
+        },
+        "lastBackupAtMs" : {
+          "type" : "integer"
+        },
+        "lastErrorAtMs" : {
+          "type" : "integer"
+        },
+        "lastQuickCheckAtMs" : {
+          "type" : "integer"
+        },
+        "lastQuickCheckOk" : {
+          "type" : "boolean"
+        },
+        "observedAtMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "readiness" : {
+      "type" : "object",
+      "properties" : {
+        "components" : {
+          "type" : [ "object", "null" ],
+          "additionalProperties" : {
+            "type" : "object",
+            "properties" : {
+              "observedAt" : {
+                "type" : "string"
+              },
+              "reasonCode" : {
+                "type" : "string"
+              },
+              "source" : {
+                "type" : "string"
+              },
+              "stale" : {
+                "type" : "boolean"
+              },
+              "stalenessMs" : {
+                "type" : "integer"
+              },
+              "state" : {
+                "type" : "string"
+              }
+            }
+          }
+        },
+        "composites" : {
+          "type" : [ "object", "null" ],
+          "additionalProperties" : {
+            "type" : "object",
+            "properties" : {
+              "reasonCodes" : {
+                "type" : [ "array", "null" ],
+                "items" : {
+                  "type" : "string"
+                }
+              },
+              "state" : {
+                "type" : [ "string", "null" ]
+              }
+            }
+          }
+        },
+        "observedAt" : {
+          "type" : [ "string", "null" ]
+        },
+        "schemaVersion" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "schema" : {
+      "type" : "object",
+      "properties" : {
+        "compatState" : {
+          "type" : [ "string", "null" ]
+        },
+        "fpCurrent" : {
+          "type" : [ "string", "null" ]
+        },
+        "fpStored" : {
+          "type" : [ "string", "null" ]
+        },
+        "observedAtMs" : {
+          "type" : "integer"
+        },
+        "reindexRequired" : {
+          "type" : "boolean"
+        },
+        "reindexRequiredReason" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "schema_version" : {
+      "type" : "integer"
+    },
+    "service" : {
+      "type" : "string"
+    },
+    "status" : {
+      "type" : "string"
+    },
+    "telemetryHealth" : {
+      "type" : "object",
+      "properties" : {
+        "flushFailureCount" : {
+          "type" : "integer"
+        },
+        "gaugeCallbackFailureCount" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "uptimeMs" : {
+      "type" : "integer"
+    },
+    "worker" : {
+      "type" : "object",
+      "properties" : {
+        "buildStamp" : {
+          "type" : "string"
+        },
+        "compatibility" : {
+          "type" : "object",
+          "properties" : {
+            "embeddingCompatReason" : {
+              "type" : [ "string", "null" ]
+            },
+            "embeddingCompatState" : {
+              "type" : [ "string", "null" ]
+            },
+            "embeddingFingerprintCurrent" : {
+              "type" : [ "string", "null" ]
+            },
+            "embeddingFingerprintStored" : {
+              "type" : [ "string", "null" ]
+            },
+            "indexSchemaCompatState" : {
+              "type" : [ "string", "null" ]
+            },
+            "indexSchemaFpCurrent" : {
+              "type" : [ "string", "null" ]
+            },
+            "indexSchemaFpStored" : {
+              "type" : [ "string", "null" ]
+            },
+            "reindexRequired" : {
+              "type" : "boolean"
+            },
+            "reindexRequiredReason" : {
+              "type" : [ "string", "null" ]
+            }
+          }
+        },
+        "core" : {
+          "type" : "object",
+          "properties" : {
+            "commitCount" : {
+              "type" : "integer"
+            },
+            "indexHealthy" : {
+              "type" : "boolean"
+            },
+            "indexSizeBytes" : {
+              "type" : "integer"
+            },
+            "indexState" : {
+              "type" : [ "string", "null" ]
+            },
+            "indexedDocuments" : {
+              "type" : "integer"
+            },
+            "pendingJobs" : {
+              "type" : "integer"
+            },
+            "pendingVduCount" : {
+              "type" : "integer"
+            },
+            "recentDocsPerSec" : {
+              "type" : [ "array", "null" ],
+              "items" : {
+                "type" : "number"
+              }
+            },
+            "recentJobQueueDepth" : {
+              "type" : [ "array", "null" ],
+              "items" : {
+                "type" : "integer"
+              }
+            },
+            "refreshLagMs" : {
+              "type" : "integer"
+            },
+            "writerPendingDocs" : {
+              "type" : "integer"
+            },
+            "writerQueueDepth" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "enrichment" : {
+          "type" : "object",
+          "properties" : {
+            "batchTiming" : {
+              "type" : [ "object", "null" ],
+              "properties" : {
+                "batchCount" : {
+                  "type" : [ "object", "null" ],
+                  "additionalProperties" : {
+                    "type" : "integer"
+                  }
+                },
+                "totalMs" : {
+                  "type" : [ "object", "null" ],
+                  "additionalProperties" : {
+                    "type" : "integer"
+                  }
+                }
+              }
+            },
+            "chunk" : {
+              "type" : [ "object", "null" ],
+              "properties" : {
+                "chunkDocCount" : {
+                  "type" : "integer"
+                },
+                "chunkEmbeddingCompletedCount" : {
+                  "type" : "integer"
+                },
+                "chunkEmbeddingFailedCount" : {
+                  "type" : "integer"
+                },
+                "chunkEmbeddingPendingCount" : {
+                  "type" : "integer"
+                },
+                "chunkVectorCoveragePercent" : {
+                  "type" : "number"
+                },
+                "chunkVectorsReady" : {
+                  "type" : "boolean"
+                }
+              }
+            },
+            "completedNerCount" : {
+              "type" : "integer"
+            },
+            "embeddingCompletedCount" : {
+              "type" : "integer"
+            },
+            "embeddingCoveragePercent" : {
+              "type" : "number"
+            },
+            "embeddingDocCount" : {
+              "type" : "integer"
+            },
+            "embeddingEnabled" : {
+              "type" : "boolean"
+            },
+            "embeddingFailedCount" : {
+              "type" : "integer"
+            },
+            "embeddingPendingCount" : {
+              "type" : "integer"
+            },
+            "encoderProfiles" : {
+              "type" : [ "object", "null" ],
+              "additionalProperties" : {
+                "type" : "object",
+                "properties" : {
+                  "calls" : {
+                    "type" : "integer"
+                  },
+                  "ortMaxUs" : {
+                    "type" : "integer"
+                  },
+                  "ortMinUs" : {
+                    "type" : "integer"
+                  },
+                  "ortP50Us" : {
+                    "type" : "integer"
+                  },
+                  "ortP95Us" : {
+                    "type" : "integer"
+                  },
+                  "ortP99Us" : {
+                    "type" : "integer"
+                  },
+                  "phaseTotalUs" : {
+                    "type" : [ "object", "null" ],
+                    "additionalProperties" : {
+                      "type" : "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "enrichmentCompleted" : {
+              "type" : [ "object", "null" ],
+              "additionalProperties" : {
+                "type" : "integer"
+              }
+            },
+            "nerEnabled" : {
+              "type" : "boolean"
+            },
+            "pendingNerCount" : {
+              "type" : "integer"
+            },
+            "spladeCompletedCount" : {
+              "type" : "integer"
+            },
+            "spladeCoveragePercent" : {
+              "type" : "number"
+            },
+            "spladeDocCount" : {
+              "type" : "integer"
+            },
+            "spladeEnabled" : {
+              "type" : "boolean"
+            },
+            "spladeFailedCount" : {
+              "type" : "integer"
+            },
+            "spladePendingCount" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "failure" : {
+          "type" : "object",
+          "properties" : {
+            "failedByFileKind" : {
+              "type" : [ "object", "null" ],
+              "additionalProperties" : {
+                "type" : "integer"
+              }
+            },
+            "failedJobs" : {
+              "type" : "integer"
+            },
+            "lastFailedAtMs" : {
+              "type" : "integer"
+            },
+            "lastFailedErrorMessage" : {
+              "type" : [ "string", "null" ]
+            },
+            "lastFailedPath" : {
+              "type" : [ "string", "null" ]
+            },
+            "nextRetryAtMs" : {
+              "type" : "integer"
+            },
+            "searchesZeroResultCount" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "gpu" : {
+          "type" : "object",
+          "properties" : {
+            "bgeM3OrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            },
+            "citationOrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            },
+            "embedBackend" : {
+              "type" : [ "string", "null" ]
+            },
+            "embedGpuLayers" : {
+              "type" : "integer"
+            },
+            "embedOrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            },
+            "nerGpuEnabled" : {
+              "type" : "boolean"
+            },
+            "nerModelPath" : {
+              "type" : [ "string", "null" ]
+            },
+            "nerOrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            },
+            "rerankerModelPath" : {
+              "type" : [ "string", "null" ]
+            },
+            "rerankerOrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            },
+            "spladeModelPath" : {
+              "type" : [ "string", "null" ]
+            },
+            "spladeOrtCuda" : {
+              "$ref" : "#/$defs/OrtCudaView-nullable"
+            }
+          }
+        },
+        "migration" : {
+          "type" : "object",
+          "properties" : {
+            "activeGenerationId" : {
+              "type" : [ "string", "null" ]
+            },
+            "activeIndexedDocuments" : {
+              "type" : "integer"
+            },
+            "buildingGenerationId" : {
+              "type" : [ "string", "null" ]
+            },
+            "buildingIndexedDocuments" : {
+              "type" : "integer"
+            },
+            "migrationEnumerator" : {
+              "$ref" : "#/$defs/MigrationEnumeratorView-nullable"
+            },
+            "migrationPauseReason" : {
+              "type" : [ "string", "null" ]
+            },
+            "migrationPaused" : {
+              "type" : "boolean"
+            },
+            "migrationPausedAtMs" : {
+              "type" : "integer"
+            },
+            "migrationSource" : {
+              "type" : [ "string", "null" ]
+            },
+            "migrationState" : {
+              "type" : [ "string", "null" ]
+            },
+            "migrationSwitchingAgeMs" : {
+              "type" : "integer"
+            },
+            "migrationSwitchingMaxDurationMs" : {
+              "type" : "integer"
+            },
+            "pendingBackoffJobsCount" : {
+              "type" : "integer"
+            },
+            "pendingJobsCount" : {
+              "type" : "integer"
+            },
+            "pendingReadyJobsCount" : {
+              "type" : "integer"
+            },
+            "previousGenerationId" : {
+              "type" : [ "string", "null" ]
+            },
+            "processingJobsCount" : {
+              "type" : "integer"
+            },
+            "servingIngestGenerationId" : {
+              "type" : [ "string", "null" ]
+            },
+            "servingSearchGenerationId" : {
+              "type" : [ "string", "null" ]
+            },
+            "switchBufferDepth" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "queueDb" : {
+          "type" : "object",
+          "properties" : {
+            "queueDbHealthy" : {
+              "type" : "boolean"
+            },
+            "queueDbLastBackupAtMs" : {
+              "type" : "integer"
+            },
+            "queueDbLastErrorAtMs" : {
+              "type" : "integer"
+            },
+            "queueDbLastQuickCheckAtMs" : {
+              "type" : "integer"
+            },
+            "queueDbLastQuickCheckOk" : {
+              "type" : "boolean"
+            }
+          }
+        },
+        "searchConfig" : {
+          "type" : "object",
+          "properties" : {
+            "branchCcWeightChunk" : {
+              "type" : "number"
+            },
+            "branchCcWeightWhole" : {
+              "type" : "number"
+            },
+            "branchChunkMinWeightMultiplier" : {
+              "type" : "number"
+            },
+            "ccWeightDense" : {
+              "type" : "number"
+            },
+            "ccWeightSparse" : {
+              "type" : "number"
+            },
+            "ccWeightSplade" : {
+              "type" : "number"
+            },
+            "chunkAwareEnabled" : {
+              "type" : "boolean"
+            },
+            "entityBoost" : {
+              "type" : "number"
+            },
+            "queryClassificationEnabled" : {
+              "type" : "boolean"
+            },
+            "titleBoost" : {
+              "type" : "number"
+            }
+          }
+        },
+        "telemetry" : {
+          "type" : "object",
+          "properties" : {
+            "contentLengthAvgChars" : {
+              "type" : "number"
+            },
+            "contentLengthMaxChars" : {
+              "type" : "integer"
+            },
+            "contentLengthMinChars" : {
+              "type" : "integer"
+            },
+            "throughputDocsPerSec" : {
+              "type" : "number"
+            },
+            "throughputWindowState" : {
+              "type" : [ "string", "null" ]
+            }
+          }
+        },
+        "vectorFormat" : {
+          "type" : "object",
+          "properties" : {
+            "vectorFormatActual" : {
+              "type" : [ "string", "null" ]
+            },
+            "vectorFormatConfig" : {
+              "type" : [ "string", "null" ]
+            },
+            "vectorFormatStored" : {
+              "type" : [ "string", "null" ]
+            },
+            "vectorSegmentsFloat32" : {
+              "type" : "integer"
+            },
+            "vectorSegmentsQuantized" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "visualExtraction" : {
+          "type" : "object",
+          "properties" : {
+            "ocrBlockedReason" : {
+              "type" : "string"
+            },
+            "ocrEnabled" : {
+              "type" : "boolean"
+            },
+            "ocrEngine" : {
+              "type" : "string"
+            },
+            "ocrEngineAvailable" : {
+              "type" : "boolean"
+            },
+            "vduBlockedReason" : {
+              "type" : "string"
+            },
+            "visualEnrichmentNeededCount" : {
+              "type" : "integer"
+            },
+            "visualTextNeededCount" : {
+              "type" : "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

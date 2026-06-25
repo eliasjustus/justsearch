@@ -1,0 +1,15 @@
+* @eliasjustus
+/.github/** @eliasjustus
+/docs/** @eliasjustus
+/scripts/** @eliasjustus
+/SSOT/** @eliasjustus
+/modules/ui/** @eliasjustus
+/modules/ui-web/** @eliasjustus
+/modules/indexer-worker/** @eliasjustus
+/modules/adapters-lucene/** @eliasjustus
+/modules/app-services/** @eliasjustus
+/modules/configuration/** @eliasjustus
+/modules/ipc-common/** @eliasjustus
+/modules/system-tests/** @eliasjustus
+/modules/reranker/** @eliasjustus
+/modules/app-inference/** @eliasjustus

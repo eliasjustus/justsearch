@@ -1,0 +1,177 @@
+[versions]
+jdk = "25"
+spotless = "8.6.0"
+junit = "5.14.4"
+mockito = "5.22.0"
+"junit-platform" = "1.14.4"
+jqwik = "1.10.1"
+archunit = "1.4.1"
+lucene = "10.4.0"
+tika = "3.2.3"
+jackson = "3.1.0"
+googleJavaFormat = "1.25.2"
+otel = "1.60.1"
+otelInstrumentation = "2.26.0-alpha"
+slf4j = "2.0.17"
+logback = "1.5.32"
+logstashLogback = "9.0"
+log4j = "2.24.3"
+grpc = "1.79.0"
+errorprone = "2.47.0"
+errorpronePlugin = "4.0.1"
+protobuf = "4.33.5"
+protoc = "4.33.5"
+netty = "4.1.131.Final"
+spotbugs = "4.9.8"
+spotbugsPlugin = "6.5.6"
+findsecbugs = "1.14.0"
+kotlin = "2.4.0"
+onnxruntime = "1.24.3"
+djl-tokenizers = "0.36.0"
+commonmark = "0.27.1"
+lz4 = "1.10.4"
+sqlite = "3.51.2.0"
+directory-watcher = "0.19.1"
+javalin = "6.7.0"
+dependencyAnalysis = "3.15.0"
+jcipAnnotations = "1.0"
+jsonschemaGenerator = "5.0.0"
+typescriptGenerator = "4.0.0"
+hdrhistogram = "2.2.2"
+recordBuilder = "52"
+cel = "0.12.0"
+
+[libraries]
+## Testing
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
+junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
+"junit-platform-launcher" = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }
+archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
+jqwik = { module = "net.jqwik:jqwik", version.ref = "jqwik" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
+
+## Error Prone
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
+gradle-errorprone-plugin = { module = "net.ltgt.gradle:gradle-errorprone-plugin", version.ref = "errorpronePlugin" }
+
+## Lucene
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
+lucene-analysis-common = { module = "org.apache.lucene:lucene-analysis-common", version.ref = "lucene" }
+lucene-analysis-icu = { module = "org.apache.lucene:lucene-analysis-icu", version.ref = "lucene" }
+lucene-highlighter = { module = "org.apache.lucene:lucene-highlighter", version.ref = "lucene" }
+lucene-memory = { module = "org.apache.lucene:lucene-memory", version.ref = "lucene" }
+lucene-facet = { module = "org.apache.lucene:lucene-facet", version.ref = "lucene" }
+lucene-queryparser = { module = "org.apache.lucene:lucene-queryparser", version.ref = "lucene" }
+
+## Tika
+tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+tika-parsers-standard = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
+
+## Jackson 3.x (tools.jackson group; annotations stays at com.fasterxml 2.x, shared between 2.x/3.x)
+jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-dataformat-yaml = { module = "tools.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
+jackson-core = { module = "tools.jackson.core:jackson-core", version.ref = "jackson" }
+jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations", version = "2.21" }
+handlebars = { module = "com.github.jknack:handlebars", version = "4.5.0" }
+jinjava = { module = "com.hubspot.jinjava:jinjava", version = "2.7.6" }
+guava = { module = "com.google.guava:guava", version = "33.5.0-jre" }
+javalin = { module = "io.javalin:javalin", version.ref = "javalin" }
+
+
+## OpenTelemetry
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "otel" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref = "otel" }
+opentelemetry-sdk-trace = { module = "io.opentelemetry:opentelemetry-sdk-trace", version.ref = "otel" }
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version.ref = "otel" }
+opentelemetry-sdk-metrics = { module = "io.opentelemetry:opentelemetry-sdk-metrics", version.ref = "otel" }
+opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "otel" }
+opentelemetry-logback-mdc = { module = "io.opentelemetry.instrumentation:opentelemetry-logback-mdc-1.0", version.ref = "otelInstrumentation" }
+
+## Logging
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+jul-to-slf4j = { module = "org.slf4j:jul-to-slf4j", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
+logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstashLogback" }
+slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
+log4j-to-slf4j = { module = "org.apache.logging.log4j:log4j-to-slf4j", version.ref = "log4j" }
+grpc-core = { module = "io.grpc:grpc-core", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
+grpc-protoc-gen = { module = "io.grpc:protoc-gen-grpc-java", version.ref = "grpc" }
+json-schema-validator = { module = "com.networknt:json-schema-validator", version = "3.0.1" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+protobuf-java-util = { module = "com.google.protobuf:protobuf-java-util", version.ref = "protobuf" }
+protoc = { module = "com.google.protobuf:protoc", version.ref = "protoc" }
+# protovalidate-java: CEL-based runtime validators emitted symmetrically with
+# protovalidate-es (FE side). Per ADR-09a §"Decision".
+protovalidate-java = { module = "build.buf:protovalidate", version = "0.7.0" }
+netty-bom = { module = "io.netty:netty-bom", version.ref = "netty" }
+
+## Indexing & AI
+onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+onnxruntime-gpu = { module = "com.microsoft.onnxruntime:onnxruntime_gpu", version.ref = "onnxruntime" }
+djl-tokenizers = { module = "ai.djl.huggingface:tokenizers", version.ref = "djl-tokenizers" }
+djl-api = { module = "ai.djl:api", version.ref = "djl-tokenizers" }
+hdrhistogram = { module = "org.hdrhistogram:HdrHistogram", version.ref = "hdrhistogram" }
+commonmark = { module = "org.commonmark:commonmark", version.ref = "commonmark" }
+lz4-java = { module = "at.yawk.lz4:lz4-java", version.ref = "lz4" }
+directory-watcher = { module = "io.methvin:directory-watcher", version.ref = "directory-watcher" }
+
+## Database
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite" }
+
+## System Testing
+oshi-core = { module = "com.github.oshi:oshi-core", version = "6.10.0" }
+assertj-core = { module = "org.assertj:assertj-core", version = "3.27.7" }
+jsonschema-generator = { module = "com.github.victools:jsonschema-generator", version.ref = "jsonschemaGenerator" }
+jsonschema-module-jackson = { module = "com.github.victools:jsonschema-module-jackson", version.ref = "jsonschemaGenerator" }
+typescript-generator-core = { module = "cz.habarta.typescript-generator:typescript-generator-core", version.ref = "typescriptGenerator" }
+
+## Record Builder (annotation processor — generates builders for Java records)
+record-builder-processor = { module = "io.soabase.record-builder:record-builder-processor", version.ref = "recordBuilder" }
+record-builder-core = { module = "io.soabase.record-builder:record-builder-core", version.ref = "recordBuilder" }
+
+## Static Analysis
+findsecbugs = { module = "com.h3xstream.findsecbugs:findsecbugs-plugin", version.ref = "findsecbugs" }
+
+## Concurrency Annotations
+jcip-annotations = { module = "net.jcip:jcip-annotations", version.ref = "jcipAnnotations" }
+
+## Statistics
+commons-math3 = { module = "org.apache.commons:commons-math3", version = "3.6.1" }
+
+## String Similarity & Phonetics (Phase C entity disambiguation)
+commons-text = { module = "org.apache.commons:commons-text", version = "1.15.0" }
+commons-codec = { module = "commons-codec:commons-codec", version = "1.21.0" }
+
+## CEL (Common Expression Language) — Tempdoc 430 Phase 8 rule engine
+## Single fat artifact bundle from dev.cel; pulls in compiler/runtime/protos.
+cel = { module = "dev.cel:cel", version.ref = "cel" }
+
+[bundles]
+lucene = [
+  "lucene-core",
+  "lucene-analysis-common",
+  "lucene-analysis-icu",
+  "lucene-highlighter",
+  "lucene-facet",
+  "lucene-queryparser",
+]
+
+
+[plugins]
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+errorprone = { id = "net.ltgt.errorprone", version.ref = "errorpronePlugin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+protobuf = { id = "com.google.protobuf", version = "0.9.6" }
+licenseReport = { id = "com.github.jk1.dependency-license-report", version = "3.1.4" }
+dependencyAnalysis = { id = "com.autonomousapps.dependency-analysis", version.ref = "dependencyAnalysis" }
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugsPlugin" }
+versions = { id = "com.github.ben-manes.versions", version = "0.54.0" }
+

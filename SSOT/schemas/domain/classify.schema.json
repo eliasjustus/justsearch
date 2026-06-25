@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/domain/classify.schema.json",
+  "title": "Classification Pipeline Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payload_json", "degraded", "reason", "metadata"],
+  "properties": {
+    "payload_json": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "top_intent", "labels"],
+      "properties": {
+        "language": { "type": "string" },
+        "top_intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "confidence", "rationale"],
+          "properties": {
+            "name": { "type": "string" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "rationale": { "type": "string" },
+            "filters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["field", "value"],
+                "properties": {
+                  "field": { "type": "string" },
+                  "value": { "type": ["string", "number", "boolean"] }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "confidence"],
+            "properties": {
+              "name": { "type": "string" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "rationale": { "type": "string" },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["field", "value"],
+                  "properties": {
+                    "field": { "type": "string" },
+                    "value": { "type": ["string", "number", "boolean"] }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "value"],
+            "properties": {
+              "type": { "type": "string" },
+              "value": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        }
+      }
+    },
+    "degraded": { "type": "boolean" },
+    "reason": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["generator", "locale", "reason_code"],
+      "properties": {
+        "generator": { "type": "string" },
+        "locale": { "type": "string" },
+        "reason_code": { "type": "string" },
+        "rules": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

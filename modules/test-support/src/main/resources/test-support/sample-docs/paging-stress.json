@@ -1,0 +1,1848 @@
+{
+  "name": "paging-stress",
+  "paging_config": "point_in_time",
+  "with_ann_vectors": false,
+  "with_indexer_worker": false,
+  "docs": [
+    {
+      "id": "paging-stress-0000",
+      "title": "Books Highlight 1",
+      "body": "Synthetic document paging-stress-0000 showcasing books inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 1000,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0001",
+      "title": "Fashion Highlight 2",
+      "body": "Synthetic document paging-stress-0001 showcasing fashion inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 997,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0002",
+      "title": "Groceries Highlight 3",
+      "body": "Synthetic document paging-stress-0002 showcasing groceries inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 994,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0003",
+      "title": "Beauty Highlight 4",
+      "body": "Synthetic document paging-stress-0003 showcasing beauty inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 991,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0004",
+      "title": "Media Highlight 5",
+      "body": "Synthetic document paging-stress-0004 showcasing media inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 988,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-05T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0005",
+      "title": "Books Highlight 6",
+      "body": "Synthetic document paging-stress-0005 showcasing books inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 985,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-06T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0006",
+      "title": "Fashion Highlight 7",
+      "body": "Synthetic document paging-stress-0006 showcasing fashion inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 982,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-07T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0007",
+      "title": "Groceries Highlight 8",
+      "body": "Synthetic document paging-stress-0007 showcasing groceries inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 979,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-08T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0008",
+      "title": "Beauty Highlight 9",
+      "body": "Synthetic document paging-stress-0008 showcasing beauty inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 976,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-09T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0009",
+      "title": "Media Highlight 10",
+      "body": "Synthetic document paging-stress-0009 showcasing media inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 973,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-10T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0010",
+      "title": "Books Highlight 11",
+      "body": "Synthetic document paging-stress-0010 showcasing books inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 970,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-11T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0011",
+      "title": "Fashion Highlight 12",
+      "body": "Synthetic document paging-stress-0011 showcasing fashion inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 967,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-12T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0012",
+      "title": "Groceries Highlight 13",
+      "body": "Synthetic document paging-stress-0012 showcasing groceries inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 964,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-13T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0013",
+      "title": "Beauty Highlight 14",
+      "body": "Synthetic document paging-stress-0013 showcasing beauty inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 961,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-14T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0014",
+      "title": "Media Highlight 15",
+      "body": "Synthetic document paging-stress-0014 showcasing media inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 958,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-15T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0015",
+      "title": "Books Highlight 16",
+      "body": "Synthetic document paging-stress-0015 showcasing books inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 955,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-16T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0016",
+      "title": "Fashion Highlight 17",
+      "body": "Synthetic document paging-stress-0016 showcasing fashion inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 952,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-17T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0017",
+      "title": "Groceries Highlight 18",
+      "body": "Synthetic document paging-stress-0017 showcasing groceries inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 949,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-18T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0018",
+      "title": "Beauty Highlight 19",
+      "body": "Synthetic document paging-stress-0018 showcasing beauty inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 946,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-19T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0019",
+      "title": "Media Highlight 20",
+      "body": "Synthetic document paging-stress-0019 showcasing media inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 943,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-20T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0020",
+      "title": "Books Highlight 21",
+      "body": "Synthetic document paging-stress-0020 showcasing books inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 940,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-21T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0021",
+      "title": "Fashion Highlight 22",
+      "body": "Synthetic document paging-stress-0021 showcasing fashion inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 937,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-22T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0022",
+      "title": "Groceries Highlight 23",
+      "body": "Synthetic document paging-stress-0022 showcasing groceries inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 934,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-23T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0023",
+      "title": "Beauty Highlight 24",
+      "body": "Synthetic document paging-stress-0023 showcasing beauty inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 931,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-24T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0024",
+      "title": "Media Highlight 25",
+      "body": "Synthetic document paging-stress-0024 showcasing media inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 928,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-25T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0025",
+      "title": "Books Highlight 26",
+      "body": "Synthetic document paging-stress-0025 showcasing books inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 925,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-26T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0026",
+      "title": "Fashion Highlight 27",
+      "body": "Synthetic document paging-stress-0026 showcasing fashion inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 922,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-27T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0027",
+      "title": "Groceries Highlight 28",
+      "body": "Synthetic document paging-stress-0027 showcasing groceries inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 919,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-28T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0028",
+      "title": "Beauty Highlight 29",
+      "body": "Synthetic document paging-stress-0028 showcasing beauty inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 916,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0029",
+      "title": "Media Highlight 30",
+      "body": "Synthetic document paging-stress-0029 showcasing media inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 913,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0030",
+      "title": "Books Highlight 31",
+      "body": "Synthetic document paging-stress-0030 showcasing books inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 910,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0031",
+      "title": "Fashion Highlight 32",
+      "body": "Synthetic document paging-stress-0031 showcasing fashion inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 907,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0032",
+      "title": "Groceries Highlight 33",
+      "body": "Synthetic document paging-stress-0032 showcasing groceries inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 904,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-05T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0033",
+      "title": "Beauty Highlight 34",
+      "body": "Synthetic document paging-stress-0033 showcasing beauty inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 901,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-06T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0034",
+      "title": "Media Highlight 35",
+      "body": "Synthetic document paging-stress-0034 showcasing media inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 898,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-07T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0035",
+      "title": "Books Highlight 36",
+      "body": "Synthetic document paging-stress-0035 showcasing books inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 895,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-08T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0036",
+      "title": "Fashion Highlight 37",
+      "body": "Synthetic document paging-stress-0036 showcasing fashion inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 892,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-09T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0037",
+      "title": "Groceries Highlight 38",
+      "body": "Synthetic document paging-stress-0037 showcasing groceries inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 889,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-10T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0038",
+      "title": "Beauty Highlight 39",
+      "body": "Synthetic document paging-stress-0038 showcasing beauty inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 886,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-11T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0039",
+      "title": "Media Highlight 40",
+      "body": "Synthetic document paging-stress-0039 showcasing media inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 883,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-12T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0040",
+      "title": "Books Highlight 41",
+      "body": "Synthetic document paging-stress-0040 showcasing books inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 880,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-13T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0041",
+      "title": "Fashion Highlight 42",
+      "body": "Synthetic document paging-stress-0041 showcasing fashion inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 877,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-14T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0042",
+      "title": "Groceries Highlight 43",
+      "body": "Synthetic document paging-stress-0042 showcasing groceries inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 874,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-15T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0043",
+      "title": "Beauty Highlight 44",
+      "body": "Synthetic document paging-stress-0043 showcasing beauty inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 871,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-16T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0044",
+      "title": "Media Highlight 45",
+      "body": "Synthetic document paging-stress-0044 showcasing media inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 868,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-17T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0045",
+      "title": "Books Highlight 46",
+      "body": "Synthetic document paging-stress-0045 showcasing books inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 865,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-18T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0046",
+      "title": "Fashion Highlight 47",
+      "body": "Synthetic document paging-stress-0046 showcasing fashion inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 862,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-19T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0047",
+      "title": "Groceries Highlight 48",
+      "body": "Synthetic document paging-stress-0047 showcasing groceries inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 859,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-20T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0048",
+      "title": "Beauty Highlight 49",
+      "body": "Synthetic document paging-stress-0048 showcasing beauty inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 856,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-21T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0049",
+      "title": "Media Highlight 50",
+      "body": "Synthetic document paging-stress-0049 showcasing media inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 853,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-22T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0050",
+      "title": "Books Highlight 51",
+      "body": "Synthetic document paging-stress-0050 showcasing books inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 850,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-23T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0051",
+      "title": "Fashion Highlight 52",
+      "body": "Synthetic document paging-stress-0051 showcasing fashion inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 847,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-24T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0052",
+      "title": "Groceries Highlight 53",
+      "body": "Synthetic document paging-stress-0052 showcasing groceries inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 844,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-25T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0053",
+      "title": "Beauty Highlight 54",
+      "body": "Synthetic document paging-stress-0053 showcasing beauty inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 841,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-26T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0054",
+      "title": "Media Highlight 55",
+      "body": "Synthetic document paging-stress-0054 showcasing media inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 838,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-27T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0055",
+      "title": "Books Highlight 56",
+      "body": "Synthetic document paging-stress-0055 showcasing books inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 835,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-28T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0056",
+      "title": "Fashion Highlight 57",
+      "body": "Synthetic document paging-stress-0056 showcasing fashion inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 832,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0057",
+      "title": "Groceries Highlight 58",
+      "body": "Synthetic document paging-stress-0057 showcasing groceries inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 829,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0058",
+      "title": "Beauty Highlight 59",
+      "body": "Synthetic document paging-stress-0058 showcasing beauty inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 826,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0059",
+      "title": "Media Highlight 60",
+      "body": "Synthetic document paging-stress-0059 showcasing media inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 823,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0060",
+      "title": "Books Highlight 61",
+      "body": "Synthetic document paging-stress-0060 showcasing books inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 820,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-05T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0061",
+      "title": "Fashion Highlight 62",
+      "body": "Synthetic document paging-stress-0061 showcasing fashion inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 817,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-06T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0062",
+      "title": "Groceries Highlight 63",
+      "body": "Synthetic document paging-stress-0062 showcasing groceries inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 814,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-07T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0063",
+      "title": "Beauty Highlight 64",
+      "body": "Synthetic document paging-stress-0063 showcasing beauty inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 811,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-08T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0064",
+      "title": "Media Highlight 65",
+      "body": "Synthetic document paging-stress-0064 showcasing media inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 808,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-09T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0065",
+      "title": "Books Highlight 66",
+      "body": "Synthetic document paging-stress-0065 showcasing books inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 805,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-10T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0066",
+      "title": "Fashion Highlight 67",
+      "body": "Synthetic document paging-stress-0066 showcasing fashion inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 802,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-11T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0067",
+      "title": "Groceries Highlight 68",
+      "body": "Synthetic document paging-stress-0067 showcasing groceries inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 799,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-12T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0068",
+      "title": "Beauty Highlight 69",
+      "body": "Synthetic document paging-stress-0068 showcasing beauty inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 796,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-13T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0069",
+      "title": "Media Highlight 70",
+      "body": "Synthetic document paging-stress-0069 showcasing media inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 793,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-14T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0070",
+      "title": "Books Highlight 71",
+      "body": "Synthetic document paging-stress-0070 showcasing books inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 790,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-15T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0071",
+      "title": "Fashion Highlight 72",
+      "body": "Synthetic document paging-stress-0071 showcasing fashion inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 787,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-16T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0072",
+      "title": "Groceries Highlight 73",
+      "body": "Synthetic document paging-stress-0072 showcasing groceries inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 784,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-17T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0073",
+      "title": "Beauty Highlight 74",
+      "body": "Synthetic document paging-stress-0073 showcasing beauty inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 781,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-18T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0074",
+      "title": "Media Highlight 75",
+      "body": "Synthetic document paging-stress-0074 showcasing media inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 778,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-19T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0075",
+      "title": "Books Highlight 76",
+      "body": "Synthetic document paging-stress-0075 showcasing books inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "books"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 775,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-20T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0076",
+      "title": "Fashion Highlight 77",
+      "body": "Synthetic document paging-stress-0076 showcasing fashion inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "fashion"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 772,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-21T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0077",
+      "title": "Groceries Highlight 78",
+      "body": "Synthetic document paging-stress-0077 showcasing groceries inventory for region latam. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "groceries"
+        ],
+        "region": [
+          "latam"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 769,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-22T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0078",
+      "title": "Beauty Highlight 79",
+      "body": "Synthetic document paging-stress-0078 showcasing beauty inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "beauty"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 766,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-23T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "paging-stress-0079",
+      "title": "Media Highlight 80",
+      "body": "Synthetic document paging-stress-0079 showcasing media inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "media"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 763,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-24T12:00:00Z"
+      },
+      "embedding": []
+    }
+  ]
+}

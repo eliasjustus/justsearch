@@ -1,0 +1,193 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "Audience" : {
+      "type" : "string",
+      "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+    },
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    },
+    "OperationRef" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "OperationRef-nullable" : {
+      "anyOf" : [ {
+        "type" : "null"
+      }, {
+        "$ref" : "#/$defs/OperationRef"
+      } ]
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "audience" : {
+      "$ref" : "#/$defs/Audience"
+    },
+    "category" : {
+      "type" : "string",
+      "enum" : [ "STATE", "EVENT_STREAM", "HISTORY", "TABULAR", "TIMESERIES" ]
+    },
+    "collectionOperations" : {
+      "type" : "array",
+      "items" : {
+        "$ref" : "#/$defs/OperationRef"
+      }
+    },
+    "consumers" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "audience" : {
+            "$ref" : "#/$defs/Audience"
+          },
+          "consumerId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [ "audience", "consumerId" ]
+      }
+    },
+    "emissionPolicy" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "dedupeWindow" : {
+          "type" : [ "string", "null" ],
+          "format" : "duration"
+        },
+        "renderHint" : {
+          "type" : "string",
+          "enum" : [ "EPHEMERAL", "PERSISTED", "REQUIRES_ACK" ]
+        }
+      },
+      "required" : [ "dedupeWindow", "renderHint" ]
+    },
+    "endpoint" : {
+      "type" : "string"
+    },
+    "history" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "capacity" : {
+          "type" : [ "integer", "null" ]
+        },
+        "mode" : {
+          "type" : "string",
+          "enum" : [ "RING_BUFFER", "DURABLE", "EXTERNAL" ]
+        },
+        "onOverflow" : {
+          "type" : "string",
+          "enum" : [ "EVICT_OLDEST", "BACKPRESSURE", "DROP_NEWEST" ]
+        },
+        "resumeWindow" : {
+          "type" : "string",
+          "format" : "duration"
+        },
+        "retention" : {
+          "type" : [ "string", "null" ],
+          "format" : "duration"
+        }
+      },
+      "required" : [ "capacity", "mode", "onOverflow", "resumeWindow", "retention" ]
+    },
+    "id" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "itemOperations" : {
+      "type" : "array",
+      "items" : {
+        "$ref" : "#/$defs/OperationRef"
+      }
+    },
+    "kind" : {
+      "type" : "string"
+    },
+    "presentation" : {
+      "type" : "object",
+      "properties" : {
+        "category" : {
+          "type" : [ "string", "null" ]
+        },
+        "descriptionKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        },
+        "iconHint" : {
+          "type" : [ "string", "null" ]
+        },
+        "labelKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        }
+      },
+      "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+    },
+    "primaryKey" : {
+      "type" : "string"
+    },
+    "privacy" : {
+      "type" : "object",
+      "properties" : {
+        "loopbackOnly" : {
+          "type" : "boolean"
+        },
+        "pathPolicy" : {
+          "type" : "string",
+          "enum" : [ "NO_PATHS", "RAW", "HASHED_REQUIRES_RESOLVER" ]
+        },
+        "resolver" : {
+          "$ref" : "#/$defs/OperationRef-nullable"
+        }
+      },
+      "required" : [ "loopbackOnly", "pathPolicy", "resolver" ]
+    },
+    "provenance" : {
+      "type" : "object",
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "identity" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "signature" : {
+              "type" : [ "string", "null" ]
+            },
+            "verified" : {
+              "type" : "boolean"
+            }
+          },
+          "required" : [ "signature", "verified" ]
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "identity", "tier", "version" ]
+    },
+    "recovery" : {
+      "$ref" : "#/$defs/OperationRef-nullable"
+    },
+    "role" : {
+      "type" : "string",
+      "enum" : [ "PRODUCT", "DIAGNOSTIC", "TRUST" ]
+    },
+    "schema" : {
+      "type" : "string"
+    },
+    "subscriptionMode" : {
+      "type" : "string",
+      "enum" : [ "ONE_SHOT", "SSE_STREAM", "POLLING" ]
+    },
+    "type" : {
+      "type" : "string"
+    }
+  },
+  "required" : [ "audience", "category", "collectionOperations", "consumers", "emissionPolicy", "endpoint", "history", "id", "itemOperations", "kind", "presentation", "primaryKey", "privacy", "provenance", "recovery", "role", "schema", "subscriptionMode", "type" ]
+}

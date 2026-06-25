@@ -1,0 +1,109 @@
+package io.justsearch.indexerworker.util;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class IndexRootLockTest {
+
+  @TempDir Path tempDir;
+
+  @Test
+  void acquire_succeeds() throws Exception {
+    Path indexBase = tempDir.resolve("index").resolve("default");
+    Files.createDirectories(indexBase);
+
+    IndexRootLock lock = new IndexRootLock(indexBase);
+    lock.acquire();
+    lock.close();
+  }
+
+  @Test
+  void acquire_failsWhenAlreadyHeld() throws Exception {
+    Path indexBase = tempDir.resolve("index2").resolve("default");
+    Files.createDirectories(indexBase);
+
+    IndexRootLock lock1 = new IndexRootLock(indexBase);
+    lock1.acquire();
+    try {
+      IndexRootLock lock2 = new IndexRootLock(indexBase);
+      assertThrows(IOException.class, lock2::acquire);
+    } finally {
+      lock1.close();
+    }
+  }
+
+  @Test
+  void close_allowsReacquire() throws Exception {
+    Path indexBase = tempDir.resolve("index3").resolve("default");
+    Files.createDirectories(indexBase);
+
+    IndexRootLock lock1 = new IndexRootLock(indexBase);
+    lock1.acquire();
+    lock1.close();
+
+    IndexRootLock lock2 = new IndexRootLock(indexBase);
+    lock2.acquire();
+    lock2.close();
+  }
+
+  @Test
+  void acquire_recoversFromDeadProcess() throws Exception {
+    Path indexDir = tempDir.resolve("index4");
+    Files.createDirectories(indexDir);
+    Path indexBase = indexDir.resolve("default");
+    Files.createDirectories(indexBase);
+
+    // Write a fake lock file with a non-existent PID.
+    Path lockFile = indexDir.resolve("default.index.lock");
+    Files.writeString(lockFile, "pid=99999999\nstarted_at=2025-01-01T00:00:00Z\n");
+
+    IndexRootLock lock = new IndexRootLock(indexBase);
+    assertDoesNotThrow(lock::acquire);
+    lock.close();
+  }
+
+  @Test
+  void acquire_recoversFromRecentlyDeadProcess() throws Exception {
+    Path indexDir = tempDir.resolve("index5");
+    Files.createDirectories(indexDir);
+    Path indexBase = indexDir.resolve("default");
+    Files.createDirectories(indexBase);
+
+    // Spawn a real process and wait for it to exit
+    Process p = new ProcessBuilder("cmd.exe", "/c", "exit", "0").start();
+    p.waitFor();
+    long deadPid = p.pid();
+
+    // Write lock file with the real (now-dead) PID
+    Path lockFile = indexDir.resolve("default.index.lock");
+    Files.writeString(lockFile, "pid=" + deadPid + "\nstarted_at=2025-01-01T00:00:00Z\n");
+
+    IndexRootLock lock = new IndexRootLock(indexBase);
+    assertDoesNotThrow(lock::acquire);
+    lock.close();
+  }
+
+  @Test
+  void parsePidFromMetadata_validContent() {
+    assertEquals(42L, IndexRootLock.parsePidFromMetadata("pid=42\nstarted_at=2025-01-01T00:00:00Z\n"));
+  }
+
+  @Test
+  void parsePidFromMetadata_nullContent() {
+    assertNull(IndexRootLock.parsePidFromMetadata(null));
+  }
+
+  @Test
+  void parseStartedAtFromMetadata_validInstant() {
+    Long result = IndexRootLock.parseStartedAtFromMetadata("pid=1\nstarted_at=2025-06-15T12:00:00Z\n");
+    assertEquals(java.time.Instant.parse("2025-06-15T12:00:00Z").toEpochMilli(), result);
+  }
+}

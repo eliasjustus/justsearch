@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="JustSearch PMD Ruleset — CLI tooling"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+  <description>
+    Ruleset for command-line tooling modules (e.g., `ssot-tools`). Matches the main
+    JustSearch ruleset (`config/pmd/ruleset.xml`) except for two rules that are false
+    positives on CLI entry points: `SystemPrintln` (CLI tools legitimately write to
+    `System.out`/`System.err` for human-readable output) and `DoNotTerminateVM`
+    (CLI tools legitimately call `System.exit` to signal success/failure to the shell).
+    Modules opt in by pointing their `pmdMain` task's `ruleSetFiles` at this file.
+
+    KEEP IN SYNC with `ruleset.xml` — rules are inlined here rather than referenced
+    because PMD's `rule ref` resolves against the classpath, not the working directory.
+  </description>
+
+  <!-- Codestyle -->
+  <rule ref="category/java/codestyle.xml/UnnecessaryFullyQualifiedName"/>
+
+  <!-- Error-prone patterns (excludes DoNotTerminateVM vs main ruleset) -->
+  <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+      <property name="allowExceptionNameRegex" value="^expected$"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/errorprone.xml/EqualsNull"/>
+  <rule ref="category/java/errorprone.xml/ImplicitSwitchFallThrough"/>
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+  <rule ref="category/java/errorprone.xml/ReturnFromFinallyBlock"/>
+  <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+  <rule ref="category/java/errorprone.xml/UselessOperationOnImmutable"/>
+
+  <!-- Multithreading -->
+  <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+  <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+  <rule ref="category/java/multithreading.xml/NonThreadSafeSingleton"/>
+
+  <!-- Security -->
+  <rule ref="category/java/security.xml/HardCodedCryptoKey"/>
+  <rule ref="category/java/security.xml/InsecureCryptoIv"/>
+
+  <!-- Best practices - unused code detection (excludes SystemPrintln vs main ruleset) -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UnusedAssignment"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+</ruleset>

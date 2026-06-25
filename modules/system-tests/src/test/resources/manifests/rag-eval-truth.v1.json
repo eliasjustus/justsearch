@@ -1,0 +1,333 @@
+{
+  "$schema": "rag-eval-truth-v1",
+  "description": "Truth manifest for RAG answer quality evaluation. Each entry defines a question, source documents, expected answer content, and citation expectations.",
+  "corpus": {
+    "base_dir": "corpus/rag/",
+    "documents": [
+      {
+        "id": "hikari-connection-pool",
+        "file": "hikari-connection-pool.txt"
+      },
+      {
+        "id": "transformer-architecture",
+        "file": "transformer-architecture.txt"
+      },
+      {
+        "id": "gradient-descent",
+        "file": "gradient-descent.txt"
+      },
+      {
+        "id": "puppy-vaccination",
+        "file": "puppy-vaccination.txt"
+      },
+      {
+        "id": "java-generics",
+        "file": "java-generics.txt"
+      },
+      {
+        "id": "data-pipeline-architecture",
+        "file": "data-pipeline-architecture.txt"
+      }
+    ]
+  },
+  "queries": [
+    {
+      "id": "rag-001",
+      "question": "What is the recommended maximum pool size for HikariCP on a 4-core server?",
+      "corpus_docs": ["hikari-connection-pool"],
+      "expected_source_docs": ["hikari-connection-pool"],
+      "golden_answer": "For a 4-core server with SSD storage, HikariCP recommends a maximum pool size of approximately 10 connections, calculated as (2 * CPU cores) + number of disk spindles.",
+      "required_facts": ["pool size", "10 connections"],
+      "forbidden_facts": ["100 connections", "unlimited"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" }
+      ]
+    },
+    {
+      "id": "rag-002",
+      "question": "What is the attention formula used in the Transformer architecture?",
+      "corpus_docs": ["transformer-architecture"],
+      "expected_source_docs": ["transformer-architecture"],
+      "golden_answer": "The attention formula is Attention(Q,K,V) = softmax(QK^T / sqrt(d_k)) * V, where Q is Query, K is Key, V is Value, and d_k is the dimension of the key vectors.",
+      "required_facts": ["softmax", "Q", "K", "V"],
+      "forbidden_facts": ["sigmoid", "tanh activation"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "transformer-architecture" }
+      ]
+    },
+    {
+      "id": "rag-003",
+      "question": "What are the default beta values for the Adam optimizer?",
+      "corpus_docs": ["gradient-descent"],
+      "expected_source_docs": ["gradient-descent"],
+      "golden_answer": "The Adam optimizer uses beta1=0.9 for the first moment (momentum) and beta2=0.999 for the second moment (squared gradient). The default learning rate is 0.001.",
+      "required_facts": ["beta1", "0.9", "0.999"],
+      "forbidden_facts": ["0.5", "beta1=0.99", "0.95", "0.98"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "gradient-descent" }
+      ]
+    },
+    {
+      "id": "rag-004",
+      "question": "When should puppies receive their first rabies vaccination?",
+      "corpus_docs": ["puppy-vaccination"],
+      "expected_source_docs": ["puppy-vaccination"],
+      "golden_answer": "Puppies should receive their first rabies vaccination at 12-16 weeks of age. The rabies vaccine is the only pet vaccine required by law in all 50 US states.",
+      "required_facts": ["rabies", "12-16", "weeks"],
+      "forbidden_facts": ["6 months", "birth"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "puppy-vaccination" }
+      ]
+    },
+    {
+      "id": "rag-005",
+      "question": "What is type erasure in Java generics?",
+      "corpus_docs": ["java-generics"],
+      "expected_source_docs": ["java-generics"],
+      "golden_answer": "Type erasure is the process where the Java compiler removes all generic type information during compilation, replacing type parameters with their bounds or Object if unbounded. This means List<String> and List<Integer> are the same class at runtime.",
+      "required_facts": ["compiler", "runtime", "Object"],
+      "forbidden_facts": ["reified", "preserved at runtime", "generics are preserved"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "java-generics" }
+      ]
+    },
+    {
+      "id": "rag-006",
+      "question": "What is the difference between ETL and ELT data pipeline patterns?",
+      "corpus_docs": ["data-pipeline-architecture"],
+      "expected_source_docs": ["data-pipeline-architecture"],
+      "golden_answer": "ETL extracts data, transforms it, then loads it into the destination. ELT loads raw data first, then transforms in the destination. ELT is preferred for cloud-native architectures because it leverages the compute power of modern data warehouses.",
+      "required_facts": ["extract", "transform", "load"],
+      "forbidden_facts": ["real-time only", "deprecated"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "data-pipeline-architecture" }
+      ]
+    },
+    {
+      "id": "rag-007",
+      "question": "Who created HikariCP and when did it become the Spring Boot default?",
+      "corpus_docs": ["hikari-connection-pool"],
+      "expected_source_docs": ["hikari-connection-pool"],
+      "golden_answer": "HikariCP was created by Brett Wooldridge in 2013 and became the default connection pool in Spring Boot since version 2.0.",
+      "required_facts": ["Brett Wooldridge", "2013", "Spring Boot"],
+      "forbidden_facts": ["Apache Foundation", "2020"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" }
+      ]
+    },
+    {
+      "id": "rag-008",
+      "question": "What are the parameters of the original Transformer base model?",
+      "corpus_docs": ["transformer-architecture"],
+      "expected_source_docs": ["transformer-architecture"],
+      "golden_answer": "The original Transformer base model uses d_model=512, 6 encoder and 6 decoder layers, 8 attention heads, d_ff=2048, totaling approximately 65 million parameters.",
+      "required_facts": ["512", "layers", "attention heads", "65 million"],
+      "forbidden_facts": ["1 billion", "12 layers", "16 heads"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "transformer-architecture" }
+      ]
+    },
+    {
+      "id": "rag-009",
+      "question": "How does Apache Kafka ensure reliable data delivery in streaming pipelines?",
+      "corpus_docs": ["data-pipeline-architecture"],
+      "expected_source_docs": ["data-pipeline-architecture"],
+      "golden_answer": "Apache Kafka provides exactly-once delivery semantics since version 0.11. For reliability, streaming pipelines also use idempotency for safe retries and dead letter queues for handling failed records.",
+      "required_facts": ["exactly-once", "Kafka", "0.11"],
+      "forbidden_facts": ["at-most-once only", "no guarantees"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "data-pipeline-architecture" }
+      ]
+    },
+    {
+      "id": "rag-010",
+      "question": "What does the PECS principle mean in Java generics?",
+      "corpus_docs": ["java-generics"],
+      "expected_source_docs": ["java-generics"],
+      "golden_answer": "PECS stands for Producer-Extends, Consumer-Super. Use <? extends T> when reading from a structure (producer) and <? super T> when writing to a structure (consumer). The mnemonic was coined by Joshua Bloch in Effective Java.",
+      "required_facts": ["Producer", "Consumer", "extends", "super"],
+      "forbidden_facts": ["deprecated", "removed in Java 11"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "java-generics" }
+      ]
+    },
+    {
+      "id": "rag-011",
+      "question": "What reliability strategies do HikariCP and Apache Kafka share in common for handling failures?",
+      "corpus_docs": ["hikari-connection-pool", "data-pipeline-architecture"],
+      "expected_source_docs": ["hikari-connection-pool", "data-pipeline-architecture"],
+      "golden_answer": "Both HikariCP and Apache Kafka use timeout-based failure detection and retry strategies. HikariCP uses connection timeouts (30s) and validation queries to detect dead connections. Kafka uses idempotent producers for safe retries and dead letter queues for failed records. Both systems prioritize graceful degradation over hard failures.",
+      "required_facts": ["timeout", "retry", "HikariCP", "Kafka"],
+      "forbidden_facts": ["no timeout", "at-most-once only"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" },
+        { "marker": 2, "source_doc": "data-pipeline-architecture" }
+      ]
+    },
+    {
+      "id": "rag-012",
+      "question": "What is the maximum number of concurrent connections PostgreSQL supports on a server with 16GB RAM?",
+      "corpus_docs": [],
+      "expected_source_docs": [],
+      "golden_answer": "not found",
+      "required_facts": ["not found||not specified||not in the"],
+      "forbidden_facts": ["100 connections", "unlimited", "1000", "16000 connections", "512 connections"],
+      "expected_citations": []
+    },
+    {
+      "id": "rag-013",
+      "question": "How should canine immunization schedules be structured for young dogs?",
+      "corpus_docs": ["puppy-vaccination"],
+      "expected_source_docs": ["puppy-vaccination"],
+      "golden_answer": "Young dogs should follow a core vaccination schedule starting with DHPP at 6-8 weeks, with boosters at 10-12 and 14-16 weeks. Rabies vaccine is given at 12-16 weeks. Non-core vaccines like Bordetella and Leptospirosis are based on risk factors.",
+      "required_facts": ["DHPP||distemper", "weeks", "rabies"],
+      "forbidden_facts": ["no vaccines needed", "birth"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "puppy-vaccination" }
+      ],
+      "_comment": "Semantic-only query: no BM25 keyword overlap with corpus. Relies on vector similarity for retrieval."
+    },
+    {
+      "id": "rag-014",
+      "question": "What techniques help neural networks learn faster?",
+      "corpus_docs": ["gradient-descent"],
+      "expected_source_docs": ["gradient-descent"],
+      "golden_answer": "Neural networks learn faster through advanced optimizers like Adam, which adapts learning rates per parameter using momentum and RMSProp. Mini-batch gradient descent balances speed and stability by processing 32-128 samples per update.",
+      "required_facts": ["Adam||adam", "learning rate||learning rates"],
+      "forbidden_facts": ["no optimization needed"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "gradient-descent" }
+      ],
+      "_comment": "Semantic-only query: no BM25 keyword overlap with corpus. Relies on vector similarity for retrieval."
+    },
+    {
+      "id": "rag-015",
+      "question": "How do applications maintain persistent storage connections efficiently?",
+      "corpus_docs": ["hikari-connection-pool"],
+      "expected_source_docs": ["hikari-connection-pool"],
+      "golden_answer": "Applications use connection pools like HikariCP to maintain persistent database connections efficiently. Key settings include maximumPoolSize (2 * CPU cores + disk spindles), connectionTimeout (30s default), and maxLifetime (30 min default).",
+      "required_facts": ["HikariCP||hikari||pool", "timeout||connection"],
+      "forbidden_facts": ["no pooling needed"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" }
+      ],
+      "_comment": "Semantic-only query: no BM25 keyword overlap with corpus. Relies on vector similarity for retrieval."
+    },
+    {
+      "id": "rag-016",
+      "question": "What are HikariCP default values for connectionTimeout, idleTimeout, and maxLifetime?",
+      "corpus_docs": ["hikari-connection-pool"],
+      "expected_source_docs": ["hikari-connection-pool"],
+      "golden_answer": "HikariCP defaults are connectionTimeout=30000 milliseconds (30 seconds), idleTimeout=600000 milliseconds (10 minutes), and maxLifetime=1800000 milliseconds (30 minutes).",
+      "required_facts": ["30000||30 seconds", "600000||10 minutes", "1800000||30 minutes"],
+      "forbidden_facts": ["3000", "60000", "180000"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" }
+      ]
+    },
+    {
+      "id": "rag-017",
+      "question": "In which year was the Transformer introduced, and where was the paper published?",
+      "corpus_docs": ["transformer-architecture"],
+      "expected_source_docs": ["transformer-architecture"],
+      "golden_answer": "The Transformer was introduced in 2017, and the paper 'Attention Is All You Need' was published at NeurIPS.",
+      "required_facts": ["2017", "NeurIPS", "Attention Is All You Need"],
+      "forbidden_facts": ["2019", "ICML", "CVPR"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "transformer-architecture" }
+      ]
+    },
+    {
+      "id": "rag-018",
+      "question": "Which Apache technology in the corpus provides exactly-once delivery semantics since version 0.11?",
+      "corpus_docs": ["data-pipeline-architecture"],
+      "expected_source_docs": ["data-pipeline-architecture"],
+      "golden_answer": "Apache Kafka provides exactly-once delivery semantics, and this capability is available since Kafka version 0.11.",
+      "required_facts": ["Apache Kafka||Kafka", "exactly-once", "0.11"],
+      "forbidden_facts": ["Apache Spark", "Apache Airflow", "Apache Flink"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "data-pipeline-architecture" }
+      ]
+    },
+    {
+      "id": "rag-019",
+      "question": "Which came first: Adam optimizer or the Transformer architecture?",
+      "corpus_docs": ["gradient-descent", "transformer-architecture"],
+      "expected_source_docs": ["gradient-descent", "transformer-architecture"],
+      "golden_answer": "Adam came first. Adam was introduced in 2014, while the Transformer architecture was introduced in 2017.",
+      "required_facts": ["Adam", "2014", "Transformer", "2017"],
+      "forbidden_facts": ["Transformer came first", "Adam introduced in 2018"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "gradient-descent" },
+        { "marker": 2, "source_doc": "transformer-architecture" }
+      ]
+    },
+    {
+      "id": "rag-020",
+      "question": "Name one timeout mechanism from HikariCP and one retry-safety mechanism from streaming pipelines.",
+      "corpus_docs": ["hikari-connection-pool", "data-pipeline-architecture"],
+      "expected_source_docs": ["hikari-connection-pool", "data-pipeline-architecture"],
+      "golden_answer": "HikariCP uses a connection timeout mechanism (connectionTimeout, default 30 seconds). Streaming pipelines use retry-safety mechanisms such as idempotency and dead letter queues.",
+      "required_facts": ["connectionTimeout||30 seconds", "idempotency||dead letter queue"],
+      "forbidden_facts": ["no timeout", "at-most-once only"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "hikari-connection-pool" },
+        { "marker": 2, "source_doc": "data-pipeline-architecture" }
+      ]
+    },
+    {
+      "id": "rag-021",
+      "question": "What GPU model did Vaswani et al. use to train the original Transformer?",
+      "corpus_docs": [],
+      "expected_source_docs": [],
+      "golden_answer": "not found",
+      "required_facts": ["not found||not specified||not in the"],
+      "forbidden_facts": ["NVIDIA V100", "A100", "TPU v3", "8 GPUs"],
+      "expected_citations": []
+    },
+    {
+      "id": "rag-022",
+      "question": "Who coined the PECS mnemonic, and who created HikariCP?",
+      "corpus_docs": ["java-generics", "hikari-connection-pool"],
+      "expected_source_docs": ["java-generics", "hikari-connection-pool"],
+      "golden_answer": "Joshua Bloch coined the PECS mnemonic, and Brett Wooldridge created HikariCP.",
+      "required_facts": ["Joshua Bloch", "Brett Wooldridge", "PECS", "HikariCP"],
+      "forbidden_facts": ["Vaswani", "Kingma"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "java-generics" },
+        { "marker": 2, "source_doc": "hikari-connection-pool" }
+      ]
+    },
+    {
+      "id": "rag-023",
+      "question": "Why do Java collections lose parameter type details once compiled?",
+      "corpus_docs": ["java-generics"],
+      "expected_source_docs": ["java-generics"],
+      "golden_answer": "Java collections lose parameter type details because of type erasure: the compiler removes generic type information, and runtime uses bounds or Object.",
+      "required_facts": ["type erasure||compiler removes", "runtime", "Object||bounds"],
+      "forbidden_facts": ["reified generics", "preserved at runtime"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "java-generics" }
+      ]
+    },
+    {
+      "id": "rag-024",
+      "question": "When can puppies safely socialize in public areas after vaccinations?",
+      "corpus_docs": ["puppy-vaccination"],
+      "expected_source_docs": ["puppy-vaccination"],
+      "golden_answer": "Puppies can safely socialize in public areas two weeks after their final DHPP booster, which is around 18 weeks of age, and should avoid contact with unvaccinated dogs until then.",
+      "required_facts": ["2 weeks", "final DHPP booster||18 weeks", "public areas||unvaccinated dogs"],
+      "forbidden_facts": ["immediately after first shot", "6 weeks"],
+      "expected_citations": [
+        { "marker": 1, "source_doc": "puppy-vaccination" }
+      ]
+    }
+  ],
+  "thresholds": {
+    "fact_coverage_min": 0.25,
+    "forbidden_fact_rate_max": 0.10,
+    "answer_similarity_min": 0.15,
+    "faithfulness_min": 0.30,
+    "notes": "Qwen3-4B thresholds calibrated to actual baseline (fact=0.5, hall=0.0, sim=0.294 stub-jaccard, faith=0.667). Thresholds set at ~50% of baseline to catch catastrophic regressions, not enforce absolute quality."
+  }
+}

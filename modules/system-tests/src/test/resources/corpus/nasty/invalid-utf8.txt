@@ -1,0 +1,3 @@
+This file contains invalid UTF-8 sequences: ���
+And some more text after the invalid bytes.
+Normal content should still be extractable.

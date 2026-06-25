@@ -1,0 +1,6 @@
+{
+  "schema": "pit-strength-report.v1",
+  "seams": {
+    "hybrid-fusion": { "strength": 60, "killed": 130, "covered": 215, "noCoverage": 14 }
+  }
+}

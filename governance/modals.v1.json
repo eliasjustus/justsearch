@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "description": "574 §22.G — the modal-contract register (Move 4). The FULL modal contract (native <dialog>.showModal()/close() → focus-trap + inert + Top Layer, PLUS scroll-lock + focus-restore) is bound BY CONSTRUCTION: every modal host composes the ONE `ModalController` primitive, whose open()/close() fire the whole contract atomically. Because a governed adopter routes its open/close through the controller, a half-wired modal (showModal without the modality half) does not exist to drift — closing the hole in the §22.D `check-modality-contract` gate, which could only check COMPOSITION of ModalityController, not that enter()/exit() were CALLED. This gate locks the catalog's POSITIVE coverage: every `adopters` entry composes `ModalController`. A NEW modal is a discovery step — add the row + compose the primitive. (`check-modality-contract` remains the backstop: any raw showModal anywhere must still compose ModalityController, now satisfied inside ModalController.)",
+  "primitive": {
+    "module": "modules/ui-web/src/shell-v0/primitives/modalController.ts",
+    "symbol": "ModalController"
+  },
+  "adopters": [
+    "modules/ui-web/src/shell-v0/components/ConfirmDialog.ts",
+    "modules/ui-web/src/shell-v0/components/ElicitHost.ts",
+    "modules/ui-web/src/shell-v0/components/MacroDryRun.ts",
+    "modules/ui-web/src/shell-v0/components/EffectAuditLog.ts",
+    "modules/ui-web/src/shell-v0/components/AuthorizationHost.ts"
+  ]
+}

@@ -1,0 +1,220 @@
+/build/
+/.gradle/
+/.idea/
+*.iml
+.gradle/
+.DS_Store
+/out/
+**/native-bin/
+
+# Test failure dumps (accidentally created at repo root)
+/0/
+
+# Ignore Gradle build outputs in all subprojects
+**/build/
+**/.gradle/
+
+# Ignore compiled plugin outputs for included build
+build-logic/bin/
+
+# Launcher runtime artifacts
+modules/app-launcher/app.data_dir_IS_UNDEFINED/
+modules/app-launcher/\$\{user.home/**
+# Launcher smoke profile output outside the repo root
+.justsearch-smoke/
+
+# Node modules
+node_modules/
+
+# Web build outputs (ui-web and copied resources)
+modules/ui-web/dist/
+modules/ui/src/main/resources/web/
+modules/ui/build/headless-dist/
+
+# Local tool caches (JDK/Node) — do not commit
+/.tools/
+
+# Do not version generated documentation artifacts
+docs/_generated/
+
+
+
+
+# Distribution / reports
+dist/
+# Discipline-gate fixtures need to ship dist/ payloads to exercise the
+# ui-bundle enforcer's metric-computation path.
+!scripts/governance/_fixtures/**/dist/
+!scripts/governance/_fixtures/**/dist/**
+reports/*
+!reports/phase6a/
+!reports/phase6a/**
+!reports/phase13/
+!reports/phase13/**
+
+# Docs site output
+site/
+
+# Node (nested SSOT tools)
+SSOT/tools/node_modules/
+
+# Editor settings
+.vscode/
+
+# Archives and large blobs
+*.zip
+*.dll
+*.so
+*.dylib
+
+
+# Logs and dumps (large, unimportant)
+*.log
+nohup.out
+*.jfr
+*.hprof
+heapdump*
+*.dmp
+
+# Local UI data/evidence
+/tmp/ui-data/
+/tmp/ui-automation/
+run_log.txt
+
+# Test artifacts and temporary dumps
+tree_*.json
+act_*.json
+click_*.json
+seed_*.log
+results_*.json
+final_*.json
+wait_*.json
+debug_*.json
+initial_*.json
+retry_*.json
+verify_*.ps1
+test_automation.py
+app.data_dir_IS_UNDEFINED/
+*.png
+
+# Development session artifacts
+*.bak
+*.out
+*.err
+/task.md
+**/debug_llama*.txt
+/.tmp_*
+ui_tree*.json
+config_cache_test*.txt
+e2e_*.txt
+test_output*.txt
+
+# Dev-stack runtime data (databases, logs, locks, port files)
+.dev-data/
+
+# Orphaned/temp directories at root
+/.tmp-*
+/tempdocs/
+/JustSearch/
+/tmp/
+
+# Module-specific temporary directories (dev artifacts, test screenshots, evidence bundles)
+modules/*/tmp/
+
+# Browser automation caches (Puppeteer/Chromium)
+scripts/**/.local-chromium/
+scripts/**/.cache/
+# `chrome/` was historically over-broad (intended for browser
+# binaries; ended up excluding source `modules/ui-web/src/shell-v0/chrome/`
+# which holds the Lit chrome — Stage/Rail/Shell). 477-execution
+# critical-analysis caught this. Allow the source chrome dir
+# explicitly.
+chrome/
+!modules/ui-web/src/shell-v0/chrome/
+!modules/ui-web/src/shell-v0/chrome/**
+**/chrome-linux*/
+
+# Claude Code temporary directories
+tmpclaude-*/
+nul
+
+# Cargo local config (machine-specific build flags)
+**/.cargo/
+
+# Claude Code local settings (may contain tokens or permissions)
+.claude/settings.local.json
+# Auto-generated compaction state (written by compact-restore.mjs, session-specific)
+.claude/rules/compaction-state.md
+# Runtime lock files (e.g. .claude/scheduled_tasks.lock) — session-local state;
+# committing causes conflicts between concurrent Claude sessions.
+.claude/*.lock
+.mcp.json
+
+# Local agent evidence captures
+agent-review/
+
+# Inference runtime artifacts (model ID written at runtime). Slice 518's
+# inference-transitions NDJSON sidecar + head crash-dump writer can also
+# land at the repo root when the head launches from there during dev.
+modules/app-inference/inference-model-id.txt
+/inference-model-id.txt
+/crashes/
+/telemetry/
+
+# Playwright test result caches
+modules/ui-web/test-results-codex/
+
+# Extracted/decompiled Gradle plugin sources (appear at repo root)
+net/
+
+# Mangled Windows-path temp files (D：code... with Unicode fullwidth colon)
+D*codeJustSearch*
+modules/ui/inference-model-id.txt
+
+# Stale compiled classes outside build directories
+/io/
+
+# GGUF model files at repo root (should be under models/)
+*.gguf
+
+# Test artifacts tracked by mistake
+/test-results/
+/profiles/
+/health.json
+/search.json
+/test-output.txt
+/test-req.json
+
+# JVM crash dumps (hs_err, replay logs)
+hs_err_pid*.log
+replay_pid*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Eclipse IDE
+.project
+.settings/
+
+# Claude Code worktree state (session-specific, not source)
+.claude/worktrees/
+# Claude Code scratch (session-specific, often full checkouts of other repos)
+.claude/scratch/
+# Mirror of .claude/skills/ created by some agent tools
+.agents/
+
+# Evaluation datasets (large, fetched on demand)
+datasets/
+
+# Eval toolkit scratch (session-specific outputs)
+scripts/jseval/tmp/
+
+# stray commit-message temp files
+.git-msg.tmp
+
+# jqwik (PBT) persisted failing-sample DB — local, not committed (tempdoc 554)
+.jqwik-database

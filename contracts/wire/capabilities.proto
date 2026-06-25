@@ -1,0 +1,80 @@
+// Capabilities handshake response (slice 443).
+//
+// LSP-style capability handshake declaration. The FE pre-fetches message
+// catalogs at handshake time. Phase 6 of slice 3a-1-8 extends ServerCapabilities
+// with a `contract_versions` map per-Category.
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+import "buf/validate/validate.proto";
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+// Top-level capabilities response.
+//
+// Wire field naming preserves snake_case via [json_name] (existing wire
+// format uses snake_case for envelope fields like `schema_versions`).
+message CapabilitiesView {
+  SchemaVersions schema_versions = 1 [json_name = "schema_versions"];
+  repeated PromptTemplateView prompt_templates = 2 [json_name = "prompt_templates"];
+  repeated PluginView plugins = 3;
+  SourceMetadata source = 4;
+  ServerCapabilities server_capabilities = 5 [json_name = "serverCapabilities"];
+}
+
+message ServerCapabilities {
+  map<string, PrimitiveDescriptor> primitives = 1;
+  int64 catalog_version = 2 [json_name = "catalogVersion"];
+  string protocol_version = 3 [json_name = "protocolVersion"];
+  I18nCapability i18n = 4;
+  StreamingEnvelopeCapability streaming_envelope = 5 [json_name = "streamingEnvelope"];
+  // Phase 6 of slice 3a-1-8 populates this. V1: `{ "wire": "0.1.0" }`.
+  // Future Categories (plugin, catalog, etc.) add entries without breaking
+  // the wire shape.
+  map<string, string> contract_versions = 6 [json_name = "contractVersions"];
+}
+
+message I18nCapability {
+  int32 version = 1;
+  repeated string available_locales = 2 [json_name = "availableLocales"];
+}
+
+message StreamingEnvelopeCapability {
+  int32 version = 1;
+}
+
+message PrimitiveDescriptor {
+  string current = 1;
+  string endpoint = 2;
+  string message_catalog_url = 3 [json_name = "messageCatalogUrl"];
+  bool dynamic_registration = 4 [json_name = "dynamicRegistration"];
+}
+
+message SchemaVersions {
+  string schema_ver = 1 [json_name = "schema_ver"];
+  string grammar_ver = 2 [json_name = "grammar_ver"];
+  // template_ver is variably-typed (string or int) on the wire; modeled as
+  // string here. Compatibility shim in the Java facade record.
+  string template_ver = 3 [json_name = "template_ver"];
+}
+
+message PromptTemplateView {
+  string task_id = 1 [json_name = "task_id"];
+  string template_ver = 2 [json_name = "template_ver"];
+  string hash = 3;
+}
+
+message PluginView {
+  string id = 1;
+  string version = 2;
+  repeated string spis = 3;
+}
+
+message SourceMetadata {
+  string phase = 1;
+  string schema_ver = 2 [json_name = "schema_ver"];
+  string generated_at = 3 [json_name = "generated_at"];
+}

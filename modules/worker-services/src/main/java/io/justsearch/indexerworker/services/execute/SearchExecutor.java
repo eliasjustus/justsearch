@@ -1,0 +1,1089 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.indexerworker.services.execute;
+
+import io.justsearch.adapters.lucene.runtime.AdaptiveWeightSelector;
+import io.justsearch.adapters.lucene.runtime.ChunkSearchOps;
+import io.justsearch.adapters.lucene.runtime.HitProvenanceProjector;
+import io.justsearch.adapters.lucene.runtime.HybridFusionUtils;
+import io.justsearch.adapters.lucene.runtime.HybridSearchOps;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
+import io.justsearch.adapters.lucene.runtime.QueryFilterBuilder;
+import io.justsearch.adapters.lucene.runtime.ReadPathOps;
+import io.justsearch.adapters.lucene.runtime.TextQueryOps;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.indexerworker.grpc.TracingServerInterceptor;
+import io.justsearch.indexerworker.services.SearchOutcome;
+import io.justsearch.indexerworker.services.SearchReasonCode;
+import io.justsearch.indexerworker.services.input.SearchInputs;
+import io.justsearch.indexerworker.services.plan.ChunkMergeDirective;
+import io.justsearch.indexerworker.services.plan.ChunkMergeInputs;
+import io.justsearch.indexerworker.services.plan.LegSet;
+import io.justsearch.indexerworker.services.plan.SearchDecision;
+import io.justsearch.indexing.SchemaFields;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Pattern-match dispatcher for {@link SearchDecision} (tempdoc 517).
+ *
+ * <p>One outer {@code switch} over the four decision variants, with an inner
+ * {@code switch} over {@link LegSet} for {@link SearchDecision.MultiLegDecision}.
+ * Leg-execution helpers (formerly private methods on the monolithic orchestrator)
+ * live here. Each variant handler produces a {@link SearchOutcome} which the
+ * response builder reads alongside the decision to project the wire response.
+ */
+public final class SearchExecutor {
+  private static final Logger log = LoggerFactory.getLogger(SearchExecutor.class);
+  // Tempdoc 517 — the tracer is looked up on each call rather than cached as a
+  // static field. The cost is a single map lookup per request (negligible) and
+  // it makes the OTel SDK swap-in for tests (see SearchExecutorOtelTopologyTest)
+  // observable. With a static-final capture, any test that runs before SDK
+  // installation would bind the tracer to the no-op default for the whole JVM.
+  private static Tracer tracer() {
+    return GlobalOpenTelemetry.getTracer("io.justsearch.worker.search");
+  }
+
+  private static final String BRANCH_FUSION_STRATEGY_RRF = "rrf";
+  private static final String BRANCH_FUSION_STRATEGY_CC = "cc";
+  private static final int CHUNK_INITIAL_CANDIDATE_MULTIPLIER = 10;
+  private static final int CHUNK_RETRY_MULTIPLIER = 2;
+  private static final String CHUNK_SOURCE_DOC_ID_FIELD = "_chunk_source_doc_id";
+  private static final Set<String> CHUNK_COLLAPSE_MAX_EVIDENCE_SCORE_KEYS =
+      Set.of("chunk_sparse", "chunk_vector", "chunk_splade");
+  private static final Set<String> CHUNK_COLLAPSE_MIN_POSITIVE_RANK_KEYS =
+      Set.of("chunk_sparse_rank", "chunk_vector_rank", "chunk_splade_rank");
+
+  private final TextQueryOps textQueryOps;
+  private final ReadPathOps readPathOps;
+  private final HybridSearchOps hybridSearchOps;
+  private final ChunkSearchOps chunkSearchOps;
+  private final Supplier<ResolvedConfig> resolvedConfigSupplier;
+
+  public SearchExecutor(
+      TextQueryOps textQueryOps,
+      ReadPathOps readPathOps,
+      HybridSearchOps hybridSearchOps,
+      ChunkSearchOps chunkSearchOps,
+      Supplier<ResolvedConfig> resolvedConfigSupplier) {
+    this.textQueryOps = textQueryOps;
+    this.readPathOps = readPathOps;
+    this.hybridSearchOps = hybridSearchOps;
+    this.chunkSearchOps = chunkSearchOps;
+    this.resolvedConfigSupplier = resolvedConfigSupplier;
+  }
+
+  /**
+   * Dispatches on the decision variant. Returns a {@link SearchOutcome} carrying
+   * the runtime-derived state (hits, timings, chunk-merge applied, correction
+   * applied, etc.). Pre-committed reason codes (e.g. {@code ChunkMergeDirective.Skip})
+   * are read off the decision by the response builder — this method only records
+   * runtime-derived state.
+   */
+  public SearchOutcome execute(SearchDecision decision, SearchInputs inputs) {
+    Objects.requireNonNull(decision, "decision");
+    Objects.requireNonNull(inputs, "inputs");
+    return switch (decision) {
+      case SearchDecision.EmptyQueryDecision e -> handleEmpty();
+      case SearchDecision.BlockedDecision b -> handleBlocked();
+      case SearchDecision.SparseShortcut s -> runSparseShortcut(s, inputs);
+      case SearchDecision.MultiLegDecision m -> runMultiLeg(m, inputs);
+    };
+  }
+
+  private SearchOutcome handleEmpty() {
+    return SearchOutcome.empty(new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0));
+  }
+
+  private SearchOutcome handleBlocked() {
+    return SearchOutcome.empty(new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0));
+  }
+
+  private SearchOutcome runSparseShortcut(SearchDecision.SparseShortcut decision, SearchInputs inputs) {
+    Context parentCtx = TracingServerInterceptor.currentOtelContext();
+    var request = inputs.request();
+    String queryString = request.getQuery();
+    var runtimeFilters = inputs.runtimeFilters();
+    var boostRuntimeFilters =
+        io.justsearch.indexerworker.util.ProtoConverters.toRuntimeFilters(
+            request.hasBoostFilters() ? request.getBoostFilters() : null);
+    var runtimeSort = io.justsearch.indexerworker.util.ProtoConverters.toRuntimeSort(request.getSort());
+    String cursor = request.getCursor();
+    Set<String> projection =
+        request.getProjectionList().isEmpty()
+            ? Set.of()
+            : new java.util.HashSet<>(request.getProjectionList());
+
+    Span retrievalSpan =
+        tracer()
+            .spanBuilder("search/retrieval")
+            .setParent(parentCtx)
+            .setAttribute("search.mode", "TEXT")
+            .startSpan();
+    long retrievalStartNs = System.nanoTime();
+    LuceneRuntimeTypes.SearchResult result;
+    org.apache.lucene.search.Query queryForSpans = null;
+    org.apache.lucene.search.Query luceneQuery;
+    boolean correctionApplied = false;
+    String correctedQuery = null;
+    String chunkQueryText = queryString;
+    long retrievalMs;
+    try {
+      try {
+        luceneQuery = textQueryOps.buildTextQuery(queryString, runtimeFilters, decision.runtimeSyntax());
+        if (luceneQuery != null && boostRuntimeFilters != null) {
+          var boostQb = new org.apache.lucene.search.BooleanQuery.Builder();
+          boostQb.add(luceneQuery, org.apache.lucene.search.BooleanClause.Occur.MUST);
+          QueryFilterBuilder.applyBoostFilters(
+              boostQb, boostRuntimeFilters, QueryFilterBuilder.DEFAULT_BOOST_WEIGHT);
+          luceneQuery = boostQb.build();
+        }
+      } catch (org.apache.lucene.queryparser.classic.ParseException e) {
+        if (decision.runtimeSyntax() == LuceneRuntimeTypes.QuerySyntax.LUCENE) {
+          throw new IllegalArgumentException("Invalid query syntax: " + e.getMessage());
+        }
+        log.warn("Failed to parse query", e);
+        // Tempdoc 517 narrowed SensitiveQuery to the Head HTTP boundary, so the raw queryString
+        // is unwrapped inside Worker. Drop to TRACE so the failure-diagnosis affordance survives
+        // for ad-hoc debugging while staying out of any reasonable production log level. The
+        // diagnostics-ZIP path (DiagnosticsServiceImpl.addTelemetryFiles) doesn't bundle slf4j
+        // logs, so this leak is bounded to local file-system readers with TRACE enabled.
+        // Observations.md item #205 follow-up: typed in-process SafeQueryString wrapper deferred.
+        log.trace("Failed query text: {}", queryString);
+        luceneQuery = null;
+      }
+
+      if (luceneQuery == null) {
+        result = new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
+      } else {
+        queryForSpans = luceneQuery;
+        result = readPathOps.search(luceneQuery, decision.retrievalLimit(), projection, runtimeSort, cursor);
+
+        if (decision.correctionRetryEnabled()
+            && result.totalHits() == 0
+            && decision.runtimeSyntax() == LuceneRuntimeTypes.QuerySyntax.SIMPLE) {
+          var search = resolvedConfigSupplier.get().search();
+          if (search.corrections().enabled() && search.corrections().zeroHitRetryEnabled()) {
+            var fuzzyResult =
+                textQueryOps.buildFuzzyTextQuery(
+                    queryString, runtimeFilters, search.corrections().maxEditDistance());
+            if (fuzzyResult != null) {
+              var corrResult =
+                  readPathOps.search(
+                      fuzzyResult.query(), decision.retrievalLimit(), projection, runtimeSort, cursor);
+              if (corrResult.totalHits() >= search.corrections().dfThreshold()) {
+                queryForSpans = fuzzyResult.query();
+                result = corrResult;
+                correctionApplied = true;
+                correctedQuery = fuzzyResult.correctedText();
+                chunkQueryText = correctedQuery;
+                log.info("Zero-hit retry: corrections yielded {} hits", result.totalHits());
+              }
+            }
+          }
+        }
+
+        if (decision.correctionRetryEnabled()
+            && !correctionApplied
+            && result.totalHits() > 0
+            && decision.runtimeSyntax() == LuceneRuntimeTypes.QuerySyntax.SIMPLE) {
+          var ptSearch = resolvedConfigSupplier.get().search();
+          if (ptSearch.corrections().enabled()) {
+            var perTermResult =
+                textQueryOps.buildPerTermFuzzyQuery(
+                    queryString, runtimeFilters, ptSearch.corrections().maxEditDistance());
+            if (perTermResult != null) {
+              var correctedResult =
+                  readPathOps.search(
+                      perTermResult.query(), decision.retrievalLimit(), projection, runtimeSort, cursor);
+              if (correctedResult.totalHits() > result.totalHits()
+                  && correctedResult.totalHits() >= ptSearch.corrections().dfThreshold()) {
+                queryForSpans = perTermResult.query();
+                result = correctedResult;
+                correctionApplied = true;
+                correctedQuery = perTermResult.correctedText();
+                chunkQueryText = correctedQuery;
+                log.info("Per-term correction: {} hits", result.totalHits());
+              }
+            }
+          }
+        }
+      }
+      retrievalMs = (System.nanoTime() - retrievalStartNs) / 1_000_000;
+      retrievalSpan.setAttribute("search.took_ms", retrievalMs);
+      // Tempdoc 553 Phase A: the retrieval phase's documents, projected onto the span as an
+      // OpenInference RETRIEVER (single deriver — no hand-authored per-hit attrs at the site).
+      retrievalSpan.setAllAttributes(OpenInferenceSpanProjection.retriever(result));
+    } finally {
+      retrievalSpan.end();
+    }
+
+    // Tempdoc 549 Slice 3c (U2): single BM25 text leg (no fusion); survives into/through chunk merge.
+    result = HitProvenanceProjector.attachSingleLeg(result, HitProvenanceProjector.LegKind.BM25);
+
+    var chunkOutcome = maybeApplyChunkMerge(decision.chunkMerge(), result, inputs, chunkQueryText);
+    // Facet computation is deferred to SearchResponseBuilder (which owns FacetingEngine).
+    // The decision carries the FacetCompute discriminator + arguments; the builder reads
+    // the decision and invokes facetingEngine.computeFacets there.
+    return new SearchOutcome(
+        chunkOutcome.result(),
+        null,
+        queryForSpans,
+        chunkQueryText,
+        retrievalMs,
+        correctionApplied,
+        correctedQuery,
+        chunkOutcome.applied(),
+        chunkOutcome.reason(),
+        chunkOutcome.branchFusionStrategy(),
+        chunkOutcome.branchFusionContributed(),
+        false,
+        chunkOutcome.chunkMergeMs(),
+        chunkOutcome.chunkBm25Ns(),
+        chunkOutcome.chunkKnnNs(),
+        chunkOutcome.chunkSpladeNs(),
+        chunkOutcome.chunkRetry(),
+        chunkOutcome.branchFusionNs());
+  }
+
+  private SearchOutcome runMultiLeg(SearchDecision.MultiLegDecision decision, SearchInputs inputs) {
+    Context parentCtx = TracingServerInterceptor.currentOtelContext();
+    var request = inputs.request();
+    String queryString = request.getQuery();
+    var runtimeFilters = inputs.runtimeFilters();
+    var boostRuntimeFilters =
+        io.justsearch.indexerworker.util.ProtoConverters.toRuntimeFilters(
+            request.hasBoostFilters() ? request.getBoostFilters() : null);
+    // Tempdoc 549 Phase D2: the numeric detail tier is requested via include_detail; `debug` is
+    // the transitional alias. Either drives fusion-time detail computation (some keys are only
+    // computed when on — Slice-1 interrogation finding), so widen the flag end-to-end here.
+    boolean debug = request.getDebug() || request.getIncludeDetail();
+    String effectiveMode = decision.legs().effectiveModeLabel();
+
+    Span retrievalSpan =
+        tracer()
+            .spanBuilder("search/retrieval")
+            .setParent(parentCtx)
+            .setAttribute("search.mode", effectiveMode)
+            .startSpan();
+    long retrievalStartNs = System.nanoTime();
+    LuceneRuntimeTypes.SearchResult result;
+    boolean spladeExecuted = false;
+    long retrievalMs;
+    try {
+      result =
+          switch (decision.legs()) {
+            case LegSet.ThreeWay tw -> {
+              spladeExecuted = true;
+              yield runThreeWay(tw, queryString, runtimeFilters, boostRuntimeFilters, debug, retrievalSpan);
+            }
+            case LegSet.Bm25Dense bd ->
+                debug
+                    ? hybridSearchOps.searchHybridWithDebug(
+                        queryString, toFloatArray(bd.vector().vector()), bd.retrievalLimit(), runtimeFilters)
+                    : hybridSearchOps.searchHybridFiltered(
+                        queryString,
+                        toFloatArray(bd.vector().vector()),
+                        bd.retrievalLimit(),
+                        QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters));
+            case LegSet.DenseOnly d ->
+                // Tempdoc 549 Slice 3c (U2): single dense leg, no fusion.
+                HitProvenanceProjector.attachSingleLeg(
+                    readPathOps.searchVector(
+                        toFloatArray(d.vector().vector()),
+                        d.retrievalLimit(),
+                        QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters)),
+                    HitProvenanceProjector.LegKind.DENSE);
+            case LegSet.SpladeOnly p -> {
+              spladeExecuted = true;
+              yield HitProvenanceProjector.attachSingleLeg(
+                  searchSplade(p.splade().weights(), p.retrievalLimit(), runtimeFilters),
+                  HitProvenanceProjector.LegKind.SPLADE);
+            }
+            case LegSet.Bm25Splade bs -> {
+              spladeExecuted = true;
+              var bm25Result =
+                  textQueryOps.searchText(
+                      queryString, bs.retrievalLimit(), runtimeFilters, boostRuntimeFilters);
+              var spladeResult =
+                  searchSplade(bs.splade().weights(), bs.retrievalLimit(), runtimeFilters);
+              var fused = fuseLegs(List.of(bm25Result, spladeResult), bs.retrievalLimit(), debug);
+              yield HitProvenanceProjector.attachRetrieval(
+                  fused, bm25Result, spladeResult, null, "rrf");
+            }
+            case LegSet.DenseSplade ds -> {
+              spladeExecuted = true;
+              var denseResult =
+                  readPathOps.searchVector(
+                      toFloatArray(ds.vector().vector()),
+                      ds.retrievalLimit(),
+                      QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters));
+              var spladeResult =
+                  searchSplade(ds.splade().weights(), ds.retrievalLimit(), runtimeFilters);
+              var fused = fuseLegs(List.of(denseResult, spladeResult), ds.retrievalLimit(), debug);
+              yield HitProvenanceProjector.attachRetrieval(
+                  fused, null, spladeResult, denseResult, "rrf");
+            }
+            case LegSet.Bm25Only b ->
+                HitProvenanceProjector.attachSingleLeg(
+                    textQueryOps.searchText(
+                        queryString, b.retrievalLimit(), runtimeFilters, boostRuntimeFilters),
+                    HitProvenanceProjector.LegKind.BM25);
+          };
+      retrievalMs = (System.nanoTime() - retrievalStartNs) / 1_000_000;
+      retrievalSpan.setAttribute("search.took_ms", retrievalMs);
+      retrievalSpan.setAttribute("search.mode", effectiveMode);
+      // Tempdoc 553 Phase A: OpenInference RETRIEVER projection of the retrieval-phase result.
+      retrievalSpan.setAllAttributes(OpenInferenceSpanProjection.retriever(result));
+    } finally {
+      retrievalSpan.end();
+    }
+
+    // Facet computation deferred to SearchResponseBuilder (which owns FacetingEngine).
+    var chunkOutcome =
+        maybeApplyChunkMerge(decision.chunkMerge(), result, inputs, queryString);
+    return new SearchOutcome(
+        chunkOutcome.result(),
+        null,
+        null,
+        queryString,
+        retrievalMs,
+        false,
+        null,
+        chunkOutcome.applied(),
+        chunkOutcome.reason(),
+        chunkOutcome.branchFusionStrategy(),
+        chunkOutcome.branchFusionContributed(),
+        spladeExecuted,
+        chunkOutcome.chunkMergeMs(),
+        chunkOutcome.chunkBm25Ns(),
+        chunkOutcome.chunkKnnNs(),
+        chunkOutcome.chunkSpladeNs(),
+        chunkOutcome.chunkRetry(),
+        chunkOutcome.branchFusionNs());
+  }
+
+  private LuceneRuntimeTypes.SearchResult runThreeWay(
+      LegSet.ThreeWay tw,
+      String queryString,
+      LuceneRuntimeTypes.RuntimeSearchFilters runtimeFilters,
+      LuceneRuntimeTypes.RuntimeSearchFilters boostRuntimeFilters,
+      boolean debug,
+      Span retrievalSpan) {
+    ResolvedConfig rc3 = resolvedConfigSupplier.get();
+    ResolvedConfig.HybridSearch hs3 = rc3 != null ? rc3.hybridSearch() : null;
+    int candidateMax = Math.max(hs3 != null ? hs3.candidateLimitMax() : 100, tw.retrievalLimit());
+    int textMult = hs3 != null ? hs3.textCandidateMultiplier() : 10;
+    int vectorMult = hs3 != null ? hs3.vectorCandidateMultiplier() : 10;
+    int textCandLimit = Math.min(tw.retrievalLimit() * Math.max(1, textMult), candidateMax);
+    int vectorCandLimit = Math.min(tw.retrievalLimit() * Math.max(1, vectorMult), candidateMax);
+
+    Context otelCtx = Context.current().with(retrievalSpan);
+    LuceneRuntimeTypes.SearchResult result;
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var bm25F =
+          CompletableFuture.supplyAsync(
+              () -> {
+                try (Scope ctxScope = otelCtx.makeCurrent()) { // NOPMD - auto-close
+                  return branchSpan(
+                      "lexical",
+                      () ->
+                          textQueryOps.searchText(
+                              queryString, textCandLimit, runtimeFilters, boostRuntimeFilters));
+                }
+              },
+              executor);
+      var denseF =
+          CompletableFuture.supplyAsync(
+              () -> {
+                try (Scope ctxScope = otelCtx.makeCurrent()) { // NOPMD - auto-close
+                  return branchSpan(
+                      "dense",
+                      () ->
+                          readPathOps.searchVector(
+                              toFloatArray(tw.vector().vector()),
+                              vectorCandLimit,
+                              QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters)));
+                }
+              },
+              executor);
+      var spladeF =
+          CompletableFuture.supplyAsync(
+              () -> {
+                try (Scope ctxScope = otelCtx.makeCurrent()) { // NOPMD - auto-close
+                  return branchSpan(
+                      "splade",
+                      () -> searchSplade(tw.splade().weights(), textCandLimit, runtimeFilters));
+                }
+              },
+              executor);
+      var bm25Result = bm25F.join();
+      var denseResult = denseF.join();
+      var spladeResult = spladeF.join();
+      double[] weights = {
+        hs3 != null ? hs3.ccWeightSparse() : 0.35,
+        hs3 != null ? hs3.ccWeightDense() : 0.35,
+        hs3 != null ? hs3.ccWeightSplade() : 0.30
+      };
+      // Tempdoc 580 §13.3 — per-query adaptive CC-weight selection (default off). When enabled, the
+      // configured weights become the fallback for queries with no length signal.
+      if (hs3 != null && hs3.adaptiveWeightsEnabled()) {
+        weights = AdaptiveWeightSelector.selectWeights(bm25Result, denseResult, spladeResult, weights);
+      }
+      boolean zeroExclude = hs3 != null && hs3.ccZeroExclude();
+      Span fuseSpan =
+          tracer()
+              .spanBuilder("search/fuse")
+              .setAttribute("search.fusion.algorithm", "cc")
+              .setAttribute("search.fusion.branch_count", 3L)
+              .startSpan();
+      try {
+        result =
+            HybridFusionUtils.fuseWithCC3(
+                bm25Result,
+                denseResult,
+                spladeResult,
+                tw.retrievalLimit(),
+                weights,
+                debug,
+                zeroExclude,
+                "",
+                true);
+        // Tempdoc 549 Slice 3c (U2): three distinct typed legs → no bm25-vs-splade mislabel
+        // (the old debug_scores parser routed the lexical "sparse" key to SPLADE under spladeExecuted).
+        result =
+            HitProvenanceProjector.attachRetrieval(
+                result, bm25Result, spladeResult, denseResult, "cc");
+        // Tempdoc 553 Phase A: OpenInference RERANKER projection of the fused output.
+        fuseSpan.setAllAttributes(OpenInferenceSpanProjection.reranker("cc", 3, result));
+      } finally {
+        fuseSpan.end();
+      }
+    }
+    return result;
+  }
+
+  // ============================================================
+  // Chunk-merge helpers (moved from monolithic SearchOrchestrator)
+  // ============================================================
+
+  private record ChunkRunOutcome(
+      LuceneRuntimeTypes.SearchResult result,
+      boolean applied,
+      SearchReasonCode reason,
+      String branchFusionStrategy,
+      boolean branchFusionContributed,
+      // Tempdoc 517 follow-up (pass-F): chunk-merge timing fields threaded
+      // through to ComponentTiming. Legacy emit-path set these in
+      // SearchOrchestrator.java:886-895.
+      long chunkMergeMs,
+      long chunkBm25Ns,
+      long chunkKnnNs,
+      long chunkSpladeNs,
+      boolean chunkRetry,
+      long branchFusionNs) {}
+
+  private ChunkRunOutcome maybeApplyChunkMerge(
+      ChunkMergeDirective directive,
+      LuceneRuntimeTypes.SearchResult baseResult,
+      SearchInputs inputs,
+      String chunkQueryText) {
+    if (directive instanceof ChunkMergeDirective.Skip s) {
+      var trimmed = trimSearchResult(baseResult, inputs.request().getLimit() > 0 ? inputs.request().getLimit() : 10);
+      return new ChunkRunOutcome(trimmed, false, s.reason(), null, false, 0L, 0L, 0L, 0L, false, 0L);
+    }
+    var apply = (ChunkMergeDirective.EligibleApply) directive;
+    boolean hasBaseResults = baseResult.hits() != null && !baseResult.hits().isEmpty();
+    if (!hasBaseResults) {
+      return new ChunkRunOutcome(
+          baseResult,
+          false,
+          SearchReasonCode.SKIPPED_EMPTY_BASE_RESULTS,
+          null,
+          false,
+          0L,
+          0L,
+          0L,
+          0L,
+          false,
+          0L);
+    }
+
+    Context parentCtx = TracingServerInterceptor.currentOtelContext();
+    Span chunkSpan = tracer().spanBuilder("search/chunk_merge").setParent(parentCtx).startSpan();
+    // Tempdoc 553 Phase A: structural (CHAIN) span — its retriever/reranker children carry documents.
+    chunkSpan.setAllAttributes(OpenInferenceSpanProjection.chain());
+    long mergeStartNs = System.nanoTime();
+    try (Scope chunkScope = chunkSpan.makeCurrent()) { // NOPMD - auto-close
+      var ci = apply.inputs();
+      float[] chunkQueryVector =
+          ci.chunkQueryVector() != null ? toFloatArray(ci.chunkQueryVector()) : null;
+      var pipeline = inputs.request().hasPipeline() ? inputs.request().getPipeline() : null;
+      if (pipeline == null) {
+        return new ChunkRunOutcome(
+            baseResult,
+            false,
+            SearchReasonCode.SKIPPED_UNKNOWN,
+            null,
+            false,
+            0L,
+            0L,
+            0L,
+            0L,
+            false,
+            0L);
+      }
+      var merged =
+          mergeChunkResults(
+              baseResult,
+              chunkQueryText,
+              chunkQueryVector,
+              ci.chunkSpladeWeights(),
+              pipeline,
+              inputs.request().getDebug() || inputs.request().getIncludeDetail(),
+              ci.limit(),
+              inputs.runtimeFilters());
+      long chunkMergeMs = (System.nanoTime() - mergeStartNs) / 1_000_000;
+      return new ChunkRunOutcome(
+          merged.result(),
+          true,
+          SearchReasonCode.APPLIED,
+          merged.branchFusionStrategy(),
+          merged.branchContributed(),
+          chunkMergeMs,
+          merged.bm25Ns(),
+          merged.knnNs(),
+          merged.spladeNs(),
+          merged.retryTriggered(),
+          merged.branchFusionNs());
+    } finally {
+      chunkSpan.end();
+    }
+  }
+
+  private record ChunkMergeResult(
+      LuceneRuntimeTypes.SearchResult result,
+      long bm25Ns,
+      long knnNs,
+      long spladeNs,
+      long branchFusionNs,
+      boolean retryTriggered,
+      String branchFusionStrategy,
+      boolean branchContributed) {}
+
+  private record ChunkBranchResult(
+      LuceneRuntimeTypes.SearchResult parentResult,
+      boolean anyLegSaturated,
+      long bm25Ns,
+      long knnNs,
+      long spladeNs) {}
+
+  private ChunkMergeResult mergeChunkResults(
+      LuceneRuntimeTypes.SearchResult wholeDocResult,
+      String queryString,
+      float[] queryVector,
+      Map<String, Float> spladeWeights,
+      io.justsearch.ipc.PipelineConfig pipeline,
+      boolean debug,
+      int limit,
+      LuceneRuntimeTypes.RuntimeSearchFilters filters) {
+
+    org.apache.lucene.search.Query chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
+
+    boolean chunkSplade =
+        pipeline.getSpladeEnabled() && spladeWeights != null && !spladeWeights.isEmpty();
+    boolean chunkBm25 = pipeline.getSparseEnabled() && queryString != null && !queryString.isBlank();
+    boolean chunkKnn = pipeline.getDenseEnabled() && queryVector != null && queryVector.length > 0;
+
+    if (!chunkSplade && !chunkBm25 && !chunkKnn) {
+      return new ChunkMergeResult(
+          trimSearchResult(wholeDocResult, limit), 0, 0, 0, 0, false, "", false);
+    }
+
+    ResolvedConfig resolvedConfig = resolvedConfigSupplier.get();
+    ResolvedConfig.HybridSearch hybridConfig =
+        resolvedConfig != null ? resolvedConfig.hybridSearch() : null;
+    double[] weights = {
+      chunkBm25 ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightSparse() : 0.35) : 0.0,
+      chunkKnn ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightDense() : 0.35) : 0.0,
+      chunkSplade ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightSplade() : 0.30) : 0.0
+    };
+    boolean zeroExclude = hybridConfig != null && hybridConfig.ccZeroExclude();
+
+    int candidateBudget = Math.max(limit, limit * CHUNK_INITIAL_CANDIDATE_MULTIPLIER);
+    boolean retryTriggered = false;
+    ChunkBranchResult chunkBranchResult =
+        executeChunkBranchFusion(
+            queryString,
+            queryVector,
+            spladeWeights,
+            chunkFilter,
+            chunkBm25,
+            chunkKnn,
+            chunkSplade,
+            candidateBudget,
+            Math.max(limit * 2, limit),
+            weights,
+            debug,
+            zeroExclude);
+    if (chunkBranchResult.parentResult().hits() == null
+        || chunkBranchResult.parentResult().hits().isEmpty()) {
+      return new ChunkMergeResult(
+          trimSearchResult(wholeDocResult, limit),
+          chunkBranchResult.bm25Ns(),
+          chunkBranchResult.knnNs(),
+          chunkBranchResult.spladeNs(),
+          0,
+          false,
+          "",
+          false);
+    }
+
+    if (chunkBranchResult.parentResult().hits().size() < limit
+        && chunkBranchResult.anyLegSaturated()) {
+      int retryBudget = Math.max(candidateBudget * CHUNK_RETRY_MULTIPLIER, limit);
+      retryTriggered = true;
+      long initialBm25Ns = chunkBranchResult.bm25Ns();
+      long initialKnnNs = chunkBranchResult.knnNs();
+      long initialSpladeNs = chunkBranchResult.spladeNs();
+      chunkBranchResult =
+          executeChunkBranchFusion(
+              queryString,
+              queryVector,
+              spladeWeights,
+              chunkFilter,
+              chunkBm25,
+              chunkKnn,
+              chunkSplade,
+              retryBudget,
+              Math.max(limit * 2, limit),
+              weights,
+              debug,
+              zeroExclude);
+      chunkBranchResult =
+          new ChunkBranchResult(
+              chunkBranchResult.parentResult(),
+              chunkBranchResult.anyLegSaturated(),
+              initialBm25Ns + chunkBranchResult.bm25Ns(),
+              initialKnnNs + chunkBranchResult.knnNs(),
+              initialSpladeNs + chunkBranchResult.spladeNs());
+      if (chunkBranchResult.parentResult().hits() == null
+          || chunkBranchResult.parentResult().hits().isEmpty()) {
+        return new ChunkMergeResult(
+            trimSearchResult(wholeDocResult, limit),
+            chunkBranchResult.bm25Ns(),
+            chunkBranchResult.knnNs(),
+            chunkBranchResult.spladeNs(),
+            0,
+            true,
+            "",
+            false);
+      }
+    }
+
+    String branchFusionStrategy =
+        hybridConfig != null ? hybridConfig.branchFusionStrategy() : BRANCH_FUSION_STRATEGY_CC;
+    long branchFusionStart = System.nanoTime();
+    LuceneRuntimeTypes.SearchResult merged;
+    Span branchFuseSpan =
+        tracer()
+            .spanBuilder("search/fuse")
+            .setAttribute(
+                "search.fusion.algorithm",
+                BRANCH_FUSION_STRATEGY_RRF.equals(branchFusionStrategy) ? "rrf" : "cc")
+            .setAttribute("search.fusion.branch_count", 2L)
+            .startSpan();
+    try {
+      if (BRANCH_FUSION_STRATEGY_RRF.equals(branchFusionStrategy)) {
+        merged =
+            HybridFusionUtils.fuseWithRRFNamed(
+                wholeDocResult,
+                chunkBranchResult.parentResult(),
+                limit,
+                debug,
+                Integer.MAX_VALUE,
+                1.0,
+                resolvedConfig,
+                "whole_branch",
+                "chunk_branch",
+                "branch_merge_",
+                false);
+      } else {
+        double[] branchWeights = {
+          hybridWeight(hybridConfig != null ? hybridConfig.branchCcWeightWhole() : 0.50),
+          hybridWeight(hybridConfig != null ? hybridConfig.branchCcWeightChunk() : 0.50)
+        };
+        boolean branchZeroExclude = hybridConfig == null || hybridConfig.branchCcZeroExclude();
+        double chunkMinMultiplier =
+            hybridConfig != null ? hybridConfig.branchChunkMinWeightMultiplier() : 0.25;
+        merged =
+            HybridFusionUtils.fuseWithCCNamed(
+                wholeDocResult,
+                chunkBranchResult.parentResult(),
+                limit,
+                branchWeights,
+                debug,
+                branchZeroExclude,
+                "whole_branch",
+                "chunk_branch",
+                "branch_merge_",
+                "whole",
+                "chunk",
+                true,
+                chunkMinMultiplier);
+      }
+      // Tempdoc 553 Phase A: OpenInference RERANKER projection of the whole×chunk branch merge.
+      branchFuseSpan.setAllAttributes(
+          OpenInferenceSpanProjection.reranker(
+              BRANCH_FUSION_STRATEGY_RRF.equals(branchFusionStrategy) ? "rrf" : "cc", 2, merged));
+    } finally {
+      branchFuseSpan.end();
+    }
+    long branchFusionNs = System.nanoTime() - branchFusionStart;
+
+    // Tempdoc 636 Design v3 — recall-complete rerank pool (default off), branch-fusion stage. A
+    // leg-top-N candidate that the whole-doc fusion stage spliced in carries a low synthetic fused
+    // score, so branch fusion (whole ⊕ chunk) would re-bury it below the returned window before the
+    // Head cross-encoder ever sees it. Re-assert the guarantee on the branch-fused list, identifying
+    // the protected docs by the dense/bm25 leg rank carried in their whole-doc provenance (presence,
+    // not score — keyword-neutral). Spliced before attachBranchFusion so provenance is re-mapped.
+    if (hybridConfig != null && hybridConfig.legRecallCompleteEnabled()) {
+      int topN = hybridConfig.legRecallCompleteTopN();
+      List<LuceneRuntimeTypes.SearchHit> protectedHits = new ArrayList<>();
+      for (LuceneRuntimeTypes.SearchHit h : wholeDocResult.hits()) {
+        LuceneRuntimeTypes.HitProvenanceSignals prov = h.provenance();
+        if (prov == null) {
+          continue;
+        }
+        boolean denseTopN =
+            prov.dense() != null && prov.dense().rank() > 0 && prov.dense().rank() <= topN;
+        boolean bm25TopN =
+            prov.bm25() != null && prov.bm25().rank() > 0 && prov.bm25().rank() <= topN;
+        if (denseTopN || bm25TopN) {
+          protectedHits.add(h);
+        }
+      }
+      List<LuceneRuntimeTypes.SearchHit> spliced =
+          HybridFusionUtils.spliceRecallComplete(merged.hits(), protectedHits, limit);
+      if (spliced != merged.hits()) {
+        merged =
+            new LuceneRuntimeTypes.SearchResult(spliced, merged.totalHits(), merged.tookMs());
+      }
+    }
+
+    // Tempdoc 549 Slice 3c (U2): branch fusion makes fresh hits (fuser drops typed provenance),
+    // so re-map by docId — whole-doc branch carries retriever/fusion legs, chunk branch the
+    // chunk-merge leg, branch scores + fused score the branch-fusion leg.
+    merged =
+        HitProvenanceProjector.attachBranchFusion(
+            merged, wholeDocResult, chunkBranchResult.parentResult(), branchFusionStrategy);
+
+    return new ChunkMergeResult(
+        merged,
+        chunkBranchResult.bm25Ns(),
+        chunkBranchResult.knnNs(),
+        chunkBranchResult.spladeNs(),
+        branchFusionNs,
+        retryTriggered,
+        branchFusionStrategy,
+        true);
+  }
+
+  private ChunkBranchResult executeChunkBranchFusion(
+      String queryString,
+      float[] queryVector,
+      Map<String, Float> spladeWeights,
+      org.apache.lucene.search.Query chunkFilter,
+      boolean chunkBm25,
+      boolean chunkKnn,
+      boolean chunkSplade,
+      int candidateBudget,
+      int collapseLimit,
+      double[] weights,
+      boolean debug,
+      boolean zeroExclude) {
+    LuceneRuntimeTypes.SearchResult bm25Result = emptySearchResult();
+    LuceneRuntimeTypes.SearchResult denseResult = emptySearchResult();
+    LuceneRuntimeTypes.SearchResult spladeResult = emptySearchResult();
+    boolean anyLegSaturated = false;
+    long bm25Ns = 0, knnNs = 0, spladeNs = 0;
+
+    if (chunkBm25) {
+      long t0 = System.nanoTime();
+      bm25Result = chunkSearchOps.searchChunksText(queryString, candidateBudget, chunkFilter);
+      bm25Ns = System.nanoTime() - t0;
+      anyLegSaturated |= isCandidateBudgetSaturated(bm25Result, candidateBudget);
+    }
+    if (chunkKnn) {
+      long t0 = System.nanoTime();
+      denseResult = chunkSearchOps.searchChunkVector(queryVector, null, candidateBudget, chunkFilter);
+      knnNs = System.nanoTime() - t0;
+      anyLegSaturated |= isCandidateBudgetSaturated(denseResult, candidateBudget);
+    }
+    if (chunkSplade) {
+      long t0 = System.nanoTime();
+      spladeResult = chunkSearchOps.searchChunksSplade(spladeWeights, candidateBudget, chunkFilter);
+      spladeNs = System.nanoTime() - t0;
+      anyLegSaturated |= isCandidateBudgetSaturated(spladeResult, candidateBudget);
+    }
+
+    LuceneRuntimeTypes.SearchResult fusedChunkResult;
+    Span chunkFuseSpan =
+        tracer()
+            .spanBuilder("search/fuse")
+            .setAttribute("search.fusion.algorithm", "cc")
+            .setAttribute("search.fusion.branch_count", 3L)
+            .setAttribute("search.retrieval.branch", "chunk")
+            .startSpan();
+    try {
+      fusedChunkResult =
+          HybridFusionUtils.fuseWithCC3(
+              bm25Result,
+              denseResult,
+              spladeResult,
+              candidateBudget,
+              weights,
+              debug,
+              zeroExclude,
+              "chunk_",
+              true);
+      // Tempdoc 553 Phase A: OpenInference RERANKER projection of the chunk-side 3-way fusion.
+      chunkFuseSpan.setAllAttributes(OpenInferenceSpanProjection.reranker("cc", 3, fusedChunkResult));
+    } finally {
+      chunkFuseSpan.end();
+    }
+    // Tempdoc 549 Slice 3c (U2): chunk-merge provenance from the typed chunk legs, before collapse
+    // (the collapse helpers preserve hit.provenance() so the winning chunk's signal survives).
+    fusedChunkResult =
+        HitProvenanceProjector.attachChunkMerge(
+            fusedChunkResult, bm25Result, denseResult, spladeResult);
+    LuceneRuntimeTypes.SearchResult parentNormalizedChunkResult =
+        collapseChunkHitsToParents(fusedChunkResult, collapseLimit);
+    return new ChunkBranchResult(
+        parentNormalizedChunkResult, anyLegSaturated, bm25Ns, knnNs, spladeNs);
+  }
+
+  private static boolean isCandidateBudgetSaturated(
+      LuceneRuntimeTypes.SearchResult result, int candidateBudget) {
+    if (result == null || candidateBudget <= 0) {
+      return false;
+    }
+    int hits = result.hits() != null ? result.hits().size() : 0;
+    return hits >= candidateBudget || result.totalHits() > candidateBudget;
+  }
+
+  private static double hybridWeight(double configuredWeight) {
+    return Math.max(0.0, configuredWeight);
+  }
+
+  private static LuceneRuntimeTypes.SearchResult emptySearchResult() {
+    return new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
+  }
+
+  static LuceneRuntimeTypes.SearchResult collapseChunkHitsToParents(
+      LuceneRuntimeTypes.SearchResult chunkResult, int limit) {
+    Map<String, LuceneRuntimeTypes.SearchHit> bestPerParent = new LinkedHashMap<>();
+    for (LuceneRuntimeTypes.SearchHit hit : chunkResult.hits()) {
+      String parentId = hit.fields().get(SchemaFields.PARENT_DOC_ID);
+      if (parentId == null || parentId.isEmpty()) {
+        parentId = hit.docId();
+      }
+      LuceneRuntimeTypes.SearchHit normalized = normalizeChunkHitToParent(hit, parentId);
+      LuceneRuntimeTypes.SearchHit existing = bestPerParent.get(parentId);
+      if (existing == null) {
+        bestPerParent.put(parentId, normalized);
+      } else {
+        bestPerParent.put(parentId, mergeCollapsedChunkParentHit(existing, normalized));
+      }
+      if (bestPerParent.size() >= limit) {
+        break;
+      }
+    }
+    List<LuceneRuntimeTypes.SearchHit> collapsed = new ArrayList<>(bestPerParent.values());
+    return new LuceneRuntimeTypes.SearchResult(
+        collapsed, collapsed.size(), chunkResult.tookMs(), null);
+  }
+
+  private static LuceneRuntimeTypes.SearchHit normalizeChunkHitToParent(
+      LuceneRuntimeTypes.SearchHit hit, String parentId) {
+    if (parentId == null || parentId.isEmpty()) {
+      return hit;
+    }
+    Map<String, String> normalizedFields = new HashMap<>(hit.fields());
+    normalizedFields.putIfAbsent(SchemaFields.PARENT_DOC_ID, parentId);
+    if (hit.docId() != null && !hit.docId().equals(parentId)) {
+      normalizedFields.put(CHUNK_SOURCE_DOC_ID_FIELD, hit.docId());
+    }
+    return new LuceneRuntimeTypes.SearchHit(
+        parentId, hit.score(), Map.copyOf(normalizedFields), hit.debugScores(), hit.provenance());
+  }
+
+  private static LuceneRuntimeTypes.SearchHit mergeCollapsedChunkParentHit(
+      LuceneRuntimeTypes.SearchHit winner, LuceneRuntimeTypes.SearchHit sibling) {
+    Map<String, String> mergedFields = new HashMap<>(winner.fields());
+    for (var entry : sibling.fields().entrySet()) {
+      mergedFields.putIfAbsent(entry.getKey(), entry.getValue());
+    }
+    Map<String, Float> mergedDebugScores = new HashMap<>(winner.debugScores());
+    for (var entry : sibling.debugScores().entrySet()) {
+      mergeCollapsedChunkParentDebugScore(mergedDebugScores, entry.getKey(), entry.getValue());
+    }
+    // Preserve the winning chunk's typed provenance (the chunk-merge leg follows
+    // the best chunk per parent); fall back to the sibling's if the winner has none.
+    LuceneRuntimeTypes.HitProvenanceSignals mergedProvenance =
+        winner.provenance() != null ? winner.provenance() : sibling.provenance();
+    return new LuceneRuntimeTypes.SearchHit(
+        winner.docId(),
+        winner.score(),
+        Map.copyOf(mergedFields),
+        Map.copyOf(mergedDebugScores),
+        mergedProvenance);
+  }
+
+  private static void mergeCollapsedChunkParentDebugScore(
+      Map<String, Float> mergedDebugScores, String key, Float siblingValue) {
+    if (siblingValue == null) {
+      return;
+    }
+    Float winnerValue = mergedDebugScores.get(key);
+    if (CHUNK_COLLAPSE_MAX_EVIDENCE_SCORE_KEYS.contains(key)) {
+      mergedDebugScores.put(key, chooseMaxEvidenceValue(winnerValue, siblingValue));
+      return;
+    }
+    if (CHUNK_COLLAPSE_MIN_POSITIVE_RANK_KEYS.contains(key)) {
+      mergedDebugScores.put(key, chooseBestPositiveRank(winnerValue, siblingValue));
+      return;
+    }
+    mergedDebugScores.putIfAbsent(key, siblingValue);
+  }
+
+  private static float chooseMaxEvidenceValue(Float winnerValue, float siblingValue) {
+    if (winnerValue == null) {
+      return siblingValue;
+    }
+    return Math.max(winnerValue, siblingValue);
+  }
+
+  private static float chooseBestPositiveRank(Float winnerValue, float siblingValue) {
+    if (winnerValue == null) {
+      return siblingValue;
+    }
+    boolean winnerPositive = winnerValue > 0f;
+    boolean siblingPositive = siblingValue > 0f;
+    if (winnerPositive && siblingPositive) {
+      return Math.min(winnerValue, siblingValue);
+    }
+    if (winnerPositive) {
+      return winnerValue;
+    }
+    if (siblingPositive) {
+      return siblingValue;
+    }
+    return winnerValue;
+  }
+
+  static LuceneRuntimeTypes.SearchResult trimSearchResult(
+      LuceneRuntimeTypes.SearchResult result, int limit) {
+    if (result == null || result.hits() == null || result.hits().size() <= limit) {
+      return result;
+    }
+    List<LuceneRuntimeTypes.SearchHit> trimmed =
+        new ArrayList<>(result.hits().subList(0, limit));
+    return new LuceneRuntimeTypes.SearchResult(
+        trimmed, result.totalHits(), result.tookMs(), result.nextCursor());
+  }
+
+  // ============================================================
+  // Leg helpers
+  // ============================================================
+
+  private LuceneRuntimeTypes.SearchResult searchSplade(
+      Map<String, Float> queryWeights,
+      int limit,
+      LuceneRuntimeTypes.RuntimeSearchFilters filters) {
+    if (queryWeights == null || queryWeights.isEmpty()) {
+      return new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
+    }
+    org.apache.lucene.search.Query query = textQueryOps.buildSpladeQuery(queryWeights, filters);
+    if (query == null) {
+      return new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
+    }
+    return readPathOps.search(
+        query, limit, null, LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE, null);
+  }
+
+  private LuceneRuntimeTypes.SearchResult fuseLegs(
+      List<LuceneRuntimeTypes.SearchResult> legs, int limit, boolean debug) {
+    if (legs.isEmpty()) {
+      return new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
+    }
+    if (legs.size() == 1) {
+      return legs.get(0);
+    }
+    ResolvedConfig rc = resolvedConfigSupplier.get();
+    Span nestedFuseSpan =
+        tracer()
+            .spanBuilder("search/fuse")
+            .setAttribute("search.fusion.algorithm", "rrf")
+            .setAttribute("search.fusion.branch_count", (long) legs.size())
+            .startSpan();
+    try {
+      LuceneRuntimeTypes.SearchResult fused = legs.get(0);
+      for (int i = 1; i < legs.size(); i++) {
+        fused =
+            HybridFusionUtils.fuseWithRRF(
+                fused, legs.get(i), limit, debug, Integer.MAX_VALUE, 1.0, rc);
+      }
+      // Tempdoc 553 Phase A: OpenInference RERANKER projection of the nested-leg RRF fusion.
+      nestedFuseSpan.setAllAttributes(
+          OpenInferenceSpanProjection.reranker("rrf", legs.size(), fused));
+      return fused;
+    } finally {
+      nestedFuseSpan.end();
+    }
+  }
+
+  private <T> T branchSpan(String branch, Supplier<T> work) {
+    Span span =
+        tracer()
+            .spanBuilder("search/branch")
+            .setAttribute("search.retrieval.branch", branch)
+            .startSpan();
+    try (Scope ignored = span.makeCurrent()) { // NOPMD - auto-close
+      T out = work.get();
+      // Tempdoc 553 Phase A: a per-leg OpenInference RETRIEVER span carrying the documents this
+      // leg produced, projected from its result (the only T this helper is ever called with).
+      if (out instanceof LuceneRuntimeTypes.SearchResult legResult) {
+        span.setAllAttributes(OpenInferenceSpanProjection.retriever(legResult));
+      }
+      return out;
+    } finally {
+      span.end();
+    }
+  }
+
+  private static float[] toFloatArray(List<Float> list) {
+    if (list == null) {
+      return new float[0];
+    }
+    float[] arr = new float[list.size()];
+    for (int i = 0; i < arr.length; i++) {
+      arr[i] = list.get(i);
+    }
+    return arr;
+  }
+}

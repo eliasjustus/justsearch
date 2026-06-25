@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "files": {
+    "modules/app-services/src/test/java/io/justsearch/app/services/bootstrap/CompositionRootGuardrailsTest.java": 3
+  },
+  "$comment": "Suppression-annotation ratchet (tempdoc 620 Part V). Per-file @Disabled + // noinspection counts; may only shrink. A NEW one beyond baseline fails check-suppression-ratchet.mjs. Excludes @SuppressWarnings by design (noisy/legit in prod)."
+}

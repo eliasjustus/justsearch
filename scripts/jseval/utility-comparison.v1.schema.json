@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "utility-comparison.v1",
+  "title": "Agent-utility comparison record (tempdoc 624)",
+  "description": "Condition-paired sibling of the 623 benchmark release. Projects over agent-eval runs cohort-identical on every axis except `condition` (with-tool vs. without-tool), one cell per (corpus, agent_model), aggregating over seed. A separate canonical record, NOT a metric family inside the single-cohort 623 release.",
+  "type": "object",
+  "required": ["schema", "composed_at", "cohort", "measured", "coverage"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "const": "utility-comparison.v1" },
+    "schema_version": { "type": "integer" },
+    "composed_at": { "type": "string", "description": "ISO timestamp (passed in; scripts can't call Date.now)." },
+    "cohort": {
+      "type": "object",
+      "description": "The harness identity held fixed across the whole record (the agent_cohort_key surface). EXCLUDES corpus/model/condition/seed (range axes). The search_config_cohort_key co-varies with condition and is recorded here, not in the pairing key (R2).",
+      "required": ["agent_cohort_key", "git_sha"],
+      "properties": {
+        "agent_cohort_key": { "type": "string", "description": "SHA over {git_sha, cli_version, mcp_tool_surface_hash, judge, prompt_template_hash, decoding, eval_limits}." },
+        "git_sha": { "type": "string" },
+        "cli_version": { "type": ["string", "null"], "description": "Claude Code CLI version (HAL/Evaluation-Cards provenance: harness version)." },
+        "mcp_tool_surface_hash": { "type": ["string", "null"], "description": "Hash of the tools/list payload the agent was offered (R8)." },
+        "judge": { "type": "object", "description": "Hybrid scorer identity: {kind: substring-em | llm-judge, model?, version?, prompt_hash?}." },
+        "prompt_template_hash": { "type": ["string", "null"] },
+        "decoding": { "type": ["object", "null"], "description": "{temperature, max_tokens} (Evaluation-Cards agentic-minimal)." },
+        "eval_limits": { "type": ["object", "null"], "description": "Per-query token/step/cost budget." },
+        "search_config_cohort_key": { "type": ["string", "null"], "description": "623 config_cohort_key of the with-tool search backend (null for the without-tool arm)." },
+        "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "description": "Condition semantics (tempdoc 346): A=file tools only, B=file+JustSearch, C=JustSearch only."
+    },
+    "measured": {
+      "type": "object",
+      "description": "{corpus_slug: {agent_model: cell}} — one paired comparison cell per (corpus, model).",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": ["accuracy", "tokens_unique", "cost_usd"],
+          "properties": {
+            "accuracy": {
+              "type": "object",
+              "description": "Binary outcome via McNemar's paired test over pooled (seed, qid) observations.",
+              "required": ["baseline", "with_tool", "delta", "mcnemar_p"],
+              "properties": {
+                "baseline": { "type": "number" },
+                "with_tool": { "type": "number" },
+                "delta": { "type": "number" },
+                "mcnemar_p": { "type": "number" },
+                "mcnemar_test": { "type": "string" },
+                "n_with_tool_fixes": { "type": "integer" },
+                "n_with_tool_breaks": { "type": "integer" },
+                "seed_envelope_baseline": { "type": "object" },
+                "seed_envelope_with_tool": { "type": "object" }
+              }
+            },
+            "tokens_unique": {
+              "type": "object",
+              "description": "cache_creation (unique-content) tokens — the contamination-robust headline (D-1). Per-arm distribution (median+p95), not a single mean.",
+              "properties": {
+                "baseline": { "type": "object" },
+                "with_tool": { "type": "object" },
+                "delta_mean": { "type": "number" },
+                "delta_ci95": { "type": "array" }
+              }
+            },
+            "cost_usd": { "type": "object" },
+            "turns": { "type": "object" },
+            "n_paired_observations": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "seed_count": { "type": "integer", "description": "Distinct seeds aggregated (the statistical power knob; >=5 is the literature floor)." },
+    "confidence_tier": { "type": "string", "enum": ["A", "B", "C"], "description": "Honest confidence label carried through (mirrors 623/the register)." },
+    "coverage": {
+      "type": "object",
+      "description": "First-class negative space (mirrors 623 release.coverage).",
+      "required": ["measures", "does_not_measure", "contamination_class"],
+      "properties": {
+        "measures": { "type": "string" },
+        "does_not_measure": { "type": "string", "description": "States the SUBSTITUTION-vs-ADDITION caveat (C-4)." },
+        "contamination_class": { "type": "string", "enum": ["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"], "description": "Corpus contamination class (C-5) as a first-class label, not a footnote." }
+      }
+    },
+    "external_baselines": {
+      "type": "object",
+      "description": "CITED external constants (FRAMES, BFCL-V4, CodeScaleBench, PHMForge, A-RAG) — never a projection of our runs; pinned by source+version.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "claim": { "type": "string" },
+            "value": {},
+            "source_url": { "type": "string" },
+            "version": { "type": "string" },
+            "self_reproduced": { "const": false }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+Java Interfaces vs Abstract Classes
+
+Understanding when to use interfaces versus abstract classes is fundamental to 
+good Java object-oriented design.
+
+Interfaces:
+- Define a contract with method signatures only (pre-Java 8)
+- Support multiple inheritance (a class can implement many interfaces)
+- All methods are implicitly public and abstract
+- Cannot have instance fields (only static final constants)
+- Java 8+ allows default and static methods
+
+Abstract Classes:
+- Can have both abstract and concrete methods
+- Support single inheritance only
+- Can have instance fields and constructors
+- Can have protected and private members
+- Better for sharing code between closely related classes
+
+When to Use Each:
+- Use interfaces for "can-do" relationships (Comparable, Serializable)
+- Use abstract classes for "is-a" relationships with shared implementation
+- Prefer interfaces when behavior is unrelated to class hierarchy
+
+Note: This document is about Java language features, NOT about database 
+connection pools. It should NOT rank highly for database-related queries.
+

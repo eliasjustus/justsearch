@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/indexing/field-catalog.schema.json",
+  "title": "JustSearch Field Catalog",
+  "type": "object",
+  "required": ["version", "fields"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "string" },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/field" }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "string",
+      "enum": ["id", "filter", "sort", "facet", "highlight", "vector", "chunk_vector", "tiebreak"]
+    },
+    "field": {
+      "type": "object",
+      "required": ["id", "type", "stored", "docValues", "roles"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "type": { "type": "string", "enum": ["keyword", "text", "long", "double", "boolean", "vector", "splade"] },
+        "stored": { "type": "boolean" },
+        "docValues": { "type": "boolean" },
+        "roles": { "type": "array", "items": { "$ref": "#/$defs/role" } },
+        "multiValued": { "type": "boolean" },
+        "unique": { "type": "boolean" },
+        "analyzer": { "type": "string" },
+        "facet": { "type": "boolean" },
+        "indexOptions": { "type": "string", "enum": [
+          "docs", "docs_freqs", "docs_freqs_positions", "docs_freqs_positions_offsets"
+        ] },
+        "omitNorms": { "type": "boolean" },
+        "vector": {
+          "type": "object",
+          "required": ["dimension"],
+          "properties": {
+            "dimension": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "text" } } },
+          "then": {
+            "required": ["analyzer"],
+            "properties": {
+              "analyzer": { "$ref": "#/$defs/field/properties/analyzer" },
+              "docValues": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "vector" } } },
+          "then": {
+            "required": ["vector"],
+            "properties": {
+              "vector": { "$ref": "#/$defs/field/properties/vector" },
+              "stored": { "const": false },
+              "docValues": { "const": false }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "text" },
+              "roles": { "type": "array", "contains": { "const": "highlight" } }
+            }
+          },
+          "then": {
+            "properties": { "indexOptions": { "const": "docs_freqs_positions_offsets" } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "keyword" },
+              "roles": { "type": "array", "contains": { "enum": ["id", "filter"] } }
+            }
+          },
+          "then": {
+            "properties": { "omitNorms": { "const": true } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "roles": { "type": "array", "contains": { "const": "id" } }
+            }
+          },
+          "then": { "properties": { "docValues": { "const": true } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": { "enum": ["long", "double"] },
+              "roles": { "type": "array", "contains": { "enum": ["filter", "sort"] } }
+            }
+          },
+          "then": {
+            "properties": { "docValues": { "const": true } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "$comment": "Ensure exactly one field with role 'id' exists (best-effort via JSON Schema).",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "contains": {
+            "type": "object",
+            "properties": {
+              "roles": { "type": "array", "contains": { "const": "id" } }
+            },
+            "required": ["roles"]
+          },
+          "minItems": 1
+        }
+      }
+    }
+  ],
+  "$comment": "Internal maintenance fields for soft-delete retention (e.g., <soft_deletes.field>_ts, <soft_deletes.field>_ordinal) are added programmatically as Sorted Numeric DocValues and are not part of the public field catalog. Do not require them here."
+}
+

@@ -1,0 +1,32 @@
+# Rule: memory.pressure
+#
+# Tempdoc 430 §A.3 — V1 minimal rule engine; the only V1 rule.
+# After Phase 8: 23 of 27 catalog IDs flow end-to-end (10 LifecycleSnapshotTap +
+# 7 WorkerSnapshotTap + 5 HeadHealthEventsEmitter + 1 rule-engine memory.pressure).
+#
+# RRD step interval is 60s (RrdMetricStore.STEP_SECONDS). With a 5s rule tick
+# (RuleRunner default), `for: 60s` corresponds to ~12 rule evaluations against
+# 1 fresh sample, then a 60s pause until the next archived sample arrives.
+# This sub-step latency floor is documented in tempdoc 430 §A.9 and rev 3.11
+# §B.X.4; not a defect.
+#
+# Both metrics referenced below are archived to RRD per the Phase 8 prereq
+# (rev 3.11 §B.X.1): max_bytes was added to JvmMetricCatalog's archivedTo
+# annotation alongside used_bytes.
+
+rule: memory-pressure
+kind: threshold
+emits:
+  id: memory.pressure
+  subject: head.memory
+  reason: MemoryPressureHigh
+  severity: WARNING
+expr_cel: |
+  signals['head.jvm.memory.heap.used_bytes'].latest()
+    / signals['head.jvm.memory.heap.max_bytes'].latest() > 0.9
+for: 60s
+keep_firing_for: 30s
+magnitudes_cel:
+  used_bytes: signals['head.jvm.memory.heap.used_bytes'].latest()
+  max_bytes: signals['head.jvm.memory.heap.max_bytes'].latest()
+  ratio_pct: 100.0 * signals['head.jvm.memory.heap.used_bytes'].latest() / signals['head.jvm.memory.heap.max_bytes'].latest()

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "tempdoc": 560,
+  "adr": "0042",
+  "description": "Tempdoc 560 §4b/§5 LIVE-REGISTRY witness register (ADR-0042). Consumer-presence has three tiers: the static `consumer-presence` gate (a declaration NAMES a consumer); the static `runtime-witness` gate (AGENT-channel — declared agent consumers match what AgentOperationEmitter would deliver, from the static catalogs); and THIS live-registry witness, the only tier that examines the running ContributionRegistry, so it covers the contributions composed at RUNTIME that both static tiers are blind to (the DR-D class, e.g. core.workflow-* ops, MCP tools, plugins). The teeth are the backend live-registry test (DR-A: an offline gate cannot see runtime composition); this register + the check-live-witness early-warning keep the authority from being silently removed or forked (mirrors the tempdoc 575 in-flight-liveness register).",
+  "complements": {
+    "gate": "runtime-witness",
+    "note": "The existing `runtime-witness` discipline gate checks the AGENT delivery channel over the STATIC snapshot. This live-witness is its live-registry complement: same §5 keystone, the tier that sees runtime composition. Not a fork — a different tier of the one consumer-presence notion."
+  },
+  "authority": {
+    "class": "modules/app-services/src/main/java/io/justsearch/app/services/registry/snapshot/LiveWitness.java",
+    "symbol": "orphanedDeliveries",
+    "note": "The ONE live-registry consumer-presence authority. Do not re-implement the live consumer-presence check per-surface; derive from this."
+  },
+  "enforcingTest": "modules/app-services/src/test/java/io/justsearch/app/services/registry/snapshot/LiveWitnessTest.java",
+  "reuses": {
+    "class": "modules/app-services/src/main/java/io/justsearch/app/services/registry/snapshot/RegistrySnapshotExporter.java",
+    "symbol": "operationConsumerIds",
+    "note": "The live-registry witness reuses the build-tier consumer merge (inline ConsumerHooks union executor-derived) verbatim — it is NOT a second/forked authority, just the same notion applied over the live set."
+  },
+  "scope": {
+    "kinds": ["operation", "resource", "prompt"],
+    "hooks": "Realized",
+    "includesRuntimeComposed": true,
+    "note": "ConsumerDeclaring kinds only. Surfaces/diagnostic-channels/conversation-shapes are consumers, not consumer-declaring, so they are out of scope."
+  },
+  "decisions": {
+    "_doc": "The four §E.2.1 decisions resolved as defensible defaults — see docs/decisions/0042-runtime-witness-consumer-presence.md.",
+    "agentConsumerWitnessShape": "Attest at the DELIVERY SEAM, not consumption. An agent tool's consumer is satisfied by being bound into the live toolset; delivery != invocation.",
+    "perActorDeadline": "None. Attested-at-compose, tier-keyed: lockstep core/FE/agent at boot, independent plugin/MCP on install(Installation). 'Undelivered' = declared-but-never-composed (a live absence), not a wall-clock timeout.",
+    "sliceCatalogIntegrity": "Out of scope. Realized hooks only; a future Promised graduation stays a separate substrate primitive.",
+    "trafficCounter": "Delivery-PRESENCE, not a count. Reuses the live registry / witness; no new RegistryEntry-shaped TrafficCounter primitive."
+  }
+}

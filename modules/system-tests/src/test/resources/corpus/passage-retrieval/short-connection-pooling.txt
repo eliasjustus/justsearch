@@ -1,0 +1,28 @@
+Connection Pooling Best Practices for Database and Service Connections
+
+Connection pooling is essential for any backend service that communicates with databases or
+other backend services over TCP. Rather than opening and closing connections for each request,
+a pool maintains reusable connections that eliminate handshake overhead.
+
+Key configuration parameters:
+
+Minimum idle connections: Keep 3-5 connections warmed up to handle baseline traffic without
+cold-start delays. Set based on steady-state request volume.
+
+Maximum pool size: Cap the pool to prevent resource exhaustion. A common starting point is
+10-20 connections per pool. Overly large pools waste server resources and memory.
+
+Idle timeout: Close connections that have been idle for longer than 5-10 minutes to free
+server-side resources and prevent stale connection issues.
+
+Maximum lifetime: Rotate connections after 30-60 minutes regardless of activity. This
+prevents issues with server-side connection limits and ensures DNS changes are picked up.
+
+Connection validation: Run a lightweight health check (e.g., SELECT 1) before returning
+a connection from the pool to detect broken or half-closed connections.
+
+Wait timeout: Set a maximum queue time (e.g., 5 seconds) for when all connections are in use,
+so callers fail fast rather than hanging indefinitely.
+
+Monitoring: Track pool utilization (active vs idle connections), wait times, and timeout rates
+to right-size the pool for your workload.

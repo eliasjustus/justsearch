@@ -1,0 +1,99 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "activeIndexedDocuments" : {
+      "type" : "integer"
+    },
+    "buildingIndexedDocuments" : {
+      "type" : "integer"
+    },
+    "chunkEmbeddingReady" : {
+      "type" : [ "boolean", "null" ]
+    },
+    "completedNerCount" : {
+      "type" : "integer"
+    },
+    "embeddingCompatReason" : {
+      "type" : [ "string", "null" ]
+    },
+    "embeddingCompatState" : {
+      "type" : [ "string", "null" ]
+    },
+    "embeddingCoveragePercent" : {
+      "type" : "number"
+    },
+    "embeddingFingerprintCurrent" : {
+      "type" : [ "string", "null" ]
+    },
+    "embeddingFingerprintStored" : {
+      "type" : [ "string", "null" ]
+    },
+    "healthy" : {
+      "type" : "boolean"
+    },
+    "indexState" : {
+      "type" : [ "string", "null" ]
+    },
+    "indexedDocuments" : {
+      "type" : "integer"
+    },
+    "migrationPauseReason" : {
+      "type" : [ "string", "null" ]
+    },
+    "migrationPaused" : {
+      "type" : "boolean"
+    },
+    "migrationPausedAtMs" : {
+      "type" : "integer"
+    },
+    "migrationSwitchingAgeMs" : {
+      "type" : "integer"
+    },
+    "migrationSwitchingMaxDurationMs" : {
+      "type" : "integer"
+    },
+    "pendingBackoffJobsCount" : {
+      "type" : "integer"
+    },
+    "pendingJobs" : {
+      "type" : "integer"
+    },
+    "pendingJobsCount" : {
+      "type" : "integer"
+    },
+    "pendingNerCount" : {
+      "type" : "integer"
+    },
+    "pendingReadyJobsCount" : {
+      "type" : "integer"
+    },
+    "processingJobsCount" : {
+      "type" : "integer"
+    },
+    "ready" : {
+      "type" : "boolean"
+    },
+    "servingIngestGenerationId" : {
+      "type" : [ "string", "null" ]
+    },
+    "servingSearchGenerationId" : {
+      "type" : [ "string", "null" ]
+    },
+    "spladeCoveragePercent" : {
+      "type" : "number"
+    },
+    "state" : {
+      "type" : [ "string", "null" ]
+    },
+    "statusStale" : {
+      "type" : [ "boolean", "null" ]
+    },
+    "statusStaleMs" : {
+      "type" : [ "integer", "null" ]
+    },
+    "switchBufferDepth" : {
+      "type" : "integer"
+    }
+  }
+}

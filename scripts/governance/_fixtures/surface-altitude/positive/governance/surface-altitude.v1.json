@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "description": "POSITIVE fixture register — derives every surface's altitude from FixtureResourceCatalog roles; no conflicts, no non-CORE TRUST. The gate must PASS.",
+  "scan": {
+    "surfaceCatalog": "catalog/CoreSurfaceCatalog.java",
+    "resourceCatalogRoots": ["catalog"],
+    "javaInclude": ""
+  }
+}

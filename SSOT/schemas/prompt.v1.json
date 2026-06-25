@@ -1,0 +1,104 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "Audience-nullable" : {
+      "anyOf" : [ {
+        "type" : "null"
+      }, {
+        "type" : "string",
+        "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+      } ]
+    },
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "audience" : {
+      "$ref" : "#/$defs/Audience-nullable"
+    },
+    "consumers" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "audience" : {
+            "$ref" : "#/$defs/Audience-nullable"
+          },
+          "consumerId" : {
+            "type" : [ "string", "null" ]
+          },
+          "kind" : {
+            "const" : "realized"
+          }
+        },
+        "required" : [ "kind" ]
+      }
+    },
+    "id" : {
+      "type" : [ "string", "null" ],
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "presentation" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "category" : {
+          "type" : [ "string", "null" ]
+        },
+        "descriptionKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        },
+        "iconHint" : {
+          "type" : [ "string", "null" ]
+        },
+        "labelKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        }
+      },
+      "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+    },
+    "provenance" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "identity" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "signature" : {
+              "type" : [ "string", "null" ]
+            },
+            "verified" : {
+              "type" : "boolean"
+            }
+          },
+          "required" : [ "signature", "verified" ]
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "identity", "tier", "version" ]
+    },
+    "requiredVariables" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "templateRef" : {
+      "type" : [ "string", "null" ]
+    },
+    "type" : {
+      "const" : "prompt"
+    }
+  },
+  "required" : [ "type" ]
+}

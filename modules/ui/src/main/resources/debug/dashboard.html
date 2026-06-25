@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>JustSearch Debug Dashboard</title>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      margin: 0;
+      padding: 20px;
+      line-height: 1.5;
+    }
+    h1 {
+      color: #58a6ff;
+      margin-bottom: 8px;
+      font-size: 1.5rem;
+    }
+    .subtitle {
+      color: #8b949e;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card h2 {
+      color: #7ee787;
+      margin: 0 0 12px 0;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    pre {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 12px;
+      overflow: auto;
+      max-height: 400px;
+      font-size: 0.8rem;
+      margin: 0;
+    }
+    .status-bar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .status-item {
+      background: #21262d;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    .status-item.ok { border-left: 3px solid #7ee787; }
+    .status-item.warn { border-left: 3px solid #d29922; }
+    .status-item.error { border-left: 3px solid #f85149; }
+    .refresh-btn {
+      background: #238636;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.85rem;
+    }
+    .refresh-btn:hover { background: #2ea043; }
+    .auto-refresh {
+      color: #8b949e;
+      font-size: 0.8rem;
+      margin-left: 12px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .timestamp {
+      color: #8b949e;
+      font-size: 0.75rem;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>JustSearch Debug Dashboard</h1>
+      <div class="subtitle">Real-time system status and diagnostics</div>
+    </div>
+  </div>
+
+  <div class="status-bar" id="status-bar">
+    <div class="status-item">Loading...</div>
+  </div>
+
+  <div style="margin-bottom: 16px;">
+    <button class="refresh-btn" onclick="refresh()">Refresh Now</button>
+    <span class="auto-refresh">Auto-refreshes every 5 seconds</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>System Status</h2>
+      <pre id="status">Loading...</pre>
+      <div class="timestamp" id="status-time"></div>
+    </div>
+    <div class="card">
+      <h2>Debug State</h2>
+      <pre id="debug">Loading...</pre>
+      <div class="timestamp" id="debug-time"></div>
+    </div>
+  </div>
+
+  <script>
+    function formatJson(obj) {
+      return JSON.stringify(obj, null, 2);
+    }
+
+    function updateStatusBar(status, debug) {
+      const bar = document.getElementById('status-bar');
+      const items = [];
+
+      // API status
+      if (status && status.status === 'ok') {
+        items.push('<div class="status-item ok">API: OK</div>');
+      } else {
+        items.push('<div class="status-item error">API: Error</div>');
+      }
+
+      // Worker status
+      if (debug && debug.worker) {
+        const w = debug.worker;
+        if (w.status === 'RUNNING' || w.status === 'READY') {
+          items.push(`<div class="status-item ok">Worker: ${w.status}</div>`);
+          if (w.doc_count !== undefined) {
+            items.push(`<div class="status-item ok">Docs: ${w.doc_count}</div>`);
+          }
+        } else {
+          items.push(`<div class="status-item warn">Worker: ${w.status || 'Unknown'}</div>`);
+        }
+        if (w.pid && w.pid > 0) {
+          items.push(`<div class="status-item">PID: ${w.pid}</div>`);
+        }
+        if (w.port && w.port > 0) {
+          items.push(`<div class="status-item">Port: ${w.port}</div>`);
+        }
+      }
+
+      // LLM status
+      if (debug && debug.llm) {
+        items.push(`<div class="status-item ok">LLM: ${debug.llm.state}</div>`);
+      }
+
+      // Memory
+      if (debug && debug.system) {
+        items.push(`<div class="status-item">Memory: ${debug.system.memory_usage_mb}MB</div>`);
+      }
+
+      bar.innerHTML = items.join('');
+    }
+
+    async function refresh() {
+      const now = new Date().toLocaleTimeString();
+      try {
+        const [statusRes, debugRes] = await Promise.all([
+          fetch('/api/status'),
+          fetch('/api/debug/state')
+        ]);
+        const status = await statusRes.json();
+        const debug = await debugRes.json();
+
+        document.getElementById('status').textContent = formatJson(status);
+        document.getElementById('debug').textContent = formatJson(debug);
+        document.getElementById('status-time').textContent = 'Updated: ' + now;
+        document.getElementById('debug-time').textContent = 'Updated: ' + now;
+
+        updateStatusBar(status, debug);
+      } catch (e) {
+        document.getElementById('status').textContent = 'Error: ' + e.message;
+        document.getElementById('debug').textContent = 'Error: ' + e.message;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

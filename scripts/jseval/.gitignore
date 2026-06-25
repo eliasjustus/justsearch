@@ -1,0 +1,9 @@
+
+# Eval run artifacts and venv (paths are relative to this .gitignore,
+# not repo root — leading "scripts/jseval/" prefix was a no-op bug)
+tmp/
+.venv/
+.pytest_cache/
+
+# Downloaded datasets (not committed — see ner_eval.py docstring for download URLs)
+data/

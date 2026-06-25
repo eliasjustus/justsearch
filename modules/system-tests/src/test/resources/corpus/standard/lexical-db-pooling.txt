@@ -1,0 +1,20 @@
+Database Connection Pooling Best Practices
+
+A database connection pool maintains a cache of database connections that can be reused 
+when future requests to the database are required. Connection pooling is essential for 
+enterprise applications that need to handle many concurrent database requests.
+
+Key configuration parameters:
+- Maximum pool size: The maximum number of connections allowed in the pool
+- Minimum idle connections: Connections to keep ready even when not in use  
+- Connection timeout: How long to wait for an available connection
+- Idle timeout: How long an unused connection can remain in the pool
+
+Popular JDBC connection pool implementations include HikariCP, Apache DBCP, and C3P0.
+HikariCP is known for its excellent performance and is the default in Spring Boot.
+
+Common issues:
+- Connection leaks: Forgetting to close connections returns them to the pool
+- Pool exhaustion: All connections in use, new requests must wait
+- Stale connections: Connections that have been closed by the database server
+

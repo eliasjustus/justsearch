@@ -1,0 +1,33 @@
+Neural Network Architecture Design
+
+Designing effective neural network architectures requires understanding both the problem
+domain and the capabilities of different layer types and configurations.
+
+Layer Types and Uses:
+- Dense/Fully Connected: General purpose, good for tabular data
+- Convolutional: Spatial patterns in images and sequences
+- Recurrent (LSTM, GRU): Sequential dependencies in time series and text
+- Attention/Transformer: Long-range dependencies, state-of-the-art for NLP
+
+Architecture Patterns:
+- Encoder-Decoder: Translation, summarization, image segmentation
+- U-Net: Image segmentation with skip connections
+- ResNet: Deep networks with residual connections
+- Vision Transformer (ViT): Transformers for image classification
+
+Design Considerations:
+- Receptive field: How much input each output "sees"
+- Skip connections: Help gradient flow in deep networks
+- Normalization: BatchNorm, LayerNorm, GroupNorm improve training
+- Activation functions: ReLU variants, GELU for transformers
+
+Model Scaling:
+- Width scaling: More neurons per layer
+- Depth scaling: More layers
+- Resolution scaling: Larger input sizes (for images)
+- Compound scaling: EfficientNet's balanced approach
+
+Transfer Learning:
+Pre-trained models on large datasets provide excellent starting points.
+Fine-tune on domain-specific data for best results.
+

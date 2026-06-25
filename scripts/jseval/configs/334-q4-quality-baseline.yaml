@@ -1,0 +1,23 @@
+# 334: Q4 EmbeddingGemma quality baseline — measure search quality with queries
+dataset: scifact
+modes: [lexical, bm25_splade, full]
+embedding: true
+splade: true
+pipeline: true
+# max_queries not set — run all queries
+output_dir: tmp/eval-results
+
+gpu:
+  enabled: true
+  embed:
+    enabled: true
+  splade:
+    enabled: true
+  ner:
+    enabled: true
+
+backend:
+  clean: true
+
+env:
+  JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY: REINDEX

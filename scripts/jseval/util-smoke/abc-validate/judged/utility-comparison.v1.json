@@ -1,0 +1,337 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-06-22T09:30:25.933955+00:00",
+  "cohort": {
+    "agent_cohort_key": "b83b8d8b34db295baad0d67d2ed43c4912c7ad0596482143c0d9cec6f72a90b4",
+    "git_sha": "96bfee0e9f44a03874759ad6e9368720bef71e55",
+    "cli_version": "2.1.183 (Claude Code)",
+    "mcp_tool_surface_hash": null,
+    "judge": {
+      "kind": "hybrid-em-llm"
+    },
+    "prompt_template_hash": "d325302666dd71eb432033c1ac4ba7a614ba0ae3813926dc39d25bea9d0dd4ff",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "live-multihop-sparse",
+    "hardware": null
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "mixed/multihop-rag": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.8,
+          "with_tool": 0.8,
+          "delta": 0.0,
+          "mcnemar_p": 1.0,
+          "mcnemar_test": "none (no discordant pairs)",
+          "n_with_tool_fixes": 0,
+          "n_with_tool_breaks": 0,
+          "seed_envelope_baseline": {
+            "mean": 0.8,
+            "stdev": null,
+            "n": 1
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.8,
+            "stdev": null,
+            "n": 1
+          }
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 5,
+            "median": 26287.0,
+            "p95": 51743.0,
+            "mean": 31447.6
+          },
+          "with_tool": {
+            "n": 5,
+            "median": 24742.0,
+            "p95": 50039.8,
+            "mean": 29368.6
+          },
+          "delta_mean": -2079.0,
+          "delta_ci95": [
+            -17042.6,
+            10702.4
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 5,
+            "median": 0.081794,
+            "p95": 0.204416,
+            "mean": 0.121898
+          },
+          "with_tool": {
+            "n": 5,
+            "median": 0.109458,
+            "p95": 0.152931,
+            "mean": 0.105664
+          },
+          "delta_mean": -0.01623328,
+          "delta_ci95": [
+            -0.054977,
+            0.017643
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 5,
+            "median": 13.0,
+            "p95": 26.6,
+            "mean": 16.8
+          },
+          "with_tool": {
+            "n": 5,
+            "median": 14.0,
+            "p95": 14.8,
+            "mean": 13.0
+          },
+          "delta_mean": -3.8
+        },
+        "n_paired_observations": 5,
+        "arms": {
+          "substitution_c": {
+            "accuracy": {
+              "baseline": 0.8,
+              "with_tool": 1.0,
+              "delta": 0.2,
+              "mcnemar_p": 1.0,
+              "mcnemar_test": "exact-binomial",
+              "n_with_tool_fixes": 1,
+              "n_with_tool_breaks": 0,
+              "seed_envelope_baseline": {
+                "mean": 0.8,
+                "stdev": null,
+                "n": 1
+              },
+              "seed_envelope_with_tool": {
+                "mean": 1.0,
+                "stdev": null,
+                "n": 1
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 5,
+                "median": 26287.0,
+                "p95": 51743.0,
+                "mean": 31447.6
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 20280.0,
+                "p95": 26500.2,
+                "mean": 21088.8
+              },
+              "delta_mean": -10358.8,
+              "delta_ci95": [
+                -24647.0,
+                1557.2
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 5,
+                "median": 0.081794,
+                "p95": 0.204416,
+                "mean": 0.121898
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 0.108238,
+                "p95": 0.1511,
+                "mean": 0.110912
+              },
+              "delta_mean": -0.010986080000000006,
+              "delta_ci95": [
+                -0.082797,
+                0.050645
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 5,
+                "median": 13.0,
+                "p95": 26.6,
+                "mean": 16.8
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 16.0,
+                "p95": 21.0,
+                "mean": 16.0
+              },
+              "delta_mean": -0.8
+            },
+            "n_paired_observations": 5
+          },
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.8,
+              "with_tool": 0.8,
+              "delta": 0.0,
+              "mcnemar_p": 1.0,
+              "mcnemar_test": "none (no discordant pairs)",
+              "n_with_tool_fixes": 0,
+              "n_with_tool_breaks": 0,
+              "seed_envelope_baseline": {
+                "mean": 0.8,
+                "stdev": null,
+                "n": 1
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.8,
+                "stdev": null,
+                "n": 1
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 5,
+                "median": 26287.0,
+                "p95": 51743.0,
+                "mean": 31447.6
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 24742.0,
+                "p95": 50039.8,
+                "mean": 29368.6
+              },
+              "delta_mean": -2079.0,
+              "delta_ci95": [
+                -17042.6,
+                10702.4
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 5,
+                "median": 0.081794,
+                "p95": 0.204416,
+                "mean": 0.121898
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 0.109458,
+                "p95": 0.152931,
+                "mean": 0.105664
+              },
+              "delta_mean": -0.01623328,
+              "delta_ci95": [
+                -0.054977,
+                0.017643
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 5,
+                "median": 13.0,
+                "p95": 26.6,
+                "mean": 16.8
+              },
+              "with_tool": {
+                "n": 5,
+                "median": 14.0,
+                "p95": 14.8,
+                "mean": 13.0
+              },
+              "delta_mean": -3.8
+            },
+            "n_paired_observations": 5
+          }
+        },
+        "primary_arm": "addition_b"
+      }
+    }
+  },
+  "seed_count": 1,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": true,
+    "reasons": [],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.0,
+        "C": 0.0,
+        "B": 0.0
+      },
+      "excluded_jaccard": 1.0,
+      "paired_n_retention": 1.0
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_excluded": 0
+      },
+      "C": {
+        "n_excluded": 0
+      },
+      "B": {
+        "n_excluded": 0
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "public-pre-cutoff"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  }
+}

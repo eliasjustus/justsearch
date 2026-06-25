@@ -1,0 +1,232 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.app.observability.ledger;
+
+import io.justsearch.agent.api.registry.InvocationProvenance;
+import io.justsearch.agent.api.registry.TransportTag;
+import io.justsearch.app.observability.navigation.NavigationHistoryEntry;
+import io.justsearch.app.observability.operations.AuthorizationOutcomeEntry;
+import io.justsearch.app.observability.operations.OperationHistoryEntry;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Shared row projection for the unified action ledger (tempdoc 550 Outcome face).
+ *
+ * <p>Both the snapshot endpoint ({@code GET /api/action-ledger}) and the live change-stream
+ * ({@code GET /api/action-ledger/stream}, via {@link ActionLedgerChangeRegistry}) MUST emit the
+ * same row shape so the FE renders snapshot rows and streamed UPDATE rows through one projection.
+ * Centralizing the per-kind projection here is what guarantees that — the controller can no
+ * longer drift from the stream emitter.
+ *
+ * <p>Each {@code project*} method returns a row whose {@code occurredAt} is an {@link Instant}
+ * (so the snapshot endpoint can sort chronologically before serializing); {@link #toWireRow}
+ * copies a row with {@code occurredAt} rendered as an ISO-8601 string for the wire.
+ *
+ * <p>Attribution: every row carries a coarse {@code originator} ∈ {@code user | agent | system}
+ * derived from the source transport — the axis the trust-audit and "what did the agent do this
+ * session" views read.
+ */
+public final class ActionLedgerProjection {
+
+  private ActionLedgerProjection() {}
+
+  /** A completed operation invocation (tempdoc 550 thesis I — typed {@link ActionEvent}). */
+  public static ActionEvent projectOperation(OperationHistoryEntry op) {
+    return new ActionEvent.Operation(
+        deterministicId(
+            "operation",
+            op.endTime(),
+            op.operationId().value(),
+            op.outcome().name(),
+            op.executionId().orElse("")),
+        op.endTime(),
+        originatorOf(op.provenance()),
+        op.provenance().transport().name(),
+        op.operationId().value(),
+        op.outcome().name(),
+        // Tempdoc 550 G6: the backend execution id correlates this with the FE Effect Journal
+        // entry that dispatched it (one logical record across the boundary).
+        op.executionId(),
+        // Tempdoc 561 P-A1: the loop/session join key (the agent loop's sessionId), so the agent
+        // History view projects from this one ledger filtered to a single session (P-B1).
+        op.provenance().correlationId());
+  }
+
+  /**
+   * Tempdoc 561 P-A/P-B — project an agent tool completion (derived from the durable
+   * {@code AgentRunStore} record) into the SAME {@link ActionEvent.Operation} row the operation path
+   * produces, so the ledger's agent rows are a projection of the ONE agent record (the unified
+   * thread's source) and cannot disagree with it. Built HERE (the one projection authority), exactly
+   * like {@link #projectOperation}; {@code outcome} uses the same {@code SUCCESS}/{@code FAILURE}
+   * vocabulary as {@code OperationOutcome.name()} so the deterministic id + wire row match the
+   * operation-path row for the same logical execution.
+   */
+  public static ActionEvent projectAgentToolCompletion(
+      Instant occurredAt, String toolName, boolean success, String executionId, String sessionId) {
+    String outcome = success ? "SUCCESS" : "FAILURE";
+    String exec = executionId == null ? "" : executionId;
+    return new ActionEvent.Operation(
+        deterministicId("operation", occurredAt, toolName, outcome, exec),
+        occurredAt,
+        originatorOf(TransportTag.AGENT_LOOP),
+        TransportTag.AGENT_LOOP.name(),
+        toolName,
+        outcome,
+        exec.isBlank() ? Optional.empty() : Optional.of(exec),
+        Optional.of(sessionId));
+  }
+
+  /** A forwarded navigation. */
+  public static ActionEvent projectNavigation(NavigationHistoryEntry nav) {
+    return new ActionEvent.Navigation(
+        deterministicId("navigation", nav.occurredAt(), nav.targetSurface(), nav.sourceId()),
+        nav.occurredAt(),
+        originatorOf(nav.provenance()),
+        nav.provenance().transport().name(),
+        nav.targetSurface(),
+        nav.sourceId());
+  }
+
+  /**
+   * A trust-gate decision — the gate firing the 538 audit reads. {@code disposition} ∈
+   * GATED/DENIED/APPROVED is the outcome union for this kind.
+   */
+  public static ActionEvent projectGate(AuthorizationOutcomeEntry gate) {
+    return new ActionEvent.Gate(
+        deterministicId(
+            "gate",
+            gate.occurredAt(),
+            gate.operationId(),
+            gate.disposition().name(),
+            gate.gateBehavior().name(),
+            gate.sourceTier().name()),
+        gate.occurredAt(),
+        originatorOf(gate.transport()),
+        gate.transport().name(),
+        gate.operationId(),
+        gate.disposition().name(),
+        gate.gateBehavior().name(),
+        gate.sourceTier().name());
+  }
+
+  /**
+   * A system/background indexing operation's terminal outcome (tempdoc 550 thesis I — the
+   * system-operation contributor). Takes primitive args (not the {@code app-api IndexingJobView})
+   * so this projection stays in {@code app-observability} without an {@code app-api} dependency;
+   * the Head-side translator (in {@code app-services}, which depends on both) passes the view's
+   * fields. {@code occurredAt} is the job's {@code lastUpdatedMs} as an {@link Instant}, so a
+   * re-delivered terminal transition produces the same deterministic id (idempotent in the store).
+   */
+  public static ActionEvent projectIndex(
+      String pathHash,
+      String collection,
+      String state,
+      int attempts,
+      String errorMessage,
+      Instant occurredAt) {
+    return new ActionEvent.Index(
+        deterministicId("index", occurredAt, collection, pathHash, state),
+        occurredAt,
+        "system",
+        "WORKER_INDEXER",
+        pathHash,
+        collection,
+        state,
+        attempts,
+        errorMessage == null ? "" : errorMessage);
+  }
+
+  /**
+   * Render a typed {@link ActionEvent} to its flat wire row ({@code occurredAt} as ISO-8601). The
+   * field names are stable across the snapshot endpoint and the live stream because both serialize
+   * through this one method. The {@code outcome} column carries the per-kind union value (operation
+   * outcome, or the gate disposition) so a single column covers every kind.
+   */
+  public static Map<String, Object> toWireRow(ActionEvent e) {
+    Map<String, Object> m = new LinkedHashMap<>();
+    m.put("id", e.id());
+    m.put("kind", e.kind().name().toLowerCase(Locale.ROOT));
+    m.put("occurredAt", e.occurredAt().toString());
+    m.put("originator", e.originator());
+    m.put("transport", e.transport());
+    // Tempdoc 561 P-A1: the cross-domain session/loop join key, emitted once in the common section
+    // (any kind that carries it). The agent History view filters ledger rows on this (P-B1).
+    e.correlationId().ifPresent(cid -> m.put("correlationId", cid));
+    switch (e) {
+      case ActionEvent.Operation op -> {
+        m.put("operationId", op.operationId());
+        m.put("outcome", op.outcome());
+        op.executionId().ifPresent(id -> m.put("executionId", id));
+      }
+      case ActionEvent.Navigation nav -> {
+        m.put("targetSurface", nav.targetSurface());
+        m.put("sourceId", nav.sourceId());
+      }
+      case ActionEvent.Gate gate -> {
+        m.put("operationId", gate.operationId());
+        m.put("disposition", gate.disposition());
+        m.put("outcome", gate.disposition()); // outcome column mirrors disposition for gates
+        m.put("gateBehavior", gate.gateBehavior());
+        m.put("sourceTier", gate.sourceTier());
+      }
+      case ActionEvent.Grant grant -> {
+        m.put("grantId", grant.grantId());
+        m.put("action", grant.action()); // ISSUED | CONSUMED | REVOKED
+        m.put("outcome", grant.action()); // outcome column mirrors the grant action
+        m.put("subject", grant.subject());
+      }
+      case ActionEvent.Effect effect -> {
+        m.put("effectKind", effect.effectKind());
+        m.put("subject", effect.subject());
+      }
+      case ActionEvent.Index idx -> {
+        m.put("pathHash", idx.pathHash());
+        m.put("collection", idx.collection());
+        m.put("state", idx.state());
+        m.put("outcome", idx.state()); // outcome column mirrors the terminal job state
+        m.put("attempts", idx.attempts());
+        if (!idx.errorMessage().isEmpty()) {
+          m.put("errorMessage", idx.errorMessage());
+        }
+      }
+    }
+    return m;
+  }
+
+  /**
+   * Deterministic, stable id for an event: {@code kind:occurredAt:disc0:disc1:…}. Stable across
+   * snapshot re-projection and stream broadcast (the stores hold no id), so the FE can dedup a row
+   * that appears in both the snapshot and a later UPDATE, and use it as a stable render key.
+   *
+   * <p>All of the kind's projected discriminators are folded in (not just one subject) so two
+   * distinct firings — e.g. a GATED then a DENIED gate decision for the same op, or two operations
+   * with different execution ids — at an identical {@link Instant} get distinct ids rather than
+   * colliding (the second silently dropped from the unified, id-keyed store). Only two events
+   * identical in every projected field at the same instant share an id, which is the degenerate
+   * indistinguishable case where collapsing to one unified-log row is acceptable.
+   */
+  private static String deterministicId(String kind, Instant occurredAt, String... discriminators) {
+    StringBuilder sb = new StringBuilder(kind).append(':').append(occurredAt.toString());
+    for (String d : discriminators) {
+      sb.append(':').append(d == null ? "" : d);
+    }
+    return sb.toString();
+  }
+
+  /** Coarse originator attribution derived from the source provenance. */
+  public static String originatorOf(InvocationProvenance provenance) {
+    return originatorOf(provenance.transport());
+  }
+
+  /** Coarse originator attribution derived from the source transport. */
+  public static String originatorOf(TransportTag transport) {
+    return switch (transport) {
+      case LLM_EMISSION, AGENT_LOOP, MCP -> "agent";
+      case SYSTEM_INTERNAL, SCHEDULED, RULE_ENGINE -> "system";
+      default -> "user";
+    };
+  }
+}

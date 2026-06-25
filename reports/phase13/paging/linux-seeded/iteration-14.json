@@ -1,0 +1,16 @@
+{
+  "query" : "apollo",
+  "page" : 1,
+  "captured_at" : "2025-11-08T05:48:03.700545103Z",
+  "response" : {
+    "hits" : [ ],
+    "facets" : { },
+    "cursor" : null,
+    "metadata" : {
+      "intent.translation.degraded" : true,
+      "paging.commit_generation" : 15,
+      "paging.commit_id" : "f35aee9c-d8be-47ac-96c9-3a15766051a5",
+      "intent.translation.reason" : "llm_json_invalid"
+    }
+  }
+}

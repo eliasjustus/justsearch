@@ -1,0 +1,12 @@
+{
+  "slots": [
+    {
+      "id": "foo-bar",
+      "symbol": "FooBar",
+      "declaredIn": "modules/foo/FooBar.ts",
+      "includeGlobs": ["modules/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "expectedMin": 1
+    }
+  ]
+}

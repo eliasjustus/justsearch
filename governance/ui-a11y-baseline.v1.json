@@ -1,0 +1,61 @@
+{
+  "$schema": "./ui-a11y-baseline.schema.json",
+  "version": 1,
+  "description": "Shared a11y known-violation baseline (tempdoc 615 §13 Move 2). ONE authority for the per-surface axe rules accepted in the DETERMINISTIC route-mock capture state (jseval ui-shot --fixtures). Consumed by the Python ui-shot measurement (flags NEW-vs-known) AND the TS e2e accessibility-audit gate, so the tiers cannot silently disagree about 'passing' (§13.3 / P3). knownRules = accepted debt; a violation NOT listed is NEW and must be investigated. Regenerate via scripts/jseval/experiments/regen_a11y_baseline.py after a deliberate change.",
+  "captureState": "route-mock-fixtures (no backend, deterministic)",
+  "surfaces": [
+    {
+      "surface": "search",
+      "uiShotStep": "home",
+      "e2eViews": [
+        "search",
+        "aria"
+      ],
+      "knownRules": [
+        "aria-valid-attr-value"
+      ]
+    },
+    {
+      "surface": "library",
+      "uiShotStep": "library",
+      "e2eViews": [
+        "library"
+      ],
+      "knownRules": []
+    },
+    {
+      "surface": "settings",
+      "uiShotStep": "settings",
+      "e2eViews": [
+        "settings"
+      ],
+      "knownRules": [
+        "select-name"
+      ]
+    },
+    {
+      "surface": "health",
+      "uiShotStep": "health",
+      "e2eViews": [
+        "health"
+      ],
+      "knownRules": [
+        "color-contrast"
+      ]
+    },
+    {
+      "surface": "brain",
+      "uiShotStep": "ai-brain",
+      "e2eViews": [
+        "brain"
+      ],
+      "knownRules": []
+    },
+    {
+      "surface": "help",
+      "uiShotStep": "help",
+      "e2eViews": [],
+      "knownRules": []
+    }
+  ]
+}

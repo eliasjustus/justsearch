@@ -1,0 +1,5 @@
+# Intent parse goldens — one JSON object per line, canonical JSON
+{"limit":10,"offset":0,"clauses":[{"type":"keyword","tokens":["file","system"]}]}
+{"limit":10,"offset":0,"filters":{"mime":"application/pdf"},"clauses":[{"type":"keyword","tokens":["annual","report"]}]}
+{"limit":5,"offset":0,"filters":{"language":"de"},"clauses":[{"type":"keyword","tokens":["rechnung"]}]}
+{"limit":10,"offset":0,"filters":{"timeRange":{"fromMs":1704067200000,"toMs":null}},"clauses":[{"type":"keyword","tokens":["design","tokens"]}]}

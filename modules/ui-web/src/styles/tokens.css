@@ -1,0 +1,1007 @@
+/* Import Tailwind CSS v4 */
+@import "tailwindcss";
+
+/* ============================================
+   CSS Cascade Layer order — slice 477 H2.2 (V1.5.1).
+   ============================================
+   Per slice 470 §B.A.1, the V1.5 token cascade is layered so user
+   themes can cleanly override host defaults without specificity
+   wars. Layer order (lowest → highest priority):
+
+     core-theme  — host's default tokens (this file)
+     user-theme  — user-selected theme via themeState injection
+     user-override — V1.5.2+ inline-style overrides (reserved)
+
+   Per the CSS Cascade spec, **unlayered rules sort AFTER all
+   explicit `@layer` declarations at the same specificity** (we
+   verified this empirically in `cascade-layer-priority.test.ts`).
+   That property is INTENTIONAL here: `.high-contrast` accessibility
+   overrides remain UNLAYERED below so they always win, even
+   against a user-theme — accessibility is non-negotiable.
+*/
+@layer core-theme, user-theme, user-override;
+
+/* ============================================
+   JustSearch Design Tokens
+   "Local Data OS" Visual Language
+   ============================================ */
+
+@layer core-theme {
+:root {
+  /* === Primitive Palette ===
+     Base colors and hue angles shared across semantic tokens.
+     Override these to create new themes — semantic tokens derive from them. */
+
+  /* RGB channel triplets (used as: rgba(var(--p-*), opacity)) */
+  --p-glass: 255, 255, 255;       /* Glass overlay tint: white in dark, cool navy in light */
+  --p-shadow: 0, 0, 0;            /* Shadow base: black in dark, cool navy in light */
+  --p-text: 255, 255, 255;        /* Text base: white in dark, slate in light */
+
+  /* OKLCH hue angles (constants, not theme-switched) */
+  --h-teal: 180;
+  --h-purple: 290;
+  --h-green: 145;
+  --h-amber: 70;
+  --h-red: 25;
+  --h-blue: 240;
+  --h-magenta: 300;
+
+  /* === Z-Axis Hierarchy === */
+  --z-base: 0;
+  --z-glass: 10;
+  --z-float: 50;
+  --z-modal: 100;
+
+  /* === Overlay stacking scale (574 Move 2 ambient — the OverlayHost global overlay-order
+     authority, 559). DISTINCT from the local --z-* above (which order layers WITHIN one
+     component's stacking context); these order the cross-overlay slots OverlayHost owns, so
+     an overlay references a named token instead of a hand-picked magic z-index (§16 S4). === */
+  --z-overlay-float: 900;
+  --z-overlay-chrome: 1000;
+  --z-overlay-transient: 1100;
+  --z-overlay-drawer: 1500;
+  --z-overlay-modal: 2000;
+  --z-overlay-top: 3000;
+
+  /* === Semantic Colors === */
+  --accent-tint: oklch(75% 0.15 var(--h-teal));
+  --accent-command: oklch(70% 0.15 var(--h-purple));
+  --accent-chat: oklch(75% 0.18 var(--h-teal));
+  /* 577 Phase 7 (570 §18.1 G) — the two roles the search window was missing:
+     `highlight` (the query-term match fill; was the hardcoded --accent-tint-30)
+     and `link` (this-is-clickable text, e.g. result titles). */
+  --accent-highlight: oklch(50% 0.11 var(--h-amber));
+  --accent-link: oklch(72% 0.13 var(--h-blue));
+
+  /* Semantic state colors */
+  --accent-success: oklch(70% 0.18 var(--h-green));
+  --accent-warning: oklch(75% 0.18 var(--h-amber));
+  --accent-danger: oklch(65% 0.20 var(--h-red));
+  /* Warm accent - coral for visual contrast with teal */
+  --accent-warm: oklch(70% 0.18 var(--h-red));
+  --accent-warm-muted: oklch(70% 0.10 var(--h-red));
+  --glow-warm: 0 0 12px oklch(70% 0.18 var(--h-red) / 0.35);
+
+  /* Error surfaces — for error message backgrounds */
+  --error-bg: rgba(239, 68, 68, 0.10);
+  --error-border: rgba(239, 68, 68, 0.30);
+
+  /* === Surface Elevation System === */
+  --surface-0: rgba(10, 10, 12, 1);      /* Deepest, solid background */
+  --surface-1: rgba(15, 15, 18, 1);      /* Primary background */
+  --surface-2: rgba(24, 24, 28, 1);      /* Cards, panels */
+  --surface-3: rgba(32, 32, 38, 1);      /* Elevated elements */
+  --surface-4: rgba(42, 42, 50, 1);      /* Highest (modals) */
+  
+  /* Glass Surfaces - Neutral, desaturated (Pillar 1: Glass Engine)
+     The app should feel like a lens, not a filter */
+  --glass-surface: rgba(var(--p-glass), 0.03);
+  --glass-surface-hover: rgba(var(--p-glass), 0.06);
+  --glass-surface-active: rgba(var(--p-glass), 0.10);
+  --glass-border: rgba(var(--p-glass), 0.06);
+  --glass-border-hover: rgba(var(--p-glass), 0.10);
+  --glass-border-strong: rgba(var(--p-glass), 0.20);
+
+  /* Tempdoc 557 §2.C — bring the formerly-undefined "ghost" tokens into the one
+     token vocabulary. These were referenced across many components with
+     hardcoded dark fallbacks; because they were defined NOWHERE, the dark
+     fallback always won and every non-Dark theme silently broke. Defined here
+     as theme-aware aliases of canonical tokens (which are redefined in
+     [data-theme="light"] + palettes) so they resolve per active theme and the
+     fallbacks are never reached. Closure enforced by
+     scripts/ci/check-theme-token-closure.mjs. */
+  --surface-primary: var(--surface-2);
+  --surface-secondary: var(--surface-1);
+  --surface-tertiary: var(--surface-3);
+  --surface-hover: var(--glass-surface-hover);
+  --surface-active: var(--glass-surface-active);
+  --surface-subtle: var(--glass-surface);
+  --border-subtle: var(--glass-border);
+  --border-muted: var(--glass-border);
+  --border-default: var(--glass-border);
+  --border-emphasized: var(--glass-border-strong);
+  --border-strong: var(--glass-border-strong);
+  --accent: var(--accent-tint);
+  --accent-primary: var(--accent-tint);
+  /* `*-weak` = subtle translucent badge/tag backgrounds (~18% alpha), NOT the
+     full-strength accent — consumers use them as `background:` (557 C0 fix). */
+  --accent-primary-weak: color-mix(in oklch, var(--accent-tint) 18%, transparent);
+  --accent-tint-hover: color-mix(in oklch, var(--accent-tint) 88%, white);
+  --accent-tint-weak: color-mix(in oklch, var(--accent-tint) 18%, transparent);
+  /* 559 contrast-pair fix: text ON the accent-tint must CONTRAST with it, not
+     track text-primary (which tracks the surface, not the accent). The default
+     theme's accent-tint is a LIGHT teal (oklch 75%), so on-accent text is a dark
+     teal ink (AA-safe). The light theme darkens the accent and flips this to a
+     near-white below. */
+  --accent-on-tint: oklch(22% 0.06 var(--h-teal));
+  /* 577 Phase 7 — derived inks for the highlight/link fills (AA over their accents). */
+  --accent-on-highlight: oklch(98% 0.02 var(--h-amber));
+  --accent-on-link: oklch(18% 0.04 var(--h-blue));
+  /* 567 §8 / A2 — semantic role foregrounds: readable ink auto-derived (black in the dark theme) to a
+     WCAG floor over each accent bg. Pure black matches deriveForeground's output (default == derived). */
+  --accent-on-command: #000000;
+  --accent-on-chat: #000000;
+  --accent-on-success: #000000;
+  --accent-on-warning: #000000;
+  --accent-on-danger: #000000;
+  --accent-info: var(--accent-chat);
+  --accent-purple: var(--accent-command);
+  --accent-danger-weak: color-mix(in oklch, var(--accent-danger) 18%, transparent);
+  --accent-warning-weak: color-mix(in oklch, var(--accent-warning) 18%, transparent);
+  --accent-success-hover: color-mix(in oklch, var(--accent-success) 88%, white);
+  /* §2.C / P1b — alpha-graded accent scale (canonical steps 08/16/30/45%) for
+     translucent accent backgrounds/borders. Theme-aware (color-mix over the
+     accent hue). Replaces ad-hoc `rgba(<hardcoded hue>, <one-off alpha>)`
+     literals; nearby one-off alphas snap to the nearest step. */
+  --accent-tint-08: color-mix(in oklch, var(--accent-tint) 8%, transparent);
+  --accent-tint-16: color-mix(in oklch, var(--accent-tint) 16%, transparent);
+  --accent-tint-30: color-mix(in oklch, var(--accent-tint) 30%, transparent);
+  --accent-tint-45: color-mix(in oklch, var(--accent-tint) 45%, transparent);
+  --accent-danger-08: color-mix(in oklch, var(--accent-danger) 8%, transparent);
+  --accent-danger-16: color-mix(in oklch, var(--accent-danger) 16%, transparent);
+  --accent-danger-30: color-mix(in oklch, var(--accent-danger) 30%, transparent);
+  --accent-danger-45: color-mix(in oklch, var(--accent-danger) 45%, transparent);
+  --accent-warning-08: color-mix(in oklch, var(--accent-warning) 8%, transparent);
+  --accent-warning-16: color-mix(in oklch, var(--accent-warning) 16%, transparent);
+  --accent-warning-30: color-mix(in oklch, var(--accent-warning) 30%, transparent);
+  --accent-warning-45: color-mix(in oklch, var(--accent-warning) 45%, transparent);
+  --accent-success-08: color-mix(in oklch, var(--accent-success) 8%, transparent);
+  --accent-success-16: color-mix(in oklch, var(--accent-success) 16%, transparent);
+  --accent-success-30: color-mix(in oklch, var(--accent-success) 30%, transparent);
+  --accent-success-45: color-mix(in oklch, var(--accent-success) 45%, transparent);
+  --accent-chat-08: color-mix(in oklch, var(--accent-chat) 8%, transparent);
+  --accent-chat-16: color-mix(in oklch, var(--accent-chat) 16%, transparent);
+  --accent-chat-30: color-mix(in oklch, var(--accent-chat) 30%, transparent);
+  --accent-chat-45: color-mix(in oklch, var(--accent-chat) 45%, transparent);
+  --accent-command-08: color-mix(in oklch, var(--accent-command) 8%, transparent);
+  --accent-command-16: color-mix(in oklch, var(--accent-command) 16%, transparent);
+  --accent-command-30: color-mix(in oklch, var(--accent-command) 30%, transparent);
+  --accent-command-45: color-mix(in oklch, var(--accent-command) 45%, transparent);
+  --danger-tint: var(--accent-danger);
+  --success-tint: var(--accent-success);
+  --warning-tint: var(--accent-warning);
+  /* Text-grade warning foreground (review #3). The accent/-tint warnings are tuned for fills,
+     borders and glows, not body text — used as `color:` they fail WCAG AA on the surface
+     backgrounds. --text-warning is a warning-hued foreground that meets AA in each theme
+     (measured live: light dark-amber ~6:1, dark light-amber ~9:1). This :root (dark theme) value
+     is a light amber readable on the dark surface; the [data-theme="light"] block overrides it. */
+  --text-warning: rgb(240, 184, 96);
+  /* Text-grade role tokens (tempdoc 576 §6 rung-1): the per-role colour legible as TEXT on the app
+     surface, distinct from the saturated --accent-* FILLs (which are NOT legible as text). Dark theme:
+     light tints, AA on the dark surface (verified by check-contrast-matrix). */
+  --text-success: rgb(74, 192, 124);
+  --text-danger: rgb(239, 130, 120);
+  --text-command: rgb(168, 140, 238);
+  --text-chat: rgb(95, 194, 212);
+  --text-tint: rgb(95, 194, 212);
+  /* --accent-info aliases --accent-chat (line 147), so the text grade tracks --text-chat. */
+  --text-info: var(--text-chat);
+  /* 577 Phase 7 — text grades for the new roles (legible on the dark surface). */
+  --text-highlight: rgb(222, 184, 110);
+  --text-link: rgb(132, 178, 255);
+  --justsearch-shell-text: var(--text-primary);
+  --justsearch-shell-form-label-color: var(--text-secondary);
+  --jf-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --toggle-track-off: rgba(var(--p-glass), 0.25);
+  --rail-icon-inactive: #94a3b8;   /* slate-400 - visible on dark background */
+  --rail-icon-hover: #cbd5e1;      /* slate-300 - brighter on hover */
+  --glass-blur: 20px;
+  --glass-blur-elevated: 30px;
+  --glass-saturation: 1.1;
+  --glass-saturation-elevated: 1.15;
+  /* Tempdoc 567 §9.4 — the ONE blur multiplier behind every `backdrop-filter`. Default 1 (glass).
+     The `[data-surface-mode="solid"]` block sets it to 0, zeroing every blur at once. CSS custom
+     properties INHERIT through shadow DOM, so this single :root value reaches every component's
+     backdrop-filter (the shadow-DOM-piercing the old universal-selector approach could not do —
+     tokens.css ~L540). Every blur site reads `blur(calc(<base> * var(--glass-blur-scale)))`. */
+  --glass-blur-scale: 1;
+
+  /* Result row surfaces — opaque for readability */
+  --result-row-hover: rgba(255, 255, 255, 0.04);
+  --result-row-cursor: rgba(255, 255, 255, 0.06);
+
+  /* Base layer - neutral gray, high translucency (60-70% opacity) */
+  --layer-base: rgba(10, 10, 12, 0.65);
+  --layer-base-solid: rgba(18, 18, 22, 0.85);
+  
+  /* Text - Boosted Brightness for "Muddy Glass" Fix */
+  --text-primary: rgba(var(--p-text), 0.95);
+  --text-secondary: rgba(var(--p-text), 0.75);
+  --text-tertiary: rgba(var(--p-text), 0.55);
+  --text-muted: rgba(var(--p-text), 0.55);
+  --text-ghost: rgba(var(--p-text), 0.20);
+
+  /* Shadows & Glows - subtle, not dramatic */
+  --shadow-glass: 0 4px 24px rgba(var(--p-shadow), 0.25);
+  --shadow-float: 0 8px 32px rgba(var(--p-shadow), 0.35);
+  --shadow-lift: 0 2px 8px rgba(var(--p-shadow), 0.25);
+  --shadow-card: 0 4px 20px rgba(var(--p-shadow), 0.3);
+  --shadow-card-sm: 0 2px 8px rgba(var(--p-shadow), 0.2);
+  --glow-accent: 0 0 16px oklch(75% 0.15 var(--h-teal) / 0.25);
+  --glow-focus: 0 0 0 2px oklch(75% 0.15 var(--h-teal) / 0.55);
+  --glow-success: 0 0 12px oklch(70% 0.18 var(--h-green) / 0.35);
+  --glow-warning: 0 0 12px oklch(75% 0.18 var(--h-amber) / 0.35);
+  --glow-danger: 0 0 12px oklch(65% 0.20 var(--h-red) / 0.35);
+
+  /* Tooltip */
+  --tooltip-bg: rgba(var(--p-shadow), 0.85);
+  --tooltip-shadow: 0 4px 16px rgba(var(--p-shadow), 0.4);
+
+  /* Code surfaces */
+  --code-bg-inline: rgba(var(--p-glass), 0.06);
+  --code-bg-block: rgba(var(--p-glass), 0.04);
+
+  /* Floating element shadows (heavier than --shadow-float) */
+  --shadow-menu: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-panel-edge: -8px 0 32px rgba(0, 0, 0, 0.5), -2px 0 8px rgba(0, 0, 0, 0.3);
+
+  /* Subtle decorative glows */
+  --glow-hover-subtle: 0 0 12px rgba(var(--p-glass), 0.05);
+  --glow-inset-subtle: inset 0 0 12px rgba(var(--p-glass), 0.05);
+  --glow-inset-rim: inset 0 1px 0 rgba(var(--p-glass), 0.04);
+
+  /* Text Halo for readability on mixed backgrounds */
+  --halo-shadow: 0 1px 3px rgba(var(--p-shadow), 0.6);
+
+  /* === Categorical Semiotics === */
+  --cat-doc: oklch(70% 0.12 var(--h-blue));
+  --cat-code: oklch(70% 0.12 150);     /* Muted Green (hue 150, distinct from --h-green 145) */
+  --cat-image: oklch(70% 0.12 var(--h-magenta));
+  --cat-note: oklch(70% 0.12 60);      /* Muted Amber (hue 60, distinct from --h-amber 70) */
+  --cat-pdf: oklch(70% 0.12 var(--h-red));
+  --cat-folder: oklch(70% 0.12 70);   /* Amber (hue 70, matching folder identity) */
+
+  /* === Layout === */
+  --rail-width: 60px;
+  --command-height: 60px;
+  --status-height: 32px;
+  --inspector-width-collapsed: 0px;
+  --inspector-width-expanded: 400px;
+  --gutter-icon: 48px;
+  
+  /* === Typography === */
+  --font-native: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+
+  /* === Typography size scale (574 Move 2 ambient — one scale every component reads
+     instead of inlining rem literals) === */
+  --font-size-xs: 0.6875rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.9375rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.375rem;
+
+  /* === Motion (used as reference, actual springs in Framer Motion) === */
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  /* Motion easing (574 Move 2 ambient) — named curves so transitions read a token, not a literal. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+
+  /* === Selection + scrollbar (574 Move 2 ambient). scrollbar-width/scrollbar-color on :root are
+     INHERITED properties → they cross every shadow-DOM boundary (the Class-A fix for the §15
+     false-global, where the old ::-webkit-scrollbar rule reached light DOM only). The same tokens
+     drive the light-DOM/legacy ::-webkit-scrollbar fallback below and the shadow-DOM adopted-sheet
+     copy (ambientStyles, Move 1). === */
+  --selection-bg: oklch(75% 0.15 180 / 0.3);
+  --scrollbar-thumb: rgb(255 255 255 / 0.15);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 0.25);
+  --scrollbar-track: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  /* Focus ring (574 Move 2 ambient) — the one focus-visible colour every shadow root reads. */
+  --focus-ring-color: var(--accent-tint);
+
+  /* === Density (Comfort default) === */
+  --density-pad-x: 24px;            /* ~ Tailwind px-6 */
+  --density-pad-y: 24px;            /* ~ Tailwind p-6 */
+  --density-header-pad-x: 24px;     /* ~ Tailwind px-6 */
+  --density-header-pad-y: 16px;     /* ~ Tailwind py-4 */
+  --density-panel-pad-x: 24px;      /* ~ Tailwind px-6 */
+  --density-panel-pad-y: 16px;      /* ~ Tailwind py-4 */
+  --density-inner-pad-x: 16px;      /* ~ Tailwind px-4 */
+  --density-inner-pad-y: 12px;      /* ~ Tailwind py-3 */
+  --density-stack-gap-sm: 24px;     /* ~ Tailwind space-y-6 */
+  --density-stack-gap: 32px;        /* ~ Tailwind space-y-8 */
+  --density-stack-gap-lg: 40px;     /* ~ Tailwind space-y-10 */
+  /* 559 Authority VI (slack/fill) — the reading-column width a SurfaceLayout
+     body uses under data-fill="reading": short content sits in a centered
+     max-width column with intentional side whitespace instead of stretching
+     full-bleed and reading as a loose empty band on wide viewports. */
+  --surface-content-max-width: 72rem;
+}
+} /* close @layer core-theme — slice 477 H2.2 */
+
+/* === Tailwind v4 Theme Bridge ===
+   Maps CSS custom properties to Tailwind's --color-* namespace so new code
+   can use `bg-glass-surface` instead of `bg-[var(--glass-surface)]`.
+   Additive only — existing var() references still work. */
+@theme inline {
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
+  --color-text-ghost: var(--text-ghost);
+  --color-glass-surface: var(--glass-surface);
+  --color-glass-surface-hover: var(--glass-surface-hover);
+  --color-glass-surface-active: var(--glass-surface-active);
+  --color-glass-border: var(--glass-border);
+  --color-glass-border-hover: var(--glass-border-hover);
+  --color-glass-border-strong: var(--glass-border-strong);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-accent: var(--accent-tint);
+  --color-accent-command: var(--accent-command);
+  --color-accent-chat: var(--accent-chat);
+  --color-accent-success: var(--accent-success);
+  --color-accent-warning: var(--accent-warning);
+  --color-accent-danger: var(--accent-danger);
+  --color-accent-warm: var(--accent-warm);
+  --color-accent-warm-muted: var(--accent-warm-muted);
+  --color-layer-base: var(--layer-base);
+  --color-layer-base-solid: var(--layer-base-solid);
+  --shadow-glass-panel: var(--shadow-glass);
+  --shadow-float: var(--shadow-float);
+  --shadow-lift: var(--shadow-lift);
+  --shadow-menu: var(--shadow-menu);
+  --shadow-panel-edge: var(--shadow-panel-edge);
+}
+
+@layer core-theme {
+:root[data-density="compact"] {
+  --density-pad-x: 16px;
+  --density-pad-y: 16px;
+  --density-header-pad-x: 16px;
+  --density-header-pad-y: 12px;
+  --density-panel-pad-x: 16px;
+  --density-panel-pad-y: 12px;
+  --density-inner-pad-x: 12px;
+  --density-inner-pad-y: 10px;
+  --density-stack-gap-sm: 18px;
+  --density-stack-gap: 24px;
+  --density-stack-gap-lg: 28px;
+}
+
+:root[data-density="rich"] {
+  --density-pad-x: 32px;
+  --density-pad-y: 32px;
+  --density-header-pad-x: 32px;
+  --density-header-pad-y: 20px;
+  --density-panel-pad-x: 32px;
+  --density-panel-pad-y: 20px;
+  --density-inner-pad-x: 20px;
+  --density-inner-pad-y: 14px;
+  --density-stack-gap-sm: 28px;
+  --density-stack-gap: 40px;
+  --density-stack-gap-lg: 48px;
+}
+
+[data-theme="light"] {
+  /* Primitive overrides — light mode base colors */
+  --p-glass: 0, 30, 60;             /* Cool navy glass tint */
+  --p-shadow: 0, 30, 60;            /* Cool navy shadows */
+  --p-text: 15, 23, 42;             /* Slate text */
+
+  /* Glass Surfaces — stronger fills and borders for visible element boundaries */
+  --glass-surface: rgba(var(--p-glass), 0.08);
+  --glass-surface-hover: rgba(var(--p-glass), 0.12);
+  --glass-surface-active: rgba(var(--p-glass), 0.16);
+  --glass-border: rgba(var(--p-glass), 0.30);
+  --glass-border-hover: rgba(var(--p-glass), 0.35);
+  --glass-border-strong: rgba(var(--p-glass), 0.45);
+  --toggle-track-off: rgb(148, 163, 184);  /* slate-400 - highly visible */
+  --rail-icon-inactive: #334155;   /* slate-700 - improved contrast on light background */
+  --rail-icon-hover: #1e293b;      /* slate-800 - darker on hover */
+
+  /* Result row surfaces — opaque for readability */
+  --result-row-hover: rgba(0, 30, 60, 0.05);
+  --result-row-cursor: rgba(0, 30, 60, 0.08);
+
+  /* Surface elevation - more contrast between levels */
+  --surface-0: rgb(255, 255, 255);
+  --surface-1: rgb(248, 249, 252);
+  --surface-2: rgb(241, 242, 248);
+  --surface-3: rgb(234, 235, 243);
+  --surface-4: rgb(226, 228, 238);
+
+  /* Base layer - slightly cooler for better contrast */
+  --layer-base: rgba(248, 249, 252, 0.97);
+  --layer-base-solid: rgb(248, 249, 252);
+
+  /* Text — boosted for WCAG AA compliance
+     --text-primary omitted: same 0.95 opacity as dark → derived from --p-text */
+  --text-secondary: rgba(var(--p-text), 0.88);
+  --text-tertiary: rgba(var(--p-text), 0.72);
+  --text-muted: rgba(var(--p-text), 0.58);
+  --text-ghost: rgba(var(--p-text), 0.35);
+
+  /* Accent - darken teal for visibility on light backgrounds */
+  --accent-tint: oklch(45% 0.18 var(--h-teal));
+  /* 559 contrast-pair: the light theme's accent-tint is a darker teal (oklch 45%),
+     so on-accent text flips to near-white (AA-safe) — inverse of the dark default. */
+  --accent-on-tint: oklch(99% 0.01 var(--h-teal));
+  /* 567 §8 / A2 — role foregrounds flip to white on the light theme's deep accents (AA-safe). */
+  --accent-on-command: #ffffff;
+  --accent-on-chat: #ffffff;
+  --accent-on-success: #ffffff;
+  --accent-on-warning: #ffffff;
+  --accent-on-danger: #ffffff;
+  --accent-command: oklch(50% 0.18 var(--h-purple));
+  --accent-chat: oklch(45% 0.20 var(--h-teal));
+
+  /* Semantic state colors — darkened for light backgrounds */
+  --accent-success: oklch(38% 0.18 var(--h-green));
+  --accent-warning: oklch(40% 0.20 var(--h-amber));
+  --accent-danger: oklch(42% 0.20 var(--h-red));
+  /* Light-theme text-grade warning (review #3): a dark amber that meets WCAG AA as body text on
+     the light/tinted surfaces (measured live ~6:1). The accent-warning above resolves too light
+     for `color:` on a light background (~2.7:1). */
+  --text-warning: rgb(122, 65, 0);
+  /* Text-grade role tokens (tempdoc 576 §6 rung-1) — light theme: dark shades, AA on the light
+     surface (verified by check-contrast-matrix). */
+  --text-success: rgb(26, 122, 58);
+  --text-danger: rgb(139, 50, 50);
+  --text-command: rgb(73, 35, 140);
+  --text-chat: rgb(0, 80, 120);
+  --text-tint: rgb(0, 80, 120);
+  /* --accent-info aliases --accent-chat, so the text grade tracks --text-chat (light theme). */
+  --text-info: var(--text-chat);
+  /* 577 Phase 7 — light theme: pale highlight fill with dark ink; deep link blue. */
+  --accent-highlight: oklch(88% 0.12 var(--h-amber));
+  --accent-on-highlight: oklch(25% 0.06 var(--h-amber));
+  --accent-link: oklch(45% 0.18 var(--h-blue));
+  --accent-on-link: #ffffff;
+  --text-highlight: rgb(120, 78, 0);
+  --text-link: rgb(0, 70, 165);
+  /* Warm accent - darker for light mode */
+  --accent-warm: oklch(48% 0.20 var(--h-red));
+  --accent-warm-muted: oklch(48% 0.12 var(--h-red));
+  --glow-warm: 0 0 12px oklch(48% 0.20 var(--h-red) / 0.30);
+
+  /* Error surfaces — stronger visibility in light mode */
+  --error-bg: rgba(185, 28, 28, 0.12);
+  --error-border: rgba(185, 28, 28, 0.30);
+
+  /* Categorical colors - darker for light backgrounds */
+  --cat-doc: oklch(45% 0.14 var(--h-blue));
+  --cat-code: oklch(45% 0.14 150);
+  --cat-image: oklch(45% 0.14 var(--h-magenta));
+  --cat-note: oklch(40% 0.18 50);   /* Darker amber (hue 50, per-theme shift from dark 60) */
+  --cat-pdf: oklch(45% 0.14 var(--h-red));
+  --cat-folder: oklch(45% 0.14 60);   /* Amber (hue 60, per-theme shift from dark 70) */
+
+  /* Shadows - slightly stronger for visual depth on light backgrounds
+     Multi-value shadows keep raw values (mixed bases, different structure from dark) */
+  --shadow-glass: 0 2px 16px rgba(var(--p-shadow), 0.10), 0 1px 2px rgba(0, 0, 0, 0.07);
+  --shadow-float: 0 8px 32px rgba(var(--p-shadow), 0.14), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --shadow-lift: 0 2px 8px rgba(var(--p-shadow), 0.12);
+  --glow-accent: 0 0 12px oklch(45% 0.18 var(--h-teal) / 0.20);
+  --glow-focus: 0 0 0 2px oklch(45% 0.18 var(--h-teal) / 0.50);
+
+  /* Tooltip */
+  --tooltip-bg: rgba(var(--p-text), 0.92);
+  --tooltip-shadow: 0 4px 16px rgba(var(--p-shadow), 0.15);
+
+  /* Code surfaces */
+  --code-bg-inline: rgba(var(--p-glass), 0.06);
+  --code-bg-block: rgba(var(--p-glass), 0.04);
+
+  /* Floating element shadows */
+  --shadow-menu: 0 8px 40px rgba(var(--p-shadow), 0.18), 0 0 1px rgba(var(--p-shadow), 0.12);
+  --shadow-panel-edge: -8px 0 32px rgba(var(--p-shadow), 0.10), -2px 0 8px rgba(var(--p-shadow), 0.06);
+
+  /* Subtle decorative glows (inverted for light surfaces) */
+  --glow-hover-subtle: 0 0 12px rgba(var(--p-glass), 0.04);
+  --glow-inset-subtle: inset 0 0 12px rgba(var(--p-glass), 0.04);
+  --glow-inset-rim: inset 0 1px 0 rgba(var(--p-glass), 0.06);
+
+  /* Text halo - white glow for readability on light backgrounds (not primitive-derived) */
+  --halo-shadow: 0 1px 2px rgba(255, 255, 255, 0.4);
+}
+} /* close @layer core-theme (density + light theme) — slice 477 H2.2 */
+
+/* === Solid Surface Mode (tempdoc 567 §9.4) ===
+   The glass/solid switch. The ONE appearance writer (themeState.applyAppearance) toggles
+   `data-surface-mode="solid"` on <html>; this block then (a) zeroes every blur via the inherited
+   `--glass-blur-scale` (custom-property inheritance carries it across shadow DOM — no universal
+   selector needed) and (b) makes the translucent glass surfaces OPAQUE by compositing the same
+   per-theme `--p-glass` tint over the opaque base surface, so panels stay subtly differentiated
+   without translucency. Both halves are required: blur-off alone would leave surfaces see-through.
+
+   Placement mirrors the high-contrast switch below: UNLAYERED (after `@layer core-theme` closes), so
+   it overrides the layered theme/palette glass tokens regardless of source order. Theme-aware by
+   construction — `--surface-1`, `--p-glass`, `--layer-base-solid` all flip per theme, so one block
+   is correct in dark, light, and any palette. Composes with high-contrast (which overrides further). */
+[data-surface-mode="solid"] {
+  --glass-blur-scale: 0;
+  --glass-surface: color-mix(in srgb, var(--surface-1), rgb(var(--p-glass)) 4%);
+  --glass-surface-hover: color-mix(in srgb, var(--surface-1), rgb(var(--p-glass)) 8%);
+  --glass-surface-active: color-mix(in srgb, var(--surface-1), rgb(var(--p-glass)) 12%);
+  --layer-base: var(--layer-base-solid);
+}
+
+/* === High Contrast Safety Switch ===
+   Slice 475 (2026-05-07) cleanup: removed `!important` from
+   property-setting rules. The `.high-contrast` selector (specificity
+   0,1,0) wins over `:root` (0,0,0) by specificity alone; the
+   `[data-theme="light"].high-contrast` selector (0,2,0) wins over
+   plain `[data-theme="light"]` (0,1,0). Source order also favors
+   high-contrast (declared after the theme blocks).
+
+   The original block had three additional rule sets that are now
+   dead code after slice 449 phase 11 (React decommission):
+     - `.high-contrast *` universal disabling backdrop-filter:
+       universal selector cannot pierce Lit shadow DOM, where every
+       `backdrop-filter` lives in V1 Lit chrome.
+     - `.high-contrast .zone-rail|command|stage|inspector|status`:
+       the `.zone-*` classes only existed on the deleted React
+       `<ZoneGrid>` component; no current consumer.
+     - `[data-theme="light"].high-contrast .zone-*` similarly dead.
+   All three were deleted. When slice 474 ships Theme Manifests,
+   high-contrast moves into `@layer core-theme` per slice 470 §B.A.1
+   and shadow-DOM components consume a `--backdrop-filter-blur` token
+   that high-contrast sets to `none` (no universal-selector
+   piercing required). */
+/* Dark mode high contrast (default) */
+.high-contrast {
+  --glass-surface: #000000;
+  --glass-border: #ffffff;
+  --glass-surface-hover: #111111;
+  --text-primary: #ffffff;
+  --text-secondary: #dddddd;
+  --text-tertiary: #aaaaaa;
+  --text-ghost: #666666;
+  --glass-border-strong: #ffffff;
+}
+
+/* Light mode high contrast */
+[data-theme="light"].high-contrast,
+[data-theme="light"] .high-contrast {
+  --glass-surface: #ffffff;
+  --glass-border: #000000;
+  --glass-surface-hover: #f0f0f0;
+  --text-primary: #000000;
+  --text-secondary: #222222;
+  --text-tertiary: #444444;
+  --surface-0: #ffffff;
+  --surface-1: #f5f5f5;
+  --surface-2: #eeeeee;
+}
+
+/* 569 §19 Seam 4 — the reduced-motion adaptation axis. When the user selects motion = reduced, the
+   adaptation-profile authority toggles `.motion-reduced` on the root; this near-zeroes animations +
+   transitions app-wide (mirroring the OS-level `prefers-reduced-motion`), quieting the co-projected
+   liveness + every agent-driven surface in one place. */
+.motion-reduced *,
+.motion-reduced *::before,
+.motion-reduced *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* === Toggle Switch Visibility === */
+/* These styles ensure toggle switches are visible in both themes.
+   The Tailwind dark: prefix doesn't work with data-theme attribute,
+   so we need explicit CSS rules. */
+[data-theme="light"] [role="switch"][aria-checked="false"] {
+  background-color: #64748b !important; /* slate-500 - darker for visibility on light backgrounds */
+}
+
+[data-theme="dark"] [role="switch"][aria-checked="false"] {
+  background-color: #475569 !important; /* slate-600 - visible in dark mode */
+}
+
+/* === Text Halo for Readability === */
+.text-halo {
+  text-shadow: var(--halo-shadow);
+}
+
+/* === Display Font for Headings === */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
+
+/* Tight tracking for large headings */
+.tracking-display {
+  letter-spacing: -0.03em;
+}
+
+/* Branded text treatment */
+.brand-text {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Signature heading - larger, tighter */
+.heading-signature {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+/* Section labels — uppercase, clear hierarchy */
+.section-label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Section label variant for dark surfaces */
+.section-label-dark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* === Glass Panel Utilities === */
+.glass-panel {
+  background: var(--glass-surface);
+  backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale))) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * var(--glass-blur-scale))) saturate(var(--glass-saturation));
+  border: 1px solid var(--glass-border);
+}
+
+.glass-panel-elevated {
+  background: var(--glass-surface-hover);
+  backdrop-filter: blur(calc(var(--glass-blur-elevated) * var(--glass-blur-scale))) saturate(var(--glass-saturation-elevated));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur-elevated) * var(--glass-blur-scale))) saturate(var(--glass-saturation-elevated));
+  border: 1px solid var(--glass-border-hover);
+  box-shadow: var(--shadow-glass);
+}
+
+/* Fallback for browsers without backdrop-filter support */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    background: var(--layer-base);
+  }
+  .glass-panel-elevated {
+    background: var(--layer-base-solid);
+  }
+}
+
+/* Reduced transparency preference — wrapped in @layer core-theme
+   so a user-theme can override even under this media query. */
+@layer core-theme {
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-surface: rgba(var(--p-glass), 0.08);
+    --glass-surface-hover: rgba(var(--p-glass), 0.12);
+    --glass-surface-active: rgba(var(--p-glass), 0.16);
+  }
+}
+}
+
+/* Dynamic halo applied when luminosity is high */
+[data-theme="light"] .auto-halo {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* === Container Query Support === */
+/* Define container contexts for responsive sub-trees */
+.cq-stage {
+  container-type: inline-size;
+  container-name: stage;
+}
+
+.cq-inspector {
+  container-type: inline-size;
+  container-name: inspector;
+}
+
+.cq-results {
+  container-type: inline-size;
+  container-name: results;
+}
+
+/* Responsive result card layout based on container width */
+@container results (max-width: 400px) {
+  .result-card-adaptive {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .result-card-adaptive .result-meta {
+    display: none;
+  }
+  .result-card-adaptive .result-snippet {
+    max-height: 3em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@container results (min-width: 401px) and (max-width: 700px) {
+  .result-card-adaptive {
+    flex-direction: row;
+    gap: 1rem;
+  }
+  .result-card-adaptive .result-meta {
+    display: inline-flex;
+    flex-shrink: 0;
+    width: auto;
+  }
+}
+
+@container results (min-width: 701px) {
+  .result-card-adaptive {
+    flex-direction: row;
+    gap: 1.5rem;
+  }
+  .result-card-adaptive .result-meta {
+    display: flex;
+    flex-shrink: 0;
+    min-width: 120px;
+  }
+}
+
+/* === Base Resets === */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font-native);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Selection + scrollbar (574 Move 2 ambient — token-driven; light DOM + legacy fallback).
+   The authoritative cross-shadow-DOM form is the inherited scrollbar-width/scrollbar-color on
+   :root (above) + the ambientStyles adopted sheet (Move 1); these rules cover the light DOM and
+   pre-Chromium-121 WebView2. Light-mode values are token overrides so both forms stay in sync. */
+::selection {
+  background: var(--selection-bg);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Light-mode ambient token overrides (unlayered so they win over @layer core-theme defaults). */
+[data-theme="light"] {
+  --selection-bg: oklch(85% 0.12 80 / 0.4);
+  --scrollbar-thumb: rgb(0 0 0 / 0.12);
+  --scrollbar-thumb-hover: rgb(0 0 0 / 0.20);
+}
+
+/* === Native Form Controls Color Scheme ===
+   Ensures dropdown options use dark/light mode colors */
+select {
+  color-scheme: dark;
+}
+
+[data-theme="light"] select {
+  color-scheme: light;
+}
+
+/* Removed: redundant media-query select block — inline script in index.html
+   now sets data-theme before first paint, so [data-theme="light"] above covers it. */
+
+/* === Animation Keyframes === */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  @keyframes checkbox-pop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+    100% { transform: scale(1); }
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes brand-mark-pulse {
+    0%, 100% {
+      transform: scale(1);
+      filter: drop-shadow(0 0 0 transparent);
+    }
+    50% {
+      transform: scale(1.05);
+      filter: drop-shadow(0 0 8px var(--accent-tint));
+    }
+  }
+}
+
+/* === Animation Utility Classes === */
+.status-pulse {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.checkbox-pop {
+  animation: checkbox-pop 0.2s ease;
+}
+
+.focus-ring {
+  outline: none;
+  box-shadow: var(--glow-focus);
+}
+
+.hover-lift {
+  transition: all 0.1s ease;
+}
+
+.hover-lift:hover {
+  box-shadow: var(--shadow-lift);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.brand-mark-pulse {
+  animation: brand-mark-pulse 2s ease-in-out infinite;
+}
+
+/* === Atmospheric Gradients === */
+/* Subtle gradient backgrounds for depth and visual interest */
+.atmosphere-stage {
+  background:
+    radial-gradient(ellipse at 20% 0%, oklch(75% 0.15 180 / 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, oklch(75% 0.15 180 / 0.02) 0%, transparent 50%),
+    var(--surface-0);
+}
+
+.atmosphere-inspector {
+  background:
+    radial-gradient(ellipse at 50% 0%, oklch(70% 0.15 290 / 0.03) 0%, transparent 60%),
+    var(--surface-1);
+}
+
+/* Light mode atmospheric gradients */
+[data-theme="light"] .atmosphere-stage {
+  background:
+    radial-gradient(ellipse at 20% 0%, oklch(45% 0.18 180 / 0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, oklch(45% 0.18 180 / 0.03) 0%, transparent 50%),
+    var(--surface-0);
+}
+
+[data-theme="light"] .atmosphere-inspector {
+  background:
+    radial-gradient(ellipse at 50% 0%, oklch(50% 0.18 290 / 0.04) 0%, transparent 60%),
+    var(--layer-base-solid);
+}
+
+/* Inner glow effect for active elements */
+.inner-glow-active {
+  box-shadow: inset 0 0 20px oklch(75% 0.15 180 / 0.1);
+}
+
+[data-theme="light"] .inner-glow-active {
+  box-shadow: inset 0 0 20px oklch(45% 0.18 180 / 0.08);
+}
+
+/* === Refined Highlight Treatment === */
+/* Sophisticated gradient highlight (replaces flat amber-400) */
+.highlight-match {
+  background: linear-gradient(
+    135deg,
+    oklch(90% 0.12 85 / 0.85) 0%,
+    oklch(88% 0.14 75 / 0.90) 100%
+  );
+  color: oklch(25% 0.05 60);
+  font-weight: 600;
+  padding: 0.1em 0.25em;
+  margin: 0 -0.05em;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow: inset 0 -1px 0 oklch(75% 0.15 70 / 0.3);
+}
+
+/* Light mode highlight - lower chroma than dark to avoid heavy "highlighter pen" effect */
+[data-theme="light"] .highlight-match {
+  background: linear-gradient(
+    135deg,
+    oklch(93% 0.10 85 / 0.75) 0%,
+    oklch(90% 0.12 80 / 0.80) 100%
+  );
+  color: oklch(25% 0.08 70);
+  box-shadow: inset 0 -1px 0 oklch(75% 0.10 75 / 0.25);
+}
+
+/* Subdued snippet highlights - less visual weight than title highlights */
+.result-snippet .highlight-match {
+  background: oklch(90% 0.08 85 / 0.45);
+  font-weight: 500;
+  padding: 0.05em 0.15em;
+  box-shadow: none;
+}
+
+[data-theme="light"] .result-snippet .highlight-match {
+  background: oklch(93% 0.08 85 / 0.50);
+  font-weight: 500;
+  padding: 0.05em 0.15em;
+  box-shadow: none;
+}
+
+/* Citation highlight - distinct from search matches */
+.highlight-citation {
+  background: oklch(85% 0.15 200 / 0.85);
+  color: oklch(15% 0.02 200);
+  font-weight: 600;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  box-shadow: 0 0 0 1px oklch(70% 0.15 200 / 0.3);
+}
+
+[data-theme="light"] .highlight-citation {
+  background: oklch(90% 0.12 200 / 0.50);
+  color: oklch(20% 0.02 200);
+  box-shadow: 0 0 0 1px oklch(60% 0.12 200 / 0.25);
+}
+

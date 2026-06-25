@@ -1,0 +1,39 @@
+{
+  "$schema": "./design-reference.v1.schema.json",
+  "version": 1,
+  "description": "Machine-readable design reference for the REASON design-critic (tempdoc 615 §11 REASON / §6.4 Judge). The 'foundation' rules are ALWAYS-ON (typography/spacing/z/motion scales — projected from the token system shell-v0/themes/token-names.generated.ts); the per-surface 'expect' blocks are the structural invariants a surface must satisfy; the 'rubric' lists the dimensions the LLM critic scores the measured facts against. Indeed's finding (§11): JSON wins as the design-system encoding — explicit keys, no ambiguity. Minimal-viable: one rubric, foundation + the key surfaces; expand as future work.",
+  "foundation": {
+    "note": "Spacing/sizing/z/motion MUST come from these token scales — a raw literal off-scale is a finding.",
+    "fontSizeScale": ["--font-size-xs", "--font-size-sm", "--font-size-md", "--font-size-lg", "--font-size-xl"],
+    "zOverlayScale": ["--z-overlay-chrome", "--z-overlay-drawer", "--z-overlay-float", "--z-overlay-modal", "--z-overlay-top", "--z-overlay-transient"],
+    "durationScale": ["--duration-instant", "--duration-fast", "--duration-normal", "--duration-slow"],
+    "easeScale": ["--ease-accelerate", "--ease-decelerate", "--ease-standard"],
+    "spacingGridPx": 4
+  },
+  "shell": {
+    "note": "Every surface renders inside the one shell: a banner, a navigation rail, and a single main landmark.",
+    "requiredLandmarkRoles": ["banner", "navigation", "main"],
+    "singleH1": true,
+    "headingOrderMonotonic": true
+  },
+  "surfaces": {
+    "search": {
+      "expectLandmarkRoles": ["banner", "navigation", "main", "searchbox"],
+      "h1Text": "Search",
+      "note": "The default landing surface; the searchbox is the primary control."
+    },
+    "library": { "expectLandmarkRoles": ["banner", "navigation", "main"] },
+    "settings": { "expectLandmarkRoles": ["banner", "navigation", "main"] },
+    "health": { "expectLandmarkRoles": ["banner", "navigation", "main"] },
+    "brain": { "expectLandmarkRoles": ["banner", "navigation", "main"] },
+    "help": { "expectLandmarkRoles": ["banner", "navigation", "main"] }
+  },
+  "rubric": [
+    { "id": "landmark-completeness", "ask": "Are all required landmark roles present exactly once where unique (banner/navigation/main, single h1)?" },
+    { "id": "heading-order", "ask": "Do headings descend without skipping a level (no h1 -> h3)?" },
+    { "id": "visual-hierarchy", "ask": "Does the geometry imply a clear primary region and reading order, or do elements compete/overlap?" },
+    { "id": "spacing-rhythm", "ask": "Do element positions/sizes sit on the 4px grid, or is there off-scale jitter?" },
+    { "id": "no-overflow", "ask": "Is the document free of unintended horizontal/vertical overflow?" },
+    { "id": "a11y-clean", "ask": "Are there axe violations beyond the accepted baseline?" }
+  ]
+}

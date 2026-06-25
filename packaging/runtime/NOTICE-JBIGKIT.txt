@@ -1,0 +1,41 @@
+JBIG-KIT (libjbig) — GNU GPL v2 Notice & Written Offer
+======================================================
+
+JustSearch's Windows OCR bundle includes "libjbig-0.dll", part of JBIG-KIT,
+a lossless image-compression library by Markus Kuhn. It is reached only as an
+optional JBIG codec inside libtiff (used by Leptonica/Tesseract for OCR), is
+dynamically linked, and is separately replaceable.
+
+  Component:   JBIG-KIT (libjbig)
+  Author:      Markus Kuhn, University of Cambridge
+  Upstream:    https://www.cl.cam.ac.uk/~mgk25/jbigkit/
+  License:     GNU General Public License, version 2 (GPL-2.0-or-later)
+               Full license text: ./LICENSE-GPL-2.0.txt (shipped alongside)
+  Note:        JBIG-KIT is dual-licensed. It may be used under the GPL-2.0 (as
+               here), or under a separate commercial license obtained from
+               Cambridge Enterprise (software@enterprise.cam.ac.uk).
+
+Written offer for corresponding source
+--------------------------------------
+In accordance with GPL-2.0 Section 3, the complete corresponding source code
+for the redistributed "libjbig-0.dll" is the unmodified upstream JBIG-KIT
+release, available from the upstream URL above. JustSearch redistributes the
+library unmodified; we additionally offer, valid for three years from the date
+this binary was distributed, to provide a copy of the corresponding source on
+request at no charge beyond the cost of physically performing the distribution.
+Requests: open an issue on the JustSearch repository, or contact the maintainer
+listed in the project README.
+
+Replaceability
+--------------
+"libjbig-0.dll" is a standalone dynamically-linked library. It may be replaced
+or removed by the user; the rest of JustSearch and the OCR pipeline continue to
+function (JBIG is a rare bilevel-image codec; non-JBIG TIFFs and all other OCR
+input are unaffected).
+
+This file is authored alongside the tempdoc-632 native-binary disposition gate.
+The JBIG-KIT artifact is recorded as `strong-copyleft` in
+packaging/runtime/tesseract-bundled-libraries.v1.json with a dated acceptance in
+config/native-license-acceptances.json. If JustSearch later ships a Tesseract
+build without JBIG, this file, that manifest row, and that acceptance entry are
+removed together.

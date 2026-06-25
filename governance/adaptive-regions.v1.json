@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "tempdoc": 559,
+  "note": "Tempdoc 559 Part II Authority VI (Adaptivity), declaration-deepening — the catalog the adaptive-closure gate projects its coverage from (548 §5.2), so the gate is catalog-projected, NOT hardcoded to the status bar. An adaptive region is an item-bearing chrome row whose items carry a declared overflow priority: when horizontal space runs out it overflows its lowest-priority items into a single \"…\" affordance instead of clipping them. Each entry names the item registry (the priority catalog), the renderer that composes the adaptive primitive, and the priority field. A NEW item-bearing chrome region must be added here AND built from the OverflowController primitive — adding the row is the discovery step that makes the second region auto-covered. Modeled on governance/overlay-positioning-classes.v1.json + execution-surfaces.v1.json.",
+  "primitive": "modules/ui-web/src/shell-v0/primitives/adaptiveBar.ts",
+  "regions": [
+    {
+      "id": "status-bar",
+      "registryFile": "modules/ui-web/src/shell-v0/commands/StatusBarRegistry.ts",
+      "registryType": "StatusBarItem",
+      "priorityField": "priority",
+      "rendererFile": "modules/ui-web/src/shell-v0/components/StatusDeck.ts",
+      "note": "The first adaptive region — the bottom telemetry bar. Items declare `priority` (overflow order) + `overflow` (per-item policy: pinned items never hide). StatusDeck composes OverflowController and does not naked-clip its :host."
+    }
+  ],
+  "densityNote": "Tempdoc 565 §19 — the FILL half of the Adaptivity authority (559 §4: 'overflow + fill'). The `regions` above are the OVERFLOW half (which leading items of a row fit a width). A `densityElement` is the FILL half: an element that renders at MULTIPLE SCALES must project its REPRESENTATION from its measured box — below the legible threshold a glyph char collapses to a dot/shape, so 'an illegible-at-scale glyph' is unrepresentable by construction. Each element composes the `densityPrimitive` DensityController (the ResizeObserver-backed sibling of OverflowController); a new multi-scale element must be ADDED here AND built from it (the discovery step), not hand-fix one representation that fails small.",
+  "densityPrimitive": "modules/ui-web/src/shell-v0/primitives/adaptiveDensity.ts",
+  "densityElements": [
+    {
+      "id": "run-node",
+      "elementFile": "modules/ui-web/src/shell-v0/components/chat/RunNode.ts",
+      "note": "The run-step node renders at the spine-gutter (~5–13px), the in-body trace (~11.5px), and the tool-card (~13.6px). It composes DensityController so the representation is a projection of the measured box (565 §19.2): the surface declares a density ceiling (gutter `minimal`, trace `compact`, card `full`) and the size CAPS it — below GLYPH_LEGIBLE_PX a decisive glyph collapses to a tone dot. No hand-fixed representation that fails small."
+    }
+  ]
+}

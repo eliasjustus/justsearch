@@ -1,0 +1,632 @@
+{
+  "platform": "linux-dev",
+  "query": "apollo guidance",
+  "page": 1,
+  "iterations_recorded": 20,
+  "iterations": [
+    {
+      "iteration": 1,
+      "path": "reports/phase13/paging/linux-dev/iteration-1.json",
+      "sha256": "af4bea8e3dea5205bc2729be7cc453be39c37cad3168cc1f48c624aa06653fc1",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5MTUxMDd8MzAwMDAwfGQ3OWE3ZWM1LTk0ZDAtNDI4MS1iNWEyLTUzYWE2ZWJjOWEzOXxwaXRfaWQ9NWEwNGNkODQtM2YzZS00MDY4LWExNTItOTVkNDliY2NiODI3O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTE1MTA3O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxjNDU0ZmY4",
+        "expires_at_epoch_ms": 1762583215107,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582915107"
+        }
+      }
+    },
+    {
+      "iteration": 2,
+      "path": "reports/phase13/paging/linux-dev/iteration-2.json",
+      "sha256": "7677f092e298dde056628a4d0910a5bee7750c227e6b9373a190974e96a29ae0",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5MjMyMjJ8MzAwMDAwfGJhYjE3ZDMyLTgyNzItNDk1Ni1iODRjLTg0NzQ4YTRmY2FlMXxwaXRfaWQ9Njc1OTI4MmItZWMyZS00MTY0LWExYzUtZWQ2YjY1YmY3YjQ3O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTIzMjIxO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw0OGQyNGRjNA",
+        "expires_at_epoch_ms": 1762583223222,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582923221"
+        }
+      }
+    },
+    {
+      "iteration": 3,
+      "path": "reports/phase13/paging/linux-dev/iteration-3.json",
+      "sha256": "b55253d27b63fa9f0921fb30fb50d4cbef9207c503caa5c6ca718b88dc7058e4",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5MzEyNjR8MzAwMDAwfGYyYWYyNmJiLWU4OTAtNDYzMC04NGJmLTVhNjJiNDJhN2U3ZnxwaXRfaWQ9NjBhMmVkNTItZTQwMS00YjBmLWFhYmQtZDkwOTRiNjY2NmU0O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTMxMjYzO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw3Yzg5YzllMQ",
+        "expires_at_epoch_ms": 1762583231264,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582931263"
+        }
+      }
+    },
+    {
+      "iteration": 4,
+      "path": "reports/phase13/paging/linux-dev/iteration-4.json",
+      "sha256": "8449064d0f54ecdb447d8701826abc0e1f134d4c4a7d7be92c2d1ce03015a6d0",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5MzkzNDZ8MzAwMDAwfDA2NmNiZGJhLTU5MGEtNDk3NC1hZmNjLTA2ZjY2ODc2NDQ2ZnxwaXRfaWQ9ODhlOGI3ZjItZDIwZS00ZjU5LTg3YWEtOTk3YWU1YWZmZjZkO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTM5MzQ1O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxlOThkMjZjYg",
+        "expires_at_epoch_ms": 1762583239346,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582939345"
+        }
+      }
+    },
+    {
+      "iteration": 5,
+      "path": "reports/phase13/paging/linux-dev/iteration-5.json",
+      "sha256": "cb207d77725a54e9b373d029d6da7631948cfc9ae22391c6de48314896a7fc55",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5NDc0OTd8MzAwMDAwfGRlZjhiNTA0LWI5YzMtNDJkYi1iNGIzLTNjNjRmNDBlZjU4MHxwaXRfaWQ9NGI4NDA1MWQtOGQ1Zi00Nzk4LThiOTQtYmRhZGFlY2U5M2MxO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTQ3NDk2O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxlMDQ4NWQ2Mw",
+        "expires_at_epoch_ms": 1762583247497,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582947496"
+        }
+      }
+    },
+    {
+      "iteration": 6,
+      "path": "reports/phase13/paging/linux-dev/iteration-6.json",
+      "sha256": "9754f16b71332a07afc5a91a711ccd8cfe86a368273bcf7896bcaca1a2463252",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": null,
+        "token": null,
+        "expires_at_epoch_ms": null,
+        "extras": {}
+      }
+    },
+    {
+      "iteration": 7,
+      "path": "reports/phase13/paging/linux-dev/iteration-7.json",
+      "sha256": "144484b1fe6ca229ab0b99a06f5bf614f61b3f789e4986de1c3e2b764f4de0b2",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5NjM2MTF8MzAwMDAwfDJhZmJhYjNkLWNiYzQtNGYzNi05MjRhLWQ1MmY4NDMyN2Y0OHxwaXRfaWQ9Mzc0Y2ZhOTgtODdmZi00NGM4LWE0NDctMmJjMDIxOGJmYTgxO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTYzNjEwO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxhZGU2Y2NkMw",
+        "expires_at_epoch_ms": 1762583263611,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582963610"
+        }
+      }
+    },
+    {
+      "iteration": 8,
+      "path": "reports/phase13/paging/linux-dev/iteration-8.json",
+      "sha256": "472ed83a2663f27970a6968015b8e5db578d4b6c9ed8272e97aceae4debc6825",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5NzE5MDl8MzAwMDAwfGYzNzllN2JkLTI5ZmItNDMwZS1hMjlmLThhMDYwMzc1NGQ0OXxwaXRfaWQ9YmVmMjFlYzQtNzUzMC00Yjc5LWE5NDAtY2E3ZjYwZTRhZmI0O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTcxOTA4O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw5ZDlmYTNmZQ",
+        "expires_at_epoch_ms": 1762583271909,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582971908"
+        }
+      }
+    },
+    {
+      "iteration": 9,
+      "path": "reports/phase13/paging/linux-dev/iteration-9.json",
+      "sha256": "3cfac28410d9964646b1cc2d44c0332c3262d22571bb440f8c61477683ec503b",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5Nzk5Mzd8MzAwMDAwfGM5ODcxNDQwLTg1NDEtNDdiMi1iMzM1LTAzY2EwNTJlM2IyZHxwaXRfaWQ9ZTJjNGMzYzktMTZlNy00ZDFjLWI5NDgtMTk4ODA1ZWJmNWVkO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTc5OTM2O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw5M2ZiZTY",
+        "expires_at_epoch_ms": 1762583279937,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582979936"
+        }
+      }
+    },
+    {
+      "iteration": 10,
+      "path": "reports/phase13/paging/linux-dev/iteration-10.json",
+      "sha256": "2eac472418a96e758208be187d8947a8bd8070de1786ee9c4be3c50da966a427",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5ODc5Nzd8MzAwMDAwfDlkMzU2MDQxLWMyYWUtNGEyZi1hYmE4LWZjNmY0NTM0MDU3OXxwaXRfaWQ9ZWE5NmMzYTEtZjA1MC00Nzg2LTlhMjQtYzJhMWZmNTAxOGNhO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTg3OTc2O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHwzODcwYTM1Mw",
+        "expires_at_epoch_ms": 1762583287977,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582987976"
+        }
+      }
+    },
+    {
+      "iteration": 11,
+      "path": "reports/phase13/paging/linux-dev/iteration-11.json",
+      "sha256": "c9dfc5320cd6997ca17d6e35e0a1710d30c3664c3a71c3cfef6c6d800a33c865",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODI5OTYwNzB8MzAwMDAwfDk0NWY1NjIzLWI4OGItNDk5NC05M2IyLWUwYTg3OWE2NmE1YnxwaXRfaWQ9ODEyN2QwYTUtZDlhZS00ZmNiLWJmYTAtMGU4OWNiOGIwYWM0O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTk2MDY5O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHwzOTA2NjU3OQ",
+        "expires_at_epoch_ms": 1762583296070,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582996069"
+        }
+      }
+    },
+    {
+      "iteration": 12,
+      "path": "reports/phase13/paging/linux-dev/iteration-12.json",
+      "sha256": "b5ebee3dd4afd7bf6eef8e0d7c225ec8a921314ef0db91224c0f7b6b2a949aea",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwMDQwNDV8MzAwMDAwfDYzOGI1Njc0LWJkYTktNDZhYi05NGM4LTUxZWVlZjUxMjNlNHxwaXRfaWQ9YzJhZjYyMjYtZjQ5MS00MzQ5LWI1NGYtNjdkMTMxYmZiYzFhO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDA0MDQ0O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxmMzkxNTA0Yw",
+        "expires_at_epoch_ms": 1762583304045,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583004044"
+        }
+      }
+    },
+    {
+      "iteration": 13,
+      "path": "reports/phase13/paging/linux-dev/iteration-13.json",
+      "sha256": "3ed3e4ada4eb2988d21239454b689d1bbab91c4d725ed36f93a35ddfad1c8753",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwMTIyMjR8MzAwMDAwfGNiYzFkYjJhLTUyODMtNGVkYi05ZWJmLWQyMGI5NWE4MzM5NXxwaXRfaWQ9ZmQ1MmY5NDItMDhiYy00M2UxLTg0YWUtOWMyNTRlOTBjYWY1O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDEyMjIzO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw1ZDUxNzk5ZA",
+        "expires_at_epoch_ms": 1762583312224,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583012223"
+        }
+      }
+    },
+    {
+      "iteration": 14,
+      "path": "reports/phase13/paging/linux-dev/iteration-14.json",
+      "sha256": "90fc1bfe6c8e50344d94681931b924e104934b025641235c0f9c608ab68edbe7",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwMjA0OTJ8MzAwMDAwfDU2MDZkMjQ2LTM1ZjktNDY3Mi04ZWMzLTMxNjU2YjczYWY0MnxwaXRfaWQ9ODdmMzMyMWItMTU5Mi00NWYyLTkwYjQtMmU5NzkwZDE4ODEwO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDIwNDkxO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw0YjdmNzQzMQ",
+        "expires_at_epoch_ms": 1762583320492,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583020491"
+        }
+      }
+    },
+    {
+      "iteration": 15,
+      "path": "reports/phase13/paging/linux-dev/iteration-15.json",
+      "sha256": "eb317409fc7003b4b415455dfb5b72fef7075415576ff86059ec88c3fed54102",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwMjg5NjJ8MzAwMDAwfDEyNDA5M2NmLWE1MGUtNGVhNC05NTM0LWJjZDM5YjQxNGJiOHxwaXRfaWQ9OWE3YTM3NGYtZWU3OS00NTg3LWJlMmUtY2U2ZTU3ZTUzMzllO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDI4OTYxO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw1ZDIyZmUxOQ",
+        "expires_at_epoch_ms": 1762583328962,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583028961"
+        }
+      }
+    },
+    {
+      "iteration": 16,
+      "path": "reports/phase13/paging/linux-dev/iteration-16.json",
+      "sha256": "82bb4f11bc4cb1dd8fe4a812597f82d935c119b3850f62c06dd0b522a2bb1a5b",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwMzczNDB8MzAwMDAwfGJkOTc2MzM3LTQ4YmQtNGYyZC1hMDE4LWI4MWEyZjEzMmViYnxwaXRfaWQ9NTQ1ZmY4NDQtMzM4MC00NTg4LThhZGQtM2RkZDVkM2FlM2NjO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDM3MzM5O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxiY2NkNDQ1ZA",
+        "expires_at_epoch_ms": 1762583337340,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583037339"
+        }
+      }
+    },
+    {
+      "iteration": 17,
+      "path": "reports/phase13/paging/linux-dev/iteration-17.json",
+      "sha256": "50342f0581eea0d468d4c80f9ae12a9b8a77f636076223a595c46fc3337bbbfd",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwNDUyODF8MzAwMDAwfDU0NjM3Zjc2LTgyNDctNGEyNS05OTZjLTA2OWY0ZGIwYTBlZXxwaXRfaWQ9YTQ5ZjA0YTYtZjE3YS00MWJhLWI2NTYtZmM0OTQ1ZGRmNmM4O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDQ1MjgwO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxlNGVjZmI1Mg",
+        "expires_at_epoch_ms": 1762583345281,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583045280"
+        }
+      }
+    },
+    {
+      "iteration": 18,
+      "path": "reports/phase13/paging/linux-dev/iteration-18.json",
+      "sha256": "ac3ac8240b4ecd394af4d8f55b8c8ab09f921b1a62880734f78c93a7c7826274",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwNTMxNzB8MzAwMDAwfDViMWQzMTk1LTkwNTMtNDNkZC04YmQ1LWZlYWM2OTBmYjFjOHxwaXRfaWQ9OGVlYTAzNDgtMGNlYy00MTAxLThmMjEtYTk0N2IyYjk2ZjhlO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDUzMTY5O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHxiMDMwYTZkOQ",
+        "expires_at_epoch_ms": 1762583353170,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583053169"
+        }
+      }
+    },
+    {
+      "iteration": 19,
+      "path": "reports/phase13/paging/linux-dev/iteration-19.json",
+      "sha256": "d1bd1041eec5accd252e5eac54d30d71b0682df1f3e5f0c7ff6528b522df26ea",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwNjE1Mjh8MzAwMDAwfDBmNmEyNWM0LWNlZjctNDFkYS1hNWRjLWU4ZDQzYzVkNzk5NnxwaXRfaWQ9MDUxNjAyOGQtNGYyYi00YTg5LTg3N2QtZTRhMzRiYmEzOGU2O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDYxNTI3O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw4YjBiNGYwMg",
+        "expires_at_epoch_ms": 1762583361528,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583061527"
+        }
+      }
+    },
+    {
+      "iteration": 20,
+      "path": "reports/phase13/paging/linux-dev/iteration-20.json",
+      "sha256": "b9a53b109eaf0898f12d64c9d88a9412cd224f2374f3b8790cb3d582fb5afd3f",
+      "doc_ids": [
+        "demo-004",
+        "demo-014",
+        "demo-001",
+        "demo-010",
+        "demo-012",
+        "demo-006",
+        "demo-009",
+        "demo-013",
+        "demo-007",
+        "demo-008"
+      ],
+      "cursor": {
+        "mode": "pit",
+        "token": "cGl0fDE3NjI1ODMwNjkzNjR8MzAwMDAwfDQ3NGVkNGEzLTgzNmYtNGZkNy05MDJkLTIyNzJkMWUyNmY2YnxwaXRfaWQ9NGYzMDNmZTItMTdiYi00ZjBlLWJhYzktMTI3MDg0ZmUwODdhO3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgzMDY5MzYzO3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHw4OWY2YTM0YQ",
+        "expires_at_epoch_ms": 1762583369364,
+        "extras": {
+          "next_offset": 10,
+          "last_doc_id": "demo-008",
+          "last_score": 0.40552979707717896,
+          "pit_commit_id": "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+          "pit_generation": 61,
+          "pit_token": "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762583069363"
+        }
+      }
+    }
+  ],
+  "summary": {
+    "unique_hashes": [
+      "144484b1fe6ca229ab0b99a06f5bf614f61b3f789e4986de1c3e2b764f4de0b2",
+      "2eac472418a96e758208be187d8947a8bd8070de1786ee9c4be3c50da966a427",
+      "3cfac28410d9964646b1cc2d44c0332c3262d22571bb440f8c61477683ec503b",
+      "3ed3e4ada4eb2988d21239454b689d1bbab91c4d725ed36f93a35ddfad1c8753",
+      "472ed83a2663f27970a6968015b8e5db578d4b6c9ed8272e97aceae4debc6825",
+      "50342f0581eea0d468d4c80f9ae12a9b8a77f636076223a595c46fc3337bbbfd",
+      "7677f092e298dde056628a4d0910a5bee7750c227e6b9373a190974e96a29ae0",
+      "82bb4f11bc4cb1dd8fe4a812597f82d935c119b3850f62c06dd0b522a2bb1a5b",
+      "8449064d0f54ecdb447d8701826abc0e1f134d4c4a7d7be92c2d1ce03015a6d0",
+      "90fc1bfe6c8e50344d94681931b924e104934b025641235c0f9c608ab68edbe7",
+      "9754f16b71332a07afc5a91a711ccd8cfe86a368273bcf7896bcaca1a2463252",
+      "ac3ac8240b4ecd394af4d8f55b8c8ab09f921b1a62880734f78c93a7c7826274",
+      "af4bea8e3dea5205bc2729be7cc453be39c37cad3168cc1f48c624aa06653fc1",
+      "b55253d27b63fa9f0921fb30fb50d4cbef9207c503caa5c6ca718b88dc7058e4",
+      "b5ebee3dd4afd7bf6eef8e0d7c225ec8a921314ef0db91224c0f7b6b2a949aea",
+      "b9a53b109eaf0898f12d64c9d88a9412cd224f2374f3b8790cb3d582fb5afd3f",
+      "c9dfc5320cd6997ca17d6e35e0a1710d30c3664c3a71c3cfef6c6d800a33c865",
+      "cb207d77725a54e9b373d029d6da7631948cfc9ae22391c6de48314896a7fc55",
+      "d1bd1041eec5accd252e5eac54d30d71b0682df1f3e5f0c7ff6528b522df26ea",
+      "eb317409fc7003b4b415455dfb5b72fef7075415576ff86059ec88c3fed54102"
+    ],
+    "unique_doc_sequences": 1,
+    "doc_sequence_consistent": true,
+    "pit_commit_consistent": true,
+    "pit_generation_consistent": true,
+    "last_doc_consistent": true,
+    "unique_pit_tokens": 19
+  },
+  "captured_at": "2025-11-08T06:24:30.009931+00:00"
+}

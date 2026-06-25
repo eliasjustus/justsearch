@@ -1,0 +1,6 @@
+{
+  "decision_kind" : "blocked",
+  "effective_mode" : "VECTOR",
+  "vector_blocked_reason" : "UNKNOWN",
+  "encoding_failure_reason" : "UNKNOWN"
+}

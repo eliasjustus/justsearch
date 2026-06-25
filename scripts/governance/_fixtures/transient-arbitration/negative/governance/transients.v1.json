@@ -1,0 +1,4 @@
+{
+  "primitive": { "symbol": "TransientController" },
+  "adopters": ["modules/ui-web/src/shell-v0/Bad.ts"]
+}

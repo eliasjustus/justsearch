@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "tempdoc": 555,
+  "note": "The Law-Backed Seam register (tempdoc 555 Pillar A). The SINGLE allowlist of pure, branch/arithmetic-dense, high-blast-radius logic whose failure mode is a silent WRONG VALUE (not an exception). Each seam declares its `law` (the invariant a property test must encode — Pillar B) and its `guard` (the test(s) that must kill faults in it — Pillar C). This file is the single authority that (1) scopes PIT `targetClasses` per module via the `conventions.mutation` plugin, and (2) is ratcheted per-seam on mutation test-strength by the `test-efficacy` discipline gate. Out-of-register code (IO / native / DTO / UI / gRPC plumbing) has no law and is NOT mutation-targeted by design (tempdoc 555 §6 Wall 2). Keep this register SMALL — only genuine law-bearing seams (AHA: do not over-DRY).",
+  "strengthMetric": "test-strength = (KILLED + TIMED_OUT) / (KILLED + TIMED_OUT + SURVIVED), integer percent — matches PIT's own definition (TIMED_OUT counts as killed). NOT raw mutation score (tempdoc 555 §9.1). A per-seam noCoverage CEILING is ratcheted alongside so a seam cannot rot by adding untested branches (invisible to killed/covered).",
+  "propertyTestNote": "The `*PropertyTest` guard tests are fixed-seed JUnit loops over generated inputs, NOT a true PBT framework: they give reproducibility but NO shrinking and a FIXED input sample (same inputs every run), so they are weaker than jqwik-style PBT. This is a deliberate supply-chain tradeoff — jqwik 1.10.0 shipped an AI-agent-targeted prompt-injection payload, so it is not added to this dependency-verified build (tempdoc 555 §7/§10). Mutation adequacy (the test-efficacy gate) is what actually certifies these tests bite.",
+  "seams": [
+    {
+      "id": "hybrid-fusion",
+      "gradlePath": ":modules:adapters-lucene",
+      "targetClass": "io.justsearch.adapters.lucene.runtime.HybridFusionUtils",
+      "targetTests": [
+        "io.justsearch.adapters.lucene.runtime.HybridFusionUtilsTest",
+        "io.justsearch.adapters.lucene.runtime.HybridFusionUtilsPropertyTest"
+      ],
+      "pure": true,
+      "law": "RRF: each leg's fused contribution is weight/(k+rank) — rank-monotone (strictly increases as a hit's rank improves) and weight-bounded to [0,1] (clamped). The result comparator is a TOTAL ORDER (deterministic docId tiebreak). CC/CC3: normalizeScore = (s-min)/range is score-monotone within a leg. The bm25 score-boost weight is non-negative and the fused score is monotone non-decreasing in it.",
+      "guard": "test:HybridFusionUtilsTest + test:HybridFusionUtilsPropertyTest",
+      "note": "The lead seam (tempdoc 555 §9.2). Pure (858 LOC, 0 native/IO refs). Tempdoc 554's #1 PBT target — the property (law) and mutation (bite) halves coincide here."
+    },
+    {
+      "id": "chunk-offset-math",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.rag.ChunkOffsetMath",
+      "targetTests": [
+        "io.justsearch.indexerworker.rag.ChunkDocumentWriterLineFieldsTest",
+        "io.justsearch.indexerworker.rag.ChunkOffsetMathPropertyTest"
+      ],
+      "pure": true,
+      "law": "calculateLineNumber(content, offset) = 1 + count('\\n' in content[0, min(offset, len))); it is 1 for offset<=0 and non-decreasing in offset. findPrecedingHeading returns the LAST markdown heading (#{1,6} + text) starting before the offset, or NONE.",
+      "guard": "test:ChunkDocumentWriterLineFieldsTest + test:ChunkOffsetMathPropertyTest",
+      "note": "Functional-core extraction from ChunkDocumentWriter (tempdoc 555 §4/§10 U4 — genuinely IO-entangled seam). Drives RAG chunk line/heading metadata; a silent off-by-one mis-attributes citations."
+    },
+    {
+      "id": "file-freshness",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.FileFreshness",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.FileFreshnessClassifyTest"
+      ],
+      "pure": true,
+      "law": "Priority-ordered freshness classification: path-identity > file-kind > size > mtime > file-key. The FIRST difference in that order decides the result; null file-key on either side never triggers FILE_KEY_CHANGED. A reorder or flipped comparison silently misclassifies a changed file as FRESH (index corruption).",
+      "guard": "test:FileFreshnessClassifyTest",
+      "note": "Functional-core extraction from FileFreshnessSnapshot (IO capture stays in the record)."
+    },
+    {
+      "id": "admission-policy",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.AdmissionPolicy",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.AdmissionPolicyTest"
+      ],
+      "pure": true,
+      "law": "Total, injective mapping from a post-snapshot SourceValidationResult to its ingestion reason code; every change kind maps to a distinct code. A swapped/dropped arm emits a misleading stale diagnostic.",
+      "guard": "test:AdmissionPolicyTest",
+      "note": "Functional-core extraction from WorkerIngestionAuthority (the IO admit() short-circuit stays in the authority)."
+    },
+    {
+      "id": "splade-backoff",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.BackoffPolicy",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.BackoffPolicyTest"
+      ],
+      "pure": true,
+      "law": "delay = min(base * 2^consecutiveFailures, cap); exponential in the failure count, clamped to the cap, non-decreasing in failures, negatives clamped. An off-by-one exponent or wrong cap comparison causes retry starvation or thundering-herd thrashing.",
+      "guard": "test:BackoffPolicyTest",
+      "note": "Functional-core extraction from BackfillScheduler (the System.currentTimeMillis next-retry timestamp stays in the scheduler)."
+    },
+    {
+      "id": "worker-supervision",
+      "gradlePath": ":modules:app-services",
+      "targetClass": "io.justsearch.app.services.worker.SupervisionDecision",
+      "targetTests": [
+        "io.justsearch.app.services.worker.SupervisionDecisionTest"
+      ],
+      "pure": true,
+      "law": "A recoverable Worker fault never dead-ends at a status flag (Observation-Actuation Closure, tempdoc 627): given (processAlive, consecutiveUnhealthy, restartAttempts, lastStartKnown, msSinceLastStart) and the policy, decide() yields RESTART (graceful for a hang, respawn for death) while within the shared cap, GIVE_UP once the cap is exceeded, and resets the budget after the stability window. Death and hang draw from ONE cap. Backoff = min(base << (attempt-1), max). A flipped comparison or off-by-one silently never-recovers (hung worker stuck) or never-gives-up (restart storm).",
+      "guard": "test:SupervisionDecisionTest",
+      "note": "The Worker's recovery-contract authority (functional core); the impure shell (WorkerSpawner.superviseTick/doRestart) interprets the Decision verbatim. Brain side (BrainSupervisionPolicy) is policy-declared but not a seam — its decision is a trivial >= branch entangled with orchestration (tempdoc 627 investigation)."
+    },
+    {
+      "id": "worker-liveness-suicide",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.WorkerLivenessDecision",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.WorkerLivenessDecisionTest"
+      ],
+      "pure": true,
+      "law": "The Worker self-exits iff an explicit shutdown is signalled, OR — past the startup grace — the Main (Head) heartbeat is stale AND Head is not known-alive (tempdoc 630). A stale heartbeat ALONE does not kill: it must be corroborated by Head-PID death (HeadLiveness != ALIVE), because an OS suspend/resume yields a benign stale beat while Head (PID persisting across suspend) is alive. HeadLiveness.UNKNOWN (no PID signal) preserves the pre-630 heartbeat-only behavior. A flipped Head-liveness comparison silently re-introduces the false-suicide-on-every-wake, or (the unsafe direction) lets a real orphan outlive a dead Head.",
+      "guard": "test:WorkerLivenessDecisionTest",
+      "note": "The Worker's heartbeat-suicide functional core; the impure shell (MmfWorkerSignalBus.shouldDie + headLiveness) gathers nowMs/heartbeat/Head-PID-liveness and interprets the boolean verbatim. The liveness-continuity precondition (tempdoc 630) dual to the 627 Observation-Actuation Closure: an invalid (suspend-confounded) staleness observation must not actuate."
+    }
+  ]
+}

@@ -1,0 +1,173 @@
+name: Phase 3 Observability Nightly
+
+# Tempdoc 400 §26.6 Decision 4 (locked 2026-04-22).
+#
+# Cron daily at 03:00 UTC (off-hours; no push-CI contention). Per §26.5
+# this workflow drives the end-of-phase integration loop:
+# 1. `jseval calibrate --dataset scifact --modes full --runs 5 --max-queries 50`
+#    establishes the current cohort's non-determinism envelope.
+# 2. `jseval run ...` executes against that cohort, auto-embedding the
+#    envelope into its manifest and invoking every LR4-* projection
+#    (LR4-a..h registered; outputs land under
+#    `<run_dir>/projections/<name>.json`).
+# 3. `jseval gate` asserts σ(nDCG@10) is within ±10% of the B2 baseline
+#    (0.00108) and validates the manifest embed + projection outputs.
+#    (Phase 6 / 6.13: moved from scripts/ci/phase3_observability_gate.py
+#    into the jseval package.) Out-of-band auto-opens a GitHub issue
+#    via `gh`; workflow fails.
+# 4. Artifacts uploaded with 30-day retention.
+#
+# Mirrors the rr219-*-nightly.yml + agent-live-eval-nightly.yml patterns
+# (self-hosted runner + Node + Java + powershell shell). Avoids the
+# heavier rr219 governance path because Phase 3's gate is single-number
+# drift detection, not the multi-lane RR-219 scorecard.
+
+# YAML note: "on" is quoted below to keep PyYAML 1.1 compat tools from
+# coercing the key to a bool; GitHub accepts both but the quoted form
+# lets our YAML-lint checks load the workflow identically to how it
+# parses in production.
+"on":
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Calibration runs (min 3, default 5)
+        required: false
+        default: '5'
+      max_queries:
+        description: Max queries per mode (default 50)
+        required: false
+        default: '50'
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: phase-3-observability-nightly
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  NODE_VERSION: '24.14.0'
+  JAVA_VERSION: '25'
+  # B2 baseline σ for nDCG@10 on scifact, established in tempdoc 400
+  # Phase 2 Q1 probe (§13.9 + §25). Nightly gate allows ±10%.
+  PHASE3_BASELINE_NDCG10_STDEV: '0.00108'
+  PHASE3_STDEV_TOLERANCE_PCT: '10'
+  # Tempdoc 400 §27.3: Phase-3 projections that consume `traces.ndjson`
+  # (encoder_drift, cpu_fallback_counts, contract_violations) only
+  # produce non-empty outputs when detailed tracing is on. Backend
+  # default is "none"; nightly workflow explicitly enables detailed
+  # so the gate exercises the full integration chain.
+  JUSTSEARCH_INDEX_TRACING_LEVEL: 'detailed'
+
+jobs:
+  phase3_observability_nightly:
+    name: Phase 3 observability calibration + projection gate
+    if: ${{ vars.BENCH_WORKFLOWS_ENABLED != 'false' }}
+    runs-on: [self-hosted, Windows, X64, justsearch-perf]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            modules/ui-web/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Install root node_modules
+        run: npm ci
+
+      - name: Gradle build (compile check)
+        run: |
+          ./gradlew.bat build -x test --no-configuration-cache
+
+      - name: Install jseval Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./scripts/jseval
+
+      - name: Ensure clean data dir
+        run: |
+          $dataDir = Join-Path $env:GITHUB_WORKSPACE "tmp/phase3-nightly-data"
+          if (Test-Path $dataDir) {
+            Remove-Item -LiteralPath $dataDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          "PHASE3_DATA_DIR=$dataDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run jseval calibrate (5 runs × 50 queries, ~25 min)
+        env:
+          JUSTSEARCH_DATA_DIR: ${{ env.PHASE3_DATA_DIR }}
+        run: |
+          $runs = "${{ github.event.inputs.runs || '5' }}"
+          $maxQueries = "${{ github.event.inputs.max_queries || '50' }}"
+          cd scripts/jseval
+          python -m jseval calibrate `
+            --dataset scifact --modes full `
+            --runs $runs --max-queries $maxQueries `
+            --data-dir $env:JUSTSEARCH_DATA_DIR `
+            2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/tmp/phase3-nightly-data/calibrate.log"
+
+      - name: Run jseval run (projection dispatch)
+        env:
+          JUSTSEARCH_DATA_DIR: ${{ env.PHASE3_DATA_DIR }}
+        run: |
+          $outDir = Join-Path $env:PHASE3_DATA_DIR "eval-results"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          cd scripts/jseval
+          python -m jseval run `
+            --dataset scifact --modes full --max-queries 50 `
+            --output-dir $outDir `
+            --start-backend --clean --pipeline `
+            --json | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/tmp/phase3-nightly-data/run.json"
+
+      - name: Phase 3 observability gate
+        id: gate
+        continue-on-error: true
+        env:
+          PHASE3_BASELINE_NDCG10_STDEV: ${{ env.PHASE3_BASELINE_NDCG10_STDEV }}
+          PHASE3_STDEV_TOLERANCE_PCT: ${{ env.PHASE3_STDEV_TOLERANCE_PCT }}
+          JUSTSEARCH_DATA_DIR: ${{ env.PHASE3_DATA_DIR }}
+        run: |
+          # Phase 6 / 6.13: gate moved into jseval package. `jseval gate`
+          # is now the single operator-facing entry point alongside
+          # calibrate / run / projections subcommands.
+          cd scripts/jseval
+          python -m jseval gate `
+            --data-dir $env:PHASE3_DATA_DIR `
+            --baseline-stdev $env:PHASE3_BASELINE_NDCG10_STDEV `
+            --tolerance-pct $env:PHASE3_STDEV_TOLERANCE_PCT `
+            --report-out "$env:PHASE3_DATA_DIR/gate-report.json"
+          "gate_exit=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload Phase 3 artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phase3-observability-${{ github.run_id }}
+          path: tmp/phase3-nightly-data
+          retention-days: 30
+
+      - name: Fail if gate failed
+        if: ${{ steps.gate.outputs.gate_exit != '0' }}
+        run: exit 1

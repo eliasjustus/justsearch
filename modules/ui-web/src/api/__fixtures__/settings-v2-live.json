@@ -1,0 +1,24 @@
+{
+  "ui" : {
+    "theme" : "dark",
+    "highContrast" : true,
+    "density" : "compact",
+    "vimMode" : true,
+    "defaultAction" : "reveal",
+    "inspectorWidth" : 400,
+    "pauseIndexingDuringAi" : true,
+    "mode" : "advanced",
+    "hasSeenTrustLoopNudge" : true,
+    "excludePatterns" : [ "*.tmp", "node_modules/**" ]
+  },
+  "llm" : {
+    "serverExecutable" : "llama-server.exe",
+    "contextWindow" : 8192,
+    "maxTokens" : 2048,
+    "gpuLayers" : 35,
+    "modelPath" : "C:/models/chat.gguf",
+    "llamaLibPath" : null
+  },
+  "indexPaths" : [ "C:/docs", "D:/papers" ],
+  "settingsMode" : "read_write"
+}

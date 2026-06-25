@@ -1,0 +1,167 @@
+[
+ {
+  "query": "In which city was the designer of the Zelvthorn Reactor born?",
+  "answer": "Drasmere",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_zelvthorn",
+   "d_varnek"
+  ]
+ },
+ {
+  "query": "Who is the mayor of the city where the designer of the Zelvthorn Reactor was born?",
+  "answer": "Ona Pell",
+  "question_type": "three_hop",
+  "evidence_ids": [
+   "d_zelvthorn",
+   "d_varnek",
+   "d_drasmere"
+  ]
+ },
+ {
+  "query": "What alloy was used in the dome commissioned by the founder of Quenby Labs?",
+  "answer": "ferrolite",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_quenby",
+   "d_tols"
+  ]
+ },
+ {
+  "query": "On which day is admission free to the dome commissioned by the founder of Quenby Labs?",
+  "answer": "Tuesdays",
+  "question_type": "three_hop",
+  "evidence_ids": [
+   "d_quenby",
+   "d_tols",
+   "d_arden_dome"
+  ]
+ },
+ {
+  "query": "How many moons orbit the planet discovered by Hessa Prynne?",
+  "answer": "seven",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_prynne",
+   "d_vollos"
+  ]
+ },
+ {
+  "query": "What is the name of the largest moon of the planet discovered by Hessa Prynne?",
+  "answer": "Greb",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_prynne",
+   "d_vollos"
+  ]
+ },
+ {
+  "query": "Who built the telescope that Hessa Prynne used to discover Vollos?",
+  "answer": "Lila Sorne",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_prynne",
+   "d_vexford"
+  ]
+ },
+ {
+  "query": "In which town is the workshop of the engineer who built the Vexford Telescope?",
+  "answer": "Greel",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_vexford",
+   "d_sorne"
+  ]
+ },
+ {
+  "query": "What is the favourite food of the captain who led the Marrow Expedition?",
+  "answer": "pickled lansk",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_marrow",
+   "d_dremm"
+  ]
+ },
+ {
+  "query": "What breed is the dog kept by the leader of the Marrow Expedition?",
+  "answer": "a Sarmik hound",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_marrow",
+   "d_dremm"
+  ]
+ },
+ {
+  "query": "In what year was the college attended by the inventor of the Glimworth engine founded?",
+  "answer": "1602",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_glimworth",
+   "d_halloran"
+  ]
+ },
+ {
+  "query": "Who is the dean of the college attended by the inventor of the Glimworth engine?",
+  "answer": "Idra Quill",
+  "question_type": "three_hop",
+  "evidence_ids": [
+   "d_glimworth",
+   "d_halloran",
+   "d_tarn"
+  ]
+ },
+ {
+  "query": "What colour is the flag of the country that hosts the Velres Observatory?",
+  "answer": "ochre and teal",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_velres",
+   "d_skarn"
+  ]
+ },
+ {
+  "query": "What is the capital of the country that hosts the Velres Observatory?",
+  "answer": "Mol Harran",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_velres",
+   "d_skarn"
+  ]
+ },
+ {
+  "query": "Which river powers the mill owned by the poet Calla Yune?",
+  "answer": "the Threx",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_calla",
+   "d_greel_mill"
+  ]
+ },
+ {
+  "query": "What breed is the dog of the architect who designed Hollin Tower?",
+  "answer": "a Sarmik hound",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_hollin",
+   "d_orrel"
+  ]
+ },
+ {
+  "query": "Which river flows past the city where Bex Halloran grew up?",
+  "answer": "the Threx",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_halloran",
+   "d_threx"
+  ]
+ },
+ {
+  "query": "On what kind of engine do the trams run in the city that uses the engine invented by Bex Halloran?",
+  "answer": "Glimworth engines",
+  "question_type": "two_hop",
+  "evidence_ids": [
+   "d_halloran",
+   "d_norvil"
+  ]
+ }
+]

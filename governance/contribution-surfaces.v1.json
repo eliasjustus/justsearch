@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "tempdoc": 560,
+  "note": "The contribution-surface register (tempdoc 560 §5 — the prevention keystone that locks in §4c). §4c made the registry declaration shapes (Operation/Resource/Presentation/Provenance) a generated single-authority projection, retiring the hand-mirrored types/registry.ts that once shipped the AuditPolicy drift bug. This register + the `contribution-surface` gate make the bypass UNREPRESENTABLE rather than honor-system: a NEW hand-authored 'second shape authority' for the registry wire (a bare `interface X {}` / `type X = {}` in the barrel, or an import of a hand-authored shape from a non-generated module) fails the build. The existing guards (contract-projection, check-wire-type-single-authority) only enforce single-authority for shapes ALREADY in TARGETS/contract-surfaces.v1.json; this gate closes the UNREGISTERED-new-shape class. HONEST LIMIT (mirrors operation-surface §5): the barrel scan catches a hand-authored object/interface in registry.ts and an import from a non-generated module; a hand shape laundered through a path that LOOKS generated, or a deeply-obfuscated alias chain, is residue for review. SCOPE: this is the unblocked SHAPE-face half of §5; the other invariants (DeliveryChannel / trust-bypass / live-witness, facets 4a/4b/4d) are deferred — `_reservedForDeferred` below shows how they extend this register without a rewrite.",
+  "canonicalRecord": {
+    "name": "RegistryWire",
+    "barrel": "modules/ui-web/src/api/types/registry.ts",
+    "generatedDir": "modules/ui-web/src/api/generated/schema-types",
+    "note": "The registry FE type barrel is a re-export/derivation surface over the generated wire types (ResourceWire/OperationWire/PresentationWire/ProvenanceWire from generated/schema-types/*). It is NOT itself a shape authority: every wire-shaped type in it must derive from a generated source. The only permitted hand-authored objects are the `registryAllowlist` below (catalog envelopes + the OperationInvocation helper)."
+  },
+  "scan": {
+    "comment": "The gate is barrel-centric (it scans the registry FE type barrels for shape/import purity + RegistryController for grandfather coverage), not an import-graph fan-out like operation-surface.",
+    "barrel": [
+      "modules/ui-web/src/api/types/registry.ts",
+      "modules/ui-web/src/api/types/diagnostic.ts"
+    ],
+    "generatedDir": "modules/ui-web/src/api/generated/schema-types",
+    "registryController": "modules/ui/src/main/java/io/justsearch/ui/api/RegistryController.java",
+    "barrelImportAllow": [
+      "../generated/",
+      "zod",
+      "./registry"
+    ],
+    "barrelImportAllowNote": "A registry barrel may import only from the generated projection (../generated/schema-types/*, ../generated/registry-enums.generated), zod, or a sibling registry barrel (./registry — diagnostic.ts reuses the FE-facing Presentation/Provenance named types). A NEW import of a hand-authored type from any other module is a laundered second authority → fail (registry-barrel-import-purity).",
+    "expectedMinPopulation": 1,
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: at least this many configured type barrels must be read non-empty, else the purity scan inspects nothing and passes vacuously. Floor 1 (the barrel set is small — registry.ts + diagnostic.ts); the allowlist-orphan check also fires on a collapse when the allowlist is non-empty."
+  },
+  "surfaces": [
+    {
+      "id": "resource",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/resource.ts",
+      "wireType": "ResourceWire",
+      "projection": "generated",
+      "endpoint": "/api/registry/resources",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The Resource wire — UIResourceView → resource.v1.json → resource.ts (tempdoc 560 §4c Phase A). The barrel derives Resource from ResourceWire."
+    },
+    {
+      "id": "operation",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/operation.ts",
+      "wireType": "OperationWire",
+      "projection": "generated",
+      "endpoint": "/api/registry/operations",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The Operation wire — UIOperationView → operation-wire.v1.json → operation.ts (tempdoc 560 §4c Phase B). The barrel derives Operation from OperationWire."
+    },
+    {
+      "id": "presentation",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/presentation.ts",
+      "wireType": "PresentationWire",
+      "projection": "generated-nested",
+      "endpoint": "nested in operations/resources",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The nested Presentation wire (presentation.v1.json → presentation.ts). The barrel derives Presentation from PresentationWire."
+    },
+    {
+      "id": "provenance",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/provenance.ts",
+      "wireType": "ProvenanceWire",
+      "projection": "generated-nested",
+      "endpoint": "nested in operations/resources",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The nested Provenance wire (provenance.v1.json → provenance.ts). The barrel derives Provenance from ProvenanceWire."
+    },
+    {
+      "id": "diagnostic-channel",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/api/generated/schema-types/diagnostic-channel.ts",
+      "wireType": "DiagnosticChannelWire",
+      "projection": "generated",
+      "endpoint": "/api/registry/diagnostic-channels",
+      "guard": "gate:contract-projection",
+      "consumesProjection": "canonical-record",
+      "note": "The DiagnosticChannel wire — the Logs surface registry primitive (tempdoc 560 §4c extension). UIDiagnosticChannelView → diagnostic-channel.v1.json → diagnostic-channel.ts, consumed by the diagnostic.ts barrel (which derives DiagnosticChannel/SubCategory/DataClass/… from DiagnosticChannelWire). Promoted from grandfatheredPending the instant the generated module landed: consumers flattened to ConsumerView (last kind-ful wire retired), parse boundary added at DiagnosticChannelCatalogClient."
+    }
+  ],
+  "grandfatheredPending": [
+    {
+      "id": "prompt",
+      "endpoint": "/api/registry/prompts",
+      "servedRaw": "handlePrompts",
+      "potentialModule": "prompt",
+      "note": "V1-stub (empty catalog), schema-only (prompt.v1.json from Prompt.class); no UIPromptView, no FE projection target. Known-pending — NOT demanded-projected. Projecting it is deferred 4c-extension work (YAGNI until prompts have a real catalog + FE consumer)."
+    },
+    {
+      "id": "surface",
+      "endpoint": "/api/registry/surfaces",
+      "servedRaw": "handleSurfaces",
+      "potentialModule": "surface",
+      "note": "Surface Manifest (not a primitive); served raw / defensively projected in the controller. Known-pending."
+    },
+    {
+      "id": "conversation-shape",
+      "endpoint": "/api/registry/shapes",
+      "servedRaw": "handleShapes",
+      "potentialModule": "conversation-shape",
+      "note": "ConversationShape Manifest (not a primitive); raw passthrough. Known-pending."
+    }
+  ],
+  "grandfatheredPendingNote": "These registry endpoints are served raw / schema-only and are NOT required to be generated projections now — that is deferred 4c-extension work. The gate GRANDFATHERS them: it confirms their handler still exists (coverage) and FAILS if one silently GAINS a generated schema-types module while staying here (drift → promote to surfaces[]). It does NOT demand they be projected.",
+  "registryAllowlist": [
+    {
+      "name": "OperationInvocation",
+      "kind": "helper-object",
+      "reason": "A small {target, defaultArgsJson} helper for argument-bearing recovery refs (slice 447-impl-B) — not a wire entry shape, a local value-object. The only non-Wire object the barrel legitimately declares besides the two catalog envelopes."
+    },
+    {
+      "name": "ResourceCatalog",
+      "kind": "catalog-envelope",
+      "reason": "The thin {entries, schemaVersion, catalogVersion, namespace, primitive} envelope of GET /api/registry/resources. Hand-composed (the Java ResourceCatalog is an interface, not a wire record); each entry is validated by the generated resourceWireSchema. The envelope itself is not a generated record."
+    },
+    {
+      "name": "OperationCatalog",
+      "kind": "catalog-envelope",
+      "reason": "The thin envelope of GET /api/registry/operations — same rationale as ResourceCatalog."
+    },
+    {
+      "name": "DiagnosticChannelCatalog",
+      "kind": "catalog-envelope",
+      "reason": "The thin envelope of GET /api/registry/diagnostic-channels (entries validated by the generated diagnosticChannelWireSchema). Same rationale as ResourceCatalog — the envelope is hand-composed; each entry derives from DiagnosticChannelWire."
+    },
+    {
+      "name": "DiagnosticEvent",
+      "kind": "deferred-sse-surface",
+      "reason": "The per-emission SSE log-line payload, served by the app-observability stream controller (NOT RegistryController) — a distinct streamed/data-tier surface. Projecting it is a separate 564-style follow-up; kept hand-authored in diagnostic.ts for now."
+    },
+    {
+      "name": "DiagnosticEventEnvelope",
+      "kind": "deferred-sse-surface",
+      "reason": "The kind-discriminated wrapper of DiagnosticEvent — same deferred SSE surface as DiagnosticEvent."
+    }
+  ],
+  "registryAllowlistNote": "The ONLY hand-authored object/interface declarations permitted in the barrel. Anything else (a new `interface X {}` or `type X = {object literal}`) fails registry-barrel-purity — it would be a second shape authority. Adding a new allowlist entry forces a human decision + a reason (so the lock-in is explicit, not silent).",
+  "_reservedForDeferred": "Reserved surface keys for the deferred §5 facets — DO NOT POPULATE until the owning facet is built. `altitude` (the declared execution altitude — 4a DeliveryChannel), `consumers` (the live-attestation consumer set — 4b witness), `delivery` (the gated transport — 4d). The enforcer IGNORES unknown surface keys, so 4a/4b/4d extend this register additively without a breaking change (the operation-surface 'extend, don't fork' precedent)."
+}

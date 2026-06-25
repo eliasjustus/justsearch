@@ -1,0 +1,5 @@
+{
+  "cpu": "model.onnx",
+  "gpu": "model_fp16.onnx",
+  "tokenizer": "tokenizer.json"
+}

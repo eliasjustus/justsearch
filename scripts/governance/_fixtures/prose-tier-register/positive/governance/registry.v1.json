@@ -1,0 +1,7 @@
+{
+  "kind": "discipline-gate-registry.v1",
+  "version": 1,
+  "gates": [
+    { "id": "class-size", "title": "class-size", "enforcer": "", "ruleDescriptions": "", "changesetsDir": "", "classifications": "", "baseline": { "kind": "ratchet-file", "path": "" }, "config": {} }
+  ]
+}

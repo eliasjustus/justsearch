@@ -1,0 +1,17 @@
+{
+  "step" : "read-only",
+  "method" : "POST",
+  "endpoint" : "/ui/act",
+  "status" : 403,
+  "request" : {
+    "type" : "focus",
+    "selector" : {
+      "role" : "button",
+      "name" : "Search"
+    }
+  },
+  "response" : {
+    "code" : "read_only",
+    "message" : "Automation read-only mode active"
+  }
+}

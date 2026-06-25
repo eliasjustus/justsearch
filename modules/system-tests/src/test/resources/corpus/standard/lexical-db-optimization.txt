@@ -1,0 +1,24 @@
+SQL Query Optimization Techniques
+
+Optimizing database queries is crucial for application performance. Slow queries can 
+cause bottlenecks, increased latency, and poor user experience.
+
+Index Optimization:
+- Create indexes on columns used in WHERE clauses and JOIN conditions
+- Use covering indexes when possible to avoid table lookups
+- Avoid indexing columns with low cardinality
+- Monitor index usage and remove unused indexes
+
+Query Writing Best Practices:
+- Avoid SELECT * - only request columns you need
+- Use EXPLAIN to understand query execution plans
+- Avoid functions on indexed columns in WHERE clauses
+- Use proper JOIN types (INNER, LEFT, etc.)
+- Batch inserts and updates when possible
+
+Database Configuration:
+- Tune buffer pool sizes for your workload
+- Configure appropriate connection pool settings
+- Set up query caching where beneficial
+- Monitor slow query logs regularly
+

@@ -1,0 +1,47 @@
+[package]
+name = "shell"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["JustSearch Contributors"]
+license = "Apache-2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+# Slice 489 §15 — OS-level deep-link plugin enabling `justsearch://...` URLs
+# from external apps (browser, terminal, mail client) to route into the
+# running instance via single-instance plugin handoff.
+tauri-plugin-deep-link = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
+# File operations
+open = "5"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "s"    # Optimize for size — Tauri shell is a thin wrapper, not compute-heavy
+strip = true       # Remove symbol tables from binary
+
+[dev-dependencies]
+tempfile = "3"
+
+

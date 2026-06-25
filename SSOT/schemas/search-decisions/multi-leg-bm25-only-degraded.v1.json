@@ -1,0 +1,17 @@
+{
+  "legs" : "bm25_only",
+  "facet_source" : "absent",
+  "effective_mode" : "TEXT",
+  "hybrid_fallback_reason" : "NO_EMBEDDING_SERVICE",
+  "decision_kind" : "multi_leg",
+  "chunk_merge_kind" : "eligible_apply",
+  "legs_detail" : {
+    "kind" : "bm25_only",
+    "effective_mode_label" : "TEXT",
+    "retrieval_limit" : 20
+  },
+  "facets_requested" : false,
+  "hybrid_fallback" : "NO_EMBEDDING_SERVICE",
+  "splade_skip" : null,
+  "chunk_merge_inputs_present" : true
+}

@@ -1,0 +1,22 @@
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    # Start with MINIMAL to avoid a large, breaking rename/refactor to satisfy strict naming rules
+    # across legacy and in-flight protos. Tighten over time as we version/migrate IPC surfaces.
+    - MINIMAL
+  # Legacy proto layout: indexing.proto lives at the module root but uses package io.justsearch.ipc.
+  # Avoid forcing a large file-move refactor just to enable Buf.
+  ignore_only:
+    PACKAGE_DIRECTORY_MATCH:
+      - indexing.proto
+
+breaking:
+  use:
+    # Binary wire compatibility (conservative enough for most teams; tighten later if desired).
+    - WIRE
+
+

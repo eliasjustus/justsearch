@@ -1,0 +1,4 @@
+{
+  "primitive": { "symbol": "ModalController" },
+  "adopters": ["modules/ui-web/src/shell-v0/Good.ts"]
+}

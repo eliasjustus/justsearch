@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JustSearch — Agent Telemetry (local OTLP)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background:#0d1117; color:#c9d1d9; margin:0; padding:16px 24px; }
+  h1 { font-size:16px; margin:0 0 4px; } h2 { font-size:13px; color:#58a6ff; margin:20px 0 6px; }
+  .sub { color:#8b949e; margin:0 0 12px; }
+  .cards { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:6px; padding:10px 14px; min-width:120px; }
+  .card .n { font-size:20px; color:#e6edf3; } .card .l { color:#8b949e; font-size:11px; }
+  .tree div { white-space:pre; }
+  .span { color:#7ee787; } .dur { color:#8b949e; }
+  table { border-collapse:collapse; width:100%; } td,th { border:1px solid #30363d; padding:3px 8px; text-align:left; }
+  th { color:#8b949e; font-weight:normal; }
+  .log { border-left:2px solid #30363d; padding:4px 10px; margin:4px 0; background:#161b22; }
+  .log .ev { color:#d2a8ff; } .log pre { margin:4px 0 0; white-space:pre-wrap; color:#adbac7; max-height:160px; overflow:auto; }
+  .pill { background:#1f6feb33; color:#58a6ff; border-radius:10px; padding:1px 7px; font-size:11px; }
+  .sub-pill { background:#a371f733; color:#d2a8ff; }
+  details summary { cursor:pointer; color:#58a6ff; }
+</style>
+</head>
+<body>
+<h1>JustSearch — Developer-Agent Telemetry <span class="pill">local OTLP · tempdoc 622</span></h1>
+<p class="sub">Docker-free local sink (<code>otlp-sink.py</code>) → this viewer. Native Claude Code OpenTelemetry: traces · metrics · logs.</p>
+<div class="cards" id="cards"></div>
+<h2>Trace waterfall (span tree)</h2>
+<div class="tree" id="tree"></div>
+<h2>Cost &amp; tokens (by query source)</h2>
+<table id="metrics"><thead><tr><th>metric</th><th>source</th><th>agent</th><th>model</th><th>type</th><th>value</th></tr></thead><tbody></tbody></table>
+<h2>Logs — prompts, tool I/O, lifecycle</h2>
+<div id="logs"></div>
+
+<script>
+async function ndjson(f){ try{ const t=await (await fetch(f)).text();
+  return t.trim()? t.trim().split("\n").map(l=>JSON.parse(l)) : []; }catch(e){ return []; } }
+const fmtDur = (a,b)=> a&&b ? ((b-a)/1e6).toFixed(1)+"ms" : "";
+(async ()=>{
+  const traces = await ndjson("traces.ndjson"),
+        metrics = await ndjson("metrics.ndjson"),
+        logs = await ndjson("logs.ndjson");
+
+  // cards
+  const cost = metrics.filter(m=>m.name.includes("cost")).flatMap(m=>m.points).reduce((s,p)=>s+(p.value||0),0);
+  const toks = metrics.filter(m=>m.name.includes("token")).flatMap(m=>m.points).reduce((s,p)=>s+(p.value||0),0);
+  const subagents = new Set(metrics.flatMap(m=>m.points).filter(p=>p.attributes.query_source==="subagent").map(p=>p.attributes["agent.name"])).size;
+  document.getElementById("cards").innerHTML = [
+    ["spans", traces.length],["log records", logs.length],
+    ["$ cost", "$"+cost.toFixed(4)],["tokens", toks.toLocaleString()],["subagents", subagents]
+  ].map(([l,n])=>`<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+  // span tree
+  const byId = Object.fromEntries(traces.map(s=>[s.span_id,s]));
+  const kids = {}; traces.forEach(s=>{ (kids[s.parent_span_id||"ROOT"] ??= []).push(s); });
+  const roots = traces.filter(s=>!s.parent_span_id || !byId[s.parent_span_id]);
+  const out=[]; (function walk(list,d){ (list||[]).sort((a,b)=>a.start_unix_nano-b.start_unix_nano).forEach(s=>{
+    const isSub = s.attributes && (s.attributes["agent.name"] || s.attributes.query_source==="subagent");
+    out.push(`<div>${"  ".repeat(d)}<span class="span">${s.name}</span> <span class="dur">${fmtDur(s.start_unix_nano,s.end_unix_nano)}</span>${isSub?' <span class="pill sub-pill">subagent</span>':''}</div>`);
+    walk(kids[s.span_id],d+1);
+  }); })(roots,0);
+  document.getElementById("tree").innerHTML = out.join("") || "<i>no spans</i>";
+
+  // metrics table
+  const rows=[]; metrics.forEach(m=>m.points.forEach(p=>{ const a=p.attributes;
+    rows.push(`<tr><td>${m.name}</td><td>${a.query_source||""}</td><td>${a["agent.name"]||""}</td><td>${a.model||""}</td><td>${a.type||""}</td><td>${p.value}</td></tr>`); }));
+  document.querySelector("#metrics tbody").innerHTML = rows.join("");
+
+  // logs
+  document.getElementById("logs").innerHTML = logs.map(l=>{
+    const a=l.attributes||{}, ev=a["event.name"]||l.severity||"log";
+    const interesting = JSON.stringify(a).length>120;
+    const body = JSON.stringify(a, null, 1);
+    return `<div class="log"><span class="ev">${ev}</span> <span class="dur">${a.session_id?("sess "+String(a.session_id).slice(0,8)):""}</span>`+
+      (interesting? `<details><summary>attrs (${Object.keys(a).length})</summary><pre>${body.replace(/</g,"&lt;")}</pre></details>` : "")+`</div>`;
+  }).join("");
+})();
+</script>
+</body>
+</html>

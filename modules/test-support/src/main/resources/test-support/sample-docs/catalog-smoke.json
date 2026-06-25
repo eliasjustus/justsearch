@@ -1,0 +1,776 @@
+{
+  "name": "catalog-smoke",
+  "paging_config": "search_after",
+  "with_ann_vectors": true,
+  "with_indexer_worker": false,
+  "docs": [
+    {
+      "id": "catalog-smoke-0000",
+      "title": "Lighting Highlight 1",
+      "body": "Synthetic document catalog-smoke-0000 showcasing lighting inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 1000,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": [
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625
+      ]
+    },
+    {
+      "id": "catalog-smoke-0001",
+      "title": "Audio Highlight 2",
+      "body": "Synthetic document catalog-smoke-0001 showcasing audio inventory for region emea. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 997,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": [
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0
+      ]
+    },
+    {
+      "id": "catalog-smoke-0002",
+      "title": "Outdoor Highlight 3",
+      "body": "Synthetic document catalog-smoke-0002 showcasing outdoor inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 994,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": [
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625
+      ]
+    },
+    {
+      "id": "catalog-smoke-0003",
+      "title": "Kitchen Highlight 4",
+      "body": "Synthetic document catalog-smoke-0003 showcasing kitchen inventory for region na. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 991,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": [
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125
+      ]
+    },
+    {
+      "id": "catalog-smoke-0004",
+      "title": "Lighting Highlight 5",
+      "body": "Synthetic document catalog-smoke-0004 showcasing lighting inventory for region emea. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 988,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-05T12:00:00Z"
+      },
+      "embedding": [
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875
+      ]
+    },
+    {
+      "id": "catalog-smoke-0005",
+      "title": "Audio Highlight 6",
+      "body": "Synthetic document catalog-smoke-0005 showcasing audio inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 985,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-06T12:00:00Z"
+      },
+      "embedding": [
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25
+      ]
+    },
+    {
+      "id": "catalog-smoke-0006",
+      "title": "Outdoor Highlight 7",
+      "body": "Synthetic document catalog-smoke-0006 showcasing outdoor inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 982,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-07T12:00:00Z"
+      },
+      "embedding": [
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25,
+        0.3125
+      ]
+    },
+    {
+      "id": "catalog-smoke-0007",
+      "title": "Kitchen Highlight 8",
+      "body": "Synthetic document catalog-smoke-0007 showcasing kitchen inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 979,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-08T12:00:00Z"
+      },
+      "embedding": [
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25,
+        0.3125,
+        0.375
+      ]
+    },
+    {
+      "id": "catalog-smoke-0008",
+      "title": "Lighting Highlight 9",
+      "body": "Synthetic document catalog-smoke-0008 showcasing lighting inventory for region apac. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 976,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-09T12:00:00Z"
+      },
+      "embedding": [
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25,
+        0.3125,
+        0.375,
+        0.4375
+      ]
+    },
+    {
+      "id": "catalog-smoke-0009",
+      "title": "Audio Highlight 10",
+      "body": "Synthetic document catalog-smoke-0009 showcasing audio inventory for region na. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 973,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-10T12:00:00Z"
+      },
+      "embedding": [
+        0.0625,
+        0.125,
+        0.1875,
+        0.25,
+        0.3125,
+        0.375,
+        0.4375,
+        0.5
+      ]
+    },
+    {
+      "id": "catalog-smoke-0010",
+      "title": "Outdoor Highlight 11",
+      "body": "Synthetic document catalog-smoke-0010 showcasing outdoor inventory for region emea. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 970,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-11T12:00:00Z"
+      },
+      "embedding": [
+        0.125,
+        0.1875,
+        0.25,
+        0.3125,
+        0.375,
+        0.4375,
+        0.5,
+        -0.5
+      ]
+    },
+    {
+      "id": "catalog-smoke-0011",
+      "title": "Kitchen Highlight 12",
+      "body": "Synthetic document catalog-smoke-0011 showcasing kitchen inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 967,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-12T12:00:00Z"
+      },
+      "embedding": [
+        0.1875,
+        0.25,
+        0.3125,
+        0.375,
+        0.4375,
+        0.5,
+        -0.5,
+        -0.4375
+      ]
+    },
+    {
+      "id": "catalog-smoke-0012",
+      "title": "Lighting Highlight 13",
+      "body": "Synthetic document catalog-smoke-0012 showcasing lighting inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 964,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-13T12:00:00Z"
+      },
+      "embedding": [
+        0.25,
+        0.3125,
+        0.375,
+        0.4375,
+        0.5,
+        -0.5,
+        -0.4375,
+        -0.375
+      ]
+    },
+    {
+      "id": "catalog-smoke-0013",
+      "title": "Audio Highlight 14",
+      "body": "Synthetic document catalog-smoke-0013 showcasing audio inventory for region emea. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 961,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-14T12:00:00Z"
+      },
+      "embedding": [
+        0.3125,
+        0.375,
+        0.4375,
+        0.5,
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125
+      ]
+    },
+    {
+      "id": "catalog-smoke-0014",
+      "title": "Outdoor Highlight 15",
+      "body": "Synthetic document catalog-smoke-0014 showcasing outdoor inventory for region apac. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 958,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-15T12:00:00Z"
+      },
+      "embedding": [
+        0.375,
+        0.4375,
+        0.5,
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25
+      ]
+    },
+    {
+      "id": "catalog-smoke-0015",
+      "title": "Kitchen Highlight 16",
+      "body": "Synthetic document catalog-smoke-0015 showcasing kitchen inventory for region na. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 955,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-16T12:00:00Z"
+      },
+      "embedding": [
+        0.4375,
+        0.5,
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875
+      ]
+    },
+    {
+      "id": "catalog-smoke-0016",
+      "title": "Lighting Highlight 17",
+      "body": "Synthetic document catalog-smoke-0016 showcasing lighting inventory for region emea. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 952,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-17T12:00:00Z"
+      },
+      "embedding": [
+        0.5,
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125
+      ]
+    },
+    {
+      "id": "catalog-smoke-0017",
+      "title": "Audio Highlight 18",
+      "body": "Synthetic document catalog-smoke-0017 showcasing audio inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 949,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-18T12:00:00Z"
+      },
+      "embedding": [
+        -0.5,
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625
+      ]
+    },
+    {
+      "id": "catalog-smoke-0018",
+      "title": "Outdoor Highlight 19",
+      "body": "Synthetic document catalog-smoke-0018 showcasing outdoor inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 946,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-19T12:00:00Z"
+      },
+      "embedding": [
+        -0.4375,
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0
+      ]
+    },
+    {
+      "id": "catalog-smoke-0019",
+      "title": "Kitchen Highlight 20",
+      "body": "Synthetic document catalog-smoke-0019 showcasing kitchen inventory for region emea. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 943,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-20T12:00:00Z"
+      },
+      "embedding": [
+        -0.375,
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625
+      ]
+    },
+    {
+      "id": "catalog-smoke-0020",
+      "title": "Lighting Highlight 21",
+      "body": "Synthetic document catalog-smoke-0020 showcasing lighting inventory for region apac. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "lighting"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "spring"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 940,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-21T12:00:00Z"
+      },
+      "embedding": [
+        -0.3125,
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125
+      ]
+    },
+    {
+      "id": "catalog-smoke-0021",
+      "title": "Audio Highlight 22",
+      "body": "Synthetic document catalog-smoke-0021 showcasing audio inventory for region na. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "audio"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "summer"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 937,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-22T12:00:00Z"
+      },
+      "embedding": [
+        -0.25,
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875
+      ]
+    },
+    {
+      "id": "catalog-smoke-0022",
+      "title": "Outdoor Highlight 23",
+      "body": "Synthetic document catalog-smoke-0022 showcasing outdoor inventory for region emea. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "outdoor"
+        ],
+        "region": [
+          "emea"
+        ],
+        "season": [
+          "autumn"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 934,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-23T12:00:00Z"
+      },
+      "embedding": [
+        -0.1875,
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25
+      ]
+    },
+    {
+      "id": "catalog-smoke-0023",
+      "title": "Kitchen Highlight 24",
+      "body": "Synthetic document catalog-smoke-0023 showcasing kitchen inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "kitchen"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 931,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-24T12:00:00Z"
+      },
+      "embedding": [
+        -0.125,
+        -0.0625,
+        0.0,
+        0.0625,
+        0.125,
+        0.1875,
+        0.25,
+        0.3125
+      ]
+    }
+  ]
+}

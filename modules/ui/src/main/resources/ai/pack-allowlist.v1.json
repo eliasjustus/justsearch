@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Allowlist of offline AI Packs accepted by JustSearch (allowlist-only trust). Packs are allowlisted by pack-manifest.v1.json SHA-256 digest.",
+  "allowlistedPackManifestSha256": []
+}
+
+

@@ -1,0 +1,255 @@
+{
+  "$schema": "golden-corpus-truth-v1",
+  "description": "Passage retrieval experiment: chunk-aware vs whole-doc Recall@3 for long documents with buried relevant passages. 4 query topics x 3 search modes = 12 queries.",
+  "corpus": {
+    "documents": [
+      {
+        "id": "long-vram-architecture",
+        "file": "corpus/passage-retrieval/long-vram-architecture.txt",
+        "category": "target",
+        "keywords": ["gpu", "architecture", "shader", "compute", "vram"],
+        "semantic_category": "hardware",
+        "notes": "Long doc (~18K chars). VRAM memory management passage buried in middle section (2 mentions in ~18K chars)."
+      },
+      {
+        "id": "long-http-protocols",
+        "file": "corpus/passage-retrieval/long-http-protocols.txt",
+        "category": "target",
+        "keywords": ["http", "tls", "quic", "websocket", "protocols"],
+        "semantic_category": "networking",
+        "notes": "Long doc (~14K chars). Connection pooling passage buried in middle section (2 mentions in ~14K chars)."
+      },
+      {
+        "id": "long-jvm-internals",
+        "file": "corpus/passage-retrieval/long-jvm-internals.txt",
+        "category": "target",
+        "keywords": ["jvm", "bytecode", "jit", "threads", "class-loading"],
+        "semantic_category": "runtime",
+        "notes": "Long doc (~14K chars). Garbage collection tuning passage buried in middle section (2 mentions in ~14K chars)."
+      },
+      {
+        "id": "long-container-orchestration",
+        "file": "corpus/passage-retrieval/long-container-orchestration.txt",
+        "category": "target",
+        "keywords": ["containers", "pods", "scheduling", "mesh", "orchestration"],
+        "semantic_category": "infrastructure",
+        "notes": "Long doc (~14K chars). TLS certificate rotation passage buried in middle section (2 mentions in ~14K chars)."
+      },
+      {
+        "id": "short-vram-tips",
+        "file": "corpus/passage-retrieval/short-vram-tips.txt",
+        "category": "baseline",
+        "keywords": ["vram", "memory", "gpu", "allocation", "monitoring"],
+        "semantic_category": "hardware",
+        "notes": "Short doc (~1200 chars). Entirely focused on VRAM memory management. Should rank well in both paths."
+      },
+      {
+        "id": "short-connection-pooling",
+        "file": "corpus/passage-retrieval/short-connection-pooling.txt",
+        "category": "baseline",
+        "keywords": ["connection", "pooling", "database", "timeout", "health"],
+        "semantic_category": "networking",
+        "notes": "Short doc (~1400 chars). Entirely focused on connection pooling. Should rank well in both paths."
+      },
+      {
+        "id": "short-gc-tuning",
+        "file": "corpus/passage-retrieval/short-gc-tuning.txt",
+        "category": "baseline",
+        "keywords": ["gc", "garbage-collection", "heap", "pause", "tuning"],
+        "semantic_category": "runtime",
+        "notes": "Short doc (~1900 chars). Entirely focused on GC tuning strategies. Should rank well in both paths."
+      },
+      {
+        "id": "short-tls-cert-rotation",
+        "file": "corpus/passage-retrieval/short-tls-cert-rotation.txt",
+        "category": "baseline",
+        "keywords": ["tls", "certificate", "rotation", "renewal", "pki"],
+        "semantic_category": "infrastructure",
+        "notes": "Short doc (~1900 chars). Entirely focused on TLS certificate rotation. Should rank well in both paths."
+      },
+      {
+        "id": "long-gpu-compute-benchmarks",
+        "file": "corpus/passage-retrieval/long-gpu-compute-benchmarks.txt",
+        "category": "confuser",
+        "keywords": ["vram", "benchmark", "gpu", "performance", "throughput"],
+        "semantic_category": "benchmarking",
+        "notes": "CONFUSER: Contains 'VRAM' and 'memory management' 7+ times but in benchmarking/measurement context, NOT architecture/design context."
+      },
+      {
+        "id": "long-microservice-observability",
+        "file": "corpus/passage-retrieval/long-microservice-observability.txt",
+        "category": "confuser",
+        "keywords": ["connection", "pooling", "database", "monitoring", "metrics"],
+        "semantic_category": "observability",
+        "notes": "CONFUSER: Contains 'connection pooling' and 'database' 3+ times but in monitoring/alerting context, NOT best-practices context."
+      },
+      {
+        "id": "long-database-internals",
+        "file": "corpus/passage-retrieval/long-database-internals.txt",
+        "category": "confuser",
+        "keywords": ["garbage-collection", "tuning", "database", "vacuum", "bloat"],
+        "semantic_category": "database",
+        "notes": "CONFUSER: Contains 'garbage collection' and 'tuning' 5+ times but in database maintenance context (VACUUM/autovacuum), NOT JVM context."
+      },
+      {
+        "id": "long-network-security-audit",
+        "file": "corpus/passage-retrieval/long-network-security-audit.txt",
+        "category": "confuser",
+        "keywords": ["certificate", "rotation", "tls", "audit", "compliance"],
+        "semantic_category": "security",
+        "notes": "CONFUSER: Contains 'certificate rotation' and 'TLS' 4+ times but in compliance/audit context, NOT operational how-to context."
+      }
+    ]
+  },
+  "queries": [
+    {
+      "id": "vram-text",
+      "text": "VRAM memory management",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["short-vram-tips", "long-vram-architecture"],
+        "not_in_top_3": ["long-database-internals", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "BM25 TF dilution: confuser (7 mentions / 8K chars) has higher term density than target (2 mentions / 18K chars). Chunk-aware search should find the buried VRAM passage."
+    },
+    {
+      "id": "vram-vector",
+      "text": "VRAM memory management",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["short-vram-tips", "long-vram-architecture"],
+        "not_in_top_3": ["long-database-internals", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Vector search should distinguish GPU architecture from GPU benchmarking via semantic similarity."
+    },
+    {
+      "id": "vram-hybrid",
+      "text": "VRAM memory management",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["short-vram-tips", "long-vram-architecture"],
+        "not_in_top_3": ["long-database-internals", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Hybrid should combine BM25 and vector signals. Chunk-aware hybrid should yield highest recall."
+    },
+    {
+      "id": "pooling-text",
+      "text": "database connection pooling best practices",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["short-connection-pooling", "long-http-protocols"],
+        "not_in_top_3": ["long-database-internals", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "BM25 TF dilution: confuser has competitive term density. Chunk-aware search should find the buried pooling passage."
+    },
+    {
+      "id": "pooling-vector",
+      "text": "database connection pooling best practices",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["short-connection-pooling", "long-http-protocols"],
+        "not_in_top_3": ["long-database-internals", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Vector search should distinguish database pooling from monitoring/observability context."
+    },
+    {
+      "id": "pooling-hybrid",
+      "text": "database connection pooling best practices",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["short-connection-pooling", "long-http-protocols"],
+        "not_in_top_3": ["long-database-internals", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Hybrid should combine signals to rank connection pooling docs above confusers."
+    },
+    {
+      "id": "gc-text",
+      "text": "garbage collection tuning",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["short-gc-tuning", "long-jvm-internals"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "BM25 TF dilution: confuser (5 mentions / 10K chars) has higher term density than target (2 mentions / 14K chars). Chunk search should find the buried GC passage."
+    },
+    {
+      "id": "gc-vector",
+      "text": "garbage collection tuning",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["short-gc-tuning", "long-jvm-internals"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Vector search should distinguish JVM GC tuning from database garbage collection via semantic similarity."
+    },
+    {
+      "id": "gc-hybrid",
+      "text": "garbage collection tuning",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["short-gc-tuning", "long-jvm-internals"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-network-security-audit"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Hybrid should combine signals for highest recall on buried GC tuning passage."
+    },
+    {
+      "id": "tls-text",
+      "text": "TLS certificate rotation",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["short-tls-cert-rotation", "long-container-orchestration"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "BM25 TF dilution: confuser (4 mentions / 11K chars) vs target (2 mentions / 14K chars). Chunk search should find the buried cert rotation passage."
+    },
+    {
+      "id": "tls-vector",
+      "text": "TLS certificate rotation",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["short-tls-cert-rotation", "long-container-orchestration"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Vector search should distinguish operational cert rotation from audit/compliance context."
+    },
+    {
+      "id": "tls-hybrid",
+      "text": "TLS certificate rotation",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["short-tls-cert-rotation", "long-container-orchestration"],
+        "not_in_top_3": ["long-gpu-compute-benchmarks", "long-microservice-observability"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Hybrid should combine signals for highest recall on buried TLS cert rotation passage."
+    }
+  ],
+  "metrics": {
+    "recall_threshold": 0.8,
+    "ndcg_threshold": 0.7,
+    "notes": "The key metric is the DELTA between Path A (whole-doc) and Path B (chunk-aware), not absolute values. Confusers are designed to have higher BM25 term density than targets, so Path A TEXT should fail to find buried passages while Path B recovers them."
+  }
+}

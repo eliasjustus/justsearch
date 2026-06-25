@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jseval"
+version = "0.1.0"
+description = "JustSearch search evaluation toolkit"
+requires-python = ">=3.11"
+dependencies = [
+    "ir-measures>=0.3.1",
+    "ir-datasets>=0.5.0",
+    "httpx>=0.25.0",
+    "scipy>=1.11.0",
+    "click>=8.1.0",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+ranx = ["ranx>=0.3.20", "pandas<3"]
+ui = ["playwright>=1.40"]
+config = ["pyyaml>=6.0"]
+ner = ["onnxruntime>=1.17", "tokenizers>=0.15"]
+# Agent-utility eval (tempdoc 624): runs the cell matrix THROUGH Inspect AI
+# (claude -p solver, condition-as-task, seed-as-epoch). Opt-in so core jseval
+# stays lean — the ~80 transitive deps only land for `pip install jseval[agent]`.
+agent = ["inspect-ai>=0.3.240"]
+dev = ["pytest>=7.0", "pyyaml>=6.0", "hypothesis>=6.0"]
+
+[project.scripts]
+jseval = "jseval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

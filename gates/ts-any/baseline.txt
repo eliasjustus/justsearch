@@ -1,0 +1,22 @@
+# ts-any ratchet — tempdoc 530 §2.5. <path> <count> <date>
+# Seeded 2026-05-27 (tempdoc 553 / observations #245): the baseline was empty, so every
+# pre-existing `any`-cast in ui-web/src read as silent-growth and the gate was red on main. These
+# counts are pre-existing debt (verified unchanged vs origin/main — not introduced by recent work);
+# recording them activates the ratchet so FUTURE any-cast growth is caught while accepting the
+# existing debt. Reduce these over time (each shrink rebalances down via --rebalance).
+modules/ui-web/src/api/contract.test.ts 2 2026-05-27
+modules/ui-web/src/api/domains/search.ts 2 2026-05-27
+modules/ui-web/src/api/registry/SurfaceFactory.test.ts 1 2026-05-27
+modules/ui-web/src/api/schemas.ts 1 2026-05-27
+modules/ui-web/src/api/streams.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/components/WalkthroughCard.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/hover/HoverPreviewHost.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/plugin-api/PluginContribution.test.ts 2 2026-05-27
+modules/ui-web/src/shell-v0/plugin-api/PluginHotReload.ts 2 2026-05-27
+modules/ui-web/src/shell-v0/plugin-api/dev-fixtures.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/plugin-api/substrate-lockdown.test.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/router/stateValidator.ts 1 2026-05-27
+modules/ui-web/src/shell-v0/substrates/effects/index.ts 1 2026-05-27
+modules/ui-web/src/utils/logger.ts 1 2026-05-27
+modules/ui-web/src/utils/platform.ts 1 2026-05-27
+modules/ui-web/src/utils/tauriRuntime.ts 2 2026-05-27

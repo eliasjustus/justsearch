@@ -1,0 +1,52 @@
+version: 2
+updates:
+  # Root npm (devDependencies for docs tooling)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      npm-dev:
+        patterns: ["*"]
+
+  # Frontend (ui-web)
+  - package-ecosystem: "npm"
+    directory: "/modules/ui-web"
+    schedule:
+      interval: "monthly"
+    groups:
+      npm-frontend:
+        patterns: ["*"]
+
+  # Tauri shell
+  - package-ecosystem: "npm"
+    directory: "/modules/shell"
+    schedule:
+      interval: "monthly"
+    groups:
+      npm-shell:
+        patterns: ["*"]
+
+  # Gradle (Java dependencies)
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      gradle-deps:
+        patterns: ["*"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Tauri shell (Rust/Cargo)
+  - package-ecosystem: "cargo"
+    directory: "/modules/shell/src-tauri"
+    schedule:
+      interval: "monthly"
+    groups:
+      cargo-shell:
+        patterns: ["*"]

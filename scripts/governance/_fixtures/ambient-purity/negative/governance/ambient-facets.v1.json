@@ -1,0 +1,7 @@
+{
+  "authority": "modules/ui-web/src/shell-v0/primitives/ambientStyles.ts",
+  "base": "modules/ui-web/src/shell-v0/primitives/JfElement.ts",
+  "classB": [
+    { "name": "::selection", "banPattern": "::selection", "presence": "::selection" }
+  ]
+}

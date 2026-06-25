@@ -1,0 +1,249 @@
+{
+  "schema": "governance-state.v1",
+  "gateCount": 33,
+  "gates": [
+    {
+      "id": "test-efficacy",
+      "title": "Per-seam mutation test-strength ratchet (tempdoc 555 Pillar C)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "hook-integrity",
+      "title": "Hook-layer enforcement integrity — wiring + cwd-invariant + load + bite (tempdoc 592)",
+      "tier": "ratchet",
+      "hasChangesets": false
+    },
+    {
+      "id": "register-guard-resolution",
+      "title": "Guard-integrity meta-pass — every register guard resolves (tempdoc 576 §3.1/§5)",
+      "tier": "changeset-gated",
+      "hasChangesets": true
+    },
+    {
+      "id": "npm-audit",
+      "title": "npm audit severity-count ratchet (high/critical)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "prose-tier-register",
+      "title": "Meta-loop: every load-bearing prose rule names a tier",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "todo-fixme",
+      "title": "TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "ts-any",
+      "title": "TypeScript `any` cast per-file ratchet (tempdoc 530 §2.5)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "style-literal-ratchet",
+      "title": "Presentation style-literal per-file ratchet (z-index/transition/font-size) — tempdoc 574 §25 Phase 4",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "atom-fork-ratchet",
+      "title": "Atom-fork per-file ratchet (raw .badge/.chip/.dot CSS outside the @atom authority) — tempdoc 574 §25 Phase 4",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "transient-arbitration",
+      "title": "Transient single-open arbitration — every governance/transients.v1.json adopter composes the one TransientController (tempdoc 574 §22.F / §25 Phase 4)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "modal-arbitration",
+      "title": "Modal contract arbitration — every governance/modals.v1.json host composes the one ModalController (tempdoc 574 §22.G / §25 Phase 4)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "modality-contract",
+      "title": "Modality contract backstop — every .showModal() composes a ModalityController (tempdoc 574 Move 4 / §25 Phase 4)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "ambient-purity",
+      "title": "Ambient authority purity — Class-B facets only in the authority sheet + JfElement base, catalog-projected (tempdoc 574 §22.F / §25 Phase 4)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "test-to-code",
+      "title": "Per-module test-to-code ratio ratchet (tempdoc 530 §2.10)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "module-deps",
+      "title": "Per-module cross-module dependency-count ratchet (tempdoc 530 §2.8)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "adr-coverage",
+      "title": "ADR Covers: path-validation gate (tempdoc 530 §2.7)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "tempdoc-wiring",
+      "title": "Tempdoc → gate auto-wiring validator (tempdoc 530 §4.1)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "wire",
+      "title": "Wire-Category protobuf-evolution gate (tempdoc 530 §4.3, kind: protobuf-evolution)",
+      "tier": "changeset-gated",
+      "hasChangesets": true
+    },
+    {
+      "id": "dead-code",
+      "title": "Knip dead-code ratchet (tempdoc 530 §2.9)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "dead-code-jvm",
+      "title": "Whole-program JVM dead-class ratchet (tempdoc 638)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "consumer-drift",
+      "title": "Substrate consumer-drift floor (tempdoc 531; generalizes the 527 C-018 audit)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "consumer-presence",
+      "title": "NonEmpty<ConsumerHook> — every registry declaration has >=1 consumer (tempdoc 560 §5/§6)",
+      "tier": "ratchet",
+      "hasChangesets": false
+    },
+    {
+      "id": "host-owns-truth",
+      "title": "Host owns truth — core namespace ⟺ CORE provenance (tempdoc 560 §4.5 / kernel decision 05)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "runtime-witness",
+      "title": "Runtime-witness — declared agent consumers are actually delivered (tempdoc 560 §5 keystone, second half)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "stage-completeness",
+      "title": "Search-trace stage-completeness (tempdoc 549 Phase F / principle 9)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "execution-surface",
+      "title": "Execution-surface register completeness (tempdoc 553 pillar c — anti-fragmentation meta-gate)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "operation-surface",
+      "title": "Operation-surface register completeness (tempdoc 550 Thesis III — anti-fragmentation gate for the indexing-job lifecycle; sibling of execution-surface)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "interaction-surface",
+      "title": "Interaction-surface cardinality (tempdoc 561 surface tier — the one-interaction-window gate; placement-keyed sibling of execution/operation-surface)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "surface-altitude",
+      "title": "Surface-altitude governing axis (tempdoc 571 — altitude DERIVED from consumed Resource roles; forecloses derivation CONFLICT + non-CORE TRUST + non-CORE DIAGNOSTIC; sibling of interaction/execution/operation-surface)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "observed-happening",
+      "title": "Observed-happening register (tempdoc 575 — the projection spine at the observability-authority tier; the observability stream family declared as concepts with one canonical source + contributors; forecloses contributor-unresolved + sourceless-concept + shared-contributor (the F-2 re-fragmentation class) + operator-trace-on-Resource (ADR-0036); the data-tier sibling of surface-altitude)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "ssot-catalog-sync",
+      "title": "SSOT catalog root↔classpath-copy sync (mechanizes the 'Classpath catalog drift' pitfall)",
+      "tier": "ratchet",
+      "hasChangesets": true
+    },
+    {
+      "id": "contract-projection",
+      "title": "Contract-projection single-authority (tempdoc 564 facet 4e — the meta-substrate gate)",
+      "tier": "scan",
+      "hasChangesets": false
+    },
+    {
+      "id": "contribution-surface",
+      "title": "Contribution-surface register (tempdoc 560 §5 — the prevention keystone that locks in §4c: a NEW hand-authored second shape authority in the registry barrel fails the build)",
+      "tier": "scan",
+      "hasChangesets": false
+    }
+  ],
+  "exceptions": {
+    "maxExceptions": null
+  },
+  "strengthFloors": [
+    {
+      "id": "hybrid-fusion",
+      "minStrength": 76,
+      "maxNoCoverage": 10
+    },
+    {
+      "id": "chunk-offset-math",
+      "minStrength": 88,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "file-freshness",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "admission-policy",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "splade-backoff",
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    {
+      "id": "worker-supervision",
+      "minStrength": 88,
+      "maxNoCoverage": 1
+    },
+    {
+      "id": "worker-liveness-suicide",
+      "minStrength": 93,
+      "maxNoCoverage": 0
+    }
+  ],
+  "classSizeDebt": {
+    "files": 0,
+    "totalDebt": 0,
+    "worst": []
+  }
+}

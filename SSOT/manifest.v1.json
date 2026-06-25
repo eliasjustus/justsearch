@@ -1,0 +1,19 @@
+{
+  "catalogs": {
+    "fields": "catalogs/fields.v1.json",
+    "analyzers": "catalogs/analyzers.v1.json"
+  },
+  "config": {
+    "schema": "schemas/config/app-config.schema.json",
+    "restart_required_keys": [
+      "index.directory.type",
+      "workers.*.enabled",
+      "ipc.*"
+    ]
+  },
+  "prompts": {
+    "intent_en": "prompts/en/intent.v1.json",
+    "summary_en": "prompts/en/summary.v1.json"
+  },
+  "versions_catalog": "versions/catalog.json"
+}

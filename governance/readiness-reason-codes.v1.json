@@ -1,0 +1,29 @@
+{
+  "kind": "readiness-reason-codes.v1",
+  "note": "Tempdoc 600 PART IX/X — the degradation-cause reason vocabulary is ONE closed authority. The producer (StatusLifecycleHandler) emits readiness reason codes from the closed LifecycleReasonCode enum; the FE CAUSE_ROWS table words them (code -> wording/remedy/severity). This register's gate (scripts/ci/check-readiness-reason-codes.mjs) enforces producer<->consumer correspondence so neither can drift: FORWARD = every enum code that is NOT exempt has a CAUSE_ROWS row (so a user can never be shown a raw `Degraded: <code>` string in the degradation banner); BACKWARD = every CAUSE_ROWS code is a real enum member OR a declared FE-derived code (no dead/typo rows). The two allow-lists below are the only curated artifact (the search-issuance gate's allowedReferences pattern).",
+  "producer": {
+    "file": "modules/app-api/src/main/java/io/justsearch/app/api/lifecycle/LifecycleReasonCode.java",
+    "symbol": "LifecycleReasonCode"
+  },
+  "consumer": {
+    "file": "modules/ui-web/src/shell-v0/state/readinessNotice.ts",
+    "table": "CAUSE_ROWS"
+  },
+  "noWordingExempt": [
+    { "code": "worker.not_configured", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking', never rendered by wordCauses (PART X)" },
+    { "code": "worker.not_started", "why": "NOT_CONFIGURED state on INDEX_SERVING -> verdict 'checking'" },
+    { "code": "worker.unavailable", "why": "NOT_READY state on INDEX_SERVING -> verdict 'checking' (reproduced live: no banner)" },
+    { "code": "index.not_healthy", "why": "NOT_READY state on INDEX_SERVING -> verdict 'checking'" },
+    { "code": "telemetry.unavailable", "why": "TELEMETRY dimension -> 'telemetry' composite, which the verdict never reads" },
+    { "code": "telemetry.metrics.stale", "why": "telemetry composite, not verdict-consumed" },
+    { "code": "telemetry.metrics.high_failure_rate", "why": "telemetry composite, not verdict-consumed" },
+    { "code": "telemetry.disk_space_low", "why": "telemetry composite, not verdict-consumed" },
+    { "code": "ort_cuda.not_configured", "why": "search/RAG reason code; not emitted by the readiness producer (grep-confirmed)" },
+    { "code": "ort_cuda.ready", "why": "search/RAG reason code; not emitted by the readiness producer" }
+  ],
+  "feDerived": [
+    { "code": "no_documents", "why": "Tempdoc 596 §17 — FE-only control-availability code; not emitted by the readiness producer" },
+    { "code": "conversations.locked", "why": "Tempdoc 629 #3 — FE-only: the locked-chat affordance words itself from CAUSE_ROWS; the backend never emits it as a readiness reason" },
+    { "code": "binding.unreachable", "why": "Tempdoc 637 #1 — FE-only: the FE detects a dead/replaced FE→backend binding (passive staleness → verdict 'unreachable') and words it from CAUSE_ROWS; the backend cannot emit it (it is unreachable by definition)" }
+  ]
+}

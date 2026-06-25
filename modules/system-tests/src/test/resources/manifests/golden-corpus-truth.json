@@ -1,0 +1,172 @@
+{
+  "$schema": "golden-corpus-truth-v1",
+  "description": "Truth manifest for Golden Corpus relevance testing. Includes hard negatives to test ranking quality.",
+  "corpus": {
+    "documents": [
+      {
+        "id": "lexical-db-pooling",
+        "file": "corpus/standard/lexical-db-pooling.txt",
+        "category": "lexical-truth",
+        "keywords": ["database", "connection", "pooling", "jdbc", "hikaricp"],
+        "semantic_category": "database"
+      },
+      {
+        "id": "lexical-db-optimization",
+        "file": "corpus/standard/lexical-db-optimization.txt",
+        "category": "lexical-truth",
+        "keywords": ["database", "query", "optimization", "index", "sql"],
+        "semantic_category": "database"
+      },
+      {
+        "id": "semantic-dog-training",
+        "file": "corpus/standard/semantic-dog-training.txt",
+        "category": "semantic-truth",
+        "keywords": ["canine", "behavior", "training", "pet", "companion"],
+        "semantic_category": "animals",
+        "notes": "No explicit 'dog' keyword - tests semantic understanding"
+      },
+      {
+        "id": "semantic-puppy-care",
+        "file": "corpus/standard/semantic-puppy-care.txt",
+        "category": "semantic-truth",
+        "keywords": ["puppy", "pup", "pet", "companion", "socialization"],
+        "semantic_category": "animals"
+      },
+      {
+        "id": "hybrid-ml-optimization",
+        "file": "corpus/standard/hybrid-ml-optimization.txt",
+        "category": "hybrid-trap",
+        "keywords": ["machine", "learning", "model", "optimization", "tuning"],
+        "semantic_category": "ml",
+        "notes": "Medium relevance in both text and semantic - should be boosted by RRF"
+      },
+      {
+        "id": "hybrid-neural-networks",
+        "file": "corpus/standard/hybrid-neural-networks.txt",
+        "category": "hybrid-trap",
+        "keywords": ["neural", "network", "architecture", "training"],
+        "semantic_category": "ml"
+      },
+      {
+        "id": "confuser-db-vs-datalake",
+        "file": "corpus/standard/confuser-db-vs-datalake.txt",
+        "category": "hard-negative",
+        "keywords": ["database", "data", "lake", "storage", "analytics"],
+        "semantic_category": "database-adjacent",
+        "notes": "HARD NEGATIVE: Contains 'database' but NOT about connection pooling"
+      },
+      {
+        "id": "confuser-java-interfaces",
+        "file": "corpus/standard/confuser-java-interfaces.txt",
+        "category": "hard-negative",
+        "keywords": ["java", "interface", "abstract", "class", "inheritance"],
+        "semantic_category": "programming",
+        "notes": "HARD NEGATIVE: Java topic but NOT about databases"
+      },
+      {
+        "id": "confuser-abstract-art",
+        "file": "corpus/standard/confuser-abstract-art.txt",
+        "category": "hard-negative",
+        "keywords": ["abstract", "art", "painting", "expressionism"],
+        "semantic_category": "art",
+        "notes": "HARD NEGATIVE: Contains 'abstract' but about art, not programming"
+      },
+      {
+        "id": "confuser-cat-training",
+        "file": "corpus/standard/confuser-cat-training.txt",
+        "category": "hard-negative",
+        "keywords": ["cat", "training", "pet", "behavior", "feline"],
+        "semantic_category": "animals",
+        "notes": "HARD NEGATIVE: Pet training but for CATS, not dogs"
+      }
+    ]
+  },
+  "queries": [
+    {
+      "id": "lexical-database-query",
+      "text": "database connection pooling",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["lexical-db-pooling", "lexical-db-optimization"],
+        "not_in_top_3": ["confuser-db-vs-datalake", "confuser-java-interfaces"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "BM25 should rank pooling docs above datalake confuser despite shared 'database' keyword"
+    },
+    {
+      "id": "semantic-dog-query",
+      "text": "dog training tips",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["semantic-dog-training", "semantic-puppy-care"],
+        "not_in_top_3": ["confuser-cat-training"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Vector search should distinguish dog docs from cat training confuser"
+    },
+    {
+      "id": "hybrid-ml-query",
+      "text": "machine learning model optimization",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["hybrid-ml-optimization", "hybrid-neural-networks"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.85
+      },
+      "notes": "RRF should boost documents appearing in both BM25 and vector rankings"
+    },
+    {
+      "id": "cross-mode-comparison-text",
+      "text": "canine behavior modification",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["semantic-dog-training"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.7
+      },
+      "notes": "TEXT mode should find via 'canine' keyword"
+    },
+    {
+      "id": "cross-mode-comparison-vector",
+      "text": "canine behavior modification",
+      "mode": "VECTOR",
+      "expected": {
+        "top_docs": ["semantic-dog-training", "semantic-puppy-care"],
+        "not_in_top_3": ["confuser-cat-training"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "VECTOR mode should find both animal-related docs by semantic similarity, excluding cats"
+    },
+    {
+      "id": "hybrid-advantage-test",
+      "text": "neural network tuning",
+      "mode": "HYBRID",
+      "expected": {
+        "top_docs": ["hybrid-neural-networks", "hybrid-ml-optimization"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.8
+      },
+      "notes": "Tests that HYBRID > TEXT and HYBRID > VECTOR for mixed-relevance docs"
+    },
+    {
+      "id": "hard-negative-java-abstract",
+      "text": "java abstract class implementation",
+      "mode": "TEXT",
+      "expected": {
+        "top_docs": ["confuser-java-interfaces"],
+        "not_in_top_3": ["confuser-abstract-art"],
+        "recall_at_3": 0.9,
+        "ndcg_at_3": 0.7
+      },
+      "notes": "NEW: Should rank Java interface doc above abstract art despite shared 'abstract' keyword"
+    }
+  ],
+  "metrics": {
+    "recall_threshold": 0.8,
+    "ndcg_threshold": 0.7,
+    "notes": "Thresholds lowered from 0.9/0.8 to account for hard negatives making ranking harder"
+  }
+}

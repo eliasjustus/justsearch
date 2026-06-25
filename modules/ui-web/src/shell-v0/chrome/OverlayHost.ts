@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * OverlayHost — tempdoc 559 Authority I (the overlay-slot authority).
+ *
+ * THE single owner of where persistent chrome overlays dock and how they stack.
+ * Today ~22 overlays each free-`position:fixed` with a hand-picked z-index, so
+ * nothing arbitrates the shared viewport (the badge floats over the header, a
+ * feed grows over the rail, the nav-toast overlaps the composer). This host
+ * owns named, fixed-positioned **slots** with one z-index scale; an overlay
+ * docks by `slot="…"` and drops its own positioning — so "an overlay picks raw
+ * coordinates" becomes unrepresentable (collapse, tier-1). Popover-API overlays
+ * (ProvenanceBadge, CommandPalette) still escape to the browser top layer
+ * transparently; the slot is just their DOM parent.
+ *
+ * Slot containers are **content-sized at a viewport anchor** (not full-bleed),
+ * with `pointer-events:none` on the container + `auto` on slotted children, so
+ * an empty slot never blocks the page. `center` is the one full-viewport slot
+ * (modals/palette), which manage their own backdrop.
+ *
+ * z-scale (single source; overlays no longer choose):
+ *   float 900 · chrome 1000 · transient 1100 · modal 2000 · top 3000
+ */
+import { html, css, type TemplateResult } from 'lit';
+import { JfElement } from '../primitives/JfElement.js';
+
+export class OverlayHost extends JfElement {
+  static styles = css`
+    :host {
+      display: contents;
+    }
+    .slot {
+      position: fixed;
+      pointer-events: none;
+      display: flex;
+      gap: 0.5rem;
+    }
+    .slot ::slotted(*) {
+      pointer-events: auto;
+    }
+    .right-drawer ::slotted(*) {
+      height: 100%;
+    }
+    /* corner + edge anchors (content-sized) */
+    /* Tempdoc 602 R4 — dock below the 2.5rem topbar grid row (Shell.ts
+       grid-template-rows) so a top-right overlay (nav toast, badge, plugin-error)
+       never occludes the topbar control cluster (Copy URL / bookmark). */
+    .top-right {
+      top: calc(2.5rem + 0.5rem);
+      right: 0.5rem;
+      flex-direction: column;
+      align-items: flex-end;
+      z-index: var(--z-overlay-chrome);
+    }
+    .top-center {
+      top: 0.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      flex-direction: column;
+      align-items: center;
+      z-index: var(--z-overlay-transient);
+    }
+    .bottom-center {
+      bottom: 2.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      flex-direction: column;
+      align-items: center;
+      z-index: var(--z-overlay-transient);
+    }
+    .bottom-left {
+      bottom: 1rem;
+      left: 1rem;
+      flex-direction: column;
+      z-index: var(--z-overlay-float);
+    }
+    .bottom-right {
+      bottom: 1rem;
+      right: 1rem;
+      flex-direction: column;
+      align-items: flex-end;
+      z-index: var(--z-overlay-float);
+    }
+    /* full-height right-edge drawer dock (the drawer owns its own slide). */
+    .right-drawer {
+      top: 0;
+      right: 0;
+      bottom: 0;
+      flex-direction: column;
+      z-index: var(--z-overlay-drawer);
+    }
+    /* full-viewport slot for modals/palette (they own their backdrop) */
+    .center {
+      inset: 0;
+      z-index: var(--z-overlay-modal);
+    }
+  `;
+
+  override render(): TemplateResult {
+    return html`
+      <div class="slot top-right"><slot name="top-right"></slot></div>
+      <div class="slot top-center"><slot name="top-center"></slot></div>
+      <div class="slot bottom-center"><slot name="bottom-center"></slot></div>
+      <div class="slot bottom-left"><slot name="bottom-left"></slot></div>
+      <div class="slot bottom-right"><slot name="bottom-right"></slot></div>
+      <div class="slot right-drawer"><slot name="right-drawer"></slot></div>
+      <div class="slot center"><slot name="center"></slot></div>
+    `;
+  }
+}
+
+if (
+  typeof customElements !== 'undefined' &&
+  !customElements.get('jf-overlay-host')
+) {
+  customElements.define('jf-overlay-host', OverlayHost);
+}

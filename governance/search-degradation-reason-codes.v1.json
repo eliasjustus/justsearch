@@ -1,0 +1,27 @@
+{
+  "kind": "search-degradation-reason-codes.v1",
+  "note": "Tempdoc 602 R6 — the per-query search-trace DEGRADATION reason vocabulary is ONE closed authority, the search-side sibling of readiness-reason-codes.v1.json (NOT merged with it — two vocabularies, per tempdoc 600 PART IX). The producer is the worker `SearchReasonCode` enum; its `.name()` wire strings populate the three user-tier degradation fields (vectorBlockedReason / hybridFallbackReason / spladeSkipReason, all carried by VectorEncoding.Failed / SpladeEncoding.Failed). The FE `DEGRADATION_REASON_WORDING` map (searchTraceExplain.ts) words them. The gate (scripts/ci/check-search-degradation-reason-codes.mjs) enforces correspondence so neither drifts: FORWARD = every non-exempt SearchReasonCode member is worded (so a degraded search-explain line can never show the raw `(CODE)` to the user — the Nielsen 'no error codes' invariant); BACKWARD = every wording key is a real enum member or a declared feDerived one (no dead/typo rows). The noWordingExempt list is the only curated artifact: the 11 chunk-merge codes are emitted by the chunk-merge STAGE reason (a diagnostic-tier facet rendered raw per the 577 altitude cut), never by the three user-tier degradation fields, so wording them would be dead UI.",
+  "producer": {
+    "file": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/SearchReasonCode.java",
+    "symbol": "SearchReasonCode",
+    "enumConstantStyle": "bare"
+  },
+  "consumer": {
+    "file": "modules/ui-web/src/shell-v0/aggregate-substrate/strategies/searchTraceExplain.ts",
+    "table": "DEGRADATION_REASON_WORDING"
+  },
+  "noWordingExempt": [
+    { "code": "APPLIED", "why": "chunk-merge stage outcome — populates the chunk-merge STAGE reason (diagnostic tier, raw per 577 cut), never the three user-tier degradation fields" },
+    { "code": "SKIPPED_DISABLED", "why": "chunk-merge stage reason; not a vector/hybrid/splade degradation reason" },
+    { "code": "SKIPPED_EMPTY_BASE_RESULTS", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_PAGINATED", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_QUERY_SYNTAX", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_SORT_NOT_RELEVANCE", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_NO_CHUNK_DOCS", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_SHORT_CORPUS", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_UNKNOWN", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_VECTOR_BLOCKED", "why": "chunk-merge stage reason; not a user-tier degradation field" },
+    { "code": "SKIPPED_EMPTY_QUERY", "why": "chunk-merge stage reason; not a user-tier degradation field" }
+  ],
+  "feDerived": []
+}

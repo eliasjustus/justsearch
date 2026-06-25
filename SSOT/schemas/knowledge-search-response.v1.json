@@ -1,0 +1,301 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "MatchSpan" : {
+      "type" : "object",
+      "properties" : {
+        "endChar" : {
+          "type" : "integer"
+        },
+        "field" : {
+          "type" : [ "string", "null" ]
+        },
+        "startChar" : {
+          "type" : "integer"
+        },
+        "term" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "StageId" : {
+      "type" : "string",
+      "enum" : [ "query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness" ]
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "entityFacetVariants" : {
+      "type" : [ "object", "null" ],
+      "additionalProperties" : {
+        "type" : "array",
+        "items" : {
+          "type" : "object",
+          "properties" : {
+            "canonicalForm" : {
+              "type" : [ "string", "null" ]
+            },
+            "totalCount" : {
+              "type" : "integer"
+            },
+            "variants" : {
+              "type" : [ "object", "null" ],
+              "additionalProperties" : {
+                "type" : "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "facets" : {
+      "type" : [ "object", "null" ],
+      "additionalProperties" : {
+        "type" : "object",
+        "additionalProperties" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "facetsTruncated" : {
+      "type" : [ "boolean", "null" ]
+    },
+    "filterNormalization" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "latencyMs" : {
+          "type" : "integer"
+        },
+        "normalized" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        },
+        "original" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        },
+        "source" : {
+          "type" : "string"
+        }
+      }
+    },
+    "indexCapabilities" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "chunkEmbeddingCoverage" : {
+          "type" : "number"
+        },
+        "crossEncoderAvailable" : {
+          "type" : "boolean"
+        },
+        "embeddingCoverage" : {
+          "type" : "number"
+        },
+        "spladeCoverage" : {
+          "type" : "number"
+        }
+      }
+    },
+    "matchCount" : {
+      "type" : "integer"
+    },
+    "nextCursor" : {
+      "type" : [ "string", "null" ]
+    },
+    "queryUnderstanding" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "appliedBoosts" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        },
+        "expectedAnswerType" : {
+          "type" : "string"
+        },
+        "latencyMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "results" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "excerptRegions" : {
+            "type" : "array",
+            "items" : {
+              "type" : "object",
+              "properties" : {
+                "approxLine" : {
+                  "type" : "integer"
+                },
+                "endChar" : {
+                  "type" : "integer"
+                },
+                "matchSpans" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "$ref" : "#/$defs/MatchSpan"
+                  }
+                },
+                "startChar" : {
+                  "type" : "integer"
+                },
+                "text" : {
+                  "type" : [ "string", "null" ]
+                }
+              }
+            }
+          },
+          "fields" : {
+            "type" : "object",
+            "additionalProperties" : {
+              "type" : "string"
+            }
+          },
+          "id" : {
+            "type" : "string"
+          },
+          "matchSpans" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/$defs/MatchSpan"
+            }
+          },
+          "matchedFields" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "score" : {
+            "type" : "number"
+          },
+          "trace" : {
+            "type" : "array",
+            "items" : {
+              "type" : "object",
+              "properties" : {
+                "detail" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "number"
+                  }
+                },
+                "id" : {
+                  "$ref" : "#/$defs/StageId"
+                },
+                "rank" : {
+                  "type" : "integer"
+                },
+                "score" : {
+                  "type" : "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "searchTrace" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "decisionKind" : {
+          "type" : "string"
+        },
+        "degradation" : {
+          "type" : "object",
+          "properties" : {
+            "hybridFallback" : {
+              "type" : "boolean"
+            },
+            "hybridFallbackReason" : {
+              "type" : "string"
+            },
+            "spladeExecuted" : {
+              "type" : "boolean"
+            },
+            "spladeSkipReason" : {
+              "type" : "string"
+            },
+            "vectorBlocked" : {
+              "type" : "boolean"
+            },
+            "vectorBlockedReason" : {
+              "type" : "string"
+            }
+          }
+        },
+        "effectiveMode" : {
+          "type" : "string"
+        },
+        "qpp" : {
+          "type" : "object",
+          "properties" : {
+            "avgIctf" : {
+              "type" : "number"
+            },
+            "maxIdf" : {
+              "type" : "number"
+            },
+            "queryScope" : {
+              "type" : "number"
+            }
+          }
+        },
+        "stages" : {
+          "type" : "array",
+          "items" : {
+            "type" : "object",
+            "properties" : {
+              "cardinality" : {
+                "type" : "integer"
+              },
+              "detail" : {
+                "type" : "string"
+              },
+              "id" : {
+                "$ref" : "#/$defs/StageId"
+              },
+              "ms" : {
+                "type" : "integer"
+              },
+              "reason" : {
+                "type" : "string"
+              },
+              "status" : {
+                "type" : "string",
+                "enum" : [ "executed", "skipped", "disabled", "failed" ]
+              }
+            }
+          }
+        },
+        "version" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "tookMs" : {
+      "type" : "integer"
+    },
+    "totalHits" : {
+      "type" : "integer"
+    }
+  }
+}

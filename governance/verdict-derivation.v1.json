@@ -1,0 +1,12 @@
+{
+  "note": "Tempdoc 595 §4.2 — the ONE system-health verdict derivation. The readiness→verdict predicate (`retrieval === …` / `retrieval !== …`) lives ONLY in the verdict seam (computeVerdict in verdict.ts); the Health header/footer and the status-bar tier/label CONSUME the derived verdict, they do not recompute it. A second shell-v0 site forming a verdict from `readiness.retrieval` is the §1.1 split (a 'Service degraded' header beside a '✓ All systems operational' footer) re-introduced. The search-window degradation banner (`readinessNotice`/`SearchSurface`) now CONSUMES the verdict too, so it is no longer allow-listed — the seam `verdict.ts` is the ONLY site that reads the predicate.",
+  "seam": {
+    "symbol": "computeVerdict",
+    "file": "modules/ui-web/src/shell-v0/state/verdict.ts"
+  },
+  "scope": "modules/ui-web/src/shell-v0",
+  "predicatePattern": "retrieval\\s*[=!]==",
+  "allowed": [
+    "modules/ui-web/src/shell-v0/state/verdict.ts"
+  ]
+}

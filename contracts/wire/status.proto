@@ -1,0 +1,490 @@
+// StatusResponse (envelope + sub-records) — /api/status.
+//
+// AXIS 1 hard case: mixed snake_case (schema_version, observed_at,
+// worker.queue_depth) and camelCase (indexBasePath, aiReady,
+// worker.indexHealthy) within the same envelope. Per ADR-09a §"Mixed
+// snake/camel naming (SE-4)": every snake_case wire field declares
+// `[json_name = "snake_case"]` to override proto3 JSON's camelCase default;
+// camelCase fields use [json_name = "camelCase"] to be explicit.
+//
+// All sub-records populated 2026-05-06 per proto-correctness pass against
+// modules/app-api/.../status/*.java + lifecycle/LifecycleSnapshotV1.java.
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+message StatusResponse {
+  // Snake-case fields
+  int32 schema_version = 1 [json_name = "schema_version"];
+  string observed_at = 2 [json_name = "observed_at"];
+  Lifecycle lifecycle = 3;
+  Components components = 4;
+
+  // Head-level fields
+  string status = 5;
+  string service = 6;
+  string index_base_path = 7 [json_name = "indexBasePath"];
+  int64 uptime_ms = 8 [json_name = "uptimeMs"];
+  int64 memory_used_bytes = 9 [json_name = "memoryUsedBytes"];
+  int64 memory_total_bytes = 10 [json_name = "memoryTotalBytes"];
+  int64 memory_max_bytes = 11 [json_name = "memoryMaxBytes"];
+  string disk_pressure = 12 [json_name = "diskPressure"];
+
+  // Worker subtree (nested per slice 384's @JsonUnwrapped removal)
+  WorkerOperationalView worker = 13;
+
+  // Index availability
+  bool index_available = 14 [json_name = "indexAvailable"];
+  string knowledge_server_start_error = 15 [json_name = "knowledgeServerStartError"];
+  string index_status_reason = 16 [json_name = "indexStatusReason"];
+
+  // Subsystem status (per tempdoc 412 Phase 3: unified inference shape)
+  InferenceRuntimeView inference = 17;
+  ReadinessEnvelopeView readiness = 18;
+
+  bool ai_ready = 19 [json_name = "aiReady"];
+  bool embedding_ready = 20 [json_name = "embeddingReady"];
+
+  // Grouped sub-objects (per tempdoc 330 §4)
+  EmbeddingStatusGroup embedding = 21;
+  SchemaStatusGroup schema = 22;
+  ChunkCoverageGroup chunk_coverage = 23 [json_name = "chunkCoverage"];
+  QueueHealthGroup queue_health = 24 [json_name = "queueHealth"];
+  MigrationStatusGroup migration = 25;
+
+  GpuStatusView gpu = 26;
+  ModelDistributionStatusView model_distribution = 27 [json_name = "modelDistribution"];
+  AgentSessionView agent_sessions = 28 [json_name = "agentSessions"];
+  TelemetryHealthView telemetry_health = 29 [json_name = "telemetryHealth"];
+  StatusMeta meta = 30;
+  // Tempdoc 629 (FLOOR): coarse OS-disk-encryption state of the data-dir volume.
+  AtRestProtectionView at_rest_protection = 31 [json_name = "atRestProtection"];
+  // Tempdoc 629 (#2): conversation (AUTHORED-store) encryption state (not_configured|locked|unlocked).
+  ConversationProtectionView conversation_protection = 32 [json_name = "conversationProtection"];
+  // Tempdoc 630: OS energy-intent snapshot for the /api/status endpoint.
+  PowerStatusView power = 33 [json_name = "power"];
+  // Tempdoc 630: post-restart reconcile ("catching up") flag.
+  bool catching_up = 34 [json_name = "catchingUp"];
+}
+
+// Tempdoc 630 — OS energy-intent snapshot (PowerStatusView record).
+message PowerStatusView {
+  bool energy_reduced = 1 [json_name = "energyReduced"];
+  string source = 2 [json_name = "source"];
+}
+
+// === Lifecycle envelope (LifecycleSnapshotV1.{Lifecycle,Components,Component}) ===
+
+message Lifecycle {
+  LifecycleState state = 1;
+  string reason_code = 2 [json_name = "reason_code"];
+  string message = 3;
+}
+
+message Components {
+  Component head = 1;
+  Component worker = 2;
+  Component inference = 3;
+}
+
+message Component {
+  LifecycleState state = 1;
+  string reason_code = 2 [json_name = "reason_code"];
+}
+
+// LifecycleState carries no enum.defined_only constraint per ADR-09a's
+// "Future Agents Must Not" — forward-compat for future states.
+enum LifecycleState {
+  LIFECYCLE_STATE_UNSPECIFIED = 0;
+  LIFECYCLE_STATE_STARTING = 1;
+  LIFECYCLE_STATE_READY = 2;
+  LIFECYCLE_STATE_DEGRADED = 3;
+  LIFECYCLE_STATE_ERROR = 4;
+  LIFECYCLE_STATE_STOPPING = 5;
+  LIFECYCLE_STATE_STOPPED = 6;
+}
+
+// === Worker operational subtree (slice 341 decomposition) ===
+
+message WorkerOperationalView {
+  CoreIndexView core = 1;
+  FailureTrackingView failure = 2;
+  MigrationGenerationView migration = 3;
+  CompatibilityStatusView compatibility = 4;
+  QueueDbStatusView queue_db = 5 [json_name = "queueDb"];
+  EnrichmentProgressView enrichment = 6;
+  GpuDiagnosticsView gpu = 7;
+  VectorFormatView vector_format = 8 [json_name = "vectorFormat"];
+  TelemetryMetricsView telemetry = 9;
+  SearchConfigView search_config = 10 [json_name = "searchConfig"];
+  // Distribution content hash for stale-JVM detection (slice 371).
+  string build_stamp = 11 [json_name = "buildStamp"];
+  VisualExtractionView visual_extraction = 12 [json_name = "visualExtraction"];
+  // aiReady / embeddingReady are @JsonIgnore on the facade; not on wire.
+}
+
+message VisualExtractionView {
+  bool ocr_enabled = 1 [json_name = "ocrEnabled"];
+  bool ocr_engine_available = 2 [json_name = "ocrEngineAvailable"];
+  string ocr_engine = 3 [json_name = "ocrEngine"];
+  string ocr_blocked_reason = 4 [json_name = "ocrBlockedReason"];
+  int64 visual_text_needed_count = 5 [json_name = "visualTextNeededCount"];
+  string vdu_blocked_reason = 6 [json_name = "vduBlockedReason"];
+  int64 visual_enrichment_needed_count = 7 [json_name = "visualEnrichmentNeededCount"];
+}
+
+message CoreIndexView {
+  bool index_healthy = 1 [json_name = "indexHealthy"];
+  int64 indexed_documents = 2 [json_name = "indexedDocuments"];
+  int64 pending_jobs = 3 [json_name = "pendingJobs"];
+  string index_state = 4 [json_name = "indexState"];
+  int64 index_size_bytes = 5 [json_name = "indexSizeBytes"];
+  int32 pending_vdu_count = 6 [json_name = "pendingVduCount"];
+  int64 writer_queue_depth = 7 [json_name = "writerQueueDepth"];
+  int64 writer_pending_docs = 8 [json_name = "writerPendingDocs"];
+  int64 commit_count = 9 [json_name = "commitCount"];
+  int64 refresh_lag_ms = 10 [json_name = "refreshLagMs"];
+  // Tempdoc 419 C3 V1: 30-min RRD trends (sparkline data).
+  repeated int64 recent_job_queue_depth = 11 [json_name = "recentJobQueueDepth"];
+  repeated double recent_docs_per_sec = 12 [json_name = "recentDocsPerSec"];
+}
+
+message FailureTrackingView {
+  int64 failed_jobs = 1 [json_name = "failedJobs"];
+  string last_failed_path = 2 [json_name = "lastFailedPath"];
+  string last_failed_error_message = 3 [json_name = "lastFailedErrorMessage"];
+  int64 last_failed_at_ms = 4 [json_name = "lastFailedAtMs"];
+  int64 next_retry_at_ms = 5 [json_name = "nextRetryAtMs"];
+  int64 searches_zero_result_count = 6 [json_name = "searchesZeroResultCount"];
+  map<string, int64> failed_by_file_kind = 7 [json_name = "failedByFileKind"];
+}
+
+message MigrationGenerationView {
+  string active_generation_id = 1 [json_name = "activeGenerationId"];
+  string migration_state = 2 [json_name = "migrationState"];
+  string building_generation_id = 3 [json_name = "buildingGenerationId"];
+  string previous_generation_id = 4 [json_name = "previousGenerationId"];
+  string serving_search_generation_id = 5 [json_name = "servingSearchGenerationId"];
+  string serving_ingest_generation_id = 6 [json_name = "servingIngestGenerationId"];
+  int64 active_indexed_documents = 7 [json_name = "activeIndexedDocuments"];
+  int64 building_indexed_documents = 8 [json_name = "buildingIndexedDocuments"];
+  int64 switch_buffer_depth = 9 [json_name = "switchBufferDepth"];
+  int64 pending_jobs_count = 10 [json_name = "pendingJobsCount"];
+  int64 processing_jobs_count = 11 [json_name = "processingJobsCount"];
+  int64 pending_ready_jobs_count = 12 [json_name = "pendingReadyJobsCount"];
+  int64 pending_backoff_jobs_count = 13 [json_name = "pendingBackoffJobsCount"];
+  int64 migration_switching_age_ms = 14 [json_name = "migrationSwitchingAgeMs"];
+  int64 migration_switching_max_duration_ms = 15 [json_name = "migrationSwitchingMaxDurationMs"];
+  bool migration_paused = 16 [json_name = "migrationPaused"];
+  string migration_pause_reason = 17 [json_name = "migrationPauseReason"];
+  int64 migration_paused_at_ms = 18 [json_name = "migrationPausedAtMs"];
+  string migration_source = 20 [json_name = "migrationSource"];
+  MigrationEnumeratorView migration_enumerator = 19 [json_name = "migrationEnumerator"];
+}
+
+message MigrationEnumeratorView {
+  bool running = 1;
+  bool done = 2;
+  int64 roots_total = 3 [json_name = "rootsTotal"];
+  int64 roots_done = 4 [json_name = "rootsDone"];
+  int64 files_seen = 5 [json_name = "filesSeen"];
+  int64 files_enqueued = 6 [json_name = "filesEnqueued"];
+  int64 started_at_ms = 7 [json_name = "startedAtMs"];
+  int64 finished_at_ms = 8 [json_name = "finishedAtMs"];
+  string last_path = 9 [json_name = "lastPath"];
+}
+
+message CompatibilityStatusView {
+  string embedding_compat_state = 1 [json_name = "embeddingCompatState"];
+  string embedding_compat_reason = 2 [json_name = "embeddingCompatReason"];
+  string embedding_fingerprint_current = 3 [json_name = "embeddingFingerprintCurrent"];
+  string embedding_fingerprint_stored = 4 [json_name = "embeddingFingerprintStored"];
+  string index_schema_fp_current = 5 [json_name = "indexSchemaFpCurrent"];
+  string index_schema_fp_stored = 6 [json_name = "indexSchemaFpStored"];
+  string index_schema_compat_state = 7 [json_name = "indexSchemaCompatState"];
+  bool reindex_required = 8 [json_name = "reindexRequired"];
+  string reindex_required_reason = 9 [json_name = "reindexRequiredReason"];
+}
+
+message QueueDbStatusView {
+  bool queue_db_healthy = 1 [json_name = "queueDbHealthy"];
+  int64 queue_db_last_backup_at_ms = 2 [json_name = "queueDbLastBackupAtMs"];
+  int64 queue_db_last_quick_check_at_ms = 3 [json_name = "queueDbLastQuickCheckAtMs"];
+  bool queue_db_last_quick_check_ok = 4 [json_name = "queueDbLastQuickCheckOk"];
+  int64 queue_db_last_error_at_ms = 5 [json_name = "queueDbLastErrorAtMs"];
+}
+
+message EnrichmentProgressView {
+  ChunkCoverageView chunk = 1;
+  int64 embedding_doc_count = 2 [json_name = "embeddingDocCount"];
+  int64 embedding_completed_count = 3 [json_name = "embeddingCompletedCount"];
+  int64 embedding_pending_count = 4 [json_name = "embeddingPendingCount"];
+  int64 embedding_failed_count = 5 [json_name = "embeddingFailedCount"];
+  double embedding_coverage_percent = 6 [json_name = "embeddingCoveragePercent"];
+  int64 splade_doc_count = 7 [json_name = "spladeDocCount"];
+  int64 splade_completed_count = 8 [json_name = "spladeCompletedCount"];
+  int64 splade_pending_count = 9 [json_name = "spladePendingCount"];
+  int64 splade_failed_count = 10 [json_name = "spladeFailedCount"];
+  double splade_coverage_percent = 11 [json_name = "spladeCoveragePercent"];
+  int64 pending_ner_count = 12 [json_name = "pendingNerCount"];
+  int64 completed_ner_count = 13 [json_name = "completedNerCount"];
+  map<string, int64> enrichment_completed = 14 [json_name = "enrichmentCompleted"];
+  BatchTimingView batch_timing = 15 [json_name = "batchTiming"];
+  map<string, EncoderProfileView> encoder_profiles = 16 [json_name = "encoderProfiles"];
+  bool embedding_enabled = 17 [json_name = "embeddingEnabled"];
+  bool splade_enabled = 18 [json_name = "spladeEnabled"];
+  bool ner_enabled = 19 [json_name = "nerEnabled"];
+}
+
+message ChunkCoverageView {
+  int64 chunk_doc_count = 1 [json_name = "chunkDocCount"];
+  int64 chunk_embedding_completed_count = 2 [json_name = "chunkEmbeddingCompletedCount"];
+  int64 chunk_embedding_pending_count = 3 [json_name = "chunkEmbeddingPendingCount"];
+  int64 chunk_embedding_failed_count = 4 [json_name = "chunkEmbeddingFailedCount"];
+  double chunk_vector_coverage_percent = 5 [json_name = "chunkVectorCoveragePercent"];
+  bool chunk_vectors_ready = 6 [json_name = "chunkVectorsReady"];
+}
+
+message BatchTimingView {
+  map<string, int64> batch_count = 1 [json_name = "batchCount"];
+  map<string, int64> total_ms = 2 [json_name = "totalMs"];
+}
+
+message EncoderProfileView {
+  int64 calls = 1;
+  map<string, int64> phase_total_us = 2 [json_name = "phaseTotalUs"];
+  int64 ort_min_us = 3 [json_name = "ortMinUs"];
+  int64 ort_max_us = 4 [json_name = "ortMaxUs"];
+  int64 ort_p50_us = 5 [json_name = "ortP50Us"];
+  int64 ort_p95_us = 6 [json_name = "ortP95Us"];
+  int64 ort_p99_us = 7 [json_name = "ortP99Us"];
+}
+
+message GpuDiagnosticsView {
+  OrtCudaView reranker_ort_cuda = 1 [json_name = "rerankerOrtCuda"];
+  OrtCudaView splade_ort_cuda = 2 [json_name = "spladeOrtCuda"];
+  OrtCudaView embed_ort_cuda = 3 [json_name = "embedOrtCuda"];
+  string embed_backend = 4 [json_name = "embedBackend"];
+  int32 embed_gpu_layers = 5 [json_name = "embedGpuLayers"];
+  string splade_model_path = 6 [json_name = "spladeModelPath"];
+  string reranker_model_path = 7 [json_name = "rerankerModelPath"];
+  string ner_model_path = 8 [json_name = "nerModelPath"];
+  bool ner_gpu_enabled = 9 [json_name = "nerGpuEnabled"];
+  OrtCudaView ner_ort_cuda = 10 [json_name = "nerOrtCuda"];
+  OrtCudaView citation_ort_cuda = 11 [json_name = "citationOrtCuda"];
+  OrtCudaView bge_m3_ort_cuda = 12 [json_name = "bgeM3OrtCuda"];
+}
+
+message OrtCudaView {
+  bool configured = 1;
+  bool attempted = 2;
+  bool available = 3;
+  string variant_id = 4 [json_name = "variantId"];
+  string native_path = 5 [json_name = "nativePath"];
+  string failure_reason = 6 [json_name = "failureReason"];
+  repeated string missing_dlls = 7 [json_name = "missingDlls"];
+}
+
+message VectorFormatView {
+  string vector_format_config = 1 [json_name = "vectorFormatConfig"];
+  string vector_format_stored = 2 [json_name = "vectorFormatStored"];
+  string vector_format_actual = 3 [json_name = "vectorFormatActual"];
+  int64 vector_segments_float32 = 4 [json_name = "vectorSegmentsFloat32"];
+  int64 vector_segments_quantized = 5 [json_name = "vectorSegmentsQuantized"];
+}
+
+message TelemetryMetricsView {
+  double content_length_avg_chars = 1 [json_name = "contentLengthAvgChars"];
+  int64 content_length_min_chars = 2 [json_name = "contentLengthMinChars"];
+  int64 content_length_max_chars = 3 [json_name = "contentLengthMaxChars"];
+  double throughput_docs_per_sec = 4 [json_name = "throughputDocsPerSec"];
+  string throughput_window_state = 5 [json_name = "throughputWindowState"];
+}
+
+message SearchConfigView {
+  bool chunk_aware_enabled = 1 [json_name = "chunkAwareEnabled"];
+  double cc_weight_sparse = 2 [json_name = "ccWeightSparse"];
+  double cc_weight_dense = 3 [json_name = "ccWeightDense"];
+  double cc_weight_splade = 4 [json_name = "ccWeightSplade"];
+  double branch_cc_weight_whole = 5 [json_name = "branchCcWeightWhole"];
+  double branch_cc_weight_chunk = 6 [json_name = "branchCcWeightChunk"];
+  double branch_chunk_min_weight_multiplier = 7 [json_name = "branchChunkMinWeightMultiplier"];
+  double title_boost = 8 [json_name = "titleBoost"];
+  double entity_boost = 9 [json_name = "entityBoost"];
+  bool query_classification_enabled = 10 [json_name = "queryClassificationEnabled"];
+}
+
+// === Top-level sub-records (full shapes per Java ground truth) ===
+
+message InferenceRuntimeView {
+  string phase = 1;
+  RuntimeIdentityView identity = 2;
+  bool using_external = 3 [json_name = "usingExternal"];
+  InferenceFailureView last_failure = 4 [json_name = "lastFailure"];
+  LifecycleCounters counters = 5;
+}
+
+message RuntimeIdentityView {
+  int64 generation_id = 1 [json_name = "generationId"];
+  string model_id = 2 [json_name = "modelId"];
+  int32 port = 3;
+  int64 loaded_at_epoch_ms = 4 [json_name = "loadedAtEpochMs"];
+}
+
+message InferenceFailureView {
+  string code = 1;
+  string detail = 2;
+}
+
+message LifecycleCounters {
+  int64 soft_restarts = 1 [json_name = "softRestarts"];
+  int64 hard_restarts = 2 [json_name = "hardRestarts"];
+  int64 transitions_total = 3 [json_name = "transitionsTotal"];
+}
+
+message ReadinessEnvelopeView {
+  int32 schema_version = 1 [json_name = "schemaVersion"];
+  string observed_at = 2 [json_name = "observedAt"];
+  map<string, ReadinessComponentView> components = 3;
+  map<string, ReadinessCompositeView> composites = 4;
+}
+
+message ReadinessComponentView {
+  string state = 1;
+  string reason_code = 2 [json_name = "reasonCode"];
+  string source = 3;
+  string observed_at = 4 [json_name = "observedAt"];
+  bool stale = 5;
+  int64 staleness_ms = 6 [json_name = "stalenessMs"];
+}
+
+message ReadinessCompositeView {
+  string state = 1;
+  repeated string reason_codes = 2 [json_name = "reasonCodes"];
+}
+
+message EmbeddingStatusGroup {
+  int64 observed_at_ms = 1 [json_name = "observedAtMs"];
+  string compat_state = 2 [json_name = "compatState"];
+  string compat_reason = 3 [json_name = "compatReason"];
+  string fingerprint_current = 4 [json_name = "fingerprintCurrent"];
+  string fingerprint_stored = 5 [json_name = "fingerprintStored"];
+  bool ready = 6;
+  int64 doc_count = 7 [json_name = "docCount"];
+  int64 completed_count = 8 [json_name = "completedCount"];
+  int64 pending_count = 9 [json_name = "pendingCount"];
+  int64 failed_count = 10 [json_name = "failedCount"];
+  double coverage_percent = 11 [json_name = "coveragePercent"];
+}
+
+message SchemaStatusGroup {
+  int64 observed_at_ms = 1 [json_name = "observedAtMs"];
+  string fp_current = 2 [json_name = "fpCurrent"];
+  string fp_stored = 3 [json_name = "fpStored"];
+  string compat_state = 4 [json_name = "compatState"];
+  bool reindex_required = 5 [json_name = "reindexRequired"];
+  string reindex_required_reason = 6 [json_name = "reindexRequiredReason"];
+}
+
+message ChunkCoverageGroup {
+  int64 observed_at_ms = 1 [json_name = "observedAtMs"];
+  int64 doc_count = 2 [json_name = "docCount"];
+  int64 completed_count = 3 [json_name = "completedCount"];
+  int64 pending_count = 4 [json_name = "pendingCount"];
+  int64 failed_count = 5 [json_name = "failedCount"];
+  double coverage_percent = 6 [json_name = "coveragePercent"];
+  bool ready = 7;
+}
+
+message QueueHealthGroup {
+  int64 observed_at_ms = 1 [json_name = "observedAtMs"];
+  bool healthy = 2;
+  int64 last_backup_at_ms = 3 [json_name = "lastBackupAtMs"];
+  int64 last_quick_check_at_ms = 4 [json_name = "lastQuickCheckAtMs"];
+  bool last_quick_check_ok = 5 [json_name = "lastQuickCheckOk"];
+  int64 last_error_at_ms = 6 [json_name = "lastErrorAtMs"];
+}
+
+message MigrationStatusGroup {
+  int64 observed_at_ms = 1 [json_name = "observedAtMs"];
+  string state = 2;
+  string building_generation_id = 3 [json_name = "buildingGenerationId"];
+  string previous_generation_id = 4 [json_name = "previousGenerationId"];
+  bool paused = 5;
+  string pause_reason = 6 [json_name = "pauseReason"];
+  int64 switching_age_ms = 7 [json_name = "switchingAgeMs"];
+  int64 switching_max_duration_ms = 8 [json_name = "switchingMaxDurationMs"];
+  MigrationEnumeratorView enumerator = 9;
+  // tempdoc 628 Stage C: why the migration is running (generation manifest source), e.g.
+  // "corrupt_index_rebuild" — lets the Head word the degradation cause.
+  string migration_source = 10 [json_name = "migrationSource"];
+}
+
+message GpuStatusView {
+  bool available = 1;
+  // Java types are Integer / Long (boxed; nullable). Wire emits null-omitted
+  // per @JsonInclude(NON_NULL); proto3 optional matches the same shape.
+  optional int32 gpu_utilization_percent = 2 [json_name = "gpuUtilizationPercent"];
+  optional int32 memory_utilization_percent = 3 [json_name = "memoryUtilizationPercent"];
+  optional int64 total_vram_bytes = 4 [json_name = "totalVramBytes"];
+  optional int64 used_vram_bytes = 5 [json_name = "usedVramBytes"];
+  optional int64 free_vram_bytes = 6 [json_name = "freeVramBytes"];
+  optional string driver_version = 7 [json_name = "driverVersion"];
+  optional int32 device_count = 8 [json_name = "deviceCount"];
+  // Tempdoc 419 C3 V1: 30-min RRD trends.
+  repeated double recent_utilization_percent = 9 [json_name = "recentUtilizationPercent"];
+  repeated double recent_memory_utilization_percent = 10 [json_name = "recentMemoryUtilizationPercent"];
+  // Tempdoc 587: the unified GPU resolver's CUDA-functional axis + VRAM/device provenance.
+  optional bool cuda_functional = 11 [json_name = "cudaFunctional"];
+  optional string source = 12 [json_name = "source"];
+  optional string confidence = 13 [json_name = "confidence"];
+}
+
+// Tempdoc 629 (FLOOR): at-rest protection of the data-dir volume. Coarse on/off fidelity only —
+// disk_encryption ∈ {ENCRYPTED, NOT_ENCRYPTED, ENCRYPTING, UNKNOWN}; quality_known is false when the
+// configuration-quality distinction (TPM-only vs pre-boot PIN) could not be read (needs admin).
+message AtRestProtectionView {
+  optional string disk_encryption = 1 [json_name = "diskEncryption"];
+  optional string source = 2 [json_name = "source"];
+  optional string confidence = 3 [json_name = "confidence"];
+  bool quality_known = 4 [json_name = "qualityKnown"];
+}
+
+// Tempdoc 629 (#2): conversation (AUTHORED-store) encryption state.
+message ConversationProtectionView {
+  optional string state = 1 [json_name = "state"];
+}
+
+message ModelDistributionStatusView {
+  string install_profile = 1 [json_name = "installProfile"];
+  map<string, ModelVariantView> model_variants = 2 [json_name = "modelVariants"];
+  string upgrade_guidance = 3 [json_name = "upgradeGuidance"];
+}
+
+message ModelVariantView {
+  string filename = 1;
+  string precision = 2;
+  string execution_provider = 3 [json_name = "executionProvider"];
+  bool degraded = 4;
+  string degradation_reason = 5 [json_name = "degradationReason"];
+  bool skipped = 6;
+  string skip_reason = 7 [json_name = "skipReason"];
+}
+
+message AgentSessionView {
+  int32 active_count = 1 [json_name = "activeCount"];
+}
+
+message TelemetryHealthView {
+  int64 flush_failure_count = 1 [json_name = "flushFailureCount"];
+  int64 gauge_callback_failure_count = 2 [json_name = "gaugeCallbackFailureCount"];
+}
+
+message StatusMeta {
+  int64 worker_rpc_at_ms = 1 [json_name = "workerRpcAtMs"];
+  bool worker_rpc_stale = 2 [json_name = "workerRpcStale"];
+}

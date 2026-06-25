@@ -1,0 +1,316 @@
+---
+title: Knowledge Server
+type: explanation
+status: stable
+description: "Formatting logic, JobQueue, and Tika usage."
+---
+
+# 03. The Knowledge Server (Worker Process)
+
+The **Knowledge Server** (`modules/indexer-worker`) is the heavy-lifting "Body" of JustSearch. It runs as a headless Java process, spawned and managed by the Main Process.
+
+Their primary responsibility is to convert a chaotic filesystem into a structured Lucene index.
+
+## Core Loop (`IndexingLoop`)
+
+The `IndexingLoop.java` class is an infinite loop that processes files one by one (or in small batches).
+
+### The Pipeline
+1.  **Check Breath:** Checks `WorkerSignalBus.isUserActive()`. If the Head has signaled recent foreground activity (UI input or interactive API use) < 2000ms ago, `Thread.sleep(500)`.
+2.  **Poll Job:** Takes the next `PENDING` job from `SqliteJobQueue`.
+3.  **Validate:** Checks `Files.exists()` and `Files.isReadable()`.
+4.  **Check Modified:** Compares `Files.getLastModifiedTime()` against the Lucene index. If unchanged, mark `DONE` and skip.
+5.  **Extract:** Passes file to `TimeboxedContentExtractor` (wraps `ContentExtractor` / Tika) to prevent pathological files from hanging the loop; timeouts fail the job with `EXTRACTION_TIMEOUT`.
+6.  **Embed (Deferred):** During primary indexing, embedding is deferred — documents get `EMBEDDING_STATUS=PENDING`. After the queue drains, `EmbeddingBackfillOps` batch-embeds via ORT (EmbeddingGemma-300M by default). If `WorkerSignalBus.isMainGpuActive()` is true, the Worker skips/unloads GPU embedding work to avoid VRAM contention with Online mode.
+7.  **Index:** Writes `IndexDocument` via the write-path ops (`WritePathOps`/`CommitOps`), including canonical metadata fields used by the UI:
+    - `mime_base`: normalized MIME without parameters (e.g., strip `; charset=` from Tika `mime`)
+    - `file_kind`: UX-friendly type bucket (e.g., `pdf|markdown|image|code|text|office|archive|binary|unknown`)
+    - `content_preview`: small stored snippet source (first ~4KB) for the results list
+    - `language`: lightweight heuristic (script-based; fast/no deps)
+8.  **Commit:** Every 10 seconds or 1000 documents.
+
+## File skip lists
+
+The Worker applies hardcoded skip rules at two stages, independent of user-configured exclude patterns.
+
+### Directory traversal skips (`WALK_SKIP_DIRS` in `SyncDirectoryOps.java`)
+
+During `Files.walkFileTree`, these directories trigger `SKIP_SUBTREE` (name compared lowercase):
+
+`$recycle.bin`, `system volume information`, `.git`, `.svn`, `.hg`, `.bzr`, `cvs`, `node_modules`, `bower_components`, `__pycache__`, `.tox`, `.pytest_cache`, `.mypy_cache`
+
+### Per-file skips (`shouldSkip()` in `IndexingLoop.java`)
+
+Before processing, each file is checked against:
+
+1. **Hidden files** — names starting with `.` (except `.env`, `.gitignore`)
+2. **Extension skip list** (`SKIP_EXTENSIONS`): `pyc`, `pyo`, `class`, `o`, `obj`
+3. **Name-contains patterns** (`SKIP_PATTERNS`): system/temp files like `thumbs.db`, `desktop.ini`
+4. **Binary content detection** — files detected as binary by content inspection are skipped
+
+### Design rationale
+
+Only unambiguously tool-generated patterns are hardcoded. Context-dependent directories (`build/`, `dist/`, `vendor/`, `.cache`, `.venv`) are left to user-configurable exclude patterns (see `docs/explanation/06-configuration-ssot.md` § "Exclude patterns").
+
+## The Job Queue (`SqliteJobQueue`)
+
+We use **SQLite** as a persistent Job Queue (`jobs.db`, stored under the Worker `dataDir`).
+*   **Why SQLite?** It survives crashes. An in-memory queue would lose thousands of pending files if the worker was killed by the "Suicide Pact."
+*   **Schema (conceptual):** jobs are durable rows with a `state` machine (`PENDING`/`PROCESSING`/`DONE`/`FAILED`) and retry/backoff metadata.
+*   **States:** `PENDING`, `PROCESSING`, `DONE`, `FAILED`.
+*   **Retry Logic:** Exponential backoff ($1s \times 2^{n-1}$, capped at ~17 min) with capped additive jitter (`[0, min(1s, backoff)]`) to prevent synchronized retry bursts.
+
+### Concurrency & configuration
+
+*   **Single-Writer model:** `SqliteJobQueue` uses a single JDBC `Connection` and serializes all access via a `ReentrantLock`. This avoids `SQLITE_BUSY` errors and aligns with SQLite best practices.
+*   **Pragmas:** Configured with `journal_mode = WAL`, `synchronous = NORMAL`, and `busy_timeout = 5000`. WAL mode provides good crash resilience for a job queue (process crashes are safe; OS crashes may lose the last transaction, but `recoverStuckJobs()` heals on next boot).
+
+### Ingest guardrails (backpressure)
+
+The gRPC ingest surface enforces caps before the queue even sees data:
+
+*   `submitBatch` rejects batches larger than **10,000** paths (`MAX_BATCH_SIZE`).
+*   `submitBatch` rejects submissions when `queueDepth >= 100,000` (`MAX_QUEUE_DEPTH`) with `RESOURCE_EXHAUSTED`. Callers should retry later.
+
+### Crash recovery
+
+On startup, `recoverStuckJobs()` resets all `PROCESSING` jobs back to `PENDING`. This heals incomplete work from a prior crash without burning retry budget (since `attempts` = failures, not claims).
+
+The indexing loop is also resilient *in-process* (tempdoc 588): a per-document `Error` — not just an `Exception` (e.g. a plugin `LinkageError`, an `AssertionError`, an `IOError`) — is logged and the loop continues to the next batch, so one pathological document cannot permanently halt indexing. A genuinely fatal `VirtualMachineError` (OOM, stack overflow) stops the loop *observably*: its liveness flag is cleared so the Worker reports the loop as stopped rather than silently advertising `RUNNING`. This matters because `recoverStuckJobs()` runs only at boot — a silent in-process loop death (with the process still alive) would otherwise strand jobs in `PROCESSING` with no recovery path.
+
+### Schema versioning & migrations
+
+The job queue uses `PRAGMA user_version` for linear schema evolution:
+
+*   **Version tracking:** SQLite's native `user_version` header field stores the current schema version.
+*   **Migration ladder:** On open, the queue applies pending migrations sequentially (V0→V1→V2→...) inside an explicit transaction.
+*   **Fail-fast:** If a migration fails, the transaction rolls back and the queue throws a fatal exception.
+*   **DDL SSOT:** All DDL and migration SQL is centralized in `SqliteSchema`. Migration orchestration (version ladder, transaction management, rollback) lives in `SqliteQueueMigrationOps`.
+
+### Pre-migration backups
+
+Before schema migrations (or when triage is needed), the queue creates a backup:
+
+*   **Mechanism:** `VACUUM INTO` creates a consistent snapshot to `jobs.db.bak.tmp`, then atomically replaces `jobs.db.bak`.
+*   **WAL safety:** Unlike raw file copy, `VACUUM INTO` handles WAL mode correctly (no need to reason about `-wal`/`-shm` sidecars).
+*   **Guard:** Backups are only created when `jobs.db` existed before the current open (not for fresh installs).
+
+### Startup integrity check (Triage pattern)
+
+On startup, if the database already exists, the queue runs `PRAGMA quick_check`:
+
+*   If all rows return `ok`, the database is healthy.
+*   If corruption is detected, the queue throws `SQLITE_CORRUPT`.
+*   `KnowledgeServer` catches this and initiates **triage**: quarantine the corrupt files (`{db, -wal}.corrupt`), restore from `jobs.db.bak` if available, and re-open.
+
+**Post-restore validation:** After triage restores from backup, `KnowledgeServer` calls `jobQueue.openWithIntegrityCheck()` instead of plain `open()`. This forces `PRAGMA quick_check` even though the restored database appears "new" to the open logic (the `existedBeforeOpen` flag would be false for a freshly restored file). The `forceIntegrityCheck` flag in `SqliteJobQueue` bypasses this skip, ensuring backup integrity is validated before the queue resumes processing.
+
+### Atomic job claiming
+
+`pollPending()` uses a single-statement atomic claim to prevent burning attempts on crashes:
+
+```sql
+UPDATE jobs SET state = 'PROCESSING', last_updated = :now
+WHERE path IN (SELECT path FROM jobs WHERE state = 'PENDING' AND ...)
+RETURNING path;
+```
+
+### Attempt semantics
+
+`attempts` represents **failures**, not claims:
+
+*   Claiming a job (`pollPending`) does **not** increment `attempts`.
+*   Only `markFailed()` increments `attempts` and schedules `retry_after`.
+*   `recoverStuckJobs()` (crash recovery) resets `PROCESSING` → `PENDING` without mutating `attempts`.
+
+This ensures transient crashes don't burn retry budget.
+
+### Retention & bloat
+
+`markDone` transitions jobs to `DONE` but does not delete them. A batch variant `markDoneBatch(Collection<Path>)` executes a single `UPDATE ... WHERE path IN (?, ...)` with chunking at 499 params (SQLite limit), replacing per-path individual UPDATEs at commit boundaries (tempdoc 312 item 8). A `cleanupOldJobs(retentionDays)` method exists but is not currently scheduled, so `jobs.db` can grow over time on long-running installs.
+
+**Incremental auto-vacuum:** `PRAGMA auto_vacuum = 2` (INCREMENTAL) is set in the `open()` PRAGMA block, before `CREATE TABLE`. This enables SQLite to reclaim freelist pages without a full `VACUUM`.
+
+**Waste monitoring:** `checkAndVacuum()` queries `page_count * page_size` and `freelist_count * page_size`. When waste ratio exceeds 25%, runs `PRAGMA incremental_vacuum(500)` (~2MB reclaimed per invocation). Called after `cleanupOldJobs()` when rows are deleted.
+
+**Existing DB limitation:** `PRAGMA auto_vacuum = 2` on a database created with `auto_vacuum = 0` has no effect until a full `VACUUM`. New installations get incremental vacuum immediately; existing installations benefit from waste monitoring but won't reclaim freelist pages until a schema migration (V5) or manual `VACUUM`.
+
+### Ingestion Ledger Privacy Contract (tempdoc 410 §8 + Slice E + Slice G.4)
+
+The Worker writes an `ingestion_ledger` audit row for every typed ingestion outcome (skip, success, failure, defer). Operators read these rows via `GET /api/diagnostics/ingestion/{recent,summary}` and via the `RecentIngestionEvents` / `IngestionOutcomeSummary` gRPC RPCs. Both surfaces marshal `JobQueue.IngestionEventView` records — never the raw queue row.
+
+**Invariant:** any operator-visible export of ledger or queue data carries a `path_hash` (SHA-256 over the normalized absolute path), never the raw path, and never any path-derived field that could reverse-map to the user's filesystem.
+
+#### Path normalisation spec
+
+`path_hash` is computed as `sha256_hex(PathNormalizer.normalizePath(path.toAbsolutePath().toString()))`.
+
+- `path.toAbsolutePath()` resolves to the JVM's working-directory-anchored absolute form before normalisation. Symlinks are NOT followed (matches the `LinkOption.NOFOLLOW_LINKS` posture used elsewhere in the admission boundary).
+- `PathNormalizer.normalizePath` (`modules/worker-services/src/main/java/io/justsearch/indexerworker/util/PathNormalizer.java`) replaces every `/` with the platform-native separator (`File.separatorChar`) — on Windows that produces backslash-form paths like `c:\users\<user>\…\file.txt`; on Linux/macOS the path is left as-is. Case folding fires on case-insensitive filesystems (Windows): the normalizer lowercases the absolute path so the same file produces the same hash regardless of how the operator typed the case.
+- The hex form is **lowercase 64-char SHA-256**. Operators correlating events to files should match on the full 64 characters; substring matching breaks the privacy property because partial hashes can be brute-forced against a known directory layout.
+- The canonical helper lives at `CloudPlaceholderRecorder.sha256Hex` (`modules/worker-services/src/main/java/io/justsearch/indexerworker/services/CloudPlaceholderRecorder.java`, package-private static). Workers writing new ledger entries should reuse it; rolling a private SHA-256 helper risks producing inconsistent normalisation that breaks the operator-side correlation pattern below.
+
+#### In-scope record fields
+
+(`JobQueue.IngestionEventView`, the export wire shape — 14 fields as of 2026-04-25):
+
+- `id`, `observedAtMs` — opaque event identity + timestamp.
+- `pathHash` — SHA-256 hex over the normalized absolute path. The only path-derived field allowed.
+- `collection` — operator-visible collection tag; never carries the path.
+- `outcomeClass`, `reasonCode`, `retryPolicy` — typed outcome triple from `IngestionOutcomeClass` / `IngestionReasonCodes` / `IngestionRetryPolicy`.
+- `diagnosticSummary` — sanitized free-form summary, capped at `LEDGER_ENTRY_MAX_FIELD_CHARS` (256). Operators producing this string must not embed raw paths or extracted text.
+- `sourceSizeBytes`, `sourceModifiedAtMs`, `sourceKind` — file metadata captured at ingestion. None of these are reversible to the path.
+- `artifactStatus`, `policyId`, `parserId` — extraction provenance (matches `ExtractionStatus`, `TikaExtractionPolicy.policyId()`, parser identifier).
+
+#### Path-derivable vs. not-path-derivable — concrete examples
+
+When deciding whether a new field belongs on `IngestionEventView`, ask: "could a sufficiently motivated operator with knowledge of the user's filesystem layout reverse-engineer the path from this field, alone or in combination with other fields already in the export?"
+
+**Forbidden (path-derivable):**
+- Raw path strings of any kind: absolute, relative, basename, parent directory.
+- File extensions when combined with `sourceSizeBytes` + `sourceModifiedAtMs` (the triple is enough to fingerprint a specific file inside a known root).
+- Hashed-but-unsalted partial paths (e.g., a hash of just the parent directory) — partial hashes are brute-forceable against a candidate directory listing.
+- Filename character counts (in combination with size + mtime).
+- Originating watcher root identity if the root path is derivable from an operator-visible setting.
+
+**Allowed (not path-derivable):**
+- Outcome classes, reason codes, retry policies — pure enum values.
+- `policyId` / `parserId` — fixed identifiers shared across the install.
+- `sourceSizeBytes`, `sourceModifiedAtMs` — file metadata. Alone these don't identify a path; the privacy property assumes they're not paired with path-derivable signals.
+- `sourceKind` — the typed source class (e.g., `CLOUD_PLACEHOLDER`, `REGULAR_FILE`).
+- `diagnosticSummary` strings that don't embed paths or extracted content (e.g., `"Indexed successfully"`, `"Cloud-only placeholder; reading would hydrate over network"`).
+
+**Rule for adding a field:** any new component on `IngestionEventView` or `IngestionLedgerEntry` must either (a) carry no path-derivable information per the examples above, or (b) be opted out of operator-visible exports via a documented mechanism (e.g., a separate internal projection that the gRPC layer never marshals — none currently exist; see Slice G.4 plan). The `ingestionEventViewExportContractIsPinned` test in `JobQueueTest` pins the exact 14-field set so accidental additions break the build with an actionable diff.
+
+#### Operator query pattern
+
+`path_hash` is one-way. To correlate a flagged event back to a specific file, operators hash candidate paths themselves:
+
+```
+sha256_hex(PathNormalizer.normalizePath(candidatePath.toAbsolutePath().toString()))
+```
+
+and compare to the event's `pathHash` field. **There is no reverse lookup *in any export path*.** The scoped resolver at `POST /api/library/resolve-hash` is the only exception, governed by [ADR-0028](../decisions/0028-scoped-reverse-path-lookup.md).
+
+#### Scoped reverse-lookup exemption (ADR-0028)
+
+The local UI's "show filename" affordance in the Library Indexing Activity panel needs to answer "which file is this hash?" for files still under a watched root. ADR-0028 refines the contract to permit exactly that — and only that — via a single, deliberately-narrow surface:
+
+- **One backing table.** `path_resolution(path_hash, normalized_path, last_seen_at, removed_at)` lives in `jobs.db` alongside the ingestion ledger. It is populated on every successful or partial admission via the `IndexingLoop.pathResolutionStore` recorder seam.
+- **One gRPC RPC.** `LookupPathByHash(pathHash) → Optional<Path>` returns the resolution if the file is still under a watched root and within retention; returns `found=false` otherwise (path was removed and retention expired, root was unwatched, or hash was never seen).
+- **One HTTP endpoint.** `POST /api/library/resolve-hash` is the only HTTP caller of the resolver RPC. The diagnostic export endpoints (`/api/diagnostics/ingestion/recent`, `/api/diagnostics/ingestion/summary`, and any future `/api/diagnostics/export`) **must not** call it.
+- **Mechanical enforcement.** The ArchUnit pin `LibraryResolveHashOnlyCallerPin` (in `modules/app-launcher`) asserts that no class in the diagnostic export call tree depends on `PathResolutionStore`. Adding a new caller requires adding it to the pin's `APPROVED_CALLERS` set with a written reason — the pin's job is to make every expansion a deliberate, reviewed action.
+- **Lifecycle.** Observed file deletions mark `removed_at = now`; rows are pruned after `JUSTSEARCH_PATH_RESOLUTION_RETENTION_DAYS` (default 90). Unwatching a watched root prunes everything under that prefix immediately. Existing ledger entries from before V7 migration return `found=false` until they are re-resolved by a future scan.
+
+The structural pin `ingestionEventViewExportContractIsPinned` is unchanged — `IngestionEventView` still has 14 fields, and the `path_resolution` table is never marshaled into it. The contract refinement does not change what gets exported; it only adds a separate, scoped path for in-process display on direct user action.
+
+### Durable cutover buffer (`switch_buffer`)
+
+During schema migration cutover (`SWITCHING` state), the Worker durably buffers mutating ingest operations into `jobs.db.switch_buffer` (rather than relying on UI/client retries). On restart after cutover, the Worker replays buffered ops against the new generation.
+
+This is the core correctness mechanism that prevents lost updates during blue/green pointer swaps.
+
+**Fail-closed semantics:** Buffering is part of the write path. If `putSwitchBuffer()` fails (SQL error), gRPC handlers return `UNAVAILABLE` (retryable) instead of ACKing the operation. This prevents "ACK without durability" during cutover. Switch buffer SQL operations are implemented in `SqliteQueueSwitchBufferOps`.
+
+## Index generations & schema migration (Blue/Green)
+
+JustSearch uses a generation-scoped index layout and a migration state machine so schema changes can be deployed without downtime:
+
+- **Generation manager**: `IndexGenerationManager` owns `<indexBasePath>/state.json` (active/building/previous generation pointers + `migration_state`).
+- **Dual runtime wiring** (Worker-only):
+  - `searchRuntime` serves queries (Blue during migration; read-only for rollback safety)
+  - `ingestRuntime` performs all writes (Green during migration; Active when not migrating)
+- **Schema mismatch policy**: when the active generation’s schema is incompatible, behavior is driven by `index.schema_mismatch.policy` (see `docs/explanation/04-storage-engine.md`).
+- **Operator controls**: migration start/cutover/rollback/pause/resume are exposed via gRPC and surfaced via REST (see `docs/explanation/07-ui-host-architecture.md`).
+
+Stable migration architecture is described in `docs/explanation/11-index-schema-migration.md`.
+
+## Content Extraction (`ContentExtractor`)
+
+We use **Apache Tika** to handle diverse formats.
+*   **Supported:** PDF, DOCX, PPTX, HTML, XML, Markdown, Source Code.
+*   **Timeout protection:** `TimeboxedContentExtractor` enforces a hard extraction deadline (default 60s) and increments `extraction.timeout_total` when it triggers. The job is marked failed as `EXTRACTION_TIMEOUT` instead of blocking the indexing loop indefinitely.
+*   **Garbage Detection:**
+    *   Tika often returns "garbage" for scanned/image-only PDFs (random unicode characters) or empty text for images.
+    *   We use `TextQualityAnalyzer` (Alphanumeric Ratio < 0.3) to detect this.
+    *   **OCR fallback:** If the structured Tika pass is weak and the file is OCR-eligible, Worker extraction may run bounded Tika/Tesseract OCR. Successful OCR writes `extraction_method=OCR_TIKA`, becomes the baseline searchable text, and records compact visual extraction evidence such as OCR language, optional confidence summary, fallback route, truncation, and skip/guard reason.
+    *   **VDU enrichment:** Documents that still lack baseline readable text, or that can benefit from richer visual/layout understanding, are marked `VDU_STATUS_PENDING` with `vdu_demand_kind` distinguishing `baseline_text` from `visual_enrichment`.
+    *   When VDU later produces non-empty text, the Worker updates `content`, `content_preview`, `language`, chunks, and `extraction_method=VDU`. Failed or empty VDU preserves the best baseline text.
+*   **Frontmatter title extraction:** Apache Tika's `MarkdownParser` does not extract YAML frontmatter metadata. `ContentExtractor.extractFrontmatterTitle()` provides a fallback: when Tika returns null for title and content starts with `---`, it parses the `title:` field from YAML frontmatter (handles standard, double-quoted, and single-quoted values). This populates the `title` field used by suggest ranking.
+*   **Archive/Binary guardrails:** archives and unknown binaries are classified as `file_kind=archive|binary`. Extraction is best-effort and must not crash the Worker on corrupt/unknown inputs. Regression coverage lives in `modules/system-tests/src/test/java/io/justsearch/systemtests/NastyCorpusTest.java` (fixtures under `modules/system-tests/src/test/resources/corpus/nasty/`).
+
+### Extraction Resilience
+
+The content extraction pipeline is hardened against real-world file system edge cases, particularly on Windows:
+
+*   **Cloud-provider placeholder detection:** On Windows, `isCloudPlaceholder()` checks `dos:attributes` for `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` (0x400000) to detect OneDrive Files-on-Demand placeholders. Reading these would trigger silent network downloads or IOException. Uses `FileSystems.getDefault().supportedFileAttributeViews().contains("dos")` for platform detection (respects ArchUnit guardrails against `System.getProperty`). No-op on non-Windows.
+*   **File walking resilience:** `syncDirectory()` uses `Files.walkFileTree()` (not `Files.walk()`) to survive `AccessDeniedException` on system directories (`$Recycle.Bin`, `System Volume Information`). The `visitFileFailed` handler logs and continues instead of aborting the entire walk. `preVisitDirectory` applies `WALK_SKIP_DIRS` at traversal time to avoid entering system/tool directories.
+*   **Office document memory protection:** A 30MB size limit (`MAX_OFFICE_FILE_SIZE`) gates Office documents before Tika parsing. POI (Tika's Office parser) can expand a 12MB xlsx to 300MB+ in heap — exceeding the Worker's 512MB default. MIME detection via `tika.detect(file)` (magic bytes only) short-circuits before `parseToString()`.
+*   **MMapDirectory unmap safety:** Worker JVM flags include `--add-opens=java.base/java.nio=ALL-UNNAMED` so Lucene's `MMapDirectory` can unmap byte buffers deterministically. Without this, index files remain locked until GC collects the buffers, causing "pending deleted files" errors on Windows.
+*   **Encoding resilience:** Tika 3.x correctly auto-detects and decodes UTF-8 (with/without BOM), UTF-16 LE/BE, Windows-1252, ISO-8859-1, and Shift-JIS. Verified by 8 encoding tests in `ContentExtractorTest`. Correctly-decoded non-ASCII text passes `TextQualityAnalyzer` without false positives.
+
+For deprioritized extraction gaps (exclude patterns during walk, junction deduplication, unindexable file feedback), see `docs/reference/issues/backend-tech-debt.md`.
+
+## Embedding Strategy
+
+> **Session construction.** The `OnnxEmbeddingEncoder` session is built by the Worker's composition root alongside the other five ORT encoders (SPLADE, NER, BGE-M3, reranker, citation). See [24-worker-inference-composition.md](24-worker-inference-composition.md) for the pipeline (resolvers → composition root → assembler → `SessionHandle`) and register entry D-007.
+
+*   **Class:** `io.justsearch.indexerworker.embed.EmbeddingService`
+*   **Backend:** ONNX Runtime via `OnnxEmbeddingEncoder` (default model: EmbeddingGemma-300M INT8, 298 MB).
+*   **Discovery:** `EmbeddingOnnxModelDiscovery` tries `embeddinggemma-300m/` first, falls back to `embedding/` (nomic). Explicit override via `JUSTSEARCH_EMBED_ONNX_MODEL_PATH`.
+*   **Default Mode:** CPU-only by default; GPU offload is opt-in via `JUSTSEARCH_EMBED_GPU_ENABLED`.
+*   **Batch size:** `MAX_ORT_BATCH_SIZE=8` (optimal for 300M-param models; batch=16+ causes GPU OOM on 2048 MB arena).
+*   **Key Env Vars:**
+    *   `JUSTSEARCH_EMBED_ONNX_MODEL_PATH`: explicit model directory path.
+    *   `JUSTSEARCH_EMBED_GPU_ENABLED`: enables CUDA execution provider for embedding (default `false`).
+    *   `JUSTSEARCH_EMBED_GPU_MEM_MB`: GPU arena size in MB (default `2048`).
+    *   `JUSTSEARCH_EMBED_BACKEND=onnx`: backend selector (default `auto`, which resolves to ONNX when model found).
+    *   `JUSTSEARCH_LLM_BACKEND=stub`: disables embeddings entirely (useful for hermetic tests).
+*   **Constraint:** When `llama-server` is running in Online mode on low-VRAM cards, we must not keep a GPU embedding backend loaded.
+*   **Logic (`IndexingLoop.handleGpuStateTransition`):**
+    *   If `signalBus.isMainGpuActive()` is **TRUE**: the Worker **unloads** `EmbeddingService` (best-effort VRAM release) and skips embedding work.
+    *   If `signalBus.isMainGpuActive()` is **FALSE**: the Worker **reloads** `EmbeddingService` (auto-discovery) and performs a backfill pass for pending embeddings.
+
+### Deferred embedding lifecycle
+
+During primary indexing, embedding is **deferred** to backfill (tempdoc 312 item 19). Documents are indexed with `EMBEDDING_STATUS=PENDING` and no vector. After the job queue drains, `EmbeddingBackfillOps` batch-embeds pending documents and updates them via Lucene read-modify-write. This yields 86–235 docs/sec primary indexing (vs 5.8 docs/sec with inline embedding). Users get BM25 search immediately; vector search improves progressively.
+
+**Exception:** During blue-green migration (embedding model change), inline batch embedding is enabled so the new index has vectors at cutover. Controlled by `migrationActiveSupplier` in `IndexingLoop` (tempdoc 312 item 20).
+
+Embedding compatibility gating (vector safety):
+- The Worker compares the current embedding model fingerprint to the stored index fingerprint (commit metadata) and blocks VECTOR/HYBRID queries when incompatible; `/api/status` surfaces `embeddingCompatState` and `embeddingCompatReason`.
+- Legacy auto-rebuild heuristics count **parent docs only** (exclude `is_chunk=true`) so chunk documents do not break “all pending” detection when chunks exist.
+
+Chunk vectors (Phase 6) are also supported:
+- Chunk documents can embed into `chunk_vector` and track status via `chunk_embedding_status`.
+- Chunk-vector enablement is controlled by `rag.chunk_vectors.enabled` (default true); retrieval is coverage-gated (see below).
+
+### Embedding Performance Tuning
+
+The embedding service is configured for optimal throughput:
+- **Batching enabled**: Multiple documents are embedded in a single inference call, providing +200-300% throughput vs sequential processing.
+- **Backfill batch size**: 100 documents per backfill cycle (up from 50; provides +40% backfill throughput).
+- **GPU arbitration**: When `isMainGpuActive()` is true, embedding is paused to avoid VRAM contention with Online mode chat.
+
+## RAG Chunking
+*   **Class:** `ChunkSplitter.java`
+*   **Strategy:** Text is split into chunks of **500 tokens** (approx. 375 words) with **50 tokens overlap**.
+*   **Algorithm:** `findBoundary()` prefers Paragraph, then Sentence, then Word boundaries to avoid cutting context mid-thought.
+*   **Content-aware modes (current):** Chunking mode is selected from `{mimeBase, fileKind}` to avoid format-specific boundary breaks:
+    * `MARKDOWN`: respects heading boundaries, fenced code blocks
+    * `CODE`: prefers newline boundaries
+    * `CSV`: avoids splitting inside quoted fields (quote-aware newline detection)
+    * `JSON`: avoids splitting inside string literals (best-effort state machine)
+*   **Storage:** Chunks are stored as separate Lucene documents with `is_chunk=true` and `parent_doc_id` pointer, including:
+    * `chunk_content` + `chunk_start_char`/`chunk_end_char` for citation offsets
+    * optional navigation metadata (`chunk_start_line`, `chunk_end_line`, `chunk_heading_text`, `chunk_heading_level`)
+*   **Threshold:** Chunk docs are only generated for sufficiently large documents (currently `>= 2000` extracted chars) to avoid tiny-fragment overhead.
+*   **Performance:** Uses `estimateTokens` (word count * 1.3) rather than a heavy tokenizer for speed.
+
+Chunk regeneration is centralized in `ChunkDocumentWriter` so index-time chunking and VDU-driven content updates produce consistent chunk docs and offsets.
+
+## Search and Retrieval
+
+The Worker handles both interactive search and RAG retrieval via the gRPC `SearchService`. The search pipeline includes BM25, dense vector (KNN), and SPLADE retrieval legs with multi-stage fusion and reranking.
+
+For the full query pipeline (fusion algorithms, reranking cascade, degradation signals), see `docs/explanation/23-search-pipeline-overview.md`.

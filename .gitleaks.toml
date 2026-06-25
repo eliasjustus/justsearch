@@ -1,0 +1,22 @@
+# JustSearch public-repo gitleaks config → ships as `.gitleaks.toml` in the public repo root.
+# Extends gitleaks' built-in ruleset; allowlists known-safe matches so the secret-scan is
+# zero-false-positive on the published snapshot (so a real hit always means a real secret).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe matches: vendored upstream + public IR corpora"
+paths = [
+  '''third_party/.*''',     # vendored upstream (llama.cpp etc.) — not our secrets
+  '''datasets/.*''',        # public IR corpora (Enron-QA, CourtListener are public record)
+  '''.*\.onnx''',           # model binaries (excluded from the repo anyway; belt-and-braces)
+  '''.*tokenizer\.json''',  # tokenizer vocabularies contain high-entropy tokens, not secrets
+  '''reports/.*''',          # eval run output (PIT pagination cursors, run hashes) — not secrets (634 dry-run)
+  '''scripts/jseval/.*''',   # eval harness + smoke fixtures + release.v1.json content hashes — not secrets
+  '''.*Test\.(java|ts|tsx)''', # test fixtures (e.g. StoreCipherTest's literal 0123… demo key) — not secrets
+  # Individually-vetted false positives (634 dry-run): a doc example token, a tempdoc title line, an i18n identifier.
+  '''docs/reference/ui/frontend-kernel/kernel/05-streaming-envelope\.md''', # example resumeToken (b64 "surface:health-events:42")
+  '''docs/tempdocs/586-frontend-live-uiux-audit\.md''',                     # title-line high-entropy FP
+  '''.*/registry/validator/ValidationContext\.java''',                      # i18n-key identifier FP (generic-api-key noise)
+]

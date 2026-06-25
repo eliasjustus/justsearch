@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Refined semantic query with filter terms removed"
+    },
+    "meta_source": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "meta_author": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "meta_category": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "meta_published_after": {
+      "type": "string"
+    },
+    "meta_published_before": {
+      "type": "string"
+    },
+    "entity_persons": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "entity_organizations": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "entity_locations": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "required": ["query"]
+}

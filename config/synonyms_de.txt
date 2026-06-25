@@ -1,0 +1,6 @@
+# Platzhalter-Synonyme (Phase 0 Bootstrap). Quelle wird in Phase 0.5 zu SSOT-Katalogen migriert.
+# Format: kommaseparierte Synonyme pro Zeile
+# Beispiel:
+# deutschland, brd, bundesrepublik, germany
+
+

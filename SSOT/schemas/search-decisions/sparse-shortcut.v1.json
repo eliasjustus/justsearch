@@ -1,0 +1,11 @@
+{
+  "decision_kind" : "sparse_shortcut",
+  "facet_source" : "absent",
+  "effective_mode" : "TEXT",
+  "correction_eligible" : true,
+  "chunk_merge_kind" : "eligible_apply",
+  "runtime_syntax" : "SIMPLE",
+  "retrieval_limit" : 20,
+  "facets_requested" : false,
+  "chunk_merge_inputs_present" : true
+}

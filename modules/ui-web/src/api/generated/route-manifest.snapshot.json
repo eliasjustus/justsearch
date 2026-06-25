@@ -1,0 +1,1663 @@
+{
+  "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
+  "count": 202,
+  "namespace": "meta-routes",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/agent/hard-stop",
+      "cohort": "agent",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/agent/hard-stop",
+      "cohort": "agent",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER",
+        "INFERENCE"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/autonomy",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/budget",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/budget-decision",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/context-decision",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/agent/history",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/agent/history/{batchId}",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/steer",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/tool-result",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/agent/tools",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/undo",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/agent/virtual-operations",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/virtual-operations",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/agent/{sessionId}/attach",
+      "cohort": "agent",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/cancel",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/install/manifest",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/repair",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/install/start",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/install/status",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/packs/import",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/packs/installed",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/packs/preflight",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/packs/status",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/runtime/activate",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/runtime/deactivate",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/runtime/status",
+      "cohort": "ai-runtime",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": "ai-runtime-status-response.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/boot/phases",
+      "cohort": "boot",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/policy/effective",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": "effective-policy.v1.json"
+    },
+    {
+      "method": "POST",
+      "path": "/api/policy/user/allowlist/pack-manifest/add",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/policy/user/create",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/policy/validate",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/v2",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/v2",
+      "cohort": "config",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/approve",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/ask",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/batch-summarize",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/conversations",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chat/conversations/{sessionId}",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/conversations/{sessionId}/branch",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/conversations/{sessionId}/history",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/dispatch",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/extract",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/free",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/hierarchical-summarize",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/reject",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions/last",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/resume-last",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/chat/sessions/{id}",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions/{id}",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions/{id}/events",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/sessions/{id}/resume",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/chat/sessions/{id}/transcript",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/summarize",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/chat/url-emit",
+      "cohort": "conversation",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/chunks",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/clear-condition",
+      "cohort": "debug",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/commit-metadata",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/dashboard",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/effective-config",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/events",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/logging",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/logging",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/metrics/timeseries",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/metrics/timeseries/available",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/reset-index",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/session-policies",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/state",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/debug/trip-condition",
+      "cohort": "debug",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/debug/worker-log",
+      "cohort": "debug",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/governance/state",
+      "cohort": "governance",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/errors/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/health-events/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/inference-failures/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-diagnostic/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-operation/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-prompt/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-resource/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-surface/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/messages/registry-workflow/{locale}",
+      "cohort": "i18n",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing-roots/substrate",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/excludes/apply",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/indexing/failed-jobs",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing/failed-jobs",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/gc",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/migration/cutover",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/migration/pause",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/migration/resume",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/migration/rollback",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/migration/start",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/reindex",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/indexing/roots",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing/roots",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/roots",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing/suggested-roots",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/gpu/capabilities",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/detach",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/encoders",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/failures",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/mode",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/reload",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/status",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/transitions",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/offline/process",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/worker/restart",
+      "cohort": "inference",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/infra/capabilities",
+      "cohort": "infra",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/infra/capabilities/stream",
+      "cohort": "infra",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/memory/{id}",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/presence",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/presence/run",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/thread/{id}",
+      "cohort": "interaction",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/document/{id}/resolve-address",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/disposition",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/folder-files",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/folders",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/ingest",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/match-citations",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/retrieve-context",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/search",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": "knowledge-search-response.v1.json"
+    },
+    {
+      "method": "POST",
+      "path": "/api/knowledge/search",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": "knowledge-search-response.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/status",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge/suggest",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/preview",
+      "cohort": "knowledge",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/mcp/token",
+      "cohort": "mcp",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/mcp",
+      "cohort": "mcp",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/mcp",
+      "cohort": "mcp",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/diagnostics/export",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/diagnostics/ingestion/recent",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/diagnostics/ingestion/summary",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/diagnostics/traces",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/health/events/stream",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/gpu.memory.utilization.percent",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/gpu.memory.utilization.percent/stream",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/gpu.utilization.percent",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/gpu.utilization.percent/stream",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/worker.documents.indexed.rate_per_sec",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/worker.documents.indexed.rate_per_sec/stream",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/worker.job_queue.depth",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics/worker.job_queue.depth/stream",
+      "cohort": "observability",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/status",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/telemetry/health",
+      "cohort": "observability",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "cohort": "openai-compat",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/v1/models",
+      "cohort": "openai-compat",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/*",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/inference/reload",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/runtime/reload",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/library/resolve-hash",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/meta/openapi.json",
+      "cohort": "other",
+      "owningModule": "MetaApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/meta/routes",
+      "cohort": "other",
+      "owningModule": "MetaApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/scans/{scanId}/progress",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ui/ready",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/ui/ready",
+      "cohort": "other",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/plugins/allowlist",
+      "cohort": "plugins",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/allowlist",
+      "cohort": "plugins",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plugins/allowlist/{sha}",
+      "cohort": "plugins",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/plugins/verify",
+      "cohort": "plugins",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/diagnostic-channels",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/operations",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/prompts",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/resources",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": "resource.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/shapes",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/surfaces",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/witness",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/workflows",
+      "cohort": "registry",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/action-ledger",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/action-ledger/events",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/action-ledger/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/advisory/health-recoverable/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/advisory/operation-completed/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/authorizations/approve",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/authorizations/grants",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/authorizations/grants",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/authorizations/grants",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/condition-recovery-index",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/condition-recovery-index/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/diagnostic-channels/head-log/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing-jobs/failed",
+      "cohort": "resource",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/indexing-jobs/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/intent/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/navigation-history",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/operation-history",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": "operation-history-entry.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/operation-history/stream",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/operations/{id}/invoke",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/operations/{id}/preview",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/undo/{id}",
+      "cohort": "resource",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/.well-known/justsearch/manifest.json",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime-context",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": "runtime-context.v1.json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime-context/stream",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/instances",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/instances/{id}",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/live",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "HEAD",
+      "path": "/api/runtime/live",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/manifest",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/manifest/stream",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/runtime/ready",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "HEAD",
+      "path": "/api/runtime/ready",
+      "cohort": "runtime",
+      "owningModule": "ResourceApiModule",
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/schemas/{name}",
+      "cohort": "schema",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    }
+  ],
+  "schemaVersion": "1.0"
+}

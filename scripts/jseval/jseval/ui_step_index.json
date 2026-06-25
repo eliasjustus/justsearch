@@ -1,0 +1,59 @@
+{
+  "shell-v0/views/SearchSurface.ts": [
+    "search-results", "command-mode", "zero-results", "input-focus",
+    "filters-chips", "search-simple-mode", "search-advanced-mode",
+    "multi-select", "row-hover", "snippets-expanded", "selection-preserved",
+    "search-results-light", "search-results-compact", "search-results-rich"
+  ],
+  "shell-v0/views/searchResultViewModel.ts": [
+    "search-results", "search-results-rich", "snippets-expanded"
+  ],
+  "shell-v0/components/InspectorPane.ts": [
+    "inspector-open", "streaming", "summarize-done", "qa-response",
+    "citation-highlight"
+  ],
+  "shell-v0/views/SummarizeView.ts": [
+    "streaming", "summarize-done", "qa-response"
+  ],
+  "shell-v0/components/chat/MarkdownBlock.ts": [
+    "citation-highlight"
+  ],
+  "shell-v0/views/UnifiedChatView.ts": [
+    "chat-mode", "qa-response"
+  ],
+  "shell-v0/components/ContextMenu.ts": ["context-menu"],
+
+  "shell-v0/chrome/Shell.ts": [
+    "home", "library", "ai-brain", "health", "settings", "security", "help",
+    "home-light", "library-light", "ai-brain-light", "health-light",
+    "settings-light", "security-light", "help-light", "inspector-open"
+  ],
+  "shell-v0/plugin-api/CorePlugin.ts": [
+    "home", "library", "ai-brain", "health", "settings", "security", "help"
+  ],
+  "shell-v0/views/SecuritySurface.ts": ["security", "security-light"],
+  "shell-v0/views/security/atRestCard.ts": ["security", "security-light", "health", "health-light"],
+  "shell-v0/views/HealthSurface.ts": ["health", "health-light"],
+  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library"],
+  "shell-v0/views/BrainSurface.ts": [
+    "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light"
+  ],
+  "shell-v0/views/SettingsSurface.ts": [
+    "settings", "settings-light",
+    "search-results-light", "search-results-compact", "search-results-rich",
+    "search-simple-mode", "search-advanced-mode"
+  ],
+  "shell-v0/views/HelpSurface.ts": ["help", "help-light"],
+
+  "shell-v0/shell/Shell.ts": ["shell-v0-demo"],
+  "shell-v0/shell/LitWidget.ts": ["shell-v0-demo"],
+  "shell-v0/components/Form.ts": ["shell-v0-demo"],
+  "shell-v0/components/StatusCard.ts": ["shell-v0-demo"],
+  "shell-v0/components/ActionButton.ts": ["shell-v0-demo"],
+  "shell-v0/themes/default.css": ["shell-v0-demo"],
+  "shell-v0/demo/shell-demo.ts": ["shell-v0-demo"],
+  "shell-v0/components/Table.ts": ["shell-v0-demo-table"],
+  "shell-v0/demo/presentation-demo.ts": ["presentation-demo"],
+  "shell-v0/components/DeclaredSurface.ts": ["presentation-demo"],
+  "shell-v0/substrates/interaction/index.ts": ["presentation-demo"]
+}

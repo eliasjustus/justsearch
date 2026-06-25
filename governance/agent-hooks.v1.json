@@ -1,0 +1,476 @@
+{
+  "$schema": "./agent-hooks.v1.schema.json",
+  "kind": "agent-hooks-manifest.v1",
+  "version": 1,
+  "comment": "Single authority for agent-analytics hook wiring (tempdoc 592). The hooks block of .claude/settings.local.json is GENERATED from this file by scripts/codegen/gen-agent-hooks-wiring.mjs (cwd-invariant exec-form commands by construction). The hook-integrity gate verifies wiring + load + bite against this manifest. Do NOT hand-edit the settings hooks block; edit this manifest and regenerate.",
+  "hookDir": "scripts/agent-analytics/hooks",
+  "hooks": {
+    "bash-guard": {
+      "file": "bash-guard.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "command-signal",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push --force origin main"
+          }
+        },
+        "expect": {
+          "exitCode": 2
+        },
+        "note": "force-push is blocked everywhere (stateless) → exit 2"
+      }
+    },
+    "build-counter": {
+      "file": "build-counter.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/build-counter.test.mjs",
+        "note": "state-dependent (3 fails); unit-tested (520)"
+      }
+    },
+    "compact-restore": {
+      "file": "compact-restore.mjs",
+      "role": "advisory"
+    },
+    "compact-save": {
+      "file": "compact-save.mjs",
+      "role": "advisory"
+    },
+    "consult-doc-hint": {
+      "file": "consult-doc-hint.mjs",
+      "role": "advisory"
+    },
+    "dispatch": {
+      "file": "dispatch.mjs",
+      "role": "telemetry"
+    },
+    "docs-regen-hint": {
+      "file": "docs-regen-hint.mjs",
+      "role": "advisory"
+    },
+    "export-session-env": {
+      "file": "export-session-env.mjs",
+      "role": "advisory"
+    },
+    "governance-hint": {
+      "file": "governance-hint.mjs",
+      "role": "advisory"
+    },
+    "otlp-sink-ensure": {
+      "file": "otlp-sink-ensure.mjs",
+      "role": "telemetry"
+    },
+    "governance-precommit-hint": {
+      "file": "governance-precommit-hint.mjs",
+      "role": "advisory"
+    },
+    "intervene": {
+      "file": "intervene.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/intervene.test.mjs",
+        "note": "state-dependent (>10 reads); decision core proven by its unit test (520)"
+      }
+    },
+    "lockfile-hint": {
+      "file": "lockfile-hint.mjs",
+      "role": "advisory"
+    },
+    "maintain-doc-hint": {
+      "file": "maintain-doc-hint.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "command-signal",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "__BITE_SESSION__",
+          "transcript_path": "__BITE_TRANSCRIPT__"
+        },
+        "transcript": [
+          {
+            "type": "assistant",
+            "message": {
+              "content": [
+                {
+                  "type": "tool_use",
+                  "name": "Edit",
+                  "input": {
+                    "file_path": "modules/ui-web/src/shell-v0/__bite__.ts"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "expect": {
+          "stdoutIncludes": "\"decision\":\"block\""
+        },
+        "note": "edited a governed shell-v0 file without touching its doc → JSON decision:block. Gate materializes transcript + unique session_id + cleans the marker."
+      }
+    },
+    "mcp-session-inject": {
+      "file": "mcp-session-inject.mjs",
+      "role": "advisory"
+    },
+    "repeat-guard": {
+      "file": "repeat-guard.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/repeat-guard.test.mjs",
+        "note": "state-dependent (3 identical); unit-tested (520)"
+      }
+    },
+    "seam-hint": {
+      "file": "seam-hint.mjs",
+      "role": "advisory"
+    },
+    "search-engine-hint": {
+      "file": "search-engine-hint.mjs",
+      "role": "advisory"
+    },
+    "ssot-hint": {
+      "file": "ssot-hint.mjs",
+      "role": "advisory"
+    },
+    "stress-test-hint": {
+      "file": "stress-test-hint.mjs",
+      "role": "advisory"
+    },
+    "subagent-guide": {
+      "file": "subagent-guide.mjs",
+      "role": "advisory"
+    },
+    "tempdoc-age-hint": {
+      "file": "tempdoc-age-hint.mjs",
+      "role": "advisory"
+    },
+    "test-edit-hint": {
+      "file": "test-edit-hint.mjs",
+      "role": "advisory"
+    },
+    "ui-shot-hint": {
+      "file": "ui-shot-hint.mjs",
+      "role": "advisory"
+    }
+  },
+  "bindings": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "hookId": "export-session-env",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "compact-restore",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "otlp-sink-ensure",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "hookId": "intervene",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "hookId": "intervene",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "hookId": "consult-doc-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "hookId": "bash-guard",
+            "timeout": 5
+          },
+          {
+            "hookId": "governance-precommit-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "hookId": "build-counter",
+            "if": "Bash(./gradlew*)",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "hookId": "repeat-guard",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__justsearch-dev__.*",
+        "hooks": [
+          {
+            "hookId": "mcp-session-inject",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "hookId": "build-counter",
+            "if": "Bash(./gradlew*)",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "hookId": "docs-regen-hint",
+            "if": "Edit(docs/**)"
+          },
+          {
+            "hookId": "ssot-hint",
+            "if": "Edit(**/SSOT/catalogs/**)"
+          },
+          {
+            "hookId": "ui-shot-hint",
+            "if": "Edit(modules/ui-web/src/**)"
+          },
+          {
+            "hookId": "test-edit-hint"
+          },
+          {
+            "hookId": "stress-test-hint",
+            "if": "Edit(modules/ort-common/**)"
+          },
+          {
+            "hookId": "seam-hint",
+            "if": "Write(modules/**/src/main/java/**/*.java)"
+          },
+          {
+            "hookId": "search-engine-hint",
+            "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "hookId": "tempdoc-age-hint"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "hookId": "lockfile-hint",
+            "if": "Edit(**/build.gradle.kts)"
+          },
+          {
+            "hookId": "governance-hint",
+            "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(.claude/rules/tier-register.md)|Edit(gates/**)"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "hookId": "compact-save",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "subagent-guide",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "maintain-doc-hint",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "hookId": "dispatch",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "compact-restore",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

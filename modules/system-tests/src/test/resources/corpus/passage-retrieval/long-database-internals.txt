@@ -1,0 +1,155 @@
+Database Engine Internals: Storage, Indexing, and Maintenance
+
+Introduction to Database Engine Architecture
+
+Relational database engines are among the most complex software systems in production use today.
+Behind the SQL interface familiar to application developers lies a sophisticated stack of
+components: a query parser, optimizer, execution engine, buffer pool, write-ahead log, storage
+engine, and concurrency control system. This document examines the internal mechanisms that
+database engines use to store, index, and maintain data efficiently.
+
+Storage Engine Fundamentals
+
+The storage engine is responsible for organizing data on persistent media and providing efficient
+access paths for reads and writes. Most modern database engines use one of two primary storage
+models: B-tree based (row-oriented) or LSM-tree based (log-structured).
+
+B-tree storage organizes data in balanced tree structures where internal nodes contain routing
+keys and leaf nodes contain the actual data rows. Each node corresponds to a disk page (typically
+4 KB to 16 KB). The tree is balanced — all leaf nodes are at the same depth — ensuring that any
+row can be reached in O(log N) page reads. Insert and update operations may trigger page splits
+when a node becomes full, and delete operations may trigger page merges when nodes become
+underpopulated.
+
+LSM-tree storage buffers writes in an in-memory sorted structure (memtable) and periodically
+flushes the memtable to disk as an immutable sorted run (SSTable). Background compaction merges
+sorted runs to reduce read amplification and reclaim space from deleted or overwritten entries.
+LSM-trees provide higher write throughput than B-trees but may incur higher read latency due to
+the need to check multiple sorted runs.
+
+Write-Ahead Logging
+
+The write-ahead log (WAL) ensures durability and atomicity for database transactions. Before any
+data page is modified, the intended change is first written to the WAL. If the system crashes
+before the modified page is flushed to disk, the WAL contains enough information to replay the
+change during recovery.
+
+WAL records contain a log sequence number (LSN), transaction ID, page ID, and the before and
+after images of the modified data (or a logical description of the change). The WAL is an
+append-only sequential file, which means writes to the WAL benefit from the high sequential
+throughput of modern storage devices.
+
+Checkpointing periodically flushes dirty pages from the buffer pool to disk and records the
+checkpoint LSN. During recovery, the database only needs to replay WAL records after the most
+recent checkpoint, significantly reducing recovery time. Fuzzy checkpoints allow normal
+operations to continue during the checkpoint process, avoiding the performance impact of a
+full stop-and-flush approach.
+
+Buffer Pool and Page Cache
+
+The buffer pool caches frequently accessed pages in main memory, avoiding the latency of reading
+from persistent storage. When a page is requested, the buffer pool first checks if the page is
+already cached. On a cache miss, the page is read from disk and placed in the buffer pool,
+potentially evicting a less-recently-used page.
+
+Buffer pool replacement policies determine which pages to evict when the pool is full. Simple LRU
+(Least Recently Used) is susceptible to scan pollution — a large sequential scan can evict
+frequently-accessed hot pages. Most databases use variants like LRU-K (which considers the Kth
+most recent access time) or clock-sweep (which approximates LRU with lower overhead).
+
+Prefetching predicts which pages will be needed next and reads them into the buffer pool before
+they are explicitly requested. Sequential scan prefetch reads ahead of the current position.
+Index prefetch reads the data pages pointed to by index entries during an index scan. Effective
+prefetching overlaps I/O latency with query processing, significantly improving throughput for
+scan-heavy workloads.
+
+Indexing Structures
+
+Secondary indexes provide efficient access paths for queries that filter or sort by columns other
+than the primary key. B-tree indexes are the most common, supporting both equality and range
+predicates. Hash indexes provide O(1) lookup for equality predicates but cannot support range
+queries.
+
+Composite indexes combine multiple columns in a single index structure. The column order matters:
+a composite index on (A, B, C) can efficiently serve queries on A alone, (A, B), or (A, B, C),
+but not queries on B alone or (B, C). Choosing the right column order requires analyzing the
+query workload.
+
+Covering indexes include all columns referenced by a query, enabling index-only scans that never
+need to access the base table. This optimization can dramatically reduce I/O for queries that
+access a small subset of columns from wide tables.
+
+Partial indexes (PostgreSQL) or filtered indexes (SQL Server) only include rows that satisfy a
+predicate. They are useful for queries that consistently filter on a specific condition, providing
+a smaller and more efficient index for that subset of data.
+
+Garbage Collection and Space Reclamation in Databases
+
+Database engines accumulate dead tuples and stale index entries through the normal course of
+update and delete operations. Under MVCC (Multi-Version Concurrency Control), deleted rows are
+not immediately removed because concurrent transactions may still need to see the old versions.
+Garbage collection tuning for the background cleanup process — which identifies and reclaims
+space from dead rows that no active transaction can reference — directly affects query
+performance and storage efficiency. Aggressive garbage collection competes with production
+queries for I/O and CPU resources, while under-provisioned garbage collection tuning leads to
+table bloat and degraded scan performance. The scheduling frequency, batch size, and resource
+limits of the garbage collection process all require tuning to match the workload's update rate
+and available I/O capacity.
+
+Query Optimization
+
+The query optimizer transforms a declarative SQL statement into an efficient execution plan. This
+involves three phases: logical optimization (applying rewrite rules like predicate pushdown,
+join reordering, and subquery elimination), physical optimization (choosing access methods,
+join algorithms, and parallelism strategies), and cost estimation (using statistics about data
+distribution, index selectivity, and hardware characteristics to predict execution cost).
+
+Join algorithms are a critical optimizer choice. Nested loop joins iterate through one table for
+each row of another, performing well for small tables or when an index supports the inner lookup.
+Hash joins build a hash table on the smaller input and probe it with the larger input, providing
+O(N + M) performance for equality joins. Sort-merge joins sort both inputs and merge them,
+performing well when inputs are already sorted or when the join predicate involves a range.
+
+Statistics maintenance is essential for optimizer accuracy. Histograms describe the distribution
+of column values, enabling the optimizer to estimate filter selectivity. Most-common-value
+statistics identify frequently occurring values that may warrant special handling. Correlation
+statistics describe relationships between columns that affect join cardinality estimates.
+
+Concurrency Control
+
+MVCC (Multi-Version Concurrency Control) allows readers and writers to operate concurrently
+without blocking each other. Each transaction sees a consistent snapshot of the database as of
+its start time. Writes create new versions of modified rows, tagged with the writing transaction's
+ID. Readers access the version that was current at their snapshot time, ignoring later writes.
+
+Serializable isolation, the strongest isolation level, ensures that the result of concurrent
+transaction execution is equivalent to some serial ordering. Serializable Snapshot Isolation
+(SSI) detects potential serialization anomalies by tracking read-write dependencies between
+concurrent transactions. When a dangerous pattern is detected, one of the involved transactions
+is aborted.
+
+Lock management provides fine-grained concurrency control for operations that cannot be handled
+by MVCC alone. Row-level locks allow concurrent modifications to different rows of the same
+table. Intent locks at table and page levels prevent conflicting lock requests from being granted
+without checking every row lock. Deadlock detection uses wait-for graph analysis to identify and
+break deadlock cycles by aborting one of the involved transactions.
+
+Replication and High Availability
+
+Replication copies data from a primary database to one or more replicas, providing read scaling,
+disaster recovery, and high availability. Synchronous replication guarantees that a write is
+durably stored on at least one replica before acknowledging the commit, preventing data loss on
+primary failure. Asynchronous replication acknowledges writes immediately on the primary and
+ships WAL records to replicas in the background, providing lower latency at the risk of data
+loss during failover.
+
+Logical replication decodes WAL records into logical change events (insert, update, delete) and
+applies them to replicas. This approach supports cross-version replication, selective table
+replication, and complex transformation of replicated data. Physical replication copies WAL
+records verbatim, providing simpler setup and lower overhead but requiring identical database
+versions and configurations.
+
+Automatic failover promotes a replica to primary when the current primary becomes unavailable.
+Failover orchestration must handle consensus (which replica is most up-to-date), fencing (ensuring
+the old primary cannot accept writes), and client redirection (updating connection endpoints to
+point to the new primary).

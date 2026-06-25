@@ -1,0 +1,442 @@
+{
+  "version": 1,
+  "tempdoc": 550,
+  "note": "The operation-surface register (tempdoc 550 Thesis III — the anti-fragmentation gate for the operation/action lifecycle, the sibling of tempdoc 553's execution-surface gate). Governs TWO sibling records under ONE gate (the execution-surface ↔ SearchTrace/ContextCitation precedent): the indexing-job lifecycle (IndexingJobView, the canonicalRecord) AND — tempdoc 561 P-C — the unified action-event log (ActionEvent, see siblingRecords). The SINGLE allowlist of code that may model 'what indexing/system operations are queued / running / done' OR carry/project the action-event log (agent History / workspace Timeline / grants). Every surface here is a governed projection of the ONE canonical job-lifecycle record (the worker `jobs` table, surfaced via IndexingJobsChangeStream + the app-api IndexingJobView wire type); none may model the lifecycle independently. New production code that references the canonical IndexingJobView type MUST be added here, or the `operation-surface` gate fails the build — so a NEW independent job-state representation (the F-2 / §B.2 drift class: a second surface reporting pending/running counts from its own source) is caught at the discovery moment. HONEST LIMIT (mirrors 553 §5): the auto-scan only sees surfaces that reference the canonical IndexingJobView type; an undeclared fork that re-models the lifecycle from a different shape (e.g. a raw count) is import-invisible — those are declared explicitly below + guarded by their named guards, and the residue is for review. The §B.2 root cause (RemoteIndexingJobsBridge served a frozen snapshot that diverged from the live queueDepth counter) is exactly the class this gate exists to prevent recurring: the count projection and the list projection are BOTH declared here as projections of the one record.",
+  "canonicalRecord": {
+    "name": "IndexingJobLifecycle",
+    "sourceOfTruth": "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/IndexingJobsChangeStream.java",
+    "appApiType": "modules/app-api/src/main/java/io/justsearch/app/api/indexing/IndexingJobView.java",
+    "counter": "SqliteJobQueue.queueDepth() → CoreIndexView.pendingJobs",
+    "note": "The one canonical record is the worker `jobs` table. The change-feed (IndexingJobsChangeStream → IndexingJobView) is the per-row projection; queueDepth()→pendingJobs is the count projection. Both MUST derive from this one table; a fresh stream subscriber's snapshot must equal the live count (the §B.2 invariant)."
+  },
+  "siblingRecords": [
+    {
+      "name": "ActionEvent",
+      "tempdoc": 561,
+      "definition": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEvent.java",
+      "store": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEventStore.java",
+      "feProjection": "modules/ui-web/src/shell-v0/operations/ActionLedgerClient.ts (BackendLedgerEntry → UnifiedActionEntry)",
+      "note": "Tempdoc 561 P-C: the unified action-event log (550 Thesis I) — the cross-domain INTERACTION authority (operation/navigation/gate/grant/effect kinds from the agent loop + the index kind projected from the indexing lifecycle above). Added as a SIBLING record here (the execution-surface ↔ ContextCitation precedent: extend the register, don't fork it — §8.1 inv.4) rather than a third parallel register: this is ONE mechanism (the operation-surface gate) guarding the operation/action lifecycle. Its FE projections — agent History (correlationId-filtered, P-B1) and the workspace Timeline (P-B2) — are governed below so a NEW parallel agent-store that re-models the action log fails the build. HONEST LIMIT: the import-scan catches ActionEvent importers + the FE BackendLedgerEntry/UnifiedActionEntry/ActionLedgerClient referencers; the AgentRunStore loop sibling + the AgentEvent loop-event stream are a separate (declared, not exhaustively-scanned) lineage — re-verify before relying."
+    },
+    {
+      "name": "InteractionThread",
+      "tempdoc": 561,
+      "definition": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/interaction/InteractionEvent.java",
+      "answerPlaneAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java",
+      "agentPlaneAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
+      "note": "Tempdoc 561 P-A/P-B (§11 correction): the unified thread is NOT its own store — it is a READ-TIME projection (InteractionEvent value type) over the records that already exist, joined by conversationId: the ANSWER plane's turns from ConversationStore (chat + ephemeral RAG, with citations + producer calibration persisted on the turn, P-1) and the AGENT plane's activity from AgentRunStore.events.ndjson (projected by AgentInteractionMapper; the typed loop object by AgentLifecycleProjection). There is ONE write-authority per plane; the thread, History, and Timeline derive from the same records so they cannot structurally diverge. §11 records the fork this REPLACED: a durable InteractionLog write-store both planes wrote into (a fifth authority). HONEST LIMIT (553 §5): the import-scan catches InteractionEvent referencers; a fork that re-models thread content with a NEW vocabulary (the exact §11 InteractionLog class) is import-invisible — it is caught structurally by forbiddenReintroduction below."
+    },
+    {
+      "name": "AgentMemory",
+      "tempdoc": 561,
+      "definition": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/memory/MemoryRecord.java",
+      "authority": "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java",
+      "note": "Tempdoc 561 P-E: the agent's learned-memory record — the persistence tier ABOVE transcripts (durable facts / preferences / summaries), distinct from the thread (what was said) and the action log (what was done). ONE authority (FileMemoryStore implementing MemoryStore), with the two first-class user-facing projections the §P-E design requires: whatItKnows() (inspect — single authority made legible) and forget(id)/clear() (user control — the on-device privacy story). A SECOND memory authority (a parallel store re-modeling learned memory) is a build failure via forbiddenReintroduction below."
+    },
+    {
+      "name": "MemoryStore",
+      "tempdoc": 561,
+      "definition": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/memory/MemoryStore.java",
+      "store": "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java",
+      "feProjection": "modules/ui-web/src/shell-v0/views/MemorySurface.ts (GET /api/memory whatItKnows)",
+      "note": "Tempdoc 561 P-E: the ONE learned-memory record. Constructed once in HeadAssembly and shared by both producers (the core_remember agent tool + the MemoryExtractionConsumer) AND the /api/memory surface, so the gate now makes a SECOND memory authority that references MemoryStore fail the build unless declared (unrepresentability extended to the memory domain)."
+    }
+  ],
+  "forbiddenReintroduction": [
+    {
+      "pattern": "(InteractionLog|InteractionStore|ThreadStore|ConversationLog)\\.(java|ts|tsx)$",
+      "canonical": "the unified thread is a read-time projection of ConversationStore (answer plane) + AgentRunStore (agent plane) joined by conversationId — see surfaces.interaction-thread-controller; tempdoc 561 §11",
+      "allow": [],
+      "note": "Tempdoc 561 P-C / §11: the structural backstop for the honest-limit residue. The §11 fork was a durable InteractionLog write-store re-modeling thread content with its own vocabulary — import-invisible to the canonical-type scan. Reintroducing it (or a ThreadStore / ConversationLog / InteractionStore sibling) is a build failure: the thread already has ONE authority per plane; project those records, do not fork a second store."
+    },
+    {
+      "pattern": "Memory(Store|Log|Bank)\\.(java|ts|tsx)$",
+      "canonical": "the agent's learned memory has ONE authority — FileMemoryStore implementing MemoryStore (the AgentMemory sibling record); project it (whatItKnows / forget), do not fork a second memory store — tempdoc 561 P-E",
+      "allow": [
+        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/memory/MemoryStore.java",
+        "modules/app-agent-api/src/main/java/io/justsearch/agent/api/memory/NoOpMemoryStore.java",
+        "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java"
+      ],
+      "note": "Tempdoc 561 P-E: the memory single-authority backstop. The ONE authority is FileMemoryStore (impl) behind the MemoryStore interface (+ the NoOp). A second store re-modeling learned memory (a SqliteMemoryStore, VectorMemoryBank, MemoryLog, …) is a build failure — the §P-E 'one memory authority' invariant the 481×530 binding (P-F) names."
+    },
+    {
+      "pattern": "(agentToolAutoApprove|autonomyPolicy|autoApprovePolicy|agentAutoApprove)\\.(ts|tsx)$",
+      "canonical": "the agent tool-call gate is the ONE backend issuance policy (IntentGateEvaluator.agentGate, on the wire as ToolCallPendingApproval.gateBehavior); the FE OBEYS it (auto-approve iff gateBehavior==='auto') and re-derives NOTHING from risk — tempdoc 561 P-D",
+      "allow": [],
+      "note": "Tempdoc 561 P-D: the FE's parallel risk->approval authority (agentToolAutoApprove) was deleted; this file-name backstop catches a NEW FE autonomy-policy module. The function-re-add-within-a-file ceiling is the §6 name-guard/test tier — the rewritten AgentSessionController tests are the behavioral lock (auto-approve iff the wire gateBehavior is AUTO)."
+    }
+  ],
+  "unrelatedStores": [
+    "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplTrainingTripleStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
+    "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
+    "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStore.java",
+    "modules/telemetry/src/main/java/io/justsearch/telemetry/RrdMetricStore.java",
+    "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterStore.java",
+    "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/MigrationProgressStore.java"
+  ],
+  "unrelatedStoresNote": "Tempdoc 561 §18 C-1: the POSITIVE durable-store gate (operation-surface/unclassified-durable-store) requires EVERY *Store.java with a Path constructor to be classified — a declared surface above (an interaction/action/memory authority) OR listed here as genuinely unrelated (UI settings, AI-pack install state, GPL training data, watched-roots config, worker path-resolution, telemetry, worker entity-clustering, index-migration progress). A NEW durable store thus cannot be added without a human deciding which it is — closing the new-vocabulary fork the import-scan + name-denylist can't catch. RESIDUE (named): a durable persister with neither a *Store name nor a canonical import (a bare DialogJournal) is still import-invisible; the forbiddenReintroduction denylist is the backstop for the known thread/memory fork vocabularies. Tempdoc 580 §17: the generic NdjsonAppendStore (the feedback-outcome backing persister) is unrelated to the indexing-job/action lifecycle THIS register governs — it is the storage tier of the 575 observed-happening `feedback-outcome` concept (search-trace snapshots + result dispositions), governed by governance/observed-happening.v1.json + its Category.HISTORY Resource catalogs, the sibling anti-fork register.",
+  "scan": {
+    "comment": "Auto-detect undeclared surfaces by scanning for references to the canonical IndexingJobView type (indexing-job lifecycle) OR the ActionEvent unified-action-log sibling (tempdoc 561 P-C: Java importers of io...ledger.ActionEvent; TS referencers of its FE projection types BackendLedgerEntry/UnifiedActionEntry/ActionLedgerClient). Import-invisible surfaces (the same-package app-observability ledger authorities; the worker change-stream; the count projection) are declared explicitly below.",
+    "javaImportPatterns": [
+      "io.justsearch.app.api.indexing.IndexingJobView",
+      "io.justsearch.app.observability.ledger.ActionEvent",
+      "io.justsearch.agent.AgentRunStore",
+      "io.justsearch.agent.api.interaction.InteractionEvent",
+      "io.justsearch.agent.api.memory.MemoryStore"
+    ],
+    "javaMainRoots": [
+      "modules"
+    ],
+    "javaInclude": "/src/main/java/",
+    "tsRefPattern": "(IndexingJobView|BackendLedgerEntry|UnifiedActionEntry|ActionLedgerClient)",
+    "tsRoots": [
+      "modules/ui-web/src"
+    ],
+    "tsExcludeSuffixes": [
+      ".test.ts",
+      ".test.tsx"
+    ],
+    "expectedMinPopulation": 10,
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many lifecycle-record-referencing files, else a renamed scan root would let every coverage check pass vacuously. Live count is 23 (2026-06-15); floor 10 is a conservative ~half-headroom. Lower this with any change that legitimately shrinks the population."
+  },
+  "surfaces": [
+    {
+      "id": "canonical-app-api-type",
+      "kind": "source",
+      "lang": "java",
+      "path": "modules/app-api/src/main/java/io/justsearch/app/api/indexing/IndexingJobView.java",
+      "guard": "exempt:canonical record type — source of truth, nothing to project-guard",
+      "consumesProjection": "self",
+      "note": "The canonical per-row wire type."
+    },
+    {
+      "id": "worker-change-stream",
+      "kind": "producer",
+      "lang": "java",
+      "path": "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/IndexingJobsChangeStream.java",
+      "guard": "test:IndexingJobsChangeStreamTest",
+      "consumesProjection": "canonical-record",
+      "note": "The one change-feed over the jobs table (snapshot + Insert/Update/Delete deltas). Import-invisible (uses worker-core JobRow); declared explicitly."
+    },
+    {
+      "id": "head-change-registry",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/indexing/IndexingJobsChangeRegistry.java",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "worker-change-stream",
+      "note": "Head-side fan-in relay of the worker change-feed."
+    },
+    {
+      "id": "head-bridge",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteIndexingJobsBridge.java",
+      "guard": "test:RemoteIndexingJobsBridgeTest",
+      "consumesProjection": "worker-change-stream",
+      "note": "Head-side bridge; its cached latestSnapshot must stay a FAITHFUL LIVE projection (deltas applied) so a fresh SSE subscriber sees current state, not a frozen snapshot (the §B.2 fix; regression-guarded by the named test)."
+    },
+    {
+      "id": "head-sse-controller",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/IndexingJobsStreamController.java",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "head-bridge",
+      "note": "Serves /api/indexing-jobs/stream from bridge.latestSnapshot() + deltas. Import-invisible (raw items); declared explicitly."
+    },
+    {
+      "id": "count-projection",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/worker/WorkerStatusMapper.java",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "canonical-record",
+      "note": "The COUNT projection (queueDepth → CoreIndexView.pendingJobs surfaced on /api/status). The §B.2 invariant: this count must agree with the change-feed list — both are projections of the one jobs table, NOT independent representations. Import-invisible (count, not IndexingJobView); declared explicitly so a future divergence is reviewable here."
+    },
+    {
+      "id": "indexing-ledger-translator",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/IndexingJobsBridgeWiring.java",
+      "guard": "test:IndexingJobsBridgeWiringTest",
+      "consumesProjection": "head-bridge",
+      "note": "Tempdoc 550 thesis I — the system-operation contributor to the ONE action-event log. Subscribes the head bridge and emits a kind=index ActionEvent on TERMINAL job transitions (DONE/FAILED) only, so Activity shows indexing happened. In-flight states are NOT emitted (that is the rail's Resource projection); per-transition emission would flood the bounded action-event ring."
+    },
+    {
+      "id": "fe-rail-projection",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/substrates/tasks/indexingJobsBridge.ts",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "head-sse-controller",
+      "note": "The FE rail projection: maps the change-feed into the Task substrate with truthful lifecycle states (PENDING→queued, PROCESSING→running, DONE→vanish) — in-flight derived from the authoritative job state, never asserted by membership (Thesis II). Rendered bounded by <jf-task-list> (Thesis III.b)."
+    },
+    {
+      "id": "fe-activity-index-projection",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/components/ActionLedgerView.ts",
+      "guard": "test:ActionLedgerView.test.ts",
+      "consumesProjection": "indexing-ledger-translator",
+      "note": "Tempdoc 550 thesis I — the Activity timeline read-view of kind=index terminal outcomes (the SECOND governed projection of the job lifecycle, alongside the rail's live Resource view). Renders bounded: an indexing burst collapses to one 'Indexed N · <collection>' summary via collapseBursts (Thesis III.b). Import-invisible (reads the action-ledger, not IndexingJobView); declared explicitly so the lifecycle projection graph is complete."
+    },
+    {
+      "id": "action-event-canonical",
+      "kind": "source",
+      "lang": "java",
+      "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEvent.java",
+      "guard": "exempt:canonical record type — source of truth, nothing to project-guard",
+      "consumesProjection": "self",
+      "note": "Tempdoc 561 P-C: the canonical ActionEvent sibling record (the unified action-event log; the Operation variant carries the P-A1 correlationId join key). Import-invisible (same package); declared as the lineage anchor."
+    },
+    {
+      "id": "action-ledger-projection",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionLedgerProjection.java",
+      "guard": "test:ActionLedgerChangeRegistryTest",
+      "consumesProjection": "action-event-canonical",
+      "note": "Tempdoc 561 P-C: THE per-kind projection authority (projectOperation/projectGate/…/toWireRow) — the one place a record becomes a wire row; emits correlationId (P-A1). Import-invisible (same package)."
+    },
+    {
+      "id": "action-event-store",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEventStore.java",
+      "guard": "test:ActionEventStoreTest",
+      "consumesProjection": "action-event-canonical",
+      "note": "Tempdoc 561 P-C: the ONE id-keyed, bounded store of the action-event log. Import-invisible (same package)."
+    },
+    {
+      "id": "action-ledger-change-registry",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionLedgerChangeRegistry.java",
+      "guard": "test:ActionLedgerChangeRegistryTest",
+      "consumesProjection": "action-event-store",
+      "note": "Tempdoc 561 P-C: the live change-stream relay over the one store. Import-invisible (same package)."
+    },
+    {
+      "id": "action-grant-producer",
+      "kind": "producer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "action-event-canonical",
+      "note": "Tempdoc 561 P-C: emits Grant-lifecycle ActionEvents (ISSUED/CONSUMED/REVOKED) into the one log."
+    },
+    {
+      "id": "action-ledger-controller",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/ActionLedgerController.java",
+      "guard": "test:ActionLedgerControllerTest",
+      "consumesProjection": "action-ledger-change-registry",
+      "note": "Tempdoc 561 P-C: GET /api/action-ledger — the unified read-view + the P-B1 session/originator filter (the agent History + workspace Timeline projection source). Serialized through ActionLedgerProjection.toWireRow so snapshot and stream rows are byte-identical."
+    },
+    {
+      "id": "fe-action-ledger-client",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/operations/ActionLedgerClient.ts",
+      "guard": "test:ActionLedgerClient.test.ts",
+      "consumesProjection": "action-ledger-controller",
+      "note": "Tempdoc 561 P-C: THE FE ledger projection authority (BackendLedgerEntry → UnifiedActionEntry via unifiedActivity), folding the FE Effect Journal in. The workspace Timeline (P-B2) projects through this."
+    },
+    {
+      "id": "fe-agent-history-timeline",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts",
+      "guard": "test:AgentSessionController.test.ts",
+      "consumesProjection": "action-ledger-controller",
+      "note": "Tempdoc 561 P-B1/P-B2: the agent History tab projects GET /api/action-ledger filtered to originator=agent + correlationId=session; the Timeline projects the workspace activity via fe-action-ledger-client. Both are governed read-views of the one record — empty-History-while-record-non-empty is now unrepresentable."
+    },
+    {
+      "id": "fe-shell-ledger-mount",
+      "kind": "consumer",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/chrome/Shell.ts",
+      "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
+      "consumesProjection": "fe-action-ledger-client",
+      "note": "Tempdoc 561 P-C: the shell mounts the action-ledger client/view; a consumer, not an independent model."
+    },
+    {
+      "id": "fe-ai-activity-digest",
+      "kind": "consumer",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/components/AiActivityDigest.ts",
+      "guard": "exempt:consumer reads UnifiedActionEntry/ActionLedgerClient for display; no projection law to mutate-guard",
+      "consumesProjection": "fe-action-ledger-client",
+      "note": "Tempdoc 561: the AI activity digest reads the action-ledger client's UnifiedActionEntry stream; a read-only consumer, not an independent model. Declared to close the operation-surface undeclared-surface gap (576 repo-green)."
+    },
+    {
+      "id": "fe-trust-channel",
+      "kind": "consumer",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/plugin-api/TrustChannel.ts",
+      "guard": "exempt:consumer reads ActionLedgerClient for display; no projection law to mutate-guard",
+      "consumesProjection": "fe-action-ledger-client",
+      "note": "Tempdoc 561: the plugin-api trust channel reads the action-ledger client; a read-only consumer, not an independent model. Declared to close the operation-surface undeclared-surface gap (576 repo-green)."
+    },
+    {
+      "id": "fe-agent-recall",
+      "kind": "consumer",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/substrates/recall/agentRecall.ts",
+      "guard": "exempt:consumer reads UnifiedActionEntry/ActionLedgerClient for display; no projection law to mutate-guard",
+      "consumesProjection": "fe-action-ledger-client",
+      "note": "Tempdoc 561: the agent-recall substrate reads the action-ledger client's UnifiedActionEntry stream; a read-only consumer, not an independent model. Declared to close the operation-surface undeclared-surface gap (576 repo-green)."
+    },
+    {
+      "id": "interaction-thread-controller",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/InteractionThreadController.java",
+      "guard": "test:InteractionThreadControllerTest",
+      "consumesProjection": "action-event-canonical",
+      "note": "Tempdoc 561 P-A/P-B (§11 correction): GET /api/thread/{id} — the unified thread is a READ-TIME projection of the records that already exist (ConversationStore chat + AgentRunStore agent, joined by conversationId), NOT a second store. This replaced an earlier InteractionLog fork (§11) that introduced a 5th authority. consumesProjection=action-event-canonical: the agent activity it projects is the same the ledger captures (the History/Timeline source), so the thread cannot structurally diverge from them. Import-invisible (reads via ConversationStore + AgentService); declared explicitly."
+    },
+    {
+      "id": "agent-thread-projection-producer",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/AgentLoopService.java",
+      "guard": "test:AgentLoopServiceTest",
+      "consumesProjection": "self",
+      "note": "Tempdoc 561 P-C auto-coverage (Item 2): the producer of the agent-plane interaction projections — threadEvents (InteractionEvent) + lifecycles (AgentLifecycle) — read-time over the ONE durable AgentRunStore record. The scan now auto-covers io.justsearch.agent.AgentRunStore + InteractionEvent referencers, so a NEW agent-plane projection fails the build (undeclared-surface) unless declared here."
+    },
+    {
+      "id": "agent-interaction-mapper",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/AgentInteractionMapper.java",
+      "guard": "test:AgentInteractionMapperTest",
+      "consumesProjection": "agent-thread-projection-producer",
+      "note": "Tempdoc 561 P-A/P-B: the read-projector mapping one persisted AgentRunStore event to an InteractionEvent for the unified thread (no second store)."
+    },
+    {
+      "id": "agent-run-store-assembly",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/HeadAssembly.java",
+      "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
+      "consumesProjection": "agent-thread-projection-producer",
+      "note": "Tempdoc 561 P-A/P-B Item 1: constructs the AgentRunStore canonical record and wires AgentRunLedgerProjector (the ledger's agent rows project from this ONE record). A consumer/assembler, not an independent model."
+    },
+    {
+      "id": "agent-loop-wiring",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/AgentLoopWiring.java",
+      "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
+      "consumesProjection": "agent-thread-projection-producer",
+      "note": "Tempdoc 561 P-C: wires the agent loop with the AgentRunStore record; a consumer, not a second authority."
+    },
+    {
+      "id": "orchestration-phase-agent",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/OrchestrationPhase.java",
+      "guard": "exempt:consumer reads the canonical type; no projection law to mutate-guard",
+      "consumesProjection": "agent-thread-projection-producer",
+      "note": "Tempdoc 561 P-C: orchestration threads the AgentRunStore record into the agent loop wiring; a consumer."
+    },
+    {
+      "id": "memory-store-file",
+      "kind": "store",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java",
+      "guard": "test:FileMemoryStoreTest",
+      "consumesProjection": "self",
+      "note": "Tempdoc 561 P-E: the durable file store for the ONE learned-memory record (MemoryStore impl)."
+    },
+    {
+      "id": "memory-producer-agent-tool",
+      "kind": "producer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/RememberFactHandler.java",
+      "guard": "test:RememberFactHandlerTest",
+      "consumesProjection": "memory-store-file",
+      "note": "Tempdoc 561 P-E: the agent-plane learning producer (core_remember) writing the shared MemoryStore."
+    },
+    {
+      "id": "memory-producer-passive-chat",
+      "kind": "producer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/MemoryExtractionConsumer.java",
+      "guard": "test:MemoryExtractionConsumerTest",
+      "consumesProjection": "memory-store-file",
+      "note": "Tempdoc 561 P-E: the answer-plane learning producer (heuristic chat extraction) writing the shared MemoryStore."
+    },
+    {
+      "id": "memory-controller",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/MemoryController.java",
+      "guard": "test:RememberFactHandlerTest",
+      "consumesProjection": "memory-store-file",
+      "note": "Tempdoc 561 P-E: GET/POST/DELETE /api/memory — the 'what it knows / forget' projection of the shared MemoryStore (read-view; no second store)."
+    },
+    {
+      "id": "agent-run-store-canonical",
+      "kind": "store",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
+      "guard": "test:AgentRunStoreTest",
+      "consumesProjection": "self",
+      "note": "Tempdoc 561 §18 C-1 (positive durable-store gate): the ONE durable agent-plane record (the InteractionThread sibling's agentPlaneAuthority) — the loop state machine + events.ndjson the thread / History / Timeline / lifecycle all project. Declared here (kind:store) so the positive gate sees the canonical agent record itself is classified, not only its projections (AgentLoopService / AgentInteractionMapper above)."
+    },
+    {
+      "id": "run-event-store-base",
+      "kind": "store",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java",
+      "guard": "exempt:deferred — RunEventStoreTest regression guard is a follow-up (565 §15.C)",
+      "consumesProjection": "self",
+      "note": "Tempdoc 565 §15.C: the shape-agnostic, append-only run event-log (per-run events.ndjson + meta.json) extracted from AgentRunStore so BOTH the agent run (AgentRunStore composes it) and the workflow run (WorkflowShapeRunner) persist + project through ONE authority. Classified here (kind:store) per 561 §18 C-1: it is the persistence BASE the agent-plane authority composes — not a competing run-event authority — so the ledger / unified thread derive from this one record and cannot get ahead of it. guard:none-yet — a RunEventStoreTest regression guard is a follow-up."
+    },
+    {
+      "id": "conversation-store-file",
+      "kind": "store",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java",
+      "guard": "test:FileConversationStoreTest",
+      "consumesProjection": "self",
+      "note": "Tempdoc 561 §18 C-1 (positive durable-store gate): the ONE durable answer-plane record (the InteractionThread sibling's answerPlaneAuthority) — chat + ephemeral-RAG turns with citations/calibration persisted, which InteractionThreadController projects into the unified thread. Declared (kind:store) so the answer-plane authority is classified, not forked."
+    },
+    {
+      "id": "agent-read-query-service",
+      "kind": "projection",
+      "lang": "java",
+      "path": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunQueryService.java",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "agent-thread-projection-producer",
+      "note": "Tempdoc 584 §B.4 — the agent's read-time query/projection surface (pure reads over AgentRunStore / interaction events / operation history; imports InteractionEvent). A read projection of the agent thread, not an independent lifecycle model."
+    },
+    {
+      "id": "fe-event-row-projection",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/components/eventRow.ts",
+      "guard": "gate:operation-surface",
+      "consumesProjection": "fe-action-ledger-client",
+      "note": "Tempdoc 558 §S1 — the ONE ledger-row projection over a UnifiedActionEntry (renderEventRow), single-sourced so the Activity surface and the workspace retrospective render identical rows (they previously forked)."
+    },
+    {
+      "id": "fe-retrospective-panel",
+      "kind": "consumer",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/components/RetrospectivePanel.ts",
+      "guard": "test:RetrospectivePanel.test.ts",
+      "consumesProjection": "fe-event-row-projection",
+      "note": "Tempdoc 558 §S1 — composes renderEventRow (the shared row projection) to render workspace activity + history; consumes UnifiedActionEntry via that projection only, no independent model."
+    }
+  ]
+}

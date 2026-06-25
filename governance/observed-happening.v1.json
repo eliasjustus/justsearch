@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "description": "Tempdoc 575 — the observed-happening register. The observability stream family (logs, health conditions, the action lifecycle, indexing jobs, metrics, advisories) declared as CONCEPTS, each naming its ONE canonical source, its contributors, its KIND (consistent with the source's primitive), its governed PROJECTIONS (the read-view surfaces that render it), and — when stateful/in-flight — its LIVENESS OWNER. The gate (the projection spine at the observability-authority tier) enforces, BOUNDED per 575 §9: (1) contributor-unresolved — every contributor resolves to a real Resource/DiagnosticChannel id; (2) concept-canonical-source — one canonical source per concept, itself a contributor; (3) contributor-shared — no contributor in two concepts (the F-2 re-fragmentation class); (4) operator-trace-must-be-channel — a Resource declaring an operator-trace origin is a build failure (ADR-0036); (5) kind-mismatch (575 §4.2) — a concept's kind must match the primitive class of its canonicalSource (channel ⟺ diagnostic-channel; Resource ⟺ a Resource-shape kind); (6) projection-unresolved (575 §4.1, Pillar 1's third element) — every declared projection resolves to a real surface mount tag; (7) stateful-requires-liveness (575 §4.3b, the build-time half of the liveness invariant) — a stateful concept must name a livenessOwner; (8) stream-uncovered (575 §13 L1, reverse-coverage) — every Resource/DiagnosticChannel id declared by a catalog must be a contributor of some concept OR listed in outOfFamily with a reason, so a new undeclared stream is a build failure; (9) live-concept-unprojected (575 §17 Face B, presentation reverse-coverage) — a stateful concept must declare at least one projection (a surface that renders its live state: the System Self-View or any declared read-view), so a live concept no surface shows is a build failure (the §5 meta-failure closed at the presentation tier; resolution of those projections is rule (6)); (10) liveness-window-coherent — RETIRED (575 §17 Face A): a stateful concept's `liveness` window (heartbeatMs/displayStaleMs/reaperStaleMs) is now the single source from which the worker + FE constants are GENERATED (scripts/codegen/gen-liveness-constants.mjs, which validates the ordering law at generation), so drift is impossible by construction rather than detected — the check-liveness-constants-regen idempotency gate is the replacement teeth. Ids/origins are parsed from catalog source — files that `implements ResourceCatalog` / `implements DiagnosticChannelCatalog` (robust to filename; the old *ResourceCatalog.java-suffix match missed ConditionRecoveryIndexCatalog) — and mount tags from the surface catalog (coverage projects from the catalogs — no hand-maintained allowlist; the 530/553 property). SCOPE BOUND: this register governs the Resource/DiagnosticChannel-backed observability streams; the non-Resource family members (boot trace / RebuildHistory, scan progress / ScanProgressRegistry, the 553 search-execution trace) are governed by their own spines and are out of THIS register's enforcement scope (575 §13 L1).",
+  "scan": {
+    "resourceCatalogRoots": ["modules"],
+    "diagnosticChannelCatalogRoots": ["modules"],
+    "surfaceCatalog": "modules/app-observability/src/main/java/io/justsearch/app/observability/surface/CoreSurfaceCatalog.java",
+    "javaInclude": "/src/main/java/",
+    "expectedMinPopulation": 8,
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the Resource/Channel stream universe parsed from the catalogs must be >= this many, else a renamed catalog root would let the coverage checks pass vacuously. Live count is 21 (2026-06-15; +2 from tempdoc 580 §17.3 feedback-outcome streams); floor 8 is a conservative ~half-headroom. Lower this with any change that legitimately shrinks the stream universe."
+  },
+  "concepts": [
+    {
+      "id": "action-lifecycle",
+      "kind": "event-stream",
+      "canonicalSource": "core.action-ledger",
+      "contributors": ["core.action-ledger", "core.operation-history", "core.indexing-jobs"],
+      "projections": ["jf-activity-surface"],
+      "stateful": true,
+      "livenessOwner": "The worker SqliteJobQueue job state machine (PENDING|PROCESSING|DONE|FAILED) + the recoverStuckJobs reaper (KnowledgeServer); the live-owner reconciliation (in-flight derives from a live owner, not stream membership) is 550 Thesis II / 575 §4.3b (the C-ii mechanism) + the §15 FE liveness derivation.",
+      "liveness": {
+        "model": "heartbeat-lease",
+        "_doc": "Tempdoc 575 §15 + §17 Face A/C — `model` declares HOW this concept proves liveness (heartbeat-lease: the worker renews last_updated, the FE derives freshness, the reaper reclaims). The window below is THE single source of the liveness window. These three values are GENERATED into the worker (Java) + FE (TS) constants by scripts/codegen/gen-liveness-constants.mjs, which validates the ordering law (heartbeatMs < displayStaleMs <= reaperStaleMs AND displayStaleMs >= 3 x heartbeatMs) at generation and throws on an incoherent window. Drift is impossible by construction (the constants ARE these values); the check-liveness-constants-regen gate enforces it. This supersedes the retired liveness-window-coherent drift-detection rule.",
+        "heartbeatMs": 30000,
+        "displayStaleMs": 90000,
+        "reaperStaleMs": 300000,
+        "generatedInto": {
+          "java": "modules/worker-core/src/main/java/io/justsearch/indexerworker/liveness/LivenessWindows.java",
+          "ts": "modules/ui-web/src/api/generated/liveness-constants.ts"
+        }
+      },
+      "note": "Tempdoc 550 Thesis I (shipped) — one action record; operation-history and terminal indexing-job outcomes (ActionEvent.Index) are federated contributors projected from the one record, not competing sources."
+    },
+    {
+      "id": "head-log",
+      "kind": "diagnostic-channel",
+      "canonicalSource": "core.head-log",
+      "contributors": ["core.head-log"],
+      "projections": ["jf-log-surface"],
+      "stateful": false
+    },
+    {
+      "id": "health-conditions",
+      "kind": "event-stream",
+      "canonicalSource": "core.health-events",
+      "contributors": ["core.health-events"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "failed-indexing-jobs",
+      "kind": "tabular",
+      "canonicalSource": "core.failed-indexing-jobs",
+      "contributors": ["core.failed-indexing-jobs"],
+      "projections": ["jf-health-surface"],
+      "stateful": false,
+      "note": "A terminal (FAILED) read-view of the job table — not in-flight, so not stateful; the in-flight liveness lives on the action-lifecycle concept."
+    },
+    {
+      "id": "advisory-operation-completed",
+      "kind": "event-stream",
+      "canonicalSource": "core.advisory-operation-completed",
+      "contributors": ["core.advisory-operation-completed"],
+      "stateful": false,
+      "note": "Rendered as toasts / an inbox, not a dedicated rail surface — projections intentionally undeclared (575 §9: completeness is the irreducible discovery problem, so projections are optional-but-validated)."
+    },
+    {
+      "id": "advisory-health-recoverable",
+      "kind": "event-stream",
+      "canonicalSource": "core.advisory-health-recoverable",
+      "contributors": ["core.advisory-health-recoverable"],
+      "stateful": false
+    },
+    {
+      "id": "metric-gpu-utilization",
+      "kind": "timeseries",
+      "canonicalSource": "core.metric-gpu-utilization-percent",
+      "contributors": ["core.metric-gpu-utilization-percent"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "metric-gpu-memory-utilization",
+      "kind": "timeseries",
+      "canonicalSource": "core.metric-gpu-memory-utilization-percent",
+      "contributors": ["core.metric-gpu-memory-utilization-percent"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "metric-documents-indexed-rate",
+      "kind": "timeseries",
+      "canonicalSource": "core.metric-worker-documents-indexed-rate-per-sec",
+      "contributors": ["core.metric-worker-documents-indexed-rate-per-sec"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "metric-job-queue-depth",
+      "kind": "timeseries",
+      "canonicalSource": "core.metric-worker-job-queue-depth",
+      "contributors": ["core.metric-worker-job-queue-depth"],
+      "projections": ["jf-health-surface"],
+      "stateful": false
+    },
+    {
+      "id": "runtime-context",
+      "kind": "state",
+      "canonicalSource": "core.runtime-context",
+      "contributors": ["core.runtime-context"],
+      "stateful": false,
+      "note": "The head's current runtime mode — replace-on-change STATE (slice 440). Tempdoc 575 §13 L1: in-family STATE concept, declared to close the reverse-coverage gap."
+    },
+    {
+      "id": "inference-runtime",
+      "kind": "state",
+      "canonicalSource": "core.inference-runtime",
+      "contributors": ["core.inference-runtime"],
+      "stateful": false,
+      "note": "The Brain's runtime capability snapshot — active model/variant, GPU/VRAM tier, per-ONNX feature status (STATE × ONE_SHOT, tempdoc 560 WS7b). Rendered by the FE Brain surface."
+    },
+    {
+      "id": "ai-install",
+      "kind": "state",
+      "canonicalSource": "core.ai-install",
+      "contributors": ["core.ai-install"],
+      "projections": ["jf-brain-surface"],
+      "stateful": true,
+      "livenessOwner": "The AiInstallService lazy reaper (reapIfStale on getStatus, 575 §17 Face C) — a polled-state owner that certifies its own death by terminalizing a wedged 'running' past STALE_RUNNING_MS; the FE surfaces a 'stalled' badge earlier via isAiInstallLive.",
+      "liveness": {
+        "model": "polled-state",
+        "_doc": "Tempdoc 575 §17 Face C — install is a POLLED-STATE liveness model: the backend owns state + updatedAtEpochMs and the FE polls it. No heartbeat-lease WINDOW (that is the action-lifecycle model); the backstop reaper terminalizes a wedged owner on read, and the FE derives the 'stalled' display from updatedAtEpochMs."
+      },
+      "note": "Brain model install progress (STATE × ONE_SHOT). Tempdoc 575 §17 Face C: registered as a concept so a liveness.model facet can declare its polled-state model + name its backstop owner."
+    },
+    {
+      "id": "pack-import",
+      "kind": "state",
+      "canonicalSource": "core.pack-import",
+      "contributors": ["core.pack-import"],
+      "projections": ["jf-brain-surface"],
+      "stateful": true,
+      "livenessOwner": "The AiPackImportService lazy reaper (reapIfStale on getStatus, 575 §17 Face C) — the polled-state sibling of the install owner; same terminalize-on-read backstop + FE staleness derivation.",
+      "liveness": {
+        "model": "polled-state",
+        "_doc": "Tempdoc 575 §17 Face C — pack import is a POLLED-STATE liveness model (see ai-install)."
+      },
+      "note": "Brain pack import progress (STATE × ONE_SHOT). Tempdoc 575 §17 Face C: registered so a liveness.model facet can declare its polled-state model."
+    },
+    {
+      "id": "condition-recovery-index",
+      "kind": "state",
+      "canonicalSource": "core.condition-recovery-index",
+      "contributors": ["core.condition-recovery-index"],
+      "stateful": false,
+      "note": "The health-condition recovery index (STATE × SSE). Tempdoc 575 §13 L1: surfaced BY reverse-coverage — its catalog (ConditionRecoveryIndexCatalog) does not match the *ResourceCatalog.java filename, so it was invisible to both the register and the old gate parser until the parser was broadened to key off `implements ResourceCatalog`."
+    },
+    {
+      "id": "indexed-roots",
+      "kind": "tabular",
+      "canonicalSource": "core.indexed-roots",
+      "contributors": ["core.indexed-roots"],
+      "stateful": false,
+      "note": "The watched-root rows backing the Library surface (TABULAR × ONE_SHOT, slice 449). In-family: observable 'what roots are indexed' state; pathHash-keyed (ADR-0028)."
+    }
+  ],
+  "outOfFamily": [
+    {
+      "id": "core.server-capabilities",
+      "reason": "The /infra/capabilities/stream feature-detection handshake — a capability CONTRACT the FE uses to discover what the server can do, NOT a 'what happened / what's true of the system' telemetry stream. It is a registry-discoverable Resource (slice 443) but is not an observed happening (575 §3 / §13 L1 discovery-judgment, made explicit and reviewable here). The stream-uncovered rule accepts it because it is declared out-of-family, not because it is silently ignored."
+    }
+  ]
+}

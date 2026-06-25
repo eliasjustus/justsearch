@@ -1,0 +1,289 @@
+{
+  "schemaVersion": 2,
+  "purpose": "JustSearch v2 model registry. Package-based with hardware-aware variant selection.",
+  "packages": [
+    {
+      "id": "embedding",
+      "label": "Embedding model",
+      "description": "Vector embeddings for multilingual semantic search",
+      "targetDir": "onnx/gte-multilingual-base",
+      "termsUrl": "https://huggingface.co/Alibaba-NLP/gte-multilingual-base",
+      "license": "Apache-2.0",
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "model.onnx",
+          "precision": "FP32",
+          "targetEP": "CPU",
+          "sha256": "5B9F03FDC40350A78FA064B4CFB6BF9A229A7C40AA87736F537E3EBD00AA2B86",
+          "sizeBytes": 1255502649,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/embed-gte-multilingual-base-fp32.onnx"
+        },
+        {
+          "filename": "model_fp16.onnx",
+          "precision": "FP16",
+          "targetEP": "CUDA",
+          "sha256": "F1D0F4EC988A6C17387D3B256E631DEEA506A891AED3A6DED4F9BF09386CC38E",
+          "sizeBytes": 627988827,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/embed-gte-multilingual-base-fp16.onnx"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "tokenizer.json",
+          "sha256": "F59925FCB90C92B894CB93E51BB9B4A6105C5C249FE54CE1C704420AC39B81AF",
+          "sizeBytes": 17082756,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/embed-tokenizer.json"
+        },
+        {
+          "filename": "pooling_config.json",
+          "sha256": "20BFF8A08F4D07D668E5C5CADB1973C8424DBF8DE7917A0060621F5A480CF6F6",
+          "sizeBytes": 24,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/embed-pooling_config.json"
+        },
+        {
+          "filename": "model_manifest.json",
+          "sha256": "9DF8C6ED2D15A686EEB15E080971670919966DE2812DAF440B4469576B33157D",
+          "sizeBytes": 130,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/embed-model_manifest.json"
+        }
+      ]
+    },
+    {
+      "id": "splade",
+      "label": "Sparse retrieval (SPLADE)",
+      "description": "Multilingual sparse vector search for improved recall",
+      "targetDir": "splade/naver-splade-v3",
+      "termsUrl": "https://huggingface.co/opensearch-project/opensearch-neural-sparse-encoding-multilingual-v1",
+      "license": "Apache-2.0",
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "model.onnx",
+          "precision": "FP32",
+          "targetEP": "CPU",
+          "sha256": "6399E92FBE1D2C99301504DC84235C9275F0AE31CDAB0125E541AC663F27D6CF",
+          "sizeBytes": 995328264,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-model.onnx"
+        },
+        {
+          "filename": "model_fp16.onnx",
+          "precision": "FP16",
+          "targetEP": "CUDA",
+          "sha256": "AB14869593A2539C86E65BFB0F2F64ACAF9B2345EFECAB57C4C6FCC2FF14F354",
+          "sizeBytes": 497598288,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-model_fp16.onnx"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "tokenizer.json",
+          "sha256": "4610565401A93BA7A0A5F738F25FD9D9B3FCC03BA11B586CF52D073A478EDB64",
+          "sizeBytes": 2563617,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-tokenizer.json"
+        },
+        {
+          "filename": "vocab.txt",
+          "sha256": "87B44292B452F6C05AFA49B2E488E7EEDF79EA4F4C39DB6F2F4B37764228EF3F",
+          "sizeBytes": 871891,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-vocab.txt"
+        },
+        {
+          "filename": "idf.json",
+          "sha256": "3CA24A68B7A0F8A4917E32AD718F686FF01ED2D9C259A0BA4388D78B794436BD",
+          "sizeBytes": 3808690,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-idf.json"
+        },
+        {
+          "filename": "config.json",
+          "sha256": "CB70B5AAAFDEE8A95E82E9B3A3CFB6C78E2A95C4027D2BD3A74B58CC76478AF4",
+          "sizeBytes": 872,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-config.json"
+        }
+      ]
+    },
+    {
+      "id": "reranker",
+      "label": "Search reranker",
+      "description": "Improves search result ranking accuracy",
+      "targetDir": "onnx/reranker",
+      "termsUrl": "https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base",
+      "license": "Apache-2.0",
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "model.onnx",
+          "precision": "FP32",
+          "targetEP": "CPU",
+          "sha256": "CCF51DBA7F8AA9205753761CFAA68C55F741792501463A3BF25D7E5BCDAC7C35",
+          "sizeBytes": 340858200,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/reranker-model.onnx"
+        },
+        {
+          "filename": "model_fp16.onnx",
+          "precision": "FP16",
+          "targetEP": "CUDA",
+          "sha256": "BABA50EE1C61DFC47601CA54518D325EAB03560FD06C4B45685CC4ECC4514DF4",
+          "sizeBytes": 629118152,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/reranker-model_fp16.onnx"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "tokenizer.json",
+          "sha256": "3FFB37461C391F096759F4A9BBBC329DA0F36952F88BAB061FCF84940C022E98",
+          "sizeBytes": 17082999,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/reranker-tokenizer.json"
+        },
+        {
+          "filename": "config.json",
+          "sha256": "DFA5713436ECB4616EAA576795C8D3EFD1F03122031A1AD4973D0B6B7E7EDFD3",
+          "sizeBytes": 1578,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/reranker-config.json"
+        }
+      ]
+    },
+    {
+      "id": "ner",
+      "label": "Named entity recognition",
+      "description": "Identifies people, organizations, and locations in documents",
+      "targetDir": "onnx/ner",
+      "termsUrl": "https://huggingface.co/Davlan/distilbert-base-multilingual-cased-ner-hrl",
+      "license": "AFL-3.0",
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "model.onnx",
+          "precision": "INT8",
+          "targetEP": "CPU",
+          "sha256": "92977E4B2335A2EE2FB95225E32FD0743A608091856B245C27D9001772023B06",
+          "sizeBytes": 135115720,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/ner-model.onnx"
+        },
+        {
+          "filename": "model_fp16.onnx",
+          "precision": "FP16",
+          "targetEP": "CUDA",
+          "sha256": "8121A42877ED482925C73FB2002948F7BDE65FDCCA16989847255C71EB54DA49",
+          "sizeBytes": 269622486,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/ner-model_fp16.onnx"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "tokenizer.json",
+          "sha256": "BF1B59B7B11C95F194F51708D918EEA378E09D05F84C0E1656DC5180E8117088",
+          "sizeBytes": 2919362,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/ner-tokenizer.json"
+        },
+        {
+          "filename": "config.json",
+          "sha256": "38847BE4DC6699B1218A749ED69F888C2CCC7B4DEBA98E3C4A1CAC8CB34D54C8",
+          "sizeBytes": 927,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/ner-config.json"
+        }
+      ]
+    },
+    {
+      "id": "citation-scorer",
+      "label": "Citation scorer",
+      "description": "Enables source attribution in AI answers",
+      "targetDir": "onnx/citation-scorer",
+      "termsUrl": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "license": "Apache-2.0",
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "model.onnx",
+          "precision": "INT8",
+          "targetEP": "CPU",
+          "sha256": "A13EC391CA99F49886694E12D3E800521F36D4267D7D448C34421C541A2BAF50",
+          "sizeBytes": 23012404,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/citation-model.onnx"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "tokenizer.json",
+          "sha256": "D241A60D5E8F04CC1B2B3E9EF7A4921B27BF526D9F6050AB90F9267A1F9E5C66",
+          "sizeBytes": 711396,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/citation-tokenizer.json"
+        },
+        {
+          "filename": "config.json",
+          "sha256": "D827779A72D27AE68CF878A6FC2E954542663FE21CA515D9F4783FC96BE2D37E",
+          "sizeBytes": 824,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/citation-config.json"
+        }
+      ]
+    },
+    {
+      "id": "chat",
+      "label": "Chat model",
+      "description": "Conversational AI with reasoning for document Q&A and summarization",
+      "targetDir": "",
+      "termsUrl": "https://huggingface.co/Qwen/Qwen3.5-9B",
+      "license": "Apache-2.0",
+      "minVramBytes": 7500000000,
+      "variants": [
+        {
+          "filename": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+          "precision": "GGUF",
+          "targetEP": "LLAMA_SERVER",
+          "sha256": "9437F5BF0DD0C97800CAAF902F41E6A6AA00223AB232F159EDA41DCBBB492645",
+          "sizeBytes": 5889811552,
+          "downloadUrl": "https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF/resolve/ff13963796ee209598509a81340172bb1c3869fe/Qwen_Qwen3.5-9B-Q4_K_M.gguf"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "mmproj-F16.gguf",
+          "sha256": "97F420245A85CE129BB764E86A5E21E27D782FE6D6056C6839B9C5FDB8F38289",
+          "sizeBytes": 918165952,
+          "downloadUrl": "https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF/resolve/ff13963796ee209598509a81340172bb1c3869fe/mmproj-Qwen_Qwen3.5-9B-f16.gguf"
+        }
+      ]
+    },
+    {
+      "id": "cuda-runtime",
+      "label": "GPU runtime libraries",
+      "description": "CUDA 12.4 runtime DLLs for GPU-accelerated chat and ONNX inference",
+      "targetDir": "cuda12",
+      "installRoot": "native-bin/llama-server/variants",
+      "termsUrl": "https://docs.nvidia.com/cuda/eula/index.html",
+      "license": "LicenseRef-NVIDIA-CUDA-EULA",
+      "minVramBytes": 7500000000,
+      "variants": [],
+      "supportingFiles": [
+        {
+          "filename": "llama-b8571-bin-win-cuda-12.4-x64.zip",
+          "sha256": "001FF8453C693DF324CE04FF6662EC656F8A72C372B6636CC4E2434955376F3A",
+          "sizeBytes": 232957511,
+          "downloadUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b8571/llama-b8571-bin-win-cuda-12.4-x64.zip",
+          "extract": true
+        },
+        {
+          "filename": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+          "sha256": "8C79A9B226DE4B3CACFD1F83D24F962D0773BE79F1E7B75C6AF4DED7E32AE1D6",
+          "sizeBytes": 391443627,
+          "downloadUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b8571/cudart-llama-bin-win-cuda-12.4-x64.zip",
+          "extract": true
+        },
+        {
+          "filename": "ort-cuda-runtime-12.4.zip",
+          "sha256": "1ACEE29B2803BEB0F7AE4E33FC2F1E0AAC63C33896A8037A708CEA53BDB99266",
+          "sizeBytes": 563449486,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/cuda-runtime-12.4/ort-cuda-runtime-12.4.zip",
+          "extract": true
+        },
+        {
+          "filename": "cudnn-9-runtime-12.4.zip",
+          "sha256": "EACE9A2186DD3452F6351358EEDB21D70485B64C461787ED12D3DFC27ACB3139",
+          "sizeBytes": 634283692,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/cuda-runtime-12.4/cudnn-9-runtime-12.4.zip",
+          "extract": true
+        }
+      ]
+    }
+  ]
+}

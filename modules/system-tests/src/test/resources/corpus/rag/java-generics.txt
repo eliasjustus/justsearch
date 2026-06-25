@@ -1,0 +1,38 @@
+Java Generics: Type Safety and Erasure
+
+Java generics were introduced in Java 5 (2004) to provide compile-time type safety for
+collections and other parameterized types. They enable writing code that works with
+different types while catching type errors at compile time rather than runtime.
+
+Type Parameters and Bounds:
+- Unbounded: <T> accepts any type. Example: List<T>
+- Upper bounded: <T extends Number> restricts T to Number or its subclasses
+- Lower bounded: <? super Integer> accepts Integer or any superclass
+- Multiple bounds: <T extends Comparable<T> & Serializable> combines constraints
+
+Type Erasure:
+The Java compiler removes all generic type information during compilation, replacing type
+parameters with their bounds (or Object if unbounded). This means:
+- List<String> and List<Integer> are the same class at runtime (both are just List)
+- You cannot use instanceof with parameterized types: "x instanceof List<String>" won't compile
+- You cannot create arrays of parameterized types: "new T[]" is illegal
+- Generic type information is not available via reflection on instances
+
+This design was chosen for backward compatibility with pre-Java 5 code. The alternative
+(reified generics, as in C#) would have required changes to the JVM bytecode format.
+
+Wildcards and PECS:
+The Producer-Extends, Consumer-Super (PECS) principle guides wildcard usage:
+- Use <? extends T> when you only READ from a structure (producer)
+- Use <? super T> when you only WRITE to a structure (consumer)
+- Use <T> (no wildcard) when you both read and write
+Joshua Bloch coined the PECS mnemonic in "Effective Java" (2008).
+
+Common Pitfalls:
+- Raw types: Using List instead of List<String> bypasses type checking entirely
+- Heap pollution: Mixing raw and generic types can cause ClassCastException at unexpected
+  locations, far from the actual type violation
+- Bridge methods: The compiler generates synthetic bridge methods to preserve polymorphism
+  after type erasure, which can cause confusing stack traces
+- Diamond problem: Before Java 7's diamond operator (<>), generic type arguments had to be
+  repeated on both sides of an assignment statement

@@ -1,0 +1,5 @@
+{
+  "$comment": "Fixture registry — empty; the negative case's test: guard is dangling regardless.",
+  "kind": "discipline-gate-registry.v1",
+  "gates": []
+}

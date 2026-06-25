@@ -1,0 +1,65 @@
+[ {
+  "function" : {
+    "description" : "stub",
+    "name" : "core_search_index",
+    "parameters" : {
+      "properties" : {
+        "limit" : {
+          "type" : "integer"
+        },
+        "query" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    }
+  },
+  "type" : "function"
+}, {
+  "function" : {
+    "description" : "stub",
+    "name" : "core_browse_folders",
+    "parameters" : {
+      "properties" : {
+        "max_folders" : {
+          "default" : 20,
+          "type" : "integer"
+        },
+        "parent_path" : {
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    }
+  },
+  "type" : "function"
+}, {
+  "function" : {
+    "description" : "stub",
+    "name" : "core_ingest_files",
+    "parameters" : {
+      "properties" : {
+        "paths" : {
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        }
+      },
+      "required" : [ "paths" ],
+      "type" : "object"
+    }
+  },
+  "type" : "function"
+}, {
+  "function" : {
+    "description" : "stub",
+    "name" : "core_ping_backend",
+    "parameters" : {
+      "properties" : { },
+      "type" : "object"
+    }
+  },
+  "type" : "function"
+} ]

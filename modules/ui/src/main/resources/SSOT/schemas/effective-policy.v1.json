@@ -1,0 +1,104 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "PolicySource-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "error" : {
+          "type" : [ "string", "null" ]
+        },
+        "loaded" : {
+          "type" : "boolean"
+        },
+        "parsed" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "allowlists" : {
+              "type" : [ "object", "null" ],
+              "properties" : {
+                "modelSha256" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "type" : "string"
+                  }
+                },
+                "packManifestSha256" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "type" : "string"
+                  }
+                }
+              }
+            },
+            "disallowExternalInferenceServers" : {
+              "type" : [ "boolean", "null" ]
+            },
+            "downloadsEnabled" : {
+              "type" : [ "boolean", "null" ]
+            },
+            "gpuAccelerationEnabled" : {
+              "type" : [ "boolean", "null" ]
+            },
+            "onlineAiEnabled" : {
+              "type" : [ "boolean", "null" ]
+            },
+            "schemaVersion" : {
+              "type" : "integer"
+            },
+            "updatedAt" : {
+              "type" : [ "string", "null" ]
+            }
+          }
+        },
+        "path" : {
+          "type" : [ "string", "null" ]
+        },
+        "present" : {
+          "type" : "boolean"
+        }
+      }
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "aiDisabledOverride" : {
+      "type" : "boolean"
+    },
+    "allowlistedModelSha256" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "allowlistedPackManifestSha256" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "disallowExternalInferenceServers" : {
+      "type" : "boolean"
+    },
+    "downloadsEnabled" : {
+      "type" : "boolean"
+    },
+    "gpuAccelerationEnabled" : {
+      "type" : "boolean"
+    },
+    "machine" : {
+      "$ref" : "#/$defs/PolicySource-nullable"
+    },
+    "onlineAiEnabled" : {
+      "type" : "boolean"
+    },
+    "packAllowlistConfigured" : {
+      "type" : "boolean"
+    },
+    "packAllowlistSource" : {
+      "type" : [ "string", "null" ]
+    },
+    "user" : {
+      "$ref" : "#/$defs/PolicySource-nullable"
+    }
+  }
+}

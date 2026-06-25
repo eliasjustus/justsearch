@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/eliasjustus/justsearch/blob/main/governance/registry.v1.schema.json",
+  "title": "Discipline-gate registry — tempdoc 530",
+  "description": "Schema for governance/registry.v1.json. Polish §13 of tempdoc 530.",
+  "type": "object",
+  "required": ["kind", "version", "gates"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "kind": { "const": "discipline-gate-registry.v1" },
+    "version": { "type": "integer", "minimum": 1 },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "enforcer", "ruleDescriptions", "baseline"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "title": { "type": "string" },
+          "kind": { "enum": ["hygiene", "meta-loop", "substrate-consumer", "protobuf-evolution"], "description": "Optional gate-kind discriminator (tempdoc 530 §4.3)" },
+          "enforcer": { "type": "string", "description": "Path to enforcer.mjs" },
+          "ruleDescriptions": { "type": "string", "description": "Path to rule-descriptions.mjs" },
+          "classifications": { "type": "string" },
+          "changesetsDir": { "type": "string" },
+          "selfTestFixturesDir": { "type": "string" },
+          "baseline": {
+            "type": "object",
+            "required": ["kind", "path"],
+            "properties": {
+              "kind": { "enum": ["ratchet-file", "git"] },
+              "path": { "type": "string" },
+              "diffStrategy": { "enum": ["git-base", "tag", "tag-prefix", "none"] },
+              "diffFallback": { "type": "string" },
+              "ref": { "type": "string" },
+              "prefix": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "config": { "type": "object" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

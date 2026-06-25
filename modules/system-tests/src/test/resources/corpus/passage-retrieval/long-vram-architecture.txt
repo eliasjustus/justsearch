@@ -1,0 +1,263 @@
+Modern Graphics Processing Unit Architecture: A Comprehensive Survey
+
+Introduction to GPU Design Philosophy
+
+The evolution of graphics processing units over the past three decades represents one of the most
+remarkable trajectories in semiconductor engineering. From their origins as fixed-function rasterization
+accelerators in the early 1990s, GPUs have transformed into massively parallel compute engines that
+power applications ranging from real-time ray tracing to large-scale neural network training. This
+survey examines the architectural foundations that enable modern GPUs to achieve throughput figures
+measured in teraflops while maintaining the programmability demanded by contemporary workloads.
+
+The fundamental design philosophy of GPU architecture diverges sharply from that of central processing
+units. Where CPUs dedicate substantial die area to control logic, branch prediction, and deep
+out-of-order execution pipelines, GPUs adopt a throughput-oriented approach that maximizes arithmetic
+density at the expense of single-thread latency. This trade-off is predicated on the observation that
+graphics and compute workloads exhibit abundant data parallelism, allowing thousands of independent
+threads to execute concurrently and thereby hide access latency through occupancy rather than through
+sophisticated caching hierarchies.
+
+Shader Core Microarchitecture
+
+At the heart of every modern GPU lies the shader core, also known as a streaming multiprocessor in
+certain vendor terminology or a compute unit in others. Each shader core contains multiple execution
+lanes organized into warp-width groups — typically 32 or 64 lanes — that execute a single instruction
+stream in lockstep via the SIMT (Single Instruction, Multiple Threads) execution model.
+
+The register file within each shader core is substantially larger than what is found in CPU cores.
+A typical shader core may contain 64 KB or more of register file storage, partitioned among active
+warps. This generous allocation allows the hardware scheduler to maintain hundreds of threads in
+flight simultaneously, switching between warps on a cycle-by-cycle basis to hide functional unit
+and latency from off-chip accesses. The warp scheduler selects eligible warps — those not stalled
+on pending operations or synchronization barriers — and issues their next instruction to the
+appropriate execution pipeline.
+
+Execution pipelines within a shader core are specialized by operation type. Integer arithmetic,
+single-precision floating point, double-precision floating point, special function evaluation
+(transcendentals, reciprocals), and texture sampling each have dedicated hardware. Recent
+architectures have added dedicated matrix multiply-accumulate units (tensor cores) optimized for
+the fused multiply-add patterns prevalent in deep learning workloads. These tensor cores can
+perform 4x4 or larger matrix operations in a single clock cycle, achieving throughput that far
+exceeds what general-purpose ALUs can deliver.
+
+The instruction dispatch mechanism in modern shader cores supports dual-issue or even quad-issue
+per cycle, provided the instructions target different functional units. This superscalar execution
+within the SIMT framework means that a single warp can simultaneously occupy an integer ALU and
+a floating-point unit, maximizing functional unit utilization. The compiler and driver stack play
+critical roles in scheduling instructions to exploit this parallelism, reordering operations
+where dependencies permit.
+
+Thread Divergence and Reconvergence
+
+One of the most significant challenges in SIMT execution is handling branch divergence — the
+situation where threads within a warp take different control flow paths at a conditional branch.
+When divergence occurs, the hardware must serialize execution of the divergent paths, masking off
+threads that are not on the active path. This serialization can substantially reduce effective
+throughput, as only a fraction of the warp's lanes perform useful work during each pass.
+
+Modern architectures employ several strategies to mitigate the cost of divergence. Independent
+thread scheduling allows threads within a warp to maintain their own program counters, enabling
+finer-grained divergence handling and more efficient reconvergence. Stack-based reconvergence
+mechanisms track divergence points and automatically merge threads when they reach a common
+post-dominator instruction. Some recent designs implement a convergence barrier model that gives
+the programmer explicit control over reconvergence points, which can be more efficient than
+implicit hardware mechanisms for certain algorithms.
+
+The impact of divergence extends beyond execution efficiency to affect data access patterns.
+Divergent threads may access scattered locations, converting what would be a coalesced
+transaction into multiple serialized requests. This interaction between control flow divergence
+and access divergence makes branch-free or branch-minimizing algorithms particularly attractive
+for GPU execution.
+
+Interconnect Topology and Scalability
+
+The interconnect fabric linking shader cores to the cache subsystem, to each other, and to the
+host CPU represents a critical bottleneck in GPU design. Modern GPUs employ crossbar or ring-based
+interconnects to connect shader core clusters to L2 cache slices and controllers. The bandwidth of
+this interconnect must scale with the number of shader cores to prevent it from becoming the
+system bottleneck.
+
+At the chip-to-chip level, multi-GPU configurations require high-bandwidth interconnects to enable
+data sharing between devices. Proprietary links such as high-speed bridges provide peer-to-peer
+bandwidth of several hundred gigabytes per second, dramatically exceeding what standard expansion
+bus interfaces can deliver. These high-bandwidth links enable coherent access across multiple GPUs,
+supporting unified address spaces and transparent data migration.
+
+The scalability of GPU architectures faces fundamental physical constraints as transistor counts
+continue to grow. Power delivery, thermal dissipation, and die yield considerations increasingly
+favor chiplet-based designs where multiple smaller dies are integrated on a common interposer or
+substrate. This packaging approach introduces additional interconnect complexity but allows each
+chiplet to be optimized independently and manufactured with higher yield rates.
+
+Cache Hierarchy Design
+
+The cache hierarchy of a modern GPU differs fundamentally from that of a CPU. At the lowest level,
+each shader core contains a local data store (shared or local data share) typically ranging from
+32 KB to 128 KB. This on-chip storage is explicitly managed by the programmer and provides
+extremely low-latency access for data sharing among threads within a workgroup. It serves a role
+analogous to the L1 data cache in a CPU but with programmer-controlled allocation and eviction.
+
+Above the local data store, each shader core typically has an L1 cache that handles global
+accesses. In many architectures, the L1 cache and local data store share a single physical SRAM
+allocation that can be partitioned between the two roles at the granularity of the workgroup
+dispatch. This configurability allows compute-intensive kernels to allocate more local storage
+while bandwidth-intensive kernels can benefit from a larger L1 cache.
+
+An L2 cache shared across all shader cores serves as the primary on-chip aggregation point.
+Modern GPU L2 caches range from 4 MB to 96 MB depending on the product tier. The L2 cache is
+typically organized into slices corresponding to channels, with an address interleaving scheme
+that distributes accesses across slices to balance load. Cache replacement policies tend toward
+simple algorithms like LRU or FIFO, as the massive parallelism and streaming access patterns
+make sophisticated replacement policies counterproductive.
+
+The interaction between the cache hierarchy and the thread scheduling model creates subtle
+performance dynamics. When a warp issues a request that misses in the L1 cache, the warp stalls,
+but the hardware scheduler immediately switches to another eligible warp. If sufficient warps are
+resident on the shader core, this latency hiding mechanism can completely overlap access time with
+useful computation. However, increasing occupancy requires proportionally more register and local
+resources, creating a tension between latency hiding and per-thread resource availability.
+
+Clock Domain Architecture
+
+Modern GPU designs employ multiple independent clock domains to optimize power efficiency across
+different functional blocks. The shader core array, controllers, display engine, and video decode
+blocks each operate at independently controlled frequencies. Dynamic voltage and frequency scaling
+(DVFS) algorithms monitor workload characteristics and thermal conditions to adjust clock rates in
+real time, balancing performance against power consumption.
+
+The clock distribution network within a GPU die is itself a significant engineering challenge.
+With die sizes approaching 800 square millimeters on advanced process nodes, delivering a clean
+clock signal with acceptable skew across the entire chip requires carefully designed clock trees,
+buffers, and sometimes mesh-based distribution networks. Clock gating at the block and sub-block
+level reduces dynamic power when portions of the chip are idle, while power gating can eliminate
+leakage current by disconnecting entire blocks from the supply rails.
+
+Frequency scaling is typically managed at the granularity of the entire shader core array rather
+than individual cores, as the interconnect and cache hierarchy are shared and must operate at a
+consistent frequency. However, other auxiliary domains can be scaled independently, allowing the
+GPU to reduce power consumption in scenarios where only a subset of its capabilities are exercised.
+
+VRAM Memory Management and Address Translation
+
+Effective VRAM memory management requires coordination between hardware and software components.
+Hardware page tables managed by the GPU's translation unit work in concert with software-side
+bookkeeping in the device driver to map virtual addresses to physical frame locations and track
+allocation lifetimes.
+
+Power Delivery and Thermal Design
+
+The power delivery system for a modern high-end GPU must supply several hundred watts of
+electrical power at voltages below one volt, requiring current delivery measured in hundreds
+of amperes. This demanding power delivery requirement necessitates sophisticated voltage
+regulator module (VRM) designs on the graphics card PCB, with multi-phase buck converters
+that can respond to rapid current transients.
+
+On-die power delivery networks consist of multiple metal layers dedicated to power and ground
+distribution. The resistance and inductance of these networks create voltage droops during
+rapid current changes, which constrains the maximum clock frequency. Advanced packaging
+techniques including through-silicon vias (TSVs) and embedded capacitors can mitigate these
+delivery challenges by reducing the distance and impedance between power source and load.
+
+Thermal strategies range from passive heatsinks to elaborate liquid cooling solutions. The
+thermal design power (TDP) of high-end GPUs has steadily increased, reaching 450 watts or more
+in workstation-class products. Effective heat removal from the die surface requires thermal
+interface materials with high thermal conductivity, large heatsink surface areas with optimized
+fin geometries, and powerful fans or liquid cooling pumps. In data center deployments, GPU thermal
+dissipation must integrate with facility-level cooling infrastructure, driving interest in direct
+liquid cooling solutions that pipe coolant directly to the GPU heat spreader.
+
+Rasterization and Fixed-Function Pipeline Stages
+
+Despite the trend toward programmable shader cores, modern GPUs retain substantial fixed-function
+hardware for operations that are either too specialized or too performance-critical to implement
+in software. The rasterization pipeline — including primitive assembly, clipping, triangle setup,
+and scan conversion — remains predominantly fixed-function. These stages convert geometric
+primitives into fragment coverage information at rates measured in billions of triangles per
+second, a throughput that would be impractical to achieve with programmable cores alone.
+
+Texture sampling units are another critical fixed-function component. Each shader core typically
+includes dedicated texture units that handle address generation, bilinear or anisotropic
+filtering, and format conversion. The texture units interface with the cache hierarchy through
+a dedicated path that is optimized for the two-dimensional spatial locality typical of texture
+access patterns. Modern texture units support a wide range of compressed formats, reducing
+bandwidth requirements by decompressing texture data on the fly during sampling.
+
+The render output pipeline (ROP) handles depth testing, stencil operations, color blending, and
+final framebuffer writes. ROPs operate in parallel with the shader pipeline and include dedicated
+hardware for anti-aliasing and framebuffer compression. The number of ROPs determines the pixel
+fill rate of the GPU and is a key factor in rendering performance at high resolutions.
+
+Ray Tracing Acceleration Hardware
+
+The integration of dedicated ray tracing hardware represents a paradigm shift in GPU architecture.
+Ray tracing acceleration units implement bounding volume hierarchy (BVH) traversal and
+ray-triangle intersection testing in fixed-function hardware. These operations are the dominant
+cost in ray tracing workloads and can be performed orders of magnitude more efficiently in
+dedicated hardware than in shader cores.
+
+A BVH traversal unit walks the acceleration structure, testing each ray against axis-aligned
+bounding boxes to determine which tree nodes require further traversal. When a leaf node is
+reached, the intersection test unit evaluates the ray against the enclosed triangle geometry. The
+results are returned to the shader core, which executes the shading computation for hit points
+using the standard programmable pipeline.
+
+The interaction between ray tracing hardware and the rest of the GPU creates complex scheduling
+challenges. Ray tracing workloads are inherently incoherent — rays scatter in many directions
+after bouncing off surfaces, leading to irregular access patterns and difficulty maintaining
+warp execution efficiency. Architectures address this through ray reordering hardware that
+groups rays with similar traversal paths before dispatching them, improving both cache hit
+rates and warp utilization.
+
+Display Engine and Video Processing
+
+The display engine is responsible for compositing the final framebuffer and driving display
+outputs. It operates largely independently from the 3D rendering pipeline, with its own clock
+domain, DMA engines, and format conversion hardware. Modern display engines support multiple
+simultaneous outputs at resolutions up to 8K, with hardware support for HDR tone mapping,
+color space conversion, and variable refresh rate protocols.
+
+Video encode and decode blocks provide hardware-accelerated compression and decompression for
+standard video codecs. These blocks can process multiple 4K streams simultaneously while
+consuming a fraction of the power that software encoding would require. In cloud gaming and
+streaming applications, the video encode capability is essential for delivering low-latency
+capture and compression of rendered frames.
+
+Driver Architecture and Software Stack
+
+The GPU driver serves as the critical interface between application software and the hardware.
+Modern GPU drivers are substantial software systems comprising millions of lines of code,
+implementing shader compilation, resource scheduling, power control, and hardware abstraction.
+The driver stack typically includes a user-mode component that runs within the application's
+address space and a kernel-mode component that manages hardware access and process isolation.
+
+Shader compilation is one of the most complex driver responsibilities. High-level shading
+languages must be compiled to the specific instruction set of the target GPU, with optimizations
+for register allocation, instruction scheduling, and occupancy tuning. Just-in-time compilation
+in the driver allows shaders to be optimized for the specific hardware configuration at runtime,
+but introduces compilation overhead that can cause stalls during application startup or scene
+transitions.
+
+Command scheduling in the driver manages the submission of work to the GPU across multiple
+application contexts. The driver maintains per-context command queues and implements priority
+scheduling to balance responsiveness for interactive applications with throughput for compute
+workloads. Preemption support in modern GPUs allows the driver to interrupt long-running compute
+dispatches to service latency-sensitive graphics work, though the granularity and overhead of
+preemption varies across architectures.
+
+Future Directions
+
+Several trends are likely to shape GPU architecture in the coming years. The integration of
+AI-specific acceleration beyond matrix multiplication — including support for sparse computation
+patterns, variable-precision arithmetic, and in-storage computing — will expand the GPU's
+applicability to a broader range of machine learning models. Chiplet-based designs will enable
+larger effective GPU configurations while controlling manufacturing costs and yield. Unified
+address spaces that eliminate the boundary between CPU and GPU addressing will simplify
+programming and enable new application models. Photonic interconnects may eventually address the
+bandwidth walls that constrain multi-chip GPU systems.
+
+The GPU's role as a general-purpose parallel compute engine is now firmly established. While the
+name "graphics processing unit" reflects the technology's origins, the architectural principles
+of massive parallelism, throughput-oriented design, and specialized hardware acceleration have
+proven applicable far beyond rendering. Future GPU architectures will continue to evolve along
+these dimensions, driven by the insatiable demand for parallel compute performance across
+scientific simulation, artificial intelligence, and interactive media.

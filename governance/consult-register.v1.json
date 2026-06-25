@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "$comment": "Region -> just-in-time delivery register (tempdoc 620 Move 2). Promotes scripts/agent-analytics/lib/governed-regions.mjs into data, the promotion that file's predecessor anticipated ('promote to governance/consult-register.v1.json only if it grows'). Consumed by consult-doc-hint.mjs (PreToolUse 'Consult' -> pushes governing docs when a region is edited) and maintain-doc-hint.mjs (Stop 'Maintain' -> blocks once if a region's governing doc went un-updated). Schema per row: pathIncludes (array of path substrings; matches if the edited path contains any) + region (label) + docs ([{path, why}] surfaced by consult) + maintain (optional bool; when true, maintain-doc-hint blocks turn-end if none of the docs were updated this session. Omit for consult-only DELIVERY rows that push a doc to read without demanding you maintain it -- e.g. the 616 read-0x architecture docs) + recipe (optional array of step strings; surfaced by consult as a numbered just-in-time procedure -- the relocation home for path-triggerable workflow recipes evicted from the always-loaded layer, e.g. common-workflows.md's gRPC/REST/config/agent-tool recipes, tempdoc 620 Phase 2; a recipe row typically sets docs:[] so it never blocks at Stop). A delivery row is how the always-loaded layer evicts region-specific context: load it only when the region is touched.",
+  "regions": [
+    {
+      "id": "shell-v0",
+      "pathIncludes": ["modules/ui-web/src/shell-v0/"],
+      "region": "a shell-v0 frontend surface",
+      "maintain": true,
+      "docs": [
+        {
+          "path": "docs/decisions/0032-fe-lit-web-components.md",
+          "why": "the frontend is **Lit web components**, not React (the React stack is retired)."
+        },
+        {
+          "path": "docs/explanation/27-frontend-presentation-kernel.md",
+          "why": "single presentation authorities (tone/originator/layout/modality); a re-authored badge/modal/transient is meant to be unrepresentable, not just discouraged."
+        }
+      ]
+    },
+    {
+      "id": "threat-model",
+      "pathIncludes": ["modules/shell/src-tauri/tauri.conf.json", "ApiSecurityFilters.java"],
+      "region": "the loopback egress / inbound-access security surface",
+      "maintain": true,
+      "docs": [
+        {
+          "path": "docs/reference/security/threat-model.md",
+          "why": "the privacy guarantee ('nothing leaves your machine') and its mechanical anchors (CSP loopback-lock, Host/Origin/token filters, no telemetry) — re-verify the threat model if you change the CSP or the request-filter security plumbing."
+        }
+      ]
+    },
+    {
+      "id": "app-agent",
+      "pathIncludes": ["modules/app-agent/", "modules/app-agent-api/"],
+      "region": "the in-product agent system",
+      "docs": [
+        {
+          "path": "docs/explanation/22-agent-system-architecture.md",
+          "why": "the agent loop, operation-substrate tool dispatch, token budget, durability, and the MCP tool surface -- read before changing agent behavior (616 read-0x delivery)."
+        }
+      ]
+    },
+    {
+      "id": "adapters-lucene",
+      "pathIncludes": ["modules/adapters-lucene/"],
+      "region": "the Lucene retrieval adapter",
+      "docs": [
+        {
+          "path": "docs/explanation/18-adapters-lucene-deep-dive.md",
+          "why": "HNSW search, SPLADE learned-sparse retrieval, hybrid fusion, and the commit-metadata system -- the ranking-quality surface (616 read-0x delivery)."
+        }
+      ]
+    },
+    {
+      "id": "worker-inference",
+      "pathIncludes": ["modules/app-inference/", "modules/ort-common/"],
+      "region": "the Worker inference / ORT-session composition",
+      "docs": [
+        {
+          "path": "docs/explanation/24-worker-inference-composition.md",
+          "why": "how the Worker builds ORT sessions and wires the six encoder roles onto one typed composition pipeline (616 read-0x delivery)."
+        }
+      ]
+    },
+    {
+      "id": "workflow-grpc-method",
+      "pathIncludes": ["modules/ipc-common/src/main/proto/"],
+      "region": "the gRPC contract (proto)",
+      "docs": [],
+      "recipe": [
+        "Define the method + messages in the .proto (e.g. indexing.proto).",
+        "Implement the service method in modules/worker-services/.",
+        "Add the forward in DelegatingIngestService.java (modules/indexer-worker/.../grpc/) — the server registers this wrapper, not the impl; without it the RPC returns UNIMPLEMENTED at runtime.",
+        "Add the client call in modules/app-services/ (RemoteKnowledgeClient or the relevant client).",
+        "Add a contract test.",
+        "Verify: ./gradlew.bat :modules:ipc-common:build :modules:worker-services:test :modules:indexer-worker:test",
+        "Full reference: docs/reference/contributing/common-workflows.md (Add a gRPC method)."
+      ]
+    },
+    {
+      "id": "workflow-rest-endpoint",
+      "pathIncludes": ["modules/ui/src/main/java/io/justsearch/ui/api/"],
+      "region": "the Head REST API (Javalin)",
+      "docs": [],
+      "recipe": [
+        "Add the handler/controller under modules/ui/src/main/java/.../api/.",
+        "Register the route via the relevant .../api/routes/*Routes.java class, then wire that route class from LocalApiServer.java if needed.",
+        "Update docs/reference/api-contract-map.md if the endpoint is public.",
+        "Honor the Hard Invariants: loopback-only bind (127.0.0.1), no legacy endpoints (/api/search, /api/settings), and Head never touches Lucene — delegate index IO to the Worker via gRPC.",
+        "Verify: ./gradlew.bat :modules:ui:test",
+        "Full reference: docs/reference/contributing/common-workflows.md (Add a REST endpoint)."
+      ]
+    },
+    {
+      "id": "workflow-config-key",
+      "pathIncludes": ["EnvRegistry.java", "ConfigKey.java", "ResolvedConfigBuilder.java"],
+      "region": "the configuration resolution layer",
+      "docs": [],
+      "recipe": [
+        "Add the entry in EnvRegistry.java (operator-facing) or ConfigKey.java (YAML-only).",
+        "Wire it in ResolvedConfigBuilder.java — add a putYaml*() contribution + a resolve*() call in the relevant build*().",
+        "Expose it via a ResolvedConfig record field.",
+        "Document it in docs/reference/configuration/environment-variables.md.",
+        "Verify: ./gradlew.bat :modules:configuration:test",
+        "Full reference: docs/reference/contributing/common-workflows.md (Add a configuration key)."
+      ]
+    },
+    {
+      "id": "workflow-agent-tool",
+      "pathIncludes": ["registry/operations/", "AgentToolsOperationCatalog"],
+      "region": "the agent tool / operation substrate",
+      "docs": [],
+      "recipe": [
+        "Add/update the operation definition in OperationCatalog / AgentToolsOperationCatalog.",
+        "Implement/update the handler in modules/app-services/.../registry/operations/handlers/.",
+        "Confirm AgentToolEmitter projects the intended model-visible wire name + schema.",
+        "Add safety/approval metadata at the operation layer.",
+        "Update docs/explanation/22-agent-system-architecture.md.",
+        "Verify: ./gradlew.bat :modules:app-agent:test :modules:app-services:test",
+        "Full reference: docs/reference/contributing/common-workflows.md (Add an agent tool)."
+      ]
+    }
+  ]
+}

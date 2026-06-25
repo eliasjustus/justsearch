@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/indexing/commit-metadata.schema.json",
+  "title": "Index Commit Metadata (SSOT-aligned)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_ver",
+    "schema_fp",
+    "field_catalog_hash",
+    "synonyms_hash",
+    "grammar_ver",
+    "grammar_hash",
+    "template_ver",
+    "prompt_pack_hash",
+    "analyzer_fp",
+    "build_state",
+    "commit_id",
+    "commit_time"
+  ],
+  "properties": {
+    "schema_ver": { "type": "string" },
+    "schema_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "field_catalog_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "index_schema_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "synonyms_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "analyzer_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "similarity_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "boosts_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "dag_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "pipeline_budget_profile": { "type": "string", "minLength": 1 },
+    "grammar_ver": { "type": "string" },
+    "grammar_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "template_ver": { "type": "integer", "minimum": 0 },
+    "prompt_pack_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "grammar_on": { "type": "boolean" },
+    "build_state": { "type": "string", "enum": ["BUILDING", "COMPLETE"] },
+    "commit_id": { "type": "string", "minLength": 1 },
+    "commit_time": { "type": "string", "format": "date-time" },
+    "embedding_model_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 fingerprint of the embedding model GGUF file used to generate vectors in this index. Optional for legacy indexes; when present, vector/hybrid queries require a matching current model."
+    },
+    "vector_format": {
+      "type": "string",
+      "enum": ["float32", "int8_sq"],
+      "description": "Vector storage format used in this index. float32 = standard HNSW, int8_sq = scalar-quantized HNSW."
+    },
+    "splade_model_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 fingerprint of the SPLADE sparse encoder ONNX model. When present, indicates the sparse encoding model version used for this index."
+    }
+  }
+}
+
+

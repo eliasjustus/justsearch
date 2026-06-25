@@ -1,0 +1,840 @@
+{
+  "name": "budget-tight",
+  "paging_config": "search_after",
+  "with_ann_vectors": false,
+  "with_indexer_worker": true,
+  "docs": [
+    {
+      "id": "budget-tight-0000",
+      "title": "Grocery Highlight 1",
+      "body": "Synthetic document budget-tight-0000 showcasing grocery inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 1000,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0001",
+      "title": "Household Highlight 2",
+      "body": "Synthetic document budget-tight-0001 showcasing household inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 997,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0002",
+      "title": "Essentials Highlight 3",
+      "body": "Synthetic document budget-tight-0002 showcasing essentials inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 994,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0003",
+      "title": "Grocery Highlight 4",
+      "body": "Synthetic document budget-tight-0003 showcasing grocery inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 991,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0004",
+      "title": "Household Highlight 5",
+      "body": "Synthetic document budget-tight-0004 showcasing household inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 988,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-05T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0005",
+      "title": "Essentials Highlight 6",
+      "body": "Synthetic document budget-tight-0005 showcasing essentials inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 985,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-06T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0006",
+      "title": "Grocery Highlight 7",
+      "body": "Synthetic document budget-tight-0006 showcasing grocery inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 982,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-07T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0007",
+      "title": "Household Highlight 8",
+      "body": "Synthetic document budget-tight-0007 showcasing household inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 979,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-08T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0008",
+      "title": "Essentials Highlight 9",
+      "body": "Synthetic document budget-tight-0008 showcasing essentials inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 976,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-09T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0009",
+      "title": "Grocery Highlight 10",
+      "body": "Synthetic document budget-tight-0009 showcasing grocery inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 973,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-10T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0010",
+      "title": "Household Highlight 11",
+      "body": "Synthetic document budget-tight-0010 showcasing household inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 970,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-11T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0011",
+      "title": "Essentials Highlight 12",
+      "body": "Synthetic document budget-tight-0011 showcasing essentials inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 967,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-12T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0012",
+      "title": "Grocery Highlight 13",
+      "body": "Synthetic document budget-tight-0012 showcasing grocery inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 964,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-13T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0013",
+      "title": "Household Highlight 14",
+      "body": "Synthetic document budget-tight-0013 showcasing household inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 961,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-14T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0014",
+      "title": "Essentials Highlight 15",
+      "body": "Synthetic document budget-tight-0014 showcasing essentials inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 958,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-15T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0015",
+      "title": "Grocery Highlight 16",
+      "body": "Synthetic document budget-tight-0015 showcasing grocery inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 955,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-16T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0016",
+      "title": "Household Highlight 17",
+      "body": "Synthetic document budget-tight-0016 showcasing household inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 952,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-17T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0017",
+      "title": "Essentials Highlight 18",
+      "body": "Synthetic document budget-tight-0017 showcasing essentials inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 949,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-18T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0018",
+      "title": "Grocery Highlight 19",
+      "body": "Synthetic document budget-tight-0018 showcasing grocery inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 946,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-19T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0019",
+      "title": "Household Highlight 20",
+      "body": "Synthetic document budget-tight-0019 showcasing household inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 943,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-20T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0020",
+      "title": "Essentials Highlight 21",
+      "body": "Synthetic document budget-tight-0020 showcasing essentials inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 940,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-21T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0021",
+      "title": "Grocery Highlight 22",
+      "body": "Synthetic document budget-tight-0021 showcasing grocery inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 937,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-22T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0022",
+      "title": "Household Highlight 23",
+      "body": "Synthetic document budget-tight-0022 showcasing household inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 934,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-23T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0023",
+      "title": "Essentials Highlight 24",
+      "body": "Synthetic document budget-tight-0023 showcasing essentials inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 931,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-24T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0024",
+      "title": "Grocery Highlight 25",
+      "body": "Synthetic document budget-tight-0024 showcasing grocery inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 928,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-25T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0025",
+      "title": "Household Highlight 26",
+      "body": "Synthetic document budget-tight-0025 showcasing household inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 925,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-26T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0026",
+      "title": "Essentials Highlight 27",
+      "body": "Synthetic document budget-tight-0026 showcasing essentials inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 922,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-27T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0027",
+      "title": "Grocery Highlight 28",
+      "body": "Synthetic document budget-tight-0027 showcasing grocery inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 919,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-28T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0028",
+      "title": "Household Highlight 29",
+      "body": "Synthetic document budget-tight-0028 showcasing household inventory for region na. Seasonal tag: spring.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "spring"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 916,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-01T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0029",
+      "title": "Essentials Highlight 30",
+      "body": "Synthetic document budget-tight-0029 showcasing essentials inventory for region apac. Seasonal tag: summer.",
+      "facets": {
+        "category": [
+          "essentials"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "summer"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 913,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-02T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0030",
+      "title": "Grocery Highlight 31",
+      "body": "Synthetic document budget-tight-0030 showcasing grocery inventory for region na. Seasonal tag: autumn.",
+      "facets": {
+        "category": [
+          "grocery"
+        ],
+        "region": [
+          "na"
+        ],
+        "season": [
+          "autumn"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "high",
+        "inventory": 910,
+        "traffic_bucket": "beta",
+        "last_indexed": "2025-01-03T12:00:00Z"
+      },
+      "embedding": []
+    },
+    {
+      "id": "budget-tight-0031",
+      "title": "Household Highlight 32",
+      "body": "Synthetic document budget-tight-0031 showcasing household inventory for region apac. Seasonal tag: winter.",
+      "facets": {
+        "category": [
+          "household"
+        ],
+        "region": [
+          "apac"
+        ],
+        "season": [
+          "winter"
+        ],
+        "budget_tier": [
+          "tight"
+        ]
+      },
+      "metadata": {
+        "priority": "normal",
+        "inventory": 907,
+        "traffic_bucket": "ga",
+        "last_indexed": "2025-01-04T12:00:00Z"
+      },
+      "embedding": []
+    }
+  ]
+}

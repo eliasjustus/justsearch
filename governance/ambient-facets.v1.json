@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "description": "574 §22.F — the AmbientDeclaration catalog (Move 2, self-covering). The tree-wide ambient facets that live ONLY in the host-owned adopted sheet (primitives/ambientStyles.ts, delivered by the JfElement base — Move 1). `check-ambient-purity` PROJECTS its ban-list from `classB` (shadow-scoped pseudos/keyframes with zero legitimate in-component site) AND asserts POSITIVE coverage — each `classB` facet must be DEFINED in the authority. Adding a facet here auto-bans its re-authoring in any component AND requires the sheet to provide it: coverage-projects-from-catalog (557 §5.2), the discovery step is adding the row. `utilities` (additive opt-in classes) and `keyframes` are documented for completeness; they are NOT banned (a component may compose a utility class).",
+  "authority": "modules/ui-web/src/shell-v0/primitives/ambientStyles.ts",
+  "base": "modules/ui-web/src/shell-v0/primitives/JfElement.ts",
+  "classB": [
+    {
+      "id": "scrollbar",
+      "name": "::-webkit-scrollbar",
+      "banPattern": "::-webkit-scrollbar",
+      "presence": "::-webkit-scrollbar"
+    },
+    {
+      "id": "selection",
+      "name": "::selection",
+      "banPattern": "::selection",
+      "presence": "::selection"
+    },
+    {
+      "id": "placeholder",
+      "name": "::placeholder",
+      "banPattern": "::placeholder",
+      "presence": "::placeholder"
+    },
+    {
+      "id": "spin-keyframes",
+      "name": "@keyframes spin/jf-spin",
+      "banPattern": "@keyframes\\s+(?:spin|jf-spin)\\b",
+      "presence": "@keyframes spin"
+    }
+  ],
+  "utilities": [".visually-hidden", ".jf-truncate", ".jf-scrollbar-none"],
+  "keyframes": ["spin", "jf-spin"]
+}

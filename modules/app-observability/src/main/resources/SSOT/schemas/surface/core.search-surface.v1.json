@@ -1,0 +1,18 @@
+{
+  "$comment": "Slice 489 §5 — URL-addressable state contract for core.search-surface. The schema declares the addressable state shape; per slice 489 round-7 F7 (2026-05-12) it lives in a resource file rather than inline Java string. Bindings stay in CoreSurfaceCatalog.java because they reference typed records (StateBinding) with abstract storeId values the FE resolves at runtime.",
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "$comment": "Free-text search query. Maps to searchState.query via storeId='search'."
+    },
+    "modifiedFromMs": {
+      "type": "integer",
+      "$comment": "Inclusive lower bound on modified-time filter (epoch ms). Maps to searchFiltersState.modifiedFromMs via storeId='search.filters'."
+    },
+    "modifiedToMs": {
+      "type": "integer",
+      "$comment": "Inclusive upper bound on modified-time filter (epoch ms). Maps to searchFiltersState.modifiedToMs via storeId='search.filters'."
+    }
+  }
+}

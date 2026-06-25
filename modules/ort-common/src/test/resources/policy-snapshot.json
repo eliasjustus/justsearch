@@ -1,0 +1,177 @@
+{
+  "runtime" : {
+    "arena" : {
+      "extendStrategy" : "kSameAsRequested",
+      "memoryPatternOptimization" : false
+    },
+    "cudaProvider" : {
+      "cudaGraphsEnabled" : false,
+      "tunableOpEnabled" : true,
+      "tunableOpTuningEnabled" : false,
+      "cudnnMaxWorkspace" : true,
+      "epLevelUnifiedStream" : true
+    },
+    "session" : {
+      "interOpThreads" : 1,
+      "allowSpinning" : false,
+      "forceSpinningStop" : true,
+      "useDeviceAllocatorForInitializers" : true
+    },
+    "profiling" : {
+      "ortProfilingDir" : null,
+      "verboseLogging" : false
+    }
+  },
+  "models" : {
+    "EMBEDDING" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 3221225472,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : true,
+        "gpuRetryEnabled" : true,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    },
+    "BGE_M3" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 3221225472,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : false,
+        "gpuRetryEnabled" : true,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    },
+    "SPLADE" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 4294967296,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : false,
+        "gpuRetryEnabled" : true,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    },
+    "NER" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 536870912,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : false,
+        "gpuRetryEnabled" : false,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    },
+    "RERANKER" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 2147483648,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : false,
+        "gpuRetryEnabled" : true,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    },
+    "CITATION" : {
+      "variant" : {
+        "modelFile" : "<fixture-placeholder>",
+        "precision" : "FP16",
+        "executionProvider" : "CUDA",
+        "degraded" : false,
+        "degradationReason" : null
+      },
+      "gpu" : {
+        "arenaCapBytes" : 0,
+        "cudaDeviceId" : 0,
+        "arenaExtendStrategyOverride" : null
+      },
+      "cpu" : {
+        "optLevel" : "EXTENDED_OPT"
+      },
+      "lifecycle" : {
+        "deferCpuSession" : false,
+        "gpuRetryEnabled" : false,
+        "gpuRetryIntervalMs" : 60000
+      },
+      "runOptions" : {
+        "arenaShrinkage" : true
+      }
+    }
+  }
+}

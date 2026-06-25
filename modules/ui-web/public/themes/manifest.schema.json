@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://justsearch.local/schemas/themes-manifest-v1.json",
+  "title": "JustSearch Theme Manifest",
+  "description": "V1.5.1 theme directory manifest. Lists available themes the host can offer in the picker. V1.5.2 will replace this with a Tauri filesystem watcher that auto-discovers themes; the manifest format remains forward-compatible.",
+  "type": "object",
+  "required": ["schemaVersion", "themes"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional reference to this schema for editor autocomplete."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest schema version. V1.5.1 ships v1; future versions add fields without breaking v1 consumers."
+    },
+    "themes": {
+      "type": "array",
+      "description": "List of available themes. Order is the picker display order.",
+      "items": { "$ref": "#/$defs/ThemeEntry" }
+    }
+  },
+  "$defs": {
+    "ThemeEntry": {
+      "type": "object",
+      "required": ["id", "displayName", "cssPath"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]+$",
+          "description": "Stable theme id. Used as `userConfig.activeThemeId` and as the picker selection key."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable label shown in the picker."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional longer description shown under the displayName."
+        },
+        "cssPath": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Path the loader fetches when this theme is selected. Must start with `/` (root-relative)."
+        },
+        "author": {
+          "type": "string",
+          "description": "Theme author identifier. Plugin-contributed themes carry the plugin id; host themes use `core`."
+        },
+        "version": {
+          "type": "string",
+          "description": "Optional theme version (semver-like). Forward-compat for V1.5.2's update flow."
+        }
+      }
+    }
+  }
+}

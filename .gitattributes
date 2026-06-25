@@ -1,0 +1,29 @@
+# Default: normalize text files to LF in the repo; let tools respect this on all platforms.
+* text=auto eol=lf
+# Secrets catalog + schema must retain exact bytes (hash pinned in SSOT/manifest.v1.json).
+SSOT/catalogs/secrets.v1.json -text
+SSOT/schemas/config/secret-bundle.schema.json -text
+# Windows-only scripts: keep CRLF so PowerShell/CMD stay happy.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+# Common binary formats.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+# Large line-oriented data files – still text, but always LF.
+*.ndjson text eol=lf
+*.csv    text eol=lf
+# Lucene synonym DSL files: explicit LF because Spotless / analyzer-cache
+# hot-reload rewrite them in LF on every build; without this on Windows
+# checkouts the default `text=auto` may install them as CRLF and they show
+# as "M" forever. Observations #32 + #214.
+modules/adapters-lucene/src/main/resources/SSOT/catalogs/synonyms.*.v1.txt text eol=lf
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.gguf filter=lfs diff=lfs merge=lfs -text
+*.int8-backup filter=lfs diff=lfs merge=lfs -text
+*.fp32-backup filter=lfs diff=lfs merge=lfs -text
+*onnx_data filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,76 @@
+name: Docs lint
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.14.0"
+  PUPPETEER_SKIP_DOWNLOAD: "true"
+
+jobs:
+  docs_lint:
+    name: Docs lint
+    runs-on: [self-hosted, Windows, X64, justsearch-perf]
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Ensure cache compression tools on PATH
+        shell: cmd
+        run: echo C:\Program Files\Git\usr\bin>>"%GITHUB_PATH%"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Workflow trigger policy guard
+        run: node scripts/ci/check-workflow-triggers.mjs
+
+      - name: Root README entrypoint guard
+        run: node scripts/ci/check-root-readme.mjs
+
+      - name: Verify canonical docs links
+        run: node scripts/docs/verify-canonical-doc-links.mjs
+
+      - name: Verify frontend-stack claims (no retired React stack as current)
+        run: node scripts/docs/check-frontend-stack-claims.mjs
+
+      - name: Verify model-name freshness (no retired Qwen3VL as current; registry-projected)
+        run: node scripts/docs/check-model-freshness.mjs
+
+      - name: Verify privacy claims (CSP loopback-lock + no telemetry SDK)
+        run: node scripts/docs/check-privacy-claims.mjs
+
+      # TODO: verify-runtime-config-matrix.mjs expects the pre-314-F9 column
+      # layout (YAML key / Env var / System property). The matrix doc was
+      # regenerated with a new layout; the verifier needs a rewrite before
+      # re-enabling. Mirrors the disable in ci.yml (see ci.yml "Runtime
+      # config matrix gate" block).
+      # - name: Verify runtime config ownership matrix
+      #   run: node scripts/docs/verify-runtime-config-matrix.mjs
+
+      - name: Verify module dependency doc is up to date
+        run: node scripts/architecture/module-deps.mjs --check-canonical
+
+      - name: Markdownlint (canonical docs)
+        run: npx markdownlint 'docs/explanation/**/*.md' 'docs/reference/**/*.md' 'docs/how-to/**/*.md' 'docs/decisions/**/*.md'
+
+      - name: Verify llms.txt is up to date
+        run: node scripts/docs/llmstxt-generate.mjs --check

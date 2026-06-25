@@ -1,0 +1,314 @@
+package io.justsearch.systemtests.provisioning;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import org.junit.jupiter.api.extension.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * JUnit 5 Extension that provisions a test environment for system tests.
+ *
+ * <p>Provides:
+ * <ul>
+ *   <li><b>Artifact Verification:</b> Fails fast if the worker JAR is missing</li>
+ *   <li><b>Sandboxing:</b> Creates a temporary directory for test data (signals, indices)</li>
+ *   <li><b>Configuration:</b> Sets system properties to point to real SSOT/config (no copying)</li>
+ *   <li><b>Lifecycle Management:</b> Cleans up temp directories after tests</li>
+ * </ul>
+ *
+ * <p><b>Usage:</b>
+ * <pre>{@code
+ * class MyTest {
+ *     @RegisterExtension
+ *     static TestEnvironmentProvisioner env = new TestEnvironmentProvisioner();
+ *
+ *     @Test
+ *     void myTest() {
+ *         Path workerDist = env.getWorkerDistDir();
+ *         Path tempDir = env.getTempDir();
+ *         String[] jvmArgs = env.getWorkerJvmArgs();
+ *         // ...
+ *     }
+ * }
+ * }</pre>
+ *
+ * <p><b>Design:</b> Instead of copying SSOT/config directories (which was slow and caused
+ * file locking issues on Windows), this extension now sets system properties that point to
+ * the real project directories. This relies on the configuration layer respecting:
+ * <ul>
+ *   <li>{@code -Djustsearch.repo.root} or {@code JUSTSEARCH_REPO_ROOT}</li>
+ *   <li>{@code -Djustsearch.config} or {@code JUSTSEARCH_CONFIG}</li>
+ *   <li>{@code -Djustsearch.ssot.path} or {@code JUSTSEARCH_SSOT_PATH}</li>
+ * </ul>
+ *
+ * <p><b>Note:</b> This extension manages <em>files only</em>. Process lifecycle
+ * (spawning, killing workers) is handled by {@link io.justsearch.systemtests.process.ManagedProcess}
+ * and its shutdown hook.
+ */
+public class TestEnvironmentProvisioner implements BeforeAllCallback, AfterAllCallback, BeforeEachCallback {
+  private static final Logger log = LoggerFactory.getLogger(TestEnvironmentProvisioner.class);
+
+  private Path workerDistDir;
+  private Path tempDir;
+  private Path projectRoot;
+  private boolean initialized = false;
+
+  // Original system property values (for cleanup)
+  private String originalRepoRoot;
+  private String originalSsotPath;
+  private String originalConfig;
+
+  // =========================================================================
+  // Lifecycle Callbacks
+  // =========================================================================
+
+  @Override
+  public void beforeAll(ExtensionContext context) throws Exception {
+    if (initialized) {
+      return;
+    }
+
+    log.info("TestEnvironmentProvisioner: Initializing test environment");
+
+    // Step 1: Verify worker distribution directory exists (fail-fast)
+    verifyWorkerDist();
+
+    // Step 2: Find project root
+    findProjectRoot();
+
+    // Step 3: Create temp directory for test data (signals, indices)
+    String testClassName = context.getTestClass()
+        .map(Class::getSimpleName)
+        .orElse("unknown");
+    tempDir = Files.createTempDirectory("test-env-" + testClassName + "-");
+    log.info("Created temp directory: {}", tempDir);
+
+    // Step 4: Set system properties to point to real SSOT/config (no copying!)
+    configureSystemProperties();
+
+    initialized = true;
+    log.info("TestEnvironmentProvisioner: Initialization complete");
+  }
+
+  @Override
+  public void beforeEach(ExtensionContext context) throws Exception {
+    // Clean up signal file to prevent reading stale data from previous tests
+    // Retry a few times to handle Windows file locking delays
+    Path signalFile = tempDir.resolve("worker_signal.lock");
+    for (int attempt = 0; attempt < 5; attempt++) {
+      try {
+        Files.deleteIfExists(signalFile);
+        break;
+      } catch (java.nio.file.FileSystemException e) {
+        if (attempt < 4) {
+          Thread.sleep(200);
+        } else {
+          log.warn("Could not delete signal file after 5 attempts: {}", e.getMessage());
+          // Don't throw - let the test decide if this is fatal
+        }
+      }
+    }
+  }
+
+  @Override
+  public void afterAll(ExtensionContext context) {
+    log.info("TestEnvironmentProvisioner: Cleaning up");
+
+    // Restore original system properties
+    restoreSystemProperties();
+
+    // Clean up temp directory
+    if (tempDir != null && Files.exists(tempDir)) {
+      cleanupDirectory(tempDir);
+    }
+
+    initialized = false;
+  }
+
+  // =========================================================================
+  // Public Accessors
+  // =========================================================================
+
+  /**
+   * Returns the path to the worker distribution directory (contains bin/ and lib/).
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public Path getWorkerDistDir() {
+    ensureInitialized();
+    return workerDistDir;
+  }
+
+  /**
+   * Returns the temporary directory for this test class.
+   * Use for test data: worker_signal.lock, index data, etc.
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public Path getTempDir() {
+    ensureInitialized();
+    return tempDir;
+  }
+
+  /**
+   * Returns the path to the application.yaml config file in the project.
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public Path getConfigPath() {
+    ensureInitialized();
+    return projectRoot.resolve("config/application.yaml");
+  }
+
+  /**
+   * Returns the project root directory.
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public Path getProjectRoot() {
+    ensureInitialized();
+    return projectRoot;
+  }
+
+  /**
+   * Returns the path to the SSOT directory.
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public Path getSsotPath() {
+    ensureInitialized();
+    return projectRoot.resolve("SSOT");
+  }
+
+  /**
+   * Returns JVM arguments array for spawning worker processes.
+   *
+   * <p>These arguments configure the worker to:
+   * <ul>
+   *   <li>Use the real SSOT directory</li>
+   *   <li>Use the real config file</li>
+   *   <li>Write data to the test's temp directory</li>
+   * </ul>
+   *
+   * @throws IllegalStateException if called before initialization
+   */
+  public String[] getWorkerJvmArgs() {
+    ensureInitialized();
+    return new String[] {
+        "-Djustsearch.repo.root=" + projectRoot.toAbsolutePath(),
+        "-Djustsearch.ssot.path=" + projectRoot.resolve("SSOT").toAbsolutePath(),
+        "-Djustsearch.config=" + projectRoot.resolve("config/application.yaml").toAbsolutePath(),
+        "-Djustsearch.data.dir=" + tempDir.toAbsolutePath()
+    };
+  }
+
+  // =========================================================================
+  // Private Implementation
+  // =========================================================================
+
+  private void verifyWorkerDist() {
+    String distPath = System.getProperty("justsearch.worker.dist.dir");
+    if (distPath == null || distPath.isBlank()) {
+      throw new IllegalStateException(
+          "Worker distribution not configured. Set system property 'justsearch.worker.dist.dir' or run: " +
+          "./gradlew :modules:indexer-worker:installDist");
+    }
+
+    workerDistDir = Path.of(distPath);
+    if (!Files.isDirectory(workerDistDir)) {
+      throw new IllegalStateException(
+          "Worker distribution directory not found at: " + workerDistDir + "\n" +
+          "Run: ./gradlew :modules:indexer-worker:installDist");
+    }
+
+    log.info("Worker distribution verified: {}", workerDistDir);
+  }
+
+  private void findProjectRoot() {
+    // Start from current directory and walk up to find project root
+    projectRoot = Path.of(".").toAbsolutePath().normalize();
+    while (projectRoot != null) {
+      if (Files.exists(projectRoot.resolve("SSOT")) &&
+          Files.exists(projectRoot.resolve("settings.gradle.kts"))) {
+        log.info("Found project root: {}", projectRoot);
+        return;
+      }
+      projectRoot = projectRoot.getParent();
+    }
+
+    // Fallback: try relative paths
+    Path[] fallbackPaths = {
+        Path.of("../../../").toAbsolutePath().normalize(),
+        Path.of("../../").toAbsolutePath().normalize(),
+        Path.of("../").toAbsolutePath().normalize()
+    };
+
+    for (Path fallback : fallbackPaths) {
+      if (Files.exists(fallback.resolve("SSOT"))) {
+        projectRoot = fallback;
+        log.info("Found project root via fallback: {}", projectRoot);
+        return;
+      }
+    }
+
+    throw new IllegalStateException(
+        "Could not find project root with SSOT directory. " +
+        "Ensure tests are run from within the project structure.");
+  }
+
+  private void configureSystemProperties() {
+    // Save original values
+    originalRepoRoot = System.getProperty("justsearch.repo.root");
+    originalSsotPath = System.getProperty("justsearch.ssot.path");
+    originalConfig = System.getProperty("justsearch.config");
+
+    // Set properties to point to real project directories
+    System.setProperty("justsearch.repo.root", projectRoot.toAbsolutePath().toString());
+    System.setProperty("justsearch.ssot.path", projectRoot.resolve("SSOT").toAbsolutePath().toString());
+    System.setProperty("justsearch.config", projectRoot.resolve("config/application.yaml").toAbsolutePath().toString());
+
+    log.info("Set system properties: repo.root={}, ssot.path={}, config={}",
+        projectRoot, projectRoot.resolve("SSOT"), projectRoot.resolve("config/application.yaml"));
+  }
+
+  private void restoreSystemProperties() {
+    restoreProperty("justsearch.repo.root", originalRepoRoot);
+    restoreProperty("justsearch.ssot.path", originalSsotPath);
+    restoreProperty("justsearch.config", originalConfig);
+  }
+
+  private void restoreProperty(String key, String originalValue) {
+    if (originalValue == null) {
+      System.clearProperty(key);
+    } else {
+      System.setProperty(key, originalValue);
+    }
+  }
+
+  private void cleanupDirectory(Path dir) {
+    try (var walk = Files.walk(dir)) {
+      walk.sorted(Comparator.reverseOrder())
+          .forEach(p -> {
+            try {
+              Files.deleteIfExists(p);
+            } catch (IOException e) {
+              log.debug("Could not delete {}: {}", p, e.getMessage());
+            }
+          });
+      log.info("Cleaned up temp directory: {}", dir);
+    } catch (IOException e) {
+      log.warn("Could not walk directory for cleanup: {}", dir, e);
+    }
+  }
+
+  private void ensureInitialized() {
+    if (!initialized) {
+      throw new IllegalStateException(
+          "TestEnvironmentProvisioner not initialized. " +
+          "Ensure the extension is registered with @RegisterExtension.");
+    }
+  }
+}

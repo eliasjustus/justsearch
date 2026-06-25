@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "observed_at": "2025-01-01T00:00:00Z",
+  "lifecycle": {
+    "state": "LIFECYCLE_STATE_READY",
+    "reason_code": null,
+    "message": null
+  },
+  "components": {
+    "head": { "state": "LIFECYCLE_STATE_READY", "reason_code": null },
+    "worker": { "state": "LIFECYCLE_STATE_READY", "reason_code": null },
+    "inference": { "state": "LIFECYCLE_STATE_READY", "reason_code": null }
+  },
+  "status": "ok",
+  "service": "JustSearch",
+  "indexBasePath": "C:/data/index",
+  "uptimeMs": 60000,
+  "memoryUsedBytes": 1024000,
+  "memoryTotalBytes": 2048000,
+  "memoryMaxBytes": 4096000,
+  "indexHealthy": true,
+  "indexedDocuments": 0,
+  "activeIndexedDocuments": 0,
+  "buildingIndexedDocuments": 0,
+  "pendingJobs": 0,
+  "indexState": "SERVING",
+  "indexSizeBytes": 0,
+  "indexAvailable": true,
+  "llm": {
+    "state": "READY",
+    "queueDepth": 0,
+    "activeSlots": 1,
+    "totalSlots": 4,
+    "tokensPerSecond": 25.5,
+    "backendType": "llama-server",
+    "circuitState": "CLOSED",
+    "softRestarts": 0,
+    "hardRestarts": 0
+  },
+  "onlineAi": {
+    "available": true,
+    "starting": false
+  },
+  "readiness": {
+    "schemaVersion": 1,
+    "observedAt": "2025-01-01T00:00:00Z",
+    "components": {
+      "INDEX_SERVING": {
+        "state": "READY",
+        "source": "worker",
+        "observedAt": "2025-01-01T00:00:00Z",
+        "stale": false,
+        "stalenessMs": 0
+      }
+    },
+    "composites": {
+      "overall": {
+        "state": "READY",
+        "reasonCodes": []
+      }
+    }
+  },
+  "aiReady": true,
+  "embeddingReady": true
+}

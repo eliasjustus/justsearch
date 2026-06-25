@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "description": "Tempdoc 571 — the surface-altitude governing axis, DERIVED form. Altitude (PRODUCT | DIAGNOSTIC | TRUST | TOOL) is a PROJECTION of the authority a surface consumes, computed by SurfaceAltitude.derive (the same derivation the backend wire + SurfaceAreaValidator use): a DiagnosticChannel ⟹ DIAGNOSTIC; a DIAGNOSTIC/TRUST-role Resource ⟹ that altitude; HEADLESS_AGENT_TOOL ⟹ TOOL; empty ⟹ PRODUCT. The gate reads Resource roles from the *ResourceCatalog.java `.withRole(Role.X)` declarations (coverage projects from the catalogs — no hand-maintained allowlist), then forecloses the two invariants derivation can still violate: a surface consuming two distinct non-PRODUCT authorities ⟹ a derivation CONFLICT (the §4c merge-foreclosure); a surface that DERIVES TRUST but is not CORE provenance ⟹ a forged trust surface (the surface-tier completion of 569's reserved channel; the component-tier foreclosure on the trust read-view stays in the FE RESERVED_COMPONENTS).",
+  "scan": {
+    "surfaceCatalog": "modules/app-observability/src/main/java/io/justsearch/app/observability/surface/CoreSurfaceCatalog.java",
+    "resourceCatalogRoots": ["modules"],
+    "javaInclude": "/src/main/java/",
+    "expectedMinPopulation": 8,
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: surfaces parsed from the catalog must be >= this many, else a parser-breaking refactor would let the altitude checks pass vacuously. Live count is 16 (2026-06-15); floor 8 is a conservative ~half-headroom. Lower this with any change that legitimately shrinks the surface catalog."
+  }
+}

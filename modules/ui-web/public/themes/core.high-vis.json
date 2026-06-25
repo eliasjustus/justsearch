@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "core.high-vis",
+  "displayName": "High Vis",
+  "description": "High-contrast palette for visibility-focused workflows.",
+  "author": "core",
+  "version": "1.0.0",
+  "tokens": {
+    "p-glass": "240, 240, 245",
+    "p-shadow": "0, 0, 0",
+    "p-text": "255, 255, 255",
+    "accent-tint": "oklch(85% 0.20 200)",
+    "accent-success": "oklch(80% 0.22 145)",
+    "accent-warning": "oklch(85% 0.22 70)",
+    "accent-danger": "oklch(75% 0.25 25)",
+    "accent-on-tint": "#000000",
+    "accent-on-success": "#000000",
+    "accent-on-warning": "#000000",
+    "accent-on-danger": "#000000",
+    "surface-0": "rgb(8, 8, 12)",
+    "surface-1": "rgb(15, 15, 22)",
+    "surface-2": "rgb(22, 22, 32)",
+    "text-primary": "rgb(255, 255, 255)",
+    "text-secondary": "rgb(220, 220, 230)",
+    "text-tertiary": "rgb(180, 180, 195)",
+    "border-subtle": "rgb(70, 70, 85)"
+  }
+}

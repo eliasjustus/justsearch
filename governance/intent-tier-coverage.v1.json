@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "Tempdoc 577 Goal 3 §3.7 — the full 570 Move H: intent-tier coverage projecting from the shape catalog. The one interaction window (UnifiedChatView) escalates one input across intent tiers; every LLM tier maps to exactly one registered conversation shape, and the `retrieve` BASE tier maps to NO shape (§3.3: pure retrieval via searchState, not a ConversationShape). This gate projects coverage FROM the Java shape authority (CoreConversationShapeCatalog.CORE_USER_INTERACTION_SHAPES): (1) every core user-interaction shape is reachable from exactly one tier; (2) the window's `presetByShape` routing table matches the declared tier→shape map byte-for-byte (a silent re-route, or a shape with no tier, fails); (3) the `retrieve` base tier is shape-less and its non-LLM seam (`submitSearch`) is present — so a tier rendered without a shape (other than retrieve) or a `retrieve` wired to an LLM dispatch is unrepresentable. The 'shape rendered outside the window' half is covered by the sibling `interaction-surface` gate's second-view backstop. Honest limit: regex-parses the `presetByShape` literal + the Java Set.of — a refactor to a computed table is import-invisible to this scan (register + discipline, the same ceiling as search-issuance / steering-arbitration).",
+  "shapeCatalog": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreConversationShapeCatalog.java",
+  "coreShapesSymbol": "CORE_USER_INTERACTION_SHAPES",
+  "window": "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
+  "presetTable": "presetByShape",
+  "baseTier": "retrieve",
+  "baseTierSeam": "submitSearch",
+  "tiers": {
+    "retrieve": [],
+    "none": ["core.free-chat"],
+    "documents": ["core.rag-ask"],
+    "extract": ["core.extract"],
+    "agent": ["core.agent-run", "core.workflow-run"]
+  }
+}

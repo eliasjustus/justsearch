@@ -1,0 +1,89 @@
+{
+  "schema": "suite-profile.v1",
+  "suite": "635-self-demo-v1",
+  "n_members": 4,
+  "members": [
+    {
+      "member": "synth-code-v1",
+      "type_axis": "code",
+      "contamination_class": "private-synthetic",
+      "corpus_size": 360,
+      "closed_book_passed": true,
+      "closed_book_accuracy": 0.0,
+      "fidelity_passed": true,
+      "retrieval_ndcg": 0.7578,
+      "retrieval_mode": "hybrid",
+      "retrieval_ndcg_by_mode": {
+        "bm25_splade": 0.1788,
+        "hybrid": 0.7578
+      },
+      "comparable": true,
+      "retrieval_difficulty": "moderate",
+      "memory_independence": 1.0,
+      "shortcut_leak_rate": 0.0,
+      "corpus_signature": "cdfceb3ec751"
+    },
+    {
+      "member": "synth-multihop-prose-v2",
+      "type_axis": "prose",
+      "contamination_class": "private-synthetic",
+      "corpus_size": 468,
+      "closed_book_passed": true,
+      "closed_book_accuracy": 0.0,
+      "fidelity_passed": true,
+      "retrieval_ndcg": 0.7451,
+      "retrieval_mode": "hybrid",
+      "retrieval_ndcg_by_mode": {
+        "bm25_splade": 0.1319,
+        "hybrid": 0.7451
+      },
+      "comparable": true,
+      "retrieval_difficulty": "moderate",
+      "memory_independence": 1.0,
+      "shortcut_leak_rate": 0.0,
+      "corpus_signature": "4c584f115282"
+    },
+    {
+      "member": "synth-multiling-de-v1",
+      "type_axis": "prose",
+      "contamination_class": "private-synthetic",
+      "corpus_size": 360,
+      "closed_book_passed": true,
+      "closed_book_accuracy": 0.0,
+      "fidelity_passed": true,
+      "retrieval_ndcg": 0.5558,
+      "retrieval_mode": "hybrid",
+      "retrieval_ndcg_by_mode": {
+        "bm25_splade": 0.0,
+        "hybrid": 0.5558
+      },
+      "comparable": true,
+      "retrieval_difficulty": "moderate",
+      "memory_independence": 1.0,
+      "shortcut_leak_rate": 0.0,
+      "corpus_signature": "2d65583233e0"
+    },
+    {
+      "member": "synth-tabular-v1",
+      "type_axis": "tabular",
+      "contamination_class": "private-synthetic",
+      "corpus_size": 360,
+      "closed_book_passed": true,
+      "closed_book_accuracy": 0.0,
+      "fidelity_passed": true,
+      "retrieval_ndcg": 0.7906,
+      "retrieval_mode": "hybrid",
+      "retrieval_ndcg_by_mode": {
+        "bm25_splade": 0.2268,
+        "hybrid": 0.7906
+      },
+      "comparable": true,
+      "retrieval_difficulty": "moderate",
+      "memory_independence": 1.0,
+      "shortcut_leak_rate": 0.0,
+      "corpus_signature": "71fbcce2ad96"
+    }
+  ],
+  "engine_git_sha": "021dd03802a88869658acf8c5796f3e532ce7f61",
+  "generated_date": "2026-06-24"
+}

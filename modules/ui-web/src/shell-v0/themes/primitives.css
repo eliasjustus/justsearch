@@ -1,0 +1,81 @@
+/**
+ * Shell V0 design-token primitives — Layer 1 of the 5-tier system
+ * (slice 3a.1.1; spec at `20-systems/04-theme-customization.md`
+ * §"Token Layers").
+ *
+ * Layer 1 holds raw values: color ramps, spacing scale, type sizes,
+ * line-heights, radii. Higher layers (semantic, component) reference
+ * these via `var(--jf-color-…)` / `var(--jf-space-…)`. Primitives
+ * never reference each other.
+ *
+ * Naming follows common design-system convention:
+ *   --jf-color-<hue>-<step>   (50, 100, 200, …, 900)
+ *   --jf-space-<step>          (0, 1, 2, 3, …, base 4px increments)
+ *   --jf-text-<size>           (xs, sm, base, lg, xl)
+ *   --jf-radius-<step>         (sm, md, lg)
+ *
+ * The scale is intentionally compact for V0; new primitives can be
+ * added when a semantic-token consumer needs them.
+ */
+
+:root {
+  /* ===================================================================
+   * COLOR PRIMITIVES — neutral ramp
+   * =================================================================== */
+  --jf-color-neutral-0: #ffffff;
+  --jf-color-neutral-50: #f9f9f9;
+  --jf-color-neutral-100: #f5f5f5;
+  --jf-color-neutral-200: #ececec;
+  --jf-color-neutral-300: #d0d0d0;
+  --jf-color-neutral-400: #ccc;
+  --jf-color-neutral-500: #888;
+  --jf-color-neutral-600: #555;
+  --jf-color-neutral-700: #444;
+  --jf-color-neutral-900: #000;
+  --jf-color-neutral-100-alt: #ddd;
+  --jf-color-neutral-150: #eee;
+  --jf-color-neutral-badge: #f3f3f3;
+
+  /* ===================================================================
+   * COLOR PRIMITIVES — severity hues
+   * =================================================================== */
+  --jf-color-info-500: #3a8dde;
+  --jf-color-info-600: #1b6ec2;
+  --jf-color-info-overlay: rgba(27, 110, 194, 0.15);
+  --jf-color-warning-500: #d97706;
+  --jf-color-error-500: #c00;
+
+  /* ===================================================================
+   * SPACING PRIMITIVES — 4px base scale
+   * =================================================================== */
+  --jf-space-0: 0;
+  --jf-space-1: 0.25rem;   /*  4px */
+  --jf-space-2: 0.5rem;    /*  8px */
+  --jf-space-3: 0.75rem;   /* 12px */
+  --jf-space-4: 1rem;      /* 16px */
+  --jf-space-6: 1.5rem;    /* 24px */
+  --jf-space-8: 2rem;      /* 32px */
+
+  /* ===================================================================
+   * TYPOGRAPHY PRIMITIVES
+   * The type SCALE primitives are the single global `--font-size-*` scale
+   * (`styles/tokens.css`, the 574 scale). The theme system's semantic type
+   * tokens (`--jf-text-*-size`, default.css) project from it directly — the
+   * legacy `--jf-text-{xs,sm,md,base,lg}` duplicate scale was removed in 574
+   * §25 (two-scale consolidation). Weights stay theme primitives.
+   * =================================================================== */
+  --jf-weight-normal: 400;
+  --jf-weight-medium: 500;
+  --jf-weight-semibold: 600;
+
+  /* ===================================================================
+   * RADIUS PRIMITIVES
+   * =================================================================== */
+  --jf-radius-sm: 2px;
+  --jf-radius-md: 4px;
+
+  /* ===================================================================
+   * SIZE PRIMITIVES — tab heights, etc.
+   * =================================================================== */
+  --jf-size-tab-height: 30px;
+}

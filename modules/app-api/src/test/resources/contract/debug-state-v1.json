@@ -1,0 +1,45 @@
+{
+  "status": "ok",
+  "queue_depth": 0,
+  "doc_count": 42,
+  "active_doc_count": 42,
+  "building_doc_count": 0,
+  "serving_search_generation_id": "gen-1",
+  "serving_ingest_generation_id": "gen-1",
+  "switch_buffer_depth": 0,
+  "pending_jobs_count": 0,
+  "processing_jobs_count": 0,
+  "pending_ready_jobs_count": 0,
+  "pending_backoff_jobs_count": 0,
+  "migration_switching_age_ms": 0,
+  "migration_switching_max_duration_ms": 0,
+  "migration_paused": false,
+  "migration_pause_reason": "",
+  "migration_paused_at_ms": 0,
+  "is_healthy": true,
+  "last_commit_timestamp": 1700000000000,
+  "migration_enumerator": {
+    "running": false,
+    "done": true,
+    "roots_total": 1,
+    "roots_done": 1,
+    "files_seen": 10,
+    "files_enqueued": 10,
+    "started_at_ms": 1700000000000,
+    "finished_at_ms": 1700000001000,
+    "last_path": ""
+  },
+  "signal_bus": {
+    "last_activity_ts": 0,
+    "last_heartbeat_ts": 0
+  },
+  "uptime_ms": 60000,
+  "health_check": {
+    "serving": true,
+    "version": "1.0.0",
+    "pid": 12345,
+    "worker_state": "RUNNING",
+    "ai_ready": true,
+    "embedding_ready": true
+  }
+}

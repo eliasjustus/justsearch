@@ -1,0 +1,87 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.app.services.registry.operations.handlers;
+
+import io.justsearch.agent.api.registry.OperationHandler;
+import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.PackImportService;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * Handler for {@code core.import-ai-pack}.
+ *
+ * <p>Slice 3a-2-c continuation: BrainPackImportSection Import button.
+ * Delegates to {@link PackImportService#startImport(String, boolean)} via
+ * lazy supplier.
+ *
+ * <p>Args shape: {@code {"path": string, "allowDowngrade"?: boolean}}.
+ * Returns the post-start status snapshot (AiPackImportStatus) in
+ * {@code structuredData}.
+ */
+public final class ImportAiPackHandler implements OperationHandler {
+
+  private static final Logger log = LoggerFactory.getLogger(ImportAiPackHandler.class);
+
+  private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+
+  private final Supplier<PackImportService> supplier;
+
+  public ImportAiPackHandler(Supplier<PackImportService> supplier) {
+    this.supplier = Objects.requireNonNull(supplier, "supplier");
+  }
+
+  @Override
+  public OperationResult execute(String argumentsJson) {
+    String path;
+    boolean allowDowngrade;
+    try {
+      JsonNode root = MAPPER.readTree(argumentsJson == null || argumentsJson.isBlank() ? "{}" : argumentsJson);
+      JsonNode p = root.get("path");
+      if (p == null || !p.isTextual() || p.asString().isBlank()) {
+        return OperationResult.failure("Missing required arg: path");
+      }
+      path = p.asString();
+      JsonNode ad = root.get("allowDowngrade");
+      allowDowngrade = ad != null && ad.isBoolean() && ad.asBoolean();
+    } catch (Exception e) {
+      return OperationResult.failure("Invalid args: " + e.getMessage());
+    }
+
+    PackImportService svc;
+    try {
+      svc = supplier.get();
+    } catch (RuntimeException e) {
+      log.warn("ImportAiPackHandler: supplier threw", e);
+      return OperationResult.failure("Pack import service unavailable: " + e.getMessage());
+    }
+    if (svc == null) {
+      return OperationResult.failure("Pack import service unavailable");
+    }
+
+    try {
+      Map<String, Object> status = svc.startImport(path, allowDowngrade);
+      return OperationResult.success("Pack import started", status);
+    } catch (IllegalArgumentException e) {
+      return OperationResult.failure(
+          e.getMessage(), "INVALID_REQUEST", Map.of("path", path), false);
+    } catch (IllegalStateException e) {
+      // AiPackImportService throws ISE when an import is already running.
+      return OperationResult.failure(
+          e.getMessage(), "PACK_IMPORT_RUNNING", Map.of("path", path), true);
+    } catch (Exception e) {
+      log.error("ImportAiPackHandler: startImport threw", e);
+      return OperationResult.failure(
+          "Pack import failed: "
+              + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()),
+          "PACK_IMPORT_START_FAILED",
+          Map.of("path", path),
+          true);
+    }
+  }
+}

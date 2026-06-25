@@ -1,0 +1,275 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://justsearch.io/schemas/ui/workflow.json",
+  "title": "JustSearch UI Automation Workflow",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "steps"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [1],
+      "description": "Schema version understood by the Phase 14.5 runner."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-_]{2,63}$",
+      "description": "Stable identifier (kebab case) for the workflow."
+    },
+    "description": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-_]{0,32}$"
+      },
+      "uniqueItems": true
+    },
+    "maxDurationMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "description": "Upper bound for executing the entire workflow."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/step"
+      }
+    }
+  },
+  "definitions": {
+    "selector": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "fxId": { "type": "string" },
+        "role": { "type": "string" },
+        "name": { "type": "string" },
+        "accessibleText": { "type": "string" }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "required": ["selector", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "selector": { "$ref": "#/definitions/selector" },
+        "description": { "type": "string" },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/assertionCheck" }
+        }
+      }
+    },
+    "telemetryAssertion": {
+      "type": "object",
+      "required": ["checks"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "eventType": { "type": "string" },
+        "traceId": { "type": "string" },
+        "selector": { "$ref": "#/definitions/selector" },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/assertionCheck" }
+        }
+      }
+    },
+    "assertionCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "equals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field"],
+          "properties": {
+            "field": { "type": "string" },
+            "value": {},
+            "valueFrom": { "$ref": "#/definitions/valueFrom" }
+          },
+          "oneOf": [
+            { "required": ["value"] },
+            { "required": ["valueFrom"] }
+          ]
+        },
+        "contains": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "value"],
+          "properties": {
+            "field": { "type": "string" },
+            "value": { "type": "string" }
+          }
+        }
+      },
+      "minProperties": 1,
+      "maxProperties": 1
+    },
+    "valueFrom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "field"],
+      "properties": {
+        "selector": { "$ref": "#/definitions/selector" },
+        "field": { "type": "string" }
+      }
+    },
+    "predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "childrenMin": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "equals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field"],
+          "properties": {
+            "field": { "type": "string" },
+            "value": {},
+            "valueFrom": { "$ref": "#/definitions/valueFrom" }
+          },
+          "oneOf": [
+            { "required": ["value"] },
+            { "required": ["valueFrom"] }
+          ]
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["wait", "act", "assertTree", "captureEvidence", "assertTelemetry"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "wait" } }
+          },
+          "then": {
+            "required": ["condition"],
+            "properties": {
+              "condition": {
+                "type": "string",
+                "enum": ["frameIdle", "treeNode", "textEquals"]
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 100,
+                "default": 10000
+              },
+              "selector": { "$ref": "#/definitions/selector" },
+              "predicate": { "$ref": "#/definitions/predicate" },
+              "text": { "type": "string" }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": { "condition": { "const": "treeNode" } }
+                },
+                "then": {
+                  "required": ["selector"]
+                }
+              },
+              {
+                "if": {
+                  "properties": { "condition": { "const": "textEquals" } }
+                },
+                "then": {
+                  "required": ["selector", "text"]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "act" } }
+          },
+          "then": {
+            "required": ["command"],
+            "properties": {
+              "command": {
+                "type": "string",
+                "enum": ["setValue", "click", "keys", "telemetryFail", "scrollTo"]
+              },
+              "selector": { "$ref": "#/definitions/selector" },
+              "args": { "type": "object" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "assertTree" } }
+          },
+          "then": {
+            "required": ["assertions"],
+            "properties": {
+              "assertions": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/definitions/assertion" }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "captureEvidence" } }
+          },
+          "then": {
+            "required": ["artifacts"],
+            "properties": {
+              "artifacts": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "tree",
+                    "screenshot",
+                    "version",
+                    "telemetry",
+                    "events",
+                    "actions",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "assertTelemetry" } }
+          },
+          "then": {
+            "required": ["events"],
+            "properties": {
+              "events": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/definitions/telemetryAssertion" }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

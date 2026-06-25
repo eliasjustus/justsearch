@@ -1,0 +1,32 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "count" : {
+      "type" : "integer"
+    },
+    "jobs" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "attempts" : {
+            "type" : "integer"
+          },
+          "collection" : {
+            "type" : [ "string", "null" ]
+          },
+          "errorMessage" : {
+            "type" : [ "string", "null" ]
+          },
+          "lastUpdatedMs" : {
+            "type" : "integer"
+          },
+          "path" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    }
+  }
+}

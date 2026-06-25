@@ -1,0 +1,45 @@
+# dead-code-jvm ratchet — tempdoc 638. Accepted whole-program-dead classes (one FQN/line).
+#
+# A class here is unreferenced across the whole PRODUCTION program (all modules, both processes).
+# The gate fails if a NEW class becomes dead beyond this set; `--rebalance` shrinks it as entries
+# are removed. Goal: keep this set minimal and falling.
+#
+# KNOWN LIMITATION (review finding F5): every entry below is "test-wired" — a production class
+# exercised only by a dedicated test (ValidatorRunnerTest, *EmitterTest, ContractEmitterTest, …).
+# The gate imports with DoNotIncludeTests, and the whole-program host depends on each module's MAIN
+# jar (not its test sourceset), so cross-module test references are not on the analysis classpath at
+# all — there is no feasible way to "see" them. They are genuinely PRODUCTION-unreferenced (built
+# ahead of / only for tests), so baselining them is correct, with one caveat: if such a class later
+# loses its test it is already accepted here and the gate will not re-flag it. These are also the
+# natural candidates for a future "delete speculative-but-unwired code" pass.
+
+# --- Registry validation harness (constructed only by ValidatorRunnerTest / ShapeProposalRunnerTest). ---
+io.justsearch.app.services.registry.validator.ConfirmValidator
+io.justsearch.app.services.registry.validator.ExecutorBindingValidator
+io.justsearch.app.services.registry.validator.I18nKeyValidator
+io.justsearch.app.services.registry.validator.KindRendererCrossRefValidator
+io.justsearch.app.services.registry.validator.NamespacingValidator
+io.justsearch.app.services.registry.validator.RetryRateLimitValidator
+io.justsearch.app.services.registry.validator.RiskAuditValidator
+io.justsearch.app.services.registry.proposal.OperationShapeProposalProvider
+io.justsearch.app.services.registry.proposal.PromptShapeProposalProvider
+io.justsearch.app.services.registry.proposal.ResourceShapeProposalProvider
+io.justsearch.app.services.registry.proposal.ShapeProposalValidator
+
+# --- Registry emitters built but not yet wired into production (planned/future; each has a *EmitterTest). ---
+io.justsearch.app.services.registry.emitter.URLOperationEmitter
+io.justsearch.app.services.registry.emitter.URLSurfaceEmitter
+
+# --- Contract-validation infrastructure (exercised by contract/boot tests). ---
+io.justsearch.contracts.BootContractAudit
+io.justsearch.contracts.ContractEmitter
+io.justsearch.contracts.ContractSampler
+
+# --- Backend selection infra (constructed only in backend/eval tests). ---
+# (DeterministicBackendProvider is now an SPI root — declared in META-INF/services/BackendProvider —
+#  so it is exempted by the gate, not baselined here.)
+io.justsearch.aibackend.backend.BackendRegistry
+
+# --- Other test-support production classes. ---
+io.justsearch.adapters.lucene.commit.RequiredFieldsCommitMetadataValidator
+io.justsearch.app.observability.InfraHealthController

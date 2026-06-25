@@ -1,0 +1,93 @@
+// Severity catalog (slice 3a-1-8d Phase 1 spike per ADR-09b).
+//
+// First catalog-Category instance of the contract substrate. Demonstrates
+// the proto enum + companion metadata message pattern. Source-of-truth for
+// the closed set of severity values that wire fields like `HealthEvent.severity`
+// reference.
+//
+// Format: protobuf 3 (per ADR-09b). The substrate's per-target emitters
+// generate idiomatic types in Java + TS + (future) other targets. Per-entry
+// metadata (label, i18n key, deprecation status, since-version) is carried
+// in the companion `SeverityMetadata` message; consumers query a static
+// lookup helper rather than walking descriptors.
+
+syntax = "proto3";
+
+package justsearch.catalog.v1;
+
+import "buf/validate/validate.proto";
+
+option java_package = "io.justsearch.contract.catalog.severity";
+option java_multiple_files = true;
+
+// Severity-level enum. Wire field references this enum; consumers receive
+// closed-set type ergonomics on Java + TS sides.
+//
+// The UNSPECIFIED value at zero is required by proto3 conventions; it is
+// NOT a catalog member. Real values start at 1.
+//
+// Per ADR-09a "Future Agents Must Not": no `enum.defined_only = true`
+// constraint at the wire-validation layer (forward-compat for unknown
+// future values). The catalog declares the closed set; protovalidate
+// enforces only that the value is a valid enum constant (proto3 semantics).
+enum SeverityCode {
+  SEVERITY_CODE_UNSPECIFIED = 0;
+  SEVERITY_CODE_INFO = 1;
+  SEVERITY_CODE_WARNING = 2;
+  SEVERITY_CODE_ERROR = 3;
+}
+
+// Per-entry metadata. One entry per non-UNSPECIFIED enum value. Catalog
+// consumers query metadata by `code`; lookup is constant-time after
+// one-time-load via the static helper.
+message SeverityMetadata {
+  SeverityCode code = 1 [(buf.validate.field).enum.defined_only = true];
+
+  // Human-readable label (e.g., "Information", "Warning", "Error").
+  // Used for FE rendering when no i18n locale is loaded.
+  string label = 2 [(buf.validate.field).string.min_len = 1];
+
+  // i18n catalog key for localized display. References the i18n catalog
+  // (slice 431; future slice 3a-1-8c cross-reference enforcement).
+  string i18n_key = 3 [json_name = "i18nKey", (buf.validate.field).string.min_len = 1];
+
+  // Render hint: which UI primitive this severity maps to (status badge,
+  // alert-style notification, etc.). Free-form per slice
+  // 20-systems/06-error-recovery-diagnostics.md; consumers branch on the
+  // enum-string form ("info", "warning", "error" — lowercase value name
+  // sans prefix).
+  string render_hint = 4 [json_name = "renderHint"];
+
+  // Deprecation flag (forward-compat: a value may be marked deprecated
+  // without removal so old consumers continue to receive valid wire
+  // payloads with that value).
+  bool deprecated = 5;
+
+  // Optional human-readable explanation of why deprecated + migration
+  // path. Required when `deprecated = true` (CEL invariant below).
+  optional string deprecation_reason = 6 [json_name = "deprecationReason"];
+
+  // Catalog version where this entry was introduced. Allows older
+  // consumers to detect incompatibility (the catalog's own evolution
+  // discipline; older consumers refuse to act on newer values).
+  string since = 7 [(buf.validate.field).string.min_len = 1];
+
+  option (buf.validate.message).cel = {
+    id: "severity_metadata.deprecation_reason_required",
+    expression:
+      "!this.deprecated || (has(this.deprecation_reason) && size(this.deprecation_reason) > 0)",
+    message: "deprecated severity entries must declare a deprecation_reason"
+  };
+}
+
+// Catalog envelope. The build-time generator emits a static helper that
+// returns this message populated with the inline-declared entries below.
+// Consumers don't load this from the wire at runtime; they import the
+// generated static-data helper directly.
+message SeverityCatalog {
+  // Lookup table; one entry per non-UNSPECIFIED SeverityCode value.
+  repeated SeverityMetadata entries = 1;
+
+  // Catalog version (mirrors `contracts/catalog/severity/VERSION`).
+  string version = 2 [(buf.validate.field).string.min_len = 1];
+}

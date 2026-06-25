@@ -1,0 +1,62 @@
+{
+  "shell-v0/components/StatusCard.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/components/Table.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/ArrayControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/BooleanControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/CorpusPickerRenderer.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/DateControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/EnumControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/NumberControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/ObjectControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/TextControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/controls/TimeControl.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  },
+  "shell-v0/renderers/layouts/GroupLayout.ts": {
+    "zIndex": 0,
+    "transition": 0,
+    "fontSize": 1
+  }
+}

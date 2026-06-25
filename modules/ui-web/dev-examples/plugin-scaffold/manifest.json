@@ -1,0 +1,8 @@
+{
+  "id": "scaffold",
+  "version": "0.1.0",
+  "displayName": "Scaffold Plugin",
+  "contractVersion": "1.1",
+  "tagNamespace": "scaffold",
+  "main": "plugin.js"
+}

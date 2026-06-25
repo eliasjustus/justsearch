@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Tempdoc 565 §30 — the steering-arbitration register (the DIRECTION authority). The human's direction over a LIVE agent run is a single channel of PER-RUN directives that act on the run via its controller — initiate · interject · halt — dispatched through the ONE `dispatchRunControl` seam (runControlIntent.ts), so a hand-rolled steer or stop that bypasses the seam cannot drift (the §13 'seam, not grep, is the anti-drift' shape). POSITIVE coverage: every `adopters` entry composes the seam. FORBIDDEN reintroduction: each per-run directive's controller call (`.steer(` for interject, `cancelSession(` for halt) has EXACTLY ONE dispatch site — the seam — so a second steer input or a hand-rolled stop button in any view/component is a build failure. (set-posture is OUT of this seam by design: the autonomy dial writes the GLOBAL 561 P-D autonomy store, a peer channel the run's gate consumes, not a per-run controller directive.) A NEW per-run run-control affordance is a discovery step (add to `adopters` + dispatch through the seam).",
+  "primitive": {
+    "module": "modules/ui-web/src/shell-v0/controllers/runControlIntent.ts",
+    "symbol": "dispatchRunControl"
+  },
+  "adopters": [
+    "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
+    "modules/ui-web/src/shell-v0/components/RetrospectivePanel.ts"
+  ],
+  "runDirectiveChannels": {
+    "comment": "Each per-run directive reaches the live run via a RECEIVER.method call (dot-prefixed, so the controller's own `async steer(`/`async cancelSession(` definitions do not match). It must flow ONLY through the seam — no view/component may call it directly. `.cancelSession(` is the halt channel; `.steer(` is the interject channel; `.raiseBudget(` is the raise-budget channel (tempdoc 577 Ext III); `.resumeSession(` is the resume channel (tempdoc 577 Move 1).",
+    "callPatterns": [".steer(", ".cancelSession(", ".raiseBudget(", ".resumeSession(", ".resolveBudgetGate("],
+    "allowed": [
+      "modules/ui-web/src/shell-v0/controllers/runControlIntent.ts"
+    ]
+  },
+  "lifecyclePredicates": {
+    "comment": "Tempdoc 577 §2.12 Move 1 — every per-run directive declares the lifecycle predicate under which it is dispatchable; the seam's `directiveAvailable` is the ONE implementation (render sites use it for visibility; dispatchRunControl refuses when it fails). A directive channel WITHOUT a predicate entry here fails the gate — an affordance that does not consult the state it acts on is the 404/500 class (raise-budget on a DONE run; Resume on an evicted session).",
+    "predicateSymbol": "directiveAvailable",
+    "channels": {
+      ".steer(": "run in flight (interject acts on the live run)",
+      ".cancelSession(": "run in flight (halt acts on the live run)",
+      ".raiseBudget(": "run in flight (the backend evicts finished sessions)",
+      ".resumeSession(": "session declared resumable, and no run currently in flight",
+      ".resolveBudgetGate(": "a budget gate is currently HELD (the run is parked; tempdoc 577 Move 2)"
+    }
+  }
+}

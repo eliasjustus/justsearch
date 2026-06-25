@@ -1,0 +1,6 @@
+{
+  "$schema": "https://ssot.justsearch/v1/schemas/aliases-catalog.json",
+  "schemaVersion": "1.0",
+  "description": "Cross-catalog alias/redirect table for renamed or legacy registry IDs (tempdoc 499 §4.4). Empty at initial ship — the mechanism is ready for when IDs change.",
+  "aliases": {}
+}

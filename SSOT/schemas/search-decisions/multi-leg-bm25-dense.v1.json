@@ -1,0 +1,18 @@
+{
+  "decision_kind" : "multi_leg",
+  "facet_source" : "absent",
+  "effective_mode" : "HYBRID",
+  "legs" : "bm25_dense",
+  "chunk_merge_kind" : "eligible_apply",
+  "legs_detail" : {
+    "kind" : "bm25_dense",
+    "effective_mode_label" : "HYBRID",
+    "retrieval_limit" : 20,
+    "vector_dim" : 4,
+    "hybrid_weight" : 1.0
+  },
+  "facets_requested" : false,
+  "hybrid_fallback" : null,
+  "splade_skip" : null,
+  "chunk_merge_inputs_present" : true
+}

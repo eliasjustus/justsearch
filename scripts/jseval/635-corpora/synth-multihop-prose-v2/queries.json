@@ -1,0 +1,262 @@
+[
+ {
+  "query": "What is the value associated with the founder of the designer of the power station in the upper wetlands?",
+  "answer": "ochre ferrolite 0003",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "skoash1",
+   "skoric2",
+   "vexdell3"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the stargazing facility in the ridge to the east?",
+  "answer": "indigo lansk 0006",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "cavreach4",
+   "mirlun5",
+   "vorcrag6"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the grain-grinding works in the curve of the river?",
+  "answer": "indigo quartzine 0009",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmvale7",
+   "quenker8",
+   "rellreach9"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the records vault in the former justice building?",
+  "answer": "pallid lansk 0012",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "orrvale10",
+   "mirstone11",
+   "orrcrag12"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the metal-casting works in the quarter to the west?",
+  "answer": "verdant lansk 0015",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmholt13",
+   "orrfen14",
+   "nuthby15"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the optical instrument in the Carpathian uplands?",
+  "answer": "azure perrin 0018",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limker16",
+   "wendcrag17",
+   "mirlun18"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the streetcar line in the city on the slopes?",
+  "answer": "azure skack 0021",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenker19",
+   "tasgrove20",
+   "vexreach21"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the water channel in the hills to the south?",
+  "answer": "pallid perrin 0024",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorcrag22",
+   "orrwick23",
+   "harndell24"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the publishing works in the central marketplace?",
+  "answer": "russet brannik 0027",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limash25",
+   "zellun26",
+   "mirash27"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the coastal beacon in the stony promontory?",
+  "answer": "indigo quartzine 0030",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmreach28",
+   "quendac29",
+   "pelllun30"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the wine estate in the sunlit dale?",
+  "answer": "umber vellum 0033",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "tasric31",
+   "vexcrag32",
+   "quenash33"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the thermal spa in the shoreline bluffs?",
+  "answer": "indigo quartzine 0036",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "drugrove34",
+   "limdell35",
+   "zelstone36"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the power station in the evergreen woodland?",
+  "answer": "ochre brannik 0039",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "nuthreach37",
+   "pellreach38",
+   "mirker39"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the stargazing facility in the saline plains?",
+  "answer": "indigo vellum 0042",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "wendven40",
+   "pellmire41",
+   "mirholt42"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the grain-grinding works in the stone pit?",
+  "answer": "azure quartzine 0045",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "nuthstone43",
+   "rellthorn44",
+   "skomire45"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the records vault in the port entrance?",
+  "answer": "ochre lansk 0048",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "drumond46",
+   "zelric47",
+   "nuthmire48"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the metal-casting works in the arid hollow?",
+  "answer": "verdant quartzine 0051",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "mirgrove49",
+   "olmby50",
+   "brelholt51"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the optical instrument in the iced-over tarn?",
+  "answer": "verdant lansk 0054",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "zelash52",
+   "pelldac53",
+   "wendric54"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the streetcar line in the enclosed grounds?",
+  "answer": "azure brannik 0057",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorric55",
+   "harnven56",
+   "orrstone57"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the water channel in the belfry spire?",
+  "answer": "crimson skack 0060",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "zelreach58",
+   "limwick59",
+   "orrlun60"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the publishing works in the ore working?",
+  "answer": "ochre vellum 0063",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falholt61",
+   "cavmond62",
+   "mirthorn63"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the coastal beacon in the blustery heath?",
+  "answer": "crimson perrin 0066",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "harnvale64",
+   "cavholt65",
+   "olmmire66"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the wine estate in the estuary fan?",
+  "answer": "russet brannik 0069",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kandac67",
+   "orrby68",
+   "vorreach69"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the thermal spa in the high col?",
+  "answer": "verdant vellum 0072",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falmond70",
+   "limwick71",
+   "tasven72"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the power station in the angling quay?",
+  "answer": "verdant grist 0075",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "cavker73",
+   "falpost74",
+   "olmmond75"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the stargazing facility in the fruit-grove hillside?",
+  "answer": "russet lansk 0078",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "pellfen76",
+   "pellby77",
+   "kanholt78"
+  ]
+ }
+]

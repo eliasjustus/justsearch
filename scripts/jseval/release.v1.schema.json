@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "release.v1.schema.json",
+  "title": "Benchmark release (tempdoc 623)",
+  "description": "A projection over cohort-identical jseval runs: one config/commit/hardware, ranged over N corpora. The search-quality register headline and relevance-ratchet floors are projections of this object, not hand-typed forks.",
+  "type": "object",
+  "required": ["schema", "schema_version", "composed_at", "default_mode", "cohort", "measured", "coverage"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": { "const": "release.v1" },
+    "schema_version": { "type": "integer", "const": 1 },
+    "release_id": { "type": ["string", "null"] },
+    "composed_at": { "type": "string", "description": "ISO-8601 UTC; passed in by the caller (scripts cannot call Date.now)." },
+    "default_mode": { "type": "string", "description": "The production-default search mode whose metrics are the per-corpus headline." },
+    "cohort": {
+      "type": "object",
+      "required": ["config_cohort_key", "git_sha", "hardware"],
+      "additionalProperties": true,
+      "properties": {
+        "config_cohort_key": { "type": "string", "description": "SHA over the config-global manifest subset (tempdoc 623 T-1/U1)." },
+        "git_sha": { "type": ["string", "null"] },
+        "eval_protocol_hash": { "type": ["string", "null"] },
+        "policy_hash": { "type": ["string", "null"] },
+        "model_identity": { "type": "object" },
+        "hardware": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "gpu_name": { "type": ["string", "null"] },
+            "gpu_vram_bytes": { "type": ["integer", "null"] },
+            "gpu_driver_version": { "type": ["string", "null"] },
+            "ort_version": { "type": ["string", "null"] },
+            "cuda_version": { "type": ["string", "null"] },
+            "tier": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "measured": {
+      "type": "object",
+      "description": "Per-dataset projected headline. Key = dataset slug.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["config_mode", "metrics"],
+        "additionalProperties": true,
+        "properties": {
+          "config_mode": { "type": "string" },
+          "metrics": {
+            "type": "object",
+            "description": "Per-mode family-keyed metric map (quality nDCG + promoted CE-stage latency) — NOT nDCG-hard-wired (tempdoc 623 T-3/favor-1).",
+            "additionalProperties": { "type": ["number", "null"] }
+          },
+          "run_metrics": {
+            "type": "object",
+            "description": "Per-run metric family (tempdoc 640): throughput + resident footprint. Optional — present only when ingest ran / footprint resolved.",
+            "additionalProperties": { "type": ["number", "null"] }
+          },
+          "comparable": { "type": "boolean" },
+          "ann_proof_status": { "type": ["string", "null"] },
+          "tolerance_band": { "type": ["object", "null"] },
+          "confidence_tier": { "type": "string", "enum": ["A", "B", "C"] },
+          "corpus_source": { "type": "object" },
+          "qrels_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "ablations": {
+      "type": "object",
+      "description": "Labelled non-default-mode measurements per dataset (heterogeneous research log; never the headline).",
+      "additionalProperties": { "type": "array", "items": { "type": "object" } }
+    },
+    "external_baselines": {
+      "type": "object",
+      "description": "Cited (immutable) published baselines shown side-by-side; never a projection of our runs.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["model", "value", "source_url"],
+          "additionalProperties": true,
+          "properties": {
+            "model": { "type": "string" },
+            "value": { "type": "number" },
+            "source_url": { "type": "string" },
+            "version": { "type": ["string", "null"] },
+            "split": { "type": ["string", "null"] },
+            "self_reproduced": { "type": "boolean" },
+            "caveat": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["measures", "does_not_measure"],
+      "description": "First-class negative-space statement (tempdoc 623 T-3/§F).",
+      "properties": {
+        "measures": { "type": "string" },
+        "does_not_measure": { "type": "string" }
+      }
+    },
+    "notes": { "type": "object" }
+  }
+}

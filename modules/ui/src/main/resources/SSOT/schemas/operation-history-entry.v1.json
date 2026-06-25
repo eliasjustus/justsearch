@@ -1,0 +1,60 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "actor" : {
+      "type" : "string"
+    },
+    "argumentsSummary" : {
+      "type" : [ "string", "null" ]
+    },
+    "diagnosticsLink" : {
+      "type" : [ "string", "null" ]
+    },
+    "endTime" : {
+      "type" : "string",
+      "format" : "date-time"
+    },
+    "executionId" : {
+      "type" : [ "string", "null" ]
+    },
+    "operationId" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "outcome" : {
+      "type" : "string",
+      "enum" : [ "SUCCESS", "FAILURE", "UNDONE" ]
+    },
+    "provenance" : {
+      "type" : "object",
+      "properties" : {
+        "correlationId" : {
+          "type" : [ "string", "null" ]
+        },
+        "executor" : {
+          "type" : "string",
+          "enum" : [ "UI", "AGENT", "CLI" ]
+        },
+        "initiator" : {
+          "type" : [ "string", "null" ]
+        },
+        "occurredAt" : {
+          "type" : "string",
+          "format" : "date-time"
+        },
+        "signedIntentToken" : {
+          "type" : [ "string", "null" ]
+        },
+        "transport" : {
+          "type" : "string",
+          "enum" : [ "URL_BAR", "URL_DEEPLINK", "LLM_EMISSION", "PALETTE", "BUTTON", "RAIL", "AGENT_LOOP", "WORKFLOW", "MCP", "PLUGIN_EMITTED", "SCHEDULED", "RULE_ENGINE", "SYSTEM_INTERNAL" ]
+        }
+      }
+    },
+    "startTime" : {
+      "type" : "string",
+      "format" : "date-time"
+    }
+  }
+}

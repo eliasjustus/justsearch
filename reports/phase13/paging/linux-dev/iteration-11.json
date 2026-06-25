@@ -1,0 +1,100 @@
+{
+  "query" : "apollo guidance",
+  "page" : 1,
+  "captured_at" : "2025-11-08T06:23:16.075422905Z",
+  "response" : {
+    "hits" : [ {
+      "doc_id" : "demo-004",
+      "score" : 1.211412787437439,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> Mission Debrief" ]
+      }
+    }, {
+      "doc_id" : "demo-014",
+      "score" : 1.211412787437439,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> <em>guidance</em> FAQ" ]
+      }
+    }, {
+      "doc_id" : "demo-001",
+      "score" : 1.097367525100708,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> <em>guidance</em> Procedures" ]
+      }
+    }, {
+      "doc_id" : "demo-010",
+      "score" : 1.097367525100708,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> AGC Memory Map" ]
+      }
+    }, {
+      "doc_id" : "demo-012",
+      "score" : 1.097367525100708,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> Systems Overview" ]
+      }
+    }, {
+      "doc_id" : "demo-006",
+      "score" : 0.4266023635864258,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> Flight Rules" ]
+      }
+    }, {
+      "doc_id" : "demo-009",
+      "score" : 0.4266023635864258,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> Navigator's Handbook" ]
+      }
+    }, {
+      "doc_id" : "demo-013",
+      "score" : 0.4266023635864258,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> Mission Planning" ]
+      }
+    }, {
+      "doc_id" : "demo-007",
+      "score" : 0.40552979707717896,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> MCC Shift Notes" ]
+      }
+    }, {
+      "doc_id" : "demo-008",
+      "score" : 0.40552979707717896,
+      "highlights" : {
+        "title" : [ "<em>apollo</em> <em>guidance</em> Telemetry" ]
+      }
+    } ],
+    "facets" : {
+      "mime" : {
+        "text/plain" : 11
+      },
+      "language" : {
+        "en-US" : 11
+      }
+    },
+    "cursor" : {
+      "mode" : "pit",
+      "token" : "cGl0fDE3NjI1ODI5OTYwNzB8MzAwMDAwfDk0NWY1NjIzLWI4OGItNDk5NC05M2IyLWUwYTg3OWE2NmE1YnxwaXRfaWQ9ODEyN2QwYTUtZDlhZS00ZmNiLWJmYTAtMGU4OWNiOGIwYWM0O3BpdF90b2tlbj0xM2FmZGNmYy1jMTE3LTRkMjgtYWQ1MS1lNjZmNmU5MGRhNTglM0ExNzYyNTgyOTk2MDY5O3BpdF9nZW5lcmF0aW9uPTYxO2xhc3Rfc2NvcmU9MC40MDU1Mjk3OTcwNzcxNzg5NjtuZXh0X29mZnNldD0xMDtsYXN0X2RvY19pZD1kZW1vLTAwODtwaXRfY29tbWl0X2lkPTEzYWZkY2ZjLWMxMTctNGQyOC1hZDUxLWU2NmY2ZTkwZGE1OHwzOTA2NjU3OQ",
+      "expiresAtEpochMs" : 1762583296070,
+      "extras" : {
+        "last_doc_id" : "demo-008",
+        "pit_commit_id" : "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+        "nonce" : "945f5623-b88b-4994-93b2-e0a879a66a5b",
+        "last_score" : 0.40552979707717896,
+        "issued_at_epoch_ms" : 1762582996070,
+        "strategy" : "pit",
+        "pit_generation" : 61,
+        "pit_token" : "13afdcfc-c117-4d28-ad51-e66f6e90da58:1762582996069",
+        "pit_id" : "8127d0a5-d9ae-4fcb-bfa0-0e89cb8b0ac4",
+        "ttl_ms" : 300000,
+        "next_offset" : 10
+      }
+    },
+    "metadata" : {
+      "paging.commit_id" : "13afdcfc-c117-4d28-ad51-e66f6e90da58",
+      "paging.commit_generation" : 61,
+      "intent.translation.degraded" : true,
+      "intent.translation.reason" : "llm_json_invalid"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "description": "574 §22.F — the atom-facet catalog (Move 3, self-covering). Maps each visual atom to the raw CSS-class signature of the FORK it replaces. `check-atom-fork-ratchet` PROJECTS its detection vocabulary (the union of every atom's `forkClasses`) and its authority-exclusion set (`atoms[].authorityFile` + `ahaDistinct`, plus every `@atom`-marked file, derived) from this catalog. Adding a new atom row + its fork-classes auto-extends the ratchet's coverage — coverage-projects-from-catalog (557 §5.2); the discovery step is the catalog row, not editing the gate. (Note: bare `.dot` is intentionally NOT a fork-class — too generic, decorative dots are legitimate; the status-indicator fork is `.status-dot`.) `ahaDistinct` holds genuinely-distinct chip concepts that are NOT 'a badge with a tone' and would be over-DRYed by forcing them into jf-status-badge (574 §19.6 AHA cut): ProvenanceChip = trust attribution; DispatchSource = operational provenance (transport/executor/initiator — a 2nd provenance concept distinct from ProvenanceChip's contribution-tier); SourceChipsRenderer = numbered source-citation chips. Each is a single distinct concept (no 2nd instance to unify), so a declared exemption — not a forced atom — is the AHA-correct home.",
+  "atoms": [
+    {
+      "tag": "jf-status-badge",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/StatusBadge.ts",
+      "forkClasses": ["badge", "pill", "chip", "tag", "outcome-tag"]
+    },
+    {
+      "tag": "jf-status-dot",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/StatusDot.ts",
+      "forkClasses": ["status-dot"]
+    },
+    {
+      "tag": "jf-button",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/Button.ts",
+      "forkClasses": []
+    },
+    {
+      "tag": "jf-error-alert",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/ErrorAlert.ts",
+      "forkClasses": []
+    },
+    {
+      "tag": "jf-filter-chip",
+      "authorityFile": "modules/ui-web/src/shell-v0/components/FilterChip.ts",
+      "forkClasses": []
+    }
+  ],
+  "ahaDistinct": [
+    "modules/ui-web/src/shell-v0/components/ProvenanceChip.ts",
+    "modules/ui-web/src/shell-v0/components/DispatchSource.ts",
+    "modules/ui-web/src/shell-v0/renderers/controls/SourceChipsRenderer.ts"
+  ]
+}

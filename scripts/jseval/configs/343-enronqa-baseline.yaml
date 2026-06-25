@@ -1,0 +1,23 @@
+# 343 Phase 1.2: EnronQA baseline with EmbeddingGemma + balanced CC weights
+dataset: mixed/enron-qa
+modes: [lexical, bm25_splade, full]
+embedding: true
+splade: true
+pipeline: true
+output_dir: tmp/eval-results
+
+gpu:
+  enabled: true
+  embed:
+    enabled: true
+  splade:
+    enabled: true
+  ner:
+    enabled: true
+
+# Balanced CC weights (register best-known for most corpora)
+env:
+  JUSTSEARCH_HYBRID_CC_WEIGHT_SPARSE: "0.34"
+  JUSTSEARCH_HYBRID_CC_WEIGHT_DENSE: "0.33"
+  JUSTSEARCH_HYBRID_CC_WEIGHT_SPLADE: "0.33"
+  JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY: REINDEX

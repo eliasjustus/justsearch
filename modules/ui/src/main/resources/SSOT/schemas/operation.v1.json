@@ -1,0 +1,383 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "Audience-nullable" : {
+      "anyOf" : [ {
+        "type" : "null"
+      }, {
+        "type" : "string",
+        "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+      } ]
+    },
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    },
+    "OperationRef" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "OperationRef-nullable" : {
+      "anyOf" : [ {
+        "type" : "null"
+      }, {
+        "$ref" : "#/$defs/OperationRef"
+      } ]
+    },
+    "ResourceRef" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "audience" : {
+      "$ref" : "#/$defs/Audience-nullable"
+    },
+    "availability" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "argumentDefaultsJson" : {
+          "type" : [ "string", "null" ]
+        },
+        "expression" : {
+          "type" : [ "object", "null" ]
+        }
+      }
+    },
+    "binding" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "handlerId" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "consumers" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "audience" : {
+            "$ref" : "#/$defs/Audience-nullable"
+          },
+          "consumerId" : {
+            "type" : [ "string", "null" ]
+          },
+          "kind" : {
+            "const" : "realized"
+          }
+        },
+        "required" : [ "kind" ]
+      }
+    },
+    "executors" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string",
+        "enum" : [ "UI", "AGENT", "CLI" ]
+      }
+    },
+    "id" : {
+      "$ref" : "#/$defs/OperationRef-nullable"
+    },
+    "intf" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "errors" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "inputs" : {
+          "type" : [ "string", "null" ]
+        },
+        "result" : {
+          "type" : [ "string", "null" ]
+        },
+        "uiHints" : {
+          "type" : [ "object", "null" ],
+          "additionalProperties" : {
+            "anyOf" : [ {
+              "type" : "object",
+              "properties" : {
+                "choices" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "type" : "string"
+                  }
+                },
+                "type" : {
+                  "const" : "multi-select"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "staticChoices" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "type" : "string"
+                  }
+                },
+                "suggestionEndpoint" : {
+                  "type" : [ "string", "null" ]
+                },
+                "type" : {
+                  "const" : "autocomplete"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "acceptedExtensions" : {
+                  "type" : [ "array", "null" ],
+                  "items" : {
+                    "type" : "string"
+                  }
+                },
+                "multiple" : {
+                  "type" : "boolean"
+                },
+                "type" : {
+                  "const" : "file-picker"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "max" : {
+                  "type" : "number"
+                },
+                "min" : {
+                  "type" : "number"
+                },
+                "step" : {
+                  "type" : "number"
+                },
+                "type" : {
+                  "const" : "slider"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "language" : {
+                  "type" : [ "string", "null" ]
+                },
+                "type" : {
+                  "const" : "code-editor"
+                }
+              },
+              "required" : [ "type" ]
+            } ]
+          }
+        }
+      }
+    },
+    "lineage" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "affects" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "$ref" : "#/$defs/ResourceRef"
+          }
+        },
+        "supersedes" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "$ref" : "#/$defs/OperationRef"
+          }
+        }
+      }
+    },
+    "policy" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "advisoryClass" : {
+          "anyOf" : [ {
+            "type" : "null"
+          }, {
+            "$ref" : "#/$defs/ResourceRef"
+          } ]
+        },
+        "audit" : {
+          "anyOf" : [ {
+            "type" : "null"
+          }, {
+            "type" : "string",
+            "enum" : [ "NONE", "METADATA_ONLY", "FULL_PAYLOAD" ]
+          } ]
+        },
+        "capabilityFamily" : {
+          "type" : [ "string", "null" ]
+        },
+        "confirm" : {
+          "anyOf" : [ {
+            "type" : "null"
+          }, {
+            "type" : "object",
+            "properties" : {
+              "kind" : {
+                "const" : "NONE"
+              }
+            },
+            "required" : [ "kind" ]
+          }, {
+            "type" : "object",
+            "properties" : {
+              "kind" : {
+                "const" : "INLINE"
+              }
+            },
+            "required" : [ "kind" ]
+          }, {
+            "type" : "object",
+            "properties" : {
+              "confirmTextKey" : {
+                "anyOf" : [ {
+                  "type" : "null"
+                }, {
+                  "$ref" : "#/$defs/I18nKey"
+                } ]
+              },
+              "kind" : {
+                "const" : "TYPED"
+              }
+            },
+            "required" : [ "kind" ]
+          } ]
+        },
+        "inverseOperationRef" : {
+          "$ref" : "#/$defs/OperationRef-nullable"
+        },
+        "rateLimit" : {
+          "type" : [ "string", "null" ],
+          "format" : "duration"
+        },
+        "requiredCapabilities" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "anyOf" : [ {
+              "type" : "object",
+              "properties" : {
+                "type" : {
+                  "const" : "worker-online"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "type" : {
+                  "const" : "inference-online"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "type" : {
+                  "const" : "indexed-root"
+                }
+              },
+              "required" : [ "type" ]
+            }, {
+              "type" : "object",
+              "properties" : {
+                "minVendor" : {
+                  "type" : [ "string", "null" ]
+                },
+                "type" : {
+                  "const" : "gpu-available"
+                }
+              },
+              "required" : [ "type" ]
+            } ]
+          }
+        },
+        "retry" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "allowAutoRetry" : {
+              "type" : "boolean"
+            },
+            "idempotencyKey" : {
+              "type" : [ "string", "null" ]
+            },
+            "maxRetries" : {
+              "type" : "integer"
+            }
+          }
+        },
+        "risk" : {
+          "anyOf" : [ {
+            "type" : "null"
+          }, {
+            "type" : "string",
+            "enum" : [ "LOW", "MEDIUM", "HIGH" ]
+          } ]
+        },
+        "undoSupported" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "presentation" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "category" : {
+          "type" : [ "string", "null" ]
+        },
+        "descriptionKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        },
+        "iconHint" : {
+          "type" : [ "string", "null" ]
+        },
+        "labelKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        }
+      },
+      "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+    },
+    "provenance" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "identity" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "signature" : {
+              "type" : [ "string", "null" ]
+            },
+            "verified" : {
+              "type" : "boolean"
+            }
+          },
+          "required" : [ "signature", "verified" ]
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "identity", "tier", "version" ]
+    },
+    "type" : {
+      "const" : "operation"
+    }
+  },
+  "required" : [ "type" ]
+}

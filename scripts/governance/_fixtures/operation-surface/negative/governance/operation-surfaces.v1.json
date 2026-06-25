@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "note": "Self-test fixture (negative): exercises TWO failing rules at once — (1) undeclared.ts references IndexingJobView but is NOT in surfaces → operation-surface/undeclared-surface; (2) declared-rail names a non-existent consumesProjection → operation-surface/projection-lineage. Either alone fails the gate; both are present so the self-test covers both rules.",
+  "scan": {
+    "javaImportPatterns": [],
+    "javaMainRoots": [],
+    "javaInclude": "/src/main/java/",
+    "tsRefPattern": "IndexingJobView",
+    "tsRoots": ["modules/ui-web/src"],
+    "tsExcludeSuffixes": [".test.ts", ".test.tsx"]
+  },
+  "surfaces": [
+    { "id": "declared-rail", "kind": "projection", "lang": "ts", "path": "modules/ui-web/src/declared.ts", "guard": "self", "consumesProjection": "no-such-upstream" }
+  ]
+}

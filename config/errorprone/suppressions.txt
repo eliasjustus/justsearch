@@ -1,0 +1,17 @@
+# Centralized Error Prone suppressions (Phase 1.7)
+#
+# One check per line. Lines starting with '#' are comments.
+# Example to disable a check globally:
+#   MissingOverride
+#
+# Keep this list minimal. Any addition should include justification in code review.
+PatternMatchingInstanceof
+
+# ReferenceEquality: Suppress because Character.UnicodeBlock constants are static final
+# singletons. Using == is correct and faster than .equals() for these comparisons.
+# Affected files: ChunkSplitter.java, IndexingLoop.java (112 warnings total)
+ReferenceEquality
+
+# StringSplitter: 10 warnings across core, ipc-common, indexer-worker, system-tests, ui.
+# All are simple regex splits where String.split() behavior is well-understood.
+StringSplitter

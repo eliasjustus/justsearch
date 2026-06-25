@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "note": "Self-test fixture (negative): fails on FIVE checks — undeclared.ts references SearchTrace but is NOT in surfaces (undeclared-surface); declared-explain is a kind:projection with guard:self (unguarded-projection); SpanFork.java emits a search/* span literal but is NOT registered (undeclared-vocabulary-fork, Check 5); non-conformance-projection is a kind:projection guarded only by a non-conformance test:PlainUnit (non-conformance-guard, Check 6); and the canonical record FixtureTrace has NO surface tagged guardKind:reflective (missing-reflective-guard, Check 7).",
+  "canonicalRecord": { "name": "FixtureTrace" },
+  "scan": {
+    "javaImportPatterns": [],
+    "javaMainRoots": ["modules"],
+    "javaInclude": "/src/main/java/",
+    "tsRefPattern": "SearchTrace",
+    "tsRoots": ["modules/ui-web/src"],
+    "tsExcludeSuffixes": [".test.ts", ".test.tsx"],
+    "executionSpanNameRegex": "search/[a-z_]+"
+  },
+  "surfaces": [
+    { "id": "declared-explain", "kind": "projection", "lang": "ts", "path": "modules/ui-web/src/declared.ts", "guard": "self" },
+    { "id": "non-conformance-projection", "kind": "projection", "lang": "java", "path": "modules/m/src/main/java/PlainProjection.java", "guard": "test:PlainUnit" }
+  ]
+}

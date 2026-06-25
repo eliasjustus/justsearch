@@ -1,0 +1,12 @@
+{
+  "chunk_merge_reason" : "SKIPPED_NO_CHUNK_DOCS",
+  "facet_source" : "absent",
+  "correction_eligible" : true,
+  "effective_mode" : "TEXT",
+  "decision_kind" : "sparse_shortcut",
+  "chunk_merge_kind" : "skip",
+  "runtime_syntax" : "SIMPLE",
+  "retrieval_limit" : 10,
+  "facets_requested" : false,
+  "chunk_merge_inputs_present" : false
+}

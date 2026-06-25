@@ -1,0 +1,8 @@
+{
+  "$comment": "Fixture (positive): every named guard resolves; every projection/producer is guarded; the unguarded source declares an accountable exempt:<reason> (tempdoc 576 §3.1 rung-1) rather than a bare self.",
+  "surfaces": [
+    { "id": "canonical-source", "kind": "source", "guard": "exempt:canonical record type — source of truth, nothing to project-guard" },
+    { "id": "a-projection", "kind": "projection", "guard": "gate:wire" },
+    { "id": "a-producer", "kind": "producer", "guard": "test:FooConformanceTest" }
+  ]
+}

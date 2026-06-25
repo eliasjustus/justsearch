@@ -1,0 +1,32 @@
+{
+  "_comment": "Curated overrides for the NOTICE/THIRD_PARTY_NOTICES projection (tempdoc 632). The jk1 LicenseBundleNormalizer collapses dual-licensed deps to a single (often the copyleft) license; here we claim each dual-licensed dependency under its PERMISSIVE alternative, which is the license JustSearch actually relies on. These overrides are also the source the Stage-D jk1 allowed-licenses derives from. (junrar/UnRar was removed in tempdoc 632 — the Tika RAR parser is excluded.)",
+  "jvmModuleLicense": {
+    "ch.qos.logback:logback-classic": "EPL-1.0",
+    "ch.qos.logback:logback-core": "EPL-1.0",
+    "net.java.dev.jna:jna": "Apache-2.0",
+    "net.java.dev.jna:jna-platform": "Apache-2.0",
+    "org.codelibs:jhighlight": "CDDL-1.0",
+    "net.jcip:jcip-annotations": "CC-BY-2.5"
+  },
+  "nativeRuntimes": [
+    {
+      "name": "llama.cpp",
+      "license": "MIT",
+      "ref": "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE (prebuilt llama-server binary b8571, downloaded from ggml-org/llama.cpp releases at build time)",
+      "bundled": "httplib (MIT), nlohmann/json (MIT), curl (curl license), linenoise (BSD)",
+      "disposition": "permissive"
+    },
+    {
+      "name": "NVIDIA CUDA runtime (cudart, cuBLAS, cuBLAS Lt)",
+      "license": "LicenseRef-NVIDIA-CUDA-EULA",
+      "ref": "https://docs.nvidia.com/cuda/eula/index.html (Attachment A)",
+      "disposition": "restricted"
+    },
+    {
+      "name": "NVIDIA cuDNN runtime",
+      "license": "LicenseRef-NVIDIA-cuDNN-SLA",
+      "ref": "https://docs.nvidia.com/deeplearning/cudnn/sla/ — governed by the cuDNN SLA, which is SEPARATE from the CUDA Toolkit EULA",
+      "disposition": "restricted"
+    }
+  ]
+}

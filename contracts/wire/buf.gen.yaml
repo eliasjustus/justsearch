@@ -1,0 +1,25 @@
+# Emitter configuration for JustSearch wire-Category contract.
+# See ADR-09a §"Decision" for the rationale of this emitter set.
+#
+# Required tooling (installed via scripts/wire-contract/install-buf.sh):
+#   - @bufbuild/buf (CLI)
+#   - @bufbuild/protoc-gen-es (TS emitter)
+#
+# Java emission via the standalone protoc-gen-java binary will be wired in
+# Phase 2 once the projection module's Gradle build picks up the toolchain.
+# Until then this config emits TS only; Java is generated via the
+# com.google.protobuf Gradle plugin from inside
+# modules/api-contract-projection-java/.
+
+version: v2
+plugins:
+  # protobuf-es: idiomatic TypeScript types from proto messages.
+  # target=js+dts produces both runtime JS + .d.ts for tsc.
+  # include_imports emits descriptors for transitive deps (buf.validate.*)
+  # so the FE's protovalidate runtime has the full constraint graph.
+  - local: protoc-gen-es
+    out: ../../modules/ui-web/src/api/generated
+    include_imports: true
+    opt:
+      - target=js+dts
+      - import_extension=.js

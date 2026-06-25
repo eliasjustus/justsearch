@@ -1,0 +1,844 @@
+---
+title: Search Quality Register
+type: reference
+status: stable
+created: 2026-03-19
+updated: 2026-06-15
+description: "Shared decision register for search quality. Read before starting search work. Update before finishing."
+---
+
+# Search Quality Register
+
+Coordination register for search quality work. Every search-quality
+tempdoc agent must read this before starting and update it before closing.
+
+**Rules:**
+- Do not re-run an experiment listed under Baselines or Findings without
+  justification (e.g., pipeline change that invalidates prior results).
+- When your work settles a question from Open Questions, move it to
+  Findings with your tempdoc citation.
+- When your work opens a new question, add it to Open Questions.
+- Keep entries terse. Evidence lives in tempdocs; this file is the index.
+
+**How to add a baseline row:**
+- Copy nDCG@10, P@1, R@10 from `summary.json` → `per_mode.<mode>.aggregate_metrics`
+- Fill `legs` from `summary.json` → `per_mode.<mode>.pipeline_tracking.observed`
+- Fill `git` from `summary.json` → `git_sha`
+- Assign confidence: **A** (≥200 queries, no issues), **B** (<200 queries
+  or known measurement issue), **C** (structural problem — broken legs,
+  not-comparable run; do not use as baseline)
+- Update the **Best known** line if your result beats the current best
+- Remove the row from Measurement Gaps if you filled it
+- Update the Dataset Catalog's **Last Validated** and **Validated By** columns
+  if you re-ran or validated a dataset
+
+**Replaces:** the former `search-quality.md` (SRQ-) and `retrieval-quality.md` (RAG-)
+issue files, which have been retired. Remaining open items from those files were
+triaged into this register's sections or retired to `decisions.md`.
+
+---
+
+## Dataset Catalog
+
+Reference metadata. Every slug is a valid `dataset_name` argument to jseval.
+Query variants of the same corpus get distinct slugs.
+
+| Slug | Domain | Lang | Docs | Queries | Query Form | Last Validated | Validated By | Notes |
+|------|--------|------|------|---------|------------|---------------|-------------|-------|
+| beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
+| mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
+| mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
+| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-03-28 | 343 D | |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 316 | factoid | 2026-03-18 | 309 §37 | |
+| mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
+| mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
+| mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
+| mixed/ohr-bench-clean | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench ground-truth text (7 domains). |
+| mixed/ohr-bench-got-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench GOT OCR extraction (moderate noise). |
+| mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
+| mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
+| mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
+| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json` |
+
+---
+
+## Canonical Baselines
+
+One block per dataset. Within each block, one row per measured (config × mode).
+All values are nDCG@10 unless noted. `—` = not yet measured.
+
+**Columns:** `encoder` — sparse+dense encoder. `ce` — cross-encoder at eval
+time. `cc` — CC fusion weights. `mode` — jseval mode. `legs` — retrieval
+legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
+tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
+
+**Cross-run noise vs signal** — before flagging a nDCG@10 change as a
+regression, consult the cohort envelope: `<data_dir>/cohort_baselines/
+<hash>/envelope.json` gives σ per metric (tempdoc 400 LR1-b). Deltas
+inside ±2σ are noise. For encoder-level latency distribution drift
+(different question — "did ORT session.run() durations shift even
+without a nDCG change?"), use `jseval calibrate-drift-baseline` + the
+nightly `jseval gate`: PSI > 0.2 on any `encoder.ort_run` duration
+distribution flags a drift signal independent of aggregate quality.
+See `docs/explanation/08-observability.md` §Contract Tiers + §Run
+Manifest and `docs/how-to/triage-psi-drift.md`.
+
+<!-- generated:start — do not edit between markers; run: node scripts/docs/register-headline-sync.mjs -->
+
+### Release Scorecard (projected — do not hand-edit)
+
+> Generated from `scripts/jseval/release.v1.json` (tempdoc 623). Each per-corpus number below is a
+> **projection** of one cohort-identical release (same config/commit/hardware), not a hand-typed value.
+> The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
+> is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
+
+**Release:** `bef184e333` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.47 · ORT 1.24.3
+
+**Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
+
+| Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
+|---|---|---|---|
+| beir/scifact | hybrid | 0.757 | — |
+| mixed/courtlistener-200 | hybrid | 0.608 | — |
+| mixed/enron-qa | hybrid | 0.719 | — |
+| mixed/miracl-de-2k | hybrid | 0.728 | — |
+| mixed/miracl-fr-2k | hybrid | 0.707 | — |
+
+**Engine performance** (relative-ratchet guarded — tempdoc 640):
+
+| Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
+|---|---|---|---|---|
+| beir/scifact | 152 | 93.7 | 22.0 | 2.02 |
+| mixed/courtlistener-200 | 143 | 13.5 | 1.1 | 2.02 |
+| mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
+| mixed/miracl-de-2k | 136 | 160.9 | 41.4 | 2.02 |
+| mixed/miracl-fr-2k | 134 | 161.5 | 49.7 | 2.02 |
+
+<!-- generated:end -->
+
+> **Reading the two numbers (tempdoc 623 ④ / C-4).** The **Release Scorecard** above is the
+> *production-default* (`hybrid`) result — a **projection** of one cohort-identical release, the number a
+> user actually gets and the one the ratchet floors against. The per-corpus **Best known:** lines below
+> are a *hand-authored research log of best-achievable-config ablations* (often `full`-mode), kept for
+> engineering history — **not** the production headline. They differ **by design**: e.g. legal is
+> `full`-mode **0.925** best-achievable vs `hybrid` **0.620** production-default (corpus×config optimality,
+> F-004). When a Scorecard value is present for a corpus, it — not the "Best known" line — is the
+> canonical production number; the "Best known" line is its best-config ablation.
+
+### beir/scifact
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | balanced | lexical | 0.661 | 0.537 | 0.783 | bm25 | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | balanced | splade | 0.627 | 0.520 | 0.716 | splade | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | balanced | bm25_splade | 0.679 | 0.540 | 0.801 | bm25+splade | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | balanced | full | **0.723** | 0.543 | 0.801 | bm25+sparse+dense | A | dc4f79a | 309 §35 |
+| bge-m3 | gte-8192 | balanced | full | 0.722 | — | — | bm25+sparse+dense | A | dc4f79a | 309 §41 |
+| splade-v3+nomic | minilm-512 | bm25-dom | lexical | 0.662 | — | — | bm25 | A | — | 309 §30 |
+| splade-v3+nomic | minilm-512 | bm25-dom | splade | 0.625 | — | — | splade | B | — | 309 §30 |
+| splade-v3+nomic | minilm-512 | bm25-dom | bm25_splade | 0.676 | — | — | bm25+splade | A | — | 309 §30 |
+| splade-v3+nomic | minilm-512 | bm25-dom | full | 0.684 | — | — | bm25+splade (dense broken) | C | — | 309 §30 |
+| splade-v3+gemma | gte-8192 | bm25-dom | lexical | 0.661 | 0.537 | 0.779 | bm25 | A | 68782549f | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | splade | 0.501 | 0.397 | 0.622 | splade | A | 68782549f | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | bm25_splade | 0.668 | 0.540 | 0.799 | bm25+splade | A | 68782549f | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | full | 0.714 | 0.587 | 0.839 | bm25+splade+dense (CE off) | A | 68782549f | 343 |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | lexical | 0.680 | 0.537 | 0.819 | bm25+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | splade | 0.510 | 0.390 | 0.645 | splade+CE | B | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.681 | 0.533 | 0.819 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.736 | 0.600 | 0.878 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | default-hybrid | hybrid | **0.754** | 0.633 | 0.884 | cross_encoder + dense | A | 3af6773cc | 391 |
+| (HEAD default) | (default) | default-hybrid | hybrid | 0.758 | 0.627 | 0.896 | cross_encoder + dense + splade + query_classification | A | f91e269bc | 580 |
+| (HEAD default) | CE-off | (default) | full | 0.708 | 0.577 | 0.833 | dense + splade + query_classification (CE off) | B | f91e269bc | 580 |
+
+**Best known:** splade-ml+gte / gte-ml-reranker / default-hybrid / **hybrid** = **0.754** (391, 6-run median across two 3-run sets on 2026-04-18 and 2026-04-19; range 0.7527–0.7571, CV 0.1–0.3%). Full mode best known remains splade-ml+gte / gte-ml-reranker / bm25-dom / full = **0.736** (343 Phase D).
+**Note:** GTE-ModernBERT CE produces identical result (0.722 — noise). Mode breakdown now complete.
+**Note:** splade-v3+gemma `full` row is C — dense leg broken (F-012). splade-v3+nomic `full` row downgraded to C for same reason. `splade` mode legs corrected from `bm25+splade` to `splade` (jseval sends `sparseEnabled=false`). SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact (F-013).
+**Note:** `splade-ml+gte` = opensearch-neural-sparse-multilingual-v1 + gte-multilingual-base. `gte-ml-reranker` = gte-multilingual-reranker-base (FP16 GPU). Phase D: all 5 model swaps complete, CE ON.
+**Note:** `hybrid` mode row (2026-04-19, 391): server-resolved preset, dense+CE in `observed` legs (BM25 presumably active in fusion but not reported in pipeline_tracking). git_sha in summary.json is `3b19076eb` (pre-arena-bump — runtime had `DEFAULT_GPU_MEM_MB=3072` via uncommitted edit; `3af6773cc` committed the bump and is the reproducible SHA). Hybrid beats full (0.754 vs 0.736, +2.4%) with a narrower leg set, consistent with F-004 (mode optimality is corpus-dependent) and F-006 (CE model upgrade irrelevant when retrieval is strong). Worth investigating whether SPLADE leg is actively hurting `full` on scifact post-358 model swap.
+
+### mixed/enron-qa
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | balanced | lexical | 0.810 | 0.697 | 0.910 | bm25 | A | 72c6e9a | 309 §42 |
+| bge-m3 | minilm-512 | balanced | splade | 0.711 | 0.550 | 0.867 | splade | A | 72c6e9a | 309 §42 |
+| bge-m3 | minilm-512 | balanced | bm25_splade | **0.830** | 0.720 | 0.927 | bm25+splade | A | 72c6e9a | 309 §42 |
+| bge-m3 | minilm-512 | balanced | full | 0.810 | 0.673 | 0.927 | bm25+sparse+dense | A | 72c6e9a | 309 §42 |
+| bge-m3 | gte-8192 | balanced | lexical | 0.812 | 0.700 | 0.913 | bm25 | A | 0d4b3b1 | 309 §43 |
+| bge-m3 | gte-8192 | balanced | splade | 0.712 | 0.550 | 0.867 | splade | A | 0d4b3b1 | 309 §43 |
+| bge-m3 | gte-8192 | balanced | bm25_splade | 0.828 | 0.717 | 0.923 | bm25+splade | A | 0d4b3b1 | 309 §43 |
+| bge-m3 | gte-8192 | balanced | full | 0.808 | 0.667 | 0.927 | bm25+sparse+dense | A | 0d4b3b1 | 309 §43 |
+
+| splade-v3+gemma | gte-8192 | bm25-dom | lexical | 0.827 | 0.717 | 0.927 | bm25+chunk_merge | A | 68782549f | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | bm25_splade | 0.813 | 0.700 | 0.913 | bm25+splade+chunk_merge | A | 68782549f | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | full | 0.822 | 0.703 | 0.923 | bm25+splade+dense+chunk_merge (CE off) | A | 68782549f | 343 |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | lexical | 0.827 | 0.717 | 0.927 | bm25+chunk_merge (CE off) | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.813 | 0.700 | 0.913 | bm25+splade+chunk_merge (CE off) | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.822 | 0.703 | 0.930 | bm25+splade+dense+chunk_merge (CE off) | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | lexical | 0.799 | 0.697 | 0.887 | bm25+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.787 | 0.680 | 0.880 | bm25+splade+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.777 | 0.667 | 0.863 | bm25+splade+dense+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
+
+**Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
+**Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
+**Note:** CE model makes no difference (F-001). With BGE-M3, CE hurts vs bm25_splade by ~2% (F-002).
+**Note:** splade-v3+gemma rows use chunk merge (active on EnronQA long emails). Chunk merge provides +1.3% nDCG on lexical (p=0.04, statistically significant). See 343 Phase 2.2.
+**Note:** All splade-v3+gemma `full` rows have CE OFF but dense ON (F-012 corrected — dense was working via gte-multilingual-base all along, tracking bug fixed). The full vs bm25_splade delta is the dense retrieval contribution. CE impact with splade-v3+gemma is unmeasured (jseval `--ce` flag needed).
+
+### mixed/courtlistener-200
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | bm25-dom | lexical | 0.960 | 0.925 | 0.990 | bm25 | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | splade | 0.647 | 0.485 | 0.825 | splade | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.912 | 0.855 | 0.985 | bm25+splade | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | full | **0.925** | 0.855 | 0.980 | bm25+sparse+dense | A | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | balanced | full | 0.816 | — | — | bm25+sparse+dense | A | dc4f79a | 309 §35 |
+| bge-m3 | gte-8192 | balanced | full | 0.813 | — | — | bm25+sparse+dense | A | dc4f79a | 309 §41 |
+
+**Best known:** bge-m3 / minilm-512 / bm25-dom / full = **0.925**
+**Note:** BM25-dominant (0.925) is 11.8% better than balanced (0.816) on long legal docs. CE upgrade neutral (0.813 ≈ 0.816).
+
+### mixed/miracl-de-2k
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | bm25-dom | lexical | 0.511 | — | — | bm25 | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | bm25-dom | splade | 0.669 | — | — | splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.553 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | bm25-dom | full | 0.639 | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | splade | 0.669 | — | — | splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | full | **0.734** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+| bge-m3 | gte-8192 | balanced | full | 0.735 | — | — | bm25+sparse+dense | A | dc4f79a | 309 §41 |
+| splade-v3+gemma | gte-8192 | bm25-dom | lexical | 0.513 | 0.328 | 0.749 | bm25 | A | 2681da09b | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | splade | 0.485 | 0.311 | 0.684 | splade | A | 2681da09b | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | bm25_splade | 0.540 | 0.354 | 0.780 | bm25+splade | A | 2681da09b | 343 |
+| splade-v3+gemma | gte-8192 | bm25-dom | full | 0.619 | 0.403 | 0.875 | bm25+splade+dense (CE off) | A | 2681da09b | 343 |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | lexical | 0.559 | 0.367 | 0.797 | bm25+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | splade | 0.733 | 0.530 | 0.910 | splade+CE | B | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.582 | 0.384 | 0.816 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
+| splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.696 | 0.469 | 0.908 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
+
+**Best known:** bge-m3 / minilm-512 / balanced / full = **0.734**
+**Note:** SPLADE multilingual (0.733) nearly matches BGE-M3 sparse (0.669→0.733 = +9.6%). Massive improvement over SPLADE-v3 English-only (0.485→0.733 = +51.1%). Full mode 0.696 vs pre-swap 0.619 (+12.4%).
+**Note:** splade-v3+gemma `full` mode (0.619) is +14.7% over bm25_splade (0.540) on MIRACL/de — this is the dense retrieval contribution (F-012 corrected: dense was working all along). Dense provides the largest uplift on multilingual content where BM25 is weakest.
+**Note:** Balanced weights (+14.9% over bm25-dom on full mode). CE has zero impact on German (0.734 ≈ 0.735). CE ablation confirmed zero effect (309 §37).
+
+### mixed/miracl-fr-2k
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | balanced | lexical | 0.476 | — | — | bm25 | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | full | **0.706** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+
+**Best known:** bge-m3 / minilm-512 / balanced / full = **0.706**
+**Note:** Same pattern as German — balanced weights, `splade` (0.660) strongest single retriever for non-English.
+
+### mixed/miracl-zh-2k
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | balanced | lexical | 0.495 | — | — | bm25 | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | splade | 0.604 | — | — | splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | bm25_splade | 0.533 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
+| bge-m3 | minilm-512 | balanced | full | **0.691** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+
+**Best known:** bge-m3 / minilm-512 / balanced / full = **0.691**
+**Note:** Chinese. Same multilingual pattern: balanced weights, `splade` strongest single retriever.
+
+### mixed/cord19-qddf
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | bm25-dom | lexical | 0.340 | — | — | bm25 | B | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | splade | 0.202 | — | — | splade | B | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.346 | — | — | bm25+splade | B | dc4f79a | 309 §35 |
+| bge-m3 | minilm-512 | bm25-dom | full | 0.383 | — | — | bm25+splade (dense broken) | C | dc4f79a | 309 §33,§35 |
+
+**Best known (valid):** bge-m3 / minilm-512 / bm25-dom / bm25_splade = **0.346** (B confidence)
+**Note:** `full` row is C — dense was broken (§33). 48 queries gives low statistical power. CORD-19 is a pathological corpus (homogeneous biomedical content).
+
+### mixed/desktop-mixed-v1
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| bge-m3 | minilm-512 | balanced | lexical | 0.479 | — | — | bm25 | B | dc4f79a | 309 §38 |
+| bge-m3 | minilm-512 | balanced | splade | 0.516 | — | — | splade | B | dc4f79a | 309 §38 |
+| bge-m3 | minilm-512 | balanced | full | **0.578** | — | — | bm25+sparse+dense | B | dc4f79a | 309 §38 |
+
+**Best known:** bge-m3 / minilm-512 / balanced / full = **0.578** (B — aggregate across 5 sources)
+**Per-source nDCG@10 (full mode):** en_sci=0.070 (7% qrel coverage), de=0.665, fr=0.699, zh=0.710, en_legal=0.746. Cross-language degradation <10% for DE/FR/ZH vs isolated eval (F-007).
+
+### mixed/ohr-bench-clean
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| — | — | — | lexical | **0.9487** | 0.9044 | 0.9865 | bm25 | A | 0d4b3b1 | 252 |
+
+**Best known:** AI-disabled / lexical = **0.9487**
+**Note:** Ground-truth text. Serves as ceiling for ingestion tax measurement.
+
+### mixed/ohr-bench-got-moderate
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| — | — | — | lexical | **0.8090** | 0.7505 | 0.8617 | bm25 | A | 0d4b3b1 | 252 |
+
+**Best known:** AI-disabled / lexical = **0.8090**
+**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%). Exceeds >5% decision gate.
+
+### mixed/ohr-bench-mineru-moderate
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| — | — | — | lexical | **0.6382** | 0.5644 | 0.7131 | bm25 | A | 0d4b3b1 | 252 |
+
+**Best known:** AI-disabled / lexical = **0.6382**
+**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%). 9.8% of docs have empty/trivial extracted text.
+
+### mixed/ohr-bench-tika-pdf
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| — | — | — | lexical | **0.7947** | 0.7484 | 0.8326 | bm25 | A | b13afdc | 252 |
+
+**Best known:** AI-disabled / lexical = **0.7947**
+**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%). Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7%).
+
+---
+
+## Measurement Gaps
+
+What's worth measuring next. Remove rows when filled.
+
+| Dataset | encoder | ce | cc | Modes needed | Why |
+|---------|---------|----|----|-------------|-----|
+| mixed/cord19-qddf | bge-m3 | minilm-512 | bm25-dom | full (with working dense) | Re-run after dense fix; upgrade C→A |
+| mixed/desktop-mixed-v1 | bge-m3 | minilm-512 | balanced | full (with SciFact qrel fix) | 7% SciFact qrel coverage inflates en_sci degradation. Rebuild with qrel-aware SciFact sampling. |
+
+---
+
+## Key Comparisons
+
+A/B experiments on the same dataset, same queries.
+
+### CE upgrade: minilm-512 → gte-8192 on EnronQA
+
+| Mode | minilm-512 | gte-8192 | Delta | Significant? |
+|------|-----------|----------|-------|-------------|
+| lexical | 0.810 | 0.812 | +0.3% | No |
+| splade | 0.711 | 0.712 | +0.1% | No |
+| bm25_splade | 0.830 | 0.828 | -0.2% | No |
+| full | 0.810 | 0.808 | -0.3% | No |
+
+**Conclusion:** CE model doesn't matter on email (F-001). CE itself hurts vs bm25_splade by ~2% (F-002).
+
+### Encoder upgrade: splade-v3+nomic → bge-m3 on SciFact
+
+| Mode | splade-v3+nomic / bm25-dom | bge-m3 / balanced | Delta |
+|------|--------------------------|-------------------|-------|
+| full | 0.684 | 0.723 | +5.7% |
+
+**Conclusion:** BGE-M3 + balanced weights is a major improvement on academic text.
+
+### CE upgrade: minilm-512 → gte-8192 across all tested corpora
+
+| Corpus | Mode | minilm-512 | gte-8192 | Delta |
+|--------|------|-----------|----------|-------|
+| beir/scifact | full | 0.723 | 0.722 | -0.1% |
+| mixed/courtlistener-200 | full | 0.816 | 0.813 | -0.4% |
+| mixed/miracl-de-2k | full | 0.734 | 0.735 | +0.1% |
+| mixed/enron-qa | full | 0.810 | 0.808 | -0.3% |
+
+**Conclusion:** CE model upgrade produces zero measurable difference on ANY corpus (F-006). BGE-M3 retrieval quality makes the CE marginal.
+
+### CC weights: balanced vs bm25-dom across corpora (full mode)
+
+| Corpus | Lang | bm25-dom (0.60/0.20/0.20) | balanced (0.34/0.33/0.33) | Better |
+|--------|------|--------------------------|--------------------------|--------|
+| beir/scifact | en | 0.709 | **0.723** | balanced (+1.9%) |
+| mixed/courtlistener-200 | en | **0.925** | 0.816 | bm25-dom (+13.4%) |
+| mixed/miracl-de-2k | de | 0.639 | **0.734** | balanced (+14.9%) |
+| mixed/cord19-qddf | en | 0.383 | 0.390 | balanced (+1.6%) |
+| mixed/enron-qa | en | — | **0.810** | — |
+
+**Conclusion:** Balanced wins on short/mixed/multilingual. BM25-dominant wins on long English legal docs. Corpus-adaptive weight selection (FW-001) would optimize both.
+
+### Ingestion quality tax: OHR-Bench clean vs extracted text
+
+| Variant | nDCG@10 | P@1 | R@10 | Delta vs clean |
+|---------|---------|-----|------|---------------|
+| Clean (gt_text) | **0.9487** | 0.9044 | 0.9865 | — |
+| **Tika Structured PDF** | **0.7947** | 0.7484 | 0.8326 | **-16.2%** |
+| GOT moderate | 0.8090 | 0.7505 | 0.8617 | **-14.7%** |
+| MinerU moderate | 0.6382 | 0.5644 | 0.7131 | **-32.7%** |
+
+**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Tika on real PDFs loses 16% nDCG — comparable to GOT because most PDFs are untagged (no structural SAX events). Exceeds the >5% decision gate. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.**
+
+---
+
+## Pipeline Configuration History
+
+Legacy named configs from the original register. New baselines use
+`encoder`/`ce`/`cc` columns instead. Retained for cross-reference with
+tempdoc citations that use P0/P1/P2 names.
+
+| Legacy ID | encoder | ce | cc | Notes |
+|-----------|---------|----|----|-------|
+| P0 | splade-v3+nomic | minilm-512 | bm25-dom | superseded |
+| P1 | bge-m3 | minilm-512 | balanced | current default |
+| P2 | bge-m3 | gte-8192 | balanced | tested on EnronQA only |
+| P3 | splade-ml+gte | gte-ml-reranker | bm25-dom | Current production default (343 Phase D). encoder: opensearch-neural-sparse-encoding-multilingual-v1 + gte-multilingual-base, ce: gte-multilingual-reranker-base |
+
+---
+
+## Findings
+
+Settled empirical facts. Each was an open question that got answered.
+
+### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
+
+- **Answer:** Graded the three tempdoc-636 buried-signal levers via `jseval --start-backend --llm`
+  through the full `hybrid`+CE pipeline, on `golden/needle-burial-v1` (synthetic buried-fact target)
+  and `mixed/enron-qa` (real email regression guard). **Recall-complete pool** (each leg's top-N
+  guaranteed into the CE window): needle 0.2716→**0.539 (+98%)**, enron **−0.04% (neutral)** →
+  **default-on**. **Leg-arbitration** (per-query CC-alpha raise): needle 0.2716→**0.6105 (+125%)** but
+  enron **−1.4%** → **default-on** (user decision 2026-06-24, accepting the real-email cost). **Synonym expansion**
+  (LLM query-side synonyms): needle **0% twice**, incl. an always-fire isolation run → **deleted** —
+  in the full pipeline the dense leg already supplies the semantic bridging, so it is redundant.
+- **Evidence:** tempdoc 636 §GRADED + DECIDED (2026-06-24). Baselines: needle hybrid 0.2716
+  (`comparable:False` — small synthetic corpus); enron hybrid 0.7379 (`comparable:True`, ≈ register
+  0.740).
+- **Conditions/caveats:** needle is synthetic and built to favour these levers — weight enron (real)
+  more for ship decisions. Leg-arbitration's −1.4% is small but consistent across two independent runs.
+  **Combined production default (both levers on, 2026-06-24):** needle **0.8012 (+195%)**, enron
+  **0.7142 (−3.22%)** — the levers interact non-additively (synergy on the target, *super-additive*
+  regression on email; leg-arbitration over-fires when the recall-complete pool is active). Tightening
+  leg-arbitration's trigger to be pool-aware is the open follow-up (router Item-1).
+
+### F-025: recall-survival is a measurable, regime-blind funnel — and it tracks the shipped fix
+
+- **Answer:** The **Staged Recall Accounting** instrument (tempdoc 636 / D-005) decomposes every judged query
+  into **leg-recall / cascade-leak / judge-rank** as a pure `jseval` projection over existing run artifacts
+  (`{mode}_per_query.json` presence + score-ranked `{mode}_run.trec`), auto-run at end-of-run, with a focused
+  **`jseval leak-gate`** ratchet on `leak_rate`. It measures whether each pipeline stage *kept the correct
+  document*, not just an aggregate score — and it **demonstrably tracks the shipped levers**: on
+  `golden/needle-burial-v1`, same corpus, the cascade-leak fell from **11/20 (leak_rate 0.55, CE-off,
+  `vector`+`hybrid`)** to **2/20 (0.10, both levers default-on + CE-on, all 3 legs)**, with final_recall
+  0.45→0.90 and final nDCG 0.318→0.801. **0 reconciliation mismatches** (the projection's presence call vs the
+  harness's recorded recall) on both runs — confirming doc-ID alignment.
+- **Evidence:** tempdoc 636 §IMPLEMENTED + validated (2026-06-24). 877 jseval unit tests green (no regressions)
+  + 22 new tests. The AI-free **`judge_headroom_ceiling`** (`leg_union_recall − final_ndcg` = what a *perfect*
+  judge over the current pool could add) = 0.68 (CE-off) then 0.20 (production default) — a clean
+  "judge/cascade is the bottleneck, not the legs" prioritization signal (legs find the needle 100% throughout).
+- **Conditions/caveats:** validated on the synthetic needle corpus (the design's regression guard — a clean
+  CE-on, both-levers run) **and on a non-synthetic register corpus (courtlistener-200, 200 judged, 0
+  reconciliation mismatches)** — where it reports a *different* failure regime: **LEG_MISS-dominated**
+  (`leg_miss_rate 0.28`, `leg_union_recall 0.685`, `leak_rate 0.07`; per-leg `lexical 0.64 / vector 0.25 /
+  splade 0.175`), i.e. a component/representation bottleneck, vs the needle's fusion-leak regime. The
+  **leak-gate fires/passes/skips correctly on this real data**. The optional LLM-*realistic* probe ran live
+  (`jseval judge-ceiling`, GPU `Qwen3.5-9B`): **`capture_fraction ≈ 0.11`** of the 0.199 ceiling with
+  `top1_agreement 0.20` (highly position-sensitive) — empirically confirming the **AI-free
+  `judge_headroom_ceiling` is the decision-relevant figure** and the live judge is a coarse, biased signal.
+  (The first attempts at these two were blocked by multi-agent contention on the shared default port 33221 +
+  `tmp/headless-eval-data` — root-caused in 636 §Root-cause, *not* a code defect; a quiet-window re-run
+  completed immediately.) The instrument is **eval-only** (recall-survival needs qrels). Layer-3 deep
+  intra-fusion attribution stays deferred (only-if-warranted).
+- **Guard ACTIVE + cross-corpus profile (2026-06-24 follow-up, 636 §guard-activated):** the leak-gate is now
+  **pinned** (`leak-gate-baselines.v1.json`, measured-derived via `leak-gate-derive`: needle 0.100 /
+  courtlistener 0.070 / scifact 0.013 / enron-qa 0.047, tol 0.05) and **wired** into the `search-engine-hint`
+  hook as the third engine ratchet (relevance + perf + leak). Across **four diverse corpora** (synthetic/legal/
+  academic/email, 0 reconciliation mismatches each) the instrument distinguishes regimes — legal is
+  **leg-recall-bound** (leg_miss 0.28), academic + email are **judge-rank-bound** (judge_low 0.25, legs find it
+  ≥0.89) — and the regime-blind headline is decisive: **cascade-leak is small everywhere (0.013–0.100, mean
+  ≈0.06)** so v3's fix holds and **Layer 3 stays deferred**; the cross-corpus **headroom is the judge
+  (judge-rank, the largest bucket) and the legs (leg-miss)**, pointing the next regime-blind lever at a sharper
+  judge (§2-C / §5 probe) and/or component quality (F-009), *not* another anti-leak fix. This is the §0/D-005
+  reframe — *capability = guarantees + leaks + component quality* — now **measured**, not asserted.
+  - **Owners of the two pointed-at levers (2026-06-24 triage):** the **judge-rank** side (the dominant bucket)
+    is now tempdoc **643** (judge-stage ranking quality — measurement exists via the §5 probe, lever design
+    deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
+    deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
+    (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+
+### F-001: CE model quality is irrelevant on personal email
+
+- **Answer:** Upgrading from MiniLM-L6-v2 to GTE-ModernBERT produces zero measurable difference on EnronQA (±0.3% nDCG, noise level).
+- **Evidence:** tempdoc 309 §43
+- **Conditions/caveats:** Tested on EnronQA (verbose QA questions, single-user inbox). CE may still matter on academic/legal corpora (SciFact, CourtListener).
+
+### F-002: CE actively hurts on personal email
+
+- **Answer:** `full` mode (includes CE) scores 0.810 vs `bm25_splade` (excludes CE) at 0.830 — CE degrades ranking by ~2%.
+- **Evidence:** tempdoc 309 §42, §43 (confirmed with both MiniLM and GTE-ModernBERT). **343 Phase D:** CE-on vs CE-off isolation with multilingual stack confirms CE hurts EnronQA by 3-5% across all modes (lexical 0.827→0.799, full 0.822→0.777). CE helps SciFact (+3.2%) and MIRACL/de (+4.8%).
+- **Conditions/caveats:** EnronQA only. CE helps on academic/multilingual. Confirms FW-001: corpus-adaptive CE gating needed.
+
+### F-003: BM25 dominates on entity-heavy personal content
+
+- **Answer:** BM25 alone achieves 0.810 nDCG@10 on EnronQA. Sparse adds +2.5% (bm25_splade 0.830). Dense adds nothing measurable.
+- **Evidence:** tempdoc 309 §42
+- **Conditions/caveats:** Verbose QA queries, not short navigational queries. Pattern may differ with real search queries.
+
+### F-004: Optimal fusion mode is corpus-dependent
+
+- **Answer:** `full` wins on academic/multilingual (SciFact 0.723, MIRACL/de 0.639). `bm25_splade` wins on personal email (0.830). BM25-dominant weights win on long legal docs (CourtListener 0.925 at 0.60/0.20/0.20).
+- **Evidence:** tempdoc 309 §42, §35, §37
+- **Conditions/caveats:** Only 5 corpora tested. Generalization uncertain.
+
+### F-005: bge-reranker-v2-m3 has ONNX GPU regression (5.7x slower)
+
+- **Answer:** ONNX Runtime CUDA provider is 5.7x slower than PyTorch for XLM-RoBERTa-based models. Makes GPU acceleration counterproductive.
+- **Evidence:** tempdoc 309 §39, FlagEmbedding issue #987
+- **Conditions/caveats:** May be fixed in future ONNX Runtime releases.
+
+### F-006: CE model upgrade irrelevant when retrieval is strong (generalized)
+
+- **Answer:** GTE-ModernBERT (149M, 8192 tokens) produces identical nDCG@10 to MiniLM-L6-v2 (22.7M, 512 tokens) on ALL tested corpora: SciFact (-0.1%), CourtListener (-0.4%), MIRACL/de (+0.1%), EnronQA (-0.3%). All within noise.
+- **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
+- **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
+
+### F-007: Cross-language noise is minimal in mixed multilingual corpus
+
+- **Answer:** German, French, and Chinese retain 90%+ of their isolated retrieval quality when mixed into a single index with English content. Per-language degradation: DE -9.4%, FR -1.0%, ZH +2.7%.
+- **Evidence:** tempdoc 309 §38 (Phase 8 mixed desktop corpus eval)
+- **Conditions/caveats:** Subsample-based eval (2286 docs, 250 queries). English scientific component has only 7% qrel coverage (data issue, not retrieval failure). BGE-M3's XLM-RoBERTa backbone handles language separation.
+
+### F-008: CE impact is corpus-dependent — helps academic/multilingual, hurts email
+
+- **Answer:** Per-query analysis across 4 corpora shows CE helps 183/305 queries on German (+0.086 net nDCG), 55/300 on SciFact (+0.031), but hurts 45/300 on EnronQA (-0.020). On email, CE demotes the relevant doc in 28 cases and pushes it out of top-10 entirely in 7 cases.
+- **Evidence:** tempdoc 309 §42 (per-query failure analysis on existing artifacts)
+- **Conditions/caveats:** MIRACL/de's CE "help" is likely the dense leg (active in `full` but not `bm25_splade`), not CE itself — Phase 7 CE ablation showed zero CE effect on German. Strongest evidence for corpus-adaptive CE gating.
+
+### F-009: Extraction noise is the single largest quality bottleneck
+
+- **Answer:** On OHR-Bench (1000 pages, 962 queries, 7 domains), OCR-extracted text loses 15-33% nDCG@10 vs ground-truth text. GOT moderate: -14.7% (0.949→0.809). MinerU moderate: -32.7% (0.949→0.638). Both far exceed the >5% decision gate.
+- **Evidence:** tempdoc 252 (Experiment A, 2026-03-19). All runs lexical/BM25 only, `JUSTSEARCH_AI_DISABLED=true`.
+- **Updated (343/252, 2026-03-28):** Full pipeline remeasurement with multilingual model stack + CE. Tika/PDFBox: −15.1% (0.952→0.808 full mode). Docling: −7.2% (0.952→0.884). VLM (Qwen 3.5 vision): 81.9% word overlap on 50-page sample (vs Docling 71.5%, Tika 66.3%). VLM is the best extractor with zero new dependencies. Full pipeline (dense/SPLADE) barely compensates for extraction noise (+0.4% for Tika, +4.0% for MinerU over lexical).
+- **Conditions/caveats:** MinerU's 9.8% empty-doc rate inflates its penalty. Dominant failure: extraction producing empty or wrong text (178/232 degraded queries). SPLADE is neutral or negative on all extraction variants.
+- **Current recommendation:** VLM extraction via existing chat model (Qwen 3.5 + mmproj). Expected to reduce extraction tax from 15.1% to ~5%. Production integration items in tempdoc 346.
+- **Post-cutoff candidate (2026-06-15, 580 §14.4):** **PaddleOCR-VL-1.6** (2026-05-28, Apache-2.0, ~1B, ships GGUF/llama.cpp quants, claims 96.33 OmniDocBench v1.6 — *self-reported*) is a verified, low-integration-risk drop-in over the Qwen-VL path; MinerU2.5-Pro (1.2B, Apache) the table-heavy A/B. **Gate the pilot on a retrieval-aware eval, NOT the OCR leaderboard:** *InduOCRBench* / "When Good OCR Is Not Enough" (arXiv 2605.00911, 2026-04-29) verified that high OCR char-accuracy does **not** translate to downstream RAG quality (structural/formatting-semantic errors cause retrieval failures at low WER/CER). Extraction is still hardcoded to llama-server VLM with no pluggable-extractor abstraction (real swap cost).
+
+### F-010: Entity-boosted BM25 does not improve search quality
+
+- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
+- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+
+### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
+
+- **Answer:** dslim/distilbert-NER ONNX model + BioTagDecoder subword aggregation achieves F1=0.908 on CoNLL-2003 validation (within 1.4 points of published 0.922). PER F1=0.953, ORG F1=0.839, LOC F1=0.942. Published F1 was almost certainly evaluated on validation set, not test set.
+- **Evidence:** tempdoc 326 Phase 6 (jseval ner-eval subcommand). Test set F1=0.863 (harder split).
+- **Conditions/caveats:** Eval requires `is_pretokenized=True` for correct word→subword mapping on CoNLL-2003. Production code processes free-form text and is unaffected.
+
+### F-012: Dense retrieval tracking bug — CORRECTED (2026-03-27)
+
+- **Original claim:** Dense retrieval broken for non-BGE-M3 configs. `prepareQueryVector()` falls through to `NO_EMBEDDING_SERVICE`.
+- **Correction:** Dense retrieval WAS working with gte-multilingual-base all along. Two separate issues were conflated: (1) EmbeddingGemma's FP16 NaN (head_dim=256, model-specific, resolved by 358 model change), (2) `KnowledgeHttpApiAdapter.buildPipelineExecution()` never emitted `dense: executed` component status on success — only reported `dense: skipped` on failure. jseval's pipeline tracking saw no `dense` in components and reported `requested_dense_but_not_observed`. Fixed: added `dense: executed` reporting when `pipelineConfig.denseEnabled()` and `!vectorBlocked && !hybridFallback`.
+- **Impact:** All splade-v3+gemma `full` mode baselines (with gte-multilingual-base auto-discovered) were true 3-way fusion (bm25+splade+dense). Confidence upgraded from C to A. The full vs bm25_splade quality gap IS the dense contribution.
+
+### F-013: SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact
+
+- **Answer:** SPLADE-v3 achieves nDCG@10=0.501 on SciFact in SPLADE-only mode. BGE-M3 sparse achieves 0.627 — a 20% gap. This is a model quality difference, not a pipeline regression. Confirmed deterministic across 3 independent runs (2 at HEAD, 1 at dc4f79a) with GPU on/off.
+- **Evidence:** tempdoc 343 bisect. `tmp/eval-results/20260325T124146_scifact/` (HEAD), `20260325T133143_scifact/` (dc4f79a). Identical nDCG@10=0.5012 at both commits.
+- **Conditions/caveats:** Gap may be smaller on other corpora. `bm25_splade` mode (BM25+SPLADE fusion) closes the gap substantially (0.668 vs 0.679) because BM25 dominates. The register's `splade-v3+nomic` baseline of 0.625 (309 §30) could not be reproduced and likely reflects different conditions (cached index or different jseval version). `splade` mode legs corrected from `bm25+splade` to `splade` — jseval sends `sparseEnabled=false`.
+
+### F-014: Chunk merge is a net positive on long-doc corpora; `isShortCorpus()` gate is correct
+
+- **Answer:** On EnronQA (long emails, chunk merge fires on all 300 queries), disabling chunk merge drops lexical nDCG by 1.3% (p=0.04, Cohen's d=-0.12, statistically significant). On SciFact (short abstracts), `isShortCorpus()` correctly gates chunk merge off — all 300 queries show `chunkMergeReason=SKIPPED_SHORT_CORPUS`. The current chunk branch defaults (50/50 CC with parent-length modulation) work well despite the 6-field whole-doc vs 1-field chunk asymmetry introduced by 306/326.
+- **Evidence:** tempdoc 343 Phase 2.2. Chunk-ON: `tmp/eval-results/20260324T131341_mixed_enron-qa/`. Chunk-OFF: `tmp/eval-results/20260324T140216_mixed_enron-qa/`. Same index, same config except `JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED`.
+- **Conditions/caveats:** Only tested on EnronQA (long) and SciFact (short). `bm25_splade` mode shows same direction (-1.4%) but not statistically significant (p=0.191). No adjustment to branch weights needed at current defaults.
+
+### ~~F-015: CE impact depends on retrieval strength~~ — RETRACTED
+
+- **Retracted (2026-03-27):** The evidence was invalid. jseval's `FULL_PIPELINE` had
+  `crossEncoderEnabled: false` — CE never ran in any jseval-measured run. The
+  full vs bm25_splade delta (0.822 vs 0.813 on EnronQA) was CC3 fusion path
+  overhead (3-way vs 2-way fusion with broken dense leg), not CE impact.
+  CE impact with splade-v3+gemma remains unmeasured. Fixed: jseval `--ce` flag
+  added to enable CE in eval runs.
+
+### F-016: Schema complexity degrades small model performance
+
+- **Answer:** 16.1% average degradation when schema complexity increases (arXiv:2504.19277). Confirmed in 366 Phase 6 bloat experiment: adding 2 optional parameters (`doc_ids`, `return_full_documents`) dropped accuracy from 92% to 71%. Removing them restored 86–94% accuracy.
+- **Evidence:** tempdoc 366 Phase 6 (3 eval rounds: bloated 71%, lean 90%, final 94%)
+- **Conditions/caveats:** Tested with Haiku-class agents. Opus or larger models may be less sensitive. The safe pattern: implement in backend, document in description text, keep schema minimal.
+
+### F-017: Tool consolidation impact — 7 to 4 MCP tools
+
+- **Answer:** Consolidating 7 capability-oriented MCP tools to 4 task-oriented tools produced +20pp accuracy on 50q Haiku eval (72%→92%). Validated across Phase 5 (92%) and Phase 6 (86–94%).
+- **Evidence:** tempdoc 366 Phase 4 (4a–4e). Literature: Block Engineering (30+ tools → 2), "MCP Tool Descriptions Are Smelly" (arXiv:2602.14878).
+- **Conditions/caveats:** The improvement includes tool description rewrites and position bias optimization (answer-first), not just count reduction.
+
+### F-018: Soft-boost QU is safe and neutral-to-positive
+
+- **Answer:** QU-extracted `boostFilters` applied as `ConstantScoreQuery` SHOULD clauses: nDCG +0.12%, RR@10 +0.82%, no metric degrades on MultiHop-RAG (50 queries, 611 docs). Hard filters are strongly net-negative (-20.1% nDCG, 7/50 zero-result). Weight=20 with `ConstantScoreQuery` produces +3.2% nDCG on the boost weight sweep.
+- **Evidence:** tempdoc 363 V3 eval (4-condition comparison) and V3.3 real Lucene boost weight sweep.
+- **Conditions/caveats:** Gains are modest on MultiHop-RAG because queries require multi-source evidence. Single-source filtering queries would show larger improvement. QU currently disabled by default (`JUSTSEARCH_QU_ENABLED`) due to LLM scheduling contention.
+
+### F-019: QPP closed — signals cannot separate null from answerable queries
+
+- **Answer:** QPP signals (`query_scope`, `max_idf`, `avg_ictf`) cannot separate null from answerable queries. Null query top scores: 0.70–1.0; inference query top scores: 0.82–1.0 — complete signal overlap. QPP++ (ECIR 2025, arXiv 2504.01101) confirms lack of robustness across settings.
+- **Evidence:** tempdoc 363 §Context sufficiency detection, tempdoc 366 Phase 2f.
+- **Conditions/caveats:** Post-retrieval context sufficiency checking (Google ICLR 2025) is the alternative path. QPP should not be used for query routing.
+
+### F-020: Hybrid deterministic+LLM filter normalization
+
+- **Answer:** Deterministic tier (prefix/contains matching) handles 80%+ of filter mismatches at 0 ms. LLM grammar-constrained enum handles semantic gaps (~400–1200 ms GPU). Filter mismatch complaints dropped from 19 (Phase 4) to 1 (Phase 5+).
+- **Evidence:** tempdoc 366 Phase 5 (5a–5j). Hybrid validation: 6/8 cases at 0 ms. 50q eval: accuracy maintained (91.8% vs 92% baseline), cost -4%, turns -4%, duration -25%.
+- **Conditions/caveats:** Requires facet vocabulary snapshot (gRPC facet query). Empty vocabulary degrades to LLM-only (still works, just slower). CBS Sports semantic gap needs a more capable model.
+
+### F-021: GPL-trained LambdaMART reranking HURTS / is non-viable without real user-feedback labels
+
+- **Answer:** The GPL→LambdaMART learned-fusion reranker (2-feature: sparse+vector, trained on GPL **synthetic** queries) does NOT improve ranking and **consistently degrades** nDCG on real queries. It is non-viable in our cold-start (no real-feedback) situation. **Do not re-propose "activate/enrich GPL-LambdaMART" as a quality lever without real user-click data first.**
+- **Evidence:** tempdoc 245 measured it across three BEIR datasets — **SciFact −0.009, Arguana −0.10, NFCorpus −0.021** (`245-execution-log.md:61`); root cause *"GPL synthetic queries don't transfer to real BEIR queries"* (`245:332`); verdict *"not viable without real user query data," "may be fundamentally unrecoverable"* (`245:1263`). **Re-confirmed live 2026-06-15** (tempdoc 580 §12.8–12.9): on cord19 the GPL-trained model was a **degenerate no-op** — `hybrid_run.trec` byte-identical with vs without the model (LightGBM "no meaningful features" training warning); the reranker executes (`KnowledgeSearchEngine.java:531-574`) but changes nothing.
+- **Conditions/caveats:** 234 *predicted* LambdaMART beats fixed fusion *"when ≥500 labelled queries are available"* — the failure is specifically the **GPL synthetic substitute** for those labels, not learning-to-rank per se. The substrate (GPL pipeline + LambdaMartReranker, 2-feature) is built+wired and the bootstrap first-model bug was fixed (580 §12.7); what's missing is **real implicit-feedback capture** (clicks/opens — confirmed absent, 580 §12.1). So this is a *ship-then-learn* dependency, not a code/feature change. (D-002's corpus-adaptive CC-weight idea / FW-001 is a separate, also-superseded lever — see 580 §10.) **Real labels are necessary but NOT sufficient (580 §13.7, code-verified):** the V1 feature vector `[sparse, vector]` IS fusion's own leg scores (`LambdaMartFeatureSchema`; reranker runs on the *already-fused* list reading the same `sparse-/dense-retrieval` stage scores, `KnowledgeSearchEngine.java:544-560`) and even collapses BM25+SPLADE into one "sparse" slot — so the model is informationally *poorer* than the fusion it post-processes and is **structurally capped below fusion regardless of label quality**. Any real lift needs BOTH rich features beyond fusion's own scores (234 V2 schema) AND real labels. **Do not "capture feedback → re-activate the existing 2-feature model"** — that satisfies labels and still loses to fusion. (The §13.3 *additive-feature, label-free* fusion-weight selector is the cheaper sibling lever this analysis points to.) **Refinement (580 §16, code-verified):** "real labels confirmed absent" is too strong — *user-click/explicit* feedback is absent (a build away), but the **agentic path already persists a graded real-query signal** (retrieved ⊃ grounding ⊃ cited, with `parentDocId`/`chunkIndex` + similarity; `AgentCitationResolver`/`AgentInteractionMapper`). It's real-query (unlike GPL synthetic → sidesteps 245's failure mode) and a **harvest, not a build** — but it is **reorder-only** (recall-blind: the agent can only grade within retrieved top-k, with a circularity risk) and LLM-judged, not user behavior. The cheapest first-real-label experiment: assemble the persisted citation tuples, train on them, A/B on held-out real queries.
+
+### F-022: CC beats RRF for chunk-branch fusion (CC shipped as default)
+
+- **Answer:** Convex-combination (CC) branch fusion outperforms RRF on the whole-doc ⊕ chunk-parent merge. The `branchFusionStrategy` rrf-vs-cc switch is fully wired (`SearchExecutor.java:692,704`); **CC is the default, chosen by measurement, not assumption.**
+- **Evidence:** tempdoc 280 §GPU-backed verification — CC nDCG@10 **0.7593** vs RRF **0.6062** on a short cord19-qddf smoke (directional; gates skipped, not acceptance-grade, but decisive for the default).
+- **Conditions/caveats:** Single short smoke run, not re-validated at HEAD. The RRF path stays selectable for A/B; no acceptance-grade comparison exists.
+
+### F-023: Whole-doc dense dilution is real and scales; lexical+CE legs suppress dense on paraphrase queries
+
+- **Answer:** On a purpose-built buried-signal corpus (`golden/needle-burial-v1` — long generic-filler docs, one buried distinctive head per chain, **zero-lexical-overlap paraphrase** queries, head-only qrels), the **whole-doc (`vector`) dense nDCG@10 collapses monotonically with distractor scale: 0.820 (280 docs) → 0.526 (1240) → 0.429 (2440)** — the maximally-diluted mean-of-means vector progressively loses the needle to near-identical filler twins. Separately, **`vector` ≫ `hybrid` on these paraphrase queries** (0.820 vs 0.318 at 280 docs; head@rank-1 12/20 vs 5/20, hybrid *misses* the needle on 9/20) — adding the lexical (BM25/SPLADE) + cross-encoder legs **actively demotes/drops the dense-found needle** on grep-defeating queries.
+- **Evidence:** tempdoc 636 §Phase-1 eval (2026-06-23). `jseval run --dataset golden/needle-burial-{s6,s30,s60} --modes vector,hybrid --start-backend --clean --embedding`; `vector` `comparable=True`.
+- **Conditions/caveats:** Synthetic extreme (100% zero-overlap paraphrase, 20 queries) — exaggerates the `vector≫hybrid` inversion vs real mixed queries. **jseval `hybrid` reported `chunkMergeApplied=null` on all queries** (the chunk-passage branch did not apply), which **contradicts the live interactive probe** (636 §Pre-impl pass: production hybrid fired `branch-fusion: executed` and ranked a needle decisively) — so jseval-`hybrid` is **not representative of the production default path** and its low numbers must not be read as "production hybrid collapses." See Q-011.
+
+---
+
+## Decisions
+
+Design choices in the current production pipeline, with rationale.
+
+### D-001: Ship GTE-ModernBERT as default CE — SHIPPED
+
+- **Choice:** Replace MiniLM-L6-v2 with GTE-ModernBERT-base
+- **Status:** Shipped (session aeb47d37). `models/onnx/reranker/` now contains GTE-ModernBERT. MiniLM backed up to `reranker-minilm-backup/`. Default `maxSequenceLength` changed from 512 to 8192.
+- **Rationale:** 8192-token context eliminates truncation damage on long docs. Neutral on all tested corpora (F-006). Low effort (model swap + config change).
+- **Evidence:** tempdoc 309 §41 (confirmed neutral on SciFact, CL-200, MIRACL/de, EnronQA)
+- **Revisit when:** settled. CE model is no longer a quality lever — gains come from retrieval (BGE-M3) and fusion (balanced weights).
+
+### D-002: Balanced CC weights (0.34/0.33/0.33) for BGE-M3
+
+- **Choice:** Equal weights across BM25/dense/sparse when BGE-M3 is active
+- **Rationale:** BGE-M3 produces strong dense AND sparse (unlike old SPLADE+nomic where both were weak)
+- **Evidence:** tempdoc 309 §35 Phase 5. Cross-corpus validated: balanced wins on SciFact (+1.9%), MIRACL/de (+14.9%), CORD-19 (+1.6%). BM25-dominant wins on CL-200 (+13.4%).
+- **Revisit when:** corpus-adaptive weight selection is implemented (CorpusProfile-driven). Implementation path: `CorpusProfile.isLongCorpus()` → bm25-dom, else → balanced.
+
+### D-003: Native multilingual, no per-language levers — REJECT per-language components
+
+- **Choice:** The engine stays multilingual *by construction*. No per-language artifact a contributor must author or maintain — no language-specific stemmer/analyzer field, stopword list, spelling dictionary, or hand-curated synonym set — is added. Detected *language as a signal* to one uniform policy is allowed (bucket B); language-agnostic levers are evaluated on their own merits (bucket C).
+- **Rationale:** Per-language components cost O(languages) maintenance forever and degrade silently. The multilingual model stack (gte-multilingual-base + opensearch-neural-sparse-multilingual + gte-multilingual-reranker) already delivers 90%+ cross-language retention (F-007) and strong MIRACL de/fr/zh through one uniform pipeline. The per-language scaffolding that existed (the `content_{en,de}` fields + `en`/`de` analyzers + empty synonym files) was verified inert and removed (tempdoc 581 §13); analysis is now locale-invariant (ICU + NFC + lowercase). Full reasoning + the three-bucket classifier: **ADR-0043** / tempdoc 581.
+- **Enforcement:** the analyzer-provider `enum` in `SSOT/schemas/indexing/analyzers-catalog.schema.json` (rung 1, a per-language provider is unrepresentable) + the `language-agnostic-analysis` CI gate (rung 2, `scripts/ci/check-language-agnostic-analysis.mjs`).
+- **Closes:** FW-006 (stemming), Q-004 (locale-aware BM25 routing), per-language synonym programs — all **won't-do**. Leaves FW-002 (spell correction; index-term-based, no per-language dict) and language-agnostic levers (FW-008, recipe weights) open on their own merits.
+- **Revisit when:** a *measured large* monolingual gap appears that a uniform mechanism (a better single multilingual model, or a per-deployment model choice) cannot close — never an O(languages) program (581 §5).
+
+### D-004: Query-adaptive leg arbitration on the 2-way CC alpha — SHIPPED (default off)
+
+- **Choice:** In the default 2-way `hybrid` path (`HybridSearchOps.executeHybrid` → `fuseWithCC`), make `ccAlpha`
+  **per-query adaptive**: raise alpha toward dense (`max(ccAlpha, alphaDiverge)`) — down-weighting the lexical leg —
+  **only when all three hold**: (a) dense clears a weak sanity floor (top ≥ 0.5), (b) the legs diverge (top-K
+  doc-id Jaccard < 0.1), and (c) **BM25 is incoherent** (its own `top2/top1` ratio ≥ `bm25IncoherenceMin`, i.e. a
+  flat top / no clear lexical winner). Condition (c) is the discriminator that protects BM25-dominant corpora
+  (legal/email), where BM25 returns a *peaked* winner and is usually right. All signals are rank/ratio-based
+  (score-incomparability). Gated by `JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED` (**default false**) +
+  `…_ALPHA_DIVERGE` (0.7) + `…_BM25_INCOHERENCE_MIN` (0.9), all env-tunable.
+- **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
+  the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
+  "symmetric per-query leg arbitration".
+- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free):**
+  `golden/needle-burial-v1` (paraphrase) **0.241 → 0.712 (+195%)**; `scifact` (academic) **0.7599 → 0.7641**
+  (neutral); **`mixed/enron-qa` (personal email) 0.7422 → 0.7268 (−2.1%, REAL regression)**;
+  `mixed/courtlistener-200` (legal) **0.6054 → 0.5893 (−2.7%)**.
+- **Honest limitation (important):** the feature is a **net win only for paraphrase/semantic queries** and a
+  **net loss (~2–3%) on keyword/entity-heavy corpora — including personal email**, which (F-003) is the
+  BM25-dominant shape of JustSearch's *primary* use case (personal files). So it **hurts the product's core corpus
+  type** when on; **default-off is necessary and default-on is not recommended** without removing the regression.
+  (An earlier single-build A/B mis-reported enron-qa as "neutral −0.5%" — confounded by ~0.8–2.4% embedding-rebuild
+  noise; the shared-index measurement is the correction. A dense score-*gap* refinement was measurement-rejected.)
+- **Revisit when:** removing the BM25-dominant regression needs a signal that tells *dense-found-the-answer* from
+  *dense-confidently-wrong* — which available fusion-site signals (BM25 flatness, dense-top-absent-from-BM25, maxIdf)
+  **cannot** do (all key on leg disagreement, not on which leg is right). This is an **open research problem**
+  (label-bearing / learned signal), not a threshold tweak — the gate is **not** to be curve-fit further. The
+  CE-confidence gate (cross-process) + the recall-stage embedding-seam (the deep buried-signal case) remain future.
+- **The actual goal stays in 636 (now narrowed by evidence):** D-004 is a *paraphrase* lever and **regresses
+  personal files**, so it does NOT serve the buried-signal-in-personal-files use case. A **direction investigation**
+  (636 §Direction investigation, 2026-06-23) then challenged the presumed successor (Design v1, the embedding seam):
+  the chunk-dense path **already fires** and whole-doc dense **already retrieves** the buried fact (`vector` 0.82),
+  so the measured bottleneck is **fusion, not chunk-vector quality** — Design v1 targets a non-bottleneck. Net: the
+  buried-signal-via-dense problem is **real but narrow and fusion-shaped** at measurable scale; the very-long-doc
+  regime is untested and would need its **own eval first** before any seam. Do not build Design v1 speculatively,
+  and do not curve-fit this fusion gate further.
+- **Correctly-aimed successor → 636 Design v3 (CE-arbitrated rerank pool):** the demonstrated defect is that the
+  cross-encoder reranks a **fusion-ranked** prefix (`KnowledgeSearchEngine.java:288-291`), so a correct dense answer
+  fusion buries never reaches the relevance model (CE present yet `hybrid` 0.24 ≪ `vector` 0.82). Fix = feed the CE
+  the **union of each leg's top-N** (recall-complete per leg) and let it arbitrate per-candidate — **keyword-neutral
+  by construction** (never down-weights a leg), so unlike D-004 it can be default-on, and it is **eval-testable on
+  existing corpora** (needle recovery + enron/courtlistener no-regression). Principle: *"fusion is a ranking step,
+  not a recall gate."* This is the build-worthy remaining work, not Design v1 or a richer D-004 heuristic.
+
+### D-005: Regime-blind engine development — capability over corpus-fit, intelligence in the judge not a router
+
+- **Choice (two standing rules + the design stance they imply, user decision 2026-06-24):** Because JustSearch
+  has **no users yet**, all further engine work obeys: **(1) do not reason about the types of corpus or queries
+  users *might* run, and (2) do not design code around such an assumption.** "Improve the engine" therefore means
+  improving **capability for *any* workload**, not raising nDCG on a *presumed* one. Capability is defined as
+  three corpus-agnostic things — **guarantees + leak-freeness + component quality**: (a) stronger
+  invariants/guarantees true by construction for every corpus; (b) fewer **leaks** (a correct candidate silently
+  dropped by a weaker stage before a stronger one can judge it); (c) strictly-better fixed components (encoder /
+  reranker / extractor). The architectural stance that follows is the **funnel-and-judge invariant**: *keep the
+  upstream funnel dumb, broad, and lossless; put the intelligence in fixed strong judges (the cross-encoder, the
+  LLM-as-judge) and in the legs' representation/extraction quality; make every truncation judge-aligned and
+  **auditable**; spend the "cleverness budget" on the judge and the legs, **never on a per-corpus router.*** Its
+  observability half is a distinct, reusable principle: **a funnel must be observable by recall-survival, not
+  just cardinality** — every candidate-dropping stage must be accountable for whether it dropped a *correct*
+  candidate (the engine already observes the *count* funnel via `TraceStage.cardinality`; the *recall* funnel is
+  the gap 636's Staged Recall Accounting fills).
+- **Rationale:** Speculating about an unknown workload is unfounded and bakes a guess into the code that O(forever)
+  maintenance and silent mis-fit must carry; it is the retrieval-quality form of the engine's existing
+  "verify, don't guess". A fixed strong judge over a broad lossless funnel needs **no per-corpus tuning**, so it
+  cannot mis-fit a corpus we did not foresee; a learned/heuristic *combiner* or *router* (F-021, FW-001) can and
+  does. Measuring **leaks and guarantees** (not a corpus's headline score) is the only honest definition of
+  "better" when the workload is undefined.
+- **Enforcement:** **prose-tier (design discipline), not a CI gate** — unlike D-003 there is no single mechanical
+  predicate that catches a violation, so this is reviewer/agent judgment at design time. The *partial*
+  mechanization is **BUILT** (636 §IMPLEMENTED, 2026-06-24): the **Staged Recall Accounting** projection
+  (`jseval/projections/staged_recall_accounting.py`, auto-run at end-of-run) decomposes every judged query into
+  leg-recall / cascade-leak / judge-rank, and the **`jseval leak-gate`** ratchet (`jseval/leak_gate.py`,
+  mirroring `relevance_gate.py`) fails a build when a corpus's pinned `leak_rate` ceiling is exceeded — making a
+  *newly-introduced leak* fail loudly. (A focused gate over the cross-mode projection, not the per-mode
+  cohort-envelope/nDCG-locked ratchet — confidence-pass finding.) The instrument is an **eval projection of the
+  run artifacts** (the 553 §1 projection class); it stays eval-only (recall-survival needs qrels) — never a
+  parallel production record. **Measurement caveat
+  (literature-backed, 636 §External research pass):** automated / LLM-generated relevance judgments are reliable
+  only for *coarse* recall/presence trends, not for fine top-system discrimination or significance-stability
+  ([arXiv 2411.13212](https://arxiv.org/pdf/2411.13212)) — so the robust no-users signal is **recall-survival**,
+  not graded nDCG on auto-labeled corpora; keep curated human qrels as the ship-gate and treat any LLM-generated
+  qrels on new corpora as trend-only. (The leak class itself is the literature's **"bounded recall problem"**,
+  [arXiv 2501.09186](https://arxiv.org/abs/2501.09186) — conform to that term.)
+- **Closes / implies:** the **corpus/query-adaptive router** ("Item-1", the FW-001 successor) is **retired as a
+  forward direction** — it is, by definition, code that detects the regime and routes (forbidden by rule 2);
+  FW-001's `CorpusProfile`/`isLongCorpus` regime switch stays **won't-do** as a *router* (it remains a dangling
+  zero-consumer seam). The "regime-matched levers" framing (636 v4) and the "weight the *real* corpus first"
+  ship-rule are superseded: **treat every eval as a capability measure, privilege none as "the use case."**
+  Distinguishes the **forbidden** (adaptivity keyed on an *assumption about the user's corpus*) from the
+  **allowed** (a fixed rule reacting to *runtime signals from the actual query + its own results* — e.g. D-004's
+  per-query BM25-incoherence gate, which assumes nothing about the corpus).
+- **Revisit when:** real usage data exists (then a *measured* workload, not a guess, may inform tuning); or the
+  Staged Recall Accounting profile *proves* a second leak whose runtime localization earns the deferred
+  general recall-funnel structure (candidate scope: RAG context-budget, the agent citation funnel
+  (`AgentCitationResolver`, harvest-not-build), the runtime truncation sites — **recorded, not built**).
+- **Evidence / source:** tempdoc 636 §"New development rules" + §Theorization + §"Long-term design — Staged
+  Recall Accounting" + §"Reach & principle" (2026-06-24, user decision). Sibling stance to **D-003** (a named
+  engine-development invariant); conforms to the **549/553** SearchTrace-projection seam and the **F-021** /
+  **D-004** lessons (intelligence in a *combiner/router* loses; intelligence in a *judge* + better *legs* wins).
+
+---
+
+## Open Questions
+
+Unanswered questions that need investigation. Agents should prefer
+picking up items here over inventing new experiments.
+
+### Q-001: Why does CE hurt on personal email?
+
+- **Question:** What is the mechanism by which cross-encoder reranking degrades nDCG on EnronQA by ~2%?
+- **Why it matters:** If understood, we could gate CE off for corpus types where it hurts, improving quality automatically.
+- **Prior art:** F-002 measured the effect. No per-query analysis yet.
+- **Suggested approach:** Per-query failure analysis on EnronQA `full` vs `bm25_splade` — identify which queries CE helps vs hurts, categorize by query type.
+
+### Q-002: Does BM25 dominance hold on short navigational queries?
+
+- **Question:** EnronQA uses verbose QA questions. Would BM25 still dominate with realistic 2-5 word search queries ("Ameren termination", "budget email John")?
+- **Why it matters:** If short queries shift the balance toward semantic retrieval, the corpus-adaptive mode selection strategy changes.
+- **Prior art:** No short-query eval exists for EnronQA.
+- **Suggested approach:** Use the local LLM to rephrase 50-100 EnronQA questions into short navigational queries. Re-run eval.
+
+### Q-003: What is JustSearch's ingestion quality tax? → ANSWERED → F-009
+
+### Q-004: Does locale-aware BM25 improve multilingual retrieval? → WON'T-DO → D-003
+
+- **Disposition (2026-06-15, D-003 / ADR-0043 / tempdoc 581):** **WON'T-DO.** Locale-aware BM25 routing means a per-language analyzer field (`content_de` with German-specific analysis) — exactly the per-language maintenance the language-diversity invariant (D-003) forbids (bucket A). The earlier "cheap win" framing was wrong under this stance: making it a real win requires *authoring* per-language analysis. The inert `content_{en,de}` scaffolding was removed in the 581 §13 collapse, and the `language-agnostic-analysis` gate now forbids reintroducing it. Multilingual gains come from the multilingual model stack (F-007; MIRACL de/fr/zh through one uniform pipeline), not per-language routing.
+
+### Q-005: EmbeddingGemma-300M quality baselines needed → ANSWERED → F-012, F-013
+
+- **Answered (343):** SciFact, EnronQA, and MIRACL/de baselines measured with splade-v3+gemma, then re-baselined with full multilingual model stack (Phase D). F-012 corrected (dense was working). CE measured via `--ce` flag. All 5 model swaps validated and shipped. Phase D baselines are the current production baseline.
+
+### Q-006: Does chunk merge help or hurt overall quality? → ANSWERED → F-014
+
+### Q-007: Sufficiency calibration dataset needed
+
+- **Question:** What is the precision/recall of the `context_sufficient` classifier? The prompt was tuned by flipping rule 5 ("when uncertain, respond false" → "when uncertain, respond true") but no labeled answerability dataset exists to measure false positive/negative rates.
+- **Why it matters:** If the model says "sufficient" incorrectly, agents stop searching too early. If it says "insufficient" incorrectly, agents waste turns on unnecessary refinement.
+- **Prior art:** Google ICLR 2025 "Sufficient Context" (arXiv 2411.06037) achieved 93% accuracy, 0.94 F1 with 115 human-labeled examples. Tempdoc 366 Phase 6 reverted the prompt flip due to unknown false positive rate.
+- **Suggested approach:** Build labeled dataset from 50q eval: (query, context) → answerable? Measure classifier precision/recall before adjusting prompt.
+
+### Q-008: What fraction of real JustSearch user queries contain extractable filters?
+
+- **Question:** Estimate is 40–65%, but no empirical data exists. The available query sets are either synthetic benchmarks (MultiHop-RAG: 100% filterable, BEIR: ~0% filterable) or illustrative examples.
+- **Why it matters:** Determines the real-world impact ceiling of query understanding. At 40%, QU fires on nearly half of queries with +15–29% retrieval precision (literature). At 10%, the feature is marginally useful.
+- **Prior art:** tempdoc 363 §Query distribution analysis. `meta_source` is the most common extractable field, followed by date/temporal, then person entities.
+- **Suggested approach:** Collect and analyze real user queries once usage data is available.
+
+### Q-009: Is there a validated, user-facing retrieval-confidence calibration?
+
+- **Question:** The RAG `QualitySignals` (`best_chunk_score`, `score_gap`) are emitted to the FE but were unused. `computeQualitySignals` (`RagContextOps`) sets them to either raw cross-encoder scores OR raw BM25/fusion scores — scheme-dependent and unbounded. Can these (or another signal) be normalized into a validated confidence a user can read ("how well-supported is this answer")?
+- **Why it matters:** The 561 answer-plane wants a claim-level calibration ("what the sources do/don't support"). Presenting an uncalibrated raw score as a "%" repeats the live-audit's "unlabeled 100%" anti-pattern and misleads.
+- **Prior art:** FW-009 (citation-scorer 0.5 threshold unvalidated), Q-007 (sufficiency classifier precision/recall unmeasured), F-019 (QPP cannot separate null from answerable). All point to "no validated user-facing confidence exists yet."
+- **Status (561 P-A4):** surfaced the signals only as an explicitly RELATIVE, UNCALIBRATED transparency tooltip (`retrievalSignals.ts`) — deliberately NOT a confidence verdict — pending this validation. A validated calibration would be a producer-owned field (the Worker owns the score scheme), not an FE re-derivation.
+- **Suggested approach:** Build a small labeled (query, context, answer-supported?) set as in Q-007; measure whether `best_chunk_score`/`score_gap` (CE branch only) separate well-grounded from weak answers before exposing any absolute confidence.
+
+### Q-010: Should the engine have a relevance ratchet to match the presentation gates?
+
+- **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
+- **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
+- **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
+- **Status:** Named in tempdoc 580 §4c; deliberately NOT built. **§4a (2026-06-13) resolved the trigger negatively** — HEAD hybrid nDCG@10=0.758 is on-baseline (vs 0.754), no silent regression found, so there is no proof-by-example endorsement. Q-010 now rests only on the stagnation+asymmetry argument; awaits a user decision rather than self-endorsing.
+- **Partially operationalized (2026-06-24, 636 §IMPLEMENTED / D-005):** the nDCG-mean ratchet question is now *complemented* by a recall-survival ratchet — **`jseval leak-gate`** fails a build when a corpus's pinned `leak_rate` ceiling (from the Staged Recall Accounting projection) is exceeded. It is the engine-quality "fail loudly" gate Q-010 asked for, on a **leak** metric rather than nDCG mean (and on the cross-mode projection, not the per-mode envelope). Pinning per-corpus ceilings is the deliberate governance step that still awaits a user decision (like the nDCG ratchet — un-pinned corpora do not gate).
+- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
+
+### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
+
+- **Question:** Two sub-questions opened by F-023's buried-signal eval: **(a)** jseval `hybrid` shows `chunkMergeApplied=null` (chunk branch not applying) and collapses, but the live interactive probe showed production hybrid *does* fire the chunk branch and ranks a needle well — so **does the *production* default path actually degrade on buried-signal at scale, or does the chunk-passage path hold?** The eval must be made to **isolate/exercise the chunk-dense path** before this is answerable (and before tempdoc 636's chunk-embedding seam P1a/P2 can be gated). **(b)** On grep-defeating paraphrase queries, `vector ≫ hybrid` (the lexical+CE legs *suppress* dense): should the engine **route toward dense / down-weight lexical+CE when a query is lexically poor against the corpus** (an FW-001 / low-signal-gating-in-reverse lever)?
+- **Why it matters:** (a) gates whether tempdoc 636's embedding seam is even the right fix (the Phase-1 eval measured the whole-doc vector, not the chunk vector the seam improves). (b) is plausibly the **higher-impact** lever for buried/paraphrase retrieval — the largest gap in the 636 experiment (0.82 vs 0.32) was fusion/routing, not embedding context.
+- **Prior art:** tempdoc 636 §Phase-1 eval + §Pre-impl pass (F-023); FW-001 (corpus/query-adaptive recipe, superseded as a binary switch but live as a general policy); low-signal gating (`HybridSearchOps`, caps vector on *weak* dense — here the opposite case).
+- **Suggested approach:** First reconcile jseval-`hybrid` vs production-`hybrid` (why `chunkMergeApplied=null` under jseval — a preset/`chunkAware` gap or a corpus-profile gate?); add a chunk-dense-isolating eval mode; then A/B a paraphrase-aware routing/weight policy on `golden/needle-burial-v1`.
+- **Disposition (2026-06-23):** **(a) RESOLVED as a reporting artifact** — `chunkMergeApplied=null` was jseval reading a *retired* response field (`artifacts.py`), not the chunk branch being off; jseval `hybrid` *does* exercise the production path, which genuinely degrades on paraphrase. **(b) PARTIALLY ANSWERED → D-004** — a paraphrase-aware policy was built (per-query adaptive `ccAlpha` + BM25-incoherence) and **rigorously validated**: +195% on the paraphrase target and neutral on academic, **but a real −2.1% / −2.7% regression on the BM25-dominant corpora (personal email / legal)** — so it ships **default-off** as a specialized opt-in lever, *not* a universal quality win (D-004 honest limitation). Removing the BM25-dominant regression is an **open research problem** (no available signal separates dense-right from dense-confidently-wrong), not a threshold tweak — that, plus the recall-stage embedding-seam (the deep buried-signal case the title implies but this fusion fix does not solve), remain open.
+- **(a) chunk-dense/leg isolation now MEASURABLE (2026-06-24, 636 §IMPLEMENTED):** the Staged Recall Accounting projection reports **per-leg union recall** (`vector`/`lexical`/`splade` isolated) + the cascade-leak share, so "did a leg find the buried fact, and did the fused/final path keep it?" is now a standing per-run measurement rather than a one-off reconstruction. On `needle-burial-v1` (production default, both levers): leg-union recall **1.0**, final_recall **0.90**, cascade-leak **2/20** — i.e. the legs find the needle every time; the shipped levers cut the fusion leak from 11/20 (CE-off) to 2/20.
+
+### Q-012: Should the engine have a performance ratchet (latency/throughput/footprint) to match the relevance ratchet?
+
+- **Question:** Q-010 gave *relevance* a "fail loudly" guard; *performance* (query latency, indexing throughput, resident footprint) is measured on every eval run but un-ratcheted — a latency or footprint regression coasts invisibly the same way relevance did (the same enforcement asymmetry, on the perf axis). Should an engine-edit-triggered `jseval` gate fail when a perf metric regresses past a pinned baseline?
+- **Why it matters:** The cross-encoder is ~82% of query latency (tempdoc 640 §C-2) and the default-on 636 levers feed its candidate pool, so a latency regression there is plausible *and currently unguarded*. For a local-first desktop product latency/footprint are co-equal with relevance.
+- **Prior art:** `relevance_gate.py` (the mirrored gate pattern), `diff_gate.compare_ratio` (the lower/higher-is-better ratio primitive), `calibrate.py` (the within-machine envelope that measured the perf-metric CVs).
+- **Status — IMPLEMENTED (2026-06-24, tempdoc 640):** shipped as **`jseval perf-gate`**, the perf-metric-family sibling of `relevance-gate`. A **relative** ratchet (ratio bands via `diff_gate.compare_ratio`, **no absolute SLO** — the no-users rule). Gate-able metrics, chosen by their measured within-machine CV (640 §confidence pass): **cross-encoder STAGE p50** latency (CV 1–10%; the dominant cost), **primary + enrichment throughput**, and **resident model footprint incl. the LLM** (best-effort — reads the active gguf named in the captured non-hashed `inference_status_snapshot`; ONNX-only on AI-offline runs). Deliberately **excluded as too noisy**: total latency p50 (CV 35–112%, cold-start), `index_size_bytes` (CV 11–62%).
+- **Now a first-class metric family in the canonical record** (a `metric_families` registry — the single source of truth; per-mode CE latency in `aggregate_metrics`, per-run throughput/footprint in `run_metrics`), so the floor **projects from the canonical release** (`perf_gate.project_release_to_perf_baselines`), closing the per-run fork the v1 baseline had. The noise floor is **envelope-aware** (a data-driven `1±k·CV` band from the `calibrate` envelope, with a graceful fixed-band fallback), perf is **trended** in the history DB (`jseval trend --metric`, direction-aware), and rendered in the published benchmark + register scorecard. **Source-class distinction:** per-mode and per-run families live *in* the record; **leak** (Q/D-005) is a cross-mode **projection** metric — registered in the same registry to unify the family concept, but kept projection-sourced, *not* migrated. **Advisory tier:** the `search-engine-hint` hook nudges it (with relevance + leak), not CI-blocking — inherits the relevance ratchet's tier. Conforms to the canonical-record + governed-projection seam (623).
+- **Reach — now BUILT (2026-06-24, tempdoc 640 reach + residuals):** the former reach shipped. (a) The per-run **fork is fully closed** — `release.v1.json` recomposed from a 5-corpus cohort (`scifact` + `courtlistener-200` + `enron-qa` + `miracl-de-2k` + `miracl-fr-2k`) at one commit; the perf baseline is now a `current_release` pointer, so floors project from the same canonical release relevance uses. (b) The **shared ratchet kernel** (`jseval/ratchet_kernel.py`) unifies the relevance / perf / leak / llm-gen gate orchestration. (c) The combined **engine-quality scorecard** (`scripts/docs/gen-scorecard.mjs` → `docs/reference/benchmarks/scorecard.md`) co-locates all axes as one delta-vs-guard table. (d) The **LLM-generation-latency** sibling axis shipped as a `bench`-sourced `llm-gen` family + `jseval llm-gate` (TTFT / e2e / **tokens-sec**, the last now captured — see the inference-runtime register's llm-gen finding) — the inference-path subject, nudged by `search-engine-hint`. **Reconciled (realized vs designed):** footprint is the **resident-during-eval** metric (ONNX during retrieval eval; configured-stack-incl-LLM deferred); the noise floor is the **fixed ratio band + envelope fallback** (the measured CE-stage CV superseded "median ± envelope"). **Still deferred:** 625's *generalized* projection-provenance framework (its own tempdoc).
+
+### Q-013: Candidate-set integrity (639) — extend Staged Recall Accounting, or fork a parallel recall instrument?
+
+- **Question:** Tempdoc 639 (candidate-set integrity — ANN recall at scale + near-duplicate collapse), a stub spawned by 636's coverage analysis, will need to *measure* candidate-set completeness (did retrieval return the relevant docs) and non-redundancy. Should that measurement **extend** 636's **Staged Recall Accounting** — whose `leg-recall` layer is already "did each leg surface the gold doc", a governed projection of the run artifacts with a self-reconciliation oracle — or build a **separate** recall instrument?
+- **Why it matters:** A parallel recall instrument is the exact one-authority **fork** that 553 (one canonical record; every surface a governed projection) and 636 §Reach (the *layer-invariant* observe-by-survival / one-canonical-authority principle) warn against — two un-coordinated answers to "did retrieval keep the right doc", guaranteed to drift. ANN-recall is a *refinement* of leg-recall (it asks whether the ANN index returned the true neighbours a leg *should* have surfaced), so it composes as a sub-measure of the same projection rather than a rival.
+- **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
+
+---
+
+## Future Work
+
+Identified improvements not yet started. Lower priority than Open
+Questions — these are "we should eventually" not "we need to know."
+
+- **FW-001: Corpus-adaptive mode selection** — Gate CE and select CC weights based on CorpusProfile regime (email→skip CE, academic→full pipeline). Source: tempdoc 309 §43. **SUPERSEDED (user decision, 580 §10, 2026-06-13):** premise validated (optimal recipe flips by corpus — 580 §9.3) but the binary `isLongCorpus()` switch is too crude; the target is a general recipe-weight policy, not a two-bucket lookup. `isLongCorpus()` remains a dangling seam (zero production consumers, verified 2026-06-15).
+- **FW-002: Pre-retrieval spell correction** — DirectSpellChecker for typo queries (~100 lines). Source: tempdoc 260 Gap 1. **Still unbuilt (verified 2026-06-15:** no `DirectSpellChecker`/`SpellChecker` in code); only the post-retrieval zero-hit fuzzy retry exists.
+- **FW-003: EnronQA per-query failure analysis** — 22 R@10=0 failures (net unchanged from 309). Of original 22: 14 recovered (title boost fix + chunk merge), 8 persistent (verbose query dilution). 14 new failures from chunk merge regressions (`chunkMergeApplied=True` on all). CE adds 12 more failures when enabled (16 killed, 4 recovered). Model swaps are zero-impact on EnronQA. Actionable: FW-001 (CE gating), chunk merge tuning, query reduction. Source: tempdoc 326 Phase D reanalysis (2026-03-28).
+- **FW-004: Short navigational query eval** — Rephrase EnronQA verbose questions to realistic 2-5 word queries. Source: Q-002.
+- **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
+- **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
+- **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
+- **FW-008: Vector quantization cross-machine evidence** — Codec wiring implemented (default off). Needs cross-machine benchmark evidence before enabling by default. Source: RAG-004 (retired from issues/). **Still open (verified 2026-06-15):** default remains Float32 (`JustSearchCodec.java:43`); only storage (~75%) is measured — the **nDCG quality cost of Int8 is unmeasured** (single-machine only, RAG-003/235). **Post-cutoff capability note (580 §14.1, Lucene-10.4.0-verified):** `Lucene104(Hnsw)ScalarQuantizedVectorsFormat` exposes **1/2/4/7/8-bit** + **asymmetric 2-bit-store/4-bit-query** ("2-bit recall-competitive with old 4-bit") — so a lower-bit path than Int8 is config-only (no new dep) but reindex-required and recall is corpus-dependent; an **efficiency** lever (memory), not a quality one — eval-gate recall before adopting.
+- **FW-009: Citation scorer threshold calibration** — Default 0.5 threshold works in tests but not validated across real-world content types. Source: RAG-006 (retired from issues/).
+- **FW-010: 1M+ vector scale benchmarks** — No runs at 1M+ vectors or cross-machine. Current evidence limited to smaller datasets on single machine. Source: RAG-003 (retired from issues/).

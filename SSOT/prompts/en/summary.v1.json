@@ -1,0 +1,25 @@
+{
+  "$schema": "https://ssot.justsearch/v1/schemas/llm/prompt-pack.schema.json",
+  "template_id": "summary",
+  "template_ver": 1,
+  "mode": "TEXT",
+  "defaults": {
+    "sampling": {
+      "temperature": 0.4,
+      "top_p": 0.7,
+      "top_k": 40,
+      "repeat_penalty": 1.05
+    },
+    "gen": {
+      "max_new_tokens": 80,
+      "deadline_ms": 800
+    }
+  },
+  "normalizer_ref": "https://ssot.justsearch/v1/schemas/llm/normalizer-policy.schema.json",
+  "system": "Write a short, grounded summary of the provided content. Use one paragraph.",
+  "user": "{{content}}",
+  "vars": {
+    "locale": "en-US"
+  }
+}
+

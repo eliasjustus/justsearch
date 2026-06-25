@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "query": { "type": "string" },
+    "docIds": { "type": "array", "items": { "type": "string" } }
+  }
+}

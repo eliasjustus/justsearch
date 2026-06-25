@@ -1,0 +1,25 @@
+{
+  "_comment": "Tempdoc 632 — the jk1 `checkLicense` allowlist. Authored in jk1's display-name vocabulary (matched as exact-or-whole-string-regex). Permissive licenses are allowed by `moduleLicense`; the dual-licensed deps (logback/JNA/jhighlight, which the jk1 normalizer collapses to their LGPL side) and the unusual case (jcip-annotations CC-BY) are allowed by `moduleName` so a future GENUINELY copyleft dependency still fails the build. Derived from a full `generateLicenseReport` over runtimeClasspath. Re-run after dependency changes; see scripts/codegen/license-overrides.json for the matching NOTICE attribution. (junrar/UnRar was removed in tempdoc 632 — the Tika RAR parser is excluded, eliminating the product's only non-OSI dependency.)",
+  "allowedLicenses": [
+    { "moduleLicense": "Apache License, Version 2.0" },
+    { "moduleLicense": "Apache-2.0" },
+    { "moduleLicense": "MIT License" },
+    { "moduleLicense": "Eclipse Public License - v 2.0" },
+    { "moduleLicense": "The 3-Clause BSD License" },
+    { "moduleLicense": "The 2-Clause BSD License" },
+    { "moduleLicense": "BSD Zero Clause License" },
+    { "moduleLicense": "0BSD" },
+    { "moduleLicense": "Unicode-3.0" },
+    { "moduleLicense": "Go License" },
+    { "moduleLicense": "PUBLIC DOMAIN" },
+    { "moduleLicense": "Mozilla Public License Version 1.1" },
+    { "moduleLicense": "Similar to Apache License but with the acknowledgment clause removed" },
+
+    { "moduleName": "ch.qos.logback:logback-classic", "_note": "dual EPL-1.0 / LGPL-2.1 — claimed under EPL-1.0" },
+    { "moduleName": "ch.qos.logback:logback-core", "_note": "dual EPL-1.0 / LGPL-2.1 — claimed under EPL-1.0" },
+    { "moduleName": "net.java.dev.jna:jna", "_note": "dual Apache-2.0 / LGPL-2.1+ — claimed under Apache-2.0" },
+    { "moduleName": "net.java.dev.jna:jna-platform", "_note": "dual Apache-2.0 / LGPL-2.1+ — claimed under Apache-2.0" },
+    { "moduleName": "org.codelibs:jhighlight", "_note": "dual CDDL-1.0 / LGPL-2.1+ — claimed under CDDL-1.0" },
+    { "moduleName": "net.jcip:jcip-annotations", "_note": "CC-BY-2.5 annotations jar (jk1 reports no license) — permissive, accepted" }
+  ]
+}

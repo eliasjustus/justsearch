@@ -1,0 +1,26 @@
+# JustSearch severity catalog (slice 3a-1-8d Phase 1 spike).
+# See `docs/decisions/0039-contract-substrate.md`
+# (architectural commitment) and `09b-catalog-category-format.md` (catalog format).
+# This is the FIRST catalog-Category instance proving the substrate's per-catalog
+# directory layout + per-catalog VERSION pattern.
+#
+# Per-catalog buf module — each catalog gets its own VERSION + CHANGELOG so they
+# evolve independently. The root-level :wireGenerate task discovers each catalog
+# directory and runs buf generate against it.
+
+version: v2
+modules:
+  - path: .
+deps:
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    # File lives at contracts/catalog/severity/severity.proto (flat layout
+    # within the catalog dir) but uses package justsearch.catalog.v1.
+    # Same exception rationale as contracts/wire/buf.yaml.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

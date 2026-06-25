@@ -1,0 +1,20 @@
+// Self-test fixture: governance-negative.
+// Slice 3a-1-8f §A.17 + Phase 4.
+//
+// Mutation: field REMOVED; classification declares additive-optional
+// (deliberately wrong); VERSION patch-bumped (deliberately insufficient).
+// Expected verdict: fail (misclassification).
+//
+// Self-test asserts ≥1 error-level SARIF result with ruleId
+// "contract-governance/misclassification" — proves the gate machinery
+// catches the misclassification scenario.
+syntax = "proto3";
+
+package justsearch.fixtures.gov_negative;
+
+option java_package = "io.justsearch.fixtures.gov_negative";
+
+message SampleMessage {
+  string id = 1;
+  // 'description' field has been removed (was field 2 in the baseline).
+}

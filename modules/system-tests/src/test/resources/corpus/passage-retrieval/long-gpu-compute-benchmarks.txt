@@ -1,0 +1,127 @@
+GPU Compute Benchmark Methodology and Performance Analysis
+
+Introduction to GPU Benchmarking
+
+Accurate GPU compute benchmarking requires careful methodology to produce reproducible and
+meaningful results. Unlike synthetic benchmarks that test isolated hardware capabilities, real-
+world compute benchmarks must account for the complex interactions between software frameworks,
+driver versions, and hardware characteristics. This document describes established methodologies
+for GPU compute performance measurement and analysis.
+
+Benchmark Suite Design Principles
+
+A well-designed GPU benchmark suite should measure performance across multiple axes: raw compute
+throughput, bandwidth utilization, latency characteristics, and power efficiency. Each axis
+requires dedicated test kernels with known computational intensity and data access patterns.
+
+Compute throughput benchmarks execute arithmetic-intensive kernels that stress the shader core
+ALUs. GEMM (General Matrix Multiply) is the canonical compute throughput benchmark, measuring
+sustained FLOPS across different matrix sizes and precision levels. For AI inference workloads,
+mixed-precision GEMM (FP16 inputs with FP32 accumulation) is particularly relevant as it
+exercises tensor core hardware.
+
+Bandwidth benchmarks measure the sustained transfer rate between different levels of the storage
+hierarchy. Device-to-device bandwidth tests measure the peak throughput of the high-bandwidth
+bus (HBM or GDDR). Host-to-device bandwidth tests measure PCIe or NVLink transfer rates. Cache
+bandwidth tests measure throughput at each cache level using pointer-chasing and streaming
+access patterns.
+
+VRAM Capacity and Bandwidth Measurement
+
+Measuring VRAM performance requires careful attention to allocation patterns and access locality.
+Large-buffer sequential read benchmarks measure peak sustained bandwidth by streaming through
+allocations that exceed the L2 cache size. Random-access latency benchmarks use pointer-chasing
+patterns to measure the round-trip time for individual accesses that miss all caches.
+
+VRAM memory management overhead benchmarks quantify the cost of allocation and deallocation
+operations. These tests measure the latency of allocating buffers of various sizes, the impact
+of fragmentation on allocation speed, and the throughput of the driver's page table operations.
+Understanding VRAM memory management costs is essential for applications that perform dynamic
+allocation during rendering or compute passes.
+
+Capacity planning benchmarks determine the effective usable VRAM by allocating progressively
+larger buffers and measuring at what point allocation failures or performance degradation occur.
+The overhead from page tables, driver structures, and display framebuffers reduces the amount
+of VRAM available to applications below the advertised physical capacity.
+
+Power and Thermal Characterization
+
+Power measurement during GPU benchmarks requires external instrumentation (power meters on the
+PCIe slot or dedicated shunt resistors) for accurate readings. Software-reported power values
+from driver APIs are approximations based on voltage regulator telemetry and may not capture
+transient spikes.
+
+Power efficiency metrics normalize performance by power consumption. FLOPS-per-watt is the
+standard efficiency metric for compute workloads. Different workloads exercise different portions
+of the GPU die, so power efficiency varies significantly across benchmark types: compute-heavy
+kernels stress the shader cores and their power delivery, while bandwidth-heavy kernels stress
+the storage controllers and PHY layers.
+
+Thermal throttling detection is critical for benchmark validity. If the GPU exceeds its thermal
+envelope during a benchmark, the firmware reduces clock speeds, yielding lower and potentially
+misleading performance numbers. Benchmarks should monitor junction temperature and report
+whether any throttling occurred during the measurement window.
+
+Sustained vs. Peak Performance
+
+GPU specifications typically advertise peak theoretical performance, but sustained performance
+under real workloads is invariably lower. The gap between peak and sustained performance arises
+from multiple factors: pipeline bubbles, warp scheduling inefficiency, cache misses, and power
+or thermal limits.
+
+Sustained performance benchmarks run workloads for extended periods (minutes to hours) to capture
+the steady-state performance after thermal equilibrium is reached. Bursty workloads that
+complete before thermal limits are hit may show higher performance than sustained loads, making
+burst vs. steady-state distinction important for capacity planning.
+
+Multi-GPU Scaling Benchmarks
+
+When benchmarking multi-GPU configurations, scaling efficiency measures how effectively the
+workload parallelizes across devices. Perfect linear scaling means that two GPUs deliver twice
+the performance of one. In practice, scaling is limited by inter-device communication overhead,
+load imbalance, and sequential bottlenecks.
+
+Multi-GPU communication benchmarks measure the bandwidth and latency of peer-to-peer data
+transfers between devices. For systems connected via high-speed bridges, peer-to-peer bandwidth
+can exceed 100 GB/s bidirectional. For PCIe-connected systems, bandwidth is limited to PCIe
+speeds and may require traversal through the CPU, adding latency.
+
+VRAM coherence in multi-GPU systems adds additional overhead for maintaining consistent state
+across devices. Benchmarks should measure the cost of synchronization primitives (fences, events)
+and the overhead of coherent data access patterns that require cross-device cache invalidation.
+
+Kernel Profiling Tools
+
+GPU profiling tools provide detailed performance counters that reveal hardware utilization at
+the kernel level. Occupancy metrics show how effectively the shader cores are utilizing their
+thread slots. Instruction throughput metrics reveal ALU utilization for each operation type.
+Stall analysis identifies the primary causes of warp stalls: pending data fetches, scoreboard
+dependencies, synchronization barriers, or instruction cache misses.
+
+Roofline model analysis plots kernel performance against the hardware's theoretical limits,
+determined by compute throughput and bandwidth ceilings. A kernel that falls significantly below
+the roofline is either compute-bound with suboptimal instruction scheduling or bandwidth-bound
+with poor access patterns. This visualization guides optimization efforts toward the most
+impactful changes.
+
+Timeline profiling captures the sequence of GPU operations — kernel launches, data transfers,
+synchronization events — on a wall-clock timeline. This view reveals idle gaps between
+operations, opportunities for overlapping compute with transfers, and synchronization stalls
+that serialize otherwise parallel work.
+
+Benchmark Reproducibility
+
+Reproducible benchmarks require controlling sources of variability. GPU clock speeds should be
+fixed to base frequency rather than relying on boost clocks, which vary with temperature and
+power headroom. Driver versions should be recorded and held constant across comparison runs.
+Background GPU processes (display composition, video decode) should be minimized.
+
+Statistical methodology is essential for meaningful benchmark results. Multiple iterations
+should be run to capture variance. Mean, median, and percentile statistics should all be
+reported, as GPU performance distributions are often not normal. Warmup runs should precede
+measurement runs to eliminate JIT compilation and cache cold-start effects.
+
+Comparison benchmarks must use identical configurations for all tested devices or software
+versions. Differences in batch size, precision, or kernel implementation can dominate hardware
+differences, rendering comparisons meaningless. Controlled experiments change exactly one
+variable at a time and report confidence intervals for the measured differences.

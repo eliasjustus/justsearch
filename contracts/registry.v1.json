@@ -1,0 +1,33 @@
+{
+  "$schema": "./registry.v1.schema.json",
+  "kind": "contract-category-registry.v1",
+  "version": 1,
+  "categories": [
+    {
+      "id": "wire",
+      "specDir": "contracts/wire",
+      "format": "protobuf",
+      "version": "0.2.0",
+      "versionFile": "contracts/wire/VERSION",
+      "changelog": "contracts/wire/CHANGELOG.md",
+      "changesetsDir": "contracts/wire/.changesets",
+      "baseline": { "strategy": "git-base", "fallback": "HEAD~1" },
+      "axes": [
+        "shape",
+        "runtime-invariants",
+        "behavior-separation",
+        "evolution-rules"
+      ]
+    }
+  ],
+  "externalEnforcers": [
+    {
+      "id": "ipc-grpc-buf-breaking",
+      "specDir": "modules/ipc-common/src/main/proto",
+      "format": "protobuf",
+      "axis": "evolution-rules",
+      "category": null,
+      "baseline": { "strategy": "git-base", "fallback": "HEAD~1" }
+    }
+  ]
+}

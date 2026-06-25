@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.agent.api;
+
+/** Canonical agent error codes used across SSE/UI/MCP surfaces. */
+public enum AgentErrorCode {
+  UNAVAILABLE,
+  NO_TOOLS,
+  CANCELLED,
+  UNKNOWN_TOOL,
+  EMPTY_RESPONSE,
+  INTERNAL_ERROR,
+  LLM_TRANSIENT,
+  TOOL_TRANSIENT_READ_ONLY,
+  BUDGET_EXHAUSTED,
+  POLICY_DENIED,
+  TOOL_CONTRACT,
+  TOOL_LOOP,
+  HANDOFF_CYCLE_DETECTED,
+  UNSUPPORTED_RESUME_STATE
+}

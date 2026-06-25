@@ -1,0 +1,194 @@
+/**
+ * Shell V0 design-token catalog — Layers 2 + 3 of the 5-tier system
+ * (slice 3a.1.1).
+ *
+ * Per `20-systems/04-theme-customization.md` §"Token Layers" the
+ * framework's normative architecture is:
+ *
+ *   1. primitives           (`primitives.css`)
+ *   2. semantic tokens      (this file, top half)
+ *   3. component tokens     (this file, bottom half)
+ *   4. product/theme overrides     (`app-bridge.css` during coexistence)
+ *   5. plugin-scoped overrides     (per-plugin shadow scope)
+ *
+ * Primitives never reference each other. Semantic tokens reference
+ * only primitives. Component tokens reference only semantic tokens
+ * (no direct primitive references at the component layer — drift
+ * guard enforces this). Renderers reference only component tokens
+ * via `var(--justsearch-shell-…, fallback)`.
+ *
+ * The drift guard at `themes/theme-coverage.test.ts` validates the
+ * layering invariants: every component token resolves through a
+ * semantic token; every semantic token references at least one
+ * primitive; no orphaned tokens at either layer.
+ */
+
+@import './primitives.css';
+
+:root {
+  /* ===================================================================
+   * LAYER 2 — SEMANTIC TOKENS
+   *
+   * Role-named tokens that abstract primitives into UI semantics. A
+   * theme editor or product theme override redefines these (not the
+   * 50 component tokens). Component tokens defer to these.
+   * =================================================================== */
+
+  /* Surface semantics — backgrounds, borders, foregrounds for chrome */
+  --jf-surface-bg: var(--jf-color-neutral-0);
+  --jf-surface-bg-subtle: var(--jf-color-neutral-50);
+  --jf-surface-bg-muted: var(--jf-color-neutral-100);
+  --jf-surface-bg-hover: var(--jf-color-neutral-200);
+  --jf-surface-border-subtle: var(--jf-color-neutral-150);
+  --jf-surface-border: var(--jf-color-neutral-300);
+  --jf-surface-border-soft: var(--jf-color-neutral-100-alt);
+  --jf-surface-fg: var(--jf-color-neutral-900);
+  --jf-surface-fg-muted: var(--jf-color-neutral-700);
+  --jf-surface-fg-subtle: var(--jf-color-neutral-600);
+  --jf-surface-fg-faint: var(--jf-color-neutral-500);
+
+  /* Density semantics — paddings + spacings flow through these */
+  --jf-density-pad-sm: var(--jf-space-1) var(--jf-space-2);
+  --jf-density-pad-md: var(--jf-space-2);
+  --jf-density-pad-md-x: var(--jf-space-2) var(--jf-space-3);
+  --jf-density-pad-lg: var(--jf-space-3);
+  --jf-density-pad-button: var(--jf-space-2) var(--jf-space-4);
+  --jf-density-gap: var(--jf-space-3);
+  --jf-density-indent: var(--jf-space-4);
+  --jf-density-stack: var(--jf-space-3);
+
+  /* Severity semantics — accent colors per status level */
+  --jf-severity-info: var(--jf-color-info-500);
+  --jf-severity-info-strong: var(--jf-color-info-600);
+  --jf-severity-warning: var(--jf-color-warning-500);
+  --jf-severity-error: var(--jf-color-error-500);
+  --jf-severity-unknown: var(--jf-color-neutral-500);
+
+  /* Input semantics — chrome for textboxes, selects, textareas */
+  --jf-input-bg: transparent;
+  --jf-input-border: var(--jf-color-neutral-400);
+  --jf-input-radius: var(--jf-radius-md);
+  --jf-input-pad: var(--jf-density-pad-md);
+
+  /* Button semantics — chrome for buttons (form-internal + action) */
+  --jf-button-bg: transparent;
+  --jf-button-border: var(--jf-color-neutral-400);
+  --jf-button-pad-sm: var(--jf-density-pad-sm);
+  --jf-button-pad-md: var(--jf-density-pad-button);
+
+  /* Typography semantics */
+  --jf-text-label-size: var(--font-size-sm);
+  --jf-text-label-weight: var(--jf-weight-medium);
+  --jf-text-section-size: var(--font-size-lg);
+  --jf-text-section-weight: var(--jf-weight-semibold);
+  --jf-text-body-size: var(--font-size-md);
+  --jf-text-detail-size: var(--font-size-sm);
+
+  /* Drop / overlay semantics — drag-drop affordances */
+  --jf-overlay-bg: var(--jf-color-info-overlay);
+  --jf-overlay-border: var(--jf-color-info-600);
+  --jf-overlay-handle-active: var(--jf-color-info-600);
+
+  /* Status / chrome semantics — fill the gaps between component
+   * tokens that need direct-from-primitive values. */
+  --jf-text-header-base: var(--font-size-md);
+  --jf-surface-badge-bg: var(--jf-color-neutral-badge);
+  --jf-shell-tab-height: var(--jf-size-tab-height);
+
+  /* ===================================================================
+   * LAYER 3 — COMPONENT TOKENS
+   *
+   * Each token resolves through a semantic token (no direct primitive
+   * references). Renderers consume these. Naming convention:
+   *   --justsearch-shell-<domain>-<role>
+   *
+   * Drift guard enforces the layering: a component token whose value
+   * directly references `var(--jf-color-…)` instead of a semantic
+   * `var(--jf-surface-…)` is a test failure.
+   * =================================================================== */
+
+  /* FORM — spacing */
+  --justsearch-shell-form-control-spacing: var(--jf-density-stack);
+  --justsearch-shell-form-vertical-gap: var(--jf-density-gap);
+  --justsearch-shell-form-horizontal-gap: var(--jf-density-gap);
+  --justsearch-shell-form-nesting-indent: var(--jf-density-indent);
+  --justsearch-shell-form-group-padding: var(--jf-density-pad-lg);
+
+  /* FORM — borders + chrome */
+  --justsearch-shell-form-group-border: var(--jf-surface-border-soft);
+  --justsearch-shell-form-tabs-border: var(--jf-surface-border-soft);
+  --justsearch-shell-form-tab-active-bg: var(--jf-input-bg);
+  --justsearch-shell-form-nesting-border: var(--jf-surface-border-subtle);
+
+  /* FORM — input controls */
+  --justsearch-shell-form-input-border: var(--jf-input-border);
+  --justsearch-shell-form-input-radius: var(--jf-input-radius);
+  --justsearch-shell-form-input-bg: var(--jf-input-bg);
+  --justsearch-shell-form-input-padding: var(--jf-input-pad);
+
+  /* FORM — typography */
+  --justsearch-shell-form-label-size: var(--jf-text-label-size);
+  --justsearch-shell-form-label-weight: var(--jf-text-label-weight);
+  --justsearch-shell-form-section-title-size: var(--jf-text-section-size);
+  --justsearch-shell-form-section-title-weight: var(--jf-text-section-weight);
+
+  /* FORM — state colors */
+  --justsearch-shell-form-error-color: var(--jf-severity-error);
+
+  /* FORM — button (array add/remove etc.) */
+  --justsearch-shell-form-button-padding: var(--jf-button-pad-sm);
+  --justsearch-shell-form-button-border: var(--jf-button-border);
+  --justsearch-shell-form-button-bg: var(--jf-button-bg);
+
+  /* STATUS — card chrome */
+  --justsearch-shell-status-card-padding: var(--jf-density-pad-lg);
+  --justsearch-shell-status-card-border: var(--jf-input-border);
+  --justsearch-shell-status-card-radius: var(--jf-input-radius);
+  --justsearch-shell-status-card-bg: var(--jf-input-bg);
+  --justsearch-shell-status-header-weight: var(--jf-text-section-weight);
+  --justsearch-shell-status-header-size: var(--jf-text-header-base);
+  --justsearch-shell-status-badge-bg: var(--jf-surface-badge-bg);
+  --justsearch-shell-status-reason-color: inherit;
+  --justsearch-shell-status-details-color: var(--jf-surface-fg-subtle);
+
+  /* STATUS — severity palette */
+  --justsearch-shell-status-severity-info: var(--jf-severity-info);
+  --justsearch-shell-status-severity-warning: var(--jf-severity-warning);
+  --justsearch-shell-status-severity-error: var(--jf-severity-error);
+  --justsearch-shell-status-severity-unknown: var(--jf-severity-unknown);
+
+  /* ACTION BUTTON — chrome */
+  --justsearch-shell-action-button-padding: var(--jf-button-pad-md);
+
+  /* SHELL — Lumino dock theme overlay */
+  --justsearch-shell-shell-tabbar-bg: var(--jf-surface-bg-muted);
+  --justsearch-shell-shell-tabbar-border: var(--jf-surface-border);
+  --justsearch-shell-shell-tab-height: var(--jf-shell-tab-height);
+  --justsearch-shell-shell-tab-color: var(--jf-surface-fg-muted);
+  --justsearch-shell-shell-tab-bg: transparent;
+  --justsearch-shell-shell-tab-hover-bg: var(--jf-surface-bg-hover);
+  --justsearch-shell-shell-tab-active-bg: var(--jf-surface-bg);
+  --justsearch-shell-shell-tab-active-color: var(--jf-surface-fg);
+  --justsearch-shell-shell-tab-active-indicator: var(--jf-severity-info-strong);
+  --justsearch-shell-shell-tab-close-hover-bg: var(--jf-surface-border);
+  --justsearch-shell-shell-dock-bg: var(--jf-surface-bg);
+  --justsearch-shell-shell-dock-color: var(--jf-surface-fg);
+  --justsearch-shell-shell-pane-bg: var(--jf-surface-bg);
+  --justsearch-shell-shell-handle-bg: var(--jf-surface-border);
+  --justsearch-shell-shell-handle-hover-bg: var(--jf-overlay-handle-active);
+  --justsearch-shell-shell-drop-overlay-bg: var(--jf-overlay-bg);
+  --justsearch-shell-shell-drop-overlay-border: var(--jf-overlay-border);
+
+  /* TABLE — chrome */
+  --justsearch-shell-table-text-color: inherit;
+  --justsearch-shell-table-bg: transparent;
+  --justsearch-shell-table-font-size: var(--jf-text-body-size);
+  --justsearch-shell-table-header-bg: var(--jf-surface-bg-muted);
+  --justsearch-shell-table-header-border: var(--jf-surface-border);
+  --justsearch-shell-table-header-weight: var(--jf-text-section-weight);
+  --justsearch-shell-table-header-hover-bg: var(--jf-surface-bg-hover);
+  --justsearch-shell-table-cell-padding: var(--jf-density-pad-md-x);
+  --justsearch-shell-table-row-border: var(--jf-surface-border-subtle);
+  --justsearch-shell-table-row-hover-bg: var(--jf-surface-bg-subtle);
+  --justsearch-shell-table-empty-color: var(--jf-surface-fg-faint);
+}

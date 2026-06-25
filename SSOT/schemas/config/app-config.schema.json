@@ -1,0 +1,990 @@
+{
+    "$schema":  "https://json-schema.org/draft/2020-12/schema",
+    "$id":  "https://ssot.justsearch/v1/schemas/config/app-config.schema.json",
+    "title":  "JustSearch Application Config",
+    "type":  "object",
+    "additionalProperties":  false,
+    "properties":  {
+                       "app":  {
+                                   "type":  "object",
+                                   "additionalProperties":  false,
+                                   "properties":  {
+                                                      "package_base":  {
+                                                                           "type":  "string",
+                                                                           "minLength":  1
+                                                                       },
+                                                      "data_dir":  {
+                                                                       "type":  "string",
+                                                                       "minLength":  1
+                                                                   },
+                                                      "timezone":  {
+                                                                       "type":  "string",
+                                                                       "minLength":  1
+                                                                   }
+                                                  },
+                                   "required":  [
+                                                    "package_base",
+                                                    "data_dir",
+                                                    "timezone"
+                                                ]
+                               },
+                       "egress":  {
+                                      "type":  "object",
+                                      "additionalProperties":  false,
+                                      "properties":  {
+                                                         "block_all":  {
+                                                                           "type":  "boolean"
+                                                                       }
+                                                     },
+                                      "required":  [
+                                                       "block_all"
+                                                   ]
+                                  },
+                       "ipc":  {
+                                      "type":  "object",
+                                      "additionalProperties":  false,
+                                      "properties":  {
+                                                         "mode":  {
+                                                                       "type":  "string",
+                                                                       "enum":  [
+                                                                                      "uds",
+                                                                                      "tcp"
+                                                                                  ]
+                                                                   },
+                                                         "run_dir":  {
+                                                                          "type":  "string",
+                                                                          "minLength":  1
+                                                                      },
+                                                         "bearer_bits":  {
+                                                                              "type":  "integer",
+                                                                              "minimum":  64
+                                                                          },
+                                                         "grpc":  {
+                                                                      "type":  "object",
+                                                                      "additionalProperties":  false,
+                                                                      "properties":  {
+                                                                                         "keepalive_time_ms":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "minimum":  1000
+                                                                                                                 },
+                                                                                         "keepalive_timeout_ms":  {
+                                                                                                                        "type":  "integer",
+                                                                                                                        "minimum":  100
+                                                                                                                    },
+                                                                                         "message_compression":  {
+                                                                                                                      "type":  "string",
+                                                                                                                      "enum":  [
+                                                                                                                                     "gzip",
+                                                                                                                                     "off"
+                                                                                                                                 ]
+                                                                                                                  }
+                                                                                     }
+                                                                  }
+                                                     }
+                                  },
+                       "workers":  {
+                                       "type":  "object",
+                                       "additionalProperties":  false,
+                                       "properties":  {
+                                                          "ai":  {
+                                                                     "type":  "object",
+                                                                     "additionalProperties":  false,
+                                                                     "properties":  {
+                                                                                        "enabled":  {
+                                                                                                        "type":  "boolean"
+                                                                                                    },
+                                                                                        "host":  {
+                                                                                                      "type":  "string",
+                                                                                                      "minLength":  1
+                                                                                                  },
+                                                                                        "port":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "minimum":  1,
+                                                                                                      "maximum":  65535
+                                                                                                  },
+                                                                                        "deadlineMs":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "minimum":  50
+                                                                                                      },
+                                                                                        "pool":  {
+                                                                                                     "type":  "object",
+                                                                                                     "additionalProperties":  false,
+                                                                                                     "properties":  {
+                                                                                                                        "contexts":  {
+                                                                                                                                         "type":  "integer",
+                                                                                                                                         "minimum":  1
+                                                                                                                                     }
+                                                                                                                    },
+                                                                                                     "required":  [
+                                                                                                                      "contexts"
+                                                                                                                  ]
+                                                                                                 }
+                                                                                    },
+                                                                     "required":  [
+                                                                                      "enabled"
+                                                                                  ]
+                                                                 },
+                                                          "indexer":  {
+                                                                          "type":  "object",
+                                                                          "additionalProperties":  false,
+                                                                          "properties":  {
+                                                                                             "enabled":  {
+                                                                                                             "type":  "boolean"
+                                                                                                         },
+                                                                                             "host":  {
+                                                                                                             "type":  "string",
+                                                                                                             "minLength":  1
+                                                                                                         },
+                                                                                             "port":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "minimum":  1,
+                                                                                                             "maximum":  65535
+                                                                                                         },
+                                                                                             "deadlineMs":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "minimum":  50
+                                                                                                         },
+                                                                                             "queueSize":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "minimum":  1
+                                                                                                         },
+                                                                                             "commit":  {
+                                                                                                            "type":  "object",
+                                                                                                            "additionalProperties":  false,
+                                                                                                            "properties":  {
+                                                                                                                               "hardSeconds":  {
+                                                                                                                                                   "type":  "integer",
+                                                                                                                                                   "minimum":  1
+                                                                                                                                               }
+                                                                                                                           }
+                                                                                                        },
+                                                                                             "batch":  {
+                                                                                                           "type":  "object",
+                                                                                                           "additionalProperties":  false,
+                                                                                                           "properties":  {
+                                                                                                                              "maxDocs":  {
+                                                                                                                                              "type":  "integer",
+                                                                                                                                              "minimum":  1
+                                                                                                                                          },
+                                                                                                                              "max_bytes_by":  {
+                                                                                                                                                   "type":  "integer",
+                                                                                                                                                   "minimum":  1
+                                                                                                                                               }
+                                                                                                                          }
+                                                                                                       }
+                                                                                         },
+                                                                          "required":  [
+                                                                                           "enabled"
+                                                                                       ]
+                                                                      }
+                                                      }
+                                   },
+                       "features":  {
+                                        "type":  "object",
+                                        "additionalProperties":  false,
+                                        "properties":  {
+                                                           "indexing_enabled":  {
+                                                                                    "type":  "boolean"
+                                                                                }
+                                                       }
+                                    },
+                       "logging":  {
+                                       "type":  "object",
+                                       "additionalProperties":  false,
+                                       "properties":  {
+                                                          "level":  {
+                                                                        "type":  "string",
+                                                                        "enum":  [
+                                                                                     "TRACE",
+                                                                                     "DEBUG",
+                                                                                     "INFO",
+                                                                                     "WARN",
+                                                                                     "ERROR"
+                                                                                 ]
+                                                                    },
+                                                          "json":  {
+                                                                       "type":  "boolean"
+                                                                   }
+                                                      }
+                                   },
+                       "ui":  {
+                                  "type":  "object",
+                                  "additionalProperties":  false,
+                                  "properties":  {
+                                                     "theme":  {
+                                                                   "type":  "string",
+                                                                   "enum":  [
+                                                                                "system",
+                                                                                "light",
+                                                                                "dark"
+                                                                            ]
+                                                               }
+                                                 }
+                              },
+                       "ai":  {
+                                  "type":  "object",
+                                  "additionalProperties":  false,
+                                  "properties":  {
+                                                     "queue_size":  {
+                                                                        "type":  "integer",
+                                                                        "minimum":  1
+                                                                    }
+                                                 }
+                              },
+                       "llm":  {
+                                   "type":  "object",
+                                   "additionalProperties":  false,
+                                   "properties":  {
+                                                      "enabled":  {
+                                                                      "type":  "boolean"
+                                                                  },
+                                                      "mode":  {
+                                                                   "type":  "string",
+                                                                   "enum":  [
+                                                                                "local"
+                                                                            ]
+                                                               },
+                                                      "model_path":  {
+                                                                         "type":  [
+                                                                                      "string",
+                                                                                      "null"
+                                                                                  ]
+                                                                     },
+                                                      "backend":  {
+                                                                      "type":  "string",
+                                                                      "enum":  [
+                                                                                   "auto",
+                                                                                   "cpu",
+                                                                                   "metal",
+                                                                                   "cuda",
+                                                                                   "vulkan"
+                                                                               ]
+                                                                  },
+                                                      "gpu_layers":  {
+                                                                         "oneOf":  [
+                                                                                       {
+                                                                                           "type":  "string",
+                                                                                           "enum":  [
+                                                                                                        "auto"
+                                                                                                    ]
+                                                                                       },
+                                                                                       {
+                                                                                           "type":  "integer",
+                                                                                           "minimum":  -1
+                                                                                       }
+                                                                                   ]
+                                                                     },
+                                                      "offload_kqv":  {
+                                                                          "type":  "boolean"
+                                                                      },
+                                                      "low_vram":  {
+                                                                       "type":  "boolean"
+                                                                   },
+                                                      "model_family":  {
+                                                                           "type":  "string",
+                                                                           "enum":  [
+                                                                                        "llama",
+                                                                                        "qwen",
+                                                                                        "mistral"
+                                                                                    ]
+                                                                       },
+                                                      "threads":  {
+                                                                      "oneOf":  [
+                                                                                    {
+                                                                                        "type":  "string",
+                                                                                        "const":  "auto"
+                                                                                    },
+                                                                                    {
+                                                                                        "type":  "integer",
+                                                                                        "minimum":  1
+                                                                                    }
+                                                                                ]
+                                                                  },
+                                                      "n_ctx":  {
+                                                                    "type":  "integer",
+                                                                    "minimum":  512
+                                                                },
+                                                      "max_new_tokens":  {
+                                                                             "type":  "integer",
+                                                                             "minimum":  1
+                                                                         },
+                                                      "temperature":  {
+                                                                          "type":  "number",
+                                                                          "minimum":  0.0,
+                                                                          "maximum":  2.0
+                                                                      },
+                                                      "top_p":  {
+                                                                    "type":  "number",
+                                                                    "minimum":  0.0,
+                                                                    "maximum":  1.0
+                                                                },
+                                                      "top_k":  {
+                                                                    "type":  "integer",
+                                                                    "minimum":  0
+                                                                },
+                                                      "repeat_penalty":  {
+                                                                             "type":  "number",
+                                                                             "minimum":  0.0
+                                                                         },
+                                                      "presence_penalty":  {
+                                                                               "type":  "number"
+                                                                           },
+                                                      "frequency_penalty":  {
+                                                                                "type":  "number"
+                                                                            },
+                                                      "seed":  {
+                                                                   "type":  [
+                                                                                "integer",
+                                                                                "null"
+                                                                            ]
+                                                               },
+                                                      "deadline_ms":  {
+                                                                          "type":  "integer",
+                                                                          "minimum":  50
+                                                                      },
+                                                      "max_parallel_inferences":  {
+                                                                                      "type":  "integer",
+                                                                                      "minimum":  1
+                                                                                  },
+                                                      "kv_cache_fraction":  {
+                                                                                "type":  "number",
+                                                                                "minimum":  0.1,
+                                                                                "maximum":  0.95
+                                                                            },
+                                                      "context_strategy":  {
+                                                                               "type":  "string",
+                                                                               "enum":  [
+                                                                                            "one_shot",
+                                                                                            "map_reduce"
+                                                                                        ]
+                                                                           }
+                                                  }
+                               },
+                       "index":  {
+                                     "type":  "object",
+                                     "additionalProperties":  false,
+                                     "properties":  {
+                                                        "id":  {
+                                                                   "type":  "object",
+                                                                   "additionalProperties":  false,
+                                                                   "properties":  {
+                                                                                      "field":  {
+                                                                                                    "type":  "string",
+                                                                                                    "minLength":  1
+                                                                                                }
+                                                                                  }
+                                                               },
+                                                        "collections":  {
+                                                                            "type":  "array",
+                                                                            "items":  {
+                                                                                          "type":  "object",
+                                                                                          "additionalProperties":  false,
+                                                                                          "properties":  {
+                                                                                                             "name":  {
+                                                                                                                          "type":  "string",
+                                                                                                                          "minLength":  1
+                                                                                                                      },
+                                                                                                             "roots":  {
+                                                                                                                           "type":  "array",
+                                                                                                                           "minItems":  1,
+                                                                                                                           "items":  {
+                                                                                                                                         "type":  "string",
+                                                                                                                                         "minLength":  1
+                                                                                                                                     }
+                                                                                                                       },
+                                                                                                             "shards":  {
+                                                                                                                            "type":  "array",
+                                                                                                                            "items":  {
+                                                                                                                                          "type":  "integer",
+                                                                                                                                          "minimum":  0
+                                                                                                                                      }
+                                                                                                                        },
+                                                                                                             "watcher":  {
+                                                                                                                             "type":  "object",
+                                                                                                                             "additionalProperties":  false,
+                                                                                                                             "properties":  {
+                                                                                                                                                "strategy":  {
+                                                                                                                                                                 "type":  "string",
+                                                                                                                                                                 "enum":  [
+                                                                                                                                                                              "auto",
+                                                                                                                                                                              "nio",
+                                                                                                                                                                              "windows_native",
+                                                                                                                                                                              "watchman",
+                                                                                                                                                                              "rust_notify",
+                                                                                                                                                                              "polling"
+                                                                                                                                                                          ]
+                                                                                                                                                             }
+                                                                                                                                            }
+                                                                                                                         }
+                                                                                                         },
+                                                                                         "required":  [
+                                                                                                          "name",
+                                                                                                          "roots"
+                                                                                                      ]
+                                                                                     }
+                                                                        },
+                                                        "default_language":  {
+                                                                                   "type":  "string",
+                                                                                   "minLength":  1
+                                                                               },
+                                                        "language_detection":  {
+                                                                                   "type":  "object",
+                                                                                   "additionalProperties":  false,
+                                                                                   "properties":  {
+                                                                                                      "enabled":  {
+                                                                                                                      "type":  "boolean"
+                                                                                                                  }
+                                                                                                  }
+                                                                               },
+                                                        "writer":  {
+                                                                       "type":  "object",
+                                                                       "additionalProperties":  false,
+                                                                       "properties":  {
+                                                                                          "ram_buffer_mb":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "minimum":  16
+                                                                                                            },
+                                                                                          "max_buffered_docs":  {
+                                                                                                                    "type":  "integer"
+                                                                                                                }
+                                                                                      }
+                                                                   },
+                                                        "nrt":  {
+                                                                    "type":  "object",
+                                                                    "additionalProperties":  false,
+                                                                    "properties":  {
+                                                                                       "target_max_stale_ms":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "minimum":  0
+                                                                                                               },
+                                                                                       "max_stale_ms":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "minimum":  0
+                                                                                                        }
+                                                                                   },
+                                                                    "allOf":  [
+                                                                                  {
+                                                                                      "if":  {
+                                                                                                 "properties":  {
+                                                                                                                    "target_max_stale_ms":  {
+                                                                                                                                                "type":  "integer"
+                                                                                                                                            },
+                                                                                                                    "max_stale_ms":  {
+                                                                                                                                         "type":  "integer"
+                                                                                                                                     }
+                                                                                                                },
+                                                                                                 "required":  [
+                                                                                                                  "target_max_stale_ms",
+                                                                                                                  "max_stale_ms"
+                                                                                                              ]
+                                                                                             },
+                                                                                      "then":  {
+                                                                                                   "properties":  {
+                                                                                                                      "max_stale_ms":  {
+                                                                                                                                           "type":  "integer",
+                                                                                                                                           "minimum":  {
+                                                                                                                                                           "$data":  "1/target_max_stale_ms"
+                                                                                                                                                       }
+                                                                                                                                       }
+                                                                                                                  }
+                                                                                               }
+                                                                                  }
+                                                                              ]
+                                                                },
+                                                        "commit":  {
+                                                                       "type":  "object",
+                                                                       "additionalProperties":  false,
+                                                                       "properties":  {
+                                                                                          "policy":  {
+                                                                                                          "type":  "string",
+                                                                                                          "enum":  [
+                                                                                                                       "per_batch",
+                                                                                                                       "deferred"
+                                                                                                                   ]
+                                                                                                      },
+                                                                                          "debounce_ms":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "minimum":  0
+                                                                                                           },
+                                                                                          "hard_seconds":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "minimum":  1
+                                                                                                           },
+                                                                                          "meta":  {
+                                                                                                       "type":  "object",
+                                                                                                       "additionalProperties":  false,
+                                                                                                       "properties":  {
+                                                                                                                          "enabled":  {
+                                                                                                                                          "type":  "boolean"
+                                                                                                                                      }
+                                                                                                                      }
+                                                                                                   }
+                                                                                      }
+                                                                   },
+                                                        "merge":  {
+                                                                      "type":  "object",
+                                                                      "additionalProperties":  false,
+                                                                      "properties":  {
+                                                                                         "tiered":  {
+                                                                                                        "type":  "object",
+                                                                                                        "additionalProperties":  false,
+                                                                                                        "properties":  {
+                                                                                                                           "segs_per_tier":  {
+                                                                                                                                                 "type":  "integer",
+                                                                                                                                                 "minimum":  2
+                                                                                                                                             },
+                                                                                                                           "max_merged_segment_mb":  {
+                                                                                                                                                         "type":  "integer",
+                                                                                                                                                         "minimum":  128
+                                                                                                                                                     }
+                                                                                                                       }
+                                                                                                    }
+                                                                                     }
+                                                                  },
+                                                        "directory":  {
+                                                                          "type":  "object",
+                                                                          "additionalProperties":  false,
+                                                                          "properties":  {
+                                                                                             "type":  {
+                                                                                                          "type":  "string",
+                                                                                                          "enum":  [
+                                                                                                                       "mmap",
+                                                                                                                       "niofs",
+                                                                                                                       "simplefs"
+                                                                                                                   ]
+                                                                                                      }
+                                                                                         }
+                                                                      },
+                                                        "watcher":  {
+                                                                        "type":  "object",
+                                                                        "additionalProperties":  false,
+                                                                        "properties":  {
+                                                                                           "strategy":  {
+                                                                                                            "type":  "string",
+                                                                                                            "enum":  [
+                                                                                                                         "auto",
+                                                                                                                         "nio",
+                                                                                                                         "windows_native",
+                                                                                                                         "watchman",
+                                                                                                                         "rust_notify",
+                                                                                                                         "polling"
+                                                                                                                     ]
+                                                                                                        },
+                                                                                           "debounce_ms":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "minimum":  0
+                                                                                                           },
+                                                                                           "overflow":  {
+                                                                                                            "type":  "object",
+                                                                                                            "additionalProperties":  false,
+                                                                                                            "properties":  {
+                                                                                                                               "rescan_on_overflow":  {
+                                                                                                                                                          "type":  "boolean"
+                                                                                                                                                      }
+                                                                                                                           }
+                                                                                                        },
+                                                                                           "queue":  {
+                                                                                                         "type":  "object",
+                                                                                                         "additionalProperties":  false,
+                                                                                                         "properties":  {
+                                                                                                                            "max_entries":  {
+                                                                                                                                                "type":  "integer",
+                                                                                                                                                "minimum":  1
+                                                                                                                                            }
+                                                                                                                        }
+                                                                                                     },
+                                                                                           "polling":  {
+                                                                                                           "type":  "object",
+                                                                                                           "additionalProperties":  false,
+                                                                                                           "properties":  {
+                                                                                                                              "interval_ms":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  1
+                                                                                                                                              }
+                                                                                                                          }
+                                                                                                       }
+                                                                                       }
+                                                                    },
+                                                        "sort":  {
+                                                                     "type":  "array",
+                                                                     "items":  {
+                                                                                   "type":  "object",
+                                                                                   "additionalProperties":  false,
+                                                                                   "properties":  {
+                                                                                                      "field":  {
+                                                                                                                    "type":  "string",
+                                                                                                                    "minLength":  1
+                                                                                                                },
+                                                                                                      "reverse":  {
+                                                                                                                      "type":  "boolean"
+                                                                                                                  },
+                                                                                                      "type":  {
+                                                                                                                   "type":  "string",
+                                                                                                                   "enum":  [
+                                                                                                                                "keyword",
+                                                                                                                                "long",
+                                                                                                                                "boolean",
+                                                                                                                                "string",
+                                                                                                                                "int",
+                                                                                                                                "double"
+                                                                                                                            ]
+                                                                                                               }
+                                                                                                  },
+                                                                                   "required":  [
+                                                                                                    "field"
+                                                                                                ]
+                                                                               }
+                                                                 },
+                                                        "queue":  {
+                                                                      "type":  "object",
+                                                                      "additionalProperties":  false,
+                                                                      "properties":  {
+                                                                                         "size":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "minimum":  64
+                                                                                                  }
+                                                                                     }
+                                                                  },
+                                                        "batch":  {
+                                                                      "type":  "object",
+                                                                      "additionalProperties":  false,
+                                                                      "properties":  {
+                                                                                         "max_docs":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "minimum":  1
+                                                                                                      },
+                                                                                         "max_bytes_by":  {
+                                                                                                              "type":  "integer",
+                                                                                                              "minimum":  1
+                                                                                                          }
+                                                                                     }
+                                                                  },
+                                                        "vector":  {
+                                                                       "type":  "object",
+                                                                       "additionalProperties":  true,
+                                                                       "properties":  {
+                                                                                          "dimension":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "minimum":  1
+                                                                                                        },
+                                                                                          "hnsw":  {
+                                                                                                       "type":  "object",
+                                                                                                       "additionalProperties":  false,
+                                                                                                       "properties":  {
+                                                                                                                          "m":  {
+                                                                                                                                    "type":  "integer",
+                                                                                                                                    "minimum":  2
+                                                                                                                                },
+                                                                                                                          "ef_construction":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  4
+                                                                                                                                              }
+                                                                                                                      }
+                                                                                                   },
+                                                                                          "ef_search":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "minimum":  1
+                                                                                                        }
+                                                                                      }
+                                                                   },
+                                                        "similarity":  {
+                                                                           "type":  "object",
+                                                                           "additionalProperties":  false,
+                                                                           "properties":  {
+                                                                                              "text":  {
+                                                                                                           "type":  "object",
+                                                                                                           "additionalProperties":  false,
+                                                                                                           "properties":  {
+                                                                                                                              "type":  {
+                                                                                                                                           "type":  "string",
+                                                                                                                                           "enum":  [
+                                                                                                                                                        "bm25"
+                                                                                                                                                    ]
+                                                                                                                                       },
+                                                                                                                              "k1":  {
+                                                                                                                                         "type":  "number"
+                                                                                                                                     },
+                                                                                                                              "b":  {
+                                                                                                                                        "type":  "number"
+                                                                                                                                    }
+                                                                                                                          }
+                                                                                                       }
+                                                                                          }
+                                                                       },
+                                                        "boosts":  {
+                                                                       "type":  "object",
+                                                                       "additionalProperties":  {
+                                                                                                    "type":  "number"
+                                                                                                }
+                                                                   },
+                                                        "soft_deletes":  {
+                                                                             "type":  "object",
+                                                                             "additionalProperties":  false,
+                                                                             "properties":  {
+                                                                                                "field":  {
+                                                                                                              "type":  "string",
+                                                                                                              "minLength":  1
+                                                                                                          },
+                                                                                                "retention":  {
+                                                                                                                  "type":  "object",
+                                                                                                                  "additionalProperties":  false,
+                                                                                                                  "properties":  {
+                                                                                                                                     "enabled":  {
+                                                                                                                                                     "type":  "boolean"
+                                                                                                                                                 },
+                                                                                                                                     "days":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  0
+                                                                                                                                              },
+                                                                                                                                     "max_versions":  {
+                                                                                                                                                          "type":  "integer",
+                                                                                                                                                          "minimum":  1
+                                                                                                                                                      }
+                                                                                                                                 }
+                                                                                                              }
+                                                                                            }
+                                                                         },
+                                                        "ocr":  {
+                                                                    "type":  "object",
+                                                                    "additionalProperties":  false,
+                                                                    "properties":  {
+                                                                                       "enabled":  {
+                                                                                                       "type":  "boolean"
+                                                                                                   },
+                                                                                       "languages":  {
+                                                                                                         "type":  "array",
+                                                                                                         "items":  {
+                                                                                                                       "type":  "string"
+                                                                                                                   }
+                                                                                                     },
+                                                                                       "trigger":  {
+                                                                                                       "type":  "object",
+                                                                                                       "additionalProperties":  false,
+                                                                                                       "properties":  {
+                                                                                                                          "min_image_pixels":  {
+                                                                                                                                                   "type":  "integer",
+                                                                                                                                                   "minimum":  0
+                                                                                                                                               }
+                                                                                                                      }
+                                                                                                   },
+                                                                                       "limits":  {
+                                                                                                      "type":  "object",
+                                                                                                      "additionalProperties":  false,
+                                                                                                      "properties":  {
+                                                                                                                         "per_file_timeout_ms":  {
+                                                                                                                                                     "type":  "integer",
+                                                                                                                                                     "minimum":  100
+                                                                                                                                                 },
+                                                                                                                         "max_pages":  {
+                                                                                                                                           "type":  "integer",
+                                                                                                                                           "minimum":  1
+                                                                                                                                       },
+                                                                                                                         "max_image_dimension":  {
+                                                                                                                                                     "type":  "integer",
+                                                                                                                                                     "minimum":  64
+                                                                                                                                                 },
+                                                                                                                         "max_image_pixels":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  1
+                                                                                                                                              }
+                                                                                                                     }
+                                                                                                  }
+                                                                                   }
+                                                                },
+                                                        "ssot":  {
+                                                                     "type":  "object",
+                                                                     "additionalProperties":  false,
+                                                                     "properties":  {
+                                                                                        "root":  {
+                                                                                                     "type":  "string"
+                                                                                                 }
+                                                                                    }
+                                                                 }
+                                                    }
+                                 },
+                       "infra":  {
+                                      "type":  "object",
+                                      "additionalProperties":  false,
+                                      "properties":  {
+                                                         "health":  {
+                                                                         "type":  "object",
+                                                                         "additionalProperties":  false,
+                                                                         "properties":  {
+                                                                                            "poll_interval_ms":  {
+                                                                                                                    "type":  "integer",
+                                                                                                                    "minimum":  1000
+                                                                                                                },
+                                                                                            "thresholds":  {
+                                                                                                                "type":  "object",
+                                                                                                                "additionalProperties":  false,
+                                                                                                                "properties":  {
+                                                                                                                                   "nrt_stale_ms":  {
+                                                                                                                                                       "type":  "integer",
+                                                                                                                                                       "minimum":  0
+                                                                                                                                                   },
+                                                                                                                                   "translator_handshake_stale_ms":  {
+                                                                                                                                                                       "type":  "integer",
+                                                                                                                                                                       "minimum":  0
+                                                                                                                                                                   },
+                                                                                                                                   "ann_cache_ready_percent":  {
+                                                                                                                                                                   "type":  "integer",
+                                                                                                                                                                   "minimum":  0,
+                                                                                                                                                                   "maximum":  100
+                                                                                                                                                               }
+                                                                                                                               }
+                                                                                                            }
+                                                                                            },
+                                                                                            "grpc":  {
+                                                                                                         "type":  "object",
+                                                                                                         "additionalProperties":  false,
+                                                                                                         "properties":  {
+                                                                                                                            "host":  {
+                                                                                                                                        "type":  "string",
+                                                                                                                                        "minLength":  1
+                                                                                                                                    },
+                                                                                                                            "port":  {
+                                                                                                                                        "type":  "integer",
+                                                                                                                                        "minimum":  0,
+                                                                                                                                        "maximum":  65535
+                                                                                                                                    }
+                                                                                                                        }
+                                                                                        }
+                                                                     }
+                                                     }
+                                  },
+                       "search":  {
+                                      "type":  "object",
+                                      "additionalProperties":  false,
+                                      "properties":  {
+                                                         "page_size":  {
+                                                                           "type":  "integer",
+                                                                           "minimum":  1,
+                                                                           "maximum":  100
+                                                                       },
+                                                         "default_language_policy":  {
+                                                                                        "type":  "string",
+                                                                                        "enum":  [
+                                                                                                     "explicit_or_default",
+                                                                                                     "explicit_only",
+                                                                                                     "translator_or_default",
+                                                                                                     "allow_any"
+                                                                                                 ]
+                                                                                    },
+                                                         "sort_default":  {
+                                                                              "type":  "array",
+                                                                              "items":  {
+                                                                                            "type":  "string",
+                                                                                            "minLength":  1
+                                                                                        }
+                                                                          },
+                                                         "highlight":  {
+                                                                           "type":  "object",
+                                                                           "additionalProperties":  false,
+                                                                           "properties":  {
+                                                                                              "enabled":  {
+                                                                                                              "type":  "boolean"
+                                                                                                          },
+                                                                                              "field":  {
+                                                                                                            "type":  "string"
+                                                                                                        },
+                                                                                              "fragments":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "minimum":  0
+                                                                                                            },
+                                                                                              "fragment_size":  {
+                                                                                                                    "type":  "integer",
+                                                                                                                    "minimum":  1
+                                                                                                                },
+                                                                                              "max_analyzed_chars":  {
+                                                                                                                         "type":  "integer",
+                                                                                                                         "minimum":  0
+                                                                                                                     },
+                                                                                              "pre_tag":  {
+                                                                                                              "type":  "string"
+                                                                                                          },
+                                                                                              "post_tag":  {
+                                                                                                               "type":  "string"
+                                                                                                           }
+                                                                                          }
+                                                                       },
+                                                         "facets":  {
+                                                                        "type":  "object",
+                                                                        "additionalProperties":  false,
+                                                                        "properties":  {
+                                                                                           "enabled":  {
+                                                                                                           "type":  "boolean"
+                                                                                                       },
+                                                                                           "date_bucket":  {
+                                                                                                               "type":  "string",
+                                                                                                               "enum":  [
+                                                                                                                            "day",
+                                                                                                                            "week",
+                                                                                                                            "month",
+                                                                                                                            "year"
+                                                                                                                        ]
+                                                                                                           },
+                                                                                           "fields":  {
+                                                                                                          "type":  "array",
+                                                                                                          "items":  {
+                                                                                                                        "type":  "string"
+                                                                                                                    }
+                                                                                                      }
+                                                                                       }
+                                                                    },
+                                                         "corrections":  {
+                                                                             "type":  "object",
+                                                                             "additionalProperties":  false,
+                                                                             "properties":  {
+                                                                                                "enabled":  {
+                                                                                                                "type":  "boolean"
+                                                                                                            },
+                                                                                                "df_threshold":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "minimum":  0
+                                                                                                                 },
+                                                                                                "max_edit_distance":  {
+                                                                                                                          "type":  "integer",
+                                                                                                                          "minimum":  0,
+                                                                                                                          "maximum":  2
+                                                                                                                      },
+                                                                                                "max_candidates":  {
+                                                                                                                       "type":  "integer",
+                                                                                                                       "minimum":  1
+                                                                                                                   },
+                                                                                                "zero_hit_retry_enabled":  {
+                                                                                                                               "type":  "boolean"
+                                                                                                                           },
+                                                                                                "index_fallback_enabled":  {
+                                                                                                                               "type":  "boolean"
+                                                                                                                           }
+                                                                                            }
+                                                                         },
+                                                         "rerank":  {
+                                                                        "type":  "object",
+                                                                        "additionalProperties":  false,
+                                                                        "properties":  {
+                                                                                           "enabled":  {
+                                                                                                           "type":  "boolean"
+                                                                                                       },
+                                                                                           "k":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "minimum":  1
+                                                                                                 },
+                                                                                           "model":  {
+                                                                                                         "type":  "string"
+                                                                                                     }
+                                                                                       }
+                                                                    },
+                                                         "chunk_aware":  {
+                                                                             "type":  "object",
+                                                                             "additionalProperties":  false,
+                                                                             "properties":  {
+                                                                                                "enabled":  {
+                                                                                                                "type":  "boolean"
+                                                                                                            }
+                                                                                            }
+                                                                         }
+                                                     }
+                                  }
+                   }
+}

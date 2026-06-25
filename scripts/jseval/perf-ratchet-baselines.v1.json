@@ -1,0 +1,13 @@
+{
+  "schema": "perf-ratchet-baseline.v1",
+  "tempdoc": 640,
+  "note": "POINTER, not a table (tempdoc 640 / 623 T-5) — the perf-metric-family sibling of relevance-ratchet-baselines.v1.json. Per-corpus perf FLOORS (ce_p50_ms cross-encoder STAGE latency; primary_docs_s + enrich_docs_s throughput; resident_bytes footprint) are PROJECTED live from `current_release` (a release.v1.json composed from ONE cohort-identical config/commit/hardware), via perf_gate.project_release_to_perf_baselines, and enforced as RELATIVE ratio bands by `jseval perf-gate` (perf_gate.evaluate -> diff_gate.compare_ratio; no absolute SLO — 640 §C-6). This CLOSES the per-run fork: the prior inline pins stapled enron@+19 / scifact@+13 commits (spanning the 636 ranking levers); now both project from the same canonical all-corpora release the relevance ratchet uses (composed 2026-06-24 at bef184e333, covering scifact + courtlistener-200 + enron-qa + miracl-de-2k + miracl-fr-2k). `fallback_baselines` is EMPTY — the release covers every gated corpus at one commit. resident_bytes is ONNX-only on AI-offline eval runs (the LLM is not resident then); it INCLUDES the LLM gguf on AI-online runs. The relevance floors re-baselined in the same recompose to the user-accepted post-636 levels (enron/courtlistener drops). default_bands sized from the measured within-machine CV (640 §confidence pass). Advisory tier: nudged by the search-engine-hint hook, not a CI-blocking gate (inherits the relevance ratchet's tier).",
+  "current_release": "release.v1.json",
+  "default_bands": {
+    "ce_p50_ms": 1.25,
+    "primary_docs_s": 0.65,
+    "enrich_docs_s": 0.75,
+    "resident_bytes": 1.05
+  },
+  "fallback_baselines": {}
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://justsearch.dev/schemas/telemetry/log.schema.json",
+  "title": "JustSearch Log Line (JSON)",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["@timestamp","level","logger","thread","service","component","message"],
+  "properties": {
+    "@timestamp": {"type":"string","format":"date-time", "description":"RFC3339 UTC timestamp"},
+    "observed_timestamp": {"type":"string","format":"date-time", "description":"When the event was observed (useful for delayed writes)"},
+    "level": {"type":"string","enum":["TRACE","DEBUG","INFO","WARN","ERROR"]},
+    "logger": {"type":"string"},
+    "thread": {"type":"string"},
+    "service.name": {"type":"string"},
+    "service": {"type":"string", "deprecated": true},
+    "component": {"type":"string"},
+    "body": {"type":"string", "description":"Primary log message"},
+    "message": {"type":"string", "deprecated": true},
+    "severity_text": {"type":"string","enum":["TRACE","DEBUG","INFO","WARN","ERROR"]},
+    "severity_number": {"type":"integer","minimum":1,"maximum":24},
+    "trace_id": {"type":"string","pattern":"^[0-9a-fA-F]{16,32}$"},
+    "span_id": {"type":"string","pattern":"^[0-9a-fA-F]{16}$"},
+    "pipeline_name": {"type":"string"},
+    "pipeline_hash": {"type":"string"},
+    "budget_profile": {"type":"string"},
+    "request_id": {"type":"string"},
+    "reason_code": {"type":"string"},
+    "exception": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {"type":"string"},
+        "message": {"type":"string"}
+      }
+    },
+    "attributes": {"type":"object","additionalProperties": true},
+    "attrs": {"type":"object","additionalProperties": true, "deprecated": true}
+  }
+}
+
+

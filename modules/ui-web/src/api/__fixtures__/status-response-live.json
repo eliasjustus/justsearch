@@ -1,0 +1,379 @@
+{
+  "schema_version" : 1,
+  "observed_at" : "2025-01-01T00:00:00Z",
+  "lifecycle" : {
+    "state" : "LIFECYCLE_STATE_READY",
+    "reason_code" : null,
+    "message" : null
+  },
+  "components" : {
+    "head" : {
+      "state" : "LIFECYCLE_STATE_READY",
+      "reason_code" : null
+    },
+    "worker" : {
+      "state" : "LIFECYCLE_STATE_READY",
+      "reason_code" : null
+    },
+    "inference" : {
+      "state" : "LIFECYCLE_STATE_READY",
+      "reason_code" : null
+    }
+  },
+  "status" : "ok",
+  "service" : "JustSearch",
+  "indexBasePath" : "C:/data/index",
+  "uptimeMs" : 60000,
+  "memoryUsedBytes" : 1024000,
+  "memoryTotalBytes" : 2048000,
+  "memoryMaxBytes" : 4096000,
+  "worker" : {
+    "core" : {
+      "indexHealthy" : false,
+      "indexedDocuments" : 0,
+      "pendingJobs" : 0,
+      "indexState" : "SERVING",
+      "indexSizeBytes" : 0,
+      "pendingVduCount" : 0,
+      "writerQueueDepth" : 0,
+      "writerPendingDocs" : 0,
+      "commitCount" : 0,
+      "refreshLagMs" : 0,
+      "recentJobQueueDepth" : [ ],
+      "recentDocsPerSec" : [ ]
+    },
+    "failure" : {
+      "failedJobs" : 0,
+      "lastFailedPath" : "",
+      "lastFailedErrorMessage" : "",
+      "lastFailedAtMs" : 0,
+      "nextRetryAtMs" : 0,
+      "searchesZeroResultCount" : 0,
+      "failedByFileKind" : { }
+    },
+    "migration" : {
+      "activeGenerationId" : "",
+      "migrationState" : "",
+      "buildingGenerationId" : "",
+      "previousGenerationId" : "",
+      "servingSearchGenerationId" : "",
+      "servingIngestGenerationId" : "",
+      "activeIndexedDocuments" : 0,
+      "buildingIndexedDocuments" : 0,
+      "switchBufferDepth" : 0,
+      "pendingJobsCount" : 0,
+      "processingJobsCount" : 0,
+      "pendingReadyJobsCount" : 0,
+      "pendingBackoffJobsCount" : 0,
+      "migrationSwitchingAgeMs" : 0,
+      "migrationSwitchingMaxDurationMs" : 0,
+      "migrationPaused" : false,
+      "migrationPauseReason" : "",
+      "migrationPausedAtMs" : 0,
+      "migrationSource" : "",
+      "migrationEnumerator" : {
+        "running" : false,
+        "done" : false,
+        "rootsTotal" : 0,
+        "rootsDone" : 0,
+        "filesSeen" : 0,
+        "filesEnqueued" : 0,
+        "startedAtMs" : 0,
+        "finishedAtMs" : 0,
+        "lastPath" : ""
+      }
+    },
+    "compatibility" : {
+      "embeddingCompatState" : "",
+      "embeddingCompatReason" : "",
+      "embeddingFingerprintCurrent" : "",
+      "embeddingFingerprintStored" : "",
+      "indexSchemaFpCurrent" : "",
+      "indexSchemaFpStored" : "",
+      "indexSchemaCompatState" : "",
+      "reindexRequired" : false,
+      "reindexRequiredReason" : ""
+    },
+    "queueDb" : {
+      "queueDbHealthy" : true,
+      "queueDbLastBackupAtMs" : 0,
+      "queueDbLastQuickCheckAtMs" : 0,
+      "queueDbLastQuickCheckOk" : true,
+      "queueDbLastErrorAtMs" : 0
+    },
+    "enrichment" : {
+      "chunk" : {
+        "chunkDocCount" : 0,
+        "chunkEmbeddingCompletedCount" : 0,
+        "chunkEmbeddingPendingCount" : 0,
+        "chunkEmbeddingFailedCount" : 0,
+        "chunkVectorCoveragePercent" : 0.0,
+        "chunkVectorsReady" : false
+      },
+      "embeddingDocCount" : 0,
+      "embeddingCompletedCount" : 0,
+      "embeddingPendingCount" : 0,
+      "embeddingFailedCount" : 0,
+      "embeddingCoveragePercent" : 0.0,
+      "spladeDocCount" : 0,
+      "spladeCompletedCount" : 0,
+      "spladePendingCount" : 0,
+      "spladeFailedCount" : 0,
+      "spladeCoveragePercent" : 0.0,
+      "pendingNerCount" : 0,
+      "completedNerCount" : 0,
+      "enrichmentCompleted" : { },
+      "batchTiming" : {
+        "batchCount" : { },
+        "totalMs" : { }
+      },
+      "encoderProfiles" : { },
+      "embeddingEnabled" : true,
+      "spladeEnabled" : true,
+      "nerEnabled" : true
+    },
+    "gpu" : {
+      "rerankerOrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      },
+      "spladeOrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      },
+      "embedOrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      },
+      "embedBackend" : "",
+      "embedGpuLayers" : 0,
+      "spladeModelPath" : "",
+      "rerankerModelPath" : "",
+      "nerModelPath" : "",
+      "nerGpuEnabled" : false,
+      "nerOrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      },
+      "citationOrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      },
+      "bgeM3OrtCuda" : {
+        "configured" : false,
+        "attempted" : false,
+        "available" : false,
+        "variantId" : "",
+        "nativePath" : "",
+        "failureReason" : "GPU not configured",
+        "missingDlls" : [ ]
+      }
+    },
+    "vectorFormat" : {
+      "vectorFormatConfig" : "",
+      "vectorFormatStored" : "",
+      "vectorFormatActual" : "",
+      "vectorSegmentsFloat32" : 0,
+      "vectorSegmentsQuantized" : 0
+    },
+    "telemetry" : {
+      "contentLengthAvgChars" : 0.0,
+      "contentLengthMinChars" : 0,
+      "contentLengthMaxChars" : 0,
+      "throughputDocsPerSec" : 0.0,
+      "throughputWindowState" : ""
+    },
+    "searchConfig" : {
+      "chunkAwareEnabled" : true,
+      "ccWeightSparse" : 0.0,
+      "ccWeightDense" : 0.0,
+      "ccWeightSplade" : 0.0,
+      "branchCcWeightWhole" : 0.0,
+      "branchCcWeightChunk" : 0.0,
+      "branchChunkMinWeightMultiplier" : 0.0,
+      "titleBoost" : 0.0,
+      "entityBoost" : 0.0,
+      "queryClassificationEnabled" : true
+    },
+    "visualExtraction" : {
+      "ocrEnabled" : false,
+      "ocrEngineAvailable" : false,
+      "visualTextNeededCount" : 0,
+      "visualEnrichmentNeededCount" : 0
+    }
+  },
+  "indexAvailable" : true,
+  "knowledgeServerStartError" : "",
+  "catchingUp" : false,
+  "inference" : {
+    "phase" : "ONLINE",
+    "identity" : {
+      "generationId" : 1,
+      "modelId" : "test-model",
+      "port" : 8080,
+      "loadedAtEpochMs" : 1700000000000
+    },
+    "usingExternal" : false,
+    "counters" : {
+      "softRestarts" : 0,
+      "hardRestarts" : 0,
+      "transitionsTotal" : 1
+    }
+  },
+  "readiness" : {
+    "schemaVersion" : 1,
+    "observedAt" : "2025-01-01T00:00:00Z",
+    "components" : {
+      "ai" : {
+        "state" : "READY",
+        "source" : "inference",
+        "observedAt" : "2025-01-01T00:00:00Z",
+        "stale" : false,
+        "stalenessMs" : 0
+      },
+      "embedding" : {
+        "state" : "READY",
+        "source" : "worker",
+        "observedAt" : "2025-01-01T00:00:00Z",
+        "stale" : false,
+        "stalenessMs" : 0
+      },
+      "indexServing" : {
+        "state" : "READY",
+        "source" : "worker",
+        "observedAt" : "2025-01-01T00:00:00Z",
+        "stale" : false,
+        "stalenessMs" : 0
+      },
+      "workerControlPlane" : {
+        "state" : "READY",
+        "source" : "worker",
+        "observedAt" : "2025-01-01T00:00:00Z",
+        "stale" : false,
+        "stalenessMs" : 0
+      }
+    },
+    "composites" : {
+      "aiFeatures" : {
+        "state" : "READY",
+        "reasonCodes" : [ ]
+      },
+      "retrieval" : {
+        "state" : "READY",
+        "reasonCodes" : [ ]
+      }
+    }
+  },
+  "aiReady" : true,
+  "embeddingReady" : true,
+  "embedding" : {
+    "observedAtMs" : 1704067200000,
+    "compatState" : "COMPATIBLE",
+    "compatReason" : "",
+    "fingerprintCurrent" : "fp-a",
+    "fingerprintStored" : "fp-a",
+    "ready" : true,
+    "docCount" : 0,
+    "completedCount" : 0,
+    "pendingCount" : 0,
+    "failedCount" : 0,
+    "coveragePercent" : 0.0
+  },
+  "schema" : {
+    "observedAtMs" : 1704067200000,
+    "fpCurrent" : "fp-b",
+    "fpStored" : "fp-b",
+    "compatState" : "COMPATIBLE",
+    "reindexRequired" : false,
+    "reindexRequiredReason" : ""
+  },
+  "chunkCoverage" : {
+    "observedAtMs" : 1704067200000,
+    "docCount" : 0,
+    "completedCount" : 0,
+    "pendingCount" : 0,
+    "failedCount" : 0,
+    "coveragePercent" : 0.0,
+    "ready" : false
+  },
+  "queueHealth" : {
+    "observedAtMs" : 1704067200000,
+    "healthy" : true,
+    "lastBackupAtMs" : 0,
+    "lastQuickCheckAtMs" : 0,
+    "lastQuickCheckOk" : true,
+    "lastErrorAtMs" : 0
+  },
+  "migration" : {
+    "observedAtMs" : 1704067200000,
+    "state" : "",
+    "buildingGenerationId" : "",
+    "previousGenerationId" : "",
+    "paused" : false,
+    "pauseReason" : "",
+    "switchingAgeMs" : 0,
+    "switchingMaxDurationMs" : 0,
+    "enumerator" : {
+      "running" : false,
+      "done" : false,
+      "rootsTotal" : 0,
+      "rootsDone" : 0,
+      "filesSeen" : 0,
+      "filesEnqueued" : 0,
+      "startedAtMs" : 0,
+      "finishedAtMs" : 0,
+      "lastPath" : ""
+    },
+    "migrationSource" : ""
+  },
+  "gpu" : {
+    "available" : false,
+    "recentUtilizationPercent" : [ ],
+    "recentMemoryUtilizationPercent" : [ ]
+  },
+  "atRestProtection" : {
+    "diskEncryption" : "UNKNOWN",
+    "source" : "none",
+    "confidence" : "UNKNOWN",
+    "qualityKnown" : false
+  },
+  "conversationProtection" : {
+    "state" : "unknown"
+  },
+  "agentSessions" : {
+    "activeCount" : 0
+  },
+  "telemetryHealth" : {
+    "flushFailureCount" : 0,
+    "gaugeCallbackFailureCount" : 0
+  },
+  "meta" : {
+    "workerRpcAtMs" : 1704067200000,
+    "workerRpcStale" : false
+  }
+}

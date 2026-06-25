@@ -1,0 +1,139 @@
+{
+  "kind": "justsearch-workflow-signal-policy.v1",
+  "version": 1,
+  "defaultStaleDays": 14,
+  "workflows": [
+    {
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "class": "primary-manual-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "ADR-0026 / local verification discipline",
+      "failureDefault": "product-regression",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Build Installer",
+      "path": ".github/workflows/build-installer.yml",
+      "class": "release-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 374 / Production-Reality Verification",
+      "failureDefault": "release-blocking-failure",
+      "staleDays": 14,
+      "blocking": true,
+      "advisory": false
+    },
+    {
+      "name": "Docs lint",
+      "path": ".github/workflows/docs-lint.yml",
+      "class": "docs-fast-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "documentation maintenance",
+      "failureDefault": "product-regression",
+      "staleDays": 7,
+      "blocking": true,
+      "advisory": false
+    },
+    {
+      "name": "Agent Live Eval Nightly",
+      "path": ".github/workflows/agent-live-eval-nightly.yml",
+      "class": "scheduled-quality-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "agent quality / workflow signal governance",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 7,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Phase 3 Observability Nightly",
+      "path": ".github/workflows/phase-3-observability-nightly.yml",
+      "class": "scheduled-quality-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdocs 400/404 when jseval gate is reached; workflow signal governance for setup drift",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 7,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "RR219 Resilience Governance Nightly",
+      "path": ".github/workflows/rr219-resilience-governance-nightly.yml",
+      "class": "scheduled-governance-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "resilience governance",
+      "failureDefault": "expected-advisory-failure",
+      "staleDays": 7,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "RR219 Resilience Soak Weekly",
+      "path": ".github/workflows/rr219-resilience-soak-weekly.yml",
+      "class": "scheduled-governance-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "resilience governance",
+      "failureDefault": "expected-advisory-failure",
+      "staleDays": 14,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "CodeQL",
+      "path": ".github/workflows/codeql.yml",
+      "class": "security-scan",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "ADR-0026 / security automation",
+      "failureDefault": "security-signal",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Claim A Report (Windows)",
+      "path": ".github/workflows/claim-a-report-win.yml",
+      "class": "benchmark-evidence",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "benchmark evidence",
+      "failureDefault": "expected-advisory-failure",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Track G Report (Windows)",
+      "path": ".github/workflows/track-g-report-win.yml",
+      "class": "benchmark-evidence",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "benchmark evidence",
+      "failureDefault": "expected-advisory-failure",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Dependabot Updates",
+      "path": "github-managed",
+      "class": "dependency-automation",
+      "expectedTriggers": ["dependabot"],
+      "owner": "dependency maintenance",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Dependency Graph",
+      "path": "github-managed",
+      "class": "dependency-automation",
+      "expectedTriggers": ["dynamic"],
+      "owner": "dependency maintenance",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    }
+  ]
+}

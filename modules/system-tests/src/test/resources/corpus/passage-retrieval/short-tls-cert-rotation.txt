@@ -1,0 +1,32 @@
+TLS Certificate Rotation Best Practices for Production Services
+
+TLS certificate rotation is a critical operational practice for maintaining secure encrypted
+communications without service interruptions. Certificates have finite validity periods and must
+be renewed before expiration to prevent outages.
+
+Key certificate rotation strategies include:
+
+Automated renewal: Use certificate management tools (cert-manager, ACME clients, or cloud
+provider integrations) to automatically request new certificates before the current ones expire.
+Target renewal at 2/3 of the certificate lifetime (e.g., renew 60-day certificates after 40
+days).
+
+Graceful rollover: Deploy new certificates alongside old ones during the transition period.
+Servers should accept both the old and new certificates until all clients have picked up the
+change. This overlap window prevents connection failures during rotation.
+
+Health monitoring: Continuously monitor certificate expiration dates across all services and
+endpoints. Alert when certificates are within 30 days of expiration. Track the entire certificate
+chain including intermediate and root certificates.
+
+Secret distribution: After obtaining a renewed certificate, update the secret store and trigger
+a reload in consuming services. Use file-watching or signal-based reloading to pick up new
+certificates without restarting the service process.
+
+Chain validation: Verify that the full certificate chain is valid after rotation. Test that
+clients can verify the chain from the leaf certificate through intermediates to the trusted root.
+Missing intermediate certificates are a common cause of rotation failures.
+
+Audit logging: Record all certificate issuance, renewal, and revocation events. Maintain an
+inventory of all certificates with their subjects, issuers, serial numbers, and expiration dates
+for compliance and incident response.

@@ -1,0 +1,5 @@
+{
+  "mirrors": [
+    { "id": "demo", "root": "root/demo.json", "copy": "copy/demo.json", "kind": "json" }
+  ]
+}

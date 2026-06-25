@@ -1,0 +1,44 @@
+Building Reliable Data Pipelines
+
+A data pipeline is a series of processing steps that move and transform data from source
+systems to a destination for analysis or serving. Modern data pipelines must handle
+increasing volumes while maintaining reliability and data quality.
+
+Pipeline Patterns:
+
+1. ETL (Extract, Transform, Load): The traditional pattern where data is extracted from
+   sources, transformed to match the target schema, then loaded into a data warehouse.
+   Best for structured data with well-defined schemas. Tools: Apache Spark, dbt, Informatica.
+
+2. ELT (Extract, Load, Transform): Loads raw data first, then transforms in the destination.
+   Leverages the compute power of modern data warehouses like Snowflake, BigQuery, and
+   Redshift. Preferred for cloud-native architectures because storage is cheaper than
+   compute during extraction.
+
+3. Streaming (Real-time): Processes data continuously as it arrives. Uses Apache Kafka for
+   event streaming with exactly-once delivery semantics (since Kafka 0.11). Apache Flink
+   provides stateful stream processing with event-time semantics and watermark handling.
+
+Reliability Patterns:
+- Idempotency: Design each pipeline step to produce the same result when executed multiple
+  times with the same input. Critical for safe retries after failures.
+- Checkpointing: Save intermediate state at regular intervals. Apache Spark uses RDD lineage
+  for fault tolerance; Apache Flink uses distributed snapshots (Chandy-Lamport algorithm).
+- Dead letter queues: Route failed records to a separate queue for later inspection and
+  reprocessing instead of blocking the entire pipeline.
+- Schema evolution: Use Avro or Protobuf with schema registries (Confluent Schema Registry)
+  to handle schema changes without breaking consumers.
+
+Data Quality:
+- Great Expectations: Open-source Python library for data validation. Supports expectations
+  like "column values must be between 0 and 100" or "table row count must be within 10%
+  of yesterday's count".
+- Data contracts: Formal agreements between producers and consumers about data format,
+  freshness, and quality. Enforce at pipeline boundaries.
+- Monitoring: Track data freshness (time since last update), volume (row counts vs expected),
+  and distribution (statistical tests for drift detection).
+
+Orchestration:
+Apache Airflow is the most widely adopted orchestrator with over 35,000 GitHub stars. It uses
+directed acyclic graphs (DAGs) written in Python to define pipeline dependencies. Alternatives
+include Prefect, Dagster, and Luigi.

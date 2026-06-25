@@ -1,0 +1,129 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "I18nKey" : {
+      "type" : "string",
+      "minLength" : 1
+    },
+    "SubCategory" : {
+      "type" : "string",
+      "enum" : [ "CORE_DIAGNOSTIC", "LIBRARY_TRACE", "BOOT_TRACE", "DELIVERY_INTERNAL" ]
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "consumerPermission" : {
+      "type" : "string",
+      "enum" : [ "CORE", "TRUSTED_PLUGIN", "OPERATOR_OVERRIDE" ]
+    },
+    "consumers" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "audience" : {
+            "type" : "string",
+            "enum" : [ "USER", "AGENT", "OPERATOR", "DEVELOPER" ]
+          },
+          "consumerId" : {
+            "type" : "string"
+          }
+        },
+        "required" : [ "audience", "consumerId" ]
+      }
+    },
+    "dataClasses" : {
+      "type" : "array",
+      "items" : {
+        "type" : "string",
+        "enum" : [ "USER_PATHS", "CONFIG_VALUES", "EXCEPTION_BODIES", "PII" ]
+      }
+    },
+    "deliveryMode" : {
+      "type" : "string",
+      "const" : "SSE_STREAM"
+    },
+    "endpoint" : {
+      "type" : "string"
+    },
+    "id" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+    },
+    "presentation" : {
+      "type" : "object",
+      "properties" : {
+        "category" : {
+          "type" : [ "string", "null" ]
+        },
+        "descriptionKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        },
+        "iconHint" : {
+          "type" : [ "string", "null" ]
+        },
+        "labelKey" : {
+          "$ref" : "#/$defs/I18nKey"
+        }
+      },
+      "required" : [ "category", "descriptionKey", "iconHint", "labelKey" ]
+    },
+    "producer" : {
+      "type" : "string",
+      "enum" : [ "IN_PROCESS_LOGBACK", "WORKER_GRPC_STREAM", "EXTERNAL_OBSERVER" ]
+    },
+    "provenance" : {
+      "type" : "object",
+      "properties" : {
+        "contributorId" : {
+          "type" : "string"
+        },
+        "identity" : {
+          "type" : [ "object", "null" ],
+          "properties" : {
+            "signature" : {
+              "type" : [ "string", "null" ]
+            },
+            "verified" : {
+              "type" : "boolean"
+            }
+          },
+          "required" : [ "signature", "verified" ]
+        },
+        "tier" : {
+          "type" : "string",
+          "enum" : [ "CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN" ]
+        },
+        "version" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "contributorId", "identity", "tier", "version" ]
+    },
+    "selector" : {
+      "type" : "object",
+      "properties" : {
+        "defaultSubCategory" : {
+          "$ref" : "#/$defs/SubCategory"
+        },
+        "overrides" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "$ref" : "#/$defs/SubCategory"
+          }
+        },
+        "prefixMappings" : {
+          "type" : "object",
+          "additionalProperties" : {
+            "$ref" : "#/$defs/SubCategory"
+          }
+        }
+      },
+      "required" : [ "defaultSubCategory", "overrides", "prefixMappings" ]
+    },
+    "type" : {
+      "type" : "string"
+    }
+  },
+  "required" : [ "consumerPermission", "consumers", "dataClasses", "deliveryMode", "endpoint", "id", "presentation", "producer", "provenance", "selector", "type" ]
+}

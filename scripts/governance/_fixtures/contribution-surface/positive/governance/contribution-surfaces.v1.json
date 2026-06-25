@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "tempdoc": 560,
+  "note": "Positive self-test fixture — a clean registry barrel (only Wire-derived / union / scalar / allowlisted declarations, imports only from generated/zod). The gate must PASS.",
+  "scan": {
+    "barrel": "modules/ui-web/src/api/types/registry.ts",
+    "generatedDir": "modules/ui-web/src/api/generated/schema-types",
+    "registryController": "modules/ui/src/main/java/io/justsearch/ui/api/RegistryController.java",
+    "barrelImportAllow": ["../generated/", "zod"]
+  },
+  "surfaces": [],
+  "grandfatheredPending": [],
+  "registryAllowlist": [
+    { "name": "FooCatalog", "kind": "catalog-envelope", "reason": "fixture envelope" }
+  ]
+}

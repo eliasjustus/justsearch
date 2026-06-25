@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "analyzers": [
+    {
+      "id": "content_all",
+      "locale": "*",
+      "provider": "icu",
+      "components": ["icu"],
+      "fingerprint": "ef02d97578260b3b981711916361278d85ca091d7c6aa2f7530ac01288bbc363"
+    },
+    {
+      "id": "keyword",
+      "locale": "*",
+      "provider": "keyword",
+      "components": ["keyword"],
+      "fingerprint": "60d5a6136f9e93a9303c9098e4ec7d916d7610786cfa9e9f5ff4f48419b4f76a"
+    }
+  ]
+}

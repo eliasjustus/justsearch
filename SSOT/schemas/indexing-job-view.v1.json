@@ -1,0 +1,27 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "attempts" : {
+      "type" : "integer"
+    },
+    "collection" : {
+      "type" : "string"
+    },
+    "errorMessage" : {
+      "type" : "string"
+    },
+    "lastUpdatedMs" : {
+      "type" : "integer"
+    },
+    "pathHash" : {
+      "type" : "string"
+    },
+    "retryAfterMs" : {
+      "type" : "integer"
+    },
+    "state" : {
+      "type" : "string"
+    }
+  }
+}

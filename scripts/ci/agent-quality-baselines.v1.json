@@ -1,0 +1,22 @@
+{
+  "schema": "agent-quality-baselines.v1",
+  "generated_at": "2026-06-20",
+  "note": "Tempdoc 622 Layer C. A DIAGNOSTIC trend floor over the most recent N agent sessions — NOT a per-session score and NEVER build-blocking (the kernel has no non-blocking tier; this is the standalone-validator seam, like check-run-renderers / relevance-ratchet). Tolerance absorbs per-session noise. Per tempdoc 277 PHI is a friction diagnostic, not a target; per 622 §6.4 the agents being measured can read this file, so it must never become an optimization gate. The Layer-B hard outcome (merged/built/gate-green) is the anti-gaming guardrail to PHI's process north-star.",
+  "source_report": "tmp/agent-telemetry/scores.ndjson",
+  "window_n": 10,
+  "min_sessions": 5,
+  "metrics": {
+    "phi_score": {
+      "baseline": 65,
+      "tolerance_abs": 5,
+      "direction": "higher_is_better",
+      "description": "Process Hygiene Index trend mean (0-100). SEED value; recalibrate from N>=30 real sessions once scores.ndjson is OTLP-fed."
+    },
+    "tool_failure_rate": {
+      "baseline": 0.08,
+      "tolerance_abs": 0.04,
+      "direction": "lower_is_better",
+      "description": "Mean fraction of tool calls that failed (signals.tool_failure_rate). SEED value."
+    }
+  }
+}

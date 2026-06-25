@@ -1,0 +1,15 @@
+{
+  "sessionId": "session_golden_v0",
+  "startedAt": "2026-01-01T00:00:00Z",
+  "updatedAt": "2026-01-01T00:00:01Z",
+  "state": "READY_FOR_LLM",
+  "resumable": true,
+  "resumeNote": "",
+  "selectedToolNames": ["search_index"],
+  "maxIterations": 5,
+  "initialBudget": 8000,
+  "iterationsUsed": 0,
+  "toolCallsExecuted": 0,
+  "totalTokensUsed": 0,
+  "messages": [{"role": "user", "content": "golden fixture test"}]
+}

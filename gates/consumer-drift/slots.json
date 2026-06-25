@@ -1,0 +1,99 @@
+{
+  "$comment": "Consumer-drift gate slots (tempdoc 531) + §5.2 catalog-completeness closure (tempdoc 548). Each slot declares a substrate symbol that must retain >= expectedMin production consumers; the gate fails when a slot drops below its floor after grace, unless a classifying changeset is present. Production slots are populated per-substrate AFTER measuring current consumer counts (grandfather expectedMin = measured count, mirroring class-size's ratchet-from-here; do NOT seed tempdoc 527's hollows verbatim — re-measure first). The optional `note` field is provenance only; the enforcer ignores it. The optional `substrate` field (548 §5.2) names the discovered substrate dir a slot covers. The `discovery` block (548 §5.2) makes the gate's coverage a PROJECTION of the substrate universe: the gate enumerates every `<root>/<name>/index.ts` and fails if a discovered substrate is neither covered by a slot (slot.substrate === <name>) nor grandfathered in `knownUncovered`. This closes the recursion where the gate's own coverage could be silently escaped — a new substrate dir fails until it gets a measured slot or an explicit (reviewable) knownUncovered entry. Slot schema: { id, symbol, declaredIn, includeGlobs[], excludeGlobs[], expectedMin, grace?: { untilDate: 'YYYY-MM-DD' }, substrate?: '<discovered-id>', note? }.",
+  "slots": [
+    {
+      "id": "autonomy-agent-tool-approval",
+      "note": "Tempdoc 543 §32 unify (486 R2.3 #6): the autonomy dial drives the agent surface's real per-tool auto-approval via agentToolAutoApprove. This is the substrate's first non-dormant consumer — registering it keeps the dial from drifting back to substrate-ahead-of-consumer. Floor = 1 (the real consumer is AgentSessionController.ts; symbol-occurrence also counts an explanatory comment in AgentView.ts, hence measured 2 with 1 unit of harmless slack).",
+      "symbol": "agentToolAutoApprove",
+      "declaredIn": "modules/ui-web/src/shell-v0/substrates/autonomy/index.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "expectedMin": 1,
+      "substrate": "autonomy"
+    },
+    {
+      "id": "autonomy-dial-mounted",
+      "note": "Tempdoc 543 §32: the <jf-autonomy-dial> control is mounted in two surfaces — the agent header (AgentView.ts) and Settings (SettingsSurface.ts). Floor = 2 ratchets the current mount count; losing either surface requires an acknowledged changeset.",
+      "symbol": "jf-autonomy-dial",
+      "declaredIn": "modules/ui-web/src/shell-v0/components/AutonomyDial.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "expectedMin": 2
+    },
+    {
+      "note": "Tempdoc 549 Phase D1 (U5 / principle 9). The G33 search-explain panel must stay mounted. Retargeted from `<jf-search-introspection>` (525, Slice 1) to the canonical `<jf-search-trace>` (549) when the FE explain consumer migrated to the unified trace; the legacy component + its searchIntrospectionExplain strategy retire in Phase E4. The invariant is unchanged — the panel must retain >= 1 production consumer outside its own declaration and the aggregate-substrate bootstrap registration. Measured count after D1 = 1 (SearchSurface.ts).",
+      "id": "search-explain-panel-mount",
+      "symbol": "jf-search-trace",
+      "declaredIn": "modules/ui-web/src/shell-v0/aggregate-substrate/components/JfSearchTrace.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": [
+        "**/*.test.ts",
+        "modules/ui-web/src/shell-v0/aggregate-substrate/bootstrap.ts"
+      ],
+      "expectedMin": 1
+    },
+    {
+      "note": "Tempdoc 549 Slice 5 (U5 / principle 9). The `search-trace` SelectionPayload kind (526 selection substrate) is the producer side of G111's 'Explain in words': SearchSurface composes a search-trace selection from a hit's provenance and routes it to a non-RAG explain shape (core.summarize), which the Java SelectionContextInjector.injectSearchTrace consumes. This slot codifies that the kind must retain >= 1 production producer (SearchSurface.ts) outside its own type declaration — so the explain affordance can't drift back to a dormant, never-emitted selection kind. Measured count at landing = 1 (SearchSurface.ts; selection.ts is the declaration, excluded).",
+      "id": "search-trace-selection-kind",
+      "symbol": "search-trace",
+      "declaredIn": "modules/ui-web/src/api/types/selection.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": [
+        "**/*.test.ts",
+        "modules/ui-web/src/api/types/selection.ts"
+      ],
+      "expectedMin": 1
+    },
+    {
+      "note": "Tempdoc 550 thesis II (Outcome read-view coverage). <jf-action-ledger> (ActionLedgerView) is the unified action-ledger read-view — operations + navigations + gates + FE effects, live. It shipped registered-but-UNMOUNTED, the same C-018 hollow as jf-search-introspection: data layer + unit tests but no mounted renderer. This slot forces it to stay mounted in a real surface (ActivitySurface.ts). expectedMin = 1: the production mount outside the component's own declaration.",
+      "id": "action-ledger-view-mounted",
+      "symbol": "jf-action-ledger",
+      "declaredIn": "modules/ui-web/src/shell-v0/components/ActionLedgerView.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "expectedMin": 1
+    },
+    {
+      "note": "Tempdoc 550 thesis II + G3/G4/G5 (live Outcome read-view). openActionLedgerStream is the live SSE subscription feeding the unified ledger view; it shipped with no production consumer (called only in tests), so the Outcome read-view was snapshot-only. This slot forces the live stream to have a real subscriber (ActionLedgerView) so the read-view renders live. expectedMin = 1, outside its own declaration.",
+      "id": "action-ledger-live-stream-consumer",
+      "symbol": "openActionLedgerStream",
+      "declaredIn": "modules/ui-web/src/shell-v0/operations/ActionLedgerClient.ts",
+      "includeGlobs": ["modules/ui-web/src/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "expectedMin": 1
+    }
+  ],
+  "discovery": {
+    "readViews": {
+      "$comment": "Tempdoc 550 thesis II — the GENERAL read-view coverage forcing function. Beyond the explicit per-symbol slots above, every read-view custom element (customElements.define('jf-…'|'justsearch-…')) defined under definitionGlobs MUST have a production mount: a literal tag reference in another production file (template / createElement) OR a registerViewFactory(...,'tag') registration (the chat-shape factory-mount path). A discovered read-view with no mount FAILS the gate automatically — so a NEW unmounted read-view is caught without anyone hand-adding a slot. knownUncovered grandfathers the orphans that pre-existed this gate (measured 2026-05-27; logged to docs/observations.md) — mount or remove them to shrink this list; do NOT add new tags here to dodge the gate.",
+      "definitionGlobs": ["modules/ui-web/src/shell-v0/**/*.ts"],
+      "excludeGlobs": ["**/*.test.ts"],
+      "mountGlobs": ["modules/ui-web/src/**/*.ts"],
+      "mountExcludeGlobs": ["**/*.test.ts"],
+      "knownUncovered": [
+        "jf-context-menu",
+        "jf-enter-action-picker",
+        "jf-resolution-stats",
+        "jf-selection-actions-menu",
+        "jf-sparkline"
+      ]
+    },
+    "$comment": "The substrate universe is the kernel substrate-primitive dirs (Tempdoc 543 §3/§13.2). knownUncovered grandfathers the substrates that do not yet have a measured consumer-floor slot — ratchet-from-here. Move a name out of knownUncovered into a real slots[] entry (measured expectedMin + substrate: '<name>') to tighten it. 'autonomy' is covered by the autonomy-agent-tool-approval slot; 'tasks' is grandfathered pending a measured floor.",
+    "roots": ["modules/ui-web/src/shell-v0/substrates"],
+    "entryGlob": "*/index.ts",
+    "knownUncovered": [
+      "actions",
+      "consent",
+      "effects",
+      "elicit",
+      "evaluationContext",
+      "interaction",
+      "macros",
+      "manifest",
+      "pending-effects",
+      "profiles",
+      "scope",
+      "tasks"
+    ]
+  }
+}

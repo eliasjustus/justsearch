@@ -1,0 +1,30 @@
+{
+  "$schema": "./manifest.schema.json",
+  "schemaVersion": 1,
+  "themes": [
+    {
+      "id": "core.nord",
+      "displayName": "Nord",
+      "description": "Cool blues and grays inspired by the Nord palette",
+      "cssPath": "/themes/core.nord.css",
+      "author": "core",
+      "version": "1.0.0"
+    },
+    {
+      "id": "core.sepia-focus",
+      "displayName": "Sepia Focus",
+      "description": "Warm sepia tones for low-contrast reading",
+      "cssPath": "/themes/core.sepia-focus.css",
+      "author": "core",
+      "version": "1.0.0"
+    },
+    {
+      "id": "core.high-vis",
+      "displayName": "High Vis",
+      "description": "High-contrast palette for visibility-focused workflows.",
+      "cssPath": "/themes/core.high-vis.json",
+      "author": "core",
+      "version": "1.0.0"
+    }
+  ]
+}

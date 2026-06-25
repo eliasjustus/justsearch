@@ -1,0 +1,18 @@
+// RuntimeContext (slice 440).
+//
+// STATE Resource carrying mode-shaped dimensions (systemMode + automationEnabled
+// in V1). Future dimensions (aiMode / installMode / policyMode) are deferred
+// per slice 440's scope.
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+message RuntimeContext {
+  // PRODUCTION / EVAL per slice 440.
+  string system_mode = 1 [json_name = "systemMode"];
+  bool automation_enabled = 2 [json_name = "automationEnabled"];
+}

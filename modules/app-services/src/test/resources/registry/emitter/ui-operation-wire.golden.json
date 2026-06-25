@@ -1,0 +1,1432 @@
+[ {
+  "id" : "core.restart-worker",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.restart-worker.label",
+    "descriptionKey" : "ops.restart-worker.description",
+    "iconHint" : "warning",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : { },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "HIGH",
+    "confirm" : {
+      "kind" : "TYPED",
+      "confirmTextKey" : "ops.restart-worker.confirm"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.bulk-reindex",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.bulk-reindex.label",
+    "descriptionKey" : "ops.bulk-reindex.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "corpusIds" : {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          }
+        }
+      },
+      "required" : [ "corpusIds" ]
+    },
+    "result" : { },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "HIGH",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.rebuild-index",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.rebuild-index.label",
+    "descriptionKey" : "ops.rebuild-index.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object"
+    },
+    "result" : { },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "HIGH",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ "core.failed-indexing-jobs", "core.indexed-roots", "core.indexing-jobs" ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.ping-backend",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.ping-backend.label",
+    "descriptionKey" : "ops.ping-backend.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "NONE",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "CLI", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.clear-failed-jobs",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.clear-failed-jobs.label",
+    "descriptionKey" : "ops.clear-failed-jobs.description",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "clearedCount" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.reindex",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.reindex.label",
+    "descriptionKey" : "ops.reindex.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "force" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.reconcile-root",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.reconcile-root.label",
+    "descriptionKey" : "ops.reconcile-root.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "pathHash" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "pathHash" ]
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.export-diagnostics",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.export-diagnostics.label",
+    "descriptionKey" : "ops.export-diagnostics.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.add-watched-root",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.add-watched-root.label",
+    "descriptionKey" : "ops.add-watched-root.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "collection" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "path" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "collection" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : "core.remove-watched-root"
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.remove-watched-root",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.remove-watched-root.label",
+    "descriptionKey" : "ops.remove-watched-root.description",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "collection" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "path" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "collection" : {
+          "type" : "string"
+        },
+        "deletedJobs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : "core.add-watched-root"
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.preview-excludes",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.preview-excludes.label",
+    "descriptionKey" : "ops.preview-excludes.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "dryRun" : {
+          "type" : "boolean"
+        },
+        "patterns" : {
+          "type" : "integer"
+        },
+        "rootsProcessed" : {
+          "type" : "integer"
+        },
+        "deletedByPathJobs" : {
+          "type" : "integer"
+        },
+        "deletedById" : {
+          "type" : "integer"
+        },
+        "matchedFiles" : {
+          "type" : "integer"
+        },
+        "capped" : {
+          "type" : "boolean"
+        },
+        "perPattern" : {
+          "type" : "array",
+          "items" : {
+            "type" : "object",
+            "properties" : {
+              "pattern" : {
+                "type" : "string"
+              },
+              "matches" : {
+                "type" : "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.apply-excludes",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.apply-excludes.label",
+    "descriptionKey" : "ops.apply-excludes.description",
+    "iconHint" : "warning",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "dryRun" : {
+          "type" : "boolean"
+        },
+        "patterns" : {
+          "type" : "integer"
+        },
+        "rootsProcessed" : {
+          "type" : "integer"
+        },
+        "deletedByPathJobs" : {
+          "type" : "integer"
+        },
+        "deletedById" : {
+          "type" : "integer"
+        },
+        "matchedFiles" : {
+          "type" : "integer"
+        },
+        "capped" : {
+          "type" : "boolean"
+        },
+        "perPattern" : {
+          "type" : "array",
+          "items" : {
+            "type" : "object",
+            "properties" : {
+              "pattern" : {
+                "type" : "string"
+              },
+              "matches" : {
+                "type" : "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "HIGH",
+    "confirm" : {
+      "kind" : "TYPED",
+      "confirmTextKey" : "ops.apply-excludes.confirm"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.reload-inference",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.reload-inference.label",
+    "descriptionKey" : "ops.reload-inference.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "mode" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.switch-inference-mode",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.switch-inference-mode.label",
+    "descriptionKey" : "ops.switch-inference-mode.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "mode" : {
+          "type" : "string",
+          "enum" : [ "online", "indexing" ]
+        }
+      },
+      "required" : [ "mode" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "mode" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.trigger-offline-processing",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.trigger-offline-processing.label",
+    "descriptionKey" : "ops.trigger-offline-processing.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.activate-runtime-variant",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.activate-runtime-variant.label",
+    "descriptionKey" : "ops.activate-runtime-variant.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "variantId" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "variantId" ]
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.deactivate-runtime-variant",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.deactivate-runtime-variant.label",
+    "descriptionKey" : "ops.deactivate-runtime-variant.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.preflight-ai-pack",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.preflight-ai-pack.label",
+    "descriptionKey" : "ops.preflight-ai-pack.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "path" ]
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.import-ai-pack",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.import-ai-pack.label",
+    "descriptionKey" : "ops.import-ai-pack.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "allowDowngrade" : {
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "path" ]
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.start-ai-install",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.start-ai-install.label",
+    "descriptionKey" : "ops.start-ai-install.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "acceptTerms" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.cancel-ai-install",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.cancel-ai-install.label",
+    "descriptionKey" : "ops.cancel-ai-install.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.repair-ai-install",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.repair-ai-install.label",
+    "descriptionKey" : "ops.repair-ai-install.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "acceptTerms" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.create-user-policy",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.create-user-policy.label",
+    "descriptionKey" : "ops.create-user-policy.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "manifestSha256" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "manifestSha256" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.allowlist-add-digest",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.allowlist-add-digest.label",
+    "descriptionKey" : "ops.allowlist-add-digest.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "manifestSha256" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "manifestSha256" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string"
+        },
+        "changed" : {
+          "type" : "boolean"
+        },
+        "allowlistedCount" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.reset-settings",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.reset-settings.label",
+    "descriptionKey" : "ops.reset-settings.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { }
+    },
+    "result" : {
+      "type" : "object"
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.cancel-indexing-job",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.cancel-indexing-job.label",
+    "descriptionKey" : "ops.cancel-indexing-job.description",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "pathHash" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "pathHash" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "cancelled" : {
+          "type" : "boolean"
+        },
+        "previousState" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.retry-indexing-job",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.retry-indexing-job.label",
+    "descriptionKey" : "ops.retry-indexing-job.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "pathHash" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "pathHash" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "retried" : {
+          "type" : "boolean"
+        },
+        "previousState" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.resolve-path-hash",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.resolve-path-hash.label",
+    "descriptionKey" : "ops.resolve-path-hash.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "pathHash" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "pathHash" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "found" : {
+          "type" : "boolean"
+        },
+        "path" : {
+          "type" : "string"
+        },
+        "lastSeenAtMs" : {
+          "type" : "integer"
+        },
+        "removedAtMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
+  "id" : "core.index-gc",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.index-gc.label",
+    "descriptionKey" : "ops.index-gc.description",
+    "category" : "destructive"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "keepLatest" : {
+          "type" : "integer",
+          "minimum" : 0
+        },
+        "pruneMarkedOnly" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "accepted" : {
+          "type" : "boolean"
+        },
+        "markedCount" : {
+          "type" : "integer"
+        },
+        "prunedCount" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "MEDIUM",
+    "confirm" : {
+      "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+} ]

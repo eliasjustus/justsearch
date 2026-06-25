@@ -1,0 +1,23 @@
+VRAM Memory Management Tips for GPU Applications
+
+Video RAM (VRAM) is the dedicated high-bandwidth memory on a GPU used for storing textures,
+framebuffers, model weights, and intermediate computation results. Effective VRAM memory
+management directly impacts application performance and stability.
+
+Key VRAM management strategies include:
+
+Pre-allocation: Allocate VRAM buffers at startup rather than dynamically during execution.
+This avoids fragmentation and allocation latency during performance-critical paths.
+
+Memory pooling: Use sub-allocators that carve a large VRAM allocation into smaller blocks.
+This reduces driver overhead from frequent allocate/free calls and minimizes fragmentation.
+
+Streaming and eviction: For datasets larger than available VRAM, implement a streaming
+strategy that pages data in and out based on access patterns. LRU eviction policies work
+well for texture streaming in rendering applications.
+
+Monitoring: Use nvidia-smi, GPU profilers, or vendor-specific APIs to track VRAM utilization
+in real time. Watch for allocation failures, excessive fragmentation, and memory leaks.
+
+Alignment: Respect hardware alignment requirements (typically 256 bytes) when allocating VRAM
+to avoid performance penalties from misaligned accesses.

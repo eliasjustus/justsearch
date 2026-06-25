@@ -1,0 +1,24 @@
+{
+  "$comment": "SSOT catalog mirrors (root <-> classpath copy) that must stay in sync. Production loads the classpath copy under modules/adapters-lucene/src/main/resources/, so any divergence silently drops content in packaged builds (CLAUDE.md 'Classpath catalog drift' pitfall). 'aliases.v1.json' is intentionally root-only (not dual-copied) and is not listed. kind: 'json' compares parsed structure (order-insensitive); 'text' compares CRLF-normalized. Adding a newly-dual-copied catalog is a deliberate entry here.",
+  "mirrors": [
+    {
+      "id": "fields",
+      "root": "SSOT/catalogs/fields.v1.json",
+      "copy": "modules/adapters-lucene/src/main/resources/SSOT/catalogs/fields.v1.json",
+      "kind": "json"
+    },
+    {
+      "id": "analyzers",
+      "root": "SSOT/catalogs/analyzers.v1.json",
+      "copy": "modules/adapters-lucene/src/main/resources/SSOT/catalogs/analyzers.v1.json",
+      "kind": "json"
+    },
+    {
+      "$comment": "Tempdoc 633 #6 — the model registry the Head loads at runtime (ui main resource) and the configuration-module test copy that ModelRegistryLoaderTest exercises must not diverge, else the test validates a registry production never sees.",
+      "id": "model-registry",
+      "root": "modules/ui/src/main/resources/ai/model-registry.v2.json",
+      "copy": "modules/configuration/src/test/resources/ai/model-registry.v2.json",
+      "kind": "json"
+    }
+  ]
+}

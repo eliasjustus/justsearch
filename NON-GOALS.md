@@ -1,0 +1,40 @@
+# Non-Goals
+
+JustSearch is a **local-first, private neural search engine for your own files.** That focus implies some things
+it deliberately is **not**. These boundaries keep the project coherent and maintainable by a small team —
+they're not judgments about other tools.
+
+### Privacy & locality (hard invariants — these will never change)
+- **No telemetry, analytics, or phone-home.** The product does not report usage anywhere. This is enforced in
+  the architecture (loopback-only), not just promised. A PR that adds outbound reporting will be declined.
+- **Not a (required) cloud service.** JustSearch runs on *your* machine; we won't make a cloud component, an
+  account, or server-side processing of your documents *mandatory* for the local core.
+- **We don't train on your data**, and we never upload your files. Retrieval and inference are local.
+
+### Product scope (what it is *for*)
+- **Not built to be a general-purpose chatbot.** A free-chat mode is available, but the product is *for*
+  answering questions *grounded in your files* with citations — that's where the tuning and engineering go;
+  it isn't positioned or optimized as an open-domain assistant.
+- **Not a model trainer or fine-tuning platform.** It *uses* models (BYO-LLM via llama.cpp); it doesn't train them.
+- **Not a note-taking / PKM app.** It searches the files you already have in the formats you already use; it
+  doesn't impose a vault, a note format, or a writing surface. (Indexing a notes folder is fine; *being* the
+  notes app is out of scope.)
+- **Not an open-web search engine or crawler.** It indexes *your* files — and, in a future release, *your*
+  connected cloud/email accounts — not the public internet.
+- **Not an enterprise DMS / records-management / e-discovery product.** It finds and answers; it isn't a
+  system of record, and it makes no compliance certification.
+
+### Maturity & platform
+- **No correctness or compliance guarantees.** Answers are grounded in your documents and cited — always check
+  the citation. Like any AI it can be wrong; the guarantee here is *privacy*, not infallibility, so don't act on
+  an unverified answer in high-stakes work. No warranty (see [LICENSE](LICENSE)).
+- **Windows-only.** macOS and Linux are **not in the current scope** — not ruled out forever, but not planned now.
+
+### Engineering scope
+- **No per-language search levers.** Analysis is locale-invariant by design (one multilingual pipeline); we
+  won't add per-language analyzers/stopwords/synonym dictionaries. Multilingual quality comes from the model
+  stack, not from per-language tuning.
+
+If you're unsure whether an idea fits, **open a discussion before a PR** — we'd rather shape it together than
+decline finished work.
+</content>

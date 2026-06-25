@@ -1,0 +1,255 @@
+// KnowledgeStatusView (with dual-name aliases) + KnowledgeSearchResponse stub.
+//
+// AXIS 1 hard case: KnowledgeStatusView emits BOTH `pendingJobs` (canonical)
+// AND `queueDepth` (deprecated alias) on the same wire payload. Per ADR-09a
+// §"Dual-name aliases (SE-2)": resolution = two fields in spec, both populated
+// server-side, alias marked [deprecated = true]; CEL invariant enforces
+// consistency.
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+import "buf/validate/validate.proto";
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+message KnowledgeStatusView {
+  string state = 1;
+  bool ready = 2;
+
+  // Canonical (renamed from KnowledgeStatus)
+  int64 pending_jobs = 3 [json_name = "pendingJobs"];
+  int64 indexed_documents = 4 [json_name = "indexedDocuments"];
+  int64 active_indexed_documents = 5 [json_name = "activeIndexedDocuments"];
+  int64 building_indexed_documents = 6 [json_name = "buildingIndexedDocuments"];
+
+  // Unchanged names
+  string serving_search_generation_id = 7 [json_name = "servingSearchGenerationId"];
+  string serving_ingest_generation_id = 8 [json_name = "servingIngestGenerationId"];
+  int64 switch_buffer_depth = 9 [json_name = "switchBufferDepth"];
+  int64 pending_jobs_count = 10 [json_name = "pendingJobsCount"];
+  int64 processing_jobs_count = 11 [json_name = "processingJobsCount"];
+  int64 pending_ready_jobs_count = 12 [json_name = "pendingReadyJobsCount"];
+  int64 pending_backoff_jobs_count = 13 [json_name = "pendingBackoffJobsCount"];
+  int64 migration_switching_age_ms = 14 [json_name = "migrationSwitchingAgeMs"];
+  int64 migration_switching_max_duration_ms = 15 [json_name = "migrationSwitchingMaxDurationMs"];
+  bool migration_paused = 16 [json_name = "migrationPaused"];
+  string migration_pause_reason = 17 [json_name = "migrationPauseReason"];
+  int64 migration_paused_at_ms = 18 [json_name = "migrationPausedAtMs"];
+  bool healthy = 19;
+  string index_state = 20 [json_name = "indexState"];
+
+  // Promoted from extras (slice 366: enrichment coverage)
+  string embedding_compat_state = 21 [json_name = "embeddingCompatState"];
+  string embedding_compat_reason = 22 [json_name = "embeddingCompatReason"];
+  string embedding_fingerprint_current = 23 [json_name = "embeddingFingerprintCurrent"];
+  string embedding_fingerprint_stored = 24 [json_name = "embeddingFingerprintStored"];
+  double embedding_coverage_percent = 25 [json_name = "embeddingCoveragePercent"];
+  double splade_coverage_percent = 26 [json_name = "spladeCoveragePercent"];
+  int32 pending_ner_count = 27 [json_name = "pendingNerCount"];
+  int32 completed_ner_count = 28 [json_name = "completedNerCount"];
+
+  // === Deprecated aliases (SE-2) ===
+  // Server emits these with the OLD wire-format names. Field numbers
+  // 100-103 reserved for the alias block. CEL invariant enforces
+  // value-consistency with the canonical fields.
+  int64 queue_depth = 100 [json_name = "queueDepth", deprecated = true];
+  int64 doc_count = 101 [json_name = "docCount", deprecated = true];
+  int64 active_doc_count = 102 [json_name = "activeDocCount", deprecated = true];
+  int64 building_doc_count = 103 [json_name = "buildingDocCount", deprecated = true];
+
+  option (buf.validate.message).cel = {
+    id: "knowledge_status_view.alias_consistency",
+    expression:
+      "this.pending_jobs == this.queue_depth && this.indexed_documents == this.doc_count && this.active_indexed_documents == this.active_doc_count && this.building_indexed_documents == this.building_doc_count",
+    message: "deprecated aliases (queueDepth, docCount, activeDocCount, buildingDocCount) must match canonical fields"
+  };
+}
+
+// === KnowledgeSearchResponse + nested types ===
+//
+// Populated 2026-05-06 per proto-correctness pass against
+// modules/app-api/.../knowledge/KnowledgeSearchResponse.java.
+
+message KnowledgeSearchResponse {
+  int64 total_hits = 1 [json_name = "totalHits"];
+  int64 took_ms = 2 [json_name = "tookMs"];
+  repeated Hit results = 3;
+  string next_cursor = 4 [json_name = "nextCursor"];
+  // Java type: Map<String, Map<String, Long>> facets
+  // (e.g., {"category": {"docs": 12, "code": 3}})
+  map<string, FacetCounts> facets = 5;
+  optional bool facets_truncated = 6 [json_name = "facetsTruncated"];
+  // Tempdoc 549 Phase E5: the flat query-trace fields (7–21) retired — they duplicated the
+  // SearchTrace scalars (effective_mode / decision_kind / qpp / degradation) + per-stage nodes.
+  reserved 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21;
+  reserved "effective_mode", "vector_blocked", "vector_blocked_reason", "hybrid_fallback",
+      "hybrid_fallback_reason", "chunk_merge_applied", "chunk_merge_reason", "correction_applied",
+      "corrected_query", "expansion_applied", "splade_executed", "splade_skip_reason",
+      "lambda_mart_applied", "cross_encoder_applied", "cross_encoder_skip_reason";
+  // Java type: Map<String, List<EntityVariantBreakdown>>
+  map<string, EntityVariantList> entity_facet_variants = 22 [json_name = "entityFacetVariants"];
+  IndexCapabilities index_capabilities = 23 [json_name = "indexCapabilities"];
+  // Tempdoc 549 Phase E3: pipeline_execution retired — per-stage timing + component statuses are
+  // on the unified trace (TraceStage.ms / status).
+  reserved 24;
+  reserved "pipeline_execution";
+  QueryUnderstanding query_understanding = 25 [json_name = "queryUnderstanding"];
+  FilterNormalization filter_normalization = 26 [json_name = "filterNormalization"];
+  // Tempdoc 549 / 551 Part 1: the single canonical stage-keyed search trace (the artifact that
+  // replaced debug_scores / hit_provenance / pipeline_execution / introspection / the flat fields).
+  // Mirrors app-api KnowledgeSearchResponse.searchTrace (SearchTrace.java).
+  SearchTrace search_trace = 27 [json_name = "searchTrace"];
+  // Tempdoc 597: the TRUE matched-document count (searcher.count over the chunk-excluded query),
+  // distinct from total_hits (the bounded fused-candidate-union). The FE headline binds to this
+  // ("Top N of M matches"). Mirrors app-api KnowledgeSearchResponse.matchCount.
+  int64 match_count = 28 [json_name = "matchCount"];
+}
+
+// Wire shape for one row of facets[category]: facet-value → count.
+message FacetCounts {
+  map<string, int64> values = 1;
+}
+
+// Wire shape for one row of entityFacetVariants[canonicalForm].
+message EntityVariantList {
+  repeated EntityVariantBreakdown variants = 1;
+}
+
+message Hit {
+  string id = 1;
+  double score = 2;
+  map<string, string> fields = 3;
+  // Tempdoc 549 Phase E1: debug_scores retired — the per-hit numeric detail tier is now
+  // carried by the unified trace (HitStage.detail), gated by include_detail.
+  reserved 4;
+  reserved "debug_scores";
+  // Tempdoc 549 Phase E2: provenance (the leg-keyed HitProvenance message) retired — per-hit
+  // ranking provenance is now the per-doc slice of the unified stage vocabulary.
+  reserved 5;
+  reserved "provenance";
+  repeated string matched_fields = 6 [json_name = "matchedFields"];
+  repeated MatchSpan match_spans = 7 [json_name = "matchSpans"];
+  repeated ExcerptRegion excerpt_regions = 8 [json_name = "excerptRegions"];
+  // Tempdoc 549 / 551 Part 1: per-hit slice of the unified stage vocabulary (the single per-hit
+  // ranking-decision record; subsumes the retired debug_scores + hit_provenance, fields 4/5).
+  // Mirrors app-api KnowledgeSearchResponse.Hit.trace (List<SearchTrace.HitStage>).
+  repeated HitStage trace = 9;
+}
+
+message IndexCapabilities {
+  optional double embedding_coverage = 1 [json_name = "embeddingCoverage"];
+  optional double splade_coverage = 2 [json_name = "spladeCoverage"];
+  optional double chunk_embedding_coverage = 3 [json_name = "chunkEmbeddingCoverage"];
+  optional bool cross_encoder_available = 4 [json_name = "crossEncoderAvailable"];
+}
+
+// Tempdoc 549 Phase E3: PipelineExecution + ComponentStatus retired — per-stage timing
+// (TraceStage.ms) and component statuses (TraceStage.status) live on the unified trace.
+
+message MatchSpan {
+  string field = 1;
+  int32 start_char = 2 [json_name = "startChar"];
+  int32 end_char = 3 [json_name = "endChar"];
+  string term = 4;
+}
+
+message ExcerptRegion {
+  string text = 1;
+  int32 start_char = 2 [json_name = "startChar"];
+  int32 end_char = 3 [json_name = "endChar"];
+  int32 approx_line = 4 [json_name = "approxLine"];
+  repeated MatchSpan match_spans = 5 [json_name = "matchSpans"];
+}
+
+message EntityVariantBreakdown {
+  string canonical_form = 1 [json_name = "canonicalForm"];
+  int64 total_count = 2 [json_name = "totalCount"];
+  map<string, int64> variants = 3;
+}
+
+message QueryUnderstanding {
+  // Java: Map<String, List<String>> appliedBoosts. Wrapper required for
+  // proto3 nested repeated.
+  map<string, StringList> applied_boosts = 1 [json_name = "appliedBoosts"];
+  int64 latency_ms = 2 [json_name = "latencyMs"];
+  string expected_answer_type = 3 [json_name = "expectedAnswerType"];
+}
+
+message FilterNormalization {
+  map<string, StringList> original = 1;
+  map<string, StringList> normalized = 2;
+  int64 latency_ms = 3 [json_name = "latencyMs"];
+  string source = 4;
+}
+
+// Helper: proto3 disallows repeated values in maps directly.
+message StringList {
+  repeated string values = 1;
+}
+
+// === Tempdoc 549 / 551 Part 1: the unified stage-keyed search trace ===
+//
+// The single canonical search-explainability artifact. Mirrors the app-api records
+// SearchTrace / SearchTrace.{Qpp,Degradation,TraceStage,HitStage} (SearchTrace.java) — the
+// runtime JSON source of truth. Promoted into this gated contract so `buf breaking` guards
+// its wire shape and protovalidate can carry its invariants (551 §B.4: closes the governance
+// gap that let the trace ship ungated). Additive / non-breaking.
+
+message SearchTrace {
+  int32 version = 1;
+  string effective_mode = 2 [json_name = "effectiveMode"];
+  string decision_kind = 3 [json_name = "decisionKind"];
+  TraceQpp qpp = 4;
+  TraceDegradation degradation = 5;
+  repeated TraceStage stages = 6;
+}
+
+// Query-performance-prediction signals (mirrors SearchTrace.Qpp).
+message TraceQpp {
+  float max_idf = 1 [json_name = "maxIdf"];
+  float avg_ictf = 2 [json_name = "avgIctf"];
+  float query_scope = 3 [json_name = "queryScope"];
+}
+
+// Degradation signals as trace-level booleans (mirrors SearchTrace.Degradation).
+message TraceDegradation {
+  bool vector_blocked = 1 [json_name = "vectorBlocked"];
+  string vector_blocked_reason = 2 [json_name = "vectorBlockedReason"];
+  bool hybrid_fallback = 3 [json_name = "hybridFallback"];
+  string hybrid_fallback_reason = 4 [json_name = "hybridFallbackReason"];
+  bool splade_executed = 5 [json_name = "spladeExecuted"];
+  string splade_skip_reason = 6 [json_name = "spladeSkipReason"];
+}
+
+// A query-level stage node (mirrors SearchTrace.TraceStage).
+message TraceStage {
+  // StageId wireId — closed core-owned vocabulary (12 values: query-understanding, expansion,
+  // correction, sparse/dense/splade-retrieval, fusion, chunk-merge, branch-fusion, lambdamart,
+  // cross-encoder, freshness). Left a FREE STRING by design: ADR-09a §"Forward-compat unknown
+  // variants" forbids `in:`-constraining a discriminator (it would reject future variants).
+  string id = 1;
+  // Closed status vocabulary — safe to constrain (a status flag, not a forward-compat
+  // discriminator). The "highest-value axis" per ADR-09a (protovalidate symmetric invariants).
+  string status = 2 [(buf.validate.field).string = {in: ["executed", "skipped", "disabled", "failed"]}];
+  string reason = 3;
+  // 551 §B.7: int32 (NOT int64) so protoc-gen-es emits `number`, not `bigint` — faithful to the
+  // width-less JSON `ms` (a per-stage latency; int32 ms = ~24.8 days of headroom).
+  optional int32 ms = 4;
+  string detail = 5;
+  // Tempdoc 597: the document cardinality at this stage (the funnel rung) — matched docs on the
+  // lexical retrieval stage, the ranked-union size on a fusion/merge stage. int32 (like ms) so
+  // protoc-gen-es emits `number`. Present when known.
+  optional int32 cardinality = 6 [json_name = "cardinality"];
+}
+
+// A per-hit slice of one stage (mirrors SearchTrace.HitStage).
+message HitStage {
+  string id = 1;
+  optional int32 rank = 2;
+  optional float score = 3;
+  // The numeric detail tier (former debug_scores keys), gated by include_detail at emit time.
+  map<string, float> detail = 4;
+}

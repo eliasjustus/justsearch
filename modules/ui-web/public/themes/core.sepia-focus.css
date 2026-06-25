@@ -1,0 +1,92 @@
+/*
+ * Sepia Focus — V1.5 custom UI demonstration theme.
+ *
+ * A warm sepia palette designed for long reading sessions.
+ * Visually distinct from the default dark + Nord themes:
+ *   - Warm tan/cream backgrounds (vs. cool dark)
+ *   - Deep coffee text (vs. pure white)
+ *   - Muted amber accent (vs. teal / Nord cyan)
+ *   - Reduced glass translucency for paper-like feel
+ *
+ * Loaded by `loadAndApplyTheme('sepia-focus')` from
+ * `modules/ui-web/src/shell-v0/state/themeState.ts`.
+ */
+
+:root {
+  /* === Primitives === */
+  /* Sepia primitives — warm tones throughout */
+  --p-glass: 87, 60, 40;       /* warm brown, used as overlay tint */
+  --p-shadow: 60, 35, 15;       /* deep coffee, for shadows */
+  --p-text: 50, 30, 20;         /* very dark coffee, for text */
+
+  /* === Surface elevation (warm cream tones) === */
+  --surface-0: #f5ead8;          /* lightest cream — base background */
+  --surface-1: #efe1c8;          /* parchment */
+  --surface-2: #e4d3b3;          /* tan */
+  --surface-3: #d8c39a;          /* darker tan */
+  --surface-4: #c9b283;          /* warmest tan (modals) */
+
+  /* === Glass surfaces (low opacity over warm base) === */
+  --glass-surface: rgba(87, 60, 40, 0.04);
+  --glass-surface-hover: rgba(87, 60, 40, 0.08);
+  --glass-surface-active: rgba(87, 60, 40, 0.12);
+  --glass-border: rgba(87, 60, 40, 0.12);
+  --glass-border-hover: rgba(87, 60, 40, 0.20);
+  --glass-border-strong: rgba(87, 60, 40, 0.35);
+
+  /* === Semantic colors (muted + warm) === */
+  --accent-tint: #b88a3e;        /* aged amber */
+  --accent-command: #94681c;     /* deeper amber */
+  --accent-chat: #8b6332;        /* coffee-amber */
+  --accent-success: #5d6e2c;     /* moss green (warm) */
+  --accent-warning: #b87f1e;     /* mustard */
+  --accent-danger: #a13322;      /* terracotta */
+  --accent-warm: #c9572b;        /* burnt orange */
+  --accent-warm-muted: #a0673f;
+  --glow-warm: 0 0 12px rgba(201, 87, 43, 0.30);
+
+  /* On-colors (558 — the accessible color-pair). Baked from `deriveForeground`
+     over THIS palette's fills (contrast.ts), so accent text tracks the FILL and
+     does NOT inherit the appearance-flipping base `--accent-on-*`. The lighter
+     fills (tint/warning) take black; the deeper ambers take white — each ≥ AA in
+     BOTH modes. Without these, the base flips tint/warning near-white in light
+     → ~3.1–3.5:1 (and the deeper ones near-black in dark → ~4.0:1). */
+  --accent-on-tint: #000000;
+  --accent-on-command: #ffffff;
+  --accent-on-chat: #ffffff;
+  --accent-on-success: #ffffff;
+  --accent-on-warning: #000000;
+  --accent-on-danger: #ffffff;
+
+  /* === Text (dark coffee on cream) === */
+  --text-primary: rgba(50, 30, 20, 0.95);
+  --text-secondary: rgba(50, 30, 20, 0.78);
+  --text-tertiary: rgba(50, 30, 20, 0.60);
+  --text-muted: rgba(50, 30, 20, 0.55);
+  --text-ghost: rgba(50, 30, 20, 0.30);
+
+  /* === Categorical semiotics (warm-shifted) === */
+  --cat-doc: #6b3c1a;            /* dark sienna */
+  --cat-code: #5d6e2c;            /* moss */
+  --cat-image: #94462a;           /* rust */
+  --cat-note: #b87f1e;            /* mustard */
+  --cat-pdf: #a13322;             /* terracotta */
+  --cat-folder: #8e5a1e;          /* tobacco */
+
+  /* === Code surfaces === */
+  --code-bg-inline: rgba(87, 60, 40, 0.10);
+  --code-bg-block: rgba(87, 60, 40, 0.07);
+
+  /* === Rail icons (warm tones for cream background) === */
+  --rail-icon-inactive: #8b6332;
+  --rail-icon-hover: #5d3f1a;
+
+  /* === Shadows (warm-tinted) === */
+  --shadow-glass: 0 4px 24px rgba(60, 35, 15, 0.18);
+  --shadow-float: 0 8px 32px rgba(60, 35, 15, 0.25);
+  --shadow-lift: 0 2px 8px rgba(60, 35, 15, 0.18);
+  --shadow-card: 0 4px 20px rgba(60, 35, 15, 0.20);
+
+  /* === Halos (parchment glow) === */
+  --halo-shadow: 0 1px 2px rgba(245, 234, 216, 0.6);
+}

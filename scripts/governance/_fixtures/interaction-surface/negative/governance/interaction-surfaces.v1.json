@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "canonicalSurface": "core.unified-chat-surface",
+  "canonicalMountTag": "jf-unified-chat-view",
+  "visiblePlacements": ["RAIL", "STAGE"],
+  "scan": {
+    "surfaceCatalog": "catalog/CoreSurfaceCatalog.java",
+    "shapeCatalog": "catalog/CoreConversationShapeCatalog.java",
+    "feMirror": "fe/coreInteractionShapes.ts",
+    "feRoots": ["fe"],
+    "feExcludeSuffixes": [".test.ts"]
+  }
+}

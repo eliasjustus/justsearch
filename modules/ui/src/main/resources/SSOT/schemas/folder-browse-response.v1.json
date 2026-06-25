@@ -1,0 +1,35 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "folders" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "fileCount" : {
+            "type" : "integer"
+          },
+          "lastIndexedAt" : {
+            "type" : "integer"
+          },
+          "name" : {
+            "type" : [ "string", "null" ]
+          },
+          "path" : {
+            "type" : [ "string", "null" ]
+          },
+          "totalSizeBytes" : {
+            "type" : "integer"
+          }
+        }
+      }
+    },
+    "tookMs" : {
+      "type" : "integer"
+    },
+    "truncated" : {
+      "type" : "boolean"
+    }
+  }
+}

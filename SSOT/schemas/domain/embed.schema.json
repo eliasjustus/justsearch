@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/domain/embed.schema.json",
+  "title": "Embed Pipeline Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["vector", "dimension", "metadata"],
+  "properties": {
+    "vector": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "number" }
+    },
+    "dimension": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8192
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["generator", "locale", "reason_code"],
+      "properties": {
+        "generator": { "type": "string" },
+        "locale": { "type": "string" },
+        "reason_code": { "type": "string" },
+        "degraded": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

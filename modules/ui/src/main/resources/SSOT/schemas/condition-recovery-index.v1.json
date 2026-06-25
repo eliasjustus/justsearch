@@ -1,0 +1,43 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "catalogVersion" : {
+      "type" : "integer"
+    },
+    "entries" : {
+      "type" : "array",
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "conditions" : {
+            "type" : "array",
+            "items" : {
+              "type" : "object",
+              "properties" : {
+                "conditionId" : {
+                  "type" : "string"
+                },
+                "severity" : {
+                  "type" : "string",
+                  "enum" : [ "INFO", "WARNING", "ERROR" ]
+                },
+                "since" : {
+                  "type" : "string",
+                  "format" : "date-time"
+                },
+                "subject" : {
+                  "type" : "string"
+                }
+              }
+            }
+          },
+          "target" : {
+            "type" : "string",
+            "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$"
+          }
+        }
+      }
+    }
+  }
+}

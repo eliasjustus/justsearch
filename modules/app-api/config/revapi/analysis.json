@@ -1,0 +1,26 @@
+[
+  {
+    "extension": "revapi.reporter.json",
+    "configuration": {
+      "minSeverity": "BREAKING",
+      "output": "build/reports/revapi/report.json",
+      "append": false,
+      "keepEmptyFile": true
+    }
+  },
+  {
+    "extension": "revapi.reporter.text",
+    "configuration": {
+      "minSeverity": "BREAKING",
+      "output": "build/reports/revapi/report.txt"
+    }
+  },
+  {
+    "extension": "revapi.filter.exclude",
+    "configuration": {
+      "$ref": "file:config/revapi/differences.json"
+    }
+  }
+]
+
+

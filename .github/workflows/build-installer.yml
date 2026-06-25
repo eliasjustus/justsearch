@@ -1,0 +1,216 @@
+name: Build Installer
+
+on:
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+  JAVA_VERSION: "25"
+
+jobs:
+  build-windows-installer:
+    name: Windows NSIS Installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # The release-attach step can create/update a GitHub Release when this
+    # manual workflow is dispatched against a v* tag ref.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify Rust toolchain
+        shell: pwsh
+        run: |
+          $hostLine = rustc -Vv | Select-String 'host:'
+          if ($hostLine -notmatch 'msvc') {
+            throw "Wrong Rust target: $hostLine"
+          }
+          Write-Host "Rust host: $hostLine"
+
+      # Cache Cargo registry + git + target/ keyed off Cargo.lock hash.
+      # Cold run pays one-time save cost (~1-2 min at job end); warm runs
+      # save ~6-7 min on Rust compile. Tempdoc 374 §"Installer workflow
+      # speed investigation" for the full rationale. `workspaces` points
+      # at the Tauri shell crate's non-standard location so the action
+      # keys off its Cargo.lock and caches its target/.
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: modules/shell/src-tauri
+
+      # Cache expensive Gradle outputs in modules/ui/build/:
+      # - jlink runtime image (~50 MB, ~30s to regenerate)
+      # - JEP 514 AOT caches (Head + Worker, ~16 MB each, ~30s each)
+      # - Worker installDist outputs (176 JARs)
+      # When inputs unchanged, Gradle's up-to-date check sees files present
+      # and skips task execution. When inputs change, cache-miss + rebuild.
+      # Key bumped to v2: the v1 cache was saved in an early run when
+      # `modules/ui/build/` was only ~187 MB (missing AOT caches, jlink runtime,
+      # and the llama-server zip). Subsequent v1 hits restored the incomplete
+      # archive, causing Gradle to regenerate ~100 MB of work every run. The v2
+      # key forces a fresh save of the full ~290 MB on next miss.
+      - name: Cache Gradle module build outputs
+        uses: actions/cache@v5
+        with:
+          path: |
+            modules/ui/build
+          key: gradle-ui-build-v2-${{ runner.os }}-${{ hashFiles('modules/ui/build.gradle.kts', 'modules/**/build.gradle.kts', 'gradle.properties', 'settings.gradle.kts', 'gradle/verification-metadata.xml', 'gradle/wrapper/gradle-wrapper.properties', '**/*.java') }}
+          restore-keys: |
+            gradle-ui-build-v2-${{ runner.os }}-
+
+      # Cache llama-server prebuilt zip separately, keyed off pinned version + SHA256.
+      # The zip is ~39 MB (CPU-only) and pinned in build.gradle.kts (llamaPrebuiltVersion,
+      # llamaPrebuiltSha256). This cache is tiny (compared to Gradle outputs) but avoids
+      # re-downloading on every run, and is robust against Gradle cache-save quirks.
+      - name: Cache llama-server prebuilt
+        uses: actions/cache@v5
+        with:
+          path: modules/ui/build/llama-server/prebuilt
+          key: llama-server-${{ runner.os }}-b8571-40D8C4B9
+
+      # Cache Tauri bundler downloads (NSIS 3.11, nsis_tauri_utils.dll, WebView2 bootstrapper).
+      # Tauri downloads these on every cargo-tauri invocation and validates hashes. Caching
+      # skips the ~10-15s download step between bundleSidecar and makensis.
+      - name: Cache Tauri bundler downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri
+          key: tauri-bundler-${{ runner.os }}-v2
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            modules/shell/package-lock.json
+            modules/ui-web/package-lock.json
+
+      # Pre-Gradle diagnostic: verify the llama-server prebuilt zip was actually
+      # restored to disk after the dedicated cache hit. If this logs 0 files, the
+      # cache restore is broken even though actions/cache reports success.
+      - name: Debug - Pre-Gradle cache state
+        shell: pwsh
+        run: |
+          Write-Host "=== Pre-Gradle state of modules/ui/build/ ==="
+          if (Test-Path modules/ui/build) {
+            Get-ChildItem modules/ui/build -Recurse -File -ErrorAction SilentlyContinue |
+              Measure-Object -Property Length -Sum |
+              ForEach-Object { "Total: {0} files, {1:N0} bytes" -f $_.Count, $_.Sum }
+            Write-Host "--- Direct children ---"
+            Get-ChildItem modules/ui/build -ErrorAction SilentlyContinue | ForEach-Object {
+              "  {0}" -f $_.Name
+            }
+          } else {
+            Write-Host "  (modules/ui/build does not exist)"
+          }
+          Write-Host "=== llama-server prebuilt (expecting llama-b8571-bin-win-cpu-x64.zip, SHA 40D8C4B9...) ==="
+          $zipPath = "modules/ui/build/llama-server/prebuilt/llama-b8571-bin-win-cpu-x64.zip"
+          if (Test-Path $zipPath) {
+            $item = Get-Item $zipPath
+            $sha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash
+            "  Name:  {0}" -f $item.Name
+            "  Size:  {0:N0} bytes" -f $item.Length
+            "  SHA:   {0}" -f $sha
+            if ($sha -eq "40D8C4B97676E8BE4C69A4B5BCDC25F31213137CAEB35B1563E3867D133EA31C") {
+              Write-Host "  VERDICT: SHA matches expected, Gradle should skip download"
+            } else {
+              Write-Host "  VERDICT: SHA MISMATCH — Gradle will re-download"
+            }
+          } else {
+            Write-Host "  MISSING: cache did not restore the zip"
+          }
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix modules/shell
+          npm ci --prefix modules/ui-web
+
+      - name: Build installer
+        shell: pwsh
+        # CPU-only alpha per tempdoc 374 §"2026-04-24 rebuild". Without these
+        # flags Gradle stages the full 7+ GB sidecar (models + CUDA), which
+        # exceeds NSIS's 32-bit address space and crashes makensis (G21).
+        # Models and GPU variants land on user machines via the "Install AI"
+        # flow, not the base installer.
+        #
+        # -SkipVerify: installer_verify runs verify-installer-nsis-win.ps1,
+        # which requires capture-evidence-bundle.mjs + determinism-budget
+        # tooling + a running backend — machinery designed for a more mature
+        # CI context. For manually dispatched alpha releases, "the installer
+        # built" is signal enough; verify can run separately.
+        env:
+          ORG_GRADLE_PROJECT_includeCuda: "false"
+          ORG_GRADLE_PROJECT_skipOnnxModels: "true"
+        run: ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify
+
+      # Diagnostic: log modules/ui/build contents + sizes so we can see what the
+      # Post Cache step will save. Tempdoc 374 speed investigation: the cache
+      # restores only ~187 MB even though the dir should contain more, yet the
+      # llama-server zip is re-downloaded on cached runs. This log helps pinpoint
+      # what's actually present at save time.
+      - name: Debug - Gradle build output contents
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "=== modules/ui/build/ top-level ==="
+          Get-ChildItem modules/ui/build -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
+            $size = if ($_.PSIsContainer) {
+              (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            } else { $_.Length }
+            "{0,-30} {1,12:N0}" -f $_.Name, $size
+          }
+          Write-Host "=== modules/ui/build/llama-server/prebuilt/ ==="
+          Get-ChildItem modules/ui/build/llama-server/prebuilt -ErrorAction SilentlyContinue | ForEach-Object {
+            "{0,-50} {1,12:N0}" -f $_.Name, $_.Length
+          }
+          Write-Host "=== Tauri bundler cache ==="
+          Get-ChildItem "$env:LOCALAPPDATA\tauri" -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            "{0,-50} {1,12:N0}" -f $_.Name, $_.Length
+          }
+
+      - name: Upload installer artifact
+        # Non-fatal: Actions artifact storage has a hard account quota (and a
+        # 6-12h usage-recalc lag). A 741 MB installer can exceed it, which would
+        # otherwise fail the job BEFORE the release-attach step (a condition-only
+        # `if` still carries the implicit success() gate). Releases use separate
+        # storage, so let the job proceed to the release attach regardless.
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/installer/*.exe
+          # 7d, not 30: this artifact has no downstream consumer (the release attaches the
+          # .exe from disk), so a 741 MB build only needs a short manual-download window.
+          # Curbs the artifact-storage entropy that blocked an earlier build. (tempdoc 562 item 4.)
+          retention-days: 7
+
+      # Manual dispatches against v* tag refs attach the installer to a GitHub Release.
+      # The release becomes the permanent download URL (closes G3 alongside G2).
+      # prerelease is auto-detected from SemVer pre-release identifiers —
+      # alpha / beta / rc tags are marked prerelease, bare vX.Y.Z tags are GA.
+      - name: Attach installer to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/installer/*.exe
+          prerelease: ${{ contains(github.ref, '-alpha.') || contains(github.ref, '-beta.') || contains(github.ref, '-rc.') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

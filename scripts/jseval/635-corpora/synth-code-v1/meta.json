@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "type_axis": "code",
+  "suite": "635-self-demo-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "code",
+    "lang": "en",
+    "seed": 635,
+    "hops": 2,
+    "distractor_ratio": 5,
+    "semantic": true,
+    "templated": true
+  }
+}

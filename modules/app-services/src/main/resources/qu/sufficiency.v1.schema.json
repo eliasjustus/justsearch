@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "sufficient": {
+      "type": "boolean"
+    }
+  },
+  "required": ["sufficient"]
+}

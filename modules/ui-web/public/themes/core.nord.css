@@ -1,0 +1,94 @@
+/*
+ * Nord — V1.5 reference Theme Manifest (slice 474 alpha)
+ *
+ * Demonstrates the V1.5 user UI authorship Theme tier:
+ *   - Pure CSS custom-property overrides — no script (CSP-safe).
+ *   - Loaded by `loadAndApplyTheme('nord')` from
+ *     `modules/ui-web/src/shell-v0/state/themeState.ts`, which fetches
+ *     `/themes/nord.css` and injects it into <head>.
+ *   - Uses the existing 5-tier token model (slice 3a.1.1): primitives →
+ *     semantic → component → product → plugin-scoped. This file
+ *     overrides at the SEMANTIC tier — repaints everything downstream
+ *     without touching component-tier tokens.
+ *
+ * Per slices/470-v1-5-user-ui-authorship-substrate.md §B.A.1: the
+ * `:root { --token: ... }` block has specificity (0,0,0) but is in
+ * the implicit/unlayered cascade tier, which wins over Tailwind v4's
+ * `@layer theme` defaults. V1.5.1 will move this into an explicit
+ * `@layer user-theme;` block once the full Cascade Layers substrate
+ * lands; V1.5 alpha relies on the implicit-layer-wins rule.
+ *
+ * Color references: arctic-north palette per https://www.nordtheme.com/
+ */
+
+/* The injected <style id="jf-active-theme"> is appended last to <head>;
+   for `:root` rules at equal specificity (0,0,0), source order wins,
+   so the injected theme wins over tokens.css's :root defaults. */
+:root {
+  /* === Primitive palette overrides === */
+  /* Polar Night (dark backgrounds) + Snow Storm (light foregrounds) */
+  --p-glass: 216, 222, 233;       /* nord4 — Snow Storm */
+  --p-shadow: 46, 52, 64;          /* nord0 — Polar Night base */
+  --p-text: 236, 239, 244;         /* nord6 — brightest snow */
+
+  /* === Semantic recolors === */
+  --accent-tint: #88c0d0;          /* nord8 — Frost cyan */
+  --accent-command: #81a1c1;       /* nord9 — Frost blue */
+  --accent-chat: #88c0d0;          /* nord8 — Frost cyan */
+  --accent-success: #a3be8c;       /* nord14 — Aurora green */
+  --accent-warning: #ebcb8b;       /* nord13 — Aurora yellow */
+  --accent-danger: #bf616a;        /* nord11 — Aurora red */
+  --accent-warm: #d08770;          /* nord12 — Aurora orange */
+  --accent-warm-muted: #d08770;
+  --glow-warm: 0 0 12px rgba(208, 135, 112, 0.35);
+
+  /* On-colors (558 — the accessible color-pair). Baked from `deriveForeground`
+     over THIS palette's fills (contrast.ts), so accent text tracks the FILL and
+     does NOT inherit the appearance-flipping base `--accent-on-*`. Every Nord
+     accent is bright → black text clears WCAG AA (5.1–13.5:1) in BOTH modes;
+     without these the base flips them near-white in light → ~1.6–4.1:1. */
+  --accent-on-tint: #000000;
+  --accent-on-command: #000000;
+  --accent-on-chat: #000000;
+  --accent-on-success: #000000;
+  --accent-on-warning: #000000;
+  --accent-on-danger: #000000;
+
+  /* === Surface elevation === */
+  --surface-0: #2e3440;            /* nord0 */
+  --surface-1: #3b4252;            /* nord1 */
+  --surface-2: #434c5e;            /* nord2 */
+  --surface-3: #4c566a;            /* nord3 */
+  --surface-4: #4c566a;
+
+  /* === Glass surfaces (lightly translucent over Polar Night) === */
+  --glass-surface: rgba(216, 222, 233, 0.04);
+  --glass-surface-hover: rgba(216, 222, 233, 0.07);
+  --glass-surface-active: rgba(216, 222, 233, 0.11);
+  --glass-border: rgba(216, 222, 233, 0.10);
+  --glass-border-hover: rgba(216, 222, 233, 0.16);
+  --glass-border-strong: rgba(216, 222, 233, 0.28);
+
+  /* === Text === */
+  --text-primary: rgba(236, 239, 244, 0.95);
+  --text-secondary: rgba(229, 233, 240, 0.78);
+  --text-tertiary: rgba(216, 222, 233, 0.60);
+  --text-muted: rgba(216, 222, 233, 0.55);
+  --text-ghost: rgba(216, 222, 233, 0.30);
+
+  /* === Categorical semiotics (Frost + Aurora swap for category contrast) === */
+  --cat-doc: #81a1c1;              /* nord9 — Frost blue */
+  --cat-code: #a3be8c;             /* nord14 — Aurora green */
+  --cat-image: #b48ead;            /* nord15 — Aurora purple */
+  --cat-note: #ebcb8b;             /* nord13 — Aurora yellow */
+  --cat-pdf: #bf616a;              /* nord11 — Aurora red */
+  --cat-folder: #d08770;           /* nord12 — Aurora orange */
+
+  /* === Code surfaces === */
+  --code-bg-inline: rgba(216, 222, 233, 0.07);
+  --code-bg-block: rgba(216, 222, 233, 0.05);
+
+  /* === Rail-icon contrast === */
+  --rail-icon-inactive: #d8dee9;
+  --rail-icon-hover: #e5e9f0;
+}

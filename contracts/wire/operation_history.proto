@@ -1,0 +1,85 @@
+// OperationHistoryEntry (slice 444b).
+//
+// EVENT_STREAM × RING_BUFFER Resource. Reclassified post-impl from HISTORY
+// to EVENT_STREAM per slice 444b §B.B (in-memory ring-buffer implementation
+// contradicts DURABLE's persistent-store semantic).
+//
+// Wire shape rewritten 2026-05-06 per proto-correctness pass against
+// `modules/app-observability/.../operations/OperationHistoryEntry.java:34-57`.
+// Prior stub had 5 phantom fields (invocation_id / status / result_summary
+// / error_class / error_message) that don't exist in Java + 4 missing real
+// fields (actor / outcome / affected_resources / diagnostics_link).
+
+syntax = "proto3";
+
+package justsearch.wire.v1;
+
+import "buf/validate/validate.proto";
+
+option java_package = "io.justsearch.contract.wire";
+option java_multiple_files = true;
+
+message OperationHistoryEntry {
+  // OperationRef Java side (@JsonValue → bare string on wire).
+  string operation_id = 1 [json_name = "operationId", (buf.validate.field).string.min_len = 1];
+
+  // Actor identifier (e.g., "agent", "ui", "system"). Non-blank per Java
+  // compact constructor.
+  string actor = 2 [(buf.validate.field).string.min_len = 1];
+
+  // Optional redacted summary of the input payload. Per slice 444b §B.D:
+  // never raw arguments; absent until audit-policy plumbing lands.
+  optional string arguments_summary = 3 [json_name = "argumentsSummary"];
+
+  // ISO-8601 timestamps. Java emits Instant via DateMapping.asString.
+  string start_time = 4 [json_name = "startTime", (buf.validate.field).string.min_len = 1];
+  string end_time = 5 [json_name = "endTime", (buf.validate.field).string.min_len = 1];
+
+  // Outcome discriminator. Per Java OperationOutcome: SUCCESS / FAILURE.
+  // Future variants (CANCELLED, PARTIAL) admitted via forward-compat:
+  // no `enum.defined_only` constraint per ADR-09a's "Future Agents Must Not".
+  OperationOutcome outcome = 6 [json_name = "outcome"];
+
+  // Field 7 (affected_resources) was removed in 447 follow-up (2026-05-08)
+  // as a phantom field — declared in slice 444b but never populated by any
+  // producer. Reserve the field number + name to prevent reuse and preserve
+  // wire-compat for any deserializers that previously accepted the field.
+  reserved 7;
+  reserved "affected_resources", "affectedResources";
+
+  // Optional pointer (URL or i18n key) to richer diagnostics — typically a
+  // HealthEvent id when failure mapped to a known condition.
+  optional string diagnostics_link = 8 [json_name = "diagnosticsLink"];
+
+  // Tempdoc 550 G6: optional backend execution identifier for undo-supported
+  // operations — the same value returned to the FE, which links it to the
+  // dispatching Effect Journal entry (journalEntryId ↔ executionId via
+  // markUndoableOperation). Lets the unified action-ledger projection collapse
+  // the FE-Effect row and the backend-Operation row into one logical record.
+  // Absent for non-undo-supported operations. Additive / back-compat (optional).
+  optional string execution_id = 9 [json_name = "executionId"];
+
+  // Tempdoc 490 §4.B + 564 proto-parity X-cut: typed invocation-side provenance threaded by every
+  // OperationDispatcher path (the legacy 2-arg dispatch defaults to systemInternal, so every
+  // produced entry carries it). Closes the record↔proto drift where OperationHistoryEntry.provenance
+  // had no proto counterpart (563 §3 V3). Message field → wire presence; additive-optional.
+  InvocationProvenance provenance = 10 [json_name = "provenance"];
+}
+
+// Invocation-side provenance — mirrors app-agent-api InvocationProvenance. transport/executor are
+// the enum NAMES (TransportTag / ExecutorTag) serialized as strings; occurred_at is an ISO-8601
+// Instant string. initiator / signed_intent_token / correlation_id are Optional on the Java side.
+message InvocationProvenance {
+  string transport = 1 [json_name = "transport", (buf.validate.field).string.min_len = 1];
+  string executor = 2 [json_name = "executor", (buf.validate.field).string.min_len = 1];
+  optional string initiator = 3 [json_name = "initiator"];
+  string occurred_at = 4 [json_name = "occurredAt", (buf.validate.field).string.min_len = 1];
+  optional string signed_intent_token = 5 [json_name = "signedIntentToken"];
+  optional string correlation_id = 6 [json_name = "correlationId"];
+}
+
+enum OperationOutcome {
+  OPERATION_OUTCOME_UNSPECIFIED = 0;
+  OPERATION_OUTCOME_SUCCESS = 1;
+  OPERATION_OUTCOME_FAILURE = 2;
+}

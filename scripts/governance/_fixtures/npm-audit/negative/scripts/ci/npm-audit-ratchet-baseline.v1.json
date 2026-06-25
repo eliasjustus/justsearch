@@ -1,0 +1,9 @@
+{
+  "schema": "npm-audit-ratchet-baseline.v1",
+  "generated_at": "2026-05-20T00:00:00.000Z",
+  "source_report": "tmp/npm-audit-report.json",
+  "targets": {
+    "root": { "info": 0, "low": 0, "moderate": 0, "high": 2, "critical": 0, "total": 2 }
+  },
+  "aggregate": { "info": 0, "low": 0, "moderate": 0, "high": 2, "critical": 0, "total": 2 }
+}

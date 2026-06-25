@@ -1,0 +1,98 @@
+# Maps changed file paths to affected Gradle modules.
+# Used by dorny/paths-filter in CI to determine which modules to test.
+# When build-logic or root build files change, the 'all' filter matches.
+configuration:
+  - 'modules/configuration/**'
+core:
+  - 'modules/core/**'
+dead-code-audit:
+  - 'modules/dead-code-audit/**'
+adapters-lucene:
+  - 'modules/adapters-lucene/**'
+indexing:
+  - 'modules/indexing/**'
+reranker:
+  - 'modules/reranker/**'
+ipc-common:
+  - 'modules/ipc-common/**'
+indexer-worker:
+  - 'modules/indexer-worker/**'
+ai-backend:
+  - 'modules/ai-backend/**'
+gpu-bridge:
+  - 'modules/gpu-bridge/**'
+prompt-support:
+  - 'modules/prompt-support/**'
+app-api:
+  - 'modules/app-api/**'
+app-ai:
+  - 'modules/app-ai/**'
+app-inference:
+  - 'modules/app-inference/**'
+app-config:
+  - 'modules/app-config/**'
+app-util:
+  - 'modules/app-util/**'
+app-observability:
+  - 'modules/app-observability/**'
+app-services:
+  - 'modules/app-services/**'
+infra-core:
+  - 'modules/infra-core/**'
+telemetry:
+  - 'modules/telemetry/**'
+ui:
+  - 'modules/ui/**'
+ui_web:
+  - 'modules/ui-web/**'
+  - 'scripts/ci/check-ui-cycles.mjs'
+  - 'scripts/ci/check-ui-bundle-budget.mjs'
+  - 'scripts/ci/ui-bundle-budget.v1.json'
+  - 'scripts/ci/test-check-ui-cycles.mjs'
+  - 'scripts/ci/test-check-ui-bundle-budget.mjs'
+npm_audit_scope:
+  - 'package.json'
+  - 'package-lock.json'
+  - 'modules/ui-web/package.json'
+  - 'modules/ui-web/package-lock.json'
+  - 'scripts/ci/report-npm-audit.mjs'
+  - 'scripts/ci/check-npm-audit-ratchet.mjs'
+  - 'scripts/ci/npm-audit-ratchet-baseline.v1.json'
+  - 'scripts/ci/test-check-npm-audit-ratchet.mjs'
+app-launcher:
+  - 'modules/app-launcher/**'
+test-support:
+  - 'modules/test-support/**'
+system-tests:
+  - 'modules/system-tests/**'
+benchmarks:
+  - 'modules/benchmarks/**'
+app-api-tck:
+  - 'modules/app-api-tck/**'
+# Tempdoc 530 Phase F: the wire-Category gate (formerly its own
+# `contract-governance` kernel) is now dispatched via the unified
+# discipline-gate runner. Path-trigger paths must follow the migration.
+wire:
+  - 'contracts/**'
+  - 'modules/ipc-common/src/main/proto/**'
+  - 'scripts/governance/gates/wire/**'
+# Governance registers + kernel — the register-guard-resolution / exception-count meta-gates (tempdoc 576)
+governance:
+  - 'governance/**'
+  - 'scripts/governance/**'
+  - 'gates/**'
+# Tempdoc 581 / ADR-0043: the language-agnostic-analysis gate (no per-language analysis levers).
+# Inputs: the SSOT analyzer/field catalogs + their schema, the query path, the check + its register.
+language_agnostic_analysis_scope:
+  - 'SSOT/catalogs/**'
+  - 'SSOT/schemas/indexing/analyzers-catalog.schema.json'
+  - 'modules/adapters-lucene/**'
+  - 'scripts/ci/check-language-agnostic-analysis.mjs'
+  - 'governance/language-agnostic-analysis.v1.json'
+# Build infrastructure — if any of these change, all modules must be tested
+all:
+  - 'build-logic/**'
+  - 'gradle/**'
+  - 'build.gradle.kts'
+  - 'settings.gradle.kts'
+  - 'gradle.properties'

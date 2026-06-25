@@ -1,0 +1,39 @@
+{
+  "schema": "npm-audit-ratchet-baseline.v1",
+  "generated_at": "2026-02-20T21:13:17.390Z",
+  "source_report": "tmp/npm-audit-report.json",
+  "targets": {
+    "root": {
+      "info": 0,
+      "low": 2,
+      "moderate": 1,
+      "high": 16,
+      "critical": 0,
+      "total": 19
+    },
+    "ui-web": {
+      "info": 0,
+      "low": 0,
+      "moderate": 1,
+      "high": 9,
+      "critical": 0,
+      "total": 10
+    },
+    "ssot-tools": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "aggregate": {
+    "info": 0,
+    "low": 2,
+    "moderate": 2,
+    "high": 25,
+    "critical": 0,
+    "total": 29
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "bytesDone" : {
+      "type" : "integer"
+    },
+    "bytesTotal" : {
+      "type" : "integer"
+    },
+    "errorCode" : {
+      "type" : [ "string", "null" ]
+    },
+    "manifestSha256" : {
+      "type" : [ "string", "null" ]
+    },
+    "message" : {
+      "type" : [ "string", "null" ]
+    },
+    "packId" : {
+      "type" : [ "string", "null" ]
+    },
+    "packVersion" : {
+      "type" : [ "string", "null" ]
+    },
+    "phase" : {
+      "type" : [ "string", "null" ]
+    },
+    "startedAtEpochMs" : {
+      "type" : "integer"
+    },
+    "state" : {
+      "type" : [ "string", "null" ]
+    },
+    "updatedAtEpochMs" : {
+      "type" : "integer"
+    }
+  }
+}

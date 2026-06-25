@@ -1,0 +1,17 @@
+{
+  "$schema": "https://ssot.justsearch/v1/schemas/synonyms-intent.json",
+  "description": "Semantic synonyms for intent resolution token replacement (tempdoc 499 E5). Keys are source tokens; values are canonical tokens. Replacement is token-based (split on . and -).",
+  "synonyms": {
+    "restart": "restart",
+    "reboot": "restart",
+    "delete": "remove",
+    "find": "search",
+    "lookup": "search",
+    "query": "search",
+    "prefs": "settings",
+    "preferences": "settings",
+    "config": "settings",
+    "docs": "library",
+    "files": "library"
+  }
+}

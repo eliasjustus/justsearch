@@ -1,0 +1,41 @@
+app:
+  package_base: io.justsearch
+  # data_dir is resolved automatically via PlatformPaths defaults.
+  # Override with: JUSTSEARCH_DATA_DIR or -Djustsearch.data.dir
+
+# Desktop sidecar default: keep AI disabled unless explicitly configured by the user.
+# 363: Enabled for QU eval; actual model must be present in models/ dir.
+llm:
+  enabled: true
+
+workers:
+  ai:
+    enabled: false
+
+plugins:
+  pipeline:
+    enabled: true
+    egress:
+      # Desktop default: deny by default.
+      default_policy: deny
+
+search:
+  pipeline:
+    profile: desktop-default
+
+index:
+  default_language: en-US
+  auto_recovery: true
+  # tempdoc 628: on corruption, back up the damaged index (never delete), serve degraded, and
+  # rebuild from the source files on disk. integrity_check verifies Lucene footer checksums on open
+  # so silent bit-rot is detected instead of served as wrong results.
+  recovery:
+    policy: BACKUP_REBUILD
+  integrity_check: STRUCTURAL
+  language_detection:
+    enabled: true
+  watcher:
+    strategy: auto
+    debounce_ms: 50
+
+

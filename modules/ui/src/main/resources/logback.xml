@@ -1,0 +1,95 @@
+<configuration scan="true" scanPeriod="30 seconds">
+  <!--
+    Tempdoc 374 alpha.26 hotfix: silence Logback's own Joran startup status
+    output. Pre-fix every cold boot wrote ~62 lines of `INFO in
+    ch.qos.logback.classic.LoggerContext[default] - Found logback-core ...`
+    to STDOUT before Logback's appenders were configured — these bypassed the
+    JSON encoder entirely and violated the alpha.24 "every entry is JSON with
+    service:head" invariant. Round-15 finding #3.
+  -->
+  <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+  <!--
+    Logback configuration for the Head process (HeadlessApp, module ui).
+
+    Tempdoc 374 alpha.23 follow-up — closes the Jetty DEBUG noise issue caught
+    in round-13 evidence (188K+ DEBUG org.eclipse.jetty.* lines per boot).
+    Pre-fix the bundled head jar had no logback.xml, so Logback's
+    BasicConfigurator kicked in (root=DEBUG, STDOUT) and Jetty's verbose
+    internals flooded the head log at <1% signal density.
+
+    Pattern: each entry-point module owns its own logback.xml, mirroring
+    indexer-worker/src/main/resources/logback.xml (Worker process) and
+    app-launcher/src/main/resources/logback.xml (Launcher process). With this
+    file on the ui-headless.jar classpath, Logback finds it automatically in
+    both dev (`runHeadless`) and prod (Tauri shell spawn) without any
+    -Dlogback.configurationFile system property.
+  -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${justsearch.data.dir:-build/headless-data}/logs/headless-backend.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${justsearch.data.dir:-build/headless-data}/logs/headless-backend.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>10MB</maxFileSize>
+      <maxHistory>7</maxHistory>
+      <totalSizeCap>256MB</totalSizeCap>
+    </rollingPolicy>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <shortenedLoggerNameLength>48</shortenedLoggerNameLength>
+      <fieldNames>
+        <timestamp>@timestamp</timestamp>
+      </fieldNames>
+      <!-- Include MDC correlation keys per Observability guidance -->
+      <includeMdcKeyName>trace_id</includeMdcKeyName>
+      <includeMdcKeyName>span_id</includeMdcKeyName>
+      <includeMdcKeyName>pipeline_name</includeMdcKeyName>
+      <includeMdcKeyName>request_id</includeMdcKeyName>
+      <includeMdcKeyName>stage_id</includeMdcKeyName>
+      <customFields>{"service":"head"}</customFields>
+    </encoder>
+  </appender>
+
+  <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+    <queueSize>2048</queueSize>
+    <discardingThreshold>0</discardingThreshold>
+    <neverBlock>true</neverBlock>
+    <appender-ref ref="FILE"/>
+  </appender>
+
+  <!-- OTel MDC bridge: injects span_id + trace_flags into log events.
+       Must wrap ASYNC (outermost) so OTel context is captured on the originating thread.
+       traceIdKey is renamed to avoid conflict with manual trace_id from MdcContext.request(). -->
+  <appender name="OTEL_MDC" class="io.opentelemetry.instrumentation.logback.mdc.v1_0.OpenTelemetryAppender">
+    <traceIdKey>otel_trace_id</traceIdKey>
+    <appender-ref ref="ASYNC"/>
+  </appender>
+
+  <!-- Console appender for automation breadcrumbs (kept lightweight). -->
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <withJansi>false</withJansi>
+    <encoder>
+      <pattern>[%d{HH:mm:ss.SSS}] %-5level %logger - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Emit automation sentinel messages to STDOUT so smoke harness can assert listener lifecycle. -->
+  <logger name="io.justsearch.ui.automation" level="INFO" additivity="false">
+    <appender-ref ref="STDOUT"/>
+    <appender-ref ref="ASYNC"/>
+  </logger>
+
+  <!--
+    Jetty (Javalin's underlying servlet container) is extremely chatty at DEBUG.
+    Round-13 evidence: 188,236 DEBUG org.eclipse.jetty.* lines in a single
+    install-boot log when no logback config was found and BasicConfigurator
+    kicked in at root=DEBUG. Even at INFO Jetty is fairly chatty
+    ("Started HTTP/1.1 on …" etc.) — WARN keeps the signal-to-noise high.
+    Bump this to INFO temporarily if diagnosing a Jetty-specific issue.
+  -->
+  <logger name="org.eclipse.jetty" level="WARN"/>
+  <!-- Javalin's own internals are quieter at INFO; keep them visible. -->
+  <logger name="io.javalin" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="OTEL_MDC"/>
+  </root>
+</configuration>

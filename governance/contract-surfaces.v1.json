@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "tempdoc": 564,
+  "note": "The FE↔backend wire-contract register (facet 4e). Each migrated wire record is a declared surface: its canonical source JSON Schema, the generated FE projection (TS type + Zod), and the declared FE parse-boundary consumers. The contract-projection gate keeps the register, the codegen TARGETS, the generated files, and the actual consumers coherent — the FE-contract as a registered instance on the 530 kernel (cf. execution-surfaces.v1.json for SearchTrace).",
+  "generatedDir": "modules/ui-web/src/api/generated/schema-types",
+  "scan": {
+    "comment": "Consumer auto-detection: any FE source file (outside the generated dir + tests) that imports a generated/schema-types/<record> module must be a declared consumer of that record. Catches a new parse-boundary consumer added without registration.",
+    "roots": ["modules/ui-web/src"],
+    "excludeGlobs": ["**/generated/**", "**/*.test.ts", "**/*.test.tsx", "**/__fixtures__/**"]
+  },
+  "records": [
+    {
+      "name": "KnowledgeSearchResponse",
+      "schema": "SSOT/schemas/knowledge-search-response.v1.json",
+      "outFile": "knowledge-search-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/search.ts"]
+    },
+    {
+      "name": "StatusResponse",
+      "schema": "modules/app-api/src/main/resources/schemas/status-response.schema.json",
+      "outFile": "status-response.ts",
+      "consumers": [
+        "modules/ui-web/src/shell-v0/utils/statusPoll.ts",
+        "modules/ui-web/src/api/lifecycleState.ts"
+      ]
+    },
+    {
+      "name": "AiRuntimeStatusResponse",
+      "schema": "SSOT/schemas/ai-runtime-status-response.v1.json",
+      "outFile": "ai-runtime-status-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/inference.ts"]
+    },
+    {
+      "name": "EffectivePolicy",
+      "schema": "SSOT/schemas/effective-policy.v1.json",
+      "outFile": "effective-policy.ts",
+      "consumers": [
+        "modules/ui-web/src/api/domains/packs.ts",
+        "modules/ui-web/src/shell-v0/views/BrainSurface.ts"
+      ]
+    },
+    {
+      "name": "AiPackImportStatus",
+      "schema": "SSOT/schemas/ai-pack-import-status.v1.json",
+      "outFile": "ai-pack-import-status.ts",
+      "consumers": ["modules/ui-web/src/api/domains/packs.ts"]
+    },
+    {
+      "name": "FolderBrowseResponse",
+      "schema": "SSOT/schemas/folder-browse-response.v1.json",
+      "outFile": "folder-browse-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/browse.ts"]
+    },
+    {
+      "name": "FolderFilesResponse",
+      "schema": "SSOT/schemas/folder-files-response.v1.json",
+      "outFile": "folder-files-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/browse.ts"]
+    },
+    {
+      "name": "IndexedRootView",
+      "schema": "SSOT/schemas/indexed-root.v1.json",
+      "outFile": "indexed-root-view.ts",
+      "consumers": [
+        "modules/ui-web/src/shell-v0/views/LibrarySurface.ts",
+        "modules/ui-web/src/shell-v0/state/folderStatus.ts"
+      ]
+    },
+    {
+      "name": "SearchTrace",
+      "schema": "SSOT/schemas/search-trace.v1.json",
+      "outFile": "search-trace.ts",
+      "consumers": [
+        "modules/ui-web/src/shell-v0/state/searchState.ts",
+        "modules/ui-web/src/api/generated/index.ts"
+      ]
+    },
+    {
+      "name": "TraceStage",
+      "schema": "SSOT/schemas/trace-stage.v1.json",
+      "outFile": "trace-stage.ts",
+      "consumers": ["modules/ui-web/src/api/generated/index.ts"]
+    },
+    {
+      "name": "HitStage",
+      "schema": "SSOT/schemas/hit-stage.v1.json",
+      "outFile": "hit-stage.ts",
+      "consumers": [
+        "modules/ui-web/src/shell-v0/state/searchState.ts",
+        "modules/ui-web/src/api/generated/index.ts"
+      ]
+    },
+    {
+      "name": "HealthEvent",
+      "schema": "SSOT/schemas/health-event.v1.json",
+      "outFile": "health-event.ts",
+      "consumers": [
+        "modules/ui-web/src/api/domains/health.ts",
+        "modules/ui-web/src/api/generated/index.ts"
+      ]
+    },
+    {
+      "name": "AgentSessionsResponse",
+      "schema": "SSOT/schemas/agent-sessions-response.v1.json",
+      "outFile": "agent-sessions-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/agent.ts"]
+    },
+    {
+      "name": "AgentHistoryResponse",
+      "schema": "SSOT/schemas/agent-history-response.v1.json",
+      "outFile": "agent-history-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/agent.ts"]
+    },
+    {
+      "name": "TimeseriesSnapshot",
+      "schema": "SSOT/schemas/timeseries-snapshot.v1.json",
+      "outFile": "timeseries-snapshot.ts",
+      "consumers": ["modules/ui-web/src/api/generated/index.ts"]
+    },
+    {
+      "name": "FailedJobsResponse",
+      "schema": "SSOT/schemas/failed-jobs-response.v1.json",
+      "outFile": "failed-jobs-response.ts",
+      "consumers": ["modules/ui-web/src/api/domains/indexing.ts"]
+    },
+    {
+      "name": "ResourceWire",
+      "schema": "SSOT/schemas/resource.v1.json",
+      "outFile": "resource.ts",
+      "consumers": ["modules/ui-web/src/api/types/registry.ts"]
+    },
+    {
+      "name": "DiagnosticChannelWire",
+      "schema": "SSOT/schemas/diagnostic-channel.v1.json",
+      "outFile": "diagnostic-channel.ts",
+      "consumers": ["modules/ui-web/src/api/types/diagnostic.ts"]
+    },
+    {
+      "name": "PresentationWire",
+      "schema": "SSOT/schemas/presentation.v1.json",
+      "outFile": "presentation.ts",
+      "consumers": ["modules/ui-web/src/api/types/registry.ts"]
+    },
+    {
+      "name": "ProvenanceWire",
+      "schema": "SSOT/schemas/provenance.v1.json",
+      "outFile": "provenance.ts",
+      "consumers": ["modules/ui-web/src/api/types/registry.ts"]
+    },
+    {
+      "name": "OperationWire",
+      "schema": "SSOT/schemas/operation-wire.v1.json",
+      "outFile": "operation.ts",
+      "consumers": ["modules/ui-web/src/api/types/registry.ts"]
+    }
+  ]
+}

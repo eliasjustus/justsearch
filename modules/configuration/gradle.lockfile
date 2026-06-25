@@ -1,0 +1,45 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+com.fasterxml.jackson.core:jackson-annotations:2.21=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+com.github.ben-manes.caffeine:caffeine:3.0.5=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.github.kevinstern:software-and-algorithms:1.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.auto.service:auto-service-annotations:1.0.1=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.auto.value:auto-value-annotations:1.9=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.auto:auto-common:1.2.2=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.errorprone:error_prone_annotation:2.47.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.errorprone:error_prone_annotations:2.47.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.errorprone:error_prone_check_api:2.47.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.errorprone:error_prone_core:2.47.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.googlejavaformat:google-java-format:1.27.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.guava:failureaccess:1.0.3=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.guava:guava:33.5.0-jre=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.j2objc:j2objc-annotations:3.1=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+com.google.protobuf:protobuf-java:4.33.5=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+io.github.eisop:dataflow-errorprone:3.41.0-eisop1=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+io.github.java-diff-utils:java-diff-utils:4.12=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+io.opentelemetry:opentelemetry-api:1.60.1=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+io.opentelemetry:opentelemetry-common:1.60.1=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+io.opentelemetry:opentelemetry-context:1.60.1=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+javax.inject:javax.inject:1=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath
+org.checkerframework:checker-qual:3.49.5=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+org.jspecify:jspecify:1.0.0=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+org.junit.jupiter:junit-jupiter-api:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.jupiter:junit-jupiter-engine:5.14.4=testRuntimeClasspath
+org.junit.jupiter:junit-jupiter-params:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.jupiter:junit-jupiter:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.platform:junit-platform-commons:1.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.platform:junit-platform-engine:1.14.4=testRuntimeClasspath
+org.junit.platform:junit-platform-launcher:1.14.4=testRuntimeClasspath
+org.junit:junit-bom:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.opentest4j:opentest4j:1.3.0=testCompileClasspath,testRuntimeClasspath
+org.pcollections:pcollections:4.0.2=annotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
+org.slf4j:slf4j-api:2.0.17=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+org.snakeyaml:snakeyaml-engine:3.0.1=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+tools.jackson.core:jackson-core:3.1.0=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+tools.jackson.core:jackson-databind:3.1.0=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+tools.jackson.dataformat:jackson-dataformat-yaml:3.1.0=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+tools.jackson:jackson-bom:3.1.0=compileClasspath,runtimeClasspath,testCompileClasspath,testFixturesCompileClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
+empty=

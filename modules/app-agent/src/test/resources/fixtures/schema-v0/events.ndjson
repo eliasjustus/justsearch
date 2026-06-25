@@ -1,0 +1,2 @@
+{"timestamp":"2026-01-01T00:00:00Z","eventType":"session_started","payload":{"sessionId":"session_golden_v0"}}
+{"timestamp":"2026-01-01T00:00:01Z","eventType":"progress","payload":{"phase":"init","message":"Starting","iteration":0,"maxIterations":5}}

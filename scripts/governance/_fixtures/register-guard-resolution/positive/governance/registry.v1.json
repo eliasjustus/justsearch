@@ -1,0 +1,5 @@
+{
+  "$comment": "Fixture registry — provides the gate id that a gate:<id> guard resolves against.",
+  "kind": "discipline-gate-registry.v1",
+  "gates": [{ "id": "wire" }]
+}

@@ -1,0 +1,124 @@
+---
+title: "Manual-Only CI Triggering"
+type: decision
+status: stable
+description: "Repository workflows run only on `workflow_dispatch`. No push, pull_request, or schedule triggers. Agents invoke workflows explicitly when they need remote verification; local-first verification is the primary discipline."
+date: 2026-04-22
+---
+
+# ADR-0026: Manual-Only CI Triggering
+
+## Status
+Accepted
+
+## Context
+
+CI runs on a single self-hosted Windows runner (`[self-hosted, Windows, X64, justsearch-perf]`). The runner is not guaranteed to be online for auto-triggered runs — it is powered on when the operator is working, not continuously. Historically `ci.yml` had `push:main`, `pull_request:main` (both path-filtered), and `workflow_dispatch` triggers. Auto-triggered runs against an offline runner either queue indefinitely or fail with no-runner-available errors, producing noise without value.
+
+The project has always relied on local-first verification as the primary discipline — the `CLAUDE.md` "Verification Workflow" section documents the full sequence: `./gradlew.bat build -x test` for compile, `./gradlew.bat test` for unit tests, `./gradlew.bat spotlessApply` for formatting, and the per-subject pre-merge checks at step 5 (workflow-triggers, README, contract-governance kernel — invoked individually when their subjects change). Per slice 3a-1-8f §B.12 the prior three-layer wrapper chain (`scripts/gate.ps1` → `local-agent-gate-win.ps1` → DAG runner) was retired because the inner DAG runner had been broken since 2026-03-16, and reviewing whether a replacement wrapper was useful concluded that bundling unrelated checks behind a label was a coping mechanism, not a workflow value. The `CLAUDE.md` CI note has asserted for some time that "CI does not run automatically on push to `main`. Trigger it manually when you need remote verification" — but the `ci.yml` configuration has never matched that assertion; push and pull_request triggers existed in parallel with the documented policy.
+
+This ADR canonicalises the documented behaviour by making `ci.yml`'s configuration match its intent.
+
+The forces at play:
+- The self-hosted runner is the only runner that can exercise the Windows+ORT+CUDA stack the test suite depends on. Cloud-hosted alternatives (`ubuntu-latest`) can't run the full suite without rewriting tests.
+- The repository's single-developer / small-agent-fleet operating model means auto-triggered "regression trap" workflows are low-value — agents verify locally before push, and a human-in-the-loop reviews merge readiness.
+- Stress tests (`@Tag("stress")`), added in tempdoc 397 §14.21 R3, were initially gated behind a weekly cron. Under the same runner-availability reality, a weekly cron produces the same queue-or-fail problem as auto-triggered runs.
+- A manual-dispatch policy requires agent discipline: if CI is never auto-triggered, regressions can reach `main` undetected unless agents explicitly remember to trigger it.
+
+## Decision
+
+`.github/workflows/ci.yml` runs on `workflow_dispatch` only. Specifically:
+
+1. **Triggers**: `workflow_dispatch` with two boolean inputs (`skipFrontend`, `runStress`). No `push:`, no `pull_request:`, no `schedule:`.
+2. **Jobs**: `full_build` (always runs on dispatch; the former `fast_build` is deleted) and `stress_tests` (opt-in via `runStress=true`).
+3. **Invocation**: Agents call `gh workflow run ci.yml` (optionally with `-f skipFrontend=true` or `-f runStress=true`) and watch completion with `gh run list --workflow=ci.yml --limit=1`.
+4. **Local gate is mandatory**: agents complete `./gradlew.bat build -x test` and `./gradlew.bat test` (plus the per-subject pre-merge checks in CLAUDE.md "Verification Workflow" step 5 — workflow-triggers, README, contract-governance kernel — when their subjects change) before every commit that touches build-gated surfaces. CI is a secondary remote-verification tool, not a replacement.
+
+Branch-protection rules on `main` **must not** require a CI check. Requiring a check under this policy would deadlock merges because CI never auto-runs; an agent would have to dispatch CI and wait for it before every merge, which defeats the local-first discipline.
+
+## Alternatives considered
+
+1. **Keep auto-triggers with path filters (status quo before this ADR).** Rejected: path filtering is orthogonal to runner availability. A push that hits the path filters still fails when the runner is offline, producing failure emails with no actionable signal.
+
+2. **Migrate to `ubuntu-latest` (GitHub-hosted) for auto-triggers.** Rejected: the test suite exercises Windows-specific paths (ORT DLL loading, file locking, NSIS packaging), native CUDA-linked ORT, and self-hosted-runner-specific caches. Migrating is a multi-week rewrite without a clear payoff.
+
+3. **Scheduled-only CI (nightly or weekly).** Rejected: same runner-availability problem. A Monday 08:00 UTC cron fires whether the runner is online or not. Nightly-specialty workflows (the surviving `phase-3-observability-nightly.yml` and — at the time of authoring — the now-retired `agent-live-eval-nightly.yml` and `rr219-resilience-*.yml` family) already accept this tradeoff because their failure mode is "occasional missed run", but the primary CI suite shouldn't have that failure mode.
+
+4. **Event-driven via a GitHub App webhook**. Rejected: too much infrastructure for a single-runner single-developer operating model. The `gh workflow run` command is one CLI invocation and gives agents direct control.
+
+## Consequences
+
+**Positive:**
+- CI runs always have a runner. No "no runner available" failures cluttering the notification inbox.
+- CI minutes (or self-hosted wall time) spent only when intentionally requested.
+- Workflow config matches documented policy — new agents reading either source land on the same answer.
+- Stress tests run only when an agent is working on concurrency-relevant code, the moment when their signal matters most.
+- Branch-protection configuration simplifies: no required CI check, no flaky external gates on merge readiness.
+
+**Negative (accepted):**
+- **No auto-regression trap on `main`.** If an agent forgets to trigger CI after a risky change, a regression can reach `main` unnoticed until the next manual run. Mitigated by local-gate discipline (`CLAUDE.md` Verification Workflow) and by the self-hosted runner being fast enough that manual CI after substantive work isn't an ergonomic burden.
+- **Stress-test cadence is discipline-dependent.** The weekly cron that tempdoc 397 §14.21 R3 assumed for concurrency-regression safety is gone. Agents working on `NativeSessionHandle` / ORT session state must remember to set `-f runStress=true`. The `inference-runtime` skill and `/ci-triage` skill should remind agents of this when they touch those files.
+- **PR review can't lean on a CI check.** Human reviewers must verify the author ran CI before merging, or run CI themselves. The risk of "merged without CI" is borne by the merger, not detected automatically.
+
+**Neutral:**
+- Workflow still supports `skipFrontend=true` and `runStress=true` as dispatch inputs for flexibility.
+- Other workflows (`docs-lint.yml`, nightly eval/observability/resilience soak, installer builds, dependabot automerge) retain their existing triggers. The policy in this ADR applies specifically to `ci.yml` — the primary build/test suite — not to specialty flows whose failure modes and triggers are tuned separately.
+
+## Related
+
+- **CLAUDE.md** "Verification Workflow" — primary local discipline. Step 6 cites this ADR.
+- **`docs/reference/contributing/agent-guide.md`** — expanded §3.5 area with "When to trigger CI" guidance.
+- **Tempdoc 397 §14.21 R3** — origin of the `@Tag("stress")` gating; under this ADR, stress runs become dispatch-opt-in instead of weekly-cron.
+- **Tempdoc 282 / 228** — prior CI-health work that assumed auto-triggers; this ADR supersedes the auto-trigger model those tempdocs were written against.
+
+## Amendment 2026-04-26: policy extended to all self-hosted workflows
+
+A scheduled `Phase 3 Observability Nightly` run queued while the runner host was offline. When the host booted hours later, the runner picked up the queued job and spawned a Gradle daemon plus 28 Java workers (~30 java.exe processes total, multiple GB resident) — a substantial unwanted resource event for an interactive workstation. The "Neutral" carve-out above (which retained schedule/push triggers for non-`ci.yml` workflows) is the proximate cause: queue-or-fail is one failure mode, but **queue-then-execute-at-boot is a worse one** because the operator is not present to abort.
+
+This amendment retires the carve-out and extends the manual-only policy to every workflow on `[self-hosted, Windows, X64, justsearch-perf]`.
+
+**Removed triggers:**
+
+| Workflow | Removed trigger |
+|---|---|
+| `phase-3-observability-nightly.yml` | `schedule: '0 3 * * *'` (and the schedule-conditional `Open issue on drift` step, which would have been dead code) |
+| `agent-live-eval-nightly.yml` | `schedule: '30 5 * * *'` |
+| `rr219-resilience-governance-nightly.yml` | `schedule: '45 5 * * *'` |
+| `rr219-resilience-soak-weekly.yml` | `schedule: '15 7 * * 0'` |
+| `docs-lint.yml` | `push: branches: [main]` and `pull_request: branches: [main]` (both paths-filtered to `docs/**`, etc.) |
+
+**Retained triggers (superseded by the 2026-05-08 amendment below):**
+
+- `build-installer.yml`: `push: tags: 'v*'` is preserved. The job runs on `windows-latest` (GitHub-hosted), not the local self-hosted runner, so tag-driven release builds carry no local-resource cost. A tag push is also an intentional, operator-initiated act, not a regression trap.
+
+**Additional consequences (beyond the original "Negative"):**
+
+- **Nightly observability / agent-eval / resilience soft-gate cadence is gone.** Drift signals (Phase 3 σ(nDCG@10), agent live eval scorecards, RR-219 G0 advisory) are produced only when an agent manually dispatches the relevant workflow. Subject-touching changes are the trigger point.
+- **`docs-lint` no longer auto-runs on docs PRs.** Run the regeneration scripts locally before pushing: `node scripts/docs/llmstxt-generate.mjs`, `node scripts/docs/skills-sync.mjs`, `node scripts/architecture/module-deps.mjs --check-canonical`. Load `/docs-maintenance` for the full checklist.
+- **Auto-issue-opening on Phase 3 drift is gone.** The schedule-conditional `Open issue on drift` step was removed because `github.event_name` can no longer equal `'schedule'`. Manual dispatchers read the gate report directly from the run.
+
+**Workflow signal health script** (`scripts/ci/workflow-signal-health.mjs`) remains useful for diagnosing failures of manually-dispatched runs; only the "scheduled GitHub Actions failure" framing in the docs becomes obsolete.
+
+## Amendment 2026-05-08: policy extended to all repository workflows
+
+The 2026-04-26 amendment retained a `build-installer.yml` tag-push
+exception because that workflow runs on GitHub-hosted `windows-latest`
+rather than the self-hosted workstation runner. The user decision on
+2026-05-08 retires that carve-out: **all repository workflows are
+manual-only, regardless of runner class**.
+
+Current policy:
+
+1. Every `.github/workflows/*.yml` workflow must expose
+   `workflow_dispatch`.
+2. No workflow may use top-level `push`, `pull_request`, or `schedule`
+   triggers.
+3. Release/installer workflows are dispatched manually. If a release
+   workflow needs tag context, dispatch it against the tag ref explicitly
+   instead of relying on tag-push automation.
+4. Security workflows such as CodeQL are also manually dispatched unless
+   this ADR is amended again.
+
+This amendment is enforced mechanically by
+`scripts/ci/check-workflow-triggers.mjs`, which fails if any workflow
+reintroduces a forbidden trigger.

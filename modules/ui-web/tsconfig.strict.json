@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Stage 1 (complete): Safest strict flags
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "strictBindCallApply": true,
+    "useUnknownInCatchVariables": true,
+
+    // Stage 2 (complete): No implicit any
+    "noImplicitAny": true,
+
+    // Stage 3 (complete): Null safety
+    "strictNullChecks": true,
+    "strictPropertyInitialization": true,
+
+    // Stage 4 (complete): Full strict mode
+    "strict": true,
+
+    // Stage 5 (complete): Unchecked indexed access
+    "noUncheckedIndexedAccess": true,
+
+    // Future: Additional strictness (deferred — library friction, zero real bugs)
+    "exactOptionalPropertyTypes": true
+  }
+}
+

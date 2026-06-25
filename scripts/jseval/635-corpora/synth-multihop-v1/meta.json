@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "635-pilot-v0",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "hand-authored-fabricated",
+    "author": "tempdoc-635",
+    "templated": false
+  }
+}

@@ -1,0 +1,31 @@
+# B1 — Whole-PC system sanity baseline via PassMark PerformanceTest 11.
+# Covers CPU, memory, disk, 2D graphics.
+# 3D subtests are skipped for automation safety (fullscreen window is fragile in headless batches).
+#
+# Invoke (elevated) from F:\JustSearch:
+#   "C:\Program Files\PerformanceTest\PerformanceTest64.exe" /s scripts\bench\passmark-b1.ptscript
+#
+# LOOP 1: PassMark subtests are already time-averaged internally — one LOOP iteration is
+# already an averaged sample, not a single point. For a sanity baseline vs pcbenchmarks.net
+# class averages (built from millions of runs), one good run places us within the 10-20%
+# sanity thresholds. Re-run this whole script to add another data point when A/B-comparing
+# a system change; variance only needs estimation from repeated runs at that point.
+#
+# Expected wall: 1 × 25 subtests × 30 s + overhead ≈ 14 min.
+
+SETDISK "F:"
+SETDURATION 30
+SETCPUTESTPROCESSES 20
+SET3DMAX
+
+CLEARRESULTS
+RUN CPU_ALL
+RUN ME_ALL
+RUN DI_ALL
+RUN G2D_ALL
+# RUN 3D_ALL   # skipped: 3D tests open fullscreen and do not compose with unattended batches
+EXPORTCSV "tmp\B1\passmark-b1.csv" SINGLELINE
+
+EXPORTHTML "tmp\B1\passmark-b1.html"
+
+EXIT

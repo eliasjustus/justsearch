@@ -1,0 +1,8 @@
+{
+  "intent_v1": {
+    "schema_ver": "1.0.0",
+    "grammar_ver": "1.0.0",
+    "template_ver": [1, 2]
+  }
+}
+

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# JustSearch public-repo pre-commit guard → ships as `.githooks/pre-commit` in the public repo.
+# Activate once after clone:  git config core.hooksPath .githooks
+#
+# Two guards:
+#   (1) refuse to commit private/sidecar trees that must never reach the public repo;
+#   (2) secret-scan the staged change with gitleaks (warn-skip if gitleaks is absent).
+set -euo pipefail
+
+# (1) Sidecar-path guard. These trees live in the PRIVATE sidecar, never the public repo.
+BLOCKED='^(docs/business/|docs/market-analysis/)'
+staged="$(git diff --cached --name-only)"
+if echo "$staged" | grep -Eq "$BLOCKED"; then
+  echo "✗ pre-commit: refusing to commit private/sidecar paths —" >&2
+  echo "$staged" | grep -E "$BLOCKED" | sed 's/^/      /' >&2
+  echo "  Move these to the private sidecar repo; they are out of scope for the public project." >&2
+  exit 1
+fi
+
+# (2) Secret scan on staged changes only (fast). Real hit => block.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --config .gitleaks.toml \
+    || { echo "✗ pre-commit: gitleaks flagged a potential secret in the staged change (see above)." >&2; exit 1; }
+else
+  echo "⚠ pre-commit: gitleaks not installed — staged secret scan skipped." >&2
+  echo "  Install once: https://github.com/gitleaks/gitleaks (CI also runs gitleaks on every push)." >&2
+fi

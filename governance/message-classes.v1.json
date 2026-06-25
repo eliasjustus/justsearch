@@ -1,0 +1,13 @@
+{
+  "kind": "message-classes.v1",
+  "note": "Tempdoc 613 §5.2/§8 — the FE-LOCAL message-class vocabulary (the emitEphemeralToast classId, 559 Authority III) is ONE closed authority. The declaration (LOCAL_MESSAGE_CLASSES in messageClasses.ts) is the single source for each local transient's class + policy (supersede + default tone); the emit sites name a class, never a free-form string. The gate (scripts/ci/check-message-classes.mjs) enforces declaration<->emit correspondence so neither drifts: FORWARD = every classId emitted via emitEphemeralToast({classId:'...'}) is declared (no free-form/typo'd local class can reach the toast channel — the union type is the compile-time half, this gate is the 602 §D.0 backstop for any non-typed path); BACKWARD = every declared class (except the omitted default) is actually emitted somewhere (no dead declarations). Scope: FE-LOCAL emit only — the wire AdvisoryEvent.classId stays a string (it also carries backend advisory classes whose chrome lives in AdvisoryClassChrome.ts).",
+  "declaration": {
+    "file": "modules/ui-web/src/shell-v0/state/messageClasses.ts",
+    "symbol": "LOCAL_MESSAGE_CLASSES"
+  },
+  "emitScanGlobs": [
+    "modules/ui-web/src/shell-v0/**/*.ts"
+  ],
+  "defaultClass": "core.ephemeral",
+  "emitExempt": []
+}

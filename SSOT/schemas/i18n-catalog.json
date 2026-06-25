@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/i18n-catalog.json",
+  "title": "JustSearch i18n catalog",
+  "description": "Envelope for backend-served i18n message catalogs. Per tempdoc 434 §\"Catalog file shape\". Concrete instances live under SSOT/messages/ (e.g. errors.en.json) and are served at /api/messages/<catalog-name>/<locale> per tempdoc 434 §\"Catalog endpoint\". This schema is the precedent-setting envelope per tempdoc 431 §F.1; downstream catalogs (shell strings, per-shape labels, plugin and theme catalogs) MUST conform to it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "locale", "namespace", "messages"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "description": "Catalog schema namespace identifier. SHOULD equal this schema's $id (\"https://ssot.justsearch/v1/schemas/i18n-catalog.json\"). Optional in the wire format; required only when consumers want explicit schema attribution."
+    },
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Catalog schema version. Currently \"1.0\". Bumped only on breaking changes to this envelope shape; field additions to messages are NOT breaking."
+    },
+    "locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+      "description": "BCP 47 locale tag. V1 ships \"en\" only per tempdoc 434 §\"What it does NOT support\"."
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*([.-][a-z0-9]+)*$",
+      "description": "Catalog namespace. Examples: \"errors\" (this slice's catalog), \"shell\" (shell strings — future), \"registry.admin-action\" (per-shape — future), \"plugin.acme-foo\" (plugin — future), \"theme.default\" (theme — future). Keys inside `messages` MUST be namespace-prefixed (e.g. \"errors.TIMEOUT\")."
+    },
+    "messages": {
+      "type": "object",
+      "description": "Map of i18n key → message text. Keys are namespace-prefixed (e.g. \"errors.TIMEOUT\"). Message text is the catalog's locale rendering of that key, possibly containing ICU MessageFormat placeholders like \"{name}\" or \"{count, plural, one {# item} other {# items}}\" per tempdoc 434 §5.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

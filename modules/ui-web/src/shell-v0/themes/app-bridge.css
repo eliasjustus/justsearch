@@ -1,0 +1,66 @@
+/**
+ * Shell V0 product theme override (Layer 4) — the PERMANENT product-theme bridge.
+ *
+ * #352 resolution (tempdoc 569): this is NOT a transient React-coexistence file to be
+ * deleted. It is the load-bearing single point where the framework's `--jf-*` component-
+ * token tier (Layers 1–3, `primitives.css` + `default.css`, consumed by the JSON-Forms
+ * renderer pipeline and friends via `--justsearch-shell-*`) resolves to the CANONICAL
+ * PRODUCTION token authority — `styles/tokens.css`'s `--surface-*` / `--accent-*` / `--text-*`,
+ * i.e. the closed `KNOWN_TOKEN_NAMES` vocabulary that the whole 569 runtime authors against.
+ *
+ * The single-authority relationship (the #352 "dual namespace" resolved structurally, not by
+ * a flattening migration that would break the standalone framework demos + the layering guard):
+ *   - `--surface-*` / `--accent-*` / `KNOWN_TOKEN_NAMES`  = THE canonical authoring authority.
+ *   - `--jf-*`  = the framework component tier, RESOLVED THROUGH this one bridge to the authority.
+ *
+ * Direction of override: Layer 4 redefines Layer 2 (semantic), not Layer 3 (component);
+ * component tokens pick up the change because every one resolves through a semantic token
+ * (drift guard I4). Standalone routes (`?shell-demo=1`, `?lit-health=1`) do not import the
+ * barrel and render with the framework's own defaults — the layered model serves both.
+ *
+ * Usage: imported by `shell-v0/index.ts` so any consumer of the barrel gets the bridge.
+ */
+
+:root {
+  /* === Layer 2 (semantic) overrides ====================================
+   * Each shell-v0 semantic token is redefined to alias an existing
+   * React app token. Component tokens at Layer 3 don't change
+   * (they still reference these semantic tokens by name).
+   * ==================================================================== */
+
+  /* Surface — chrome backgrounds + borders + foregrounds */
+  --jf-surface-bg: var(--surface-2);
+  --jf-surface-bg-subtle: var(--surface-1);
+  --jf-surface-bg-muted: var(--surface-3);
+  --jf-surface-bg-hover: var(--glass-surface-hover);
+  --jf-surface-border-subtle: var(--glass-border);
+  --jf-surface-border: var(--glass-border-hover);
+  --jf-surface-border-soft: var(--glass-border);
+  --jf-surface-fg: var(--text-primary);
+  --jf-surface-fg-muted: var(--text-secondary);
+  --jf-surface-fg-subtle: var(--text-tertiary);
+  --jf-surface-fg-faint: var(--text-ghost);
+
+  /* Severity — accent palette uses the React app's semantic colors */
+  --jf-severity-info: var(--accent-tint);
+  --jf-severity-info-strong: var(--accent-tint);
+  --jf-severity-warning: var(--accent-warning);
+  --jf-severity-error: var(--accent-danger);
+  --jf-severity-unknown: var(--text-muted);
+
+  /* Input chrome — match the glass-surface treatment */
+  --jf-input-bg: var(--glass-surface);
+  --jf-input-border: var(--glass-border-hover);
+
+  /* Button chrome — same glass + text colors */
+  --jf-button-bg: var(--glass-surface);
+  --jf-button-border: var(--glass-border-hover);
+
+  /* Status / chrome semantics — fill-the-gaps tokens */
+  --jf-surface-badge-bg: var(--glass-surface-hover);
+
+  /* Overlay (drag-drop) — keep the framework's blue tint; the
+   * React app doesn't have a comparable token. The framework
+   * default's `rgba(27, 110, 194, 0.15)` is appropriate
+   * regardless of theme. No override needed. */
+}

@@ -1,0 +1,26 @@
+Abstract Art History and Movements
+
+Abstract art represents a departure from reality in depiction of imagery in art.
+The movement emerged in the early 20th century and fundamentally changed how we 
+think about visual expression.
+
+Key Movements:
+- Cubism (1907-1920s): Picasso, Braque - geometric fragmentation
+- Suprematism (1913): Malevich - pure geometric forms
+- De Stijl (1917): Mondrian - primary colors and straight lines
+- Abstract Expressionism (1940s-1950s): Pollock, Rothko
+
+Characteristics:
+- Non-representational imagery
+- Focus on color, form, line, and texture
+- Emotional rather than visual representation
+- Freedom from traditional artistic constraints
+
+Famous Works:
+- "Composition VIII" - Wassily Kandinsky (1923)
+- "Black Square" - Kazimir Malevich (1915)
+- "No. 61 (Rust and Blue)" - Mark Rothko (1953)
+
+Note: This document contains "abstract" but is about ART, not programming.
+It should NOT rank highly for queries about "abstract classes" or "canine behavior".
+

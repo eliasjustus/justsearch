@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "description": "NEGATIVE fixture register — a non-CORE surface that derives TRUST and a surface that derives an altitude conflict. The gate must FAIL both surface-altitude/trust-requires-core and surface-altitude/altitude-conflict.",
+  "scan": {
+    "surfaceCatalog": "catalog/CoreSurfaceCatalog.java",
+    "resourceCatalogRoots": ["catalog"],
+    "javaInclude": ""
+  }
+}

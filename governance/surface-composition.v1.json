@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "description": "Tempdoc 571 §11 / 578 — the surface-composition one-home integrity register. A host surface declares the member surfaces it presents inside itself via `.withMembers(List.of(new SurfaceRef(...)))` in CoreSurfaceCatalog.java; membership is the single home-authority. This gate (scripts/ci/check-surface-composition.mjs) reads the catalog and forecloses the contradictions that make the original drift (Logs as a stray rail icon beside its own home) representable: (1) a member may not also be a RAIL surface — its home is its host; (2) a member may not be hosted by two hosts; (3) a member ref must resolve to a declared surface; (4) a surface may not host itself. It is a referential-integrity check over a declaration, NOT a derivation — it computes nothing from consumed authority (altitude stays the surface-altitude gate's concern; members are deliberately excluded from SurfaceAltitude.derive, 578 §10 U1).",
+  "scan": {
+    "surfaceCatalog": "modules/app-observability/src/main/java/io/justsearch/app/observability/surface/CoreSurfaceCatalog.java",
+    "corePlugin": "modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts"
+  }
+}

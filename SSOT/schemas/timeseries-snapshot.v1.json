@@ -1,0 +1,59 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$id" : "https://ssot.justsearch/v1/schemas/timeseries-snapshot.v1.json",
+  "title" : "TimeseriesSnapshot",
+  "description" : "Wire payload for a sliding-window numeric metric (slice 3a.1.4). Receiver semantics: snapshot-of-window with regular cadence — subscribers get the current N samples in one frame, not a stream of discrete events. Mirrors modules/app-observability/.../metrics/TimeseriesSnapshot.java.",
+  "type" : "object",
+  "properties" : {
+    "resourceId" : {
+      "type" : "string",
+      "pattern" : "^(core|vendor\\.[a-z][a-z0-9-]*)\\.[a-z][a-z0-9-]*$",
+      "description" : "Matches the Resource registry entry's id. Allows multiplexed streams to disambiguate."
+    },
+    "windowMs" : {
+      "type" : "integer",
+      "minimum" : 0,
+      "description" : "Total window length in milliseconds (e.g. 30 * 60 * 1000 for a 30-minute trend)."
+    },
+    "sampleIntervalMs" : {
+      "type" : "integer",
+      "exclusiveMinimum" : 0,
+      "description" : "Regular sample cadence in milliseconds. values.length is implicitly floor(windowMs / sampleIntervalMs)."
+    },
+    "unit" : {
+      "type" : "string",
+      "description" : "Free-form unit label (count, rate/s, bytes, %, etc.). V1 does not enforce a vocabulary; FE renderers display verbatim."
+    },
+    "values" : {
+      "type" : "array",
+      "items" : {
+        "type" : "number"
+      },
+      "description" : "Sliding-window samples, ordered oldest-first. Length implicitly floor(windowMs / sampleIntervalMs)."
+    },
+    "startedAt" : {
+      "type" : "string",
+      "format" : "date-time",
+      "description" : "Window start timestamp (ISO-8601)."
+    },
+    "endedAt" : {
+      "type" : "string",
+      "format" : "date-time",
+      "description" : "Window end timestamp (ISO-8601)."
+    },
+    "catalogVersion" : {
+      "type" : "integer",
+      "description" : "Monotonic version counter for SSE clients to detect missed frames (matches the seq on the universal envelope per slice 436)."
+    }
+  },
+  "required" : [
+    "resourceId",
+    "windowMs",
+    "sampleIntervalMs",
+    "unit",
+    "values",
+    "startedAt",
+    "endedAt",
+    "catalogVersion"
+  ]
+}

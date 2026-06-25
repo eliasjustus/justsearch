@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JustSearch platform-paths contract v1",
+  "description": "Canonical specification for resolving the JustSearch data directory. Every language implementation (Java PlatformPaths.java, Node scripts/lib/platform-paths.mjs, Rust modules/shell/src-tauri/.../platform_paths.rs) reads this contract and a fixture set; the cross-language contract test (modules/configuration/.../PlatformPathsContractTest) asserts identical outputs for the same inputs. Drift becomes a test failure, not a runtime silent-wrong-path failure.",
+  "schemaVersion": 1,
+  "resolveDataDir": {
+    "description": "Precedence chain. Each source is checked in order; the first non-blank value wins. If none match, fall through to platformDefault for the current OS.",
+    "sources": [
+      {"id": "sysprop_canonical", "kind": "sysprop", "key": "justsearch.data.dir", "note": "Java only; Node + Rust have no sysprops and skip this source"},
+      {"id": "sysprop_legacy_underscore", "kind": "sysprop", "key": "justsearch.data_dir", "deprecated": true},
+      {"id": "sysprop_legacy_app", "kind": "sysprop", "key": "app.data_dir", "deprecated": true},
+      {"id": "env_canonical", "kind": "env", "key": "JUSTSEARCH_DATA_DIR"}
+    ],
+    "platformDefault": {
+      "windows": {"basis": "env", "key": "LOCALAPPDATA", "join": "JustSearch", "fallbackBasis": "userHome", "fallbackJoin": ["AppData", "Local", "JustSearch"]},
+      "macos": {"basis": "userHome", "join": ["Library", "Application Support", "JustSearch"]},
+      "linux": {"basis": "userHome", "join": [".justsearch"]}
+    },
+    "postProcessing": [
+      {"name": "expandUserHomePlaceholder", "description": "Replace literal ${user.home} with the user home dir; refuses unexpanded placeholders by raising an error."}
+    ]
+  },
+  "_runnersField": "Optional per-fixture runners array. Allowed values: 'java', 'node', 'rust'. Empty/omitted = all runners. Runners not in the list skip the fixture (e.g., when an env-driven branch can't be hermetically reproduced).",
+  "fixtures": [
+    {
+      "name": "canonical_env_var_set_linux",
+      "platform": "linux",
+      "userHome": "/home/alice",
+      "env": {"JUSTSEARCH_DATA_DIR": "/var/lib/justsearch"},
+      "sysprops": {},
+      "expected": "/var/lib/justsearch"
+    },
+    {
+      "name": "canonical_env_var_with_user_home_placeholder_linux",
+      "platform": "linux",
+      "userHome": "/home/bob",
+      "env": {"JUSTSEARCH_DATA_DIR": "${user.home}/.local/share/jsearch"},
+      "sysprops": {},
+      "expected": "/home/bob/.local/share/jsearch"
+    },
+    {
+      "name": "platform_default_linux",
+      "platform": "linux",
+      "userHome": "/home/carol",
+      "env": {},
+      "sysprops": {},
+      "expected": "/home/carol/.justsearch"
+    },
+    {
+      "name": "platform_default_macos",
+      "platform": "macos",
+      "userHome": "/Users/dave",
+      "env": {},
+      "sysprops": {},
+      "expected": "/Users/dave/Library/Application Support/JustSearch"
+    },
+    {
+      "name": "platform_default_windows_localappdata_set",
+      "platform": "windows",
+      "userHome": "C:\\Users\\eve",
+      "env": {"LOCALAPPDATA": "C:\\Users\\eve\\AppData\\Local"},
+      "sysprops": {},
+      "expected": "C:\\Users\\eve\\AppData\\Local\\JustSearch",
+      "runners": ["node"],
+      "runnersNote": "Java cannot hermetically override System.getenv('LOCALAPPDATA') at runtime. The Node twin exercises this branch; the Java implementation is identical in logic (LOCALAPPDATA-then-userHome\\AppData\\Local\\JustSearch) and would need a refactor that injects an env-lookup callable to participate. Considered out of scope for tempdoc 501; revisit if a Windows-host bug is found in PlatformPaths.getPlatformDefault."
+    },
+    {
+      "name": "platform_default_windows_localappdata_unset",
+      "platform": "windows",
+      "userHome": "C:\\Users\\frank",
+      "env": {},
+      "sysprops": {},
+      "expected": "C:\\Users\\frank\\AppData\\Local\\JustSearch",
+      "runners": ["node"],
+      "runnersNote": "See platform_default_windows_localappdata_set."
+    },
+    {
+      "name": "env_var_wins_over_platform_default",
+      "platform": "linux",
+      "userHome": "/home/grace",
+      "env": {"JUSTSEARCH_DATA_DIR": "/data/explicit"},
+      "sysprops": {},
+      "expected": "/data/explicit"
+    },
+    {
+      "name": "rust_env_var_set",
+      "userHome": "/home/ivy",
+      "env": {"JUSTSEARCH_DATA_DIR": "/var/lib/jsearch-rust"},
+      "sysprops": {},
+      "expected": "/var/lib/jsearch-rust",
+      "runners": ["rust"],
+      "runnersNote": "Env-var-set branch is platform-agnostic in the resolver. Fixture omits 'platform' so the Rust harness exercises it on whichever host runs the test."
+    },
+    {
+      "name": "rust_env_var_with_user_home_placeholder",
+      "userHome": "/home/jack",
+      "env": {"JUSTSEARCH_DATA_DIR": "${user.home}/.local/jsearch"},
+      "sysprops": {},
+      "expected": "/home/jack/.local/jsearch",
+      "runners": ["rust"],
+      "runnersNote": "Exercises the ${user.home} expansion branch. Platform-agnostic — the expander reads $HOME / %USERPROFILE% under override."
+    }
+  ]
+}

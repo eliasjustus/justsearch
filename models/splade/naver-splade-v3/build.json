@@ -1,0 +1,38 @@
+{
+  "source": {
+    "hf_model_id": "opensearch-project/opensearch-neural-sparse-encoding-multilingual-v1",
+    "hf_commit": "1e0f096c2b51c234f1d20725c793e1b5b6d556db"
+  },
+  "variants": {
+    "model.onnx": {
+      "description": "CPU \u2014 FP32 baked-PRESPARSE",
+      "transformations": [
+        "torch.onnx.export of BertForMaskedLM (FP32, opset 18, legacy TorchScript)",
+        "Append PRESPARSE ops (FP32): ReLU, Add(1), Log, ReduceMax(axis=1, keepdims=0), TopK(k=256)",
+        "Declare outputs: output_idx (INT64, [B,256]), output_weights (FLOAT32, [B,256])"
+      ],
+      "output_sha256": "6399e92fbe1d2c99301504dc84235c9275f0ae31cdab0125e541ac663f27d6cf"
+    },
+    "model_fp16.onnx": {
+      "description": "GPU \u2014 FP16 baked-PRESPARSE",
+      "transformations": [
+        "Load FP32 MLM base model (opensearch-neural-sparse-encoding-multilingual-v1)",
+        "ORT transformer optimize (model_type=bert, num_heads=0, hidden_size=0, opt_level=0, use_gpu=True)",
+        "Convert entire graph to FP16 (keep_io_types=False)",
+        "Append PRESPARSE ops (FP16 constants): ReLU, Add(1), Log, ReduceMax(axis=1, keepdims=0), TopK(k=256)",
+        "Cast output_weights FP16 -> FP32 for Java ORT getFloatBuffer() compatibility",
+        "Declare outputs: output_idx (INT64, [B,256]), output_weights (FLOAT32, [B,256])"
+      ],
+      "output_sha256": "ab14869593a2539c86e65bfb0f2f64acaf9b2345efecab57c4c6fcc2ff14f354"
+    }
+  },
+  "build_command": "python scripts/models/build-splade.py --hf-model opensearch-project/opensearch-neural-sparse-encoding-multilingual-v1 --output-dir models/splade/naver-splade-v3 --no-double-log",
+  "tool_versions": {
+    "onnx": "1.20.1",
+    "onnxruntime": "1.24.4",
+    "transformers": "4.57.6",
+    "numpy": "2.4.3",
+    "huggingface_hub": "0.36.2",
+    "optimum": "2.1.0"
+  }
+}
