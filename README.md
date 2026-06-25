@@ -37,7 +37,7 @@ performance versus generic file tools — *is in development; reproducible figur
 project's benchmark methodology* (no bare percentage ships until it clears that bar).
 
 **As a desktop app** *(for non-developers)*
-Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch-releases**
+Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch/releases/latest**
 *(Windows; alpha; currently unsigned — see [Status](#status).)*
 
 ## Why JustSearch
