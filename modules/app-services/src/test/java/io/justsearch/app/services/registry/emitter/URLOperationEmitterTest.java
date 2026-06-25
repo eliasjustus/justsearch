@@ -57,7 +57,7 @@ final class URLOperationEmitterTest {
   void percentEncodedValues() {
     String url =
         emitter.toUrl(
-            new OperationRef("core.add-watched-root"), Map.of("path", "/home/elias/docs"));
+            new OperationRef("core.add-watched-root"), Map.of("path", "/home/alex/docs"));
     assertEquals(
         "justsearch://op/core.add-watched-root?path=%2Fhome%2Felias%2Fdocs", url);
   }
