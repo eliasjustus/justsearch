@@ -3,7 +3,8 @@
 Thank you for your interest in contributing to JustSearch! This document provides guidelines and instructions for contributing.
 
 > **The short version.** Clone the repo, run `./gradlew.bat build`, run the tests, pick a good-first-issue,
-> open a PR with a DCO sign-off. That's it. You do **not** need Claude Code, the agent hooks, the dev-stack
+> open a PR with a DCO sign-off (`git commit -s`), and sign the CLA once when the bot prompts you on your
+> first PR. That's it. You do **not** need Claude Code, the agent hooks, the dev-stack
 > tooling, or the governance/discipline gates to contribute — those are *how the maintainer develops*,
 > published as transparency, not as a required contributor path. Adopt them if you like them; ignore them and
 > just send a PR. Curious how the maintainer develops? See [`MAINTAINING.md`](MAINTAINING.md).
@@ -96,33 +97,51 @@ To fix formatting issues:
 ./gradlew.bat spotlessApply
 ```
 
-## Developer Certificate of Origin (DCO)
+## Contributor agreements: CLA + DCO
 
-This project uses the Developer Certificate of Origin (DCO) instead of a Contributor License Agreement (CLA). By contributing, you certify that:
+Contributing to JustSearch involves two lightweight, one-time-ish steps. Together they keep the
+project's provenance clean and its long-term licensing options open — **without taking away your
+rights**: you keep the copyright to everything you contribute, and the project is and stays
+open-source under **Apache-2.0**.
 
-1. You have the right to submit the contribution
-2. You are submitting it under the project's Apache 2.0 license
-3. You understand the contribution will be public
+### 1. Contributor License Agreement (CLA) — signed once
 
-### How to Sign Off
+When you open your **first pull request**, an automated **CLA assistant** comments on it. You agree by
+replying once (a single comment); that records your signature against your GitHub account and covers
+all your future contributions. A PR can't be merged until the CLA is signed.
 
-Add `-s` flag to your commits:
+**What you're agreeing to** (full text: [`CLA.md`](CLA.md)): you **keep your copyright**, and you grant
+the maintainer a broad licence to use your contribution — including the right to license the project as
+a whole under additional terms in the future (e.g. a commercial licence alongside the open-source one).
+This is **not** a copyright assignment and does **not** make JustSearch proprietary. It exists because,
+with only the open-source licence, the project could never offer a dual/commercial licence later without
+the consent of every past contributor — the CLA preserves that option now, while contributors are few.
+If you contribute on behalf of an employer, see §8 of the CLA (a Corporate CLA may be needed).
+
+### 2. Developer Certificate of Origin (DCO) — sign off every commit
+
+Each commit must carry a [DCO](https://developercertificate.org/) sign-off, certifying that you wrote
+the contribution (or have the right to submit it) under the project's Apache-2.0 license, and that it
+will be public. Add the `-s` flag:
 
 ```bash
 git commit -s -m "Your commit message"
 ```
 
-This adds a `Signed-off-by` line to your commit:
+This adds a `Signed-off-by` line:
 
 ```
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-If you forgot to sign off, you can amend:
+If you forgot to sign off, amend:
 
 ```bash
 git commit --amend -s
 ```
+
+*(The DCO is the per-commit provenance check; the CLA is the one-time licence grant. Both are
+required — they're complementary, not alternatives.)*
 
 ## Project Structure
 

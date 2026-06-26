@@ -1,0 +1,44 @@
+# CLA Assistant — records one-time Contributor License Agreement signatures on pull requests.
+# See CLA.md (the agreement) and CONTRIBUTING.md (the policy).
+#
+# ⚠️ ONE-TIME SETUP REQUIRED TO ACTIVATE:
+#   Create a repository secret named PERSONAL_ACCESS_TOKEN
+#   (Settings → Secrets and variables → Actions → New repository secret).
+#   Use a classic PAT with the `repo` scope, or a fine-grained PAT with
+#   Contents: read & write on this repo. The action uses it to store signatures
+#   on the `cla-signatures` branch. Until this secret exists, the CLA check will
+#   FAIL on pull requests — which correctly blocks merge-without-CLA, but means
+#   no PR can be merged until you add the secret.
+name: CLA Assistant
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla-assistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA Assistant
+        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/version1/cla.json'
+          path-to-document: 'https://github.com/eliasjustus/justsearch/blob/main/CLA.md'
+          branch: 'cla-signatures'
+          # Maintainer + bots never need to sign:
+          allowlist: 'eliasjustus,dependabot[bot]'
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-notsigned-prcomment: 'Thank you for your pull request! Before we can merge it, please read our [Contributor License Agreement](https://github.com/eliasjustus/justsearch/blob/main/CLA.md) (you keep your copyright; it just keeps the project''s licensing options open) and sign it by posting exactly the comment below.'
+          custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'
