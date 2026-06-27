@@ -1,7 +1,7 @@
 ---
 title: "Public CI fact lanes in the public repo"
 type: tempdoc
-status: "implemented - remote PR validation recorded; unit-test follow-up remains"
+status: "implemented - current-head CI lanes green; PR-rollup caveat recorded"
 created: 2026-06-27
 updated: 2026-06-28
 related:
@@ -737,6 +737,51 @@ paid cache expansion, or build-output caches.
 
 Branch protection remains unmodified. The durable follow-up is to decide which observed stable
 checks should become required once the unit-test hosted failure is understood.
+
+### Current-head green follow-up - 2026-06-28
+
+Two hosted-only unit-test hardening fixes followed the initial remote validation:
+
+- `24c0090` stopped `AiInstallServiceLateBindTest` from constructing a real
+  `KnowledgeServerBootstrap` just to verify late-binding identity. The test now uses the same
+  mock-bootstrap pattern already used elsewhere in app-services tests, avoiding order- and
+  environment-sensitive worker configuration during this narrow setter test.
+- `ed5b30f` gave the structured PDF fixture test an explicit 60 second JUnit budget. The test still
+  exercises the same extraction path, but it no longer inherits the repo-wide 30 second default
+  timeout that proved too tight for cold hosted Windows under full-suite load.
+
+Local validation after those fixes passed:
+
+- `./gradlew.bat :modules:app-services:test --tests "*AiInstallServiceLateBindTest*" --console=plain`
+- `./gradlew.bat :modules:app-services:test --console=plain`
+- `./gradlew.bat :modules:worker-services:test --tests "*StructuredExtractionIntegrationTest*" --rerun-tasks --console=plain`
+- `$env:CI='true'; ./gradlew.bat :modules:worker-services:test --rerun-tasks --console=plain`
+- `./gradlew.bat test --console=plain`
+- `git diff --check`
+
+The current branch head, `ed5b30fb3f3fb69f1534cb50f4ee023971652d10`, then passed the public CI
+fact lanes in workflow run `28304957810`:
+
+| Check | Result | Time |
+| --- | --- | ---: |
+| `Public claims` | passed | 19s |
+| `DCO` | passed | 10s |
+| `Secret scan` | passed | 17s |
+| `License and notices` | passed | 4m45s |
+| `Build (no model blobs)` | passed | 8m54s |
+| `Unit tests` | passed | 15m51s |
+
+`node scripts/ci/workflow-signal-health.mjs --repo eliasjustus/justsearch --md` now reports `CI`
+as `success (workflow_dispatch, 0d)` with failure class `passed`. Cache usage after the green run
+was 233,218,787 bytes across seven active caches, still far below the 10 GB included cache boundary.
+
+One PR-surface caveat remains: the latest push to `ed5b30f` produced the CLA
+`pull_request_target` run, but did not produce a new `pull_request` CI run in the PR rollup. A
+manual `workflow_dispatch` on the same branch and head did run the branch workflow and passed all
+fact lanes, and the commit's check-runs include the six green CI lane checks. `gh pr checks 9` still
+shows only `cla-assistant`, so a future branch-protection pass should verify the PR-triggered rollup
+again after the fact-lane workflow lands on `main`. This caveat does not change the lane design; it
+is about GitHub's PR status surface while the workflow itself is being changed in the PR.
 
 ## Done shape
 
