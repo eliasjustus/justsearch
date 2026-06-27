@@ -9,8 +9,8 @@ one-shot event would be over-engineering; tempdoc 634 §T5). They are published 
 Validates that a candidate **public snapshot tree** applies the Option-C include/exclude correctly
 (mirrors `cutover-runbook.md` §1):
 - **EXCLUDE** — the strategy sidecar (`docs/business/`, `docs/market-analysis/`), the local-runtime bits
-  (`.claude/settings.local.json`, `.mcp.json`, `tmp/`, `.claude/worktrees/`), and the model `*.onnx` LFS
-  blobs must not be present.
+  (`.claude/settings.local.json`, `.mcp.json`, `tmp/`, `.claude/worktrees/`), machine-local tempdoc 390 result
+  artifacts, and the model `*.onnx` LFS blobs must not be present.
 - **CLOSURE** — the full agent/governance machinery dependency closure must be present (631 C1 — the narrower
   "hooks/-only" list ships broken machinery).
 - **SETTINGS** — `.claude/settings.json` must be the guards-only public template (no `permissions`/`env`; the

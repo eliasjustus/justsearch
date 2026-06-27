@@ -59,7 +59,7 @@ final class URLOperationEmitterTest {
         emitter.toUrl(
             new OperationRef("core.add-watched-root"), Map.of("path", "/home/alex/docs"));
     assertEquals(
-        "justsearch://op/core.add-watched-root?path=%2Fhome%2Felias%2Fdocs", url);
+        "justsearch://op/core.add-watched-root?path=%2Fhome%2Falex%2Fdocs", url);
   }
 
   @Test

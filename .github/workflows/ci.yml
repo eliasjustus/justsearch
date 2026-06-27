@@ -5,7 +5,7 @@
 #   • GPU/perf gates (eval, relevance-ratchet, model-loading) → a SELF-HOSTED runner, with REQUIRED
 #     APPROVAL for fork-PR workflow runs (Settings → Actions → fork-PR approval) so a stranger's PR
 #     cannot run code on your machine. Free GitHub-hosted runners have no GPU, so these can't move.
-#   • Everything below (build + test + secret-scan + license-report + DCO + the no-GPU discipline
+#   • Everything below (build + test + secret-scan + license-report + CLA/DCO + the no-GPU discipline
 #     gates) → free GitHub-hosted runners, on every push/PR. This file is that hosted lane; the
 #     internal `ci.yml` is ADAPTED for the GPU lane (the trees its gates read are now public).
 #   • The handful of gates that read the private sidecar (docs/business/, docs/market-analysis/) are
@@ -39,8 +39,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Build (no model blobs required)
-        run: ./gradlew.bat build -x test -PskipWebBuild=false
+      - name: Assemble (no model blobs required)
+        run: ./gradlew.bat assemble -PskipWebBuild=false
       - name: Unit tests (model-dependent tests self-skip when blobs absent)
         run: ./gradlew.bat test
       # Tempdoc 632 — license gate + the NOTICE projection.
@@ -52,7 +52,10 @@ jobs:
       - name: Dump Rust/Cargo (desktop shell) licenses for the NOTICE projection
         run: node scripts/codegen/dump-cargo-licenses.mjs
       - name: Dump frontend (npm) licenses for the NOTICE projection
-        run: cd modules/ui-web && npx --yes license-checker --production --json --relativeOnly > ../../build/npm-licenses.json
+        shell: cmd
+        run: |
+          cd modules\ui-web
+          npx --yes license-checker --production --json --relativeOnly > ..\..\build\npm-licenses.json
       - name: NOTICE / THIRD_PARTY_NOTICES are in sync with their sources
         run: node scripts/ci/check-notices-regen.mjs
       - name: README benchmark numbers match the canonical release (tempdoc 633 #2)
@@ -71,10 +74,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # the DCO check walks the PR's commit range
-      # Require a `Signed-off-by:` trailer on every commit (DCO, no CLA — CONTRIBUTING.md documents it).
-      # tim-actions/dco fails the check if any commit in the range lacks a matching sign-off trailer.
-      # Alternative the founder may prefer post-flip: install the GitHub "DCO" app on the repo (634).
-      - uses: tim-actions/dco@v1.1.0
+          fetch-depth: 0          # the DCO check walks the PR/push commit range
+      - uses: actions/setup-node@v4
         with:
-          commit-message-regex: '^Signed-off-by: .+ <.+@.+>$'
+          node-version: '24'
+      # CLA assistant handles the one-time contributor agreement; DCO remains the per-commit provenance check.
+      - name: DCO sign-off trailers
+        run: node scripts/ci/check-dco.mjs

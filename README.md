@@ -64,11 +64,11 @@ the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
-| BEIR / SciFact | **0.751** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
-| Enron-QA | 0.740 | |
-| MIRACL-de (German) | 0.725 | multilingual — no per-language tuning |
-| MIRACL-fr (French) | 0.701 | |
-| CourtListener (legal) | 0.62 | hybrid default; legal rises to **0.97** in `full` mode (all retrievers + rerank) |
+| BEIR / SciFact | **0.757** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
+| Enron-QA | 0.719 | |
+| MIRACL-de (German) | 0.728 | multilingual — no per-language tuning |
+| MIRACL-fr (French) | 0.707 | |
+| CourtListener (legal) | 0.608 | hybrid default; legal rises to **0.97** in `full` mode (all retrievers + rerank) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
@@ -129,7 +129,7 @@ commits are co-authored.
 
 ## Contributing
 
-Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (DCO sign-off; no CLA). Please read
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (CLA + DCO sign-off). Please read
 [`NON-GOALS.md`](NON-GOALS.md) first so a change fits the project's scope. Security: [`SECURITY.md`](SECURITY.md).
 You **don't** need any of the agent/governance machinery to contribute — it's published as transparency
 ([`MAINTAINING.md`](MAINTAINING.md)), not a required path.
