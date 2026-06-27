@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -133,6 +134,7 @@ class StructuredExtractionIntegrationTest {
   }
 
   @Nested
+  @Timeout(60)
   class PdfFixture {
 
     @Test
