@@ -1,9 +1,9 @@
 ---
 title: "Public CI fact lanes in the public repo"
 type: tempdoc
-status: "implemented - local validation complete; remote PR validation pending"
+status: "implemented - remote PR validation recorded; unit-test follow-up remains"
 created: 2026-06-27
-updated: 2026-06-27
+updated: 2026-06-28
 related:
   - 632-go-public-licensing-legal
   - 633-go-public-launch-content
@@ -686,16 +686,57 @@ Notes:
 
 ### Remaining follow-up
 
-- Push the branch and confirm GitHub creates separate `Public claims`, `License and notices`,
+- Remote validation now confirms GitHub creates separate `Public claims`, `License and notices`,
   `Build (no model blobs)`, `Unit tests`, `Secret scan`, and `DCO` checks.
-- Compare time-to-first-actionable-failure against the previous 17-18 minute omnibus `build-test`
-  runs.
-- Check Actions cache usage with
-  `gh api repos/eliasjustus/justsearch/actions/cache/usage`; it should remain comfortably below the
-  included 10 GB cache boundary.
 - Configure branch protection later, after the stable check names are observed on the real PR.
 - Reconsider a dedicated `worker-extraction` lane only if hosted evidence continues to show
   parser/PDF/OCR tests dominate late unit-test failures.
+
+## Remote validation notes - 2026-06-28
+
+Remote validation used PR #9 on branch `codex/public-cutover-stabilization`.
+
+The first pushed implementation commit, `a46f48c`, proved the fact-lane shape but failed `DCO` in
+about 13 seconds because the commit was missing a sign-off trailer. That was a useful early
+actionable failure: under the old omnibus `build-test` shape, the provenance mistake could be
+visually drowned behind the long Windows lane. The commit was amended with `git commit --amend -s`,
+producing `c7b1b095fbbe791eeff8dc27bf1c9473f0468be0`, and force-pushed.
+
+The replacement CI run `28303589386` at `c7b1b095fbbe791eeff8dc27bf1c9473f0468be0` created the
+intended public fact lanes:
+
+| Check | Result | Time |
+| --- | --- | ---: |
+| `cla-assistant` | passed | 6s |
+| `DCO` | passed | 11s |
+| `Secret scan` | passed | 12s |
+| `Public claims` | passed | 17s |
+| `License and notices` | passed | 4m28s |
+| `Build (no model blobs)` | passed | 7m21s |
+| `Unit tests` | failed | 10m45s |
+
+The observed improvement is check attribution, not a full green build yet. Previously, late failures
+inside the single hosted Windows `build-test` job commonly took 17-18 minutes to become actionable.
+The new shape produced independently green public-claim, license/notice, build, provenance, and
+secret-scan facts while isolating the remaining red to `Unit tests`.
+
+The remaining remote failure is not currently evidence that the fact-lane design is miswired.
+`Unit tests` failed in `:modules:app-services:test` on
+`AiInstallServiceLateBindTest > setKnowledgeServer_replacesInitialNull()` and
+`setKnowledgeServer_acceptsNullToReleaseReference()` with `IllegalStateException` at lines 52 and
+68. The same targeted test passed locally with
+`./gradlew.bat :modules:app-services:test --tests "*AiInstallServiceLateBindTest*" --console=plain`.
+Earlier remote evidence also showed a hosted-only unit failure in a different unit-test area. This
+should be tracked as hosted test hardening or future test-lane ownership work, not as a reason to
+collapse the public CI facts back into an omnibus lane.
+
+Actions cache usage after the remote run was 119,466,055 bytes across four active caches, still far
+below the 10 GB included cache boundary. This validates the "free to use" constraint for this pass:
+the workflow uses standard hosted runners and ordinary dependency caches, with no larger runners,
+paid cache expansion, or build-output caches.
+
+Branch protection remains unmodified. The durable follow-up is to decide which observed stable
+checks should become required once the unit-test hosted failure is understood.
 
 ## Done shape
 
