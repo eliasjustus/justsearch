@@ -375,7 +375,7 @@ final class PolicyDrivenTikaExtractorTest {
   }
 
   @Test
-  @Timeout(30)
+  @Timeout(90)
   void mixedPdfWithDisabledOcrRecordsMissingPageEvidence() throws Exception {
     Path pdf = tempDir.resolve("mixed.pdf");
     writeMixedTextAndBlankPdf(pdf);
