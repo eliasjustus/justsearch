@@ -9,10 +9,10 @@ const policy = {
     {
       name: 'CI',
       path: '.github/workflows/ci.yml',
-      class: 'primary-manual-gate',
-      owner: 'ADR-0026',
+      class: 'public-hosted-fact-lanes',
+      owner: 'ADR-0044',
       failureDefault: 'product-regression',
-      staleDays: 30,
+      staleDays: 14,
     },
     {
       name: 'Build Installer',
@@ -86,7 +86,7 @@ const now = new Date('2026-04-24T12:00:00.000Z');
     policy,
     now,
     runs: [
-      run(1, 'CI', 'success', '2026-04-24T11:00:00.000Z', 'workflow_dispatch'),
+      run(1, 'CI', 'success', '2026-04-24T11:00:00.000Z', 'pull_request'),
       run(2, 'Build Installer', 'success', '2026-04-24T10:00:00.000Z'),
       run(3, 'Agent Live Eval Nightly', 'success', '2026-04-24T09:00:00.000Z'),
       run(4, 'Phase 3 Observability Nightly', 'success', '2026-04-24T08:00:00.000Z'),

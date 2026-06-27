@@ -56,7 +56,7 @@ Entity IDs are indexed from the start, providing an incremental path: if users l
 - Entity disambiguation: `modules/indexer-worker/src/main/java/io/justsearch/indexerworker/ner/DisambiguationService.java`
 - SQLite cluster store: `entity_clusters` + `entity_overrides` tables in `jobs.db`
 - Entity facets: `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FacetingEngine.java`
-- Full analysis: `docs/future-features/knowledge-extraction.md`
+- Full analysis: retained in historical design notes; this ADR is the current canonical decision.
 
 **Generalization note:** The entity faceting pattern (keyword field + `SortedDocValuesField`) has been extended to structured document metadata fields (`meta_source`, `meta_author`, `meta_category`) in tempdoc 362, establishing it as a generalized indexing pattern for faceted filtering.
 

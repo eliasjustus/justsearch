@@ -46,7 +46,7 @@ Six items, split into two groups by a thin horizontal divider:
 | 2 | `library` | Library | Library | amber | Primary |
 | 3 | `brain` | Brain | AI Brain | teal | Primary |
 | 4 | `health` | Activity | Health | emerald | Primary |
-| 5 | `help` | HelpCircle | Help | *(no tint property)* | Secondary |
+| 5 | `help` | HelpCircle | Help | _(no tint property)_ | Secondary |
 | 6 | `settings` | Settings | Settings | purple | Secondary |
 
 ### Active state
@@ -213,13 +213,13 @@ Sections in render order:
 
    **Search Quality Features** (`SearchQualityFeaturesSection`): An extracted component that shows the active/inactive status of search quality subsystems (e.g., reranking, citation scoring). The component corrects ONNX feature status using system store data before rendering — it reads `rerankerOrtCuda` and `rerankerModelPath` from `/api/status` (ground truth reflecting the Worker's actual ORT session state) rather than relying solely on ONNX model discovery (which reflects static file presence and can report "Inactive" when the model is actually executing via env-var configuration). Displays status like "1/2 active" with per-feature detail (e.g., "Search reranking: Active" + correct model path).
 
-3. **Policy & Packs** *(Tauri only, collapsible `<details>`)* — `PolicyHelperPanel` shows:
+3. **Policy & Packs** _(Tauri only, collapsible `<details>`)_ — `PolicyHelperPanel` shows:
    - Effective policy (machine vs. user)
    - Pack allowlist configuration status
    - Connection info (endpoint, port, source)
    - Copy buttons for machine/user policy JSON templates
 
-4. **GPU Acceleration** *(Tauri only)* — Runtime variant management:
+4. **GPU Acceleration** _(Tauri only)_ — Runtime variant management:
    - GPU capabilities display (source, CUDA available, driver, VRAM total/used formatted as human-readable bytes e.g. "8.0 GB")
    - Installed runtime variants with Activate/Deactivate buttons
    - Policy-gated: warns with user-friendly text when GPU acceleration or external inference servers are restricted by administrator policy. Activate button shows "Blocked by administrator policy" tooltip when policy prevents activation.
@@ -231,13 +231,13 @@ Sections in render order:
    - Repair shares the install progress UI: phase stepper dots (download/verify/apply/smoke_test), progress bar, and bytes downloaded/total
    - Policy-gated: disabled when `downloadsEnabled=false`
 
-6. **Import AI Pack** *(Tauri only)* — Offline/air-gapped import:
+6. **Import AI Pack** _(Tauri only)_ — Offline/air-gapped import:
    - Preflight: compute manifest SHA-256 without installing
    - Import .zip or folder
    - Policy-gated: requires allowlist to be configured
    - Auto-creates/updates user policy for pack allowlisting
 
-7. **AI Home** *(Tauri only)* — File system paths:
+7. **AI Home** _(Tauri only)_ — File system paths:
    - Home directory path with "Open folder" button
    - Reveal buttons: logs dir, llama-server.log, headless-backend.log
    - Export diagnostics button
@@ -254,7 +254,7 @@ Sections in render order:
    - Browse buttons for each model (Tauri only)
    - "Restart worker to apply embedding model" button
 
-10. **Inference settings** *(inside Models section, Advanced UI only)*:
+10. **Inference settings** _(inside Models section, Advanced UI only)_:
     - Context Window slider (512–32768 tokens, step 512)
     - Max tokens slider (64–16384 tokens, step 64)
     - GPU Layers: "Auto (CPU-only)" checkbox (default on, hides slider). When unchecked, slider appears (1–100 layers). Explanatory text above: v1 ships CPU-only runtime, manual offloading requires GPU-capable runtime.
@@ -286,8 +286,8 @@ Four metric cards in a 2×2 (or 4-column on large screens) grid:
 | Metric | Icon | Icon color | Value | Status dot |
 |--------|------|-----------|-------|------------|
 | Files | FileText | teal | `indexedDocuments.toLocaleString()` | green if >0, neutral otherwise |
-| Size | Database | blue | formatted bytes | *(none)* |
-| Memory | MemoryStick | purple | `{MB} MB` with "of {max}" subtitle | *(none)* |
+| Size | Database | blue | formatted bytes | _(none)_ |
+| Memory | MemoryStick | purple | `{MB} MB` with "of {max}" subtitle | _(none)_ |
 | Queue | Zap | amber if >0, muted otherwise | pending job count | processing (blue pulse) if >0, neutral otherwise |
 
 ### Connection card
@@ -472,7 +472,7 @@ Note: the Help surface's shortcuts list (`shell-v0/views/HelpSurface.ts`) should
 | Key | Description |
 |-----|-------------|
 | `/` | Focus search bar |
-| `/` | Enter command mode (when search is focused) *(duplicate key — see note)* |
+| `/` | Enter command mode (when search is focused) _(duplicate key — see note)_ |
 | `??` | Enter AI chat mode |
 | `Ctrl+Enter` | Open selected file |
 | `↑ ↓` | Navigate results |
@@ -500,8 +500,8 @@ The `ui.mode` setting (`'simple'` default / `'advanced'`) gates features across 
 |------|-------------|-------------------|
 | Library | Add/remove folders, status display | Reindex All button, exclude patterns section |
 | Brain | BrainSimplePanel (state machine) | Full configuration: compatibility cards, policy, GPU booster, model slots, inference settings |
-| Settings | All 6 sections visible | *(no difference)* |
-| Health | Full dashboard | *(no difference)* |
+| Settings | All 6 sections visible | _(no difference)_ |
+| Health | Full dashboard | _(no difference)_ |
 
 The toggle lives in Settings → Interface, but BrainView's simple panel also has a "Switch to Advanced" link.
 

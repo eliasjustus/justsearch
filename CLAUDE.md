@@ -192,7 +192,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 
 Build fails on PMD/Spotless violations — run `spotlessApply` first.
 
-CI is **manual-only** ([ADR-0026](docs/decisions/0026-manual-ci-triggering.md)). Local-first verification is the primary discipline. For CI dispatch commands and workflow failure triage, load `/ci-triage`. For pipeline profiling flags and live-stack lifecycle, load `/jseval` and `/dev-stack`.
+Public hosted `CI` runs on pull requests, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted and specialty workflows remain manually dispatched unless a later ADR changes them. Local-first verification is still the primary discipline. For CI dispatch commands and workflow failure triage, load `/ci-triage`. For pipeline profiling flags and live-stack lifecycle, load `/jseval` and `/dev-stack`.
 
 Pre-merge script checks — run the check whose **subject** you edited before merging (CI runs these too; per-gate rationale lives in each script's header + `governance/registry.v1.json`). Commands: `node scripts/ci/<name>.mjs` or `node scripts/governance/run.mjs --gate <id> --mode gate`. <!-- tempdoc 620 Move 1: compressed from per-gate paragraphs; the governance-hint/consult-doc-hint hooks also surface the relevant gate per edit. -->
 

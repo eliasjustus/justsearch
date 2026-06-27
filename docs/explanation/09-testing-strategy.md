@@ -149,7 +149,7 @@ the individual tools when their subjects change.
 Per-subject pre-merge checks (invoke individually; CLAUDE.md
 "Verification Workflow" step 5 is the canonical list):
 
-- `node scripts/ci/check-workflow-triggers.mjs` — ADR-0026 compliance after editing `.github/workflows/*.yml`
+- `node scripts/ci/check-workflow-triggers.mjs` — workflow trigger policy compliance after editing `.github/workflows/*.yml`
 - `node scripts/ci/check-root-readme.mjs` — README freshness after editing the root README
 - `node scripts/governance/run.mjs --gate wire --mode gate` — wire-evolution gate under the unified discipline-gate kernel (tempdoc 530 Phase F; supersedes the prior standalone `scripts/contract-governance/` runner); load-bearing for any PR touching `contracts/**`
 
@@ -184,9 +184,10 @@ Beyond *volume* (the `test-to-code` ratchet) and *execution* (JaCoCo coverage), 
 discipline gate (tempdoc 555) measures whether tests on designated **law-bearing seams** actually
 *constrain* them — via PIT mutation **test-strength** (killed/covered) plus a no-coverage ceiling, over
 the pure seams declared in `governance/logic-seams.v1.json`. Because PIT re-runs the suite per mutant,
-it is **not** in `check`; it runs in the opt-in `runMutation` CI lane (`scripts/ci/report-pit-strength.mjs
---run` → `node scripts/governance/run.mjs --gate test-efficacy --mode gate`). The register's integrity is
-guarded cheaply on every run by `scripts/ci/check-logic-seams.mjs`. See
+it is **not** in `check` or the public hosted `CI` fact lanes. Produce the opt-in evidence manually with
+`node scripts/ci/report-pit-strength.mjs --run`, then gate it with
+`node scripts/governance/run.mjs --gate test-efficacy --mode gate`. The register's integrity is guarded
+cheaply on every run by `scripts/ci/check-logic-seams.mjs`. See
 `docs/reference/contributing/discipline-gate-kernel.md`.
 
 ## Tier 4: AI Judge (Semantic Eval)

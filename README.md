@@ -6,7 +6,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 <!-- badges: <<build status>> · <<latest release>> · <<nDCG benchmark badge>> -->
 
-JustSearch indexes your local documents — PDF, email, Office, and hundreds of formats — and answers questions
+JustSearch is local-first: it indexes your local documents — PDF, email, Office, and hundreds of formats — and answers questions
 over them with cited passages, **without anything leaving your machine.** It combines three retrieval paradigms
 (keyword, dense-vector, learned-sparse) with a cross-encoder reranker, and exposes that retrieval over the
 **Model Context Protocol (MCP)** so any AI agent — local or cloud — can use it as a **private retrieval
@@ -109,7 +109,8 @@ Three local processes, isolated for reliability and so the UI **never touches th
 - **Worker** — owns the Lucene index + the retrieval pipeline (BM25/dense/SPLADE/rerank) + OCR.
 - **Inference** — a local `llama-server` for chat/RAG.
 
-They talk over gRPC on `127.0.0.1`. More: [`docs/explanation/`](docs/explanation/).
+They talk over gRPC on `127.0.0.1`. More: [`docs/explanation/01-system-overview.md`](docs/explanation/01-system-overview.md).
+The public API surface is mapped in [`docs/reference/api-contract-map.md`](docs/reference/api-contract-map.md).
 
 ## Privacy
 
