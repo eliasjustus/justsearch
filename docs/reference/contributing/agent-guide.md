@@ -332,16 +332,17 @@ The public hosted `CI` workflow is split into stable fact lanes: public claims,
 license and notices, no-model build, unit tests, secret scan, and DCO. A red
 check should name the fact that failed rather than one generic build bucket.
 
-The `Unit tests` lane keeps its stable check name, but it also publishes a
-unit-test attribution report from Gradle/JUnit XML. Use that report to identify
-slow modules, slow suites, skipped counts, and hosted runner image identity
-before proposing a workflow split. Do not split the lane solely by runtime
-without an evidence boundary.
+The public unit-test signal is sharded into `Unit tests (app-ui)`, `Unit tests
+(search-worker)`, and `Unit tests (platform-contracts)`. Each shard publishes a
+unit-test attribution report from Gradle/JUnit XML. Use those reports to
+identify slow modules, slow suites, skipped counts, and hosted runner image
+identity before proposing another workflow split. Do not split the lanes solely
+by runtime without an evidence boundary.
 
-`Unit tests` runs with `-PskipWebBuild=true` because the web bundle is owned by
-the separate `Build (no model blobs)` fact lane. Keep that boundary intact: if
-web assets need verification, use or extend the build lane rather than making
-the unit-test lane prove the same fact again.
+The unit-test shards run with `-PskipWebBuild=true` because the web bundle is
+owned by the separate `Build (no model blobs)` fact lane. Keep that boundary
+intact: if web assets need verification, use or extend the build lane rather
+than making unit-test lanes prove the same fact again.
 
 The public-claims lane verifies `scripts/ci/test-evidence-policy.v1.json`.
 Whenever a Java test is skipped under `CI=true`, or a non-stress JUnit tag is

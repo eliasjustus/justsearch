@@ -152,9 +152,59 @@ jobs:
         run: ./gradlew.bat assemble -PskipWebBuild=false
 
   unit-tests:
-    name: Unit tests
+    name: Unit tests (${{ matrix.lane }})
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: app-ui
+            artifact: unit-test-attribution-app-ui
+            runner_label: windows-latest/app-ui
+            gradle_tasks: >-
+              :modules:app-agent:test
+              :modules:app-agent-api:test
+              :modules:app-api:test
+              :modules:app-api-tck:test
+              :modules:app-config:test
+              :modules:app-launcher:test
+              :modules:app-observability:test
+              :modules:app-services:test
+              :modules:app-util:test
+              :modules:ui:test
+          - lane: search-worker
+            artifact: unit-test-attribution-search-worker
+            runner_label: windows-latest/search-worker
+            gradle_tasks: >-
+              :modules:adapters-lucene:test
+              :modules:configuration:test
+              :modules:core:test
+              :modules:core-contracts:test
+              :modules:indexer-worker:test
+              :modules:indexing:test
+              :modules:ipc-common:test
+              :modules:worker-core:test
+              :modules:worker-services:test
+          - lane: platform-contracts
+            artifact: unit-test-attribution-platform-contracts
+            runner_label: windows-latest/platform-contracts
+            gradle_tasks: >-
+              :modules:ai-backend:test
+              :modules:api-contract-projection-java:test
+              :modules:app-inference:test
+              :modules:benchmarks:test
+              :modules:dead-code-audit:test
+              :modules:extension-substrate:test
+              :modules:gpu-bridge:test
+              :modules:infra-core:test
+              :modules:ort-common:test
+              :modules:prompt-support:test
+              :modules:reranker:test
+              :modules:ssot-tools:test
+              :modules:system-tests:test
+              :modules:telemetry:test
+              :modules:test-support:test
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -170,17 +220,17 @@ jobs:
 
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
-        run: ./gradlew.bat test -PskipWebBuild=true
+        run: ./gradlew.bat ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
 
       - name: Report unit-test attribution
         if: always()
-        run: node scripts/ci/report-unit-test-attribution.mjs --runner-label windows-latest --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+        run: node scripts/ci/report-unit-test-attribution.mjs --runner-label "${{ matrix.runner_label }}" --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
 
       - name: Upload unit-test attribution
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: unit-test-attribution
+          name: ${{ matrix.artifact }}
           path: |
             build/ci/unit-test-attribution.json
             build/ci/unit-test-attribution.md

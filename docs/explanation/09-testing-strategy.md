@@ -122,16 +122,16 @@ Skips fall into two accepted categories:
 ## Test Evidence Lanes
 
 Public CI uses named evidence lanes rather than one anonymous test bucket. The hosted `Unit tests`
-check proves ordinary JVM regression evidence on the public hosted runner. The separate
-`Build (no model blobs)` lane owns the UI web-bundle build, so `Unit tests` runs Gradle with
-`-PskipWebBuild=true`. The unit lane does not claim to run every parser fixture, worker-process
+shards prove ordinary JVM regression evidence on the public hosted runner. The separate
+`Build (no model blobs)` lane owns the UI web-bundle build, so the unit-test shards run Gradle with
+`-PskipWebBuild=true`. The unit lanes do not claim to run every parser fixture, worker-process
 integration test, system test, stress test, model-dependent AI test, or web asset build.
 
 Evidence tiers:
 
 | Tier | Default evidence | Ownership rule |
 |---|---|---|
-| Hosted-required unit evidence | `./gradlew.bat test -PskipWebBuild=true` in the public `Unit tests` lane | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
+| Hosted-required unit evidence | `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)` with `-PskipWebBuild=true` | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
 | Local parser/fixture evidence | PDF/OCR/Office fixture tests disabled under `CI=true` | Must be declared in `scripts/ci/test-evidence-policy.v1.json` with replacement evidence and cadence. |
 | Local worker-process integration evidence | `src/integrationTest` cases that spawn worker/server processes | Must be declared when skipped under `CI=true`; run locally before changing the owned integration surface. |
 | Opt-in system/AI evidence | `modules/system-tests` tags and opt-in Gradle flags | Owned by the system-tests source sets and documented tags. |

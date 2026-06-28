@@ -685,9 +685,43 @@ Local validation for the second slice:
 
 - `$env:CI='true'; ./gradlew.bat test -PskipWebBuild=true --console=plain`
 
+Hosted validation of the second slice from run `28317985433` was green but did not reduce the
+critical path:
+
+- `Unit tests`: 14m16s total, with the Gradle step from `09:32:34Z` to `09:46:17Z`;
+- JUnit XML summed suite time was about 7m11s;
+- the report showed no failure or artifact regression, but the wall-clock result was effectively the
+  same as the previous 14m2s baseline.
+
+That result is important: removing the web-bundle fact from `Unit tests` clarified ownership, but it
+did not solve the wall-clock goal. The remaining implementation now has enough evidence to split the
+unit-test signal by owned JVM surface rather than by arbitrary runtime chunks.
+
+Third implementation slice:
+
+- replace the single `Unit tests` job with a matrix of three owned shards:
+  `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)`;
+- keep all shards on standard `windows-latest` hosted runners;
+- keep `-PskipWebBuild=true` in each unit-test shard;
+- keep the Gradle test result as the source of pass/fail;
+- publish a separate attribution artifact for each shard:
+  `unit-test-attribution-app-ui`, `unit-test-attribution-search-worker`, and
+  `unit-test-attribution-platform-contracts`;
+- keep `Build (no model blobs)` unchanged as the hosted Windows web-bundle and no-model assembly
+  fact.
+
+The split is evidence-shaped:
+
+- `app-ui` owns application service, API, agent, launcher, observability, utility, and UI JVM tests;
+- `search-worker` owns indexing, Lucene, worker, IPC, core, and configuration JVM tests;
+- `platform-contracts` owns inference, native/platform support, API contract projection, stress
+  substrate modules, system-test default tests, and governance-style test modules.
+
 Remaining follow-up:
 
-- hosted validation of the second slice to confirm the expected wall-clock reduction;
+- hosted validation of the three unit-test shards to confirm wall-clock reduction and check-name
+  behavior;
 - which tests are Windows-specific versus platform-neutral;
-- whether a split would preserve or improve required public facts;
-- a recommended lane shape, including any checks that should stay local-only, advisory, or required.
+- whether any shard should later move to Ubuntu after Windows-specific assumptions are audited;
+- whether `Build (no model blobs)` becomes the next long pole after unit-test sharding;
+- which checks should become required once branch protection is introduced.
