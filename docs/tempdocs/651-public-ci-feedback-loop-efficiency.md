@@ -788,9 +788,11 @@ The following documentation-only push did trigger the expected `pull_request` CI
 `gh pr checks 9`; `Public claims`, `DCO`, `Secret scan`, `License and notices`, and
 `Build (no model blobs)` passed. `Unit tests` failed again in
 `StructuredExtractionIntegrationTest > PdfFixture > pdfTextLayerExtractsContent()` after the 60
-second fixture budget, so the PDF fixture budget was raised to 120 seconds. This preserves the same
-PDF text-layer assertion while matching the minute-scale budgets already used by rich-document
-integration-style tests in the repo.
+second fixture budget. A later run with a larger budget still timed out, so the failure was not just
+an undersized JUnit guard. The root fix was to make the default structured PDF path explicitly set
+Tika's PDF OCR strategy to `NO_OCR`, while leaving the dedicated `extractWithOcr` path as the OCR
+entrypoint. The fixture keeps its 60 second guard so it still catches accidental slow-path
+regressions.
 
 ## Done shape
 
