@@ -227,7 +227,7 @@ Rejected because:
   CORE-equivalent in V1, not dead code)
 - Tempdoc 421 (frontend-destination-architecture stack)
   §Plugin trust model — V1/V1.5/V2 tiers
-- MCP 2025-06-18: https://modelcontextprotocol.io/specification/2025-06-18/
+- [MCP 2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/)
   (Tool annotations as hints; Security Considerations)
 - ADR-0023 — API responses declare runtime context (the honesty
   discipline this ADR composes with)

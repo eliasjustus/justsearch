@@ -119,6 +119,39 @@ Skips fall into two accepted categories:
 * **Integration-only**: gated by `describeRealBackend`, require `VITE_JUSTSEARCH_API_PORT` and a live backend with indexed data.
 * **Runtime-conditional**: defensive `test.skip(...)` for mode/state-dependent UI elements; each has parallel stub-backed coverage in dedicated specs.
 
+## Test Evidence Lanes
+
+Public CI uses named evidence lanes rather than one anonymous test bucket. The hosted `Unit tests`
+shards prove ordinary JVM regression evidence on the public hosted runner. The separate
+`Build (no model blobs)` lane owns the UI web-bundle build, so the unit-test shards run Gradle with
+`-PskipWebBuild=true`. The unit lanes do not claim to run every parser fixture, worker-process
+integration test, system test, stress test, model-dependent AI test, or web asset build.
+
+Evidence tiers:
+
+| Tier | Default evidence | Ownership rule |
+|---|---|---|
+| Hosted-required unit evidence | `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)` with `-PskipWebBuild=true` | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
+| Local parser/fixture evidence | PDF/OCR/Office fixture tests disabled under `CI=true` | Must be declared in `scripts/ci/test-evidence-policy.v1.json` with replacement evidence and cadence. |
+| Local worker-process integration evidence | `src/integrationTest` cases that spawn worker/server processes | Must be declared when skipped under `CI=true`; run locally before changing the owned integration surface. |
+| Opt-in system/AI evidence | `modules/system-tests` tags and opt-in Gradle flags | Owned by the system-tests source sets and documented tags. |
+| Stress evidence | `@Tag("stress")` tests | Owned by `scripts/ci/stress-suite-policy.v1.json` and verified by `verify-stress-suite-policy.mjs`. |
+| Experiment/evidence tags | `@Tag("experiment")` / `@Tag("evidence")` | Must be declared in `test-evidence-policy.v1.json`; they are development evidence, not branch-protection candidates. |
+
+The hosted public checks that are branch-protection candidates are declared in
+`scripts/ci/workflow-signal-policy.v1.json`. Keep the three unit-test shard names stable unless
+the branch-protection required checks are updated in the same change.
+
+The guard for this ownership model is:
+
+```bash
+node scripts/ci/verify-test-evidence-policy.mjs
+```
+
+The public `Unit tests` lane also publishes a unit-test attribution report from existing Gradle/JUnit
+XML. That report shows module totals, slow suites, skips, failures, errors, and hosted runner image
+identity. It is diagnostic evidence only; Gradle remains the source of pass/fail truth.
+
 ## Deterministic UI evidence (EvidenceBundle v1)
 
 > **Removed (tempdoc 638):** the EBv1 capture harness (`modules/ui-web/scripts/capture-evidence-bundle.mjs`) was deleted. For screenshot-driven UI/UX verification, use the `jseval ui-shot` harness (load the `/ui-check` skill). This section is retained as historical design context only.
@@ -149,7 +182,7 @@ the individual tools when their subjects change.
 Per-subject pre-merge checks (invoke individually; CLAUDE.md
 "Verification Workflow" step 5 is the canonical list):
 
-- `node scripts/ci/check-workflow-triggers.mjs` — ADR-0026 compliance after editing `.github/workflows/*.yml`
+- `node scripts/ci/check-workflow-triggers.mjs` — workflow trigger policy compliance after editing `.github/workflows/*.yml`
 - `node scripts/ci/check-root-readme.mjs` — README freshness after editing the root README
 - `node scripts/governance/run.mjs --gate wire --mode gate` — wire-evolution gate under the unified discipline-gate kernel (tempdoc 530 Phase F; supersedes the prior standalone `scripts/contract-governance/` runner); load-bearing for any PR touching `contracts/**`
 
@@ -184,9 +217,10 @@ Beyond *volume* (the `test-to-code` ratchet) and *execution* (JaCoCo coverage), 
 discipline gate (tempdoc 555) measures whether tests on designated **law-bearing seams** actually
 *constrain* them — via PIT mutation **test-strength** (killed/covered) plus a no-coverage ceiling, over
 the pure seams declared in `governance/logic-seams.v1.json`. Because PIT re-runs the suite per mutant,
-it is **not** in `check`; it runs in the opt-in `runMutation` CI lane (`scripts/ci/report-pit-strength.mjs
---run` → `node scripts/governance/run.mjs --gate test-efficacy --mode gate`). The register's integrity is
-guarded cheaply on every run by `scripts/ci/check-logic-seams.mjs`. See
+it is **not** in `check` or the public hosted `CI` fact lanes. Produce the opt-in evidence manually with
+`node scripts/ci/report-pit-strength.mjs --run`, then gate it with
+`node scripts/governance/run.mjs --gate test-efficacy --mode gate`. The register's integrity is guarded
+cheaply on every run by `scripts/ci/check-logic-seams.mjs`. See
 `docs/reference/contributing/discipline-gate-kernel.md`.
 
 ## Tier 4: AI Judge (Semantic Eval)

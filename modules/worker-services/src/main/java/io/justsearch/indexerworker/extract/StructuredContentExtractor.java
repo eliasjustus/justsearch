@@ -239,6 +239,8 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
       configClass
           .getMethod("setExtractMarkedContent", boolean.class)
           .invoke(config, true);
+      configurePdfOcrStrategy(configClass, config, "NO_OCR");
+      invokeIfPresent(configClass, config, "setExtractInlineImages", boolean.class, false);
       // ParseContext.set(Class<T>, T) — use raw types to match
       parseContext
           .getClass()
@@ -256,9 +258,7 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
     try {
       Class<?> configClass = Class.forName("org.apache.tika.parser.pdf.PDFParserConfig");
       Object config = configClass.getDeclaredConstructor().newInstance();
-      Class<?> strategyClass = Class.forName("org.apache.tika.parser.pdf.PDFParserConfig$OCR_STRATEGY");
-      Object strategy = Enum.valueOf((Class<Enum>) strategyClass.asSubclass(Enum.class), "OCR_ONLY");
-      configClass.getMethod("setOcrStrategy", strategyClass).invoke(config, strategy);
+      configurePdfOcrStrategy(configClass, config, "OCR_ONLY");
       invokeIfPresent(configClass, config, "setExtractInlineImages", boolean.class, true);
       parseContext
           .getClass()
@@ -267,6 +267,20 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
       log.debug("PDF OCR-only extraction enabled");
     } catch (Exception e) {
       log.debug("Could not enable PDF OCR strategy: {}", e.getMessage());
+    }
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static void configurePdfOcrStrategy(
+      Class<?> configClass, Object config, String strategyName) {
+    try {
+      Class<?> strategyClass =
+          Class.forName("org.apache.tika.parser.pdf.PDFParserConfig$OCR_STRATEGY");
+      Object strategy =
+          Enum.valueOf((Class<Enum>) strategyClass.asSubclass(Enum.class), strategyName);
+      configClass.getMethod("setOcrStrategy", strategyClass).invoke(config, strategy);
+    } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
+      // Tika version differences are handled by configuring only supported setters.
     }
   }
 

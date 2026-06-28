@@ -46,7 +46,7 @@ import org.junit.jupiter.api.io.TempDir;
  * </ul>
  *
  * <p>Tagged {@code @Tag("stress")} so it's excluded by default; opt in with
- * {@code -PincludeStress=true} or via {@code gh workflow run ci.yml -f runStress=true}.
+ * {@code -PincludeStress=true}.
  */
 @Tag("stress")
 class LifecycleStressTest {

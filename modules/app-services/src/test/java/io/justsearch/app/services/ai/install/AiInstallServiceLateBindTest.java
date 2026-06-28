@@ -2,8 +2,11 @@ package io.justsearch.app.services.ai.install;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.mockito.Mockito.mock;
 
 import java.nio.file.Path;
+import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,11 +49,7 @@ final class AiInstallServiceLateBindTest {
 
     assertNull(svc.knowledgeServerForTest(), "field starts null when constructor passes null");
 
-    // Constructing a real KnowledgeServerBootstrap requires worker bootstrap
-    // dependencies; we only need to prove the setter mutates the field. A
-    // bare instance suffices since the test asserts identity, not behaviour.
-    var ks =
-        new io.justsearch.app.services.worker.KnowledgeServerBootstrap();
+    KnowledgeServerBootstrap ks = mock(KnowledgeServerBootstrap.class);
     svc.setKnowledgeServer(ks);
 
     assertNotNull(
@@ -58,6 +57,7 @@ final class AiInstallServiceLateBindTest {
         "setKnowledgeServer must mutate the volatile field — pre-alpha.17 the"
             + " field was final and tryRestartWorkerBestEffort silently no-op'd"
             + " for the entire process lifetime (374 alpha.17 R3).");
+    assertSame(ks, svc.knowledgeServerForTest(), "late-bind must store the provided bootstrap");
   }
 
   /** Late-bind: non-null → null is allowed (worker shutdown should propagate). */
@@ -65,7 +65,7 @@ final class AiInstallServiceLateBindTest {
   void setKnowledgeServer_acceptsNullToReleaseReference() {
     AiInstallService svc =
         new AiInstallService(null, null, null, null, tmp);
-    var ks = new io.justsearch.app.services.worker.KnowledgeServerBootstrap();
+    KnowledgeServerBootstrap ks = mock(KnowledgeServerBootstrap.class);
     svc.setKnowledgeServer(ks);
 
     svc.setKnowledgeServer(null);

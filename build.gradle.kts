@@ -466,9 +466,8 @@ val assembleDesktopDist = tasks.register<CopyLauncherDist>("assembleDesktopDist"
 
 tasks.register("verifyPackaging") {
   group = "verification"
-  description = "Alias that assembles the distribution and runs :reports:verifyDist."
+  description = "Alias that assembles the distribution for packaging verification."
   dependsOn(assembleDesktopDist)
-  dependsOn(":reports:verifyDist")
 }
 
 // NOTE: The legacy JavaFX UI automation lane has been removed. Standardized evidence capture is now handled via EvidenceBundle v1
@@ -501,10 +500,6 @@ plugins.apply("conventions.deps-hygiene")
 // Apply build-logic conventions
 // Root-level cross-project configuration moved to the precompiled
 // convention plugin `conventions.jvm-base`, applied per-module.
-
-// Aggregated reports are provided by the :reports project via
-// :reports:testAggregateTestReport and :reports:testCodeCoverageReport.
-// Both are configuration-cache compatible as of Gradle 9.1.0.
 
 // Generate thresholds doc from build configuration
 val coverageLineMin = providers.gradleProperty("coverage.line.min").orElse("0.80")
@@ -597,7 +592,6 @@ allprojects {
 
 tasks.named("check") {
   dependsOn(ssotChecks)
-  dependsOn(":reports:check")
 }
 // (reverted) buildscript locking removed
 

@@ -317,66 +317,72 @@ When editing files under `modules/ui-web/src/`, use `jseval ui-shot` for targete
 - **Auto-hint**: The `ui-shot-hint` PostToolUse hook automatically suggests relevant steps after edits to `.ts` files under `modules/ui-web/src/`. The hint is lightweight (<50ms, no process spawning) and the agent decides whether to capture.
 - **Full reference**: Load the `/ui-check` skill for the complete step registry, file-to-step index, and worktree-aware auto-serve details.
 
-### 3.5. When to trigger CI (manual-only policy)
+### 3.5. CI signal model
 
-Every repository workflow runs **only on `workflow_dispatch`** per
-[ADR-0026](../../decisions/0026-manual-ci-triggering.md) and its
-2026-05-08 amendment. No `.github/workflows/*.yml` workflow may have a
-`push`, `pull_request`, or `schedule` trigger. Local verification is the
-primary discipline; remote workflows exist as a dispatch-on-demand
-verification tool.
+The public repository has two CI postures:
 
-Release/installer workflows are not exceptions. Dispatch
-`build-installer.yml` manually against a tag ref when you need release
-context.
+- The standard hosted `CI` workflow runs automatically on pull requests and
+  pushes to `main`, and can also be dispatched manually. ADR-0044 owns this
+  public hosted lane.
+- Self-hosted, release, security, and benchmark/specialty workflows stay
+  manually dispatched unless a later ADR changes their trigger policy. ADR-0026
+  remains the historical basis for that manual-specialty posture.
 
-**Trigger `ci.yml` after** any of:
+The public hosted `CI` workflow is split into stable fact lanes: public claims,
+license and notices, no-model build, unit tests, and secret scan. A red
+check should name the fact that failed rather than one generic build bucket.
 
-- Substantive Gradle-build or test-surface changes that you want validated
-  on the CI-identical environment (Windows self-hosted, Java 25, matching
-  cache layout).
-- Lockfile or schema regenerations (`resolveAndLockAll`, `:app-api:updateSchemas`)
-  where drift would fail on a clean machine.
-- Concurrency-relevant edits to `NativeSessionHandle` / `SessionHandle` /
-  any `@Tag("stress")` test subject — run with `runStress=true` so the
-  stress suite exercises your change. There is no scheduled stress run;
-  agents touching these files are the only trigger point.
-- Dependency upgrades that pass locally but might surface transitive
-  skew in the `Lock skew gate` step.
+The public unit-test signal is sharded into `Unit tests (app-ui)`, `Unit tests
+(search-worker)`, and `Unit tests (platform-contracts)`. Each shard publishes a
+unit-test attribution report from Gradle/JUnit XML. Use those reports to
+identify slow modules, slow suites, skipped counts, and hosted runner image
+identity before proposing another workflow split. Do not split the lanes solely
+by runtime without an evidence boundary.
 
-**Trigger `docs-lint.yml`** after edits under `docs/**`, `scripts/docs/**`,
-or `scripts/architecture/module-deps.mjs` — only if you want remote
-verification. Locally, `node scripts/docs/llmstxt-generate.mjs --check`,
-`node scripts/architecture/module-deps.mjs --check-canonical`, and
-`npx markdownlint 'docs/**/*.md'` cover the same surface and should run
-before pushing.
+The unit-test shards run with `-PskipWebBuild=true` because the web bundle is
+owned by the separate `Build (no model blobs)` fact lane. Keep that boundary
+intact: if web assets need verification, use or extend the build lane rather
+than making unit-test lanes prove the same fact again.
 
-**Trigger the nightly/soak workflows** when you've changed a subject of
-their gate:
+The public-claims lane verifies `scripts/ci/test-evidence-policy.v1.json`.
+Whenever a Java test is skipped under `CI=true`, or a non-stress JUnit tag is
+introduced, update that policy with the owner, evidence tier, replacement
+signal, and cadence. Stress tags remain governed by
+`scripts/ci/stress-suite-policy.v1.json`.
 
-- `phase-3-observability-nightly.yml` — touched query orchestration,
-  fusion weights, reranker, or anything that could shift σ(nDCG@10).
+Local verification is still required before pushing substantive work. Use the
+automatic PR checks as remote confirmation, not as a replacement for running the
+subject-specific local commands.
+
+**Dispatch `ci.yml` manually** when you need a fresh hosted run outside the
+normal pull-request or push trigger, for example after updating a branch whose
+previous run was cancelled or when rechecking after a transient hosted-runner
+failure.
+
+**Dispatch manual specialty workflows** when you changed a subject of their
+gate:
+
+- `docs-lint.yml` after edits under `docs/**`, `scripts/docs/**`, or
+  `scripts/architecture/module-deps.mjs` if you need remote docs verification.
+- `codeql.yml` when you need semantic code scanning outside GitHub's managed
+  security surfaces.
+- `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
+- `phase-3-observability-nightly.yml` after changes to query orchestration,
+  fusion weights, reranking, or anything that could shift σ(nDCG@10).
 
 The `agent-live-eval-nightly.yml`, `rr219-resilience-governance-nightly.yml`,
 `rr219-resilience-soak-weekly.yml`, `track-g-report-win.yml`, and
 `claim-a-report-win.yml` workflows were retired in slice 3a-1-8f §B.14
-(2026-05-12) — their underlying DAG runners and bench infrastructure
-were deleted by commit `a9c484f59` (2026-03-16); jseval covers the
-substance (`scripts/jseval/` — `agent-eval`, `retrieval-eval`,
-`rag-eval`, `bench-concurrency`, etc.). There is no nightly cadence;
-if you don't dispatch, the signal isn't produced.
+(2026-05-12). Their underlying DAG runners and bench infrastructure were
+deleted by commit `a9c484f59` (2026-03-16); jseval covers the substance
+(`scripts/jseval/` — `agent-eval`, `retrieval-eval`, `rag-eval`,
+`bench-concurrency`, etc.).
 
-**Trigger `ci.yml` before merging a worktree branch to `main`** if the
-change is non-trivial. Branch protection does not require a CI check
-(see ADR-0026 "Consequences"), so the merger bears the discipline.
-
-**How to trigger:**
+**How to trigger and inspect:**
 
 ```text
-gh workflow run ci.yml                              # full build
-gh workflow run ci.yml -f runStress=true            # include stress tests
-gh workflow run ci.yml -f skipFrontend=true         # backend-only changes
-gh workflow run docs-lint.yml                       # docs verification
+gh workflow run ci.yml                              # re-run public hosted fact lanes
+gh workflow run docs-lint.yml                       # manual docs verification
 gh workflow run codeql.yml                          # semantic code scanning
 gh workflow run build-installer.yml --ref <vX.Y.Z>  # installer/release attach
 gh workflow run phase-3-observability-nightly.yml   # σ(nDCG@10) drift gate
@@ -384,11 +390,11 @@ gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```
 
-**Do not rely on remote workflows catching regressions automatically** —
-if you skip the manual dispatch, nothing on the remote side watches the
-branch. Local `./gradlew.bat build`, `./gradlew.bat test`, and the per-subject
-pre-merge checks (CLAUDE.md "Quick Commands → Pre-merge script checks") are the
-first line of defence; remote dispatches are the second.
+Main branch protection requires the stable public check names declared in
+`scripts/ci/workflow-signal-policy.v1.json`. Run
+`node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main`
+with a maintainer token after changing CI job names or branch-protection settings; the default
+pull-request `GITHUB_TOKEN` cannot read branch-protection settings.
 
 ### 3.5.1. CI Failure Troubleshooting
 

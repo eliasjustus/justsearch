@@ -322,11 +322,11 @@ broken.
 the kernel fires only when explicitly invoked. Two invocation paths
 ship:
 
-1. **CI**, `.github/workflows/ci.yml` step `Contract governance
-   gate`, conditional on `contracts/` or IPC-proto changes. Per
-   ADR-0026 the workflow is `workflow_dispatch`-only; the agent
-   dispatching CI on a contract-touching PR is responsible for
-   triggering the run.
+1. **CI**, when a workflow lane explicitly invokes the contract
+   governance gate for `contracts/` or IPC-proto changes. ADR-0044
+   allows the public hosted CI lane to run on pull requests and pushes;
+   self-hosted/specialty workflow activation remains manual unless a
+   later ADR changes it.
 2. **Local invocation**, `node scripts/contract-governance/run.mjs
    --mode gate --self-test`. Per CLAUDE.md "Verification Workflow"
    step 5, this runs alongside the other per-subject pre-merge
@@ -337,12 +337,13 @@ ship:
    whether a "single canonical gate" affordance was structurally
    useful concluded it wasn't.
 
-There is no `push` / `pull_request` auto-trigger. The substrate's
-mechanical-enforcement claim is **conditional on invocation**: the
-gate catches breaks *when run*; the operator is responsible for
-running it before merge. The empirical worked example demonstrating
-the activation gap (a contract-touching commit reaching `main`
-without the gate firing) is slice 3a-1-8f §B.9 (`c815c703b`).
+The substrate's mechanical-enforcement claim is **conditional on
+invocation**: the gate catches breaks *when run*. Public hosted CI can
+now provide automatic activation for lanes that include it, but any
+specialty/manual lane still depends on the operator dispatching it. The
+empirical worked example demonstrating the old activation gap (a
+contract-touching commit reaching `main` without the gate firing) is
+slice 3a-1-8f §B.9 (`c815c703b`).
 Operators relying on this substrate should treat `scripts/gate.ps1`
 as load-bearing for pre-merge verification of contract changes.
 

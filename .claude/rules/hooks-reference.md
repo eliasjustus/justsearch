@@ -69,8 +69,8 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 **Action:** Run the suggested command before commit. The suggestion is the same defect-class guard caught by observations.md item #5 (the 2026-05-08 ConfigWiringTest assertion-class mismatch shipped because the test wasn't re-run after edit).
 
 ## stress-test-hint (PostToolUse → Edit, Write)
-**Behavior:** When you edit a file in `modules/ort-common/` that is a stress-test subject (`NativeSessionHandle`, `SessionHandle`, `OrtSessionAssembler`, `OnnxSessionCache`, `OrtCudaHelper`) or a `*StressTest.java`, this hook reminds you to dispatch CI with `runStress=true`.
-**Action:** Run `gh workflow run ci.yml -f runStress=true` after your changes are committed. ADR-0026 manual-only CI means stress tests only run when explicitly dispatched.
+**Behavior:** When you edit a file in `modules/ort-common/` that is a stress-test subject (`NativeSessionHandle`, `SessionHandle`, `OrtSessionAssembler`, `OnnxSessionCache`, `OrtCudaHelper`) or a `*StressTest.java`, this hook reminds you to run the stress-tagged Gradle tests.
+**Action:** Run `./gradlew.bat test -PincludeStress=true --tests "*Stress*"` before handoff. Stress tests are opt-in, so they only run when explicitly requested.
 
 ## governance-hint (PostToolUse → Edit, Write)
 **Behavior:** When you edit a discipline-gate baseline file (`scripts/ci/npm-audit-ratchet-baseline.v1.json`, `.claude/rules/tier-register.md`) or a changeset under `gates/<id>/.changesets/`, this hook surfaces the relevant `node scripts/governance/run.mjs --gate <id>` command + `--explain <ruleId>` / `--suggest-changeset` next steps. (The `class-size` / `ui-bundle` baselines were removed with those gates — tempdoc 634.)

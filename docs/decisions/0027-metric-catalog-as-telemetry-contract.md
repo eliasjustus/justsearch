@@ -87,7 +87,7 @@ This is the same design philosophy tempdoc 406 shipped for runtime lifecycle (se
 
 - `docs/explanation/08-observability.md` — full lifecycle, wire-format guarantees, test patterns, alternatives considered, namespace ownership table.
 - [ADR-0026](0026-manual-ci-triggering.md) — agent-discipline pattern that the catalog's ArchUnit rule depends on.
-- `docs/future-features/service-identity-lifecycle-pattern.md` — tempdoc 406's lifecycle pattern, mirrored here for telemetry.
+- Service lifecycle pattern — tempdoc 406's lifecycle pattern, mirrored here for telemetry.
 - Implementation tempdoc: tempdoc 417 (tier4/tier5 followups from 406).
 - Tempdoc 419 C3 V1 (2026-04-26) — first non-trivial consumer extending the substrate: 2 new `StatusEndpoint` enum values (`GPU_STATUS_VIEW`, `TELEMETRY_HEALTH_VIEW`), 3 new `surfacedAt(...)` declarations across `WorkerOpsMetricCatalog` (worker side) and `HeadGpuMetricCatalog` (head side), and a parallel `HeadMetricSurfaceContractTest` in `app-services` mirroring the worker-side drift detection. See tempdoc 419 (C3 entry).
 - Tempdoc 419 C3 V2 (2026-04-28) — three named-question HealthEvents consuming the V1 substrate: `telemetry-degraded` (extracted `TelemetryHealthClassifier` shared with `/api/telemetry/health`), `recentDocsPerSec` rate trend (new `worker.documents.indexed.rate_per_sec` gauge with `surfacedAt(CORE_INDEX_VIEW, "recentDocsPerSec")`), and `gpu-saturated` (new head-side `GpuSaturationMonitor` mirroring `OperationalMetrics.ThroughputMonitor` discipline + daemon-thread `GpuSaturationSampler`). Two new `ReadinessDimension` enum constants (`TELEMETRY`, `GPU`) and one new `LifecycleReasonCode` (`GPU_SATURATED`).

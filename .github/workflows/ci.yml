@@ -1,22 +1,13 @@
-# PUBLIC CI — the GitHub-HOSTED LANE for the open-source JustSearch repo (Option C).
+# PUBLIC CI - GitHub-hosted fact lanes for the open-source JustSearch repo.
 #
-# Under Option C (radical transparency) the discipline-gate machinery IS published, so the public repo
-# keeps running the gates — via a SPLIT, not a replacement:
-#   • GPU/perf gates (eval, relevance-ratchet, model-loading) → a SELF-HOSTED runner, with REQUIRED
-#     APPROVAL for fork-PR workflow runs (Settings → Actions → fork-PR approval) so a stranger's PR
-#     cannot run code on your machine. Free GitHub-hosted runners have no GPU, so these can't move.
-#   • Everything below (build + test + secret-scan + license-report + DCO + the no-GPU discipline
-#     gates) → free GitHub-hosted runners, on every push/PR. This file is that hosted lane; the
-#     internal `ci.yml` is ADAPTED for the GPU lane (the trees its gates read are now public).
-#   • The handful of gates that read the private sidecar (docs/business/, docs/market-analysis/) are
-#     made skip-when-absent (Option-C work program, item 2) since the sidecar isn't in the public repo.
-#
-# NOTE: the model .onnx blobs are NOT in the public repo (hosted externally) — that's fine: `build`
-# does not stage models (the stageOnnxModels task is gated by -PincludeOnnxModels), and the
-# model-loading tests are guarded (assumeTrue(Files.exists(...))) so they skip when models are absent.
+# Public pull requests should get fast, owner-specific feedback. Keep each job
+# named after the fact it proves because main branch protection requires these
+# meaningful checks instead of one opaque Windows bucket.
 
 name: CI
+
 on:
+  workflow_dispatch: {}
   pull_request:
   push:
     branches: [main]
@@ -24,57 +15,239 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.14.0"
+  JAVA_VERSION: "25"
+
 jobs:
-  build-test:
-    runs-on: windows-latest      # JustSearch is Windows-first; Tauri/NSIS + the Win build path
-    timeout-minutes: 40
+  public-claims:
+    name: Public claims
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            modules/ui-web/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Workflow trigger policy guard
+        run: node scripts/ci/check-workflow-triggers.mjs
+
+      - name: Test evidence policy guard
+        run: node scripts/ci/verify-test-evidence-policy.mjs
+
+      - name: Root README entrypoint guard
+        run: node scripts/ci/check-root-readme.mjs
+
+      - name: README benchmark numbers match the canonical release
+        run: node scripts/ci/check-readme-benchmark-numbers.mjs
+
+      - name: Verify frontend-stack claims
+        run: node scripts/docs/check-frontend-stack-claims.mjs
+
+      - name: Verify model-name freshness
+        run: node scripts/docs/check-model-freshness.mjs
+
+      - name: Verify privacy claims
+        run: node scripts/docs/check-privacy-claims.mjs
+
+      - name: Verify canonical docs links
+        run: node scripts/docs/verify-canonical-doc-links.mjs
+
+      - name: Verify module dependency doc is up to date
+        run: node scripts/architecture/module-deps.mjs --check-canonical
+
+      - name: Markdownlint canonical docs
+        run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
+
+      - name: Verify llms.txt is up to date
+        run: node scripts/docs/llmstxt-generate.mjs --check
+
+      - name: Verify synced skills are up to date
+        run: node scripts/docs/skills-sync.mjs --check
+
+  license-and-notices:
+    name: License and notices
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: |
             21
-            25
-      - uses: actions/setup-node@v4
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          node-version: '24'
-      - name: Build (no model blobs required)
-        run: ./gradlew.bat build -x test -PskipWebBuild=false
-      - name: Unit tests (model-dependent tests self-skip when blobs absent)
-        run: ./gradlew.bat test
-      # Tempdoc 632 — license gate + the NOTICE projection.
-      # generateLicenseReport / checkLicense need these flags on this repo (jk1 3.1.4 + config-cache +
-      # dependency-locking + cross-project resolution). The verification-metadata.xml now carries the
-      # license-report POM checksums, so `-Dverification=lenient` is NOT needed.
-      - name: Enforce the license allowlist (checkLicense)
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: modules/ui-web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix modules/ui-web
+
+      - name: Enforce the license allowlist
         run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
-      - name: Dump Rust/Cargo (desktop shell) licenses for the NOTICE projection
+
+      - name: Dump Rust/Cargo licenses for the NOTICE projection
         run: node scripts/codegen/dump-cargo-licenses.mjs
-      - name: Dump frontend (npm) licenses for the NOTICE projection
-        run: cd modules/ui-web && npx --yes license-checker --production --json --relativeOnly > ../../build/npm-licenses.json
-      - name: NOTICE / THIRD_PARTY_NOTICES are in sync with their sources
+
+      - name: Dump frontend npm licenses for the NOTICE projection
+        shell: cmd
+        run: |
+          cd modules\ui-web
+          npx --yes license-checker --production --json --relativeOnly > ..\..\build\npm-licenses.json
+
+      - name: NOTICE / THIRD_PARTY_NOTICES are in sync
         run: node scripts/ci/check-notices-regen.mjs
-      - name: README benchmark numbers match the canonical release (tempdoc 633 #2)
-        run: node scripts/ci/check-readme-benchmark-numbers.mjs
+
+  build:
+    name: Build (no model blobs)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            modules/ui-web/package-lock.json
+
+      - name: Assemble without model blobs
+        run: ./gradlew.bat assemble -PskipWebBuild=false
+
+  unit-tests:
+    name: Unit tests (${{ matrix.lane }})
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: app-ui
+            artifact: unit-test-attribution-app-ui
+            runner_label: windows-latest/app-ui
+            gradle_tasks: >-
+              :modules:app-agent:test
+              :modules:app-agent-api:test
+              :modules:app-api:test
+              :modules:app-api-tck:test
+              :modules:app-config:test
+              :modules:app-launcher:test
+              :modules:app-observability:test
+              :modules:app-services:test
+              :modules:app-util:test
+              :modules:ui:test
+          - lane: search-worker
+            artifact: unit-test-attribution-search-worker
+            runner_label: windows-latest/search-worker
+            gradle_tasks: >-
+              :modules:adapters-lucene:test
+              :modules:configuration:test
+              :modules:core:test
+              :modules:core-contracts:test
+              :modules:indexer-worker:test
+              :modules:indexing:test
+              :modules:ipc-common:test
+              :modules:worker-core:test
+              :modules:worker-services:test
+          - lane: platform-contracts
+            artifact: unit-test-attribution-platform-contracts
+            runner_label: windows-latest/platform-contracts
+            gradle_tasks: >-
+              :modules:ai-backend:test
+              :modules:api-contract-projection-java:test
+              :modules:app-inference:test
+              :modules:benchmarks:test
+              :modules:dead-code-audit:test
+              :modules:extension-substrate:test
+              :modules:gpu-bridge:test
+              :modules:infra-core:test
+              :modules:ort-common:test
+              :modules:prompt-support:test
+              :modules:reranker:test
+              :modules:ssot-tools:test
+              :modules:system-tests:test
+              :modules:telemetry:test
+              :modules:test-support:test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Unit tests with model-dependent tests self-skipping
+        id: gradle-test
+        run: ./gradlew.bat ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+
+      - name: Report unit-test attribution
+        if: always()
+        run: node scripts/ci/report-unit-test-attribution.mjs --runner-label "${{ matrix.runner_label }}" --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+
+      - name: Upload unit-test attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            build/ci/unit-test-attribution.json
+            build/ci/unit-test-attribution.md
+            modules/**/build/test-results/test/TEST-*.xml
+          if-no-files-found: warn
 
   secret-scan:
+    name: Secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 0          # full history scan
-      - uses: gitleaks/gitleaks-action@v2
+          fetch-depth: 0
 
-  dco:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0          # the DCO check walks the PR's commit range
-      # Require a `Signed-off-by:` trailer on every commit (DCO, no CLA — CONTRIBUTING.md documents it).
-      # tim-actions/dco fails the check if any commit in the range lacks a matching sign-off trailer.
-      # Alternative the founder may prefer post-flip: install the GitHub "DCO" app on the repo (634).
-      - uses: tim-actions/dco@v1.1.0
-        with:
-          commit-message-regex: '^Signed-off-by: .+ <.+@.+>$'
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

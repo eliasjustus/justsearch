@@ -118,9 +118,8 @@ You do **not** email or post this document. When you open your **first pull requ
 which records your signature against your GitHub account. After that, all your future pull requests
 are covered automatically. Until the CLA is signed, a PR cannot be merged.
 
-Every commit must **additionally** carry a [Developer Certificate of Origin](https://developercertificate.org/)
-sign-off (`git commit -s`) — see [`CONTRIBUTING.md`](CONTRIBUTING.md). The DCO is the per-commit
-provenance check; the CLA is the one-time licence grant. Both are required.
+The CLA is the canonical contributor agreement for JustSearch. Normal pull requests do not require
+a separate per-commit sign-off.
 
 ---
 

@@ -1,14 +1,11 @@
-# CLA Assistant — records one-time Contributor License Agreement signatures on pull requests.
-# See CLA.md (the agreement) and CONTRIBUTING.md (the policy).
+# CLA Assistant records one-time Contributor License Agreement signatures on
+# pull requests. See CLA.md for the agreement and CONTRIBUTING.md for the
+# contributor policy.
 #
-# ⚠️ ONE-TIME SETUP REQUIRED TO ACTIVATE:
-#   Create a repository secret named PERSONAL_ACCESS_TOKEN
-#   (Settings → Secrets and variables → Actions → New repository secret).
-#   Use a classic PAT with the `repo` scope, or a fine-grained PAT with
-#   Contents: read & write on this repo. The action uses it to store signatures
-#   on the `cla-signatures` branch. Until this secret exists, the CLA check will
-#   FAIL on pull requests — which correctly blocks merge-without-CLA, but means
-#   no PR can be merged until you add the secret.
+# The public repo keeps CLA canonical. CLA signatures are stored on the
+# cla-signatures branch at signatures/version1/cla.json. The workflow passes
+# with the repository token today; PERSONAL_ACCESS_TOKEN remains accepted as a
+# compatibility path for deployments that need a separate write token.
 name: CLA Assistant
 
 on:
@@ -37,8 +34,8 @@ jobs:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/eliasjustus/justsearch/blob/main/CLA.md'
           branch: 'cla-signatures'
-          # Maintainer + bots never need to sign:
+          # Maintainer and bots never need to sign.
           allowlist: 'eliasjustus,dependabot[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-notsigned-prcomment: 'Thank you for your pull request! Before we can merge it, please read our [Contributor License Agreement](https://github.com/eliasjustus/justsearch/blob/main/CLA.md) (you keep your copyright; it just keeps the project''s licensing options open) and sign it by posting exactly the comment below.'
-          custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'
+          custom-allsigned-prcomment: 'All contributors have signed the CLA.'
