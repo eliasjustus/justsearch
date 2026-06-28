@@ -1,7 +1,7 @@
 ---
 title: "Public CI fact lanes in the public repo"
 type: tempdoc
-status: "implemented - current-head CI lanes green; PR-rollup caveat recorded"
+status: "implemented - public CI lanes wired; hosted PDF fixture hardening in progress"
 created: 2026-06-27
 updated: 2026-06-28
 related:
@@ -793,6 +793,17 @@ an undersized JUnit guard. The root fix was to make the default structured PDF p
 Tika's PDF OCR strategy to `NO_OCR`, while leaving the dedicated `extractWithOcr` path as the OCR
 entrypoint. The fixture keeps its 60 second guard so it still catches accidental slow-path
 regressions.
+
+Run `28306236712` showed that even the `NO_OCR` fix did not make this specific Tika PDF fixture
+stable enough for the broad hosted Windows unit lane: the same fixture timed out after 18m46s while
+the other fact lanes stayed green. That changes the CI-shaping conclusion. The normal structured
+extractor should still avoid accidental OCR in product code, but the PDF fixture itself belongs with
+the existing local-only Tika PDF fixture policy already used by `VduEligibilityPdfFixturesTest`,
+which is disabled under `CI` because Tika cold start exceeds hosted Windows budgets. The immediate
+CI fix is therefore to keep the structured PDF fixture active locally and exclude only that nested
+PDF fixture group from public hosted CI. This is a scoped test-surface decision, not a weakening of
+the public fact-lane design; the remaining follow-up is a dedicated worker-extraction/parser lane or
+a more deterministic PDF fixture substrate if hosted parser evidence becomes required later.
 
 ## Done shape
 
