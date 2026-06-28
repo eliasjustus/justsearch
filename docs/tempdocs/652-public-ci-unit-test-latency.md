@@ -647,11 +647,47 @@ Remote validation still remains after commit/push:
 - confirm `Unit tests` still passes or fails according to Gradle rather than the reporter;
 - confirm check names remain unchanged.
 
+Hosted validation from run `28317561618` passed for commit `2375236`:
+
+- `Public claims`: 19s, including the new test-evidence policy guard;
+- `Build (no model blobs)`: 7m15s;
+- `License and notices`: 5m1s;
+- `Unit tests`: 14m2s, with the Gradle test step from `09:15:01Z` to `09:28:02Z`;
+- `DCO`, `Secret scan`, and `cla-assistant`: green.
+
+The uploaded attribution artifact exists and contains JSON, Markdown, and Gradle JUnit XML. The
+hosted report recorded runner label `windows-latest`, OS `Windows`, image `win25-vs2026`, and image
+version `20260622.153.1`.
+
+Hosted attribution findings:
+
+- JUnit XML summed suite time was about 7m0s, while the Gradle test command took about 12m51s.
+  Therefore the remaining wall-clock problem is not explained by JUnit class runtime alone.
+- The slowest hosted module groups were `app-services` (62.296s), `worker-services` (59.677s),
+  `indexer-worker` (50.253s), `adapters-lucene` (44.987s), `app-launcher` (38.163s), and
+  `app-inference` (32.77s).
+- The hosted log showed `:modules:ui:installWebDependencies`, `:modules:ui:buildWeb`, and
+  `:modules:ui:copyWebResources` running inside the `Unit tests` lane even though the separate
+  `Build (no model blobs)` lane already owns the web-bundle fact.
+- That made the next safe reduction clear: keep the check name `Unit tests`, keep one required hosted
+  JVM regression lane, but run it with the existing `-PskipWebBuild=true` Gradle property and remove
+  Node setup from that job.
+
+Second implementation slice:
+
+- changed the `Unit tests` workflow command to `./gradlew.bat test -PskipWebBuild=true`;
+- removed `actions/setup-node` from the `Unit tests` job because this lane no longer owns web asset
+  building;
+- kept `Build (no model blobs)` unchanged with `./gradlew.bat assemble -PskipWebBuild=false`, so
+  public CI still proves the web bundle on hosted Windows.
+
+Local validation for the second slice:
+
+- `$env:CI='true'; ./gradlew.bat test -PskipWebBuild=true --console=plain`
+
 Remaining follow-up:
 
-- measured timing evidence for the current unit-test lane;
-- runner image label and, where available, runner image version for hosted timing evidence;
-- the main slow modules/classes or setup costs;
+- hosted validation of the second slice to confirm the expected wall-clock reduction;
 - which tests are Windows-specific versus platform-neutral;
 - whether a split would preserve or improve required public facts;
 - a recommended lane shape, including any checks that should stay local-only, advisory, or required.

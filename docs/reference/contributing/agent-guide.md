@@ -338,6 +338,11 @@ slow modules, slow suites, skipped counts, and hosted runner image identity
 before proposing a workflow split. Do not split the lane solely by runtime
 without an evidence boundary.
 
+`Unit tests` runs with `-PskipWebBuild=true` because the web bundle is owned by
+the separate `Build (no model blobs)` fact lane. Keep that boundary intact: if
+web assets need verification, use or extend the build lane rather than making
+the unit-test lane prove the same fact again.
+
 The public-claims lane verifies `scripts/ci/test-evidence-policy.v1.json`.
 Whenever a Java test is skipped under `CI=true`, or a non-stress JUnit tag is
 introduced, update that policy with the owner, evidence tier, replacement

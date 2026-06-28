@@ -168,18 +168,9 @@ jobs:
             ${{ env.JAVA_VERSION }}
           cache: gradle
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            modules/ui-web/package-lock.json
-
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
-        run: ./gradlew.bat test
+        run: ./gradlew.bat test -PskipWebBuild=true
 
       - name: Report unit-test attribution
         if: always()
