@@ -1,7 +1,7 @@
 ---
 title: "Public CI fact lanes in the public repo"
 type: tempdoc
-status: "implemented - public CI lanes wired; hosted PDF fixture hardening in progress"
+status: "implemented - PR CI fact lanes green"
 created: 2026-06-27
 updated: 2026-06-28
 related:
@@ -804,6 +804,25 @@ CI fix is therefore to keep the structured PDF fixture active locally and exclud
 PDF fixture group from public hosted CI. This is a scoped test-surface decision, not a weakening of
 the public fact-lane design; the remaining follow-up is a dedicated worker-extraction/parser lane or
 a more deterministic PDF fixture substrate if hosted parser evidence becomes required later.
+
+PR run `28306725464` on `ce58b65` then passed all public CI fact lanes, and CLA passed in
+`28306725149`:
+
+| Check | Result | Time |
+| --- | --- | ---: |
+| `Public claims` | passed | 18s |
+| `DCO` | passed | 10s |
+| `Secret scan` | passed | 12s |
+| `License and notices` | passed | 5m4s |
+| `Build (no model blobs)` | passed | 5m41s |
+| `Unit tests` | passed | 15m36s |
+| `cla-assistant` | passed | 7s |
+
+`node scripts/ci/workflow-signal-health.mjs --repo eliasjustus/justsearch --md` now reports `CI`
+as `success (pull_request, 0d)` and `CLA Assistant` as `success (pull_request_target, 0d)`.
+Actions cache usage remains 233,218,787 bytes across seven active caches, still far below the 10 GB
+included cache boundary. Branch protection remains intentionally unchanged; the follow-up is still
+to choose which observed stable checks become required on `main`.
 
 ## Done shape
 
