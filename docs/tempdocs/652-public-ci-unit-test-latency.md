@@ -756,3 +756,7 @@ The branch-protection decision deliberately does not change the test-lane design
 optimization pass should still audit Windows-specific assumptions before moving shards to Ubuntu,
 and should add a worker-extraction/parser lane only after attribution evidence shows that hosted
 parser evidence needs a deterministic, named public signal.
+
+Contributor provenance was simplified after this slice: `cla-assistant` is the required
+contributor-policy check, and DCO is no longer part of the protected public CI set. This does not
+change the test-lane design or the three required unit-test shard names.

@@ -12,7 +12,7 @@ const policy = {
   workflows: [
     {
       name: 'CI',
-      requiredStatusChecks: ['Public claims', 'Build (no model blobs)', 'DCO'],
+      requiredStatusChecks: ['Public claims', 'Build (no model blobs)', 'Secret scan'],
     },
     {
       name: 'CLA Assistant',
@@ -35,7 +35,7 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
   assert.deepEqual(requiredStatusChecksFromPolicy(policy).checks, [
     'Public claims',
     'Build (no model blobs)',
-    'DCO',
+    'Secret scan',
     'cla-assistant',
   ]);
 }
@@ -44,18 +44,18 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
   const actual = protectedStatusChecksFromProtection(
     protection({
       contexts: ['Public claims'],
-      checks: [{ context: 'Build (no model blobs)' }, { context: 'DCO' }, { context: 'cla-assistant' }],
+      checks: [{ context: 'Build (no model blobs)' }, { context: 'Secret scan' }, { context: 'cla-assistant' }],
     })
   );
   assert.equal(actual.strict, true);
-  assert.deepEqual(actual.contexts, ['Build (no model blobs)', 'cla-assistant', 'DCO', 'Public claims']);
+  assert.deepEqual(actual.contexts, ['Build (no model blobs)', 'cla-assistant', 'Public claims', 'Secret scan']);
 }
 
 {
   const report = validateBranchProtection({
     policy,
     protection: protection({
-      contexts: ['Public claims', 'Build (no model blobs)', 'DCO', 'cla-assistant'],
+      contexts: ['Public claims', 'Build (no model blobs)', 'Secret scan', 'cla-assistant'],
     }),
   });
   assert.equal(report.ok, true);
@@ -66,7 +66,7 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
     policy,
     protection: protection({
       strict: false,
-      contexts: ['Public claims', 'Build (no model blobs)', 'DCO', 'cla-assistant'],
+      contexts: ['Public claims', 'Build (no model blobs)', 'Secret scan', 'cla-assistant'],
     }),
   });
   assert.equal(report.ok, false);
@@ -81,14 +81,14 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
     }),
   });
   assert.equal(report.ok, false);
-  assert.match(report.errors.join('\n'), /missing required status check: DCO/);
+  assert.match(report.errors.join('\n'), /missing required status check: Secret scan/);
 }
 
 {
   const report = validateBranchProtection({
     policy,
     protection: protection({
-      contexts: ['Public claims', 'Build (no model blobs)', 'DCO', 'cla-assistant', 'Old omnibus build'],
+      contexts: ['Public claims', 'Build (no model blobs)', 'Secret scan', 'cla-assistant', 'Old omnibus build'],
     }),
   });
   assert.equal(report.ok, false);
@@ -97,8 +97,8 @@ function protection({ strict = true, contexts = [], checks = [] } = {}) {
 
 {
   const report = validateBranchProtection({
-    policy: { workflows: [{ name: 'CI', requiredStatusChecks: ['DCO', 'DCO'] }] },
-    protection: protection({ contexts: ['DCO'] }),
+    policy: { workflows: [{ name: 'CI', requiredStatusChecks: ['Secret scan', 'Secret scan'] }] },
+    protection: protection({ contexts: ['Secret scan'] }),
   });
   assert.equal(report.ok, false);
   assert.match(report.errors.join('\n'), /duplicate required status check/);

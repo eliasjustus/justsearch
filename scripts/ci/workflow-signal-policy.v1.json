@@ -1,6 +1,6 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 3,
+  "version": 4,
   "defaultStaleDays": 14,
   "workflows": [
     {
@@ -20,8 +20,7 @@
         "Unit tests (app-ui)",
         "Unit tests (search-worker)",
         "Unit tests (platform-contracts)",
-        "Secret scan",
-        "DCO"
+        "Secret scan"
       ]
     },
     {

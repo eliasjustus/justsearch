@@ -837,7 +837,6 @@ are the protected `main` check set:
 - `Unit tests (search-worker)`
 - `Unit tests (platform-contracts)`
 - `Secret scan`
-- `DCO`
 
 Those names are recorded in `scripts/ci/workflow-signal-policy.v1.json`, and
 `scripts/ci/check-branch-protection.mjs` verifies that GitHub branch protection requires exactly
@@ -850,6 +849,12 @@ The deferred work remains deliberately deferred: do not move unit shards to Ubun
 worker-extraction/parser lane, or use path-aware skipping as a required-check mechanism until the
 unit-test attribution artifacts show a concrete evidence boundary that justifies it.
 
+Contributor provenance policy was then simplified to CLA-only. DCO remains historical context from
+the cutover, but it is no longer a required public check, branch-protection context, or contributor
+instruction. The required protected set is therefore `cla-assistant`, `Public claims`,
+`License and notices`, `Build (no model blobs)`, the three `Unit tests (...)` shards, and
+`Secret scan`.
+
 ## Done shape
 
 A good result would make the public CI suitable for normal development:
@@ -857,7 +862,7 @@ A good result would make the public CI suitable for normal development:
 - Fast checks fail in minutes, independently.
 - Windows-specific work remains covered but no longer blocks platform-neutral checks.
 - Clean hosted runners do not rely on local cache assumptions.
-- Public PRs still prove CLA, DCO, secret scan, license/notice, benchmark projection, and
+- Public PRs still prove CLA, secret scan, license/notice, benchmark projection, and
   no-model hosted build/test behavior.
 - Branch protection can require meaningful individual checks instead of one opaque
   `build-test` bucket.

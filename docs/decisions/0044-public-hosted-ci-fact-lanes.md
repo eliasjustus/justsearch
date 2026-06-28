@@ -36,7 +36,7 @@ and `push` to `main`, and it may also be dispatched manually with `workflow_disp
 
 The CI workflow is organized as stable **fact lanes**:
 
-- contributor provenance remains split across CLA and DCO checks;
+- contributor provenance is enforced by the CLA Assistant check;
 - secret scanning stays independently visible;
 - public claim projections run as their own fast lane;
 - license and notice closure run as their own lane with fresh generated inputs;

@@ -2,11 +2,10 @@
 # pull requests. See CLA.md for the agreement and CONTRIBUTING.md for the
 # contributor policy.
 #
-# The public repo keeps CLA canonical and also requires DCO. CLA signatures are
-# stored on the cla-signatures branch at signatures/version1/cla.json. The
-# workflow passes with the repository token today; PERSONAL_ACCESS_TOKEN remains
-# accepted as a compatibility path for deployments that need a separate write
-# token.
+# The public repo keeps CLA canonical. CLA signatures are stored on the
+# cla-signatures branch at signatures/version1/cla.json. The workflow passes
+# with the repository token today; PERSONAL_ACCESS_TOKEN remains accepted as a
+# compatibility path for deployments that need a separate write token.
 name: CLA Assistant
 
 on:
