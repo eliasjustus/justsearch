@@ -746,7 +746,7 @@ Two hosted-only unit-test hardening fixes followed the initial remote validation
   `KnowledgeServerBootstrap` just to verify late-binding identity. The test now uses the same
   mock-bootstrap pattern already used elsewhere in app-services tests, avoiding order- and
   environment-sensitive worker configuration during this narrow setter test.
-- `ed5b30f` gave the structured PDF fixture test an explicit 60 second JUnit budget. The test still
+- `ed5b30f` gave the structured PDF fixture test an explicit JUnit budget. The test still
   exercises the same extraction path, but it no longer inherits the repo-wide 30 second default
   timeout that proved too tight for cold hosted Windows under full-suite load.
 
@@ -782,6 +782,15 @@ fact lanes, and the commit's check-runs include the six green CI lane checks. `g
 shows only `cla-assistant`, so a future branch-protection pass should verify the PR-triggered rollup
 again after the fact-lane workflow lands on `main`. This caveat does not change the lane design; it
 is about GitHub's PR status surface while the workflow itself is being changed in the PR.
+
+The following documentation-only push did trigger the expected `pull_request` CI run
+`28305342376`, so the PR rollup caveat was transient. That run made all six fact lanes visible in
+`gh pr checks 9`; `Public claims`, `DCO`, `Secret scan`, `License and notices`, and
+`Build (no model blobs)` passed. `Unit tests` failed again in
+`StructuredExtractionIntegrationTest > PdfFixture > pdfTextLayerExtractsContent()` after the 60
+second fixture budget, so the PDF fixture budget was raised to 120 seconds. This preserves the same
+PDF text-layer assertion while matching the minute-scale budgets already used by rich-document
+integration-style tests in the repo.
 
 ## Done shape
 

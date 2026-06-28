@@ -134,7 +134,7 @@ class StructuredExtractionIntegrationTest {
   }
 
   @Nested
-  @Timeout(60)
+  @Timeout(120)
   class PdfFixture {
 
     @Test
