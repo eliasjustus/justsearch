@@ -717,11 +717,36 @@ The split is evidence-shaped:
 - `platform-contracts` owns inference, native/platform support, API contract projection, stress
   substrate modules, system-test default tests, and governance-style test modules.
 
+Hosted validation of the third slice from run `28318433836` was green after rerunning one unrelated
+infrastructure failure:
+
+- the first `License and notices` attempt failed before Gradle started because the Gradle wrapper
+  download hit `java.net.SocketException: An established connection was aborted by the software in
+  your host machine`;
+- the same job passed on `gh run rerun --failed`, including `checkLicense`, NOTICE projection, and
+  NOTICE sync;
+- `Build (no model blobs)` passed in 6m55s, with the assemble step taking 6m17s;
+- `Public claims`, `DCO`, `Secret scan`, and `cla-assistant` passed.
+
+The three sharded unit checks all passed and uploaded separate attribution artifacts:
+
+| Check | Total job time | Gradle test step | JUnit suites | JUnit tests | Skipped | JUnit suite time | Slowest module |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `Unit tests (app-ui)` | 10m22s | 8m52s | 536 | 3133 | 4 | 158.901s | `modules/app-services` 46.479s |
+| `Unit tests (search-worker)` | 8m31s | 8m02s | 402 | 2120 | 22 | 180.547s | `modules/worker-services` 59.103s |
+| `Unit tests (platform-contracts)` | 7m59s | 7m30s | 160 | 878 | 1 | 97.618s | `modules/app-inference` 40.789s |
+
+This satisfies the tempdoc's main implementation goal: the old single `Unit tests` job had a hosted
+Gradle step around 13-14 minutes, while the public unit evidence now reaches its first failing shard
+in about 7.5-9 minutes on standard hosted Windows runners. The split is still evidence-owned rather
+than arbitrary: each check name identifies the module surface it proves, each artifact records runner
+identity and JUnit attribution, and the separate build lane remains responsible for web bundle
+assembly.
+
 Remaining follow-up:
 
-- hosted validation of the three unit-test shards to confirm wall-clock reduction and check-name
-  behavior;
-- which tests are Windows-specific versus platform-neutral;
-- whether any shard should later move to Ubuntu after Windows-specific assumptions are audited;
-- whether `Build (no model blobs)` becomes the next long pole after unit-test sharding;
-- which checks should become required once branch protection is introduced.
+- audit which tests are Windows-specific versus platform-neutral;
+- consider moving platform-neutral shards to Ubuntu only after those assumptions are explicit;
+- watch whether `Build (no model blobs)` becomes the next long pole now that unit tests are no longer
+  the only slow public fact lane;
+- decide which split checks should become required once branch protection is introduced.
