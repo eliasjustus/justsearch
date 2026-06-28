@@ -824,6 +824,32 @@ Actions cache usage remains 233,218,787 bytes across seven active caches, still 
 included cache boundary. Branch protection remains intentionally unchanged; the follow-up is still
 to choose which observed stable checks become required on `main`.
 
+### Branch-protection completion - 2026-06-28
+
+The required check set is now no longer implicit future work. The observed green public PR checks
+are the protected `main` check set:
+
+- `cla-assistant`
+- `Public claims`
+- `License and notices`
+- `Build (no model blobs)`
+- `Unit tests (app-ui)`
+- `Unit tests (search-worker)`
+- `Unit tests (platform-contracts)`
+- `Secret scan`
+- `DCO`
+
+Those names are recorded in `scripts/ci/workflow-signal-policy.v1.json`, and
+`scripts/ci/check-branch-protection.mjs` verifies that GitHub branch protection requires exactly
+that set with strict up-to-date branches enabled when run with maintainer GitHub credentials. The
+default pull-request token cannot read branch-protection settings, so this remains a maintainer
+verification guard rather than another required hosted PR check. This keeps the fact-lane names
+stable without adding a new CI framework.
+
+The deferred work remains deliberately deferred: do not move unit shards to Ubuntu, add a
+worker-extraction/parser lane, or use path-aware skipping as a required-check mechanism until the
+unit-test attribution artifacts show a concrete evidence boundary that justifies it.
+
 ## Done shape
 
 A good result would make the public CI suitable for normal development:

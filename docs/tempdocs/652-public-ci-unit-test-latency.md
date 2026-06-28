@@ -749,4 +749,10 @@ Remaining follow-up:
 - consider moving platform-neutral shards to Ubuntu only after those assumptions are explicit;
 - watch whether `Build (no model blobs)` becomes the next long pole now that unit tests are no longer
   the only slow public fact lane;
-- decide which split checks should become required once branch protection is introduced.
+- treat the three current split checks as the required unit-test branch-protection facts:
+  `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)`.
+
+The branch-protection decision deliberately does not change the test-lane design. The next
+optimization pass should still audit Windows-specific assumptions before moving shards to Ubuntu,
+and should add a worker-extraction/parser lane only after attribution evidence shows that hosted
+parser evidence needs a deterministic, named public signal.

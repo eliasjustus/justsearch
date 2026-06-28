@@ -42,8 +42,9 @@ The CI workflow is organized as stable **fact lanes**:
 - license and notice closure run as their own lane with fresh generated inputs;
 - no-model build and unit tests are separate Windows-hosted lanes.
 
-Each lane name should describe the fact it proves. Future branch protection can require these
-stable checks directly, but this decision does not itself configure branch protection.
+Each lane name describes the fact it proves. Main branch protection requires the current stable
+check names declared in `scripts/ci/workflow-signal-policy.v1.json`, with strict up-to-date
+branches enabled.
 
 Self-hosted, benchmark, installer, and other specialty workflows remain manually dispatched
 unless a later ADR explicitly changes their trigger posture.
@@ -78,7 +79,10 @@ checkout or execute untrusted pull-request code.
 
 **Neutral:**
 
-- Branch protection remains a repository-settings decision outside this ADR.
+- Branch protection remains a repository setting, but its required check names are now recorded
+  in `scripts/ci/workflow-signal-policy.v1.json` and verified by the maintainer-run
+  `scripts/ci/check-branch-protection.mjs` script. The default pull-request token cannot read
+  branch-protection settings.
 - Stress, GPU, live-eval, installer, and other resource-sensitive workflows remain opt-in
   specialty signals.
 

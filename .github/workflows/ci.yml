@@ -1,8 +1,8 @@
 # PUBLIC CI - GitHub-hosted fact lanes for the open-source JustSearch repo.
 #
 # Public pull requests should get fast, owner-specific feedback. Keep each job
-# named after the fact it proves so branch protection can require meaningful
-# checks later without depending on one opaque Windows bucket.
+# named after the fact it proves because main branch protection requires these
+# meaningful checks instead of one opaque Windows bucket.
 
 name: CI
 

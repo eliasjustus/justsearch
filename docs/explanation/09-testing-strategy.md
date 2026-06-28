@@ -138,6 +138,10 @@ Evidence tiers:
 | Stress evidence | `@Tag("stress")` tests | Owned by `scripts/ci/stress-suite-policy.v1.json` and verified by `verify-stress-suite-policy.mjs`. |
 | Experiment/evidence tags | `@Tag("experiment")` / `@Tag("evidence")` | Must be declared in `test-evidence-policy.v1.json`; they are development evidence, not branch-protection candidates. |
 
+The hosted public checks that are branch-protection candidates are declared in
+`scripts/ci/workflow-signal-policy.v1.json`. Keep the three unit-test shard names stable unless
+the branch-protection required checks are updated in the same change.
+
 The guard for this ownership model is:
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 2,
+  "version": 3,
   "defaultStaleDays": 14,
   "workflows": [
     {
@@ -12,7 +12,17 @@
       "failureDefault": "product-regression",
       "staleDays": 14,
       "blocking": true,
-      "advisory": false
+      "advisory": false,
+      "requiredStatusChecks": [
+        "Public claims",
+        "License and notices",
+        "Build (no model blobs)",
+        "Unit tests (app-ui)",
+        "Unit tests (search-worker)",
+        "Unit tests (platform-contracts)",
+        "Secret scan",
+        "DCO"
+      ]
     },
     {
       "name": "CLA Assistant",
@@ -23,7 +33,8 @@
       "failureDefault": "contributor-policy",
       "staleDays": 14,
       "blocking": true,
-      "advisory": false
+      "advisory": false,
+      "requiredStatusChecks": ["cla-assistant"]
     },
     {
       "name": "Build Installer",

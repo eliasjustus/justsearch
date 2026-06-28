@@ -390,9 +390,11 @@ gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```
 
-Branch protection does not currently require status checks. Keep check names
-stable so those fact lanes can become required later without another workflow
-rename.
+Main branch protection requires the stable public check names declared in
+`scripts/ci/workflow-signal-policy.v1.json`. Run
+`node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main`
+with a maintainer token after changing CI job names or branch-protection settings; the default
+pull-request `GITHUB_TOKEN` cannot read branch-protection settings.
 
 ### 3.5.1. CI Failure Troubleshooting
 
