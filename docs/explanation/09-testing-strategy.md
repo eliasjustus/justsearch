@@ -119,6 +119,34 @@ Skips fall into two accepted categories:
 * **Integration-only**: gated by `describeRealBackend`, require `VITE_JUSTSEARCH_API_PORT` and a live backend with indexed data.
 * **Runtime-conditional**: defensive `test.skip(...)` for mode/state-dependent UI elements; each has parallel stub-backed coverage in dedicated specs.
 
+## Test Evidence Lanes
+
+Public CI uses named evidence lanes rather than one anonymous test bucket. The hosted `Unit tests`
+check proves ordinary JVM regression evidence on the public hosted runner. It does not claim to run
+every parser fixture, worker-process integration test, system test, stress test, or model-dependent
+AI test.
+
+Evidence tiers:
+
+| Tier | Default evidence | Ownership rule |
+|---|---|---|
+| Hosted-required unit evidence | `./gradlew.bat test` in the public `Unit tests` lane | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
+| Local parser/fixture evidence | PDF/OCR/Office fixture tests disabled under `CI=true` | Must be declared in `scripts/ci/test-evidence-policy.v1.json` with replacement evidence and cadence. |
+| Local worker-process integration evidence | `src/integrationTest` cases that spawn worker/server processes | Must be declared when skipped under `CI=true`; run locally before changing the owned integration surface. |
+| Opt-in system/AI evidence | `modules/system-tests` tags and opt-in Gradle flags | Owned by the system-tests source sets and documented tags. |
+| Stress evidence | `@Tag("stress")` tests | Owned by `scripts/ci/stress-suite-policy.v1.json` and verified by `verify-stress-suite-policy.mjs`. |
+| Experiment/evidence tags | `@Tag("experiment")` / `@Tag("evidence")` | Must be declared in `test-evidence-policy.v1.json`; they are development evidence, not branch-protection candidates. |
+
+The guard for this ownership model is:
+
+```bash
+node scripts/ci/verify-test-evidence-policy.mjs
+```
+
+The public `Unit tests` lane also publishes a unit-test attribution report from existing Gradle/JUnit
+XML. That report shows module totals, slow suites, skips, failures, errors, and hosted runner image
+identity. It is diagnostic evidence only; Gradle remains the source of pass/fail truth.
+
 ## Deterministic UI evidence (EvidenceBundle v1)
 
 > **Removed (tempdoc 638):** the EBv1 capture harness (`modules/ui-web/scripts/capture-evidence-bundle.mjs`) was deleted. For screenshot-driven UI/UX verification, use the `jseval ui-shot` harness (load the `/ui-check` skill). This section is retained as historical design context only.

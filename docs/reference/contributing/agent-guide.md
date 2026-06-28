@@ -332,6 +332,18 @@ The public hosted `CI` workflow is split into stable fact lanes: public claims,
 license and notices, no-model build, unit tests, secret scan, and DCO. A red
 check should name the fact that failed rather than one generic build bucket.
 
+The `Unit tests` lane keeps its stable check name, but it also publishes a
+unit-test attribution report from Gradle/JUnit XML. Use that report to identify
+slow modules, slow suites, skipped counts, and hosted runner image identity
+before proposing a workflow split. Do not split the lane solely by runtime
+without an evidence boundary.
+
+The public-claims lane verifies `scripts/ci/test-evidence-policy.v1.json`.
+Whenever a Java test is skipped under `CI=true`, or a non-stress JUnit tag is
+introduced, update that policy with the owner, evidence tier, replacement
+signal, and cadence. Stress tags remain governed by
+`scripts/ci/stress-suite-policy.v1.json`.
+
 Local verification is still required before pushing substantive work. Use the
 automatic PR checks as remote confirmation, not as a replacement for running the
 subject-specific local commands.

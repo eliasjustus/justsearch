@@ -47,6 +47,9 @@ jobs:
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
 
+      - name: Test evidence policy guard
+        run: node scripts/ci/verify-test-evidence-policy.mjs
+
       - name: Root README entrypoint guard
         run: node scripts/ci/check-root-readme.mjs
 
@@ -175,7 +178,23 @@ jobs:
             modules/ui-web/package-lock.json
 
       - name: Unit tests with model-dependent tests self-skipping
+        id: gradle-test
         run: ./gradlew.bat test
+
+      - name: Report unit-test attribution
+        if: always()
+        run: node scripts/ci/report-unit-test-attribution.mjs --runner-label windows-latest --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+
+      - name: Upload unit-test attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-attribution
+          path: |
+            build/ci/unit-test-attribution.json
+            build/ci/unit-test-attribution.md
+            modules/**/build/test-results/test/TEST-*.xml
+          if-no-files-found: warn
 
   secret-scan:
     name: Secret scan
