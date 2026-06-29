@@ -39,6 +39,10 @@ Use the [feature request template](https://github.com/eliasjustus/JustSearch/iss
 5. Commit your changes
 6. Push and open a pull request
 
+You do not need to curate your branch into perfect public-history commits before
+opening a PR. Maintainers may squash PRs before merge so public `main` stays
+readable while contributors can work naturally on branches.
+
 ## Development Setup
 
 ### Prerequisites
