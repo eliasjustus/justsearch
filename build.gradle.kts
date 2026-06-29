@@ -12,6 +12,7 @@ plugins {
   id("conventions.archiving-reproducible") apply false
   id("conventions.coverage") apply false
   id("conventions.locking")
+  id("conventions.build-attribution")
   id("org.openrewrite.rewrite") version "7.34.0"
 }
 

@@ -1,20 +1,22 @@
 ---
-title: "Public CI fact lanes in the public repo"
+title: "Public CI evidence read-model and build attribution"
 type: tempdoc
-status: "implemented - PR CI fact lanes green"
+status: "implemented - advisory CI digest and build attribution added"
 created: 2026-06-27
-updated: 2026-06-28
+updated: 2026-06-29
 related:
   - 632-go-public-licensing-legal
   - 633-go-public-launch-content
   - 634-go-public-cutover-transition
   - 650-go-public-capability-descriptor-truthfulness
+  - 652-public-ci-unit-test-latency
+  - 653-public-main-history-hygiene
 ---
 
 > NOTE: Noncanonical working note. Verify against `.github/workflows/`, current GitHub
 > Actions status, and the code before treating any detail as current truth.
 
-# 651 - Public CI fact lanes in the public repo
+# 651 - Public CI evidence read-model
 
 ## Idea
 
@@ -866,3 +868,393 @@ A good result would make the public CI suitable for normal development:
   no-model hosted build/test behavior.
 - Branch protection can require meaningful individual checks instead of one opaque
   `build-test` bucket.
+
+## CI evidence digest implementation - 2026-06-29
+
+The remaining 651 read-model work is implemented as `scripts/ci/report-ci-evidence-digest.mjs`.
+The script is deliberately advisory: it renders what a CI run proved, where the evidence lives, and
+which local command is closest to reproducing a failed lane. It does not change workflow triggers,
+required checks, branch protection, repository settings, or the `.github/workflows/ci.yml` job
+graph.
+
+The digest reads the existing ownership sources rather than creating a new CI framework:
+
+- `scripts/ci/workflow-signal-policy.v1.json` supplies the known public CI fact-lane names, owner,
+  and required-check classification.
+- GitHub run/job/artifact/cache APIs supply run identity, job status, failed steps, runner labels,
+  artifact URLs, and cache footprint.
+- Existing `unit-test-attribution-*` artifacts are listed by name. Unit-attribution JSON enriches
+  the digest only when a caller supplies a local `--unit-attribution-dir`; the v1 reporter does not
+  automatically download artifact payloads.
+- `Build (no model blobs)` is represented with coarse job/step timing, especially the
+  `Assemble without model blobs` step. The script does not parse Gradle task timing or build logs.
+
+The CLI has two modes:
+
+```bash
+node scripts/ci/report-ci-evidence-digest.mjs --repo eliasjustus/justsearch --run-id <run-id> --md
+node scripts/ci/report-ci-evidence-digest.mjs --run-json run.json --jobs-json jobs.json --artifacts-json artifacts.json --cache-usage-json cache.json --unit-attribution-dir artifacts --json
+```
+
+The JSON output kind is `justsearch-ci-evidence-digest.v1`. Fixture mode is the test surface, so the
+reporter can be validated without live GitHub calls.
+
+### Validation evidence
+
+Local validation passed:
+
+- `node --check scripts/ci/report-ci-evidence-digest.mjs`
+- `node --check scripts/ci/workflow-signal-health.mjs`
+- `node scripts/ci/test-report-ci-evidence-digest.mjs`
+- `node scripts/ci/test-workflow-signal-health.mjs`
+- `node scripts/ci/test-report-unit-test-attribution.mjs`
+- `node scripts/ci/test-check-branch-protection.mjs`
+- `node scripts/ci/check-workflow-triggers.mjs`
+- `node scripts/ci/verify-test-evidence-policy.mjs`
+- `node scripts/ci/check-tempdoc-numbers.mjs`
+
+Live smoke validation passed:
+
+- Run `28327275759` rendered a green digest with `Unit tests (app-ui)` as the critical path,
+  unit-attribution artifact links for all three shards, `Build (no model blobs)` assemble timing,
+  and cache footprint of 518.3 MB across 14 caches.
+- Run `28327460039` rendered a failed digest with `License and notices` as the primary failed lane,
+  `Enforce the license allowlist` as the failed step, additional failed build/unit steps, artifact
+  links for the unit shards, and the same cache-footprint signal.
+
+### Remaining limits
+
+The v1 digest intentionally does not download artifact payloads, parse build logs, create a trend
+store, or publish a CI job summary. Those can be added later if the digest proves useful, but the
+present problem only required a reliable per-run read-model over existing evidence.
+
+Durable build attribution remains future work. If `Build (no model blobs)` becomes the next
+optimization target, add a small structured build-attribution producer before splitting or tuning
+that lane.
+
+652 still owns unit-test latency, parser/PDF tiering, and `test-evidence-policy.v1.json`. 653 still
+owns public-main history and repository history policy. The 651 digest may present those sibling
+facts later, but it should not redefine them.
+
+## Build evidence long-term design - 2026-06-29
+
+This pass focused on the build-evidence gap left by the v1 digest. It did not implement build
+attribution. It re-read adjacent work and inspected the existing build/CI substrate to settle the
+right long-term shape before adding more structure.
+
+### Adjacent-tempdoc read
+
+- `652-public-ci-unit-test-latency` is the closest sibling. It already established the correct
+  pattern for test evidence: the unit lane produces a structured `unit-test-attribution` artifact,
+  and the cross-CI digest consumes or links it without taking ownership of test policy. Build
+  evidence should follow the same producer/consumer split.
+- `647-engine-performance-attribution-and-budget-allocation` is relevant by principle. It says
+  optimization should be led by standing attribution, not one-off guesses. For CI build time, the
+  analogous rule is: do not split or tune `Build (no model blobs)` until the build lane itself
+  exposes where its time goes.
+- `650-go-public-capability-descriptor-truthfulness` is relevant by shape. It fixed a public
+  projection problem by extending existing guards and sources, not by inventing a parallel authority.
+  Build evidence should likewise project from build-owned facts rather than creating a second CI
+  policy.
+
+### Existing substrate
+
+The repo already has most of the right pieces:
+
+- `report-ci-evidence-digest.mjs` can present a per-run answer and already has a place to consume
+  richer build evidence.
+- `report-unit-test-attribution.mjs` is the best local pattern: a small stdlib reporter emits JSON,
+  Markdown, and a job summary while leaving the underlying Gradle result as the pass/fail authority.
+- `workflow-signal-policy.v1.json` owns public check names and owners. It should stay workflow
+  scoped; it should not grow task-level build timing.
+- The CI build lane already proves one named fact: `Build (no model blobs)` runs
+  `./gradlew.bat assemble -PskipWebBuild=false` on hosted Windows.
+- `settings.gradle.kts` enables Develocity build scans in CI, and local confidence work used
+  Gradle `--profile`. Those are useful diagnostics, but neither should be the required source of
+  public build attribution: build scans are an external service, and profile HTML is not a stable
+  repo-owned evidence artifact.
+- `modules/ui/build.gradle.kts` makes the build lane more than "compile Java": it includes the
+  `installWebDependencies`, `buildWeb`, and `copyWebResources` path when `skipWebBuild=false`.
+  Those subfacts matter because unit-test lanes deliberately use `-PskipWebBuild=true`; the build
+  lane is the hosted owner of the web-bundle fact.
+
+### Correct long-term design
+
+The right design is **build-attribution as a lane-owned evidence producer**.
+
+`Build (no model blobs)` should eventually emit a structured artifact analogous to unit-test
+attribution, for example a `justsearch-build-attribution.v1` JSON plus Markdown summary. The
+artifact should be produced inside the build lane and consumed by the CI evidence digest when
+available. The digest should remain the presenter; it should not scrape logs and become the owner
+of build measurement.
+
+The build-attribution artifact should answer only the questions the current problem needs:
+
+- what command and Gradle properties proved the build fact;
+- which runner label, runner OS, image OS, and image version produced the evidence;
+- whether the build ran with model blobs excluded and the web build included;
+- total build-command duration and exit result;
+- coarse phase/task groups that explain time, especially web dependency install, web build,
+  resource copy, Java compilation/classes, distribution/runtime staging, and other large Gradle
+  tasks visible from the build;
+- cache/context facts that affect interpretation, without treating cache warmth as correctness;
+- a direct link or artifact path to richer diagnostics when available.
+
+This should still be advisory evidence. The pass/fail source remains the Gradle assemble command.
+The attribution producer may wrap the command as long as it preserves the command's exit result, but
+it must not become a second build gate.
+
+Do not solve this by making Develocity or public build scans the required evidence source. They can
+be linked as optional diagnostics when present, but the durable evidence should be repo-owned,
+downloadable from the GitHub run, and testable with local fixtures. This preserves the free public CI
+boundary and avoids making an external observability service the authority for a required check.
+
+Do not add a generic "all Gradle timing framework" yet. The present tempdoc only needs enough build
+attribution to explain `Build (no model blobs)` when it becomes the next long pole. If later work
+finds the same attribution need across installer, docs lint, release, or eval workflows, then a
+shared Gradle/build-evidence convention may be warranted.
+
+### When to build it
+
+Build attribution is not required merely because the v1 digest currently reports coarse build
+timing. It becomes the correct next implementation when either condition is true:
+
+- `Build (no model blobs)` becomes the critical path after unit sharding, or repeatedly accounts for
+  most PR wait time; or
+- build failures/timeouts are not explainable from job and step names alone.
+
+Until then, the current digest's job/step timing is sufficient. The next implementation should add
+the producer before attempting build-lane optimization or splitting.
+
+### Reach judgment
+
+This is another instance of the existing principle **owned evidence, projected read-models**:
+
+> The lane that proves a fact should produce the structured evidence for that fact; higher-level
+> reports may compose and explain it, but must not become a second authority.
+
+Where else this applies:
+
+- unit-test attribution already follows it;
+- workflow-signal health consumes workflow policy instead of redefining workflow ownership;
+- branch-protection verification consumes required-check declarations instead of discovering a new
+  check vocabulary;
+- future repo-history or public-health bundles should consume 653's repo-history verifier output
+  rather than redefining merge/publication policy.
+
+Candidate future scope:
+
+- build attribution for installer and release workflows, if they become recurring long poles;
+- richer trend reporting over CI lane durations;
+- a maintainer health bundle that composes workflow health, branch protection, CI digest, and
+  repo-history checks as separate owned reports.
+
+Known current gap:
+
+- `Build (no model blobs)` is the only protected public fact lane without a lane-owned structured
+  attribution artifact. The v1 digest partially masks that gap by showing job and step timing, but
+  it does not close it.
+
+Do not build a generalized evidence framework now. The insight is general, but the next concrete
+structure should remain a small build-attribution producer only if the build lane becomes the next
+evidence or latency problem.
+
+## Build evidence confidence pass - 2026-06-29
+
+This pass deliberately did not implement build attribution. It reduced uncertainty around whether a
+future `justsearch-build-attribution.v1` producer is needed now, what source should produce it, and
+how to avoid building a fragile log scraper or a paid/external dependency.
+
+### Evidence gathered
+
+- `gh run list --repo eliasjustus/justsearch --workflow CI --limit 10 --json ...`
+- `node scripts/ci/report-ci-evidence-digest.mjs --repo eliasjustus/justsearch --workflow CI --limit 10 --json`
+- `node scripts/ci/workflow-signal-health.mjs --repo eliasjustus/justsearch --md`
+- `gh run view <run-id> --json jobs` for recent completed green and failed CI runs
+- `gh run view <run-id> --job <build-job-id> --log` for `Build (no model blobs)`
+- `./gradlew.bat assemble -PskipWebBuild=false --console=plain --profile`
+- a temporary, untracked Gradle init-script probe under `%TEMP%`
+- adjacent-tempdoc review of 652 and the active 653 worktree
+
+The latest `CI` run at the time of this pass, `28360095401`, was still in progress on the
+`codex/public-main-history-policy` branch, so this pass did not wait on it. The timing comparison
+used recent completed runs instead.
+
+### Live CI findings
+
+Recent completed green runs show that `Build (no model blobs)` is still a substantial public fact
+lane, but it is not currently the critical path. In the sampled green runs, build jobs took roughly
+415-557 seconds, while the critical path was a unit-test shard at roughly 567-702 seconds. The build
+lane is therefore worth keeping visible, but current evidence does not justify implementing build
+attribution before the next concrete build-latency or build-failure problem appears.
+
+The existing digest already gives useful coarse evidence for build failures. Failed run
+`28327460039` identified `Build (no model blobs)` as a failed lane with the failed step
+`Assemble without model blobs`; the build log then showed a dependency-verification failure for
+`org.gradle.kotlin.kotlin-dsl.gradle.plugin-6.6.4.pom`. That is actionable without task-level build
+attribution.
+
+Green build logs expose useful but non-durable facts: runner image `windows-2025-vs2026`, the
+Gradle and npm cache posture, the build command, broad Gradle task names, the build scan URL, and
+the final Gradle result. They do not expose a stable task-timing data model. Inferring phase timing
+from timestamped log lines would make the CI digest a log scraper and would violate the
+producer/consumer split this tempdoc settled earlier.
+
+One unrelated but useful observation: `actions/setup-java cache: gradle` can emit post-job cache-save
+warnings on hosted Windows because Gradle cache lock files are still busy. That supports the current
+design choice to treat cache facts as advisory context, not correctness evidence.
+
+### Local evidence-source findings
+
+A warm local profile run finished in 41.7 seconds, so it is not representative of hosted cold
+Windows time. It was still useful for source-shape inspection. Gradle's `--profile` HTML reported
+task timing such as `:modules:ui:installWebDependencies` at 10.093s, `:modules:ui:buildWeb` at
+2.663s, `:modules:ui:compileJava` at 0.223s from cache, and `:modules:ui:copyWebResources` at
+0.041s.
+
+That makes `--profile` useful as a local diagnostic, but not the right required evidence source:
+the output is a human HTML report, not a repo-owned JSON contract, and parsing it would be another
+form of scraping.
+
+The temporary Gradle init-script probe confirmed an important implementation risk. A naive
+`gradle.taskGraph.beforeTask/afterTask` listener did not emit timing under the normal
+configuration-cache path; it only worked when rerun with `--no-configuration-cache`. A future
+producer should therefore not be based on old task-graph hooks that disable or bypass the build's
+current configuration-cache posture.
+
+The better long-term Gradle seam is a small repo-owned producer built on Gradle's build-service /
+build-events listener shape, because that path can observe task completion without making the CI
+digest parse logs. The repo already has a build-service precedent in `TestGateService`, and the
+existing `NpmInstallTask` / `NpmBuildTask` classes show where web-build phase ownership lives. No
+current build-attribution producer exists.
+
+### Boundary findings
+
+Tempdoc 652 continues to own unit-test attribution, unit shard timing, parser/PDF evidence tiering,
+and `test-evidence-policy.v1.json`. 651 should consume those artifacts through the digest, not
+redefine them.
+
+Tempdoc 653 is separate public-main history work. Its active worktree owns merge/squash/repo-history
+policy, not build timing. A future broader public-health report may consume both the 651 CI digest
+and 653's repo-history verifier, but neither tempdoc should absorb the other's authority.
+
+### Confidence judgment
+
+Confidence in the long-term design increased from 6.5/10 to 8/10.
+
+The remaining uncertainty is no longer the design shape. It is implementation timing: build
+attribution should wait until `Build (no model blobs)` becomes the next long pole or produces
+failures that job/step evidence cannot explain. When that happens, the implementation should be a
+small lane-owned Gradle/build producer that emits structured JSON/Markdown and preserves the Gradle
+assemble command as the pass/fail authority.
+
+The main risks to carry forward are:
+
+- do not parse CI logs or Gradle profile HTML as the durable source;
+- do not require Develocity/build scans as public evidence;
+- do not disable configuration cache just to collect timing;
+- do not add a generalized Gradle evidence framework before one build-lane producer proves the
+  need;
+- keep build attribution advisory unless a later tempdoc explicitly changes the public CI gate.
+
+## Build attribution implementation - 2026-06-29
+
+The build-evidence gap is now closed for the public `Build (no model blobs)` lane with a small
+advisory producer. This was implemented after the explicit follow-up request, even though the
+confidence pass judged it non-urgent for speed. The scope stayed diagnostic: the Gradle assemble
+command remains the pass/fail authority, and attribution is evidence attached to the lane rather
+than a new gate.
+
+### Final shape
+
+The repo now has a Gradle build-logic convention, inactive by default, that records task completion
+events only when a build-attribution output property is supplied. It uses a Gradle build service and
+`BuildEventsListenerRegistry.onTaskCompletion`, avoiding CI log scraping, Gradle profile HTML
+parsing, Develocity as a required evidence source, and legacy task-graph hooks.
+
+`scripts/ci/report-build-attribution.mjs` is the lane wrapper. It runs the requested Gradle command,
+preserves Gradle's exit code, writes `justsearch-build-attribution.v1` JSON, writes a Markdown
+summary, and appends that Markdown to `GITHUB_STEP_SUMMARY` when available. If Gradle fails before
+task evidence is available, the wrapper still emits command, exit code, duration, runner/cache
+context, and a `taskEvidencePresent=false` warning.
+
+The public workflow only changes the existing `Build (no model blobs)` job. The direct assemble
+step is now wrapped with build attribution, and an `if: always()` upload step publishes a
+`build-attribution` artifact containing:
+
+- `build/ci/build-attribution.json`
+- `build/ci/build-attribution.md`
+- `build/ci/build-task-timing.json`
+
+No check names, workflow triggers, branch protection rules, runner classes, cache policy, or
+required-check authority changed.
+
+`scripts/ci/report-ci-evidence-digest.mjs` now composes this evidence when present. Online GitHub
+mode still does not download artifacts; it lists the `build-attribution` artifact. Local/fixture
+mode can enrich the digest from a supplied `--build-attribution` JSON file or directory. Wrong-kind
+or malformed payloads are ignored with a warning.
+
+### Evidence contract
+
+The build attribution JSON records:
+
+- command, exit code, success, total duration, and requested Gradle tasks;
+- relevant Gradle properties, including the no-model/web-build posture;
+- runner and image metadata available from the environment;
+- cache context available from environment variables;
+- raw task-timing evidence from the Gradle listener;
+- slowest tasks and coarse phase groups for web dependency install, web build, resource copy,
+  Java compile/classes, distribution/runtime staging, and other tasks.
+
+The coarse phase totals are explanatory, not normative. They help identify where build time went,
+but the `Build (no model blobs)` fact is still proven by the Gradle assemble command's exit result.
+
+### Validation evidence
+
+Local validation passed:
+
+- `node --check scripts/ci/report-build-attribution.mjs`
+- `node scripts/ci/test-report-build-attribution.mjs`
+- `node --check scripts/ci/report-ci-evidence-digest.mjs`
+- `node scripts/ci/test-report-ci-evidence-digest.mjs`
+- `node scripts/ci/test-report-unit-test-attribution.mjs`
+- `node scripts/ci/check-workflow-triggers.mjs`
+- `node scripts/ci/verify-test-evidence-policy.mjs`
+- `node scripts/ci/check-tempdoc-numbers.mjs`
+- `git diff --check`
+
+Gradle/build validation passed:
+
+- `./gradlew.bat help "-PjustsearchBuildAttributionTasksJson=build/ci/probe-build-task-timing.json" --console=plain`
+- `node scripts/ci/report-build-attribution.mjs --task-timing-json build/ci/probe-wrapper-task-timing.json --out-json build/ci/probe-wrapper-build-attribution.json --out-md build/ci/probe-wrapper-build-attribution.md -- ./gradlew.bat help --console=plain`
+- `node scripts/ci/report-build-attribution.mjs --runner-label local/ui-assemble --task-timing-json build/ci/ui-assemble-task-timing.json --out-json build/ci/ui-assemble-build-attribution.json --out-md build/ci/ui-assemble-build-attribution.md -- ./gradlew.bat :modules:ui:assemble -PskipWebBuild=false --console=plain`
+- `node scripts/ci/report-build-attribution.mjs --runner-label local/full-assemble --task-timing-json build/ci/full-assemble-task-timing.json --out-json build/ci/full-assemble-build-attribution.json --out-md build/ci/full-assemble-build-attribution.md -- ./gradlew.bat assemble -PskipWebBuild=false --console=plain`
+
+The full local assemble wrapper succeeded with exit code `0`, observed 196 Gradle tasks, and wrote
+the expected attribution JSON/Markdown. In that warm local run, the slowest observed tasks were
+Java compilation tasks in worker, benchmark, and system-test modules. This is useful evidence that
+the producer works, not a hosted-runner timing baseline.
+
+Digest smoke validation also passed with:
+
+```bash
+node scripts/ci/report-ci-evidence-digest.mjs --repo eliasjustus/justsearch --run-id 28327275759 --build-attribution build/ci/full-assemble-build-attribution.json --md
+```
+
+That old run predates the workflow artifact, so the digest correctly reported that no remote
+`build-attribution` artifact was listed while still enriching build phases from the supplied local
+payload.
+
+### Known limits and follow-up
+
+Remote validation is still required after pushing this branch: confirm that `Build (no model blobs)`
+keeps the same check name, the `build-attribution` artifact uploads on success and on ordinary
+Gradle failure, and the CI digest lists the artifact without downloading it.
+
+The wrapper can only emit attribution after it starts. If the runner is cancelled, killed, or fails
+before Node starts, no artifact can be produced. That is acceptable for an advisory evidence
+producer.
+
+Build attribution remains lane-owned and advisory. It does not replace unit-test attribution owned
+by 652, repo-history policy owned by 653, branch-protection verification, or the Gradle assemble
+command itself.
