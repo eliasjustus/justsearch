@@ -1361,9 +1361,16 @@ Known unrelated validation issue:
   still works with `node scripts/docs/generate-runtime-config-matrix.mjs --check`. This is not caused
   by the 652 changes and was left untouched.
 
-Remaining validation before remote closeout:
+Hosted validation after push:
 
-- hosted CI artifact inspection after push.
+- opened PR #11 from `codex/unit-test-evidence-contract` to `main`;
+- hosted CI run `28360852429` passed all required checks with unchanged check names;
+- `Public claims` ran and passed the new `Unit-test shard policy guard`;
+- each unit shard ran `Report unit-test attribution` and `Report unit-test advisory budget`;
+- downloaded and inspected the three unit-test artifacts:
+  - `unit-test-attribution-app-ui`: 3133 tests, 536 suites, 0 budget warnings;
+  - `unit-test-attribution-search-worker`: 2120 tests, 402 suites, 0 budget warnings;
+  - `unit-test-attribution-platform-contracts`: 878 tests, 160 suites, 0 budget warnings.
 
 Remaining future-only 652 work:
 
