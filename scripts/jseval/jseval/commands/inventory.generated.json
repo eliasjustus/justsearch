@@ -1,0 +1,250 @@
+[
+  {
+    "name": "agent-eval",
+    "group": "eval"
+  },
+  {
+    "name": "bench-concurrency",
+    "group": "bench"
+  },
+  {
+    "name": "bisect",
+    "group": "analysis"
+  },
+  {
+    "name": "calibrate",
+    "group": "calibrate"
+  },
+  {
+    "name": "calibrate-drift-baseline",
+    "group": "calibrate"
+  },
+  {
+    "name": "commands",
+    "group": "ops"
+  },
+  {
+    "name": "compare",
+    "group": "analysis"
+  },
+  {
+    "name": "corpus-build",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-certify",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-fidelity",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-probe",
+    "group": "corpus"
+  },
+  {
+    "name": "correction-probe",
+    "group": "analysis"
+  },
+  {
+    "name": "counterfactual",
+    "group": "analysis"
+  },
+  {
+    "name": "datasets",
+    "group": "ops"
+  },
+  {
+    "name": "dev",
+    "group": "ops"
+  },
+  {
+    "name": "diff",
+    "group": "analysis"
+  },
+  {
+    "name": "engine-bench",
+    "group": "bench"
+  },
+  {
+    "name": "extract-eval",
+    "group": "eval"
+  },
+  {
+    "name": "extraction-gate",
+    "group": "gates"
+  },
+  {
+    "name": "gate",
+    "group": "gates"
+  },
+  {
+    "name": "ingest-bench",
+    "group": "bench"
+  },
+  {
+    "name": "judge-ceiling",
+    "group": "gates"
+  },
+  {
+    "name": "knn-bench",
+    "group": "bench"
+  },
+  {
+    "name": "leak-gate",
+    "group": "gates"
+  },
+  {
+    "name": "leak-gate-derive",
+    "group": "gates"
+  },
+  {
+    "name": "llm-bench",
+    "group": "bench"
+  },
+  {
+    "name": "llm-gate",
+    "group": "gates"
+  },
+  {
+    "name": "log-path",
+    "group": "ops"
+  },
+  {
+    "name": "logs",
+    "group": "ops"
+  },
+  {
+    "name": "materialize",
+    "group": "ops"
+  },
+  {
+    "name": "modes",
+    "group": "ops"
+  },
+  {
+    "name": "ner-eval",
+    "group": "eval"
+  },
+  {
+    "name": "perf-gate",
+    "group": "gates"
+  },
+  {
+    "name": "preflight",
+    "group": "ops"
+  },
+  {
+    "name": "qu-spike",
+    "group": "query-understanding"
+  },
+  {
+    "name": "qu-v3",
+    "group": "query-understanding"
+  },
+  {
+    "name": "rag-eval",
+    "group": "eval"
+  },
+  {
+    "name": "recalibrate-nightly-baseline",
+    "group": "calibrate"
+  },
+  {
+    "name": "recall-profile",
+    "group": "gates"
+  },
+  {
+    "name": "release",
+    "group": "release"
+  },
+  {
+    "name": "relevance-gate",
+    "group": "gates"
+  },
+  {
+    "name": "requery",
+    "group": "run"
+  },
+  {
+    "name": "retrieval-eval",
+    "group": "eval"
+  },
+  {
+    "name": "run",
+    "group": "run"
+  },
+  {
+    "name": "search",
+    "group": "ops"
+  },
+  {
+    "name": "shadow-eval",
+    "group": "analysis"
+  },
+  {
+    "name": "spot-check",
+    "group": "analysis"
+  },
+  {
+    "name": "suite-profile",
+    "group": "release"
+  },
+  {
+    "name": "tier2-eval",
+    "group": "eval"
+  },
+  {
+    "name": "trend",
+    "group": "analysis"
+  },
+  {
+    "name": "ui-a11y-gate",
+    "group": "ui"
+  },
+  {
+    "name": "ui-check",
+    "group": "ui"
+  },
+  {
+    "name": "ui-critic",
+    "group": "ui"
+  },
+  {
+    "name": "ui-diff",
+    "group": "ui"
+  },
+  {
+    "name": "ui-fuzz",
+    "group": "ui"
+  },
+  {
+    "name": "ui-perf",
+    "group": "ui"
+  },
+  {
+    "name": "ui-shot",
+    "group": "ui"
+  },
+  {
+    "name": "utility-calibrate",
+    "group": "utility"
+  },
+  {
+    "name": "utility-compose",
+    "group": "utility"
+  },
+  {
+    "name": "utility-judge",
+    "group": "utility"
+  },
+  {
+    "name": "utility-run",
+    "group": "utility"
+  },
+  {
+    "name": "utility-status",
+    "group": "utility"
+  }
+]
