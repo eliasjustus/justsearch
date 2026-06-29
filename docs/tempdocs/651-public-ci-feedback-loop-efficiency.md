@@ -1,7 +1,7 @@
 ---
 title: "Public CI evidence read-model and build attribution"
 type: tempdoc
-status: "implemented - advisory CI digest and build attribution added"
+status: "implemented - advisory CI digest and build attribution remotely validated"
 created: 2026-06-27
 updated: 2026-06-29
 related:
@@ -1247,9 +1247,28 @@ payload.
 
 ### Known limits and follow-up
 
-Remote validation is still required after pushing this branch: confirm that `Build (no model blobs)`
-keeps the same check name, the `build-attribution` artifact uploads on success and on ordinary
-Gradle failure, and the CI digest lists the artifact without downloading it.
+Remote validation on PR #12 run `28382837333` confirmed the success path:
+
+- `Build (no model blobs)` kept the same check name and passed in `7m30s`.
+- `Public claims` passed in `20s`, `License and notices` in `5m14s`, `Secret scan` in `12s`,
+  `Unit tests (search-worker)` in `7m58s`, `Unit tests (platform-contracts)` in `9m20s`, and
+  `Unit tests (app-ui)` in `9m26s`. `cla-assistant` passed separately in `7s`.
+- `node scripts/ci/report-ci-evidence-digest.mjs --repo eliasjustus/justsearch --run-id 28382837333 --md`
+  listed the `build-attribution` artifact without downloading it, reported `Unit tests (app-ui)` as
+  the critical path, and showed cache footprint at 543,518,112 bytes across 14 active caches.
+- Downloading only the `build-attribution` artifact verified that it contained
+  `build-attribution.json`, `build-attribution.md`, and `build-task-timing.json`.
+- The downloaded `build-attribution.json` had kind `justsearch-build-attribution.v1`, exit code `0`,
+  `taskEvidencePresent=true`, 196 tasks, and no warnings. The raw task-timing file had kind
+  `justsearch-build-task-timing.v1`.
+- The slowest hosted build tasks were `:modules:ui:installWebDependencies` at about 98s, followed by
+  several Java compile tasks. Coarse phase evidence showed Java compile/classes as the largest task
+  time bucket, then web dependency install, then distribution/runtime staging.
+
+The ordinary Gradle-failure upload path was not forced with a deliberately broken remote commit.
+The local wrapper test covers failure exit-code preservation and report emission, and the workflow
+uses `if: always()` for artifact upload. A future naturally red build-lane run should be checked to
+confirm the remote failure artifact path behaves the same way.
 
 The wrapper can only emit attribution after it starts. If the runner is cancelled, killed, or fails
 before Node starts, no artifact can be produced. That is acceptable for an advisory evidence
