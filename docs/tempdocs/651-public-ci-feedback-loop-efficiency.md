@@ -1277,3 +1277,57 @@ producer.
 Build attribution remains lane-owned and advisory. It does not replace unit-test attribution owned
 by 652, repo-history policy owned by 653, branch-protection verification, or the Gradle assemble
 command itself.
+
+## Final handoff audit - 2026-06-29
+
+This section is the handoff state for a future agent that reads the tempdoc without the chat.
+
+Delivery branch and PR:
+
+- Worktree: `F:\justsearch-public\.claude\worktrees\651-ci-evidence-read-model`
+- Branch: `codex/651-ci-evidence-read-model`
+- Draft PR: <https://github.com/eliasjustus/justsearch/pull/12>
+- Implementation commit: `2ed06f7` (`Add public CI build attribution digest`)
+- Remote-evidence commit: `4b614f3` (`Record CI build attribution remote evidence`)
+
+Latest validated branch-head evidence before this handoff audit:
+
+- PR #12 run `28383547040` passed on commit `4b614f3`.
+- `Build (no model blobs)` kept the same check name and passed in `6m22s`.
+- `Public claims` passed in `22s`, `License and notices` in `5m50s`, `Secret scan` in `13s`,
+  `Unit tests (app-ui)` in `11m6s`, `Unit tests (platform-contracts)` in `8m34s`, and
+  `Unit tests (search-worker)` in `10m52s`. `cla-assistant` passed separately in `6s`.
+- The CI digest for run `28383547040` listed the `build-attribution` artifact in online mode,
+  kept the payload non-downloading, reported `Unit tests (app-ui)` as the critical path, and showed
+  cache footprint at 543,518,112 bytes across 14 active caches.
+- Downloading the `build-attribution` artifact from run `28383547040` verified
+  `justsearch-build-attribution.v1`, exit code `0`, `taskEvidencePresent=true`, 196 observed tasks,
+  raw `justsearch-build-task-timing.v1` with 196 tasks, and no warnings.
+- The slowest hosted build tasks in that latest artifact were `:modules:ui:installWebDependencies`
+  at about 69s, followed by Java compile tasks such as
+  `:modules:api-contract-projection-java:compileJava` and `:modules:app-services:compileJava`.
+
+Handoff judgement:
+
+- The tempdoc goal is satisfied: public CI has stable fact lanes, an advisory CI evidence digest,
+  and lane-owned build attribution for `Build (no model blobs)`.
+- The implementation intentionally does not change branch protection, required checks, workflow
+  triggers, runner class, or cache policy.
+- The implementation intentionally does not download artifact payloads in digest online mode.
+  Payload enrichment remains local/fixture-driven.
+- 652 still owns unit-test evidence meaning, shard budgets, and parser/PDF test policy. Do not fold
+  that work back into 651.
+- 653 still owns public-main/repo-history policy. Do not fold that work into 651.
+
+Unverified or deferred items that should not be forgotten:
+
+- The remote ordinary-Gradle-failure artifact path has not been forced with a deliberately broken
+  commit. The local wrapper test covers exit-code preservation and report emission, and the workflow
+  uses `if: always()` for upload. Confirm on the first natural build-lane failure.
+- Hosted Windows cache-save annotations appeared on the final run for some unit-test jobs:
+  `Failed to save: "C:\Program ... tar.exe" failed with exit code 2`. The run still passed, and this
+  is cache advisory noise rather than a 651 correctness failure. If it becomes frequent or noisy,
+  treat it as a cache-policy follow-up, not as a build-attribution problem.
+- The PR is draft. If another agent takes over for merge, they should first refresh
+  `gh pr checks 12 --repo eliasjustus/justsearch --watch=false`, then decide whether to mark the PR
+  ready.
