@@ -339,10 +339,22 @@ identify slow modules, slow suites, skipped counts, and hosted runner image
 identity before proposing another workflow split. Do not split the lanes solely
 by runtime without an evidence boundary.
 
+`scripts/ci/unit-test-shard-policy.v1.json` is the checked-in contract for those
+unit shards. It declares each shard's check name, artifact, runner label, Gradle
+task list, local reproduction command, owner, platform classification, and
+warn-only budget settings. Run
+`node scripts/ci/verify-unit-test-shard-policy.mjs` after changing `ci.yml`,
+workflow-signal policy, unit shard membership, or unit-shard budget metadata.
+
 The unit-test shards run with `-PskipWebBuild=true` because the web bundle is
 owned by the separate `Build (no model blobs)` fact lane. Keep that boundary
 intact: if web assets need verification, use or extend the build lane rather
 than making unit-test lanes prove the same fact again.
+
+Each unit shard also publishes an advisory budget report. Budget warnings are
+diagnostic evidence only; they must not replace the Gradle test step as the
+pass/fail source, and blocking thresholds require a later explicit design after
+hosted trend samples exist.
 
 The public-claims lane verifies `scripts/ci/test-evidence-policy.v1.json`.
 Whenever a Java test is skipped under `CI=true`, or a non-stress JUnit tag is
