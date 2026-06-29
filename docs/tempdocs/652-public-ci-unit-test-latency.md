@@ -1,11 +1,12 @@
 ---
-title: "Public CI test-evidence lanes and hosted unit-test ownership"
+title: "Public CI unit-test evidence ownership and test-tier policy"
 type: tempdoc
-status: "implemented slice - local validation complete"
+status: "implemented - long-term design settled; coordination boundary recorded"
 created: 2026-06-28
 updated: 2026-06-28
 related:
   - 651-public-ci-feedback-loop-efficiency
+  - 653-public-main-history-hygiene
   - 650-go-public-capability-descriptor-truthfulness
   - 647-engine-performance-attribution-and-budget-allocation
 ---
@@ -13,7 +14,7 @@ related:
 > NOTE: Noncanonical working note. Verify against `.github/workflows/`, current GitHub
 > Actions status, Gradle test reports, and the code before treating any detail as current truth.
 
-# 652 - Public CI test-evidence lanes and hosted unit-test ownership
+# 652 - Public CI unit-test evidence ownership and test-tier policy
 
 ## Purpose
 
@@ -760,3 +761,616 @@ parser evidence needs a deterministic, named public signal.
 Contributor provenance was simplified after this slice: `cla-assistant` is the required
 contributor-policy check, and DCO is no longer part of the protected public CI set. This does not
 change the test-lane design or the three required unit-test shard names.
+
+## Post-implementation research pass - 2026-06-28
+
+This pass asks what the implemented design makes possible now that public unit evidence is sharded,
+owned, and attributed. It is deliberately exploratory. The goal is not to start the next
+implementation, but to identify valuable directions and avoid confusing polish, speed work, and new
+product features.
+
+### How to research this from here
+
+Use three evidence sources in this order:
+
+1. Current repo facts: PR check timings, `ci.yml`, attribution artifacts, branch-protection policy,
+   `test-evidence-policy.v1.json`, and current docs.
+2. Primary platform docs: GitHub Actions workflow summaries, annotations, cache behavior, required
+   checks, matrix jobs, artifact handling, and Gradle's CI/build-performance docs.
+3. Experiments only after a hypothesis is clear: run one hosted/manual CI experiment per idea and
+   compare against the current green baseline, rather than mixing several CI changes in one push.
+
+Primary-source notes used for this round:
+
+- GitHub job summaries are meant to show important run information without forcing readers into raw
+  logs: [Workflow commands - job summaries](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#adding-a-job-summary).
+- GitHub warnings/notices can create annotations tied to files and lines:
+  [Workflow commands - warning messages](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-a-warning-message).
+- Required checks interact badly with workflow-level path filtering: a workflow skipped by path,
+  branch, or commit-message filtering can leave required checks pending, while job-level conditionals
+  report success when skipped:
+  [Troubleshooting required status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks#handling-skipped-but-required-checks).
+- GitHub matrix jobs are the right mechanism for owned job variants:
+  [Running variations of jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations).
+- Gradle's performance guidance starts with inspection, then one change, then inspection again:
+  [Improve Gradle build performance](https://docs.gradle.org/current/userguide/performance.html#inspect_your_build).
+- Gradle test-performance guidance points to slow-test attribution, test parallelism, forks, and
+  report cost, with the caveat that parallel tests must be isolated:
+  [Gradle test execution performance](https://docs.gradle.org/current/userguide/performance.html#optimize_test_execution).
+- `gradle/actions/setup-gradle` can validate the wrapper, cache Gradle user home, add job summaries,
+  and recommends read-only cache use on non-primary matrix legs:
+  [Gradle on GitHub Actions](https://docs.gradle.org/current/userguide/github-actions.html).
+- Gradle can aggregate test results across multiple projects into one HTML report:
+  [Test Report Aggregation Plugin](https://docs.gradle.org/current/userguide/test_report_aggregation_plugin.html).
+
+### Current baseline after implementation
+
+The current PR surface already proves that the design is useful:
+
+- required public CI facts now include `Public claims`, `License and notices`, `Build (no model
+  blobs)`, `Unit tests (app-ui)`, `Unit tests (search-worker)`, `Unit tests (platform-contracts)`,
+  `Secret scan`, and `cla-assistant`;
+- the latest observed check times were roughly: Build 7m22s, License 4m55s, `app-ui` 9m17s,
+  `platform-contracts` 10m46s, and `search-worker` 8m27s;
+- the slowest remaining public path is no longer one opaque 14-minute unit bucket, but the overall
+  critical path is still close to ten or eleven minutes;
+- the test attribution artifacts are machine-readable but not yet turned into a durable trend,
+  policy, or contributor-facing explanation.
+
+That means the most valuable next work is probably not another immediate split. The next value is
+making the evidence easier to consume, easier to compare over time, and safer to use for later speed
+experiments.
+
+### Polishing the implemented code
+
+**Make the report more actionable, not larger.** The current attribution report lists modules and
+slow suites. A useful polish would add a short "What changed?" or "Where to look first" block:
+slowest module, largest skipped count, runner image, and whether this shard exceeded a soft budget.
+This should stay diagnostic; it must not become the pass/fail source.
+
+**Emit GitHub notices only for high-signal cases.** The reporter could emit a small number of
+`::notice` or `::warning` annotations for slow suites or unexpected skip spikes. The risk is PR
+noise. A conservative design would emit annotations only above a configured budget and only for
+owned files that a contributor can act on.
+
+**Add a budget file later, not now.** A future `unit-test-budgets.v1.json` could define soft budgets
+per shard or module. It should start advisory and trend-oriented. Making budgets blocking too early
+would turn normal hosted-runner variance into CI noise.
+
+**Preserve the small-script pattern.** The current reporter and verifier match the repo's
+`scripts/ci/*.mjs` style. Polishing should extend them in-place rather than introduce a CI framework.
+
+### Simplifying the CI shape
+
+**Do not use workflow-level path filters for required checks.** A docs-only PR currently still runs
+the public checks. That costs time, but it avoids required checks becoming permanently pending. If
+path-aware skipping is ever added, it should happen inside the workflow with job-level conditions or
+a stable required summary job, not by skipping the whole required workflow.
+
+**Consider one required aggregate status only if branch protection becomes noisy.** Matrix checks are
+clear, but three required unit names increase branch-protection surface area. A future aggregate job
+could depend on all unit shards and become the single required test check. The downside is slower
+first-failure visibility and another indirection. For now, the explicit shard checks are clearer.
+
+**Avoid adding a fourth unit shard until the slowest lane is stable.** `platform-contracts` is
+currently the slowest observed shard, but not by enough to justify a new required check without more
+samples. More shards mean more runner startup, cache restore/save, and branch-protection names.
+
+### Extending evidence UX
+
+**Create a CI evidence digest.** A script such as `scripts/ci/report-ci-evidence-digest.mjs` could
+combine `gh run view`, workflow job timings, unit attribution JSON, and workflow-signal policy into
+one Markdown digest. It would answer: which required fact is slowest, which shard owns failures, what
+runner image ran, and what artifacts exist. This is likely the highest-value documentation/UX layer.
+
+**Create a trend view across recent runs.** A non-blocking reporter could read the latest N CI runs
+and show median/max duration per required check. That would separate one-off hosted variance from
+real regressions. It could start as a local command and later become a manual `workflow_dispatch`
+diagnostic lane.
+
+**Make artifact browsing easier.** The current artifacts are complete but raw. A top-level Markdown
+or HTML index could link each shard's JSON, Markdown, and JUnit XML. If artifact size or upload time
+becomes visible, set short retention for diagnostic artifacts rather than reducing the evidence
+itself.
+
+**Map changed files to expected checks.** A local helper could inspect changed paths and print which
+public facts are likely to matter: `app-ui`, `search-worker`, `platform-contracts`, Build, docs, or
+license. This would help contributors predict CI without changing branch protection.
+
+### Speed directions worth testing later
+
+**Build lane attribution is now the next obvious blind spot.** `Build (no model blobs)` is close to
+the shard timings and owns web-bundle evidence. Before optimizing it, add the same kind of timing
+ownership: Gradle task summary, web-build timing, runner image, and whether `assemble` is proving
+more than the public fact requires.
+
+**Try `gradle/actions/setup-gradle` in one branch experiment.** The official Gradle action can cache
+Gradle user home, validate the wrapper, and add Gradle summaries. It may simplify custom cache
+behavior compared with relying only on `actions/setup-java` caching. Because it writes caches mainly
+from default-branch pushes and recommends read-only cache use for non-primary matrix legs, it could
+reduce matrix cache churn. This needs a hosted A/B run before adoption.
+
+**Do not assume configuration cache helps PR shards.** Gradle's configuration cache can skip
+configuration work on repeated matching invocations, but CI runners are cold and matrix task sets
+differ. It is worth investigating only after measuring configuration time in the hosted shards and
+checking compatibility. It should not be enabled globally as a blind speed fix.
+
+**Audit Ubuntu eligibility as an advisory matrix first.** `search-worker` may contain the most
+platform-neutral work, but it still touches file watching, paths, Lucene, and worker behavior. A
+safe experiment is an advisory Ubuntu duplicate, not replacing the required Windows shard. Only move
+a required fact after a Windows-specific assumption audit.
+
+**Parser/extraction should become a lane only when it has a product question.** The current
+local-parser-fixture tier is honest. A hosted parser lane would be valuable if the repo wants public
+proof of PDF/OCR/Office behavior before merge or before release. Without that product requirement,
+it is just another slow lane.
+
+### Possible new product or developer features
+
+**A "CI facts" page in docs.** Turn the evidence-lane model into a compact contributor-facing page:
+what each required check proves, what it does not prove, how to reproduce it locally, and where to
+find artifacts. This is a documentation UX improvement, not a runtime feature.
+
+**A PR failure triage command.** A script could take a run id and print the shortest diagnosis:
+failed check, owning surface, relevant local command, artifact path, and likely owner. This would
+turn the fact-lane design into daily agent/developer leverage.
+
+**Evidence policy as a review checklist.** The current policy enforces presence. Later it could also
+render a human-readable table: local-only evidence, replacement command, cadence, and owner. That
+would make skipped evidence visible during reviews without adding CI time.
+
+**A lightweight public health badge group.** The README could eventually show the public fact lanes
+as stable public signals, but this should wait until check names and branch protection settle. Badges
+are user-facing trust signals and should not change during experimentation.
+
+### Ideas to defer deliberately
+
+- A full dashboard app for CI evidence. The repo does not need a UI surface until the command-line
+  digest proves the information is valuable.
+- Paid/larger runners or self-hosted caches. They violate the public-free design boundary.
+- Required path-based skipping. It is easy to make branch protection confusing or pending.
+- Blocking performance budgets. Start advisory; hosted-runner variance is real.
+- A generalized evidence framework. The current policy and reporter are enough unless more evidence
+  tiers start appearing.
+
+### Best next research rounds
+
+1. **Evidence UX round:** design a `report-ci-evidence-digest` command and decide what a contributor
+   should see after a failed or slow PR run.
+2. **Build attribution round:** give `Build (no model blobs)` the same fact ownership and timing
+   visibility that unit shards now have.
+3. **Gradle setup/cache experiment:** compare current `setup-java` cache behavior with
+   `gradle/actions/setup-gradle`, including matrix cache-write policy.
+4. **Platform audit round:** classify each shard's Windows assumptions before any Ubuntu-required
+   migration.
+5. **Policy lifecycle round:** decide whether evidence policy entries need review cadence,
+   advisory/blocking status, or rendered documentation.
+
+## Coordination boundary with 651 - 2026-06-28
+
+The post-implementation research above intentionally explored what the sharded unit-test evidence
+makes possible. After comparing it with the adjacent active tempdoc `651-public-ci-feedback-loop-efficiency`,
+the long-term ownership boundary should be explicit so the two notes do not compete.
+
+This split is accepted by both sides: 652 remains the unit-test and test-evidence owner, while 651
+may take over cross-CI presentation work that composes 652's outputs into a broader public evidence
+view.
+
+Tempdoc `652-public-ci-unit-test-latency` should keep owning:
+
+- the three unit-test shard design and any future reshaping of those shard boundaries;
+- the test-evidence policy for `CI=true` skips and declared test tags;
+- parser/PDF/OCR/Office fixture tiering, including whether hosted parser evidence ever needs its
+  own named lane;
+- future unit-test budgets, skip budgets, or slow-suite warnings when they are scoped to unit-test
+  shards;
+- Windows-versus-Ubuntu assumptions for unit-test evidence, including advisory platform experiments.
+
+Tempdoc `651-public-ci-feedback-loop-efficiency` should own the broader CI presentation layer:
+
+- a top-level CI evidence digest that composes all public facts;
+- run timing and trend reporting across checks;
+- build-lane attribution for `Build (no model blobs)`;
+- the contributor-facing answer to "what failed, why, and how do I reproduce it locally?";
+- composing 652's unit-test artifacts into one public CI view.
+
+This means the evidence-UX, trend, artifact-index, changed-file mapping, and build-attribution ideas
+in the research section above should be treated as inputs or handoff notes for `651`, not as
+remaining 652 implementation work. The remaining 652 work is narrower: keep the unit-test signal
+honest, owned, platform-explicit, and budgetable without turning it into the repo-wide CI dashboard.
+
+## Nearby work interference scan - 2026-06-28
+
+This tempdoc's filename number is `652`, so the relevant numeric window is `632` through `672`. The
+recency cutoff for this scan was the last five hours from 2026-06-28T22:14+02:00. In the current
+checkout, the recent in-range tempdocs were `634-go-public-cutover-transition`,
+`651-public-ci-feedback-loop-efficiency`, `652-public-ci-unit-test-latency`, and
+`653-public-main-history-hygiene`. The active in-range worktree was
+`.claude/worktrees/public-main-history-policy`, associated with tempdoc `653`.
+
+Findings:
+
+- `634-go-public-cutover-transition` is upstream historical context. It records the public cutover,
+  the public hosted CI fact-lane premise, and the old private repo as archive-only. It should not
+  own new unit-test work. Any old references to DCO, self-hosted/GPU lanes, or cutover-time CI shape
+  must be treated as context and checked against the live workflow and ADR-0044 before use.
+- `651-public-ci-feedback-loop-efficiency` is the active neighboring owner for the outer public CI
+  evidence map. Its current design explicitly says it should compose the evidence produced by 652
+  rather than redesign unit-test shards. This is the main coordination boundary: 652 produces and
+  governs unit-test evidence; 651 presents and trends public CI evidence across all checks.
+- `653-public-main-history-hygiene` is an adjacent public-repo policy surface, not a test lane. The
+  active worktree has already implemented a forward-only public-history policy with ADR-0045,
+  `repo-history-policy.v1.json`, a repo-history verifier, PR-template cleanup, branch-safety
+  guidance, and live GitHub merge-setting changes. It can touch branch protection and PR guidance,
+  but it should not reinterpret unit-test evidence or CI check names.
+
+Potential long-term interferences:
+
+- If 651 builds a digest or trend reporter, it must consume 652's unit-test attribution artifacts
+  and policy output as inputs. It should not move unit-test budgets, parser/PDF tiering, or shard
+  ownership into the outer digest layer.
+- If 652 later changes unit-test check names, branch-protection facts, or requiredness, it must
+  coordinate with 651's public CI map and with 653's public-history verifier/guidance if those tools
+  report or assume the protected check set.
+- If 653's repo-history verifier grows into a broader remote-settings policy, it should remain about
+  publication settings and branch-protection posture. It should not become the owner of CI evidence
+  semantics.
+
+No current nearby tempdoc blocks the remaining 652 work. The meaningful risk is boundary blur, not
+contradiction: 652 should stay the unit-test evidence owner, while 651 owns CI evidence
+presentation/trends and 653 owns public-main publication policy.
+
+## Long-term design settlement after implementation - 2026-06-28
+
+This settlement supersedes the earlier pre-implementation design direction where the repo still had
+one broad `Unit tests` lane. The broad lane has now been split, the hosted checks are green, and the
+neighboring tempdocs have taken clearer ownership of the outer CI map and public-history policy.
+The remaining 652 design should therefore be narrower and more durable than "make CI faster."
+
+### Adjacent-tempdoc synthesis
+
+- `651-public-ci-feedback-loop-efficiency` owns the outer public CI evidence map: digest,
+  cross-check timing, build-lane attribution, trend reporting, and contributor-facing failure
+  presentation. It should consume 652's unit-test artifacts, not redefine them.
+- `653-public-main-history-hygiene` owns public `main` publication policy. It may verify branch
+  protection and repository settings, but it should treat protected CI check names as declared
+  public facts rather than designing test evidence.
+- `650-go-public-capability-descriptor-truthfulness` is the closest structural sibling: when a
+  public fact has a guard with the wrong scope, extend the existing guard instead of creating a
+  parallel authority.
+- `647-engine-performance-attribution-and-budget-allocation` and
+  `648-engine-latency-optimization-cross-encoder-cost` provide the sequencing rule for any future
+  speed work: first attribution, then budgets, then optimization. Do not choose optimization levers
+  because one run looks slow.
+
+### Existing design to extend
+
+The current codebase already has a usable design substrate:
+
+- `.github/workflows/ci.yml` declares three protected unit-test facts:
+  `Unit tests (app-ui)`, `Unit tests (search-worker)`, and
+  `Unit tests (platform-contracts)`.
+- `scripts/ci/workflow-signal-policy.v1.json` declares those check names as required public CI
+  facts beside public claims, license/notices, no-model build, secret scan, and CLA.
+- `scripts/ci/test-evidence-policy.v1.json` is the sibling policy for non-default test evidence:
+  `CI=true` skipped sites, declared non-stress tags, owners, replacement evidence, and cadence.
+- `scripts/ci/verify-test-evidence-policy.mjs` scans Java sources for `CI=true` skips and JUnit
+  tags, catches stale policy entries, and delegates `stress` to the stress-suite policy.
+- `scripts/ci/report-unit-test-attribution.mjs` turns existing Gradle/JUnit XML into module,
+  slow-suite, skip/failure/error, and runner-image evidence without becoming the pass/fail source.
+- `docs/explanation/09-testing-strategy.md` and
+  `docs/reference/contributing/agent-guide.md` already document the hosted unit shards and the
+  evidence-tier model.
+
+That is enough structure for 652. The correct design is to improve and govern this substrate, not to
+replace it with a generalized test-evidence framework.
+
+### Correct long-term design
+
+652 should treat hosted unit testing as a **protected unit-evidence contract**.
+
+The contract has two parts:
+
+1. **Protected hosted unit facts.** The three unit-test shards are the public required facts for
+   ordinary JVM regression evidence. Their names are branch-protection vocabulary. A future change
+   to shard names, shard membership, runner platform, or requiredness is not just a YAML edit; it is
+   a change to the public evidence contract and must update workflow policy, docs, attribution
+   expectations, and branch protection together.
+2. **Declared substitutions for non-default evidence.** Any test-shaped evidence that is excluded
+   from the protected hosted unit facts must have an explicit reason and replacement when it uses a
+   visible mechanism such as `CI=true` skipping or a JUnit tag. The current `test-evidence-policy`
+   is the right home: tier, owner, reason, replacement evidence, and cadence.
+
+The three current shards should remain the baseline until attribution shows a stable evidence
+boundary that the current split cannot express. More shards are justified only when they name a
+distinct fact, such as a deterministic hosted parser lane or a platform-specific test lane. A shard
+should not be added merely because one module was slow in one run.
+
+Parser/PDF/OCR/Office fixtures should remain `local-parser-fixture` evidence unless a product or
+release decision requires hosted parser proof. If hosted parser evidence becomes necessary, it
+should start as a named parser/extraction evidence lane with deterministic setup and clear
+requiredness. It should not be smuggled back into a generic unit shard, because that recreates the
+old opaque failure mode.
+
+Windows-versus-Ubuntu movement is a proof-environment decision, not a speed trick. A unit shard can
+move off Windows only after its Windows assumptions are audited: paths, file locking, native
+libraries, Tauri/installer coupling, PowerShell/batch behavior, Lucene filesystem behavior, and
+worker-process expectations. The first platform move should be advisory or duplicated until it is
+clear that the protected fact can honestly be proven on the new runner.
+
+Future unit-test budgets belong to 652 only when they are about unit evidence: shard duration,
+module suite time, slow-suite thresholds, skip counts, or failure/error ownership. They should start
+advisory and trend-based, fed by unit attribution. Blocking budgets are premature until hosted
+variance is understood over multiple runs.
+
+Source-set omission should not be over-modeled. The repo has many `integrationTest`, system, AI,
+stress, and local fixture surfaces that are not part of protected hosted unit evidence. 652 should
+not require every non-unit source set to be registered individually. Registration is required when a
+test uses an explicit CI-skip or tag that could otherwise hide evidence, or when a local/scheduled
+test is presented as replacement evidence for a hosted fact.
+
+### What not to design here
+
+- Do not build the top-level CI digest, run timing ledger, build-lane attribution, or
+  contributor-facing "what failed and how do I reproduce it" page in 652. Those belong to 651.
+- Do not fold `test-evidence-policy.v1.json` into `workflow-signal-policy.v1.json`; workflow facts
+  and test substitutions are related but have different reasons to change.
+- Do not add a general repository evidence registry. The current sibling policies are clearer:
+  workflow facts, test evidence, stress evidence, and public-history policy each own one class of
+  fact.
+- Do not make path-aware skipping part of required unit evidence. Skipped required checks are too
+  easy to misread, and this repo has projection-heavy inputs.
+- Do not make performance budgets blocking before attribution has enough hosted samples to separate
+  real regression from runner variance.
+
+### Design reach
+
+The broader principle is **declared evidence substitution**:
+
+> When required public evidence does not directly run a test or proof, the substitute must be named:
+> what fact it proves, who owns it, where it runs, how often it is expected, and what hosted evidence
+> it replaces or supplements.
+
+This is a specific instance of the broader public-evidence projection principle already present in
+the repo. It appears in several places:
+
+- public CI fact lanes project workflow internals into stable branch-protection facts;
+- unit-test attribution projects raw JUnit XML into readable module and suite evidence;
+- `test-evidence-policy.v1.json` projects scattered `CI=true` skips and tags into owned evidence
+  tiers;
+- `stress-suite-policy.v1.json` already delegates a special evidence class instead of mixing stress
+  tests into ordinary unit semantics;
+- 653's public-history policy projects branch work into curated public `main` history;
+- 650's capability work projects public prose from declared facts rather than hand-authored forks.
+
+Candidate future scope:
+
+- hosted/advisory parser evidence if PDF/OCR/Office fixture proof becomes merge- or release-relevant;
+- advisory unit-test budgets derived from attribution artifacts;
+- platform assumption records for Windows-to-Ubuntu moves;
+- rendered human-readable summaries of test-evidence policy entries, likely consumed by 651's CI
+  digest rather than owned there;
+- other opt-in evidence classes only if they start replacing or supplementing protected public facts.
+
+Known gaps relative to this principle:
+
+- The current policy captures explicit `CI=true` skips and declared tags, but it does not make the
+  general "integration tests are not part of protected hosted unit evidence" boundary machine
+  visible. That is acceptable for now because docs state the boundary and no current design needs a
+  per-source-set registry.
+- Unit-test attribution has enough detail for ownership, but no advisory budget file exists yet.
+  That should wait for trend evidence.
+- Parser/PDF/OCR evidence is honest as local fixture evidence, but not yet public hosted evidence.
+  That is a product confidence tradeoff to revisit only if parser behavior becomes a merge-required
+  public fact.
+
+The principle should be recorded but not generalized into new infrastructure now. 652 needs a
+well-owned unit-test evidence contract, not an all-repository evidence system.
+
+## Confidence-building pass - 2026-06-28
+
+Purpose: reduce surprises before any remaining 652 implementation work. This pass did not
+implement feature work, change CI, alter shard boundaries, or introduce budgets.
+
+### Static contract audit
+
+The current workflow contract is internally consistent after expanding the unit-test matrix:
+
+- `.github/workflows/ci.yml` defines three unit-test lanes: `app-ui`, `search-worker`, and
+  `platform-contracts`.
+- The expanded required check names are `Unit tests (app-ui)`, `Unit tests (search-worker)`, and
+  `Unit tests (platform-contracts)`.
+- `scripts/ci/workflow-signal-policy.v1.json` declares the same three required unit checks.
+- The attribution artifact names are `unit-test-attribution-app-ui`,
+  `unit-test-attribution-search-worker`, and `unit-test-attribution-platform-contracts`.
+- Runner labels are explicit in the reporter call as `windows-latest/app-ui`,
+  `windows-latest/search-worker`, and `windows-latest/platform-contracts`.
+- `node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main`
+  passed and reported that `main` requires the eight declared checks.
+
+This confirms that 652's protected unit-test vocabulary currently matches workflow policy and
+branch-protection policy. Any later shard rename or requiredness change must update all three
+places together.
+
+### Policy and reporter validation
+
+Local validation passed:
+
+- `node scripts/ci/verify-test-evidence-policy.mjs --json`
+- `node scripts/ci/test-verify-test-evidence-policy.mjs`
+- `node scripts/ci/verify-stress-suite-policy.mjs --json`
+- `node --check scripts/ci/report-unit-test-attribution.mjs`
+- `node scripts/ci/test-report-unit-test-attribution.mjs`
+- `node scripts/ci/check-workflow-triggers.mjs`
+- `node scripts/ci/check-tempdoc-numbers.mjs`
+
+The test-evidence policy currently covers all discovered `CI=true` skipped Java test sites and all
+non-stress JUnit tags. The discovered explicit CI skips are owned in `app-services`, `ui`, and
+`worker-services`. The discovered tags are `ai`, `evidence`, `experiment`, `stress`, `systemTest`,
+and `vdu`; `stress` remains delegated to `stress-suite-policy.v1.json`.
+
+The attribution reporter is adequate for future advisory budgets because it reports module totals,
+slow suites, skipped counts, failure/error counts, and runner identity. One local caveat matters:
+running the reporter from the repository root can include copied hosted artifacts under local
+temporary directories such as `tmp/gha-unit-*` if they exist. A clean hosted checkout is not affected,
+but local budget research should either use clean artifacts or constrain `--results-root` to the
+intended results tree.
+
+A constrained local attribution run against `modules` reported 6131 tests, 27 skipped tests, no
+failures, no errors, 1098 suites, and about 3m06s of summed suite time. The slowest local modules in
+that evidence were `worker-services`, `app-services`, `indexer-worker`, `adapters-lucene`, `ui`,
+`app-inference`, and `app-launcher`. This is enough for ownership diagnosis, but not yet enough for
+blocking hosted budgets.
+
+### Hosted evidence check
+
+Read-only hosted checks showed that the three attribution artifacts are being uploaded on successful
+CI runs. Recent green CI runs completed around ten minutes overall. The unit shards are all in the
+same broad range, with no stable single long pole:
+
+- one green `main` run had `Unit tests (app-ui)` around 9m57s, `Unit tests (platform-contracts)`
+  around 9m42s, `Unit tests (search-worker)` around 8m56s, and `Build (no model blobs)` around
+  9m17s;
+- nearby green runs alternated between `app-ui` and `platform-contracts` as the slowest unit shard;
+- `Build (no model blobs)` remains close enough to the unit shards that broad feedback-loop speed
+  work belongs with 651, not 652.
+
+A newer failed Dependabot dependency run failed broadly and early across multiple checks. It is not
+evidence that the 652 shard design is wrong.
+
+### Platform-risk review
+
+All three current unit shards should be classified as `mixed/needs targeted experiment` for any
+future Windows-to-Ubuntu move:
+
+- `app-ui` includes Windows-sensitive app utility and launcher tests, including power status, job
+  objects, app instance locking, runtime manifest/logback behavior, and headless-eval surfaces.
+- `search-worker` includes worker services, Tika/PDF fixture behavior, index locking, worker-core
+  native/model discovery, Lucene filesystem behavior, and platform path contracts.
+- `platform-contracts` has the strongest native/runtime risk because it includes GPU bridge,
+  app-inference, ORT/common fixture behavior, benchmarks, system-test substrate, and test-support
+  surfaces.
+
+This means an Ubuntu migration should not be treated as a speed-only change. The first platform
+move, if attempted, should be advisory or duplicated until it proves the same public fact honestly.
+
+### Assumptions confirmed or changed
+
+Confirmed:
+
+- The three protected unit-test checks match workflow policy and branch protection.
+- `test-evidence-policy.v1.json` still covers the explicit skipped/tagged evidence surface.
+- Local parser/PDF/OCR evidence remains a defensible local fixture tier; no current evidence forces
+  a hosted parser lane.
+- Unit attribution has the right data shape for future advisory budgets.
+- 652 should stay scoped to unit-test evidence ownership, test-evidence policy, parser/test-tier
+  boundaries, unit budgets, and platform assumptions.
+
+Adjusted:
+
+- Budget work should prefer hosted attribution artifacts or a constrained result root. Local
+  repository-root scans can be polluted by copied artifacts.
+- Direct protected Ubuntu migration is lower-confidence than a casual read suggests. All shards have
+  enough Windows/native/file-system risk to require an advisory experiment first.
+- There is no evidence yet for another immediate shard split. The remaining latency problem is now
+  shared across unit shards and the build lane, so cross-check timing and contributor presentation
+  remain 651's concern.
+
+### Remaining uncertainty and confidence
+
+Remaining uncertainties:
+
+- Hosted shard variance needs several clean samples before any advisory budget becomes meaningful.
+- A parser/extraction hosted lane may become necessary later if parser behavior becomes a
+  merge-required public fact, but that is not required by the current evidence.
+- Ubuntu eligibility needs targeted experiments per shard or per module group before any required
+  check moves off Windows.
+- Any future check-name or branch-protection change must coordinate with 651's CI digest direction
+  and 653's public-history policy.
+
+Confidence for implementing the remaining 652 work: **8/10**.
+
+The contract is coherent, verified locally, and backed by recent hosted evidence. Confidence is not
+higher because budget thresholds and platform moves still depend on hosted trend samples and
+targeted platform experiments.
+
+## Implementation closeout - 2026-06-29
+
+Implemented the remaining 652 unit-test evidence contract slice without changing shard boundaries,
+branch protection, runner class, or parser/test requiredness.
+
+What landed:
+
+- added `scripts/ci/unit-test-shard-policy.v1.json` as the checked-in contract for the three public
+  unit shards: check name, artifact name, runner label, Gradle task list, local reproduction command,
+  owner, platform classification, platform-risk notes, and advisory budget settings;
+- added `scripts/ci/verify-unit-test-shard-policy.mjs` plus fixture tests so the workflow matrix,
+  workflow-signal required checks, and shard policy cannot drift independently;
+- extended `scripts/ci/report-unit-test-attribution.mjs` with explicit `lane` identity and tightened
+  default JUnit XML discovery so repo-root scans do not count copied hosted artifacts under local
+  temporary directories;
+- added `scripts/ci/report-unit-test-budget.mjs` plus fixture tests to turn one shard's attribution
+  JSON into warn-only budget evidence;
+- wired the policy verifier into the existing `Public claims` lane;
+- wired each unit shard to emit attribution and advisory budget JSON/Markdown artifacts, while
+  keeping Gradle as the unit-test pass/fail authority;
+- updated canonical testing and agent guidance to document the unit-shard policy, platform
+  classification, and warn-only budget reports.
+
+The advisory budget defaults are intentionally conservative and non-blocking:
+
+- `maxSummedSuiteSeconds`: 300;
+- `slowSuiteWarnSeconds`: 60;
+- `maxSkipped`: 50.
+
+These values are not a performance promise. They are an initial visibility floor that should be
+revisited only after several clean hosted attribution samples exist.
+
+Validation performed during implementation:
+
+- `node --check scripts/ci/report-unit-test-attribution.mjs`
+- `node scripts/ci/test-report-unit-test-attribution.mjs`
+- `node --check scripts/ci/verify-unit-test-shard-policy.mjs`
+- `node scripts/ci/test-verify-unit-test-shard-policy.mjs`
+- `node scripts/ci/verify-unit-test-shard-policy.mjs --json`
+- `node --check scripts/ci/report-unit-test-budget.mjs`
+- `node scripts/ci/test-report-unit-test-budget.mjs`
+- `node scripts/ci/report-unit-test-attribution.mjs --lane local --json --allow-empty`
+- `node scripts/ci/verify-test-evidence-policy.mjs --json`
+- `node scripts/ci/test-verify-test-evidence-policy.mjs`
+- `node scripts/ci/verify-stress-suite-policy.mjs --json`
+- `node scripts/ci/check-workflow-triggers.mjs`
+- `node scripts/ci/test-check-workflow-triggers.mjs`
+- `node scripts/ci/check-tempdoc-numbers.mjs`
+- `node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main`;
+- `CI=true ./gradlew.bat test -PskipWebBuild=true --console=plain`;
+
+Docs-maintenance validation:
+
+- `node scripts/docs/llmstxt-generate.mjs --check`
+- `node scripts/docs/skills-sync.mjs --check`
+- `node scripts/docs/verify-canonical-doc-links.mjs`
+- `node scripts/architecture/module-deps.mjs --check-canonical`
+- `node scripts/docs/prompt-surface-inventory.mjs`
+
+Known unrelated validation issue:
+
+- `node scripts/docs/verify-runtime-config-matrix.mjs` currently fails with a script-level
+  `TypeError` because it expects `buildMatrixModel()` fields named `yamlKeys` and
+  `envSyspropPairs`, while the current matrix model exposes counts and `rows`. The generator itself
+  still works with `node scripts/docs/generate-runtime-config-matrix.mjs --check`. This is not caused
+  by the 652 changes and was left untouched.
+
+Remaining validation before remote closeout:
+
+- hosted CI artifact inspection after push.
+
+Remaining future-only 652 work:
+
+- do not add blocking budgets until hosted variance is understood across multiple clean runs;
+- do not move any protected unit shard off Windows without an advisory duplicate/platform
+  experiment;
+- do not add a hosted parser/PDF/OCR lane unless parser behavior becomes a merge-required public
+  fact;
+- keep 651 as the owner of top-level CI digest, build-lane attribution, and cross-check trend
+  presentation.
