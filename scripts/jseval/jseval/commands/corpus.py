@@ -1,0 +1,285 @@
+"""jseval corpus commands (split from cli.py — tempdoc 645)."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import logging
+
+import click
+
+log = logging.getLogger(__name__)
+
+
+@click.command("corpus-build")
+@click.option("--source", required=True, type=click.Path(exists=True),
+              help="Committed corpus source dir (scripts/jseval/635-corpora/<name>/).")
+@click.option("--name", required=True,
+              help="Golden dataset name, e.g. synth-multihop-v1 (-> datasets/golden/<name>/).")
+@click.option("--datasets-dir", default=None, type=click.Path(),
+              help="Base datasets dir (default: repo datasets/).")
+@click.pass_context
+def cmd_corpus_build(ctx, source, name, datasets_dir):
+    """Materialize a committed corpus source -> golden/ BEIR layout + agent inputs (tempdoc 635).
+
+    One source -> two projections: retrieval view (corpus.jsonl + queries.jsonl + qrels) and
+    agent view (queries.json + raw corpus-dir). Writes a metadata.json with the 635 identity fields."""
+    from .. import corpus_build as cb
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    dataset_dir = base / "golden" / name
+    meta = cb.build_golden(source, dataset_dir)
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(meta, indent=2))
+    else:
+        click.echo(f"Built golden/{name}: {meta['corpus_size']} docs, "
+                   f"{meta['query_count']} queries -> {dataset_dir}")
+        click.echo(f"  sig={(meta['corpus_signature'] or '')[:16]} type={meta['type_axis']} "
+                   f"suite={meta['suite']} class={meta['contamination_class']}")
+
+
+@click.command("corpus-certify")
+@click.option("--dataset", required=True, help="Golden dataset name, e.g. synth-multihop-v1.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.option("--model", default="haiku", show_default=True)
+@click.option("--threshold", default=0.15, show_default=True, type=float,
+              help="Max closed-book accuracy to PASS (a clean corpus should score ~0).")
+@click.option("--concurrency", default=8, show_default=True, type=int)
+@click.pass_context
+def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency):
+    """Closed-book certification: a corpus is clean only if the model FAILS it closed-book (tempdoc 635).
+
+    Writes closed_book_certification + fidelity into the dataset's metadata.json. Needs the `claude` CLI
+    (no JustSearch dev stack)."""
+    from .. import corpus_certify as cc
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    dataset_dir = base / "golden" / dataset
+    queries = json.loads((dataset_dir / "queries.json").read_text(encoding="utf-8"))
+    result = cc.certify_corpus(queries, model=model, threshold=threshold, concurrency=concurrency)
+
+    meta_path = dataset_dir / "metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    # The two co-equal gates (memory = certify, retrieval-difficulty = fidelity) BOTH write the
+    # `fidelity` block; MERGE the sub-block so neither clobbers the other regardless of run order
+    # (symmetric to corpus-fidelity's merge — without this, certify-after-fidelity wiped the
+    # retrieval_ndcg/by_mode/comparable fields).
+    meta.update({k: v for k, v in result.items() if k != "fidelity"})
+    fid = dict(meta.get("fidelity") or {})
+    # Skip None values: certify emits `retrieval_difficulty: None` as a placeholder for the
+    # post-retrieval-run population — it must NOT clobber a real value already set by
+    # corpus-fidelity when certify runs second. (Only memory_independence is certify's to own.)
+    fid.update({k: v for k, v in (result.get("fidelity") or {}).items() if v is not None})
+    meta["fidelity"] = fid
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    cert = result["closed_book_certification"]
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        verdict = "PASS" if cert["passed"] else "FAIL"
+        click.echo(f"corpus-certify golden/{dataset}: closed-book acc={cert['closed_book_accuracy']:.3f} "
+                   f"(<= {threshold}) -> {verdict}")
+        click.echo(f"  memory_independence={result['fidelity']['memory_independence']} "
+                   f"(retrieval_difficulty set post-retrieval-run)  written to {meta_path.name}")
+
+
+@click.command("corpus-fidelity")
+@click.option("--dataset", required=True, help="Golden dataset name (e.g. synth-code-v1).")
+@click.option("--base-url", default="http://127.0.0.1:33221", show_default=True,
+              help="Live backend with the corpus already ingested (ignored when --start-backend).")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.option("--modes", default="bm25_splade", show_default=True, help="Retrieval modes; headline = last.")
+@click.option("--embedding/--no-embedding", default=False, help="Enable dense (needs chunking docs).")
+@click.option("--band-low", default=None, type=float,
+              help="Min nDCG@10 to pass (default: corpus_fidelity.DEFAULT_BAND_LOW; multi-hop scores low).")
+@click.option("--band-high", default=None, type=float, help="Max nDCG@10 to pass (default module constant).")
+@click.option("--leak-threshold", default=None, type=float, help="Max single-doc shortcut-leak rate.")
+@click.option("--model", default="haiku", show_default=True)
+@click.option("--concurrency", default=8, show_default=True, type=int)
+@click.option("--start-backend", is_flag=True,
+              help="Self-contained: start runHeadlessEval, ingest the dataset, assess, stop. The "
+                   "harness backend auto-discovers the reranker (default-on engine). Mirrors `jseval run`.")
+@click.option("--clean", is_flag=True, help="Clean the data dir before starting (requires --start-backend).")
+@click.pass_context
+def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
+                        band_low, band_high, leak_threshold, model, concurrency,
+                        start_backend, clean):
+    """FIDELITY gate (tempdoc 635 §D.5): a corpus passes only if it is non-trivial yet retrievable
+    (in-band nDCG@10) AND genuinely multi-hop (low single-doc shortcut leaks). The retrieval-difficulty
+    axis, symmetric to corpus-certify's memory axis. Stack-bound: pass --start-backend to ingest+assess
+    self-contained (the harness backend's auto-discovered reranker is the DEFAULT-ON engine), or point
+    --base-url at a backend with the corpus already ingested."""
+    from .. import corpus_fidelity as cf
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    dataset_dir = base / "golden" / dataset
+    mode_list = tuple(m.strip() for m in modes.split(",") if m.strip())
+
+    # Self-contained mode: bring up the harness backend, ingest the member, assess, stop.
+    # Reuses the exact backend + ingest+readiness path `jseval run --start-backend` uses
+    # (cli._run_single_iteration), so the reranker auto-discovery + reaper-free lifecycle apply.
+    backend_proc = None
+    if start_backend:
+        from .. import backend as backend_mod
+        from .. import ingest as ingest_mod
+        from ..types import IngestConfig
+        if not clean:
+            # A self-contained gate run must start from a clean index: cache-verification
+            # (tempdoc 635) binds the materialized corpus to its source, but a dirty Lucene
+            # index would still co-ingest a prior corpus. Both are needed to bind index==corpus,
+            # so refuse rather than silently pollute the verdict.
+            raise click.UsageError(
+                "--start-backend requires --clean (a self-contained fidelity run must start "
+                "from a clean index, else a prior corpus co-ingests and pollutes the verdict)."
+            )
+        # Resolve ONE port and pass it to both start_backend and base_url (D3): start_backend binds
+        # `port` and sets the child's env from it, so deriving base_url from the parent's env would
+        # diverge whenever JUSTSEARCH_API_PORT is set to a non-default value.
+        port = int(os.environ.get("JUSTSEARCH_API_PORT", "33221"))
+        backend_proc = backend_mod.start_backend(clean=clean, llm=False, port=port)
+        base_url = f"http://127.0.0.1:{port}"
+    try:
+        if start_backend:
+            popen = backend_proc.proc
+            ingest_mod.prepare_corpus(
+                f"golden/{dataset}",
+                config=IngestConfig(
+                    base_url=base_url, dense_enabled=embedding, splade_enabled=True,
+                    pipeline=True, json_mode=ctx.obj.get("json", False),
+                    process_check=(lambda: popen.poll() is None),
+                ),
+            )
+        result = cf.assess_fidelity(
+            dataset_dir, f"golden/{dataset}", base_url, modes=mode_list,
+            embedding_enabled=embedding, splade_enabled=True,
+            band_low=cf.DEFAULT_BAND_LOW if band_low is None else band_low,
+            band_high=cf.DEFAULT_BAND_HIGH if band_high is None else band_high,
+            leak_threshold=cf.DEFAULT_LEAK_THRESHOLD if leak_threshold is None else leak_threshold,
+            model=model, concurrency=concurrency, base_dir=base)
+    finally:
+        if backend_proc is not None:
+            from .. import backend as backend_mod
+            backend_mod.stop_backend(backend_proc.proc)
+
+    meta_path = dataset_dir / "metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    # Merge into the cert's fidelity block, preserving memory_independence. Skip None values for
+    # symmetry with corpus-certify's merge (D2) — neither co-equal gate clobbers the other's fields
+    # regardless of run order.
+    fid = dict(meta.get("fidelity") or {})
+    fid.update({k: v for k, v in result.items() if v is not None})
+    meta["fidelity"] = fid
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        verdict = "PASS" if result["passed"] else "FAIL"
+        click.echo(f"corpus-fidelity golden/{dataset}: nDCG@10={result['retrieval_ndcg']} "
+                   f"(band {result['band'][0]}-{result['band'][1]}, in_band={result['in_band']}), "
+                   f"difficulty={result['retrieval_difficulty']}, "
+                   f"shortcut_leaks={result['shortcut_leak_rate']} -> {verdict}")
+
+
+@click.command("corpus-probe")
+@click.option("--dataset", required=True, help="Golden dataset name (e.g. synth-code-v1).")
+@click.option("--base-url", default="http://127.0.0.1:33221", show_default=True,
+              help="Live backend with the corpus ingested (ignored when --start-backend).")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.option("--modes", default="vector,bm25_splade,hybrid", show_default=True,
+              help="Retrieval modes to probe (comma-separated).")
+@click.option("--embedding/--no-embedding", default=True, help="Enable dense (needed for vector/hybrid).")
+@click.option("--top-k", default=10, show_default=True, type=int)
+@click.option("--start-backend", is_flag=True,
+              help="Self-contained: start runHeadlessEval, ingest, probe, stop.")
+@click.option("--clean", is_flag=True, help="Clean the data dir before starting (requires --start-backend).")
+@click.pass_context
+def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top_k, start_backend, clean):
+    """PROBE the retrieval binding (tempdoc 635 witness): per-query expected-head rank + top-k across modes,
+    plus a control search of the head's own descriptor. The inspectable 'show your work' companion to
+    corpus-fidelity's scalar verdict — diagnoses whether/why retrieval finds the certified head (and whether
+    the measured index is even the certified corpus: an exactly-0.0 / head-never-found probe is the
+    plumbing-mismatch signature, not a retrieval-quality one)."""
+    import collections
+    from .. import retriever as retr
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    dataset_dir = base / "golden" / dataset
+    mode_list = [m.strip() for m in modes.split(",") if m.strip()]
+
+    queries: dict[str, str] = {}
+    for line in (dataset_dir / "queries.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            d = json.loads(line); queries[d["_id"]] = d["text"]
+    head: dict[str, str] = {}
+    for line in (dataset_dir / "qrels" / "test.tsv").read_text(encoding="utf-8").splitlines()[1:]:
+        if line.strip():
+            qid, cid, _ = line.split("\t"); head[qid] = cid
+    titles: dict[str, str] = {}
+    for line in (dataset_dir / "corpus.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            d = json.loads(line); titles[d["_id"]] = d.get("title", "")
+
+    backend_proc = None
+    if start_backend:
+        if not clean:
+            raise click.UsageError("--start-backend requires --clean (see corpus-fidelity).")
+        from .. import backend as backend_mod
+        from .. import ingest as ingest_mod
+        from ..types import IngestConfig
+        port = int(os.environ.get("JUSTSEARCH_API_PORT", "33221"))
+        backend_proc = backend_mod.start_backend(clean=clean, llm=False, port=port)
+        base_url = f"http://127.0.0.1:{port}"
+    try:
+        if start_backend:
+            popen = backend_proc.proc
+            ingest_mod.prepare_corpus(
+                f"golden/{dataset}",
+                config=IngestConfig(
+                    base_url=base_url, dense_enabled=embedding, splade_enabled=True,
+                    pipeline=True, json_mode=ctx.obj.get("json", False),
+                    process_check=(lambda: popen.poll() is None)))
+        rows = []
+        for mode in mode_list:
+            scored, _ = retr.retrieve(queries, base_url, mode=mode, top_k=top_k, allow_errors=True)
+            by_q: dict[str, list[str]] = collections.defaultdict(list)
+            for sd in scored:
+                by_q[sd.query_id].append(sd.doc_id)
+            ranks, found = [], 0
+            for qid in queries:
+                preds = by_q.get(qid, [])
+                h = head.get(qid)
+                if h and h in preds:
+                    found += 1; ranks.append(preds.index(h) + 1)
+            rows.append({"mode": mode, "head_at_topk": f"{found}/{len(queries)}",
+                         "mean_rank": (round(sum(ranks) / len(ranks), 2) if ranks else None)})
+        ctrl = None
+        if queries:
+            q0 = next(iter(queries)); h0 = head.get(q0)
+            if h0:
+                cs, _ = retr.retrieve({"ctrl": titles.get(h0, "")}, base_url,
+                                      mode=mode_list[-1], top_k=top_k, allow_errors=True)
+                preds = [sd.doc_id for sd in cs]
+                ctrl = {"head": h0, "rank": (preds.index(h0) + 1 if h0 in preds else None)}
+    finally:
+        if backend_proc is not None:
+            from .. import backend as backend_mod
+            backend_mod.stop_backend(backend_proc.proc)
+
+    out = {"dataset": f"golden/{dataset}", "n_queries": len(queries), "modes": rows, "control": ctrl}
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(out, indent=2))
+    else:
+        click.echo(f"corpus-probe golden/{dataset} ({len(queries)} queries):")
+        for r in rows:
+            click.echo(f"  [{r['mode']:12}] head@top{top_k}: {r['head_at_topk']}  mean_rank={r['mean_rank']}")
+        if ctrl is not None:
+            click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
+
+
+COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe]
