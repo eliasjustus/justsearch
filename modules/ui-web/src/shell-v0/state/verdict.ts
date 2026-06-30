@@ -197,6 +197,14 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
         return { kind: 'transitioning', severity: 'warn', reasons: [cause, 'overdue'] };
       }
     }
+    // Tempdoc 649 — `channel-stale` is genuine lost contact (no poll AND no stream frame within the
+    // window), worded "Reconnecting…". Unlike `updating` (reachable, data merely behind → calm "Catching
+    // up…"), this is a connectivity problem the user should see as a WARNING, not calm. Severity 'warn'
+    // gives the proper ramp: updating(busy→info) < channel-stale(warn→amber) < unreachable(error→red),
+    // so the calm and the alarming in-flux states are visually distinct on every surface.
+    if (cause === 'channel-stale') {
+      return { kind: 'transitioning', severity: 'warn', reasons: [cause] };
+    }
     return { kind: 'transitioning', severity: 'busy', reasons: [cause] };
   }
   // Settled: roll up the readiness axis.

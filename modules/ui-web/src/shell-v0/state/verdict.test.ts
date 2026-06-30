@@ -330,14 +330,17 @@ describe('computeVerdict — stuck-transition escalation (595 §15.2 / E4)', () 
     expect(verdictHeadline(v)).toBe('Rebuilding… (taking longer than expected)');
   });
 
-  it('escalation applies only to rebuild/switch, not e.g. channel-stale', () => {
+  it('migration escalation flags do not attach to channel-stale (it has its own 649 severity)', () => {
     const v = computeVerdict({
       phase: 'connected',
       stability: { kind: 'provisional', cause: 'channel-stale' },
       readiness: UNKNOWN,
       migrationPaused: true, // irrelevant to a connection-stale transition
     });
-    expect(v.severity).toBe('busy');
+    // 649: channel-stale (lost contact, "Reconnecting…") is its OWN warning — distinct from the calm
+    // `updating`/`busy` catch-up. The `reasons` prove the migration `paused` flag did NOT attach (no
+    // 'paused' reason), so the E4 escalation path is still scoped to rebuild/switch only.
+    expect(v.severity).toBe('warn');
     expect(v.reasons).toEqual(['channel-stale']);
   });
 });

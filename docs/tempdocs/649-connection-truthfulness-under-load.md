@@ -969,3 +969,27 @@ new UI element**. It does not change any of the above.
   the fork (older states happened to agree). Candidate scope: every site where `statusTier` drives tone/colour
   independently of `verdictTone` (`StatusDeck`, `LivenessReadout`, any status dot). Recorded; the in-scope fix
   is to re-seat those on `verdictTone`, not to build new structure.
+
+### Implemented (2026-06-30)
+
+The primary tone-authority fix + the secondary two-timestamp legibility are **implemented and live-verified**
+(branch `worktree-649-toneux`). Changes:
+
+- **One verdict-derived `statusTone`** (`aiStateStore.computeStatusTone`, the tone sibling of
+  `computeStatusLabel`; new `AiState.statusTone: NoticeTone`). `StatusDeck.inferencePillTone` and
+  `LivenessReadout.toneFor` now read it (the latter gains `info`→`--accent-tint` and `error`→`--accent-danger`
+  dot tones — both pre-existing tokens, no new colour). `statusTier` is retained but no longer drives tone.
+- **The ramp made real:** `channel-stale` ("Reconnecting…") was elevated `busy`→`warn` in `computeVerdict`, so
+  lost contact is **amber**, distinct from the calm **info/tint** `updating` ("Catching up…"); `unreachable`
+  stays **error/red**. One calm→amber→red ramp on every surface.
+- **Two timestamps:** `AiConnection.lastContactMs` surfaced; the Health CONNECTION panel renders "Backend
+  reachable" / "Data updated" via a new `relativeTime.formatRelativeMs` (epoch-ms + sub-minute "Ns ago" tier).
+- **Tests:** `aiStateStore`/`StatusDeck`/`verdict` updated + a new `LivenessReadout.test`; typecheck + unit
+  green; token/contrast/verdict gates green.
+- **Live-verified** (dev stack + browser): the organic "Catching up…" rendered `info` (teal,
+  `oklch(0.75 0.15 180)`) on the Health badge, the Retrieval dot, AND the status-bar pill (all matched); an
+  induced contact loss flipped all three to `warning` (amber, `oklch(0.75 0.18 70)`) "Reconnecting…"; the two
+  timestamps ticked honestly ("reachable just now / 2 min ago", "data 15s ago / 5 min ago").
+
+Still out of scope (own future tempdoc): the SSE-consolidation "managed connection budget"; catalog
+enhancements (alarm-debounce, retrying-vs-error nuance, Tauri heartbeat, positive-evidence lint).

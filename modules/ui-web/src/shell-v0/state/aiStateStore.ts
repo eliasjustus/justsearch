@@ -53,9 +53,11 @@ import {
   computeStability,
   computeVerdict,
   verdictHeadline,
+  verdictTone,
   type Stability,
   type SystemHealthVerdict,
 } from './verdict.js';
+import type { NoticeTone } from '../utils/statusTone.js';
 
 // Re-export the raw snapshot types — the store is the single observed-state
 // authority, so consumers type `aiState.status` / `aiState.inference` from here.
@@ -72,7 +74,14 @@ export interface AiCapabilities {
 
 export interface AiConnection {
   reachable: boolean;
+  /** Last *poll* success (the data-freshness stamp). */
   lastSuccessMs: number | null;
+  /**
+   * Tempdoc 649 — last POSITIVE CONTACT of any channel (poll success OR an SSE frame/heartbeat), the
+   * reachability stamp. Distinct from `lastSuccessMs` (poll freshness): under load the poll can lag while
+   * a stream keeps contact fresh. Surfaced so the CONNECTION panel can show both timestamps honestly.
+   */
+  lastContactMs: number | null;
   consecutiveFailures: number;
 }
 
@@ -146,6 +155,14 @@ export interface AiState {
   index: AiIndex;
   statusLabel: string;
   statusTier: StatusTier;
+  /**
+   * Tempdoc 649 — the ONE tone for the status-bar pill + liveness dot, the matched sibling of
+   * `statusLabel`: both project from the one verdict (`verdictTone`). Replaces the `statusTier`→tone
+   * fork that rendered the calm "Catching up…" (`busy`) state as amber `degraded`. Calm in-flux → `info`,
+   * real degradation → `warning`/`error`, settled-online → `success`. (`statusTier` stays for any coarse
+   * non-tone use; it no longer drives connection-status colour.)
+   */
+  statusTone: NoticeTone;
   /**
    * 595 §4.1 — the ONE "is what we're showing settled, or in flux?" axis. Every
    * transition-/freshness-sensitive renderer consults this instead of treating a
@@ -303,10 +320,11 @@ function computeConnection(): AiConnection {
   // `lastSuccessMs` stays the last POLL success (the data-freshness stamp consumers read); `reachable`
   // is the contact-based truth (tempdoc 649). They are different facts and must not be conflated.
   const { lastSuccessMs } = computeStaleness();
-  const { reachable } = computeReachability();
+  const { reachable, lastContactMs } = computeReachability();
   return {
     reachable,
     lastSuccessMs,
+    lastContactMs,
     consecutiveFailures: reachable ? 0 : 1,
   };
 }
@@ -430,6 +448,39 @@ function computeStatusTier(
   }
 }
 
+/**
+ * Tempdoc 649 — the ONE tone for the status pill + liveness dot, the matched sibling of
+ * `computeStatusLabel` (same branch order). Both the pill and the dot consume this single
+ * verdict-derived tone, so `statusTier` is no longer a second tone authority: the calm "Catching up…"
+ * (`transitioning`, severity `busy`) projects `verdictTone('busy')='info'` (calm tint) instead of the
+ * old `statusTier='degraded'` amber. Real degradations stay `warning`/`error`; settled runtime modes
+ * (the labels `computeStatusLabel` shows when settled) tone by the mode, since the verdict EXCLUDES AI.
+ */
+function computeStatusTone(
+  verdict: SystemHealthVerdict,
+  runtime: AiRuntime,
+  act: AiActivity,
+): NoticeTone {
+  if (act.state === 'thinking' || act.state === 'streaming' || act.state === 'extracting') {
+    return 'info';
+  }
+  // Verdict-driven labels (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
+  // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
+  if (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  ) {
+    return verdictTone(verdict.severity);
+  }
+  // Settled (operational / checking): the label is the runtime mode (AI is excluded from the verdict),
+  // so tone by the mode — online green, in-progress calm, offline/unknown neutral.
+  if (runtime.mode === 'online') return 'success';
+  if (runtime.mode === 'indexing' || runtime.mode === 'starting') return 'info';
+  return 'neutral';
+}
+
 function computePhase(): ConnectionPhase {
   const { lastSuccessMs, neverConnected, stale } = computeStaleness();
   if (lastSuccessMs === null) return neverConnected ? 'disconnected' : 'connecting';
@@ -495,6 +546,7 @@ function buildSnapshot(): AiState {
   });
   const statusLabel = computeStatusLabel(verdict, runtime, activity);
   const statusTier = computeStatusTier(verdict, runtime);
+  const statusTone = computeStatusTone(verdict, runtime, activity);
   return {
     phase,
     readiness,
@@ -505,6 +557,7 @@ function buildSnapshot(): AiState {
     index,
     statusLabel,
     statusTier,
+    statusTone,
     stability,
     verdict,
     status,

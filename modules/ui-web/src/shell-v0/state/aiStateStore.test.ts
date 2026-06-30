@@ -113,7 +113,11 @@ describe('aiStateStore — R1a signal-core conversion', () => {
       expect(s.connection.reachable).toBe(true);
       expect(s.statusLabel).toBe('Catching up…');
       expect(s.index.documentCount).toEqual(known(42)); // last-known retained, not wiped
-      expect(s.statusTier).toBe('degraded');
+      expect(s.statusTier).toBe('degraded'); // statusTier still 'degraded' (it no longer drives tone)
+      // 649 tone fix: the calm "Catching up…" state is `info` (calm tint), NOT amber — so every surface
+      // (status pill, liveness dot) renders it calm, matching the Health badge.
+      expect(s.statusTone).toBe('info');
+      expect(s.connection.lastContactMs).toBe(t0); // contact stamp surfaced (the t0 poll success)
 
       // 41s later: NO contact of any kind within the 40s window ⇒ genuinely unreachable ⇒ the alarm.
       vi.setSystemTime(t0 + 41_000);
@@ -121,6 +125,8 @@ describe('aiStateStore — R1a signal-core conversion', () => {
       s = getAiState();
       expect(s.connection.reachable).toBe(false);
       expect(s.statusLabel).toBe('Reconnecting…');
+      // 649 ramp: lost contact ("Reconnecting…") is a WARNING (amber), distinct from the calm catch-up.
+      expect(s.statusTone).toBe('warning');
       expect(s.index.documentCount).toEqual(known(42)); // still retained
     } finally {
       vi.useRealTimers();
@@ -147,6 +153,8 @@ describe('aiStateStore — R1a signal-core conversion', () => {
       expect(s.phase).toBe('stale'); // poll data is behind
       expect(s.connection.reachable).toBe(true); // but a recent SSE frame proves the backend is alive
       expect(s.statusLabel).toBe('Catching up…'); // calm, not the false "Reconnecting…"
+      expect(s.statusTone).toBe('info'); // 649: calm tone, not amber
+      expect(s.connection.lastContactMs).toBe(t0 + 45_000); // contact stamp = the SSE frame
     } finally {
       vi.useRealTimers();
     }
@@ -188,6 +196,7 @@ describe('aiStateStore — R1a signal-core conversion', () => {
       });
       expect(getAiState().runtime.mode).toBe('online');
       expect(getAiState().statusLabel.startsWith('Starting')).toBe(false);
+      expect(getAiState().statusTone).toBe('success'); // 649: settled-online is green
     } finally {
       vi.useRealTimers();
     }
@@ -258,6 +267,7 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('degraded');
     expect(s.verdict.severity).toBe('warn');
     expect(s.statusTier).toBe('degraded'); // was 'online' before 595 — the live split
+    expect(s.statusTone).toBe('warning'); // 649: an impairing degrade is amber on every surface
   });
 
   it('600 Design A: a compat reindex code carries through to a degraded verdict (the specific cause)', () => {
@@ -276,6 +286,7 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('degraded');
     expect(s.verdict.severity).toBe('info');
     expect(s.statusTier).not.toBe('degraded'); // no false alarm for an optional re-ranker
+    expect(s.statusTone).toBe('info'); // 649: a cosmetic degrade stays calm (info), never amber
   });
 
   it('a worker-down fallback (indexState UNAVAILABLE) ⇒ transitioning, "Restarting…"', () => {
