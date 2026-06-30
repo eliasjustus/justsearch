@@ -60,7 +60,7 @@ _CORPUS_DEPENDENT_COMMIT_METADATA = (
 )
 # model_fingerprints keys that are execution-context (vary GPU vs CPU), excluded
 # from model identity:
-_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu")
+_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu", "reranker_gpu")
 
 
 class ComposeError(ValueError):

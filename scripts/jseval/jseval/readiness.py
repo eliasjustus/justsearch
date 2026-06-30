@@ -458,33 +458,43 @@ def _fetch_status(client: httpx.Client) -> dict:
 def flatten_status(data: dict) -> dict:
     """Flatten nested worker sub-records to the top level.
 
-    Since change 384, WorkerOperationalView is nested under "worker" key
-    (was @JsonUnwrapped for flat compat). This merges all nested sub-records
-    (core, enrichment, migration, telemetry, enrichment.chunk) into the
-    top-level dict so existing ``.get()`` calls work unchanged.
+    Since change 384, WorkerOperationalView is nested under the "worker" key
+    (was @JsonUnwrapped for flat compat). This merges every direct child of
+    ``worker`` to the top level so existing ``.get()`` calls work unchanged.
+
+    Data-driven (tempdoc 644): it iterates ``worker``'s children rather than a
+    hand-maintained allow-list, so a newly-added sub-record (e.g. the formerly
+    omitted ``visualExtraction``) is surfaced automatically — the same omission
+    class that once hid ``gpu`` (and with it the per-encoder ``*OrtCuda``
+    diagnostics the 644 capability guard reads) cannot recur. The merge is
+    **one level only**: dict-valued *leaves* like ``embedOrtCuda`` are copied
+    through as nested dicts (preflight reads them as dicts), never recursed.
+    A sibling-collision assertion converts a future wire-contract change that
+    makes two sub-records claim the same top-level key from silent
+    first-writer-wins data loss into a loud failure.
     """
     worker = data.get("worker")
     if not isinstance(worker, dict):
         return data
 
-    # Flatten direct worker fields (e.g., buildStamp)
-    for k, v in worker.items():
-        if not isinstance(v, dict) and k not in data:
-            data[k] = v
-
-    # Flatten sub-records (core, enrichment, migration, etc.)
-    # `gpu` carries the per-encoder model-path + ORT-CUDA diagnostics
-    # (rerankerModelPath, spladeModelPath, embedBackend, *OrtCuda, …). Without it these
-    # surface as None at top level, so preflight's model_wiring/GPU section and the
-    # tempdoc-644 capability guard were blind to whether the reranker actually loaded.
-    for sub_key in ("core", "enrichment", "failure", "migration",
-                    "compatibility", "queueDb", "telemetry",
-                    "vectorFormat", "searchConfig", "gpu"):
-        sub = worker.get(sub_key)
-        if isinstance(sub, dict):
-            for k, v in sub.items():
-                if k not in data:
-                    data[k] = v
+    contributed: dict = {}  # child-key -> the sub-record that first contributed it
+    for sub_key, sub in worker.items():
+        if not isinstance(sub, dict):
+            # Direct worker field (e.g. buildStamp) — copy the leaf.
+            if sub_key not in data:
+                data[sub_key] = sub
+            continue
+        # Sub-record — copy its children one level (dict-valued leaves stay dicts).
+        for k, v in sub.items():
+            if k in contributed and contributed[k] != sub_key:
+                raise ValueError(
+                    f"flatten_status: worker sub-records '{contributed[k]}' and '{sub_key}' both "
+                    f"define top-level key '{k}'; a flatten would silently drop one. Disambiguate "
+                    f"the wire contract (rename one) before flattening."
+                )
+            if k not in data:
+                data[k] = v
+                contributed[k] = sub_key
     # enrichment.chunk is one level deeper
     chunk = worker.get("enrichment", {}).get("chunk")
     if isinstance(chunk, dict):
