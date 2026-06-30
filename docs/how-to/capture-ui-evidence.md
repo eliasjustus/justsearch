@@ -54,6 +54,7 @@ python -m jseval ui-check --ui-url http://127.0.0.1:5173
 # JSON output (per-step measurement summary included)
 python -m jseval --json ui-check
 ```
+
 (`--no-demo` is legacy — the `?demo=true` mock path is orphaned; data comes from the live backend.)
 
 Output: timestamped directory in `tmp/ui-check/<timestamp>/` with all PNGs

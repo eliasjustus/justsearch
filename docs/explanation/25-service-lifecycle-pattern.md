@@ -220,11 +220,9 @@ question (phase typing wins) rather than an *operational fit* question
 | `SqliteJobQueue` | B | Already cyclable (re-callable `open()`); pattern adoption pending | — |
 | `IndexingLoop` | B | Pattern not yet adopted; `resetForProfiling` workaround exists | — |
 
-For the speculative future-feature drivers and per-owner target
-designs, see
-[`docs/future-features/service-identity-lifecycle-pattern.md`](../future-features/service-identity-lifecycle-pattern.md).
-That doc is intentionally noncanonical — it captures *what each owner
-might become*. This doc captures *the pattern they would all adopt*.
+Speculative per-owner target designs are intentionally outside this
+canonical document. This doc captures the shared pattern those owners
+would adopt if that future work is resumed.
 
 ## Related design heuristics
 
@@ -298,5 +296,5 @@ and [ADR-0029 (TelemetryEvents bridge vs direct-emit)](../decisions/0029-telemet
 - [ADR-0027 — MetricCatalog as the Telemetry Contract](../decisions/0027-metric-catalog-as-telemetry-contract.md)
 - [ADR-0028 — Scoped Reverse Path-Hash Lookup](../decisions/0028-scoped-reverse-path-lookup.md)
 - [ADR-0029 — TelemetryEvents Bridge vs Direct-Emit](../decisions/0029-telemetry-events-bridge-vs-direct-emit.md)
-- [`docs/future-features/service-identity-lifecycle-pattern.md`](../future-features/service-identity-lifecycle-pattern.md)
-  — speculative per-owner target designs and feature drivers
+- Speculative per-owner lifecycle notes are noncanonical and not part of
+  the current public reference corpus.

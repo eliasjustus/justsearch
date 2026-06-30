@@ -5,8 +5,8 @@
  *
  * When an agent edits NativeSessionHandle, SessionHandle, OrtSessionAssembler,
  * OnnxSessionCache, or any @Tag("stress") test file in ort-common, surfaces a
- * reminder to dispatch CI with runStress=true. Without this, stress-cadence is
- * discipline-dependent under ADR-0026 (observations.md L45).
+ * reminder to run the stress-tagged Gradle tests. Without this, stress-cadence
+ * is discipline-dependent (observations.md L45).
  *
  * - Synchronous (blocks until return, <50ms)
  * - No external process spawning — just path parsing
@@ -59,11 +59,10 @@ async function main() {
     if (!isStressSubject(filePath) && !isStressTest(filePath)) return;
 
     const hint = [
-      `ORT stress-test subject edited — dispatch CI with stress lane:`,
-      `  gh workflow run ci.yml -f runStress=true`,
-      `ADR-0026 manual-only CI means stress tests only run when explicitly`,
-      `requested. Without this dispatch, ORT concurrency regressions reach`,
-      `main undetected (observations.md L45).`,
+      `ORT stress-test subject edited — run the stress-tagged Gradle tests:`,
+      `  ./gradlew.bat test -PincludeStress=true --tests "*Stress*"`,
+      `Stress tests are opt-in. Without an explicit local run, ORT concurrency`,
+      `regressions can reach main undetected (observations.md L45).`,
     ].join('\n');
 
     process.stdout.write(JSON.stringify({

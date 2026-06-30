@@ -86,7 +86,7 @@ Superseded ADRs are retained for historical context but must include a note dire
 | [0023](0023-api-responses-declare-runtime-context.md) | API responses declare their runtime context | Accepted | 2026-03-30 |
 | [0024](0024-app-packaging-nsis-per-user-download.md) | App packaging: NSIS, per-user install, download-on-demand | Accepted | 2026-04-06 |
 | [0025](0025-core-dto-dual-type-layering.md) | Core DTO dual-type layering (gRPC vs REST) | Accepted | 2026-04-06 |
-| [0026](0026-manual-ci-triggering.md) | Manual-Only CI Triggering | Accepted | 2026-04-22 |
+| [0026](0026-manual-ci-triggering.md) | Manual-Only CI Triggering | Accepted (narrowed by ADR-0044) | 2026-04-22 |
 | [0027](0027-metric-catalog-as-telemetry-contract.md) | MetricCatalog as the Telemetry Contract | Accepted | 2026-04-25 |
 | [0028](0028-scoped-reverse-path-lookup.md) | Scoped Reverse Path-Hash Lookup | Accepted | 2026-04-26 |
 | [0029](0029-telemetry-events-bridge-vs-direct-emit.md) | TelemetryEvents Bridge vs Direct-Emit Façade | Accepted | 2026-04-27 |
@@ -104,6 +104,8 @@ Superseded ADRs are retained for historical context but must include a note dire
 | [0041](0041-catalog-category-format.md) | Catalog Category format — protobuf enums + metadata | Accepted (format superseded in part by tempdoc 564) | 2026-06-09 |
 | [0042](0042-runtime-witness-consumer-presence.md) | Live-registry witness — consumer-presence over the live ContributionRegistry | Accepted | 2026-06-11 |
 | [0043](0043-multilingual-by-construction-no-per-language-levers.md) | Multilingual by construction — no per-language levers | Accepted | 2026-06-15 |
+| [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted | 2026-06-27 |
+| [0045](0045-public-main-history-publication.md) | Public main history publication | Accepted | 2026-06-28 |
 
 > ADRs 0031–0041 were graduated on 2026-06-09 from the retired `421` frontend-rewrite kernel
 > draft's `50-decisions/` set (authored ~2026-05; the rewrite shipped per tempdoc 563). The

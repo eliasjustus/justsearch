@@ -20,6 +20,7 @@ import {
   __feedForTest,
   __tickClockForTest,
   type StatusSnapshot,
+  type InferenceSnapshot,
 } from '../state/aiStateStore.js';
 import { formatCount } from '../display/format.js';
 
@@ -58,6 +59,49 @@ describe('HealthSurface — recommendedActions panel', () => {
     });
     __tickClockForTest();
   }
+
+  it('tempdoc 644: renders per-engine realized state (GPU/CPU pills) in the AI Engine card', async () => {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexedDocuments: 5, indexState: 'IDLE', indexHealthy: true },
+          gpu: {
+            rerankerModelPath: '/models/onnx/reranker',
+            rerankerOrtCuda: { available: true, attempted: true },
+            embedBackend: 'onnx',
+            embedOrtCuda: { available: false, attempted: true },
+            spladeModelPath: '/models/splade',
+            spladeOrtCuda: { available: false, attempted: false, failureReason: 'lazy' },
+          },
+        },
+        readiness: {
+          composites: {
+            retrieval: { state: 'READY', reasonCodes: [] },
+            aiFeatures: { state: 'READY', reasonCodes: [] },
+          },
+        },
+      } as unknown as StatusSnapshot,
+      // The AI Engine card (and the engine rows inside it) only render when inference is present.
+      inference: { mode: 'online', starting: false, available: true } as unknown as InferenceSnapshot,
+    });
+    __tickClockForTest();
+    const el = await mount();
+    try {
+      const card = Array.from(el.shadowRoot?.querySelectorAll('.card.section') ?? []).find((c) =>
+        c.textContent?.includes('Retrieval engines'),
+      );
+      expect(card, 'the AI Engine card should contain the Retrieval engines block').not.toBeUndefined();
+      const text = card?.textContent ?? '';
+      expect(text).toContain('Reranker');
+      expect(text).toContain('Embeddings');
+      expect(text).toContain('SPLADE');
+      // reranker available:true → GPU; embed attempted but not available → CPU.
+      expect(text).toContain('GPU');
+      expect(text).toContain('CPU');
+    } finally {
+      teardown(el);
+    }
+  });
 
   it('renders "All healthy" when recommendedActions is empty and the verdict is operational', async () => {
     feedReady();

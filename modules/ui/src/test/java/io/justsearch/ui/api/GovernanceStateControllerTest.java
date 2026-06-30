@@ -55,15 +55,15 @@ class GovernanceStateControllerTest {
   @Test
   @DisplayName("handle() aggregates per-gate activation efficacy from local history + classifies status")
   void servesEfficacyProjection(@TempDir Path tmp) throws IOException {
-    // Two runs of a gate the roster knows (class-size — present in the committed projection):
+    // Two runs of a gate the roster knows (test-efficacy — present in the committed projection):
     // one clean pass, one with findings → totalRuns=2, runsWithFindings=1, error=3.
     // Plus one run of a gate NOT in the roster → status "orphaned".
     Path history = tmp.resolve("governance-history.ndjson");
     Files.writeString(
         history,
         """
-        {"ts":"2026-06-21T05:00:00Z","gate":"class-size","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
-        {"ts":"2026-06-21T06:00:00Z","gate":"class-size","verdict":"fail","findings":{"error":3,"warning":0,"note":1}}
+        {"ts":"2026-06-21T05:00:00Z","gate":"test-efficacy","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
+        {"ts":"2026-06-21T06:00:00Z","gate":"test-efficacy","verdict":"fail","findings":{"error":3,"warning":0,"note":1}}
         {"ts":"2026-06-21T07:00:00Z","gate":"retired-gate-xyz","verdict":"pass","findings":{"error":0,"warning":0,"note":0}}
         """);
     GovernanceStateController controller =
@@ -85,13 +85,13 @@ class GovernanceStateControllerTest {
 
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> byGate = (List<Map<String, Object>>) efficacy.get("byGate");
-    Map<String, Object> classSize =
-        byGate.stream().filter(g -> "class-size".equals(g.get("gate"))).findFirst().orElseThrow();
-    assertEquals(2, classSize.get("totalRuns"), "two runs aggregated");
-    assertEquals(1, classSize.get("runsWithFindings"), "one run had findings");
-    assertEquals(3, classSize.get("error"), "cumulative errors summed");
-    assertEquals("fail", classSize.get("lastVerdict"), "last verdict reflects the most recent run");
-    assertEquals("active", classSize.get("status"), "a roster gate with runs is active");
+    Map<String, Object> testEfficacy =
+        byGate.stream().filter(g -> "test-efficacy".equals(g.get("gate"))).findFirst().orElseThrow();
+    assertEquals(2, testEfficacy.get("totalRuns"), "two runs aggregated");
+    assertEquals(1, testEfficacy.get("runsWithFindings"), "one run had findings");
+    assertEquals(3, testEfficacy.get("error"), "cumulative errors summed");
+    assertEquals("fail", testEfficacy.get("lastVerdict"), "last verdict reflects the most recent run");
+    assertEquals("active", testEfficacy.get("status"), "a roster gate with runs is active");
 
     Map<String, Object> orphan =
         byGate.stream().filter(g -> "retired-gate-xyz".equals(g.get("gate"))).findFirst().orElseThrow();

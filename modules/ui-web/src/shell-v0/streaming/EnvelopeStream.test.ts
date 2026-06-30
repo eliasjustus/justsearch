@@ -8,9 +8,13 @@
  * real network connection.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { EnvelopeStream } from './EnvelopeStream.js';
 import type { SseEnvelope } from './envelope-types.js';
+import {
+  getLastOriginContactMs,
+  __resetOriginContactForTest,
+} from '../state/originContact.js';
 
 class FakeEventSource extends EventTarget {
   url: string;
@@ -512,5 +516,57 @@ describe('EnvelopeStream re-establishment (tempdoc 604)', () => {
     stream.stop(); // …then stop before it fires.
     await wait(40);
     expect(sources).toHaveLength(1);
+  });
+});
+
+describe('EnvelopeStream feeds origin contact (tempdoc 649)', () => {
+  beforeEach(() => __resetOriginContactForTest());
+
+  it('a received frame (incl. a heartbeat) records positive origin contact', () => {
+    const fake = new FakeEventSource('http://test/api/x/stream');
+    const stream = makeStream(fake);
+    stream.start();
+    expect(getLastOriginContactMs()).toBeNull(); // no frame yet
+
+    fake.emitFrame({
+      streamId: 'x/v1',
+      frameKind: 'LIFECYCLE',
+      seq: 1,
+      ts: '2026-05-05T00:00:00Z',
+      payload: { kind: 'heartbeat' },
+      resumeToken: 'tok-1',
+    });
+
+    // The heartbeat is proof of life — contact is now stamped.
+    expect(getLastOriginContactMs()).not.toBeNull();
+    stream.stop();
+  });
+
+  it('a clean open records positive origin contact', () => {
+    const fake = new FakeEventSource('http://test/api/x/stream');
+    const stream = makeStream(fake);
+    stream.start();
+    fake.emitOpen();
+    expect(getLastOriginContactMs()).not.toBeNull();
+    stream.stop();
+  });
+
+  it('frames do not perturb the strict subscriber-notify order (no extra notify)', () => {
+    const fake = new FakeEventSource('http://test/api/x/stream');
+    const stream = makeStream(fake);
+    const seen: number[] = [];
+    stream.subscribe((snap) => seen.push(snap.payload.count));
+    stream.start();
+    fake.emitFrame({
+      streamId: 'x/v1', frameKind: 'UPDATE', seq: 1, ts: '2026-05-05T00:00:00Z',
+      payload: { kind: 'item-added' }, resumeToken: 't1',
+    });
+    fake.emitFrame({
+      streamId: 'x/v1', frameKind: 'UPDATE', seq: 2, ts: '2026-05-05T00:00:01Z',
+      payload: { kind: 'item-added' }, resumeToken: 't2',
+    });
+    // One notify per frame — the contact bump adds no listener fan-out.
+    expect(seen).toEqual([1, 2]);
+    stream.stop();
   });
 });

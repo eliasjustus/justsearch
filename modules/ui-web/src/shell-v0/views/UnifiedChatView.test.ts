@@ -1422,7 +1422,7 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
     await view.updateComplete;
     expect(searchListener).not.toBeNull();
     const longPath =
-      '/Users/elias/Documents/projects/justsearch/modules/ui-web/src/shell-v0/quarterly-report.md';
+      '/Users/alex/Documents/projects/justsearch/modules/ui-web/src/shell-v0/quarterly-report.md';
     searchListener!({
       query: 'invoice',
       results: [

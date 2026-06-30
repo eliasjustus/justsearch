@@ -3,7 +3,8 @@
  *
  * The README / threat-model assert two mechanically-checkable properties:
  *   (1) the webview CSP pins network egress to loopback (no external origin can be reached), and
- *   (2) the shipped app declares no analytics/telemetry SDK.
+ *   (2) the shipped app declares no analytics/telemetry SDK, and
+ *   (3) model-download source claims match the current registry.
  * Both are easy to break silently (a CSP edit that adds a host; a new dependency). This lint anchors the
  * claim to its source of truth so a drift fails the build rather than shipping a false privacy promise.
  *
@@ -135,14 +136,57 @@ function checkNoTelemetrySdk(repoRoot, errors) {
   }
 }
 
+function checkModelSourceClaims(repoRoot, errors) {
+  const threatPath = path.join(repoRoot, "docs", "reference", "security", "threat-model.md");
+  const registryPath = path.join(
+    repoRoot,
+    "modules",
+    "ui",
+    "src",
+    "main",
+    "resources",
+    "ai",
+    "model-registry.v2.json"
+  );
+  if (!fs.existsSync(threatPath)) {
+    errors.push(`Threat model not found at ${threatPath} - cannot verify model-source claims.`);
+    return;
+  }
+  if (!fs.existsSync(registryPath)) {
+    errors.push(`Model registry not found at ${registryPath} - cannot verify model-source claims.`);
+    return;
+  }
+
+  const threatText = fs.readFileSync(threatPath, "utf8");
+  const registryText = fs.readFileSync(registryPath, "utf8");
+  const chatRegistryUsesHuggingFace =
+    /"downloadUrl"\s*:\s*"https:\/\/huggingface\.co\/bartowski\/Qwen_Qwen3\.5-9B-GGUF\//i.test(
+      registryText
+    );
+  const threatClaimsChatMirror =
+    /\b(project|justsearch)\s+mirrors?\s+(?:the\s+)?(?:third-party\s+)?chat[- ](?:model\s+)?GGUF\b/i.test(
+      threatText
+    ) ||
+    /\bchat[- ](?:model\s+)?GGUF\s+(?:is\s+)?mirrored\b/i.test(threatText);
+
+  if (chatRegistryUsesHuggingFace && threatClaimsChatMirror) {
+    errors.push(
+      "Threat model claims the chat GGUF is mirrored, but model-registry.v2.json still downloads " +
+        "the packaged chat GGUF/mmproj from huggingface.co/bartowski. Update the doc or point the " +
+        "registry at the project-controlled mirror."
+    );
+  }
+}
+
 function main() {
   const repoRoot = repoRootFromCwd();
   const errors = [];
   checkCsp(repoRoot, errors);
   checkNoTelemetrySdk(repoRoot, errors);
+  checkModelSourceClaims(repoRoot, errors);
 
   if (errors.length === 0) {
-    console.log("check-privacy-claims: OK (CSP pins loopback; no analytics SDK in dependency files)");
+    console.log("check-privacy-claims: OK (CSP pins loopback; no analytics SDK; model-source claims match registry)");
     return;
   }
   console.log(`check-privacy-claims: FAIL (errors=${errors.length})`);

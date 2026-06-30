@@ -55,6 +55,6 @@ Recent timestamped runs are written to `tmp/governance-runs.md` (gitignored) to 
 
 ## See also
 
-- [`docs/tempdocs/530-class-size-ratchet-automation.md`](../tempdocs/530-class-size-ratchet-automation.md) — design tempdoc
+- Historical tempdoc 530 — original design note for the discipline-gate kernel
 - [`docs/reference/contributing/discipline-gate-kernel.md`](contributing/discipline-gate-kernel.md) — substrate reference
 - [`governance/registry.v1.json`](../../governance/registry.v1.json) — gate registry

@@ -176,16 +176,14 @@ kernel-mediated mechanical structural-diff via the governance kernel
 report payload SARIF v2.1.0 ingestible by GitHub Code Scanning. See
 `slices/3a-1-8f-governance-runtime.md` for the substrate
 implementation. **Activation caveat:** the kernel fires only when
-explicitly invoked — either through CI (`workflow_dispatch`-only per
-ADR-0026, so the operator must dispatch on a contract-touching PR)
-or through the local gate (`scripts/gate.ps1` runs the kernel as one
-of its pre-DAG checks per slice 3a-1-8f §B.10). There is no
-auto-trigger on `push` / `pull_request`. The substrate's
-mechanical-enforcement claim is true *given* invocation; the
-operator/agent is responsible for invoking the gate before merging a
-contract-touching PR. Empirical worked example demonstrating the
-activation gap: slice 3a-1-8f §B.9 (`c815c703b` reached `main` with
-an undeclared structural break because CI was not dispatched). Cross-reference integrity is admitted as capability;
+explicitly invoked. ADR-0044 allows the public hosted CI lane to run
+on pull requests and pushes, but a contract gate still only protects
+that lane when the lane actually invokes it; self-hosted/specialty
+workflows remain manual unless separately amended. The substrate's
+mechanical-enforcement claim is true *given* invocation. Empirical
+worked example demonstrating the old activation gap: slice 3a-1-8f
+§B.9 (`c815c703b` reached `main` with an undeclared structural break
+because CI was not dispatched). Cross-reference integrity is admitted as capability;
 mechanical enforcement ships with `slices/3a-1-8c-cross-reference-
 enforcement.md` (registers as a kernel enforcer plugin).
 Catalog-membership integrity ships with

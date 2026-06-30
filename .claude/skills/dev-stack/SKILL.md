@@ -212,9 +212,11 @@ A stack abandoned past a grace period is reaped automatically (the supervisor se
 ## Live-validate a worktree's frontend (FE-only work)
 
 To see *this worktree's* FE in a browser without starting your own stack, borrow the running backend (read-only) and serve the worktree's Vite:
-```
+
+```bash
 node scripts/dev/serve-worktree-fe.cjs   # picks a free port, auto-detects the running backend
 ```
+
 It serves from the worktree's `modules/ui-web` (the served code is the worktree's by construction) and prints the branch + backend it bound to — the sanctioned path for the contention/port/wrong-code frictions in tempdoc 618 §7 (no `start` needed, so it works even when another session owns the stack).
 
 ## Troubleshooting

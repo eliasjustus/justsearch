@@ -610,4 +610,4 @@ The same pattern applies to `readOps()`, `writeOps()`, and `indexingCoordinator(
 - `docs/explanation/04-storage-engine.md` - Storage layer overview
 - `docs/explanation/17-ai-bridge-deep-dive.md` - AI/embedding integration
 - `docs/explanation/11-index-schema-migration.md` - Blue/green migration
-- `docs/future-features/rust-worker-rewrite.md` - Lucene JNI bridge analysis
+- Historical Lucene JNI bridge analysis was removed from the public canonical corpus.

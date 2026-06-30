@@ -28,7 +28,6 @@ node scripts/architecture/module-deps.mjs --check-canonical
 
 **Included in `settings.gradle.kts`:**
 - `:modules:*` (34 JVM projects)
-- `:reports` (test/coverage aggregation project)
 
 **Not Gradle projects (invoked by the build):**
 - `modules/ui-web` (Lit/Vite/TailwindCSS frontend)

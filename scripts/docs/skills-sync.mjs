@@ -112,7 +112,7 @@ function main() {
 
     const existing = fs.readFileSync(skillPath, "utf8");
     const startIdx = existing.indexOf(MARKER_START);
-    const endIdx = existing.indexOf(MARKER_END);
+    const endIdx = existing.lastIndexOf(MARKER_END);
 
     if (startIdx === -1 || endIdx === -1) {
       console.error(

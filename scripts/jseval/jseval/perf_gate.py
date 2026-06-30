@@ -21,7 +21,7 @@ Gate-able metrics (confidence pass §C — chosen because their cross-run CV is 
   the stack). AI-offline eval runs yield the ONNX-only footprint (the LLM is not resident then).
   ``index_size_bytes`` is excluded (CV 11-62%, Lucene segment-merge non-determinism).
 
-Exit codes (see :func:`jseval.cli.cmd_perf_gate`), mirroring :mod:`jseval.relevance_gate`:
+Exit codes (see :func:`jseval.commands.gates.cmd_perf_gate`), mirroring :mod:`jseval.relevance_gate`:
 
 - 0 — no regression (or the dataset is not pinned → does not gate).
 - 1 — regression: a pinned metric crossed its band.

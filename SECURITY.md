@@ -4,15 +4,15 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.x     | Yes       |
-| < 2.0   | No        |
+| 0.1.x (alpha) | Yes |
+| Older/unreleased versions | No |
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in JustSearch, please report it privately.
 **Do not disclose it as a public issue.**
 
-**Preferred:** Use GitHub's [private vulnerability reporting](https://github.com/eliasjustus/JustSearch/security/advisories/new) to submit a security advisory.
+**Preferred:** Use GitHub's [private vulnerability reporting](https://github.com/eliasjustus/justsearch/security/advisories/new) to submit a security advisory.
 
 **Alternative:** Email security concerns to the repository owner via their GitHub profile.
 
