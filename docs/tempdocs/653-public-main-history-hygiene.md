@@ -1679,3 +1679,88 @@ Honest self-limit: the hook keys on the `git push` diff, so it nudges at the
 blocking — granularity is a judgment a gate cannot adjudicate. That enforcement
 tier was a deliberate choice (see the "design only" slice above), not an
 oversight. No further axis-2 work is outstanding.
+
+## Operating the policy — retrospective (2026-07-01)
+
+What was learned actually *operating* this public-main policy during one large
+multi-PR session, recorded so a future maintainer tuning the merge mechanics has
+the evidence without the working chat. Dated history, not canonical guidance.
+
+### What was exercised
+
+The policy landed, as squash merges into public `main` on `eliasjustus/justsearch`:
+the axis-2 implementation (PR #17), two feature PRs (#18, #19), an
+observations-fold (#20), and **all seven open Dependabot PRs** (#2–#8) — including
+a Gradle wrapper bump 9.4.0→9.6.1 (#8) that needed real engineering, not a rubber
+stamp. A follow-up docs PR (#21) carried the axis-2 implementation record + this
+section.
+
+### Friction worth fixing (merge mechanics)
+
+1. **Strict "require branches up to date" makes batch merging O(n) in CI.**
+   `main`'s branch protection requires up-to-date branches, so each squash
+   advances `main` and forces every other open PR to `update-branch` + re-run the
+   full CI lanes (~10 min each) before it can merge. Merging ~11 PRs was therefore
+   a long sequential cascade, not a batch. For recurring batch work (Dependabot
+   especially), a **merge queue** or **auto-merge** (both currently disabled —
+   `allow_auto_merge=false`, see ADR-0045's "what not to design yet") would remove
+   the manual babysitting and the per-PR re-CI. This is the concrete pressure
+   ADR-0045 said to wait for; it has now appeared. Decide deliberately before the
+   next dependency batch.
+
+2. **`gh pr checks <n> --watch` can exit 0 before the *required* run registers.**
+   Observed repeatedly: `--watch` returns success on an earlier/partial run while
+   a fresh required run is still pending, leaving `mergeStateStatus=BLOCKED`. Do
+   not merge on the watch's exit alone — always re-check
+   `gh pr view <n> --json mergeStateStatus -q .mergeStateStatus` == `CLEAN`
+   immediately before `gh pr merge`.
+
+3. **`PR_BODY` is the public commit body, so a thin PR body silently degrades
+   history.** `node scripts/ci/preview-squash-message.mjs --pr <n>` was the
+   reliable guard (it surfaced "0 warnings" before each merge). Keep it in the
+   pre-merge loop.
+
+### What worked well (preserve)
+
+- Squash-only + `PR_TITLE`/`PR_BODY` + branch-deletion produced clean
+  one-commit-per-PR public history across all 11 merges, exactly as intended.
+- `preview-squash-message.mjs` is the right pre-merge check.
+- The `docs-granularity-hint` axis-2 hook behaved as designed: silent on the
+  docs+code dependency-fix branches; it would nudge only on a pure
+  tempdoc/observations branch.
+
+### Exact validation commands (used this session)
+
+```bash
+# repo-settings conformance to ADR-0045
+node scripts/ci/check-repo-history-policy.mjs --repo eliasjustus/justsearch --branch main --json
+# protected-branch check-name conformance
+node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main
+# preview the exact public squash commit a PR will publish
+node scripts/ci/preview-squash-message.mjs --pr <n>
+# authoritative merge-readiness immediately before merging
+gh pr view <n> --json mergeStateStatus -q .mergeStateStatus   # must be CLEAN
+```
+
+### Known unrelated dirty work (do NOT attribute to this policy work)
+
+At session end the primary checkout `F:\justsearch-public` (on `main`) carried
+*other sessions'* uncommitted/untracked work — modified `docs/tempdocs/643` &
+`docs/tempdocs/662`, untracked `docs/tempdocs/654–660`, untracked
+`models/*.onnx`, and an observations shard — plus autocrlf-only churn on
+`gradlew.bat`. None originate from the history-policy work; per `branch-safety.md`
+they were left untouched.
+
+### Archive / non-canonical caveat (for any reader, incl. external)
+
+The old private checkout `F:\JustSearch` referenced earlier in this tempdoc is
+**archive/history only** — never current truth. Verify any repository-state claim
+against the public GitHub repo with `git ls-remote origin -h refs/heads/main`,
+**not** a local `git log origin/main`: during this session a local
+remote-tracking ref briefly disagreed with the authoritative GitHub `main`, so
+`ls-remote` is the tiebreaker. (Cross-cutting agent/tooling findings unrelated to
+merge policy — a `bash-guard` `git -C <path>` bypass gap, the dependency-PR
+`THIRD_PARTY_NOTICES`/verification-metadata regeneration workflow, a Gradle-10
+parent-property deprecation, and a `com.gradle.develocity` cold-runner CI flake —
+were logged to `docs/observations.md` rather than here, as they are not
+history-policy topics.)
