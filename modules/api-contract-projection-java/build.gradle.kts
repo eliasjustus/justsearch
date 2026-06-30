@@ -73,7 +73,14 @@ sourceSets {
   }
 }
 
-tasks.matching { it.name.startsWith("generateProto") }.configureEach {
+// The protobuf plugin's generateProto* tasks — and, since protobuf-gradle-plugin
+// 0.10.0, the `processProtoResources` ProtoSyncTask (any `*ProtoResources`) — consume
+// sourceSets.main.proto, which includes the extracted protovalidate dir. Declare the
+// dependency explicitly so Gradle 9.6+'s stricter task-graph validation doesn't flag an
+// implicit-input ordering problem (the dir is produced by extractProtovalidateProtos).
+tasks.matching {
+  it.name.startsWith("generateProto") || it.name.endsWith("ProtoResources")
+}.configureEach {
   dependsOn(protovalidateProtoExtract)
 }
 
