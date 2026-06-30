@@ -424,13 +424,13 @@ export function mountPresentationDemo(host: HTMLElement): void {
     folders: [
       {
         pathHash: 'h1',
-        displayPath: '/home/elias/Documents',
+        displayPath: '/home/alex/Documents',
         status: 'indexed',
         metaText: 'Documents · 12,340 files · 2h ago',
       },
       {
         pathHash: 'h2',
-        displayPath: '/home/elias/Code/justsearch',
+        displayPath: '/home/alex/Code/justsearch',
         status: 'indexed',
         metaText: 'Code · 8,210 files · 5m ago',
       },

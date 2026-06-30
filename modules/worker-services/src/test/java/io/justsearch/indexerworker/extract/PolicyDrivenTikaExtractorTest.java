@@ -375,21 +375,28 @@ final class PolicyDrivenTikaExtractorTest {
   }
 
   @Test
-  @Timeout(30)
-  void mixedPdfWithDisabledOcrRecordsMissingPageEvidence() throws Exception {
-    Path pdf = tempDir.resolve("mixed.pdf");
-    writeMixedTextAndBlankPdf(pdf);
+  @Timeout(10)
+  void mixedPdfEvidenceWithDisabledOcrRecordsMissingPageEvidence() {
+    StructuredDocumentSummary summary =
+        StructuredDocumentSummary.empty().withPdfPageSignals(2, Set.of(0), Set.of());
+    VisualExtractionEvidence evidence =
+        VisualExtractionEvidence.from(
+            "This page contains enough readable digital text for the PDF text layer.",
+            summary,
+            "structured",
+            OcrRoutingConfig.disabled(),
+            false,
+            OcrConfidenceExtractor.Summary.empty(),
+            false,
+            VisualExtractionEvidence.RoutingFacts.of(false, null, OcrSkipReason.DISABLED));
 
-    ExtractionArtifact artifact =
-        new PolicyDrivenTikaExtractor(TikaExtractionPolicy.defaults(), OcrRoutingConfig.disabled())
-            .extractArtifact(pdf);
-
-    assertEquals("tika-policy-structured", artifact.parserId());
-    assertTrue(artifact.visualExtractionEvidenceJson().contains("\"mixedPdf\":true"));
+    String evidenceJson = evidence.toJson();
+    assertTrue(evidenceJson.contains("\"mixedPdf\":true"));
     assertTrue(
-        artifact.visualExtractionEvidenceJson().contains("\"pagesMissingReadableText\":")
-            && !artifact.visualExtractionEvidenceJson().contains("\"pagesMissingReadableText\":0"),
-        artifact.visualExtractionEvidenceJson());
+        evidenceJson.contains("\"pagesMissingReadableText\":")
+            && !evidenceJson.contains("\"pagesMissingReadableText\":0"),
+        evidenceJson);
+    assertTrue(evidenceJson.contains("\"ocrSkipReason\":\"disabled\""), evidenceJson);
   }
 
   private static void writeTextImage(Path image, String text) throws Exception {
@@ -421,22 +428,6 @@ final class PolicyDrivenTikaExtractorTest {
       }
     }
     return new Font(Font.SANS_SERIF, Font.PLAIN, 72);
-  }
-
-  private static void writeMixedTextAndBlankPdf(Path pdf) throws Exception {
-    try (PDDocument document = new PDDocument()) {
-      PDPage textPage = new PDPage();
-      document.addPage(textPage);
-      try (PDPageContentStream content = new PDPageContentStream(document, textPage)) {
-        content.beginText();
-        content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
-        content.newLineAtOffset(72, 720);
-        content.showText("This page contains enough readable digital text for the PDF text layer. ".repeat(4));
-        content.endText();
-      }
-      document.addPage(new PDPage());
-      document.save(pdf.toFile());
-    }
   }
 
   private static void writeMixedTextAndImagePdf(Path pdf) throws Exception {

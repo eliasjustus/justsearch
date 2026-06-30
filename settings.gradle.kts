@@ -142,7 +142,6 @@ include(
   ":modules:test-support",
   ":modules:system-tests",
   ":modules:benchmarks",
-  ":reports",
   ":modules:app-api-tck"
 )
 // Enable automatic Java toolchain resolution via Foojay to allow EP-compatible compilers

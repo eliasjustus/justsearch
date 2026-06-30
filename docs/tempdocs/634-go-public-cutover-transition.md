@@ -3,7 +3,7 @@ title: "Go-public (Option C) — the cutover & develop-in-public transition: the
 type: tempdoc
 status: "planned — go-public Option C, workstream 4/4 (execution). [founder] + [cutover]-heavy and operational. The most under-scoped piece is the multi-agent cut-line. Runbook mechanics live in the private cutover-package (go-to-market/cutover-package/cutover-runbook.md). 2026-06-23: added the §Inbound cutover-dependent hand-offs registry (the single projection of 631/632/633's flip-gated items) + recorded the private staging repo eliasjustus/justsearch-launch. 2026-06-24: clarified the flip-vs-announce boundary (this gates neither signing nor first-run readiness — those gate the *announce*); tightened the entry precondition (633's code has landed, `ded1779ca`); surfaced the pre-existing 632 gate-reds as a green-gate risk; gave the multi-agent cut-line a checkable definition-of-ready + a staging-repo rehearsal; re-scoped the 624 redaction; stamped the registry current through tempdoc 645. 2026-06-24 (takeover verification pass): added §Investigation notes — verified the registry against `main` (HEAD `8b5d4a10d`) + the live GitHub repos, re-synced 3 drifted projection items (the 632 gate-red specifics, the green-tree precondition scope, the bartowski public-host-test claim), and flagged the self-hosted-runner↔sidecar security coupling as the second under-specified risk beside the cut-line. Then added §Theorization & open directions (exploratory) — the canary's 'unannounced≠unindexed' limit, the cut-line's true invariant being *freeze* not *simultaneous-move*, four hidden assumptions (history/content/contributor-agent/guard-prefix), the publish-the-mechanism-keep-the-data principle, and a candidate `cutover-preflight` oracle as the doc's deeper canonical-source→projection→drift-gate shape."
 created: 2026-06-22
-updated: 2026-06-24
+updated: 2026-06-27
 related:
   - 631-go-public-publish-machinery
   - 632-go-public-licensing-legal
@@ -64,6 +64,22 @@ step. Keep them sequenced (strategy E.2 #3: protect the one-shots until prerequi
 ## Done
 Public-but-unannounced; both CI lanes green; the trusted-dev quickstart + MCP setup pass; development happening in
 the public repo with the strategy sidecar mounted privately; the old repo frozen as the archive.
+
+## Post-flip stabilization note (2026-06-27)
+
+The public repository (`eliasjustus/justsearch`, local checkout `F:\justsearch-public`) is now the canonical
+development repo. The former private repository (`F:\JustSearch`) is archive/history only and must not be treated as
+an active source to re-snapshot from without deliberately replaying public-only changes such as CLA policy, CI fixes,
+README truthfulness updates, and snapshot-exclusion updates. The sidecar remains private data, not an upstream source
+of public development truth.
+
+The post-flip stabilization pass also records `docs/tempdocs/390-results/` as a machine-local artifact directory that
+belongs in the snapshot exclusion list. This is independent of the intentionally deferred `docs/future-features/`
+link cleanup.
+
+Hosted public CI uses `assemble` plus the separate `test`, license, notice, benchmark, secret-scan, CLA, and DCO gates.
+It intentionally does not use root `build` as the hosted build step, because root `build` currently pulls in broader
+PMD/SpotBugs/integration-test debt that was not part of the public cutover stabilization surface.
 
 ## Dependencies
 **Gates on 631 + 632 + 633 (all three).** This is the last workstream.
@@ -156,9 +172,9 @@ authority — if a source tempdoc adds a cutover-gated item, mirror it here.
   either fix them or confirm each is a **sidecar-absent false-positive** that self-skips under public CI
   (no gate reads the private sidecar). **[agent triage → founder sign-off]**
 - **`public-ci.yml` validation that can't exist pre-flip** — `checkLicense` green on the *hosted* lane, the
-  `tim-actions/dco` job, the npm/cargo license dumps in CI (632 Stage F authored these; validation defers here).
-- **DCO GitHub App install** — a repo setting (post-flip). The CI yaml + `CONTRIBUTING` DCO prose are done; only the
-  App activation on the public repo remains. **[founder]**
+  repo-local DCO sign-off check, the npm/cargo license dumps in CI (632 Stage F authored these; validation defers here).
+- **DCO enforcement** — post-flip stabilization replaced the third-party DCO action / app-dependency path with a
+  repo-local CI check. CLA assistant remains the one-time contributor agreement gate; DCO remains per-commit.
 - **Packaging validation of the libjbig KEEP compliance** — 632 decided **keep** `libjbig-0.dll` (GPL-2.0) and wired
   the Gradle staging so `NOTICE-JBIGKIT.txt` + `LICENSE-GPL-2.0.txt` ship into `native-bin/tesseract/` next to the
   DLL (GPL-2.0 §1/§3). Confirm they actually land in a real packaging/installer build at cutover. **[cutover]**

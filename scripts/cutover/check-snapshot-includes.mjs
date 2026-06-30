@@ -48,6 +48,7 @@ export const EXCLUDE_RULES = [
   { id: "local-runtime/.mcp.json", kind: "path", target: ".mcp.json" },
   { id: "local-runtime/tmp", kind: "path", target: "tmp" },
   { id: "local-runtime/worktrees", kind: "path", target: ".claude/worktrees" },
+  { id: "machine-artifacts/tempdoc-390-results", kind: "path", target: "docs/tempdocs/390-results" },
   { id: "model-blobs/onnx", kind: "onnx", target: "models" },
 ];
 

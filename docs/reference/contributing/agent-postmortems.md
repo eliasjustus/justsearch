@@ -34,7 +34,7 @@ Indexed reference cases that lessons in `CLAUDE.md` and `.claude/rules/agent-les
 
 ## 1. `audit-without-test` — tempdoc 403 Tier C
 
-A subagent audit concluded `analyzerRegistry` was the only restart blocker in the (now-deleted) `LuceneLifecycleManager`. The partial fix shipped on that basis. A regression test for the restart path then revealed two more blockers: the state machine and `indexingCoordinator`. The audit was wrong; a runnable test would have caught it in minutes. **Principle**: a static audit is a hypothesis; the regression test is truth. The design that resulted lives in `docs/future-features/service-identity-lifecycle-pattern.md` (phase-typed values + consumer-as-holder).
+A subagent audit concluded `analyzerRegistry` was the only restart blocker in the (now-deleted) `LuceneLifecycleManager`. The partial fix shipped on that basis. A regression test for the restart path then revealed two more blockers: the state machine and `indexingCoordinator`. The audit was wrong; a runnable test would have caught it in minutes. **Principle**: a static audit is a hypothesis; the regression test is truth. The design that resulted was the phase-typed values + consumer-as-holder lifecycle pattern.
 
 ## 2. `wrong-gate` — tempdoc 403 Tier B
 

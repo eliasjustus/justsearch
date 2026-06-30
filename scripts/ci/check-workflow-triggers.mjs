@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Enforce ADR-0026: GitHub workflows are manually dispatched only.
+ * Validate GitHub workflow triggers against workflow-signal-policy.v1.json.
  *
  * This intentionally uses a small line scanner instead of a YAML parser so it
  * can run before npm install and inside lightweight local checks.
@@ -9,8 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-
-const REQUIRED_EVENT = 'workflow_dispatch';
+import { fileURLToPath } from 'node:url';
 
 function repoRootFromCwd() {
   const markers = ['settings.gradle.kts', 'build.gradle.kts', '.git'];
@@ -82,9 +81,8 @@ function parseInlineEvents(rest) {
   return events;
 }
 
-function scanWorkflow(file, repoRoot) {
+export function scanWorkflow(file, repoRoot) {
   const rel = normalizeRel(path.relative(repoRoot, file));
-  const errors = [];
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
   let inOnBlock = false;
   let onIndent = -1;
@@ -118,7 +116,6 @@ function scanWorkflow(file, repoRoot) {
         const inlineEvents = parseInlineEvents(topLevelEntry.rest);
         inOnBlock = inlineEvents.length === 0;
         for (const event of inlineEvents) addEvent(event, lineNumber);
-        continue;
       }
       continue;
     }
@@ -137,27 +134,28 @@ function scanWorkflow(file, repoRoot) {
     }
   }
 
-  if (!sawOn) {
-    errors.push({ rel, lineNumber: 1, message: 'missing top-level on: block' });
-  }
-  if (!events.has(REQUIRED_EVENT)) {
-    errors.push({ rel, lineNumber: 1, message: `missing required trigger: ${REQUIRED_EVENT}` });
-  }
-  for (const [event, lineNumber] of events) {
-    if (event !== REQUIRED_EVENT) {
-      errors.push({ rel, lineNumber, message: `unexpected trigger: ${event}` });
-    }
-  }
-
-  return errors;
+  return { rel, sawOn, events };
 }
 
-function main() {
-  const repoRoot = repoRootFromCwd();
+function workflowEntries(policy) {
+  return (policy.workflows || []).filter(
+    (entry) => typeof entry.path === 'string' && normalizeRel(entry.path).startsWith('.github/workflows/')
+  );
+}
+
+export function validateWorkflows({ repoRoot, policy }) {
   const workflowsDir = path.join(repoRoot, '.github', 'workflows');
-  if (!fs.existsSync(workflowsDir)) {
-    console.log('check-workflow-triggers: OK (no .github/workflows directory)');
-    return;
+  const errors = [];
+  if (!fs.existsSync(workflowsDir)) return errors;
+
+  const policyByPath = new Map();
+  for (const entry of workflowEntries(policy)) {
+    const rel = normalizeRel(entry.path);
+    if (policyByPath.has(rel)) {
+      errors.push({ rel, lineNumber: 1, message: `duplicate workflow policy entry for ${rel}` });
+      continue;
+    }
+    policyByPath.set(rel, entry);
   }
 
   const files = fs
@@ -166,18 +164,64 @@ function main() {
     .map((name) => path.join(workflowsDir, name))
     .sort((a, b) => a.localeCompare(b));
 
-  const errors = files.flatMap((file) => scanWorkflow(file, repoRoot));
+  const seen = new Set();
+  for (const file of files) {
+    const scanned = scanWorkflow(file, repoRoot);
+    seen.add(scanned.rel);
+    const policyEntry = policyByPath.get(scanned.rel);
+    if (!policyEntry) {
+      errors.push({ rel: scanned.rel, lineNumber: 1, message: 'workflow file is missing from workflow-signal-policy.v1.json' });
+      continue;
+    }
+
+    if (!scanned.sawOn) {
+      errors.push({ rel: scanned.rel, lineNumber: 1, message: 'missing top-level on: block' });
+      continue;
+    }
+
+    const expected = new Set(policyEntry.expectedTriggers || []);
+    for (const event of expected) {
+      if (!scanned.events.has(event)) {
+        errors.push({ rel: scanned.rel, lineNumber: 1, message: `missing expected trigger from policy: ${event}` });
+      }
+    }
+    for (const [event, lineNumber] of scanned.events) {
+      if (!expected.has(event)) {
+        errors.push({ rel: scanned.rel, lineNumber, message: `unexpected trigger not declared in policy: ${event}` });
+      }
+    }
+  }
+
+  for (const [rel, entry] of policyByPath) {
+    if (!seen.has(rel)) {
+      errors.push({ rel, lineNumber: 1, message: `policy entry for ${entry.name || rel} points at a missing workflow file` });
+    }
+  }
+
+  return errors;
+}
+
+function loadPolicy(repoRoot) {
+  const policyPath = path.join(repoRoot, 'scripts', 'ci', 'workflow-signal-policy.v1.json');
+  return JSON.parse(fs.readFileSync(policyPath, 'utf8'));
+}
+
+function main() {
+  const repoRoot = repoRootFromCwd();
+  const errors = validateWorkflows({ repoRoot, policy: loadPolicy(repoRoot) });
   if (errors.length === 0) {
-    console.log(`check-workflow-triggers: OK (workflows=${files.length})`);
+    console.log('check-workflow-triggers: OK (workflow triggers match workflow-signal-policy.v1.json)');
     return;
   }
 
   console.error('check-workflow-triggers: FAIL');
-  console.error('ADR-0026 requires workflow_dispatch-only GitHub workflows.');
+  console.error('Workflow triggers must match scripts/ci/workflow-signal-policy.v1.json.');
   for (const error of errors) {
     console.error(`- ${error.rel}:${error.lineNumber} ${error.message}`);
   }
   process.exitCode = 1;
 }
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}
