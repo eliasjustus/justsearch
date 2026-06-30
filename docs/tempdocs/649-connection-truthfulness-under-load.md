@@ -724,3 +724,108 @@ A **related finding** (2026-06-30, above) was also logged: the AI-engine state s
 fragile because it was excluded from the unified verdict kernel and reconciles ~5 independently-polled sources
 by hand. Recommended direction is a scoped re-architecture (an `aiEngineVerdict` single authority), **not** a
 rewrite — separable from the connection-pool fix and a likely candidate for its own tempdoc when picked up.
+
+## Future directions — building on the reachability authority (research, 2026-06-30)
+
+A generative research pass (4 parallel agents: connection-status UX in mature apps; failure-detector +
+adaptive-polling theory; internal seams; HTTP/2-on-loopback feasibility) on *what the 649 authority unlocks*.
+**Research only — nothing chosen or built; option-generation, not a commitment.** The app is pre-production
+with no users, so all of these are viable whenever.
+
+### The leverage insight
+
+649 did one structural thing with outsized reach: it **decoupled "is the backend alive?" from "how we find
+out."** Reachability is now a single, channel-agnostic *positive-contact* authority (`state/originContact.ts`),
+independent of any one transport. That decoupling is the leverage point — it makes directions A, E below cheap,
+because each just *feeds or reads* the one authority rather than re-deriving liveness.
+
+### Idea clusters (by the four asks)
+
+**EXTEND — A. Stream-gated adaptive polling (the standout; uniquely 649-enabled).**
+Because reachability no longer depends on the poll, the expensive `/api/status` poll can **back off while an
+SSE heartbeat is fresh** and resume fast only on contact loss (+ visibility-throttle when the tab is hidden).
+This **directly relieves the 6-connection-per-host pressure that *caused* 649**, cheaply — no HTTP/2, no stream
+consolidation. Seam: `utils/statusPoll.ts` / `inferencePoll.ts` are fixed `setInterval` → convert to a
+self-rescheduling `setTimeout`; backoff math already exists at `streaming/EnvelopeStream.ts` `scheduleReconnect`,
+the heartbeat signal at `handleFrame`. Tradeoff to honour: don't starve *data-freshness* — keep a floor and
+don't back off while a count-sensitive surface is visible. Basis: "poll less when a stream is healthy" +
+visibility throttling ([reactive polling](https://dev.to/alex-nguyen-duy-anh/reactive-polling-efficient-data-monitoring-3ed)).
+*Value high · effort low.*
+
+**NEW UX — B. Honest connection legibility: two timestamps + a calm graded badge.**
+Make 649's invisible reachability/freshness split *user-visible* — the most on-brand idea for an honesty-pitched
+app. Surface **two quiet timestamps**: "backend last reachable Ns ago" (contact) and "data last updated Ns ago"
+(poll freshness) — the Google sync-UX + "Lie-fi" guidance to lead with your own measured contact, not
+`navigator.onLine`. Render a **graded calm badge** via the existing tone authority (`utils/statusTone.ts`,
+`StatusTier`, `LivenessReadout`'s 3-tone dot) with a calm colour-*temperature* ramp — grey/blue for
+"Catching up", **yellow (not red)** for "Reconnecting", red only for confirmed total loss
+([Google OHS](https://developers.google.com/open-health-stack/design/offline-sync-guideline)). Frame the
+vocabulary in **Calm Technology** (periphery for calm, focus only when action is needed —
+[Calm Tech](https://www.calmtech.institute/calm-tech-principles)). Positioning: a concrete answer to a problem
+the **local-first manifesto explicitly lists as unsolved** — "how to communicate online/offline, available/
+unavailable states" ([Ink & Switch](https://www.inkandswitch.com/essay/local-first/)). *Value high · effort low–med.*
+
+**POLISH/HARDEN — C. Debounce the alarm + make `retrying` first-class.**
+Sub-second contact gaps must stay calm — only promote after a real loss window (NN/g: under ~1s show no looped
+indicator — [progress indicators](https://www.nngroup.com/articles/progress-indicators/)). Make the staged
+promotion explicit and distinct: **Catching up (calm) → Reconnecting (visible backoff = `retrying`) →
+Disconnected · "Reconnect now" (actionable `error`)** — don't merge the last two. Verify the SSE client resets
+the contact clock on *keepalive/comment* frames, not just data, so a wedged-but-open stream still trips the
+window ([RabbitMQ heartbeats](https://www.rabbitmq.com/docs/heartbeats)). *Value med · effort low.*
+
+**EXTEND THE PRINCIPLE — D. Generalize "positive-evidence liveness" with teeth.**
+(1) A shared `freshWithin(ts, window, now)` primitive the three authorities delegate to (`inFlightLiveness`,
+`aiInstallLiveness`, `originContact`) — also fix `aiInstallLiveness`'s hardcoded `60_000` window (a drift seam)
+to be generated like the others. (2) A **lint flagging inline `Date.now() - … > _MS` outside registered
+authority modules** — catches the brain's `BrainSurface.deriveAiState` inferring "offline" from *absence* (the
+exact anti-pattern) and any future re-fork. (3) Bring the brain's runtime state under the register (the
+`aiEngineVerdict` idea). Note: failure-detector theory (phi-accrual) was researched and judged **overkill** for
+a single-origin loopback app — the fixed 40s window (≈2.7× the 15s beat) is within best-practice ratios; don't
+build CDF math. *Value med–high · effort med.*
+
+**EXTEND — E. Tauri-native, pool-immune heartbeat.**
+Because the contact authority is channel-agnostic, a **Rust-emitted `justsearch://origin-heartbeat` event**
+(Tauri `emit`/`listen` — the *event bus*, NOT a custom-protocol stream, which WebView2 can't stream) that calls
+`bumpOriginContact()` makes reachability **immune to total HTTP-pool exhaustion**. Bridge template already
+exists (`router/tauriBridge.ts`, `utils/tauriRuntime.ts`); degrades gracefully in browser/dev. *Value med–high · effort med.*
+
+**NEW UX — F. Connection diagnostics / inspectability.**
+Extend `EnvelopeStream` with per-stream `lastFrameMs`, surface it past the single-boolean collapse into an
+extended `AiConnection`, and render a "why is it catching up?" view in the existing `LogSurface` /
+`diagnosticChannelStrategy` — conforming to the tempdoc-658 diagnostic-bundle concept. On-brand for an honesty
+product. *Value med · effort med.*
+
+### The structural root fix (the scoped-out resource follow-up — research verdict)
+
+Ranking for *reducing connection pressure* (its own future tempdoc):
+
+| Rank | Option | Why |
+|---|---|---|
+| 1 | **Consolidate the ~5 always-on SSE streams into ONE multiplexed stream** | Low effort, fully portable, no TLS; the 6-cap only bites because we run ~5 separate streams (521/501 prior art) |
+| 2 | Single `ws://127.0.0.1` multiplex | WebSocket per-host cap ≈255, not 6; `ws://` loopback needs no TLS |
+| 3 | Tauri native event IPC for push | Pool-free by construction, but Tauri-only |
+| 4 | Adaptive polling (= A) | Relieves the *poll* specifically; cheap; doesn't fix the SSE fan-out |
+| 5 | **HTTP/2 over loopback (deprioritized)** | Browsers are **TLS-only** for HTTP/2 (no h2c, unchanged 2025–26); self-signed-loopback trust is real but **per-OS fragile** (WebView2 redirect caveat, WKWebView WS gap, Tauri lacks native HTTPS devUrl) — highest effort, lowest portability |
+
+So the eventual resource fix is **consolidation, not HTTP/2** — an evidence-backed reversal of the naive
+"just use HTTP/2" instinct.
+
+### Top picks (value × builds-on-649 × feasibility)
+
+1. **A — stream-gated adaptive polling** (cheap; uniquely unlocked by 649; relieves 649's own root cause).
+2. **B — two-timestamp calm graded badge** (high-value, on-brand, reuses the tone authority).
+3. **C — alarm debounce + `retrying`-as-first-class** (low-risk hardening against flapping).
+4. **E — Tauri pool-immune heartbeat** (high robustness; trivial via the channel-agnostic authority).
+5. **D — generalize the principle (freshWithin + lint + brain under register)** (extends with enforcement).
+
+### Reach — the broader principle this surfaces
+
+- **One authority, many downstream wins.** Decoupling "alive" from "how we learn it" is a *leverage point*: it
+  is what makes adaptive polling (A), multi-channel robustness (E), and quality grading (B) cheap — the payoff
+  of single-authority discipline applied to a *runtime* concept, not just a visual one.
+- **"Positive-evidence liveness" has external provenance.** It is the convergence of three named ideas: Calm
+  Technology's **alarm budget**, the **Lie-fi** principle (trust your own measured contact, not the OS/browser
+  online flag), and the failure-detector insight that **suspicion should come from observed heartbeats** (the
+  useful half of phi-accrual, minus the CDF math). 649 is a concrete, citeable instance — not invented here.
+- **Calm Technology as an app-wide rubric.** The alarm budget could govern *every* status/alarm surface, not
+  just connection (candidate audit: proportionate tone everywhere; aligns with the 562 alarm-budget thesis).
