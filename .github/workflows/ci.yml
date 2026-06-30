@@ -152,7 +152,18 @@ jobs:
             modules/ui-web/package-lock.json
 
       - name: Assemble without model blobs
-        run: ./gradlew.bat assemble -PskipWebBuild=false
+        run: node scripts/ci/report-build-attribution.mjs --runner-label "windows-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew.bat assemble -PskipWebBuild=false --console=plain
+
+      - name: Upload build attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-attribution
+          path: |
+            build/ci/build-attribution.json
+            build/ci/build-attribution.md
+            build/ci/build-task-timing.json
+          if-no-files-found: warn
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
