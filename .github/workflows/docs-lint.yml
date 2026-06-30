@@ -58,13 +58,8 @@ jobs:
       - name: Verify privacy claims (CSP loopback-lock + no telemetry SDK)
         run: node scripts/docs/check-privacy-claims.mjs
 
-      # TODO: verify-runtime-config-matrix.mjs expects the pre-314-F9 column
-      # layout (YAML key / Env var / System property). The matrix doc was
-      # regenerated with a new layout; the verifier needs a rewrite before
-      # re-enabling. Mirrors the disable in ci.yml (see ci.yml "Runtime
-      # config matrix gate" block).
-      # - name: Verify runtime config ownership matrix
-      #   run: node scripts/docs/verify-runtime-config-matrix.mjs
+      - name: Verify runtime config ownership matrix
+        run: node scripts/docs/verify-runtime-config-matrix.mjs
 
       - name: Verify module dependency doc is up to date
         run: node scripts/architecture/module-deps.mjs --check-canonical
