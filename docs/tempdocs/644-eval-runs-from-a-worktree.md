@@ -830,3 +830,110 @@ Where the principle applies (candidate scope; existing code that violates it is 
   `flatten_status` omission (A1) and resolver triplication (A2) are themselves parity leaks. Whether the
   trend now justifies a small "worktree-parity register" (asset-class × dependent-workflow) is the open
   judgement — recorded, not built.
+
+---
+
+## Long-term design for the future-directions cluster — SETTLED 2026-07-01
+
+> The §Future-directions catalog above is a list of *symptoms*. This section settles the *one* long-term
+> design they share. Investigation (3 codebase agents + reading the adjacent records seam: 549/553/623,
+> 636, 640, 613). **General design only — no implementation this pass.** The size below is an outcome of
+> matching scope to the real defect, not a target.
+
+### The one defect under Axes A–C: a forked "realized-capability record"
+"Realized capability state" — *which retrieval engines actually loaded, on which device* — already has a
+**single canonical source**: the backend `GpuDiagnosticsView` / `OrtCudaView` record exposed at
+`/api/status` under `worker.gpu` (producer chain `GpuDiagnosticSuppliers` → `IndexStatusOps` →
+`WorkerStatusMapper` → `GpuDiagnosticsView`; wire `contracts/wire/status.proto:267-274`). It is a
+*backend-capability* concept, **distinct** from the per-query `SearchTrace` (which 549/553 already made
+canonical + governed). The defect is that this record is **read as a fork by ≥5 consumers, each with a
+different "is engine X realized" predicate**:
+
+| Reader | Predicate | file:line |
+|---|---|---|
+| `preflight.execute_preflight` model_wiring | `*OrtCuda.attempted` OR model-path | `preflight.py:107-135` |
+| `preflight.assert_capabilities` (644 guard) | model-path / backend non-empty | `preflight.py:290-360` |
+| `run._snapshot_models` (cohort identity) | `*OrtCuda.available` (device) — **reranker omitted** | `run.py:44-64` |
+| `provenance` component_status_counts | per-query `SearchTrace` stage executed (different concept, conflated) | `provenance.py:60-64,186` |
+| FE `display/facts.ts` chips | reranker=model-path · splade=`enrichment.spladeEnabled` flag | `facts.ts:140-176` |
+
+They **already disagree** (reranker: key-presence vs path vs device vs absent), and the cohort-identity
+reader is reranker-blind — the live consequence 644's guard exists to prevent, reappearing one layer
+down. Unlike SearchTrace and unlike FE affordance-availability, this backend record has **no register
+and no fork-prevention gate** (`governance/` has `execution-surfaces` for SearchTrace and
+`capability-availability-surfaces` for the FE `projectAvailability` authority — but nothing rooted on
+`GpuDiagnosticsView`).
+
+### The design: one governed realized-capability projection (conform to the existing seam — do not fork it)
+This is **not a new subsystem.** It is the *capability/condition sibling* of the move 640 made for perf
+("promote it into the canonical record; the ratchet/projection/calibrate/history/scorecard then follow
+through the path quality already uses") and the move 553 made for SearchTrace ("one record, every surface
+a governed projection, a gate stops the next fork"). Four parts, in scope order:
+
+1. **One realized-capability projector (the single authority).** A pure function of the canonical
+   `worker.gpu` record, defining *one* "realized" predicate and *one* device read. The five forks above
+   collapse to projections of it: both preflight readers (A3), the cohort-identity read, and the FE
+   chips. This subsumes the `flatten_status` allow-list drift (A1) — one *complete* reader replaces the
+   hand-curated list, so the `gpu`→`visualExtraction` omission class cannot recur.
+2. **Make the realized-engine set first-class in the canonical *measurement* record's identity** (the run
+   manifest's cohort hash) — the 640 move applied to the *identity/conditions* half rather than the
+   *metric* half. Capturing the reranker + a normalized device read there (B1) gives CE-on/off and
+   CPU/GPU runs distinct cohort identities **by construction**, so the comparability verdict (B3), every
+   hash-keyed consumer (`calibrate`/`history`/`bisection`), and the gates' `manifest==cohort` assertion
+   (B2) separate non-homogeneous runs *for free*. "Realized conditions are first-class identity in the
+   record" is the homogeneity guarantee 640's release-projection/calibrate-envelope already assume.
+3. **FE capability/health surfaces project from the same authority.** Extend the existing 613 seam
+   (`projectAvailability` + `governance/capability-availability-surfaces.v1.json`) so the new engine/
+   device UX (C1–C6) *and* `projectAvailability` consume the one realized-capability projector instead of
+   re-reading raw `worker.gpu`/`enrichment.*Enabled` (the 613-named fork-class) — and so availability
+   wording and the engine chips can no longer diverge.
+4. **Source integrity is the precondition** (B4). The projection is only as true as its source, so the
+   backend must report the realized device honestly — surface a silent ONNX CPU fallback as a
+   realized-state field (`disable_cpu_ep_fallback` / post-create `getProviders()`), the exact garbage-in
+   the deadline-skip episode exposed.
+
+**Drift protection (scope judgement).** The durable completion is a `capability-surfaces` register +
+fork gate rooted on `GpuDiagnosticsView`, mirroring `execution-surfaces` for SearchTrace, so a 6th fork
+fails the build. The fork has *already bitten* (5 disagreeing predicates + the reranker-blind cohort) —
+553's exact "this stops the next fork" trigger — so the register+gate is **warranted to land with the
+consolidation** (1–3), not after a future incident. The *generalized* shared kernel across all such
+records is **not** this design's to build (see Reach / 625).
+
+**Scope match & sequencing.** Parts 1–4 are a consolidation of an existing record onto one projection,
+not a new measurement pipeline; each fork migrates to the projector independently, behind the seam
+(553's "unification proceeds incrementally behind the gate"). The smallest first step that pays for
+itself is **B1** (reranker into the cohort identity) — one field, amplified by machinery that already
+keys on the hash. Like 640 (which spun out of 636's gap), this design is substantial enough to spin into
+its own tempdoc if pursued; it is recorded here because it is 644's direct reach.
+
+### Reach — the principle, and where it already applies
+**This conforms to a seam that exists in three places already — it must not become a fourth parallel
+version.** The "canonical record + governed projections + fork-prevention gate" seam: **553/549/623**
+(SearchTrace), **640** (perf first-class in the measurement record), **636** (recall as an eval
+projection), **613** (`projectAvailability`). The realized-capability record is the one sibling of this
+family that still lacks the projection+gate; the design wraps the *existing* `GpuDiagnosticsView` source
+using `projectAvailability` as the template.
+
+**The principle, named plainly:** *Realized state is a single-authority projection of one canonical
+record, never an independent re-derivation — and the conditions under which a measurement was taken are
+first-class identity in that record.* It is the representation-drift/DRY principle (553) fused with the
+canonical-measurement-record principle (640), and an instance of **tempdoc 625's** generalization
+("every asserted measurement is a projection of a reproducible run; every projection of the same record
+is governed") that 640 deferred until "the fork bites again." The capability fork *has* bitten — so this
+is a further witness for 625, **not** a license to build 625's generalized kernel here.
+
+**Candidate scope — where the principle applies, and existing violations (flagged, not fixed):**
+- The 5 forks in the table above are the live violations (Axes A–C resolve them).
+- The two-GPU-objects confusion — surfaces reading top-level `status.gpu` (inference GPU) vs
+  `worker.gpu.*OrtCuda` (retrieval engines) interchangeably (`facts.ts:125-138` vs the engine reads) — is
+  a sub-fork of the same record family.
+- 640 already records the principle violated for perf (fixed), extraction-quality (F-009, open), and a
+  ratchet that doesn't auto-run; this capability record is the next un-consolidated sibling.
+- **625** is the generalized structure (shared register/gate kernel + asserted-measurement-provenance) —
+  recognized, deferred; this design feeds it as one more witness, scope-matched to the one sibling the
+  present problem requires.
+
+**A genuinely separate shape (do not fold in):** the worktree-parity boundary (resolver triplication A2,
+the parity-leak framing of A1) is the 283→618→644 "a worktree inherits tracked text but not built/LFS/
+untracked assets" shape — orthogonal to the realized-capability record. It keeps its own §Reach note;
+merging the two would be a false unification.
