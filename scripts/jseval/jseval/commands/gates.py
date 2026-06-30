@@ -72,8 +72,13 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
               help="Specific run dir (with summary.json). Default: latest under data-dir/eval-results.")
 @click.option("--report-out", type=click.Path(), default=None,
               help="Write the full gate decision JSON to this path.")
+@click.option("--allow-engine-mismatch", is_flag=True,
+              help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
+                   "set differ — e.g. cross-encoder on vs off). Use only when comparing degraded "
+                   "numbers deliberately.")
 @click.pass_context
-def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out):
+def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
+                       allow_engine_mismatch):
     """Q-010 relevance ratchet (tempdoc 580 §4c) — fail on nDCG@10 regression.
 
     Reads the latest eval-results run's summary.json for DATASET and compares
@@ -101,6 +106,9 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out):
         ),
     )
     rd = _rk.resolve_run_dir(run_dir, data_dir)
+    # tempdoc 644: refuse to compare a run whose realized engine set differs from the baseline's
+    # (e.g. a CE-off worktree run vs a CE-on baseline) — apples-to-oranges. Backward-compatible.
+    _rk.assert_cohort_engines(rd, baselines, allow_mismatch=allow_engine_mismatch)
     run_summary = json.loads((rd / "summary.json").read_text(encoding="utf-8"))
     report = _rgate.evaluate(baselines_doc, run_summary, dataset)
     _rk.finalize_report(report, run_dir=rd, baselines_path=baselines,
@@ -125,8 +133,12 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out):
               help="Re-pin the floor for --dataset from the selected run (project its "
                    "measured metrics into the baselines file), then exit 0 without gating. "
                    "Use after a deliberate, justified perf change.")
+@click.option("--allow-engine-mismatch", is_flag=True,
+              help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
+                   "set differ — e.g. cross-encoder on vs off).")
 @click.pass_context
-def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, update_baseline):
+def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, update_baseline,
+                  allow_engine_mismatch):
     """Performance ratchet (tempdoc 640) — fail on a latency/throughput/footprint regression.
 
     The perf-metric-family sibling of ``relevance-gate``. Reads the latest eval-results run's
@@ -165,6 +177,10 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
         }, indent=2), err=True)
         sys.exit(2)
 
+    # tempdoc 644: refuse a cross-engine-set comparison (run vs baseline realized engines differ);
+    # also protects --update-baseline from pinning a degraded (e.g. CE-off) run. Backward-compatible.
+    _rk.assert_cohort_engines(rd, baselines, allow_mismatch=allow_engine_mismatch)
+
     if update_baseline:
         # Re-pin the floor from this (green) run -- measured, never hand-typed (review fix #3).
         modes_present = list((run_summary.get("per_mode") or {}).keys())
@@ -199,8 +215,11 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
               help="Specific run dir (with projections/). Default: latest under data-dir/eval-results.")
 @click.option("--report-out", type=click.Path(), default=None,
               help="Write the full gate decision JSON to this path.")
+@click.option("--allow-engine-mismatch", is_flag=True,
+              help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
+                   "set differ — e.g. cross-encoder on vs off).")
 @click.pass_context
-def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out):
+def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_engine_mismatch):
     """Recall-leak ratchet (tempdoc 636 / register D-005) — fail on leak-rate regression.
 
     Reads the latest eval-results run's staged_recall_accounting projection for
@@ -225,6 +244,10 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out):
             sys.exit(2)
         return json.loads(pp.read_text(encoding="utf-8"))
 
+    # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
+    # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
+    _rk.assert_cohort_engines(
+        _rk.resolve_run_dir(run_dir, data_dir), baselines, allow_mismatch=allow_engine_mismatch)
     # Tempdoc 640 K: leak is the SIMPLE case (no current_release, no extra guards) — it uses the
     # kernel's `run_gate` convenience directly; only its source reader differs (projection vs summary).
     _rk.run_gate(
