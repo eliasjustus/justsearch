@@ -52,6 +52,10 @@
       "file": "docs-regen-hint.mjs",
       "role": "advisory"
     },
+    "docs-granularity-hint": {
+      "file": "docs-granularity-hint.mjs",
+      "role": "advisory"
+    },
     "export-session-env": {
       "file": "export-session-env.mjs",
       "role": "advisory"
@@ -243,6 +247,10 @@
           },
           {
             "hookId": "governance-precommit-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "docs-granularity-hint",
             "timeout": 5
           }
         ]

@@ -356,16 +356,10 @@ export class StatusDeck extends JfElement {
   }
 
   private inferencePillTone(): NoticeTone {
-    switch (this.aiState?.statusTier ?? 'offline') {
-      case 'online':
-        return 'success';
-      case 'disconnected':
-        return 'error';
-      case 'degraded':
-        return 'warning';
-      default:
-        return 'neutral';
-    }
+    // Tempdoc 649 — the system pill shows `statusLabel`; its tone is the matched `statusTone` sibling
+    // (the ONE verdict-derived tone), NOT a parallel `statusTier` mapping. This is what makes the calm
+    // "Catching up…" (`busy`) render calm (`info`/tint) here instead of amber, matching the Health badge.
+    return this.aiState?.statusTone ?? 'neutral';
   }
 
   /**

@@ -11,7 +11,7 @@ import logging
 import click
 
 from .._paths import DEFAULT_EVAL_RESULTS
-from ._common import _DEFAULT_BASE_URL
+from ._common import _DEFAULT_BASE_URL, assert_run_capabilities
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 @click.option("--clean", is_flag=True, help="Clean data dir before starting backend (requires --start-backend).")
 @click.option("--reset", is_flag=True, help="Reset index via API before ingestion (requires running backend in eval mode).")
 @click.option("--cpu", is_flag=True, help="Force CPU-only mode (disable GPU for all ONNX encoders). For testing CPU inference paths on GPU machines.")
+@click.option("--allow-degraded", is_flag=True, help="Tempdoc 644 Axis 2: proceed even when an intended engine (e.g. the cross-encoder) is not loaded. Default OFF — a worktree run with the reranker silently absent refuses rather than emitting wrong-but-plausible numbers.")
 @click.option("--config", "config_path", type=click.Path(exists=True), default=None, help="YAML run config file.")
 @click.option("--warmup", "warmup_count", type=int, default=0, show_default=True,
               help=(
@@ -64,7 +65,7 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, config_path, warmup_count, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, config_path, warmup_count, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
@@ -197,6 +198,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             llm=llm,
             clean=clean,
             reset=reset,
+            allow_degraded=allow_degraded,
             env_overrides=env_overrides,
             json_flag=json_flag,
             is_warmup=is_warmup,
@@ -267,6 +269,7 @@ def _run_iteration(
     llm,
     clean,
     reset,
+    allow_degraded,
     env_overrides,
     json_flag,
     is_warmup,
@@ -308,6 +311,15 @@ def _run_iteration(
         process_check=process_check,
     )
     try:
+        # Tempdoc 644 Axis 2: instrument-integrity guard. Refuse to emit numbers when the
+        # realized engine set diverges from the intended one (the worktree silent
+        # cross-encoder-off trap), unless --allow-degraded. Model-present signals are
+        # startup-stable (644 U4), so this runs before the expensive ingest. Inside the
+        # try/finally so a started backend is still stopped if we exit.
+        assert_run_capabilities(
+            effective_base_url, modes, cross_encoder=cross_encoder,
+            allow_degraded=allow_degraded,
+        )
         _do_run(
             ctx, dataset, modes, effective_base_url, output_dir, top_k, embedding,
             splade, lambdamart, cross_encoder, allow_errors, max_queries,

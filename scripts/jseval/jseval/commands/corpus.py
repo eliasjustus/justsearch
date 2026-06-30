@@ -8,6 +8,8 @@ import logging
 
 import click
 
+from ._common import assert_run_capabilities
+
 log = logging.getLogger(__name__)
 
 
@@ -103,10 +105,11 @@ def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency
               help="Self-contained: start runHeadlessEval, ingest the dataset, assess, stop. The "
                    "harness backend auto-discovers the reranker (default-on engine). Mirrors `jseval run`.")
 @click.option("--clean", is_flag=True, help="Clean the data dir before starting (requires --start-backend).")
+@click.option("--allow-degraded", is_flag=True, help="Tempdoc 644 Axis 2: proceed even when an intended engine (the reranker for a hybrid mode) is not loaded. Default OFF — fail closed rather than score with a silently-degraded engine set.")
 @click.pass_context
 def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
                         band_low, band_high, leak_threshold, model, concurrency,
-                        start_backend, clean):
+                        start_backend, clean, allow_degraded):
     """FIDELITY gate (tempdoc 635 §D.5): a corpus passes only if it is non-trivial yet retrievable
     (in-band nDCG@10) AND genuinely multi-hop (low single-doc shortcut leaks). The retrieval-difficulty
     axis, symmetric to corpus-certify's memory axis. Stack-bound: pass --start-backend to ingest+assess
@@ -143,6 +146,9 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
         backend_proc = backend_mod.start_backend(clean=clean, llm=False, port=port)
         base_url = f"http://127.0.0.1:{port}"
     try:
+        # Tempdoc 644 Axis 2: refuse if the cross-encoder is intended (a hybrid mode is in the
+        # list) but not realized — before the expensive ingest.
+        assert_run_capabilities(base_url, mode_list, allow_degraded=allow_degraded)
         if start_backend:
             popen = backend_proc.proc
             ingest_mod.prepare_corpus(
