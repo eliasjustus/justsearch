@@ -697,3 +697,136 @@ live-verify the composed loop in this repo means the final proof must happen in 
   models`. Hardening the Gradle default is a possible follow-up.
 - GPU/`cuda12` resolution deferred (device recorded/warned, not refused). Cross-run comparison-gate
   homogeneity (relevance/perf/leak) recognized in §Reach, not built.
+
+---
+
+## Future directions — post-implementation research (2026-07-01)
+
+> Pure research/ideation pass after 644 shipped (PR #15). Goal: catalogue what the implemented
+> mechanism *enables* — polish, simplify, extend, new UX, and the broader principle — grounded in (a) a
+> codebase survey (3 parallel Explore agents) and (b) an industry survey (web). **Nothing here is
+> committed beyond this doc; all items are options, no priority is forced.** Every codebase claim is
+> `file:line`-anchored so a future implementer starts from facts. The app has **no users yet**, so
+> these are free-to-pursue improvements, not fixes.
+
+### What 644 actually produced (two reusable things, not just a fix)
+1. **Worktree/environment-parity asset resolution** — resolve the main checkout's shared assets from a
+   linked worktree (`_paths.main_repo_root`/`shared_models_dir`).
+2. **An "instrument-integrity" pattern** — a measurement run refuses to emit numbers when the *realized*
+   engine set ≠ the *declared* one (`preflight.assert_capabilities`) — plus the realized-engine signal
+   it surfaced by teaching `readiness.flatten_status` to expose `worker.gpu.*`.
+
+### Industry grounding (what the web survey established)
+- **The principle has two established names.** Axis 2 is a **preflight check** (aviation / distributed
+  systems / a literal "preflight checks for hardware accelerators" patent — *assert the environment;
+  halt with a meaningful message; make no changes unless all checks pass*) and the eval-side twin of a
+  **Kubernetes readiness probe** (*declare ready only when the model is loaded; 503 otherwise*). jseval
+  already has a `preflight.py`; the framing fits.
+- **644's fail-closed stance is *stronger* than the industry norm.** Experiment trackers (MLflow, W&B)
+  *record* run conditions (git sha, env, GPU utilization, data version) so runs compare "on equal
+  footing" — but they **display and let humans notice**; they rarely **hard-refuse** a non-comparable
+  comparison. Keeping 644's refuse-don't-warn posture is a deliberate, defensible upgrade.
+- **The silent CPU-fallback I hit is a known, unsolved class.** ONNX Runtime's `get_available_providers`
+  reports *compile-time* providers, so `CUDAExecutionProvider` is "silently dropped without warning";
+  the documented mitigations (`disable_cpu_ep_fallback=True`, or check `get_providers()` post-load; ORT
+  feature-request #27177 for `get_loadable_providers`) are exactly 644's philosophy. Ollama / LM Studio
+  have the *same* GPU→CPU silent-fallback UX gap (debug-logs only; `ollama ps` shows a GPU/CPU split) —
+  so a user-facing "what's loaded and where" indicator is a recognized, poorly-served need.
+- **IR-eval reproducibility is an active field** (repro_eval, Pyserini reference runs, the IR Experiment
+  Platform, the BEIR leaderboard) — all about *standardizing the eval environment*, validating the
+  "one resolved contract" half.
+
+### Axis A — Polish / simplify (codebase survey)
+- **A1 (latent same-class bug; high-value/low-effort).** `readiness.flatten_status` flattens a
+  hardcoded allow-list of worker sub-records (`readiness.py:480-482`) that has **10** entries, but the
+  wire contract has **11** dict sub-records — **`visualExtraction` is omitted** (`contracts/wire/
+  status.proto:126`; `WorkerOperationalView.java:19-30`), so its OCR/visual fields read as `None` at top
+  level — the *exact* class of bug 644 fixed for `gpu`. Fix: make `flatten_status` **data-driven**
+  (flatten every dict-valued `worker` child) **+ a key-collision assertion** (today the allow-list only
+  "works" because leaf views are prefixed, e.g. `chunkDocCount` not `docCount`) **+ a completeness test**
+  driving all 11 sub-records (the missing test is why the omission recurred — `audit-without-test`).
+- **A2 (resolver triplication, live drift).** The worktree→main `.git`-walk exists three times:
+  `dev-runner.cjs:32` (JS), `_paths.py:56` (Python), `build.gradle.kts:1818` (Kotlin). JS+Python resolve
+  a *relative* `gitdir:` against the repo root; **Kotlin treats it as absolute** (`build.gradle.kts:1828`)
+  — a real divergence that breaks on a relative gitdir. Also `_paths.py:90`/`backend.py:100` hardcode
+  `dev-runner.cjs:428-434` line-refs that will rot. Fix: cite by *symbol* not line; align the Kotlin
+  relative-path handling; let JS↔Python share where feasible.
+- **A3 (preflight consolidation).** `assert_capabilities` (`preflight.py:326-336`) and
+  `execute_preflight`'s `model_wiring` (`preflight.py:108-135`) independently re-derive "is engine X
+  loaded" from `/api/status` with **different predicates** (`*_wired` keys off `attempted`/`configured`;
+  `realized` keys off model-path-non-empty) and each separately `_fetch_endpoint`+`flatten_status`. Fold
+  into **one "realized-engine reader"** (fetch+flatten+realize once) consumed by both.
+- **A4 (minor).** Dead `dense`/`splade` branches in `assert_capabilities` now that
+  `derive_intended_engines` is reranker-only (`preflight.py:285-287` vs `:334-348`) — document as
+  forward-compat or drop; `flatten_status` mutates its argument in place; `_fetch_status`/`_fetch_endpoint`
+  near-duplicates; add the missing server-mode `derive_intended_engines` test.
+
+### Axis B — Extend the principle to the consumption point (the §Reach "recognized-not-built", now concrete)
+- **B1 (flagship; high-value, tiny change).** The run-comparison machinery never re-checks the guard,
+  and the cohort identity is **blind to the reranker**: `run._snapshot_models` (`run.py:44-64`) folds
+  `embed`/`splade`/`ner` model+device into `model_fingerprints` (which *is* in the cohort hash,
+  `manifest.py:294`) **but not the reranker** (verified: no `reranker_model_path`/`reranker_gpu`). So two
+  `hybrid` runs — one with the reranker loaded, one in a worktree where it silently fell off (the exact
+  644 trap) — get the **same `manifest_hash`** and are **silently averaged into one cohort** by
+  `history`/`calibrate`. **Fix: add `reranker_model_path` + `reranker_gpu` to `_snapshot_models`.** Since
+  `model_fingerprints` is in the cohort hash, CE-on/off and reranker-CPU/GPU then get **distinct cohort
+  identities by construction**, and every hash-keyed consumer (`calibrate.py:315` stability abort,
+  `history.py:249,332` windowing, `bisection.py:70` axis) separates them for free. The data already
+  exists at the guard point (`preflight.py:326,329`).
+- **B2.** `gate.evaluate` validates a σ-envelope from one cohort against a run from another without
+  asserting `manifest_hash == cohort_hash` even though it holds both (`gate.py:108` vs `:160`). Add the
+  equality assertion.
+- **B3.** Thread the realized engine set (`component_status_counts`, `provenance.py:186`) into
+  `comparability.determine_comparability` (`comparability.py:8-37`) so the per-run `comparable` flag —
+  the one signal every trend/history consumer already filters on — turns **false** when realized ≠
+  intended. Closes the consumers that ignore `manifest_hash` entirely (`compare_runs`, `diff_gate`,
+  `perf_gate`, `leak_gate`).
+- **B4 (worker-level, externally-validated).** Adopt the ONNX mitigation at the encoder/session level —
+  `disable_cpu_ep_fallback` or a post-create `getProviders()` check — so a **silent CPU fallback** (the
+  root cause of the cross-encoder DEADLINE_EXCEEDED skip I observed) becomes a **loud, surfaced** signal
+  at load time instead of a quiet quality cliff. This is the "make the instrument honest about its own
+  device" complement to Axis 2.
+
+### Axis C — New UX: surface the realized engine set to users (codebase survey of the Lit `shell-v0` FE)
+> The realized-engine signals 644 exposed (`worker.gpu.{embedOrtCuda,spladeOrtCuda,rerankerOrtCuda}`,
+> `embedBackend`, `crossEncoderSkipReason`) are **read nowhere in the production FE today** (only in
+> generated/fixtures) — the Health chips are *presence-only* (the reranker chip = "model configured",
+> not "loaded / on GPU", `display/facts.ts:154-164`). So there's a clean, additive opportunity.
+- **C1 (low).** Upgrade the Reranker/SPLADE capability chips from **presence → placement** (GPU·CUDA vs
+  CPU vs absent) from `*OrtCuda.available` (`display/facts.ts:154-176`; chips already declared in
+  `builtinPresentations.ts:413-414`).
+- **C2 (low).** A compact **GPU/CPU "ranking on …" badge** in the search header next to the
+  retrieval-mode pill (`views/SearchSurface.ts:1163-1169`).
+- **C3 (low).** **Failure-reason tooltips** — surface `*OrtCuda.failureReason` ("CUDA provider failed:
+  missing cudnn64_9.dll") via the existing `ProjectedFact.provenance` channel (`display/facts.ts:46-47`).
+- **C4 (medium).** A dedicated **"Retrieval engines" health card** — Embedder / SPLADE / Reranker /
+  Cross-encoder, each with loaded? · placement · failure-reason — beside `renderGpu`
+  (`views/HealthSurface.ts:1135`).
+- **C5 (medium).** Promote **CE-skipped / reranker-on-CPU** from the dev-only diagnostic disclosure
+  (`searchTraceExplain.ts:232-262`) into a user-facing **"results may be degraded" notice** (add
+  `crossEncoderSkipReason` wording to `DEGRADATION_REASON_WORDING`; respects the
+  `check-search-degradation-reason-codes` gate). Mirrors the Windows-search "results may be incomplete"
+  transparency pattern.
+- **C6 (medium).** An **Install-AI capability-completeness checklist** in `BrainSurface`
+  (`views/BrainSurface.ts:1766`) showing configured-vs-realized per engine (`*OrtCuda.configured` vs
+  `.available`) — so a user sees which engines the install *actually realized*.
+- Lowest-effort/highest-leverage starter set: **C1 + C2 + C3** (all reuse existing chip/pill/provenance
+  machinery), then **C4** as the dedicated panel.
+
+### Axis D — The principle, named, with candidate scope (recognize ≠ build)
+> **Instrument integrity under a single resolved contract:** *a measurement-or-serving instrument must
+> run under the configuration it declares, or refuse to report — and that configuration must come from
+> one resolved contract consumed by every launcher/consumer, never per-launcher convention.* It is the
+> fusion of "verify, don't guess" + "interrogate results" applied to the harness itself, an instance of
+> the established **preflight-check** and **readiness-probe** patterns, and the same fail-closed shape as
+> the codebase's existing schema-fingerprint refusal (`embeddingCompatState`) applied to the *runtime
+> engine* dimension instead of stored vectors.
+
+Where the principle applies (candidate scope; existing code that violates it is flagged, not yet fixed):
+- **Eval consumption point** — the comparison gates (Axis B). *Violates today* (B1-B3).
+- **Worker EP selection** — silent CPU fallback (B4). *Violates today* (ONNX default fallback).
+- **The UI** — the realized state exists but isn't shown (Axis C). *Gap today.*
+- **Worktree parity is a boundary, not a backlog** (the narrower recurring shape, 283 → 618 → 644): the
+  `flatten_status` omission (A1) and resolver triplication (A2) are themselves parity leaks. Whether the
+  trend now justifies a small "worktree-parity register" (asset-class × dependent-workflow) is the open
+  judgement — recorded, not built.
