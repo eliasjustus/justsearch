@@ -25,6 +25,7 @@ import {
   __resetEnvelopeStreamPoolForTest,
   __poolSizeForTest,
 } from '../../streaming/EnvelopeStreamPool.js';
+import { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
 
 type Row = { pathHash: string; state: string; collection: string; lastUpdatedMs?: number };
 // lastUpdatedMs defaults FRESH (Date.now()), so a PROCESSING job is `running`
@@ -200,6 +201,9 @@ class FakeEventSource {
     for (const fn of this.listeners['frame'] ?? [])
       fn({ data: JSON.stringify(envelope) });
   }
+  emitOpen(): void {
+    for (const fn of this.listeners['open'] ?? []) fn(new Event('open'));
+  }
 }
 
 const lifecycle = (seq: number, payload: unknown) => ({
@@ -338,5 +342,59 @@ describe('§32 #1 — startIndexingJobsBridge (stream → reducer → tasks)', (
     } finally {
       g.EventSource = saved;
     }
+  });
+
+  describe('tempdoc 662 — multiplexed path', () => {
+    function multiplexOn(): { multiplex: MultiplexedStream; source: FakeEventSource } {
+      let source!: FakeEventSource;
+      const multiplex = new MultiplexedStream({
+        url: 'http://test/api/shell-events/stream',
+        eventSourceFactory: (url) => {
+          source = new FakeEventSource(url);
+          return source as unknown as EventSource;
+        },
+      });
+      multiplex.start();
+      source.emitOpen(); // realistic EventSource ordering: 'open' precedes any 'frame'
+      return { multiplex, source };
+    }
+
+    it('subscribes on the shared multiplexer instead of opening its own EventSource', () => {
+      const { multiplex, source } = multiplexOn();
+      const stop = startIndexingJobsBridge('http://127.0.0.1:55393', { multiplex });
+
+      // Only the ONE multiplexed connection's EventSource exists — no dedicated socket.
+      source.emitFrame({
+        streamId: 'surface:indexing-jobs',
+        frameKind: 'LIFECYCLE',
+        seq: 1,
+        ts: '2026-07-01T00:00:00Z',
+        resumeToken: 'tok-1',
+        payload: {
+          kind: 'snapshot',
+          items: [{ pathHash: 'mux1', state: 'PENDING', collection: 'docs' }],
+        },
+      });
+      expect(getTask('idxjob:mux1')?.status).toBe('queued');
+
+      stop();
+    });
+
+    it('ignores a frame for a different streamId on the same multiplexed connection', () => {
+      const { multiplex, source } = multiplexOn();
+      const stop = startIndexingJobsBridge('http://127.0.0.1:55393', { multiplex });
+
+      source.emitFrame({
+        streamId: 'surface:action-ledger', // a DIFFERENT logical stream on the same socket
+        frameKind: 'UPDATE',
+        seq: 1,
+        ts: '2026-07-01T00:00:00Z',
+        resumeToken: 'tok-1',
+        payload: { kind: 'entry-appended' },
+      });
+      expect(listTasks().filter((t) => t.id.startsWith('idxjob:'))).toHaveLength(0);
+
+      stop();
+    });
   });
 });

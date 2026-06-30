@@ -16,6 +16,8 @@
 import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { openActionLedgerStream, type UnifiedActionEntry } from '../operations/ActionLedgerClient.js';
+import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
+import { getSharedShellEventsMultiplex } from '../streaming/shellEventsMultiplexInstance.js';
 import { collapseBursts } from '../projections/boundedProjection.js';
 import { newestFirst } from '../primitives/eventStreamProjection.js';
 // tempdoc 558 §S1 — the ONE shared ledger-row projection (also used by the retrospective History tab).
@@ -48,6 +50,9 @@ function isBurst(row: UnifiedActionEntry | IndexBurstSummary): row is IndexBurst
 export class ActionLedgerView extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
+    // Tempdoc 662: the shared MultiplexedStream (mirrors AdvisoryToastHost's `store` property
+    // shape — an object, not an attribute-able primitive).
+    multiplex: { attribute: false },
     entries: { attribute: false },
     // tempdoc 558 §E1 — client-side facets over the streamed entries (empty = all).
     filterOriginators: { state: true },
@@ -61,6 +66,7 @@ export class ActionLedgerView extends JfElement {
   } as const;
 
   declare apiBase: string;
+  declare multiplex?: MultiplexedStream;
   declare entries: UnifiedActionEntry[];
   declare filterOriginators: string[];
   declare filterOutcomes: string[];
@@ -160,8 +166,14 @@ export class ActionLedgerView extends JfElement {
     // subsequent backend row, and re-folds the FE Effect Journal on each change — so there is no
     // separate snapshot fetch to drift from the live stream. (tempdoc 550 thesis I: snapshot and
     // live are two reads of one projection, not two code paths.)
+    // Tempdoc 662: `ActivitySurface` mounts this element via the generic SurfaceCatalog
+    // dispatcher (attribute-only — no object property binding path from Shell's boot site),
+    // so an un-bound `multiplex` property falls back to the shared singleton Shell sets at
+    // boot. Tests keep injecting `multiplex` directly and never touch the singleton.
+    const multiplex = this.multiplex ?? getSharedShellEventsMultiplex() ?? undefined;
     this.stopStream = openActionLedgerStream({
       apiBase: this.apiBase,
+      ...(multiplex ? { multiplex } : {}),
       ...(this.eventSourceFactory ? { eventSourceFactory: this.eventSourceFactory } : {}),
       onActivity: (rows) => {
         this.entries = rows;

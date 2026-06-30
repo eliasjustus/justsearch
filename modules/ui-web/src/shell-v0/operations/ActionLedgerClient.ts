@@ -23,6 +23,8 @@ import {
   type EffectOriginator,
 } from '../substrates/effects/index.js';
 import { EnvelopeStream, type EnvelopeStreamSnapshot } from '../streaming/EnvelopeStream.js';
+import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
+import { SHELL_EVENT_STREAM_IDS } from '../streaming/shellEventStreamIds.js';
 import { isLifecycleEnvelope } from '../streaming/envelope-types.js';
 import { present } from '../display/present.js';
 // Tempdoc 613 §6/§10 + 612 §3 — the Activity-inclusion routing predicates: routine local-ack effects /
@@ -375,14 +377,33 @@ function ledgerReducer(
  * because the FE ingests them into the one authoritative log (see {@link startEffectIngest}). There
  * is no longer a read-time client-side merge of the backend ledger and the FE journal (the
  * eliminated `unifiedActivity` fold); the view renders one log. Returns a stop function.
+ *
+ * Tempdoc 662: when `config.multiplex` is supplied, subscribes the `surface:action-ledger`
+ * streamId on the shared `MultiplexedStream` instead of opening a dedicated EventSource — this
+ * is also where the pre-662 duplicate-socket defect (both `AiActivityDigest` and
+ * `ActionLedgerView` independently called this function, each opening its OWN
+ * `/api/action-ledger/stream` connection) collapses for free: both callers subscribe the SAME
+ * streamId on the SAME shared multiplexer, so there is exactly one socket regardless of how
+ * many consumers call this function. Omitting `multiplex` keeps the pre-662 direct-connection
+ * fallback (apiBase/eventSourceFactory), unchanged.
  */
 export function openActionLedgerStream(
   config: {
     apiBase?: string;
     eventSourceFactory?: (url: string) => EventSource;
+    multiplex?: MultiplexedStream;
     onActivity: (rows: UnifiedActionEntry[]) => void;
   },
 ): () => void {
+  if (config.multiplex) {
+    return config.multiplex.subscribe<BackendLedgerEntry[]>(
+      SHELL_EVENT_STREAM_IDS.ACTION_LEDGER,
+      () => ({ initialState: [], reducer: ledgerReducer as never }),
+      (snap: EnvelopeStreamSnapshot<BackendLedgerEntry[]>) => {
+        config.onActivity(snap.payload.map(projectBackend));
+      },
+    );
+  }
   const base = (config.apiBase ?? '').replace(/\/$/, '');
   const stream = new EnvelopeStream<BackendLedgerEntry[]>({
     url: `${base}/api/action-ledger/stream`,

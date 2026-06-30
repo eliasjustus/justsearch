@@ -58,6 +58,8 @@ final class ResourceApiModule implements ApiModule {
   private final HardStopController hardStopController;
   private final AdvisoryStreamController operationCompletedAdvisoryStreamController;
   private final AdvisoryStreamController healthRecoverableAdvisoryStreamController;
+  // Tempdoc 662: cross-channel multiplexer over the 5 always-on streams above.
+  private final ShellEventsStreamController shellEventsStreamController;
   private final ConditionRecoveryIndexController conditionRecoveryIndexController;
   private final DebugConditionController debugConditionController;
   private final JobQueueDepthMetricController jobQueueDepthMetricController;
@@ -302,6 +304,19 @@ final class ResourceApiModule implements ApiModule {
     // Tempdoc 550 E2: operator control for the Global Hard Stop.
     this.hardStopController =
         new HardStopController(headAssembly.substrate().conversation().globalHardStop());
+    // Tempdoc 662: the cross-channel multiplexer — aggregates the 5 always-on streams above
+    // (intent, the two advisory classes, action-ledger, indexing-jobs) onto ONE physical
+    // connection so the FE no longer holds 5 always-on EventSources against the browser's
+    // ~6-per-host pool. Built last in this constructor because it depends on the controller
+    // instances constructed above (reuses their channel()/snapshotExtras() accessors, not a
+    // forked copy of their channel-lookup or projection logic).
+    this.shellEventsStreamController =
+        new ShellEventsStreamController(
+            headAssembly.substrate().intent().changes(),
+            operationCompletedAdvisoryStreamController,
+            healthRecoverableAdvisoryStreamController,
+            actionLedgerController,
+            indexingJobsStreamController);
   }
 
   /** Binds every cohort route. All controllers are non-null; only runtimeApiRoutes can be null. */
@@ -413,6 +428,12 @@ final class ResourceApiModule implements ApiModule {
         "/api/advisory/health-recoverable/stream",
         healthRecoverableAdvisoryStreamController::handle);
 
+    // Tempdoc 662: cross-channel multiplexer aggregating the 5 always-on streams above (intent,
+    // the two advisory classes, action-ledger, indexing-jobs) onto ONE physical connection. The
+    // 5 individual routes above stay live (existing direct consumers, e.g. tooling, are
+    // unaffected); the FE shell migrates onto this one instead of opening all 5.
+    app.sse("/api/shell-events/stream", shellEventsStreamController::handle);
+
     // Slice 3a.1.4 Phase 5 + 3a.1.4b cohort: TIMESERIES Resource REST + SSE routes.
     app.get("/api/metrics/worker.job_queue.depth", jobQueueDepthMetricController::handleGet);
     app.sse(
@@ -466,6 +487,7 @@ final class ResourceApiModule implements ApiModule {
         "Advisory operation-completed stream", operationCompletedAdvisoryStreamController::shutdown);
     shutdownQuietly(
         "Advisory health-recoverable stream", healthRecoverableAdvisoryStreamController::shutdown);
+    shutdownQuietly("ShellEventsStreamController", shellEventsStreamController::shutdown);
     shutdownQuietly("JobQueueDepthMetricController", jobQueueDepthMetricController::shutdown);
     shutdownQuietly(
         "DocumentsIndexedRateMetricController", documentsIndexedRateMetricController::shutdown);
