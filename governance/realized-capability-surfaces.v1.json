@@ -1,0 +1,12 @@
+{
+  "kind": "realized-capability-surfaces.v1",
+  "note": "Tempdoc 644 — realized-capability coherence. A surface that DISPLAYS per-engine realized state (which retrieval engine actually loaded + on which device + any failure reason) must PROJECT it from the ONE authority `computeRealized` (state/aiStateStore.ts) by reading the projected `aiState.realized.*` field — never by re-reading raw `worker.gpu.*OrtCuda` ad-hoc in the component. That ad-hoc read is the fork-class: a second reader drifts from the projector AND from the eval-side realized-engine guard/cohort identity (the same representation-drift class as 553 / the FE 613 capability-availability seam). This positive-coverage check fails if a REGISTERED realized-capability surface stops consuming `aiState.realized`, so a registered surface cannot silently re-fork. Honest limit (like capability-availability / declared-surfaces): positive coverage over the registered surfaces' projection seam — NOT detection of a brand-new unregistered fork surface (that is a discovery-step register row). A local pre-merge check (not a kernel gate), proportionate to the small projector population.",
+  "authority": {
+    "file": "modules/ui-web/src/shell-v0/state/aiStateStore.ts",
+    "symbol": "computeRealized"
+  },
+  "consumedField": "realized",
+  "surfaces": [
+    "modules/ui-web/src/shell-v0/views/HealthSurface.ts"
+  ]
+}
