@@ -299,3 +299,40 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(getAiState().lastSettledIndex).toEqual({ documentCount: 77, indexSizeBytes: null });
   });
 });
+
+describe('computeRealized — tempdoc 644 realized engine projection', () => {
+  beforeEach(() => __resetAiStateForTest());
+  afterEach(() => __resetAiStateForTest());
+
+  it('projects loaded + accelerator + failure per engine from worker.gpu', () => {
+    __feedForTest({
+      status: {
+        worker: {
+          gpu: {
+            rerankerModelPath: '/models/onnx/reranker',
+            rerankerOrtCuda: { available: true, attempted: true },
+            embedBackend: 'onnx',
+            embedOrtCuda: { available: false, attempted: true },
+            spladeModelPath: '/models/splade',
+            spladeOrtCuda: { available: false, attempted: false, failureReason: 'lazy' },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    const r = getAiState().realized;
+    expect(r.reranker).toEqual({ loaded: true, accelerator: 'gpu', failureReason: null });
+    expect(r.embed).toEqual({ loaded: true, accelerator: 'cpu', failureReason: null });
+    // present but device not yet probed (attempted false) → accelerator null, NOT a false "CPU".
+    expect(r.splade).toEqual({ loaded: true, accelerator: null, failureReason: 'lazy' });
+  });
+
+  it('reports an absent reranker as not loaded (the silent CE-off worktree trap)', () => {
+    __feedForTest({
+      status: { worker: { gpu: { embedBackend: 'onnx' } } } as unknown as StatusSnapshot,
+    });
+    const r = getAiState().realized;
+    expect(r.reranker.loaded).toBe(false);
+    expect(r.reranker.accelerator).toBe(null);
+    expect(r.embed.loaded).toBe(true);
+  });
+});
