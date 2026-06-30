@@ -1,9 +1,9 @@
 ---
 title: "Public main as projected history surface and merge policy"
 type: tempdoc
-status: "axis-1 implemented (squash policy + preview); axis-2 (PR/commit granularity) reopened for design"
+status: "implemented — axis-1 (squash policy + preview) and axis-2 (docs-ride-along rule + git-push hint)"
 created: 2026-06-28
-updated: 2026-06-30
+updated: 2026-07-01
 related:
   - 634-go-public-cutover-transition
   - 651-public-ci-feedback-loop-efficiency
@@ -1640,3 +1640,42 @@ GitHub setting:
 
 This pass is research + design only: no convention text, hook, or settings
 change is implemented here.
+
+## Axis-2 implementation record - 2026-07-01
+
+The "Proposed axis-2 slice (design only)" section above was implemented in the
+same pull request that added this axis-2 research pass — the convention text,
+the hook, and the register row all shipped together. Treat the "design only"
+disclaimer immediately above as *historical*: axis 2 is **done**, not pending.
+A later agent should not re-implement it. What landed (all verifiable in-repo):
+
+- **Rule `docs-ride-along`** — anchored in `.claude/rules/branch-safety.md`
+  (section "Publishing docs-only changes (history granularity)"), registered in
+  `.claude/rules/tier-register.md` as row 36 at tier `hook-hint`, with a
+  `new-rule-registered` changeset under
+  `gates/prose-tier-register/.changesets/`.
+- **Hook `docs-granularity-hint`** —
+  `scripts/agent-analytics/hooks/docs-granularity-hint.mjs`, a non-blocking
+  PreToolUse `git push` hook declared in `governance/agent-hooks.v1.json` and
+  projected into the settings wiring (`gen-agent-hooks-wiring.mjs`); it ships in
+  the public hook set. It fires only when a branch's whole diff vs `origin/main`
+  is `docs/tempdocs/**` / `docs/observations*` only; canonical-doc-only and
+  docs+code branches intentionally do not trigger. Unit-tested in
+  `scripts/agent-analytics/hooks/docs-granularity-hint.test.mjs`.
+- **Rationale + worked example** — `docs/reference/contributing/agent-guide.md`
+  §3.7 ("History publication"). `CLAUDE.md` root was deliberately *not* touched:
+  the always-loaded budget is guarded, and the hook delivers the rule at push
+  time, so a root paragraph would be the bloat the `before-appending-to-rules`
+  gate exists to prevent.
+
+Verification at landing: the unit test passed (push detection + path
+classification), the `prose-tier-register` and `hook-integrity` gates passed,
+`gen-agent-hooks-wiring --check` plus the docs `--check`s passed, and the hook
+was observed firing on a tempdoc-only branch and staying silent once that branch
+also contained code.
+
+Honest self-limit: the hook keys on the `git push` diff, so it nudges at the
+*publish* boundary rather than at PR formation, and it is advisory (~85%), not
+blocking — granularity is a judgment a gate cannot adjudicate. That enforcement
+tier was a deliberate choice (see the "design only" slice above), not an
+oversight. No further axis-2 work is outstanding.
