@@ -739,7 +739,80 @@ out."** Reachability is now a single, channel-agnostic *positive-contact* author
 independent of any one transport. That decoupling is the leverage point — it makes directions A, E below cheap,
 because each just *feeds or reads* the one authority rather than re-deriving liveness.
 
-### Idea clusters (by the four asks)
+### Settled long-term design — a managed connection budget (design theorization, 2026-06-30)
+
+The idea clusters below were *option-generation*; this converges them to the **one correct long-term design**,
+scope-matched to the problem that actually remains. (Design only — general, not implementation-level; execution
+is its own tempdoc, as always intended.)
+
+**The problem the design must actually solve.** 649 fixed the *truthfulness symptom* (honest labels), but the
+**root defect persists**: the FE **over-subscribes the browser's ~6-connection-per-host budget** (≈5 always-on
+SSE streams + 2 unconditional polls), so under load data is genuinely stale — now honestly labelled, but still
+behind. The complete long-term answer to "connection **under load**" therefore has two layers: **honesty**
+(Layer 1 — delivered by 649) and **actually working under load** (Layer 2 — the remaining root fix). This design
+is Layer 2.
+
+**The design: consolidate the always-on event streams into ONE multiplexed channel.** The connection budget
+becomes a *managed* resource with a single permanent holder (the consolidated channel) + transient
+freshness polls:
+- **Backend:** one fan-in multiplexed endpoint (e.g. `/api/shell-events/stream`) that carries every event
+  *kind* (advisory ×2, indexing-jobs, action-ledger, intent) over one connection, reusing the existing
+  per-connection lifecycle orchestrator (`SseEnvelopeWriter.attach`/`attachEventOnly`: connected → resume →
+  snapshot → subscribe → heartbeat → close) — with a **multi-`streamId` resume model** (per-kind cursors),
+  which is the one piece today's single-stream `?since=`/`ResumeTokenCodec` lacks.
+- **Frontend:** build the **`MultiplexedStream` kind-router** — the exact wrapper tempdoc 521 §"SSE
+  multiplexer" proposed and never built — owning ONE `EnvelopeStream` and dispatching each frame by
+  `SseEnvelope.streamId` / `payload.kind` to the matching reducer; extend `EnvelopeStreamPool` from
+  *URL-dedup* to *one-connection-with-kind-router*. The bridges (`AdvisoryStore`, `indexingJobsBridge`,
+  `ActionLedgerClient`, `bootIntentStreamBridge`) become thin "subscribe to my kind on the shared channel"
+  adapters; their **reducers are unchanged** (they already self-route by `frameKind`/`payload.kind`).
+- **The one channel's heartbeat feeds 649's `originContact` authority** — it is the natural, single reachability
+  witness. The poll is then a **freshness-only** transient consumer with abundant budget.
+
+**Why this scope — root-cause, not short-term, not over-built:**
+- It fixes the *present, observed* over-subscription defect at its source (it caused the alpha.28 starvation).
+- It **EXTENDS substrate that was *designed* for exactly this**: the `SseEnvelope.streamId`/`payload.kind`
+  discriminator is already on the wire, and **both 501 ("one stream, multiple event kinds") and 521
+  (`MultiplexedStream`) explicitly proposed it** — yet the codebase repeatedly added *separate* endpoints
+  instead (501's runtime-manifest got its own connection — a documented instance of this very
+  over-subscription). Only the fan-out (FE router) + fan-in (backend endpoint) layer is genuinely missing.
+- It is deliberately **NOT**: *adaptive polling* (a short-term fix — frees only the poll's own slot, leaves the
+  5-stream dominance, recurs on the next stream; ruled out by "no short-term fixes"); *HTTP/2 over loopback*
+  (deprioritized — browsers are TLS-only for h2 and self-signed-loopback trust is per-OS fragile); a
+  *WebSocket switch* (throws away the SSE envelope/resume investment this design reuses); the *UX features*
+  (graded badge / two-timestamps / diagnostics — enhancements for cases the present problem doesn't include —
+  no users, no observed need); or the *Tauri heartbeat* (robustness the consolidated channel already provides).
+
+**Genuinely-new structure (warranted by the present problem):** (1) the backend multiplexed endpoint + fan-in
+writer + multi-`streamId` resume; (2) the FE `MultiplexedStream` kind-router (521's unbuilt proposal). The hard
+adapter is `AdvisoryStore` (a dynamic, catalog-driven *N-stream* aggregator). Everything else — envelope,
+transport, lifecycle, reducers, and the 649 contact authority — is reused.
+
+### Reach — judging this design's scope (design theorization)
+
+- **It is an instance of a principle 649 *already named* — conform/extend, do not fork.** The original 649
+  Reach recorded: *"a finite platform quota (connections, workers, storage, timers) consumed by
+  independently-authored components needs ONE owner/multiplexer, or it drifts to exhaustion."* The consolidated
+  channel **is that one owner** for the always-on-stream slice of the connection budget — and it literally
+  builds 521's proposed `MultiplexedStream` and extends `EnvelopeStreamPool`, rather than inventing a parallel
+  mechanism. So this is *building part of the structure for an already-recognized principle, now that the
+  present problem requires it* — the same single-authority kernel discipline (574/595), applied to a runtime
+  *resource* instead of a visual concept.
+- **The recurring shape it surfaces: "N independently-authored always-on consumers of a capped shared
+  resource."** Present violations: the 5 always-on streams; the unpooled action-ledger duplicate; and the
+  documented pattern of the codebase taking the over-subscribing path despite a multiplex-ready substrate
+  (501). **Sharpest *future* scope: the plugin SDK / plugin host** — `subscribeResource`/`subscribeHealth`
+  already pool per-URL, and third-party plugins each opening their own streams makes the over-subscription
+  *acute and un-reviewable* (521's original motivation was exactly plugin fan-out). Beyond connections, the
+  same shape governs web workers, background timers, and storage quotas.
+- **Recognize the principle; do NOT pre-build the generalized structure.** The present problem requires
+  consolidating the *known, bounded* set of always-on streams + the `MultiplexedStream` router — **not** a
+  general "connection-budget broker/register" with quotas and priorities for arbitrary (incl. third-party)
+  consumers. Build that general broker only when a second class of consumer actually arrives — i.e. when the
+  plugin SDK ships third-party stream consumers. Recording the principle + its candidate scope here is the
+  deliverable; separating *recognizing* it from *building* it keeps the insight without premature abstraction.
+
+### Idea clusters (by the four asks) — the option-space the design above converged from
 
 **EXTEND — A. Stream-gated adaptive polling (the standout; uniquely 649-enabled).**
 Because reachability no longer depends on the poll, the expensive `/api/status` poll can **back off while an
