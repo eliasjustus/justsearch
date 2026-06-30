@@ -28,8 +28,32 @@ the apparatus is visible and documented, never forced on a contributor.
   the `/dev-stack` skill.
 - **Hooks** — the universally-safe discipline guards/hints are the published wiring
   (`.claude/settings.json`). Maintainer-local analytics hooks — the telemetry sink, MCP
-  session-injection, and the analytics dispatch pipeline — are wired only in a maintainer's own
-  gitignored `settings.local.json`, not committed.
+  session-injection, session attribution, and the analytics dispatch pipeline — are wired only in a
+  maintainer's own gitignored `settings.local.json`, not committed.
+
+  To opt in on a fresh checkout (or a new worktree — these gitignored files are NOT inherited),
+  copy each committed seed and customize it:
+
+  ```bash
+  cp .claude/settings.local.json.example .claude/settings.local.json
+  # then set per-machine permissions/env (e.g. JUSTSEARCH_MODELS_DIR) in the copied file
+
+  cp .mcp.json.example .mcp.json
+  # then set GITHUB_PERSONAL_ACCESS_TOKEN (the justsearch-dev dev-tooling server needs no secret)
+  ```
+
+  `.mcp.json` registers the `justsearch-dev` dev-tooling MCP server (the dev-stack lifecycle/health
+  tools, which `mcp-session-inject` targets) plus your `github` server; it is gitignored because it
+  carries a personal access token.
+
+  The seed (regenerate with `node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example`)
+  carries the **full** hook set — including the four founder-analytics hooks the public
+  `settings.json` template intentionally drops (`export-session-env`, `dispatch`,
+  `otlp-sink-ensure`, `mcp-session-inject`). Without a `settings.local.json`, `export-session-env`
+  never runs, so `tmp/agent-telemetry/current-session-id` is never written and merge attribution
+  (`record-merge.mjs`) is skipped — sessions still work, they are just unattributed. The new
+  session's `SessionStart` hook writes the pointer; to attribute the *current* session immediately,
+  write the raw session id to `tmp/agent-telemetry/current-session-id` once.
 - **Telemetry** — local-only OpenTelemetry capture of agent sessions, for measuring
   agent-assisted development. It never leaves the machine.
 

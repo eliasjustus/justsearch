@@ -34,7 +34,7 @@ Exported types:
 ## Authoring a plugin
 
 See the
-[how-to guide](https://github.com/eliasjustus/JustSearch/blob/main/docs/how-to/write-a-plugin.md)
+[how-to guide](https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/write-a-plugin.md)
 for a full walkthrough.
 
 Quick start (TypeScript):
