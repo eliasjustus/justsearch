@@ -48,6 +48,20 @@ export function formatRelativeIso(iso: string, now: Date = new Date()): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+/**
+ * Tempdoc 649 — epoch-ms sibling of {@link formatRelativeIso} with a sub-minute **seconds** tier, for
+ * live connection-freshness readouts ("backend reachable 4s ago" / "data updated 16s ago"). The base
+ * helper floors at "just now" under 60s, which hides the 15–40s catch-up window; here we surface it.
+ * `null`/`undefined` → "—" (caller-visible placeholder). Minute+ tiers delegate to the one base helper.
+ */
+export function formatRelativeMs(ms: number | null | undefined, now: Date = new Date()): string {
+  if (ms == null) return '—';
+  const deltaMs = now.getTime() - ms;
+  if (deltaMs < 5 * SECOND_MS) return 'just now';
+  if (deltaMs < MINUTE_MS) return `${Math.floor(deltaMs / SECOND_MS)}s ago`;
+  return formatRelativeIso(new Date(ms).toISOString(), now);
+}
+
 function formatUnit(n: number, unit: Intl.RelativeTimeFormatUnit): string {
   if (typeof Intl?.RelativeTimeFormat === 'function') {
     try {

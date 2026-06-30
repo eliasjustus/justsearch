@@ -291,6 +291,58 @@ class TestStartBackendCleanPreservesCohortBaselines:
         assert not (data_dir / "index").exists()
         assert not (data_dir / "app.lock").exists()
 
+
+class TestStartBackendModelsDirResolution:
+    """Tempdoc 644 Axis 1: when JUSTSEARCH_MODELS_DIR is unset, start_backend defaults it
+    to the shared (main-checkout) models dir so worktree eval discovers the real models
+    instead of the worktree's LFS-pointer-only copy."""
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    @patch("jseval.backend.shared_models_dir")
+    def test_defaults_models_dir_when_unset(self, mock_shared, _health, mock_popen,
+                                            tmp_path, monkeypatch):
+        monkeypatch.delenv("JUSTSEARCH_MODELS_DIR", raising=False)
+        main_models = tmp_path / "main" / "models"
+        main_models.mkdir(parents=True)
+        mock_shared.return_value = main_models
+        mock_popen.return_value = MagicMock()
+
+        start_backend()
+
+        env = mock_popen.call_args.kwargs["env"]
+        assert env["JUSTSEARCH_MODELS_DIR"] == str(main_models)
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    @patch("jseval.backend.shared_models_dir")
+    def test_caller_env_models_dir_wins(self, mock_shared, _health, mock_popen,
+                                        tmp_path, monkeypatch):
+        explicit = tmp_path / "explicit-models"
+        explicit.mkdir()
+        monkeypatch.setenv("JUSTSEARCH_MODELS_DIR", str(explicit))
+        mock_popen.return_value = MagicMock()
+
+        start_backend()
+
+        env = mock_popen.call_args.kwargs["env"]
+        assert env["JUSTSEARCH_MODELS_DIR"] == str(explicit)
+        # Short-circuit: an already-set value means we never resolve the shared dir.
+        mock_shared.assert_not_called()
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    @patch("jseval.backend.shared_models_dir", return_value=None)
+    def test_no_models_dir_set_when_none_resolvable(self, _shared, _health, mock_popen,
+                                                    monkeypatch):
+        monkeypatch.delenv("JUSTSEARCH_MODELS_DIR", raising=False)
+        mock_popen.return_value = MagicMock()
+
+        start_backend()
+
+        env = mock_popen.call_args.kwargs["env"]
+        assert "JUSTSEARCH_MODELS_DIR" not in env
+
     @patch("jseval.backend.subprocess.Popen")
     @patch("jseval.backend._wait_for_health", return_value=True)
     def test_clean_on_empty_data_dir_is_noop(self, _health, mock_popen, tmp_path):

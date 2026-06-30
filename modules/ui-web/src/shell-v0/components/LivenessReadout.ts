@@ -18,16 +18,26 @@ import { JfElement } from '../primitives/JfElement.js';
 import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
 import { present } from '../display/present.js';
 
-/** The three observed tones the engine derives from the authority (never authored). */
-type LivenessTone = 'live' | 'degraded' | 'idle';
+/** The observed tones the engine derives from the authority (never authored). */
+type LivenessTone = 'live' | 'info' | 'degraded' | 'error' | 'idle';
 
 function toneFor(state: AiState | null): LivenessTone {
-  // `statusTier` is projected from the backend readiness composites — the one degradation
-  // authority — so the tone IS the real observed state, never an author choice.
-  const tier = state?.statusTier ?? 'offline';
-  if (tier === 'online') return 'live';
-  if (tier === 'degraded') return 'degraded';
-  return 'idle'; // offline / disconnected
+  // Tempdoc 649 — derive the dot tone from the ONE verdict-derived `statusTone` (not `statusTier`), so
+  // the calm "Catching up…" state (`info`) shows a calm tint dot instead of an amber `degraded` dot,
+  // matching the Health badge and the status-bar pill. The tone IS the real observed state, never an
+  // author choice. (`error` now shows a danger dot — previously unreachable fell through to grey `idle`.)
+  switch (state?.statusTone ?? 'neutral') {
+    case 'success':
+      return 'live';
+    case 'info':
+      return 'info';
+    case 'warning':
+      return 'degraded';
+    case 'error':
+      return 'error';
+    default:
+      return 'idle'; // neutral — offline / unknown
+  }
 }
 
 export class LivenessReadout extends JfElement {
@@ -61,6 +71,13 @@ export class LivenessReadout extends JfElement {
     }
     .dot[data-tone='degraded'] {
       background: var(--accent-warning);
+    }
+    .dot[data-tone='info'] {
+      /* Tempdoc 649 — the calm in-flux tone ("Catching up…"); reuses the existing tint token. */
+      background: var(--accent-tint);
+    }
+    .dot[data-tone='error'] {
+      background: var(--accent-danger);
     }
     .dot[data-tone='idle'] {
       background: var(--text-secondary);
