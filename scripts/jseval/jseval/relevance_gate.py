@@ -9,7 +9,7 @@ Unlike :mod:`jseval.gate` (which checks the *stdev* of nDCG@10 for latency/
 non-determinism drift), this checks the *mean* nDCG@10 against a pinned
 per-corpus floor in ``gates/relevance-ratchet/baselines.v1.json``.
 
-Exit codes (see :func:`jseval.cli.cmd_relevance_gate`):
+Exit codes (see :func:`jseval.commands.gates.cmd_relevance_gate`):
 
 - 0 — no regression (or the dataset is not pinned → does not gate).
 - 1 — regression: current nDCG@10 < (pinned baseline - tolerance).

@@ -105,6 +105,7 @@ Superseded ADRs are retained for historical context but must include a note dire
 | [0042](0042-runtime-witness-consumer-presence.md) | Live-registry witness — consumer-presence over the live ContributionRegistry | Accepted | 2026-06-11 |
 | [0043](0043-multilingual-by-construction-no-per-language-levers.md) | Multilingual by construction — no per-language levers | Accepted | 2026-06-15 |
 | [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted | 2026-06-27 |
+| [0045](0045-public-main-history-publication.md) | Public main history publication | Accepted | 2026-06-28 |
 
 > ADRs 0031–0041 were graduated on 2026-06-09 from the retired `421` frontend-rewrite kernel
 > draft's `50-decisions/` set (authored ~2026-05; the rewrite shipped per tempdoc 563). The

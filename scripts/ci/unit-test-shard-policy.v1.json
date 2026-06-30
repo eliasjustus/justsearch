@@ -1,0 +1,104 @@
+{
+  "kind": "justsearch-unit-test-shard-policy.v1",
+  "version": 1,
+  "budgetsAreAdvisory": true,
+  "lanes": [
+    {
+      "lane": "app-ui",
+      "requiredCheck": "Unit tests (app-ui)",
+      "artifact": "unit-test-attribution-app-ui",
+      "runnerLabel": "windows-latest/app-ui",
+      "owner": "app and UI hosted unit evidence",
+      "platformClass": "mixed/needs targeted experiment",
+      "platformRiskNotes": [
+        "Includes Windows-sensitive app-util and app-launcher behavior.",
+        "Includes runtime manifest, logging, headless eval, and app-instance locking surfaces.",
+        "Do not move this lane off Windows without an advisory duplicate run first."
+      ],
+      "gradleTasks": [
+        ":modules:app-agent:test",
+        ":modules:app-agent-api:test",
+        ":modules:app-api:test",
+        ":modules:app-api-tck:test",
+        ":modules:app-config:test",
+        ":modules:app-launcher:test",
+        ":modules:app-observability:test",
+        ":modules:app-services:test",
+        ":modules:app-util:test",
+        ":modules:ui:test"
+      ],
+      "localCommand": "./gradlew.bat :modules:app-agent:test :modules:app-agent-api:test :modules:app-api:test :modules:app-api-tck:test :modules:app-config:test :modules:app-launcher:test :modules:app-observability:test :modules:app-services:test :modules:app-util:test :modules:ui:test -PskipWebBuild=true --console=plain",
+      "advisoryBudgets": {
+        "maxSummedSuiteSeconds": 300,
+        "slowSuiteWarnSeconds": 60,
+        "maxSkipped": 50
+      }
+    },
+    {
+      "lane": "search-worker",
+      "requiredCheck": "Unit tests (search-worker)",
+      "artifact": "unit-test-attribution-search-worker",
+      "runnerLabel": "windows-latest/search-worker",
+      "owner": "search and worker hosted unit evidence",
+      "platformClass": "mixed/needs targeted experiment",
+      "platformRiskNotes": [
+        "Includes Tika/PDF fixture-adjacent behavior, Lucene filesystem behavior, index locking, and worker model discovery.",
+        "Contains path and worker-runtime assumptions that need targeted proof before a platform move.",
+        "Do not treat this lane as platform-neutral without an advisory duplicate run first."
+      ],
+      "gradleTasks": [
+        ":modules:adapters-lucene:test",
+        ":modules:configuration:test",
+        ":modules:core:test",
+        ":modules:core-contracts:test",
+        ":modules:indexer-worker:test",
+        ":modules:indexing:test",
+        ":modules:ipc-common:test",
+        ":modules:worker-core:test",
+        ":modules:worker-services:test"
+      ],
+      "localCommand": "./gradlew.bat :modules:adapters-lucene:test :modules:configuration:test :modules:core:test :modules:core-contracts:test :modules:indexer-worker:test :modules:indexing:test :modules:ipc-common:test :modules:worker-core:test :modules:worker-services:test -PskipWebBuild=true --console=plain",
+      "advisoryBudgets": {
+        "maxSummedSuiteSeconds": 300,
+        "slowSuiteWarnSeconds": 60,
+        "maxSkipped": 50
+      }
+    },
+    {
+      "lane": "platform-contracts",
+      "requiredCheck": "Unit tests (platform-contracts)",
+      "artifact": "unit-test-attribution-platform-contracts",
+      "runnerLabel": "windows-latest/platform-contracts",
+      "owner": "platform, inference, contract, and governance hosted unit evidence",
+      "platformClass": "mixed/needs targeted experiment",
+      "platformRiskNotes": [
+        "Includes GPU bridge, ORT/common, app-inference, system-test substrate, and native/runtime assumptions.",
+        "This is the highest-risk shard for a direct protected Ubuntu migration.",
+        "Use advisory platform experiments before changing the required proof environment."
+      ],
+      "gradleTasks": [
+        ":modules:ai-backend:test",
+        ":modules:api-contract-projection-java:test",
+        ":modules:app-inference:test",
+        ":modules:benchmarks:test",
+        ":modules:dead-code-audit:test",
+        ":modules:extension-substrate:test",
+        ":modules:gpu-bridge:test",
+        ":modules:infra-core:test",
+        ":modules:ort-common:test",
+        ":modules:prompt-support:test",
+        ":modules:reranker:test",
+        ":modules:ssot-tools:test",
+        ":modules:system-tests:test",
+        ":modules:telemetry:test",
+        ":modules:test-support:test"
+      ],
+      "localCommand": "./gradlew.bat :modules:ai-backend:test :modules:api-contract-projection-java:test :modules:app-inference:test :modules:benchmarks:test :modules:dead-code-audit:test :modules:extension-substrate:test :modules:gpu-bridge:test :modules:infra-core:test :modules:ort-common:test :modules:prompt-support:test :modules:reranker:test :modules:ssot-tools:test :modules:system-tests:test :modules:telemetry:test :modules:test-support:test -PskipWebBuild=true --console=plain",
+      "advisoryBudgets": {
+        "maxSummedSuiteSeconds": 300,
+        "slowSuiteWarnSeconds": 60,
+        "maxSkipped": 50
+      }
+    }
+  ]
+}

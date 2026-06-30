@@ -52,6 +52,13 @@ def _snapshot_models(base_url: str) -> dict | None:
         compat = w.get("compatibility", {})
         embed_cuda = gpu_diag.get("embedOrtCuda") or {}
         splade_cuda = gpu_diag.get("spladeOrtCuda") or {}
+        reranker_cuda = gpu_diag.get("rerankerOrtCuda") or {}
+        # tempdoc 644: make the realized engine SET first-class in cohort identity so a
+        # silently-degraded run (e.g. cross-encoder off in a worktree) forms a distinct cohort
+        # and cannot be averaged with a CE-on baseline. `realized_engines` (presence) is
+        # startup-stable identity; `reranker_gpu` (device) is recorded but stripped from the
+        # comparison key (release._MODEL_EXECUTION_FLAGS), exactly like embed_gpu/splade_gpu.
+        from .preflight import realized_engine_set
         return {
             "embed_backend": gpu_diag.get("embedBackend"),
             "embed_fingerprint": compat.get("embeddingFingerprintCurrent"),
@@ -59,8 +66,11 @@ def _snapshot_models(base_url: str) -> dict | None:
             "embed_gpu": embed_cuda.get("available"),
             "splade_model_path": gpu_diag.get("spladeModelPath"),
             "splade_gpu": splade_cuda.get("available"),
+            "reranker_model_path": gpu_diag.get("rerankerModelPath"),
+            "reranker_gpu": reranker_cuda.get("available"),
             "ner_model_path": gpu_diag.get("nerModelPath"),
             "ner_gpu": gpu_diag.get("nerGpuEnabled"),
+            "realized_engines": realized_engine_set(gpu_diag),
         }
     except Exception:
         log.debug("Failed to snapshot model identity from /api/status")

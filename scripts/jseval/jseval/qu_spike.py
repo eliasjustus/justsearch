@@ -337,3 +337,6 @@ def qu_spike(port: int, with_grounding: bool, prompt_version: int, thinking: boo
     # Exit code: 0 if >80% accuracy, 1 otherwise
     correct = sum(1 for r in results if r["score"]["correct"])
     sys.exit(0 if correct / len(results) >= 0.8 else 1)
+
+
+COMMANDS = [qu_spike]

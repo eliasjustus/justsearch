@@ -27,6 +27,7 @@
 
 import type { SseEnvelope } from './envelope-types.js';
 import { STREAM_WATCHDOG_STALE_MS } from '../../api/generated/stream-liveness-constants.js';
+import { bumpOriginContact } from '../state/originContact.js';
 
 /**
  * `EventSource.readyState === CLOSED`. The spec value is a stable `2`; using the literal (not the
@@ -236,6 +237,11 @@ export class EnvelopeStream<T> {
     this.resumeToken = envelope.resumeToken ?? this.resumeToken;
     // A frame (incl. a heartbeat) is proof of life: the channel is healthy, so reset both the
     // watchdog and the reconnect backoff.
+    // Tempdoc 649: a received frame is also positive contact with the backend origin — feed the ONE
+    // reachability authority so a poll starved behind the connection-pool limit can't read as
+    // "Backend disconnected" while this stream is provably alive. Pure stamp bump, no listener notify
+    // (the strict subscriber-order test must stay [0,1,2,2]).
+    bumpOriginContact();
     this.reconnectAttempt = 0;
     this.armWatchdog();
     if (!this.isConnected) {
@@ -246,6 +252,8 @@ export class EnvelopeStream<T> {
 
   private handleOpen(): void {
     // A clean open means the transport is healthy again — reset the backoff and re-arm the watchdog.
+    // Tempdoc 649: a clean open is positive contact with the origin — feed the reachability authority.
+    bumpOriginContact();
     this.reconnectAttempt = 0;
     this.armWatchdog();
     if (!this.isConnected) {

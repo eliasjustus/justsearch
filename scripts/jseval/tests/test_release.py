@@ -36,7 +36,8 @@ _MIXED_CORPUS_FPS = {
 
 
 def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
-              envelope=None, dataset="beir/scifact"):
+              envelope=None, dataset="beir/scifact", reranker_gpu=True,
+              realized_engines=("dense", "reranker", "splade")):
     cm = dict(_CONFIG_GLOBAL)
     cm.update(corpus_fps or _SCIFACT_CORPUS_FPS)
     return {
@@ -50,6 +51,10 @@ def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
             "splade_model_path": "/models/splade",
             "embed_gpu": embed_gpu,      # execution flag — must NOT affect key
             "splade_gpu": embed_gpu,
+            "reranker_gpu": reranker_gpu,  # tempdoc 644: execution flag — must NOT affect key
+            # tempdoc 644: the realized engine SET — startup-stable identity; CE-on vs CE-off
+            # must form distinct cohorts so a degraded run can't be averaged with a CE-on baseline.
+            "realized_engines": list(realized_engines),
         },
         "non_determinism_envelope": envelope,
         "env_fingerprint": {"gpu": {"name": "RTX 4070"}},
@@ -114,6 +119,24 @@ def test_config_key_ignores_gpu_execution_flags():
     gpu = _manifest(embed_gpu=True)
     cpu = _manifest(embed_gpu=False)
     assert release.config_cohort_key(gpu) == release.config_cohort_key(cpu)
+
+
+def test_config_key_ignores_reranker_gpu_execution_flag():
+    """tempdoc 644: the reranker DEVICE bit is execution-context (flaky pre-query) and is
+    stripped from the key, exactly like embed_gpu/splade_gpu — a GPU reranker run and a CPU
+    reranker run of the same config share the key."""
+    gpu = _manifest(reranker_gpu=True)
+    cpu = _manifest(reranker_gpu=False)
+    assert release.config_cohort_key(gpu) == release.config_cohort_key(cpu)
+
+
+def test_config_key_changes_on_realized_engine_set():
+    """tempdoc 644: the realized engine SET (presence) IS cohort identity — a CE-on run and a
+    CE-off (cross-encoder silently absent) run of the same commit MUST form distinct cohorts so
+    the degraded run cannot be averaged with a CE-on baseline."""
+    ce_on = _manifest(realized_engines=("dense", "reranker", "splade"))
+    ce_off = _manifest(realized_engines=("dense", "splade"))
+    assert release.config_cohort_key(ce_on) != release.config_cohort_key(ce_off)
 
 
 def test_config_key_changes_on_real_config_change():

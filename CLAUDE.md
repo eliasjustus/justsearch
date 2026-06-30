@@ -192,14 +192,16 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 
 Build fails on PMD/Spotless violations — run `spotlessApply` first.
 
-Public hosted `CI` runs on pull requests, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted and specialty workflows remain manually dispatched unless a later ADR changes them. Local-first verification is still the primary discipline. For CI dispatch commands and workflow failure triage, load `/ci-triage`. For pipeline profiling flags and live-stack lifecycle, load `/jseval` and `/dev-stack`.
+Public hosted `CI` runs on PRs, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted/specialty workflows remain manual. Local-first verification stays primary. For CI triage load `/ci-triage`; for profiling/live stack load `/jseval` and `/dev-stack`.
 
-Pre-merge script checks — run the check whose **subject** you edited before merging (CI runs these too; per-gate rationale lives in each script's header + `governance/registry.v1.json`). Commands: `node scripts/ci/<name>.mjs` or `node scripts/governance/run.mjs --gate <id> --mode gate`. <!-- tempdoc 620 Move 1: compressed from per-gate paragraphs; the governance-hint/consult-doc-hint hooks also surface the relevant gate per edit. -->
+Pre-merge script checks — run the check whose **subject** you edited. Commands: `node scripts/ci/<name>.mjs` or `node scripts/governance/run.mjs --gate <id> --mode gate`.
 
 | Edited subject | Check(s) |
 |---|---|
 | `.github/workflows/*.yml` · root README | `check-workflow-triggers` · `check-root-readme` |
 | root `CLAUDE.md` Pre-merge table | `check-premerge-table` |
+| repo history publication settings (ADR-0045) | `check-repo-history-policy` |
+| PR title/body as public squash message | `preview-squash-message` |
 | `contracts/**` | `--gate wire` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
@@ -214,7 +216,7 @@ Pre-merge script checks — run the check whose **subject** you edited before me
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
 | **`modules/ui-web/src/**`** (ui-web gate set) | `check-presentation-purity` · `check-observed-state-collapse` · `check-theme-token-closure` · `gen-token-names --check` · `strip-token-fallbacks --check modules/ui-web/src` · `check-color-tokens` · `check-a11y-closure` · `check-controls-a11y` · `check-adaptive-closure` · `check-layout-purity` · `check-surface-composition` · `check-message-single-model` · `check-run-renderers` · `check-inflight-liveness` · `check-composition-surfaces` · `check-declared-surfaces` · `check-contrast-matrix` · `check-accent-as-text`; `--gate ambient-purity,style-literal-ratchet,atom-fork-ratchet,modality-contract,transient-arbitration,modal-arbitration` |
-| `modules/ui-web/src/shell-v0/**` (also) | `check-steering-arbitration` · `check-search-issuance` · `check-verdict-derivation` · `check-message-classes` · `check-capability-availability` |
+| `modules/ui-web/src/shell-v0/**` (also) | `check-steering-arbitration` · `check-search-issuance` · `check-verdict-derivation` · `check-message-classes` · `check-capability-availability` · `check-realized-capability` |
 | `shell-v0/views/**` (also) | `check-surface-task-state-retention` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
 

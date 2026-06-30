@@ -70,6 +70,7 @@ why prose-tier is intentionally the right choice).
 | 25 | `never-force-push` | Never `git push --force` to main/master | `hook` | `hook:bash-guard.mjs` | `bash-guard.mjs` blocks `--force` everywhere |
 | 26 | `pre-merge-gradle-build` | Pre-merge `./gradlew build -x test` required | `prose-only` | — | CI catches at PR time, but local-first discipline is honor system |
 | 35 | `verify-worktree-base` | Always verify a new worktree's base contains the expected work before coding | `prose-only` | — | Agent discipline; `worktree.baseRef:"head"` is the by-construction half (config, not a gate), and manual `git worktree add` ignores it — no mechanical check that the base matched task intent (tempdoc 618 §1) |
+| 36 | `docs-ride-along` | Publishing docs-only changes: tempdoc/observations edits ride-along with their code PR or batch; canonical-doc updates may stand alone (ADR-0045 axis-2 / tempdoc 653) | `hook-hint` | `hook:docs-granularity-hint.mjs` | `docs-granularity-hint.mjs` (PreToolUse Bash `git push`) fires when a branch's whole diff vs `origin/main` is `docs/tempdocs/**` / `docs/observations*` only, delivering the ride-along/batch convention — non-blocking (~85%); canonical-doc-only and docs+code branches intentionally don't trigger |
 
 ## .claude/rules/agent-lessons.md
 

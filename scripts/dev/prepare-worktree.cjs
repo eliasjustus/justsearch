@@ -5,9 +5,13 @@
  * A worktree is a fresh checkout: it needs its own `node_modules` (for FE typecheck/test/Vite) and
  * its own installDist before the dev stack will start. What it does NOT need a setup step for:
  *   - models: the dev-runner resolves JUSTSEARCH_MODELS_DIR from the MAIN checkout (618 §2);
- *   - llama-server: the dev-runner auto-stages it into native-bin on start (618 §3);
- *   - config: .mcp.json / .claude/settings.local.json are tracked, so every checkout already has
- *     them (no .worktreeinclude needed for this repo).
+ *   - llama-server: the dev-runner auto-stages it into native-bin on start (618 §3).
+ *
+ * What it DOES need (post-cutover): .mcp.json and .claude/settings.local.json are now gitignored
+ * (maintainer-local, not tracked), so a fresh worktree does NOT inherit them. Seed each from its
+ * committed example — `cp .mcp.json.example .mcp.json` and
+ * `cp .claude/settings.local.json.example .claude/settings.local.json` — then fill in per-machine
+ * values (github PAT, permissions/env). See MAINTAINING.md.
  *
  * Usage (run from inside the worktree):
  *   node scripts/dev/prepare-worktree.cjs            # npm ci + installDist

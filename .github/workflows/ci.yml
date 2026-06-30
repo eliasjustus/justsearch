@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -46,6 +46,9 @@ jobs:
 
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
+
+      - name: Unit-test shard policy guard
+        run: node scripts/ci/verify-unit-test-shard-policy.mjs
 
       - name: Test evidence policy guard
         run: node scripts/ci/verify-test-evidence-policy.mjs
@@ -86,7 +89,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -128,7 +131,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -207,7 +210,7 @@ jobs:
               :modules:test-support:test
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -224,7 +227,11 @@ jobs:
 
       - name: Report unit-test attribution
         if: always()
-        run: node scripts/ci/report-unit-test-attribution.mjs --runner-label "${{ matrix.runner_label }}" --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+        run: node scripts/ci/report-unit-test-attribution.mjs --lane "${{ matrix.lane }}" --runner-label "${{ matrix.runner_label }}" --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+
+      - name: Report unit-test advisory budget
+        if: always()
+        run: node scripts/ci/report-unit-test-budget.mjs --lane "${{ matrix.lane }}" --attribution build/ci/unit-test-attribution.json --out-json build/ci/unit-test-budget.json --out-md build/ci/unit-test-budget.md
 
       - name: Upload unit-test attribution
         if: always()
@@ -234,6 +241,8 @@ jobs:
           path: |
             build/ci/unit-test-attribution.json
             build/ci/unit-test-attribution.md
+            build/ci/unit-test-budget.json
+            build/ci/unit-test-budget.md
             modules/**/build/test-results/test/TEST-*.xml
           if-no-files-found: warn
 
@@ -243,7 +252,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

@@ -17,7 +17,7 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 
 ### Reporting Bugs
 
-Use the [bug report template](https://github.com/eliasjustus/JustSearch/issues/new?template=bug_report.md) to report issues. Include:
+Use the [bug report template](https://github.com/eliasjustus/justsearch/issues/new?template=bug_report.md) to report issues. Include:
 - Steps to reproduce
 - Expected vs actual behavior
 - Environment details (OS, Java version, GPU if applicable)
@@ -25,7 +25,7 @@ Use the [bug report template](https://github.com/eliasjustus/JustSearch/issues/n
 
 ### Suggesting Features
 
-Use the [feature request template](https://github.com/eliasjustus/JustSearch/issues/new?template=feature_request.md) to propose new features. Describe:
+Use the [feature request template](https://github.com/eliasjustus/justsearch/issues/new?template=feature_request.md) to propose new features. Describe:
 - The problem you're trying to solve
 - Your proposed solution
 - Alternatives you've considered
@@ -38,6 +38,10 @@ Use the [feature request template](https://github.com/eliasjustus/JustSearch/iss
 4. Verify locally: `./gradlew.bat build` (compile + tests), and for frontend changes `cd modules/ui-web && npm run typecheck && npm run test:unit:run`
 5. Commit your changes
 6. Push and open a pull request
+
+You do not need to curate your branch into perfect public-history commits before
+opening a PR. Maintainers may squash PRs before merge so public `main` stays
+readable while contributors can work naturally on branches.
 
 ## Development Setup
 
@@ -134,4 +138,4 @@ For detailed architecture, see [System Overview](docs/explanation/01-system-over
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/eliasjustus/JustSearch/discussions) for questions or ideas that aren't bug reports or feature requests.
+Open a [GitHub Discussion](https://github.com/eliasjustus/justsearch/discussions) for questions or ideas that aren't bug reports or feature requests.
