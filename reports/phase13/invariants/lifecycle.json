@@ -1,8 +1,0 @@
-{
-  "captured_at": "2025-11-08T05:14:11.493552+00:00",
-  "suite": "Lifecycle ownership",
-  "description": "ArchUnit gate ensures only adapters-lucene may instantiate IndexWriter",
-  "gradle_task": ":modules:app-launcher:test --tests *IndexWriterOwnershipTest",
-  "report_html": "reports/phase13/invariants/index-writer-ownership.html",
-  "status": "pass"
-}

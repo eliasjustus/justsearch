@@ -35,6 +35,10 @@ ok("EXCLUDE: docs/future-features (provisional unpublish)", isExcluded("docs/fut
 ok("EXCLUDE: settings.local.json", isExcluded(".claude/settings.local.json") === "local-runtime/settings.local.json");
 ok("EXCLUDE: .mcp.json", isExcluded(".mcp.json") === "local-runtime/.mcp.json");
 ok("EXCLUDE: tmp data", isExcluded("tmp/agent-telemetry/x.json") === "local-runtime/tmp");
+ok(
+  "EXCLUDE: tempdoc 390 machine artifacts",
+  isExcluded("docs/tempdocs/390-results/fingerprint.txt") === "machine-artifacts/tempdoc-390-results"
+);
 ok("EXCLUDE: an onnx blob under models/", isExcluded("models/onnx/embed.onnx") === "model-blobs/onnx");
 ok("EXCLUDE: backslash paths normalize", isExcluded("docs\\business\\x.md") === "sidecar/docs-business");
 ok("KEEP: a normal module source file", isExcluded("modules/ui/src/main/java/X.java") === null);

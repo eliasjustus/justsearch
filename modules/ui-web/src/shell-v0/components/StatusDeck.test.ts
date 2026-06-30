@@ -15,12 +15,18 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     phase: 'connected',
     readiness: UNKNOWN,
     capabilities: { chat: false, rag: false, extract: false, embedding: false },
-    connection: { reachable: true, lastSuccessMs: Date.now(), consecutiveFailures: 0 },
+    connection: { reachable: true, lastSuccessMs: Date.now(), lastContactMs: Date.now(), consecutiveFailures: 0 },
     runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
     index: { documentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+    realized: {
+      reranker: { loaded: false, accelerator: null, failureReason: null },
+      embed: { loaded: false, accelerator: null, failureReason: null },
+      splade: { loaded: false, accelerator: null, failureReason: null },
+    },
     statusLabel: 'offline',
     statusTier: 'offline',
+    statusTone: 'neutral',
     stability: { kind: 'settled' },
     verdict: { kind: 'operational', severity: 'ok', reasons: [] },
     status: null,
@@ -84,20 +90,24 @@ describe('StatusDeck (slice 461)', () => {
     expect(memDot?.classList.contains('warn')).toBe(true);
   });
 
-  it('inference status badge tone follows AI state tier', async () => {
+  it('system pill tone follows the verdict-derived statusTone (tempdoc 649)', async () => {
     const badgeTone = (el: StatusDeck) =>
       el.shadowRoot?.querySelector('jf-status-badge')?.getAttribute('tone');
     const el = make();
-    el.aiState = makeAiState({ statusTier: 'online', statusLabel: 'Online' });
+    el.aiState = makeAiState({ statusTone: 'success', statusLabel: 'Online' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('success');
-    el.aiState = makeAiState({ statusTier: 'degraded', statusLabel: 'Indexing' });
+    // 649: the calm "Catching up…" (busy) state must render calm `info`, NOT amber.
+    el.aiState = makeAiState({ statusTone: 'info', statusLabel: 'Catching up…' });
+    await el.updateComplete;
+    expect(badgeTone(el)).toBe('info');
+    el.aiState = makeAiState({ statusTone: 'warning', statusLabel: 'Service degraded' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('warning');
-    el.aiState = makeAiState({ statusTier: 'offline', statusLabel: 'offline' });
+    el.aiState = makeAiState({ statusTone: 'neutral', statusLabel: 'offline' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('neutral');
-    el.aiState = makeAiState({ statusTier: 'disconnected', statusLabel: 'Disconnected' });
+    el.aiState = makeAiState({ statusTone: 'error', statusLabel: 'Backend disconnected' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('error');
   });

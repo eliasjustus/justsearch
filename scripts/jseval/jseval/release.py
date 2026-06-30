@@ -60,7 +60,7 @@ _CORPUS_DEPENDENT_COMMIT_METADATA = (
 )
 # model_fingerprints keys that are execution-context (vary GPU vs CPU), excluded
 # from model identity:
-_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu")
+_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu", "reranker_gpu")
 
 
 class ComposeError(ValueError):
@@ -322,6 +322,10 @@ def compose(
         "eval_protocol_hash": ref_manifest.get("eval_protocol_hash"),
         "policy_hash": ref_manifest.get("policy_hash"),
         "model_identity": _model_identity(ref_manifest.get("model_fingerprints")),
+        # tempdoc 644: the realized engine set this release was measured under (also inside
+        # model_identity; surfaced here as the legible read-path the homogeneity gate compares a
+        # HEAD run against). All members share it — engine-set differences split config_cohort_key.
+        "realized_engines": (ref_manifest.get("model_fingerprints") or {}).get("realized_engines"),
         "hardware": _hardware_projection(ref_manifest),
     }
 

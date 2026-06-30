@@ -186,7 +186,7 @@ When deciding whether a new field belongs on `IngestionEventView`, ask: "could a
 
 `path_hash` is one-way. To correlate a flagged event back to a specific file, operators hash candidate paths themselves:
 
-```
+```text
 sha256_hex(PathNormalizer.normalizePath(candidatePath.toAbsolutePath().toString()))
 ```
 

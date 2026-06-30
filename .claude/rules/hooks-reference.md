@@ -69,8 +69,8 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 **Action:** Run the suggested command before commit. The suggestion is the same defect-class guard caught by observations.md item #5 (the 2026-05-08 ConfigWiringTest assertion-class mismatch shipped because the test wasn't re-run after edit).
 
 ## stress-test-hint (PostToolUse → Edit, Write)
-**Behavior:** When you edit a file in `modules/ort-common/` that is a stress-test subject (`NativeSessionHandle`, `SessionHandle`, `OrtSessionAssembler`, `OnnxSessionCache`, `OrtCudaHelper`) or a `*StressTest.java`, this hook reminds you to dispatch CI with `runStress=true`.
-**Action:** Run `gh workflow run ci.yml -f runStress=true` after your changes are committed. ADR-0026 manual-only CI means stress tests only run when explicitly dispatched.
+**Behavior:** When you edit a file in `modules/ort-common/` that is a stress-test subject (`NativeSessionHandle`, `SessionHandle`, `OrtSessionAssembler`, `OnnxSessionCache`, `OrtCudaHelper`) or a `*StressTest.java`, this hook reminds you to run the stress-tagged Gradle tests.
+**Action:** Run `./gradlew.bat test -PincludeStress=true --tests "*Stress*"` before handoff. Stress tests are opt-in, so they only run when explicitly requested.
 
 ## governance-hint (PostToolUse → Edit, Write)
 **Behavior:** When you edit a discipline-gate baseline file (`scripts/ci/npm-audit-ratchet-baseline.v1.json`, `.claude/rules/tier-register.md`) or a changeset under `gates/<id>/.changesets/`, this hook surfaces the relevant `node scripts/governance/run.mjs --gate <id>` command + `--explain <ruleId>` / `--suggest-changeset` next steps. (The `class-size` / `ui-bundle` baselines were removed with those gates — tempdoc 634.)
@@ -79,6 +79,10 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 ## governance-precommit-hint (PreToolUse → Bash, `git commit`)
 **Behavior:** Before a `git commit` that touches discipline-gate baselines, this hook detects available rebalances (pinned values that could shrink) and emits a hint. Does NOT auto-write the baseline — the rebalance is explicit.
 **Action:** If the hint reports a rebalance available, run `node scripts/governance/run.mjs --gate <id> --rebalance` to update the baseline, then re-stage and commit.
+
+## docs-granularity-hint (PreToolUse → Bash, `git push`)
+**Behavior:** Before a `git push`, if the branch's whole diff vs `origin/main` is dated working history only (`docs/tempdocs/**` or `docs/observations*`), this hook emits a non-blocking reminder that a tempdoc-only change should ride along with its code PR or batch, not become its own standalone public commit (ADR-0045 axis-2 / tempdoc 653; rule `docs-ride-along`). Canonical-doc-only and docs+code branches intentionally do **not** trigger. Fail-open; honors `JUSTSEARCH_DISABLE_HOOKS=1`; never blocks.
+**Action:** If pushing a tempdoc-only branch, prefer to fold the edit into the code PR it documents, or batch tempdoc edits into one `docs(tempdocs): …` PR. Rationale: `docs/reference/contributing/agent-guide.md` §3.7.
 
 ## seam-hint (PostToolUse → Write)
 **Behavior:** When you `Write` a NEW production Java class in a module that hosts registered logic seams (`governance/logic-seams.v1.json`) and the class is branch/arithmetic-dense AND IO-free, this hook asks whether it is a law-bearing seam to declare (tempdoc 555 §5, the authoring-time oracle). It self-filters: only seam-bearing modules, only unregistered classes, never `Edit`s / IO-heavy / DTO files.

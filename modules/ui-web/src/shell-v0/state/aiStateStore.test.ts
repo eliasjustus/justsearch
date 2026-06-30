@@ -17,6 +17,7 @@ import {
   setInstallState,
   __resetAiStateForTest,
   __feedForTest,
+  __feedContactForTest,
   __tickClockForTest,
   type AiState,
 } from './aiStateStore.js';
@@ -88,28 +89,72 @@ describe('aiStateStore — R1a signal-core conversion', () => {
     expect(s.statusLabel).toBe('Connecting…');
   });
 
-  it('§2.B / B4: a connection lost AFTER data goes `stale` (last-known retained), not `disconnected`', () => {
+  it('§2.B / B4 + 649: poll stale then truly unreachable — staged "Catching up…" → "Reconnecting…", last-known retained', () => {
     vi.useFakeTimers();
     try {
       const t0 = new Date('2026-01-01T00:00:00Z').getTime();
       vi.setSystemTime(t0);
-      // One successful status poll: 42 docs.
+      // One successful status poll: 42 docs (a poll success is positive contact, tempdoc 649).
       __feedForTest({
         status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
       });
       __tickClockForTest();
       expect(getAiState().phase).toBe('connected');
+      expect(getAiState().connection.reachable).toBe(true);
       expect(getAiState().index.documentCount).toEqual(known(42));
 
-      // 16s later with no further success: past the 15s threshold.
+      // 16s later: past the 15s poll-freshness threshold, but the last contact (the t0 poll) is only
+      // 16s old — within the 40s reachability window. 649: data is behind but the backend is provably
+      // reachable, so the calm "Catching up…", NOT the "Reconnecting…" alarm.
       vi.setSystemTime(t0 + 16_000);
       __tickClockForTest();
-      const s = getAiState();
+      let s = getAiState();
       expect(s.phase).toBe('stale');
+      expect(s.connection.reachable).toBe(true);
+      expect(s.statusLabel).toBe('Catching up…');
+      expect(s.index.documentCount).toEqual(known(42)); // last-known retained, not wiped
+      expect(s.statusTier).toBe('degraded'); // statusTier still 'degraded' (it no longer drives tone)
+      // 649 tone fix: the calm "Catching up…" state is `info` (calm tint), NOT amber — so every surface
+      // (status pill, liveness dot) renders it calm, matching the Health badge.
+      expect(s.statusTone).toBe('info');
+      expect(s.connection.lastContactMs).toBe(t0); // contact stamp surfaced (the t0 poll success)
+
+      // 41s later: NO contact of any kind within the 40s window ⇒ genuinely unreachable ⇒ the alarm.
+      vi.setSystemTime(t0 + 41_000);
+      __tickClockForTest();
+      s = getAiState();
+      expect(s.connection.reachable).toBe(false);
       expect(s.statusLabel).toBe('Reconnecting…');
-      // Last-known is retained (NOT wiped to 0/Unknown) and the tier is degraded.
-      expect(s.index.documentCount).toEqual(known(42));
-      expect(s.statusTier).toBe('degraded');
+      // 649 ramp: lost contact ("Reconnecting…") is a WARNING (amber), distinct from the calm catch-up.
+      expect(s.statusTone).toBe('warning');
+      expect(s.index.documentCount).toEqual(known(42)); // still retained
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('649: a stale poll stays calm "Catching up…" while an SSE frame keeps contact fresh', () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+      vi.setSystemTime(t0);
+      __feedForTest({
+        status: { worker: { core: { indexedDocuments: 7 } } } as unknown as StatusSnapshot,
+      });
+      __tickClockForTest();
+
+      // 50s later: the poll is long stale (>40s) — WITHOUT a stream this would be "Reconnecting…".
+      // But an SSE frame arrived at t0+45s (positive contact), so the origin is reachable.
+      vi.setSystemTime(t0 + 45_000);
+      __feedContactForTest(t0 + 45_000); // mirrors EnvelopeStream.handleFrame bumping the stamp
+      vi.setSystemTime(t0 + 50_000);
+      __tickClockForTest();
+      const s = getAiState();
+      expect(s.phase).toBe('stale'); // poll data is behind
+      expect(s.connection.reachable).toBe(true); // but a recent SSE frame proves the backend is alive
+      expect(s.statusLabel).toBe('Catching up…'); // calm, not the false "Reconnecting…"
+      expect(s.statusTone).toBe('info'); // 649: calm tone, not amber
+      expect(s.connection.lastContactMs).toBe(t0 + 45_000); // contact stamp = the SSE frame
     } finally {
       vi.useRealTimers();
     }
@@ -151,6 +196,7 @@ describe('aiStateStore — R1a signal-core conversion', () => {
       });
       expect(getAiState().runtime.mode).toBe('online');
       expect(getAiState().statusLabel.startsWith('Starting')).toBe(false);
+      expect(getAiState().statusTone).toBe('success'); // 649: settled-online is green
     } finally {
       vi.useRealTimers();
     }
@@ -221,6 +267,7 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('degraded');
     expect(s.verdict.severity).toBe('warn');
     expect(s.statusTier).toBe('degraded'); // was 'online' before 595 — the live split
+    expect(s.statusTone).toBe('warning'); // 649: an impairing degrade is amber on every surface
   });
 
   it('600 Design A: a compat reindex code carries through to a degraded verdict (the specific cause)', () => {
@@ -239,6 +286,7 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('degraded');
     expect(s.verdict.severity).toBe('info');
     expect(s.statusTier).not.toBe('degraded'); // no false alarm for an optional re-ranker
+    expect(s.statusTone).toBe('info'); // 649: a cosmetic degrade stays calm (info), never amber
   });
 
   it('a worker-down fallback (indexState UNAVAILABLE) ⇒ transitioning, "Restarting…"', () => {
@@ -263,6 +311,45 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('operational');
     expect(s.verdict.severity).toBe('ok');
     expect(s.stability).toEqual({ kind: 'settled' });
+  });
+
+  // 649 scope guard — the tone fix is CONNECTION-only; non-connection states keep their pre-649 tone.
+  it('649: AI activity does NOT flatten statusTone — it follows the underlying health', () => {
+    feed(statusWith('READY'));
+    __feedForTest({
+      inference: { mode: 'online', starting: false, available: true } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().statusTone).toBe('success');
+    setAiActivity({ state: 'thinking' });
+    expect(getAiState().statusLabel).toBe('Thinking…'); // activity overlays the LABEL…
+    expect(getAiState().statusTone).toBe('success'); // …but NOT the tone (was flattened to 'info' pre-fix)
+    // A real degradation must still show amber while thinking (tone follows underlying health).
+    feed(statusWith('DEGRADED', ['worker.health.embedding_not_ready']));
+    expect(getAiState().statusTone).toBe('warning');
+    setAiActivity({ state: 'idle' });
+  });
+
+  it('649: indexing/starting keep the prior amber "in-flux" tone (connection-only scope)', () => {
+    feed(statusWith('READY'));
+    __feedForTest({
+      inference: { mode: 'indexing', starting: false, available: true } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().runtime.mode).toBe('indexing');
+    expect(getAiState().statusTone).toBe('warning');
+    __feedForTest({
+      inference: { mode: 'transitioning', starting: true, available: false } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().runtime.mode).toBe('starting');
+    expect(getAiState().statusTone).toBe('warning');
+  });
+
+  it('649: a fresh never-connected store reads calm "Connecting…" (info), not a false alarm', () => {
+    __resetAiStateForTest();
+    // Startup grace: before the first poll lands, the verdict is the calm `connecting`, not a false
+    // "Backend disconnected" — and its tone is `info`, not red. (The hard `unreachable→error` mapping is
+    // covered by verdict.test's verdictTone + the uniform connection branch of computeStatusTone.)
+    expect(getAiState().verdict.kind).toBe('connecting');
+    expect(getAiState().statusTone).toBe('info');
   });
 
   // 595 §15.3 (E2) — last-settled index retention across a provisional window.
@@ -297,5 +384,42 @@ describe('aiStateStore — system-health verdict (595)', () => {
       readiness: { composites: { retrieval: { state: 'READY', reasonCodes: [] } } },
     } as unknown as StatusSnapshot);
     expect(getAiState().lastSettledIndex).toEqual({ documentCount: 77, indexSizeBytes: null });
+  });
+});
+
+describe('computeRealized — tempdoc 644 realized engine projection', () => {
+  beforeEach(() => __resetAiStateForTest());
+  afterEach(() => __resetAiStateForTest());
+
+  it('projects loaded + accelerator + failure per engine from worker.gpu', () => {
+    __feedForTest({
+      status: {
+        worker: {
+          gpu: {
+            rerankerModelPath: '/models/onnx/reranker',
+            rerankerOrtCuda: { available: true, attempted: true },
+            embedBackend: 'onnx',
+            embedOrtCuda: { available: false, attempted: true },
+            spladeModelPath: '/models/splade',
+            spladeOrtCuda: { available: false, attempted: false, failureReason: 'lazy' },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    const r = getAiState().realized;
+    expect(r.reranker).toEqual({ loaded: true, accelerator: 'gpu', failureReason: null });
+    expect(r.embed).toEqual({ loaded: true, accelerator: 'cpu', failureReason: null });
+    // present but device not yet probed (attempted false) → accelerator null, NOT a false "CPU".
+    expect(r.splade).toEqual({ loaded: true, accelerator: null, failureReason: 'lazy' });
+  });
+
+  it('reports an absent reranker as not loaded (the silent CE-off worktree trap)', () => {
+    __feedForTest({
+      status: { worker: { gpu: { embedBackend: 'onnx' } } } as unknown as StatusSnapshot,
+    });
+    const r = getAiState().realized;
+    expect(r.reranker.loaded).toBe(false);
+    expect(r.reranker.accelerator).toBe(null);
+    expect(r.embed.loaded).toBe(true);
   });
 });

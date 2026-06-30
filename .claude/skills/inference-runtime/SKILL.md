@@ -30,11 +30,11 @@ update it before closing.
   Findings with your tempdoc citation.
 - When your work opens a new question, add it to Open Questions.
 - Keep entries terse. Evidence lives in tempdocs; this file is the index.
-- After ORT/session concurrency changes, dispatch the manual CI stress
-  lane with `gh workflow run ci.yml -f runStress=true`. ADR-0026 removed
-  the scheduled stress cadence, so runtime agents touching
-  `NativeSessionHandle` or `SessionHandle` are one trigger point for the
-  repo-wide policy-covered stress lane.
+- After ORT/session concurrency changes, run the stress-tagged Gradle tests
+  explicitly with `./gradlew.bat test -PincludeStress=true --tests "*Stress*"`.
+  There is no scheduled stress cadence, so runtime agents touching
+  `NativeSessionHandle` or `SessionHandle` are one trigger point for this
+  opt-in verification.
 
 **Replaces:** Relevant items from `docs/reference/issues/gpu-detection.md`
 (GPU-) and inference-related items from `retrieval-quality.md` (RAG-001,
