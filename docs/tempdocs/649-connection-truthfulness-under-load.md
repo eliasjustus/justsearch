@@ -279,6 +279,7 @@ The connection-pool fix (the rest of this doc) and the AI-engine-verdict re-arch
 is logged here for the shared root + shared poller; if/when the brain work is picked up it should likely become
 its own tempdoc ("AI-engine verdict: single-authority state for the brain surface"), cross-referencing 649 for
 the timeout-less-poller interaction. Not started — diagnosis + recommended direction only.
+**→ Spun out (2026-06-30): `docs/tempdocs/663-ai-engine-verdict-single-authority.md`.**
 
 ## Theorization (2026-06-30) — directions, framings, principles (NOT final design)
 
@@ -518,7 +519,8 @@ Matching structure to the problem the tempdoc *actually* has:
   These are the *resource* concern — they reduce how often the poll is starved (improving freshness latency),
   but the tempdoc's problem is *truthfulness*, which the contact authority solves on its own. Building them
   now would be structure for a case the present problem does not include. They remain a **named candidate
-  follow-up** (likely its own tempdoc); if pursued, a "live-channel budget register" would conform to the
+  follow-up** (**→ spun out 2026-06-30: `docs/tempdocs/662-managed-connection-budget-sse-consolidation.md`**);
+  if pursued, a "live-channel budget register" would conform to the
   governance-register pattern, and the transport options are each gated on a prior decision (TLS-on-loopback
   for HTTP-2/WebTransport; desktop-coupling for Tauri-IPC — see Research below).
 - **OUT: a new independent liveness probe endpoint** (562's reverted approach; 649 disproved it).
