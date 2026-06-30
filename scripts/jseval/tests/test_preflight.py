@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from jseval.preflight import execute_preflight, format_console
+from jseval.preflight import (
+    assert_capabilities,
+    derive_intended_engines,
+    execute_preflight,
+    format_console,
+)
 
 
 class TestExecutePreflight:
@@ -99,3 +104,116 @@ class TestFormatConsole:
         output = format_console(result)
         assert "Preflight: OK" in output
         assert "embed_backend: onnx" in output
+
+
+# ===================================================================================
+# Tempdoc 644 Axis 2 — instrument-integrity guard
+# ===================================================================================
+
+
+class TestDeriveIntendedEngines:
+    def test_ce_flag_intends_reranker(self):
+        assert "reranker" in derive_intended_engines("lexical", cross_encoder=True)
+
+    def test_hybrid_is_ce_bearing_server_mode(self):
+        # hybrid runs CE on by server default even without --ce (tempdoc 644 U5).
+        assert "reranker" in derive_intended_engines("hybrid")
+
+    def test_leg_modes_do_not_intend_reranker(self):
+        # vector/lexical/splade carry explicit crossEncoderEnabled:false → never flagged.
+        assert derive_intended_engines("vector,lexical,splade") == set()
+
+    def test_scoped_to_reranker_only(self):
+        # tempdoc 644 live-debug: dense/splade are NOT hard-gated by the pre-run guard — their
+        # model-presence isn't startup-observable (embedBackend/spladeModelPath populate during
+        # enrichment), so gating them pre-ingest caused false refusals even when present. Only
+        # the reranker (startup-stable signal + documented silent-off trap) is gated.
+        assert derive_intended_engines("hybrid") == {"reranker"}
+        assert derive_intended_engines("vector") == set()   # dense leg — not gated
+        assert derive_intended_engines("splade") == set()   # splade leg — not gated
+        assert derive_intended_engines("hybrid", cross_encoder=True) == {"reranker"}
+
+    def test_list_modes_accepted(self):
+        assert "reranker" in derive_intended_engines(["hybrid", "lexical"])
+
+
+class TestAssertCapabilities:
+    def _status(self, **over):
+        base = {
+            "rerankerModelPath": "/models/onnx/reranker",
+            "embedBackend": "onnx",
+            "spladeModelPath": "/models/splade",
+            "rerankerOrtCuda": {"available": True, "configured": True},
+        }
+        base.update(over)
+        return base
+
+    def test_intended_and_present_is_ok(self):
+        v = assert_capabilities(self._status(), {"reranker"})
+        assert v["ok"] is True
+        assert v["refusals"] == []
+
+    def test_ce_intended_but_absent_refuses(self):
+        # The worktree silent-CE-off trap: reranker intended, rerankerModelPath empty.
+        v = assert_capabilities(self._status(rerankerModelPath=""), {"reranker"})
+        assert v["ok"] is False
+        assert any("reranker_intended_but_absent" in r for r in v["refusals"])
+
+    def test_allow_degraded_downgrades_refusal_to_warning(self):
+        v = assert_capabilities(
+            self._status(rerankerModelPath=""), {"reranker"}, allow_degraded=True
+        )
+        assert v["ok"] is True
+        assert v["refusals"] == []
+        assert any("reranker_intended_but_absent" in w for w in v["warnings"])
+
+    def test_no_intent_never_refuses(self):
+        # A pure leg run intends nothing CE-bearing; absent reranker is fine.
+        v = assert_capabilities(self._status(rerankerModelPath=""), set())
+        assert v["ok"] is True
+        assert v["refusals"] == []
+
+    def test_cpu_only_is_warning_not_refusal(self):
+        # Reranker present but on CPU → device warning, still ok (GPU deferred, T3-6).
+        v = assert_capabilities(
+            self._status(rerankerOrtCuda={"available": False}), {"reranker"}
+        )
+        assert v["ok"] is True
+        assert any("reranker_cpu_only" in w for w in v["warnings"])
+
+    def test_splade_intended_but_absent_refuses(self):
+        v = assert_capabilities(self._status(spladeModelPath=""), {"splade"})
+        assert v["ok"] is False
+        assert any("splade_intended_but_absent" in r for r in v["refusals"])
+
+    def test_unreachable_status_refuses(self):
+        v = assert_capabilities(None, {"reranker"})
+        assert v["ok"] is False
+        assert any("backend_unreachable" in r for r in v["refusals"])
+
+    def test_unreachable_with_allow_degraded_is_ok(self):
+        v = assert_capabilities(None, {"reranker"}, allow_degraded=True)
+        assert v["ok"] is True
+
+    def test_reads_nested_worker_gpu_status(self):
+        # Regression (tempdoc 644 live-debug): the realized signals live under worker.gpu.* in
+        # the real /api/status — NOT at top level. assert_capabilities must read them through
+        # flatten_status. This nested shape is what the live backend actually returns; the
+        # earlier flat-dict tests masked the flatten_status `gpu` omission that left the guard
+        # blind (it refused even when the reranker had loaded).
+        nested = {
+            "indexAvailable": True,
+            "worker": {"gpu": {
+                "rerankerModelPath": "/main/models/onnx/reranker",
+                "rerankerOrtCuda": {"available": False, "configured": True},
+            }},
+        }
+        v = assert_capabilities(nested, {"reranker"})
+        assert v["ok"] is True, v
+        assert v["realized"]["reranker"]["realized"] is True
+
+    def test_nested_absent_reranker_refuses(self):
+        nested = {"indexAvailable": True, "worker": {"gpu": {"rerankerModelPath": ""}}}
+        v = assert_capabilities(nested, {"reranker"})
+        assert v["ok"] is False
+        assert any("reranker_intended_but_absent" in r for r in v["refusals"])

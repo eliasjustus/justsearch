@@ -473,9 +473,13 @@ def flatten_status(data: dict) -> dict:
             data[k] = v
 
     # Flatten sub-records (core, enrichment, migration, etc.)
+    # `gpu` carries the per-encoder model-path + ORT-CUDA diagnostics
+    # (rerankerModelPath, spladeModelPath, embedBackend, *OrtCuda, …). Without it these
+    # surface as None at top level, so preflight's model_wiring/GPU section and the
+    # tempdoc-644 capability guard were blind to whether the reranker actually loaded.
     for sub_key in ("core", "enrichment", "failure", "migration",
                     "compatibility", "queueDb", "telemetry",
-                    "vectorFormat", "searchConfig"):
+                    "vectorFormat", "searchConfig", "gpu"):
         sub = worker.get(sub_key)
         if isinstance(sub, dict):
             for k, v in sub.items():
