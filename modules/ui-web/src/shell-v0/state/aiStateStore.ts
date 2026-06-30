@@ -450,21 +450,21 @@ function computeStatusTier(
 
 /**
  * Tempdoc 649 — the ONE tone for the status pill + liveness dot, the matched sibling of
- * `computeStatusLabel` (same branch order). Both the pill and the dot consume this single
- * verdict-derived tone, so `statusTier` is no longer a second tone authority: the calm "Catching up…"
- * (`transitioning`, severity `busy`) projects `verdictTone('busy')='info'` (calm tint) instead of the
- * old `statusTier='degraded'` amber. Real degradations stay `warning`/`error`; settled runtime modes
- * (the labels `computeStatusLabel` shows when settled) tone by the mode, since the verdict EXCLUDES AI.
+ * `computeStatusLabel`. Both the pill and the dot consume this single verdict-derived tone, so `statusTier`
+ * is no longer a second tone authority: the calm "Catching up…" (`transitioning`, severity `busy`) projects
+ * `verdictTone('busy')='info'` (calm tint) instead of the old `statusTier='degraded'` amber.
+ *
+ * Scope: this change is intentionally CONNECTION-ONLY. The verdict-driven kinds
+ * (`connecting`/`transitioning`/`unreachable`/`degraded`) take their tone from the one `verdictTone`; every
+ * NON-connection state keeps its PRE-649 tone:
+ *   - AI **activity** ("Thinking…") is NOT special-cased here — its tone falls through to the verdict/runtime
+ *     logic, so a "Thinking…" overlay still shows the UNDERLYING health (green healthy / amber degraded), as
+ *     before. The label is the only thing the activity overlays (`computeStatusLabel`), not the tone.
+ *   - settled `indexing`/`starting` keep their prior **amber** (`warning`) "in-flux" tone (595); only the
+ *     connection states were the 649 over-alarm. `online → success`, `offline`/unknown → `neutral`.
  */
-function computeStatusTone(
-  verdict: SystemHealthVerdict,
-  runtime: AiRuntime,
-  act: AiActivity,
-): NoticeTone {
-  if (act.state === 'thinking' || act.state === 'streaming' || act.state === 'extracting') {
-    return 'info';
-  }
-  // Verdict-driven labels (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
+function computeStatusTone(verdict: SystemHealthVerdict, runtime: AiRuntime): NoticeTone {
+  // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
   // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
   if (
     verdict.kind === 'connecting' ||
@@ -474,10 +474,10 @@ function computeStatusTone(
   ) {
     return verdictTone(verdict.severity);
   }
-  // Settled (operational / checking): the label is the runtime mode (AI is excluded from the verdict),
-  // so tone by the mode — online green, in-progress calm, offline/unknown neutral.
+  // Settled (operational / checking): the label is the runtime mode (AI is excluded from the verdict), so
+  // tone by the mode — online green, indexing/starting keep the prior amber "in-flux" tone, offline neutral.
   if (runtime.mode === 'online') return 'success';
-  if (runtime.mode === 'indexing' || runtime.mode === 'starting') return 'info';
+  if (runtime.mode === 'indexing' || runtime.mode === 'starting') return 'warning';
   return 'neutral';
 }
 
@@ -546,7 +546,7 @@ function buildSnapshot(): AiState {
   });
   const statusLabel = computeStatusLabel(verdict, runtime, activity);
   const statusTier = computeStatusTier(verdict, runtime);
-  const statusTone = computeStatusTone(verdict, runtime, activity);
+  const statusTone = computeStatusTone(verdict, runtime);
   return {
     phase,
     readiness,

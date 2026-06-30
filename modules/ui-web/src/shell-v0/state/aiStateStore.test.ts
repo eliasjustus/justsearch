@@ -313,6 +313,45 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.stability).toEqual({ kind: 'settled' });
   });
 
+  // 649 scope guard — the tone fix is CONNECTION-only; non-connection states keep their pre-649 tone.
+  it('649: AI activity does NOT flatten statusTone — it follows the underlying health', () => {
+    feed(statusWith('READY'));
+    __feedForTest({
+      inference: { mode: 'online', starting: false, available: true } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().statusTone).toBe('success');
+    setAiActivity({ state: 'thinking' });
+    expect(getAiState().statusLabel).toBe('Thinking…'); // activity overlays the LABEL…
+    expect(getAiState().statusTone).toBe('success'); // …but NOT the tone (was flattened to 'info' pre-fix)
+    // A real degradation must still show amber while thinking (tone follows underlying health).
+    feed(statusWith('DEGRADED', ['worker.health.embedding_not_ready']));
+    expect(getAiState().statusTone).toBe('warning');
+    setAiActivity({ state: 'idle' });
+  });
+
+  it('649: indexing/starting keep the prior amber "in-flux" tone (connection-only scope)', () => {
+    feed(statusWith('READY'));
+    __feedForTest({
+      inference: { mode: 'indexing', starting: false, available: true } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().runtime.mode).toBe('indexing');
+    expect(getAiState().statusTone).toBe('warning');
+    __feedForTest({
+      inference: { mode: 'transitioning', starting: true, available: false } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().runtime.mode).toBe('starting');
+    expect(getAiState().statusTone).toBe('warning');
+  });
+
+  it('649: a fresh never-connected store reads calm "Connecting…" (info), not a false alarm', () => {
+    __resetAiStateForTest();
+    // Startup grace: before the first poll lands, the verdict is the calm `connecting`, not a false
+    // "Backend disconnected" — and its tone is `info`, not red. (The hard `unreachable→error` mapping is
+    // covered by verdict.test's verdictTone + the uniform connection branch of computeStatusTone.)
+    expect(getAiState().verdict.kind).toBe('connecting');
+    expect(getAiState().statusTone).toBe('info');
+  });
+
   // 595 §15.3 (E2) — last-settled index retention across a provisional window.
   it('E2: lastSettledIndex is null before any settled poll', () => {
     expect(getAiState().lastSettledIndex).toBeNull();

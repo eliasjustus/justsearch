@@ -979,6 +979,10 @@ The primary tone-authority fix + the secondary two-timestamp legibility are **im
   `computeStatusLabel`; new `AiState.statusTone: NoticeTone`). `StatusDeck.inferencePillTone` and
   `LivenessReadout.toneFor` now read it (the latter gains `info`→`--accent-tint` and `error`→`--accent-danger`
   dot tones — both pre-existing tokens, no new colour). `statusTier` is retained but no longer drives tone.
+  **Scope is connection-only:** only the verdict-driven kinds (`connecting`/`transitioning`/`unreachable`/
+  `degraded`) change tone; non-connection states keep their pre-649 tone — AI **activity** ("Thinking…")
+  follows the underlying health (not flattened), and `indexing`/`starting` keep their prior amber "in-flux"
+  tone (the 595 choice is unchanged; only the connection over-alarm was the 649 target).
 - **The ramp made real:** `channel-stale` ("Reconnecting…") was elevated `busy`→`warn` in `computeVerdict`, so
   lost contact is **amber**, distinct from the calm **info/tint** `updating` ("Catching up…"); `unreachable`
   stays **error/red**. One calm→amber→red ramp on every surface.
