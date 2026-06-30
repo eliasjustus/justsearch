@@ -5,12 +5,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eliasjustus/JustSearch.git",
+    "url": "git+https://github.com/eliasjustus/justsearch.git",
     "directory": "packages/plugin-api-ts"
   },
-  "homepage": "https://github.com/eliasjustus/JustSearch/blob/main/docs/how-to/write-a-plugin.md",
+  "homepage": "https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/write-a-plugin.md",
   "bugs": {
-    "url": "https://github.com/eliasjustus/JustSearch/issues"
+    "url": "https://github.com/eliasjustus/justsearch/issues"
   },
   "keywords": [
     "justsearch",
