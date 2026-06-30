@@ -902,3 +902,70 @@ So the eventual resource fix is **consolidation, not HTTP/2** — an evidence-ba
   useful half of phi-accrual, minus the CDF math). 649 is a concrete, citeable instance — not invented here.
 - **Calm Technology as an app-wide rubric.** The alarm budget could govern *every* status/alarm surface, not
   just connection (candidate audit: proportionate tone everywhere; aligns with the 562 alarm-budget thesis).
+
+## Frontend / user-facing design (live-grounded, 2026-06-30)
+
+A live inspection pass (started the dev stack, opened the real UI in a browser) — *not* judged from the
+tempdoc. The System Health surface happened to be **organically in the 649 "Catching up…" state** (the polls
+starved behind the 5 always-on streams — the exact 649 condition), so all three connection-status surfaces
+were observable at once.
+
+### The user-facing consequence the live UI revealed (the headline)
+
+**649 made the connection *words* honest, but the calm state still renders with a WARNING colour on the two
+most-glanceable surfaces.** Confirmed at the data level for the live "Catching up…" state: `verdict.severity =
+'busy'` → `verdictTone = 'info'` (**calm**), yet `statusTier = 'degraded'`. The result on screen:
+
+| Surface | Tone source | Rendered tone for "Catching up…" |
+|---|---|---|
+| System Health **header badge** | `verdictTone(severity)` → `info` | **calm** green/teal ✓ |
+| Bottom **status-bar pill** (`StatusDeck`) | `inferencePillTone(statusTier='degraded')` → `warning` | **amber/orange** ✗ |
+| **CONNECTION → Retrieval** dot (`LivenessReadout`) | `statusTier='degraded'` → `--accent-warning` | **amber/orange** ✗ |
+
+So the *same* calm state is calm in one place and an alarm-colour in two — and the two amber ones (the persistent
+bottom-bar pill + the connection dot) are exactly the indicators a user glances at. The 649 core fixed the
+sentence ("Catching up…") but left the **colour** alarming, which **undercuts the 649/562 "alarm budget" at the
+pixel level** — the user is *told* calm and *shown* alarm.
+
+### The correct frontend design — conform to the ONE tone authority (fix a fork)
+
+This is a single-authority correction, exactly the 595 kernel: **every connection-status surface must project
+its tone from the ONE verdict-tone authority (`verdictTone` / `severity`), not from a parallel `statusTier` →
+tone mapping.** Today `computeStatusTier` collapses *every* `transitioning` verdict to `degraded`, so the
+calm-busy transition (`updating` / `catching-up`) and an impairing degradation get the same amber. The design:
+
+- **The calm transitioning state must map to a calm tier/tone** (info), distinct from an impairing
+  `degraded`. Whether realized by `computeStatusTier` distinguishing severity `busy` (calm) from `warn`/`error`
+  (amber), or by the consumers (`StatusDeck.inferencePillTone`, `LivenessReadout.toneFor`) reading
+  `verdictTone(severity)` instead of `statusTier` — the invariant is the same: **`statusTier` must stop being a
+  second tone authority that forks from `verdictTone`.** Then "Catching up…" looks calm everywhere.
+- This is fixing a *fork*, not adding structure — it conforms to 595's "one verdict, one tone, every surface
+  consumes it." It is the **primary** user-facing design for this tempdoc: the genuine consequence of the
+  649 calm-state design that only the live UI exposed.
+
+### Secondary (live-grounded placement of the deferred UX)
+
+- The **CONNECTION panel** already has a structured rows layout (Retrieval · API endpoint · Index state ·
+  Uptime) and the index cards already render a **"Last known"** freshness label — an existing honesty pattern.
+  That panel is the natural home for cluster-B's **two timestamps** ("backend last reachable Ns ago" / "data
+  last updated Ns ago") — *extend the existing rows*, don't invent a surface. Most of cluster-B's value,
+  though, is just the tone fix above.
+- The graded-calm colour ramp (cluster B) largely reduces to the tone-authority fix: give the reachable-but-stale
+  state a calm tone in the one mapping.
+
+### Indirect (the settled consolidation design)
+
+Purely changes *how often* the surface sits in "Catching up…" under load (consolidation makes it rarer); **no
+new UI element**. It does not change any of the above.
+
+### Scope & reach
+
+- **Scope:** the primary frontend design is the **tone-authority correction** (the calm state must *look*
+  calm) — small, presentation-layer, conforming to 595; it needs neither the consolidation (separate resource
+  tempdoc) nor the two-timestamp enhancement to ship. The two-timestamp legibility is a secondary enhancement
+  now correctly *placed* (the existing CONNECTION panel) rather than dismissed.
+- **Reach:** this is the **same "one axis was two / single authority" shape** the rest of 649 keeps surfacing —
+  `statusTier` is a *second tone authority* forking from `verdictTone`, and the new calm state is what exposed
+  the fork (older states happened to agree). Candidate scope: every site where `statusTier` drives tone/colour
+  independently of `verdictTone` (`StatusDeck`, `LivenessReadout`, any status dot). Recorded; the in-scope fix
+  is to re-seat those on `verdictTone`, not to build new structure.
