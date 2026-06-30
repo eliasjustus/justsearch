@@ -161,6 +161,25 @@ backend work.
    This teardown also records the `session_id → merge_commit` link; backfill
    with `node scripts/agent-analytics/record-merge.mjs` if needed.
 
+### Publishing docs-only changes (history granularity) <!-- rule:docs-ride-along -->
+
+Public `main` is a curated narrative, not a working log. ADR-0045 already makes
+the merge *squash* a branch into one commit; this rule governs the complementary
+question of whether a change should be its **own** public PR at all (tempdoc 653
+"axis 2").
+
+- A **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) is
+  dated working history. Do not open a standalone PR for a tempdoc-only change.
+  Ride it along in the same PR as the code it documents, or batch several tempdoc
+  edits into one periodic `docs(tempdocs): …` PR.
+- A **canonical-doc** update (`docs/{explanation,reference,how-to,decisions}`) is
+  durable current truth and may stand alone as its own PR/commit.
+- A branch mixing docs with code is already a ride-along — publish it normally.
+
+The `docs-granularity-hint` hook surfaces this at `git push` when a branch
+changes only working history; it never blocks. Rationale and the worked example
+live in `docs/reference/contributing/agent-guide.md` (History publication).
+
 ### Working on shared `main` safely (multi-agent)
 
 The main checkout routinely holds other agents' uncommitted WIP. Keep PR

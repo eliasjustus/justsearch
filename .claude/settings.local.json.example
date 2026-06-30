@@ -141,6 +141,14 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/governance-precommit-hint.mjs"
             ],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/docs-granularity-hint.mjs"
+            ],
+            "timeout": 5
           }
         ]
       },
