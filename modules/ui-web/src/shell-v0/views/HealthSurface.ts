@@ -49,6 +49,7 @@ import {
   type EngineRealized,
 } from '../state/aiStateStore.js';
 import { presentVerdict, type SystemHealthVerdict } from '../state/verdict.js';
+import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
 import { unavailableBecause } from '../state/availability.js';
 import { present } from '../display/present.js';
@@ -1004,6 +1005,14 @@ export class HealthSurface extends JfElement {
       <div class="data-row">
         <span class="key">Uptime</span>
         <span class="val">${formatUptime(this.status?.uptimeMs)}</span>
+      </div>
+      <div class="data-row">
+        <span class="key">Backend reachable</span>
+        <span class="val">${formatRelativeMs(this.aiState?.connection.lastContactMs ?? null)}</span>
+      </div>
+      <div class="data-row">
+        <span class="key">Data updated</span>
+        <span class="val">${formatRelativeMs(this.aiState?.connection.lastSuccessMs ?? null)}</span>
       </div>
     `;
     // 569 §15 — when CORE_DECLARED declares the connection status region, the live STATUS line is

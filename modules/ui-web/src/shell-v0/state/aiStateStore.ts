@@ -41,13 +41,23 @@ import {
 } from '../utils/statusPoll.js';
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
+// Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
+// the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
+import {
+  getLastOriginContactMs,
+  isOriginReachable,
+  bumpOriginContact,
+  __resetOriginContactForTest,
+} from './originContact.js';
 import {
   computeStability,
   computeVerdict,
   verdictHeadline,
+  verdictTone,
   type Stability,
   type SystemHealthVerdict,
 } from './verdict.js';
+import type { NoticeTone } from '../utils/statusTone.js';
 
 // Re-export the raw snapshot types — the store is the single observed-state
 // authority, so consumers type `aiState.status` / `aiState.inference` from here.
@@ -64,7 +74,14 @@ export interface AiCapabilities {
 
 export interface AiConnection {
   reachable: boolean;
+  /** Last *poll* success (the data-freshness stamp). */
   lastSuccessMs: number | null;
+  /**
+   * Tempdoc 649 — last POSITIVE CONTACT of any channel (poll success OR an SSE frame/heartbeat), the
+   * reachability stamp. Distinct from `lastSuccessMs` (poll freshness): under load the poll can lag while
+   * a stream keeps contact fresh. Surfaced so the CONNECTION panel can show both timestamps honestly.
+   */
+  lastContactMs: number | null;
   consecutiveFailures: number;
 }
 
@@ -161,6 +178,14 @@ export interface AiState {
   realized: AiRealized;
   statusLabel: string;
   statusTier: StatusTier;
+  /**
+   * Tempdoc 649 — the ONE tone for the status-bar pill + liveness dot, the matched sibling of
+   * `statusLabel`: both project from the one verdict (`verdictTone`). Replaces the `statusTier`→tone
+   * fork that rendered the calm "Catching up…" (`busy`) state as amber `degraded`. Calm in-flux → `info`,
+   * real degradation → `warning`/`error`, settled-online → `success`. (`statusTier` stays for any coarse
+   * non-tone use; it no longer drives connection-status colour.)
+   */
+  statusTone: NoticeTone;
   /**
    * 595 §4.1 — the ONE "is what we're showing settled, or in flux?" axis. Every
    * transition-/freshness-sensitive renderer consults this instead of treating a
@@ -288,12 +313,42 @@ function computeStaleness(): Staleness {
   };
 }
 
+/**
+ * Tempdoc 649 — REACHABILITY (is the backend alive at all?), derived from the most recent POSITIVE
+ * CONTACT of ANY channel: a poll success (`lastInference/StatusSuccessSig`) OR any SSE frame/heartbeat
+ * (`getLastOriginContactMs`). This is DELIBERATELY SEPARATE from poll-freshness (`computeStaleness`):
+ * under load the cheap polls get starved behind the browser's 6-per-host connection limit, but the
+ * always-on SSE streams keep heartbeating (15s) — so a poll-only signal wrongly reads "disconnected"
+ * while the backend is provably alive. Reachability via the ONE `isOriginReachable` authority fixes
+ * that. Before the first contact, the start-up grace window must elapse before we are willing to call
+ * the origin unreachable (mirrors `neverConnected`), so startup shows "Connecting…", not a false alarm.
+ */
+function computeReachability(): { reachable: boolean; lastContactMs: number | null } {
+  // Depend on the clock tick so reachability flips re-evaluate (the stream stamp is a plain global; the
+  // 5s `checkStaleness` tick bumps `clockTickSig` when the value would change — see checkStaleness).
+  void clockTickSig.get();
+  const lastInf = lastInferenceSuccessSig.get();
+  const lastStatus = lastStatusSuccessSig.get();
+  const lastStream = getLastOriginContactMs();
+  const lastContactMs = Math.max(lastInf ?? 0, lastStatus ?? 0, lastStream ?? 0) || null;
+  const now = Date.now();
+  if (lastContactMs === null) {
+    // No contact of any kind yet: not reachable, but not "disconnected" until the grace window elapses.
+    return { reachable: started && now - _startedAtMs <= STALE_THRESHOLD_MS, lastContactMs: null };
+  }
+  return { reachable: isOriginReachable(lastContactMs, now), lastContactMs };
+}
+
 function computeConnection(): AiConnection {
-  const { lastSuccessMs, neverConnected, stale } = computeStaleness();
+  // `lastSuccessMs` stays the last POLL success (the data-freshness stamp consumers read); `reachable`
+  // is the contact-based truth (tempdoc 649). They are different facts and must not be conflated.
+  const { lastSuccessMs } = computeStaleness();
+  const { reachable, lastContactMs } = computeReachability();
   return {
-    reachable: !neverConnected && !stale,
+    reachable,
     lastSuccessMs,
-    consecutiveFailures: stale || neverConnected ? 1 : 0,
+    lastContactMs,
+    consecutiveFailures: reachable ? 0 : 1,
   };
 }
 
@@ -449,6 +504,39 @@ function computeStatusTier(
   }
 }
 
+/**
+ * Tempdoc 649 — the ONE tone for the status pill + liveness dot, the matched sibling of
+ * `computeStatusLabel`. Both the pill and the dot consume this single verdict-derived tone, so `statusTier`
+ * is no longer a second tone authority: the calm "Catching up…" (`transitioning`, severity `busy`) projects
+ * `verdictTone('busy')='info'` (calm tint) instead of the old `statusTier='degraded'` amber.
+ *
+ * Scope: this change is intentionally CONNECTION-ONLY. The verdict-driven kinds
+ * (`connecting`/`transitioning`/`unreachable`/`degraded`) take their tone from the one `verdictTone`; every
+ * NON-connection state keeps its PRE-649 tone:
+ *   - AI **activity** ("Thinking…") is NOT special-cased here — its tone falls through to the verdict/runtime
+ *     logic, so a "Thinking…" overlay still shows the UNDERLYING health (green healthy / amber degraded), as
+ *     before. The label is the only thing the activity overlays (`computeStatusLabel`), not the tone.
+ *   - settled `indexing`/`starting` keep their prior **amber** (`warning`) "in-flux" tone (595); only the
+ *     connection states were the 649 over-alarm. `online → success`, `offline`/unknown → `neutral`.
+ */
+function computeStatusTone(verdict: SystemHealthVerdict, runtime: AiRuntime): NoticeTone {
+  // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
+  // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
+  if (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  ) {
+    return verdictTone(verdict.severity);
+  }
+  // Settled (operational / checking): the label is the runtime mode (AI is excluded from the verdict), so
+  // tone by the mode — online green, indexing/starting keep the prior amber "in-flux" tone, offline neutral.
+  if (runtime.mode === 'online') return 'success';
+  if (runtime.mode === 'indexing' || runtime.mode === 'starting') return 'warning';
+  return 'neutral';
+}
+
 function computePhase(): ConnectionPhase {
   const { lastSuccessMs, neverConnected, stale } = computeStaleness();
   if (lastSuccessMs === null) return neverConnected ? 'disconnected' : 'connecting';
@@ -498,11 +586,15 @@ function buildSnapshot(): AiState {
     servingSearchGenerationId: migration?.servingSearchGenerationId,
     servingIngestGenerationId: migration?.servingIngestGenerationId,
     catchingUp: status?.catchingUp,
+    // Tempdoc 649 — poll-stale BUT reachable via another channel ⟹ calm "Catching up…", not "Reconnecting…".
+    reachableViaContact: connection.reachable,
   });
   const verdict = computeVerdict({
     phase,
     stability,
     readiness,
+    // Tempdoc 649 — distinguishes "no poll yet but origin alive" (Connecting…) from a true unreachable.
+    reachableViaContact: connection.reachable,
     // 595 §15.2 (E4) — project the backend's own stuck-rebuild signals so a wedged
     // generation cutover escalates from calm "Rebuilding…" to a warning.
     migrationPaused: migration?.migrationPaused,
@@ -511,6 +603,7 @@ function buildSnapshot(): AiState {
   });
   const statusLabel = computeStatusLabel(verdict, runtime, activity);
   const statusTier = computeStatusTier(verdict, runtime);
+  const statusTone = computeStatusTone(verdict, runtime);
   return {
     phase,
     readiness,
@@ -522,6 +615,7 @@ function buildSnapshot(): AiState {
     realized,
     statusLabel,
     statusTier,
+    statusTone,
     stability,
     verdict,
     status,
@@ -643,15 +737,15 @@ function stampSettledIndex(snap: StatusSnapshot): void {
 }
 
 function checkStaleness(): void {
-  const now = Date.now();
-  const lastSuccess = Math.max(
-    lastInferenceSuccessSig.get() ?? 0,
-    lastStatusSuccessSig.get() ?? 0,
-  );
-  const wasReachable = aiState.get().connection.reachable;
-  const isStale = lastSuccess > 0 && now - lastSuccess > STALE_THRESHOLD_MS;
-  const neverConnected = lastSuccess === 0 && now - _startedAtMs > STALE_THRESHOLD_MS;
-  if ((isStale || neverConnected) !== !wasReachable) {
+  // Tempdoc 649 — two time-derived axes can change between input-signal updates: the poll-freshness
+  // PHASE (data current vs aged out) and contact-based REACHABILITY (the stream stamp is a plain
+  // global). Bump the clock tick when EITHER would flip vs the currently-displayed snapshot, so the
+  // memoized `computed` re-evaluates — covering both the calm "Catching up…" transition (poll goes
+  // stale while still reachable) and the unreachable transition (all contact ages out).
+  const current = aiState.get();
+  const phaseNow = computePhase();
+  const { reachable: reachableNow } = computeReachability();
+  if (phaseNow !== current.phase || reachableNow !== current.connection.reachable) {
     clockTickSig.set(clockTickSig.get() + 1);
   }
 }
@@ -726,6 +820,16 @@ export function __feedForTest(opts: {
   }
 }
 
+/**
+ * Test-only (tempdoc 649): record positive origin contact at `ms` (default now), mirroring an SSE
+ * frame/heartbeat, so tests can exercise reachable-but-poll-stale without a live stream. Bump the clock
+ * tick so the reachability derivation re-evaluates (the stream stamp is a plain global).
+ */
+export function __feedContactForTest(ms: number = Date.now()): void {
+  bumpOriginContact(ms);
+  clockTickSig.set(clockTickSig.get() + 1);
+}
+
 /** Test-only: force the staleness derivation to re-evaluate (mirrors the interval). */
 export function __tickClockForTest(): void {
   clockTickSig.set(clockTickSig.get() + 1);
@@ -743,5 +847,6 @@ export function __resetAiStateForTest(): void {
   lastSettledIndexSig.set(null);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
+  __resetOriginContactForTest();
   _startedAtMs = 0;
 }
