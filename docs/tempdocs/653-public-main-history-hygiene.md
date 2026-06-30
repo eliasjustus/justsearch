@@ -1,9 +1,9 @@
 ---
 title: "Public main as projected history surface and merge policy"
 type: tempdoc
-status: "implemented - public history policy and squash-message preview"
+status: "axis-1 implemented (squash policy + preview); axis-2 (PR/commit granularity) reopened for design"
 created: 2026-06-28
-updated: 2026-06-29
+updated: 2026-06-30
 related:
   - 634-go-public-cutover-transition
   - 651-public-ci-feedback-loop-efficiency
@@ -1494,3 +1494,149 @@ verification.
 Second, Markdown output now chooses an outer body-preview fence longer than any
 backtick run in the previewed PR body. This keeps `--md` readable even when the
 PR body preview contains its own fenced code block.
+
+## Axis-2 internet research: PR/commit granularity - 2026-06-30
+
+This pass reopens 653 against a problem the implemented slice does **not**
+cover. The shipped policy (ADR-0045 + repo settings + verifier + squash preview)
+solves what can be called **axis 1**: collapsing a noisy branch transcript into
+one curated `main` commit at merge. It is silent on **axis 2**: whether a
+trivial or docs-only change should become its own standalone PR / public `main`
+commit *at all*. Everything above assumes "one PR = one durable change" and even
+worries about PRs being *too broad* (see "Risks and hidden assumptions", second
+assumption); nothing here addresses the opposite — a PR that is *too small to be
+a public-history unit*.
+
+### Triggering instance
+
+The most recent `origin/main` commit at the time of this pass is
+`7d020cd docs(644): catalogue post-implementation future directions (#16)`:
+a single-file, docs-only, +240-line append to a tempdoc, self-described in its
+own PR body as "all options, nothing prioritised, no code changed". It merged
+cleanly as one squash commit — axis 1 worked perfectly — yet it is exactly the
+shape the *Boundary* section of this tempdoc warned against: "preserving every
+intermediate tempdoc edit … as a **separate public `main` commit**." Squash
+tidied *how* it landed; it did nothing about *whether it should have been its
+own public unit*. That gap is what this pass researches.
+
+### Research scope and method
+
+Web research over established commit/PR-granularity guidance, docs-vs-code PR
+convention, working-notes/RFC placement, and the 2025-2026 AI-agent commit-noise
+literature. The question: has the industry already designed a solution for
+"trivial / docs-only change becomes a standalone mainline commit", or is 653's
+axis-2 problem novel? Findings below; each external claim is cited.
+
+### Findings
+
+**There is no turnkey, named solution — there is a convergent convention
+cluster.** Every mature project answers axis 2 with conventions, not a tool. The
+cluster:
+
+1. **The PR (not the commit) is the public-history unit, and a PR should have
+   exactly one reason to change.** Microsoft's engineering playbook states it
+   directly: "the PR should have only one reason to change the project." This is
+   ADR-0045's own framing, independently standard — so axis 1 is consensus, and
+   axis 2 is simply the same principle applied to *under*-sized changes.
+   ([Microsoft code-with-engineering-playbook — Pull Requests](https://microsoft.github.io/code-with-engineering-playbook/code-reviews/pull-requests/))
+
+2. **Working history ≠ published history is an explicit, named practice.**
+   Fixup/checkpoint commits during review; rewrite/squash before merge. This is
+   653's "branches are workspaces, `main` is the narrative" projection, arrived
+   at independently elsewhere. ([epage — Curating Commit History](https://epage.github.io/dev/commits/);
+   [Mainmatter — keeping a clean git history](https://mainmatter.com/blog/2021/05/26/keeping-a-clean-git-history/))
+
+3. **Docs ride along with the code they document — don't open a separate
+   docs-only PR.** The mainstream answer to "should this doc change be its own
+   PR/commit" is *no — fold it into the code PR*. Microsoft: "update the
+   documentation to match the changes as part of [creating the PR]"; monorepo
+   guidance favors one atomic PR carrying related code + docs together. This is
+   the **ride-along** rule, and it is the established convention rather than a
+   653 invention.
+   ([Microsoft playbook](https://microsoft.github.io/code-with-engineering-playbook/code-reviews/pull-requests/);
+   [monorepo.tools](https://monorepo.tools/))
+
+4. **Batch trivial changes; a PR-per-one-liner is recognized waste.**
+   Kubernetes' contributor guide and broader consensus: separate PRs for tiny
+   fixes are "significant overhead … avoidable"; "batch your changes together."
+   By this standard `7d020cd` (a standalone PR for a docs-only tempdoc append) is
+   precisely the overhead these conventions exist to remove.
+   ([Kubernetes — Pull Request Process](https://www.kubernetes.dev/docs/guide/pull-requests/);
+   [HN discussion](https://news.ycombinator.com/item?id=11407485))
+
+5. **Working-design notes frequently do not live on the code mainline at all.**
+   The direct analog to tempdocs. The industry split: **ADRs / decision records**
+   (current truth) live in-repo; **RFCs / design docs / working notes** are often
+   kept in a *separate* knowledge base (Confluence, Notion, Google Docs, separate
+   repo) *specifically so design churn never pollutes code history*. Uber and
+   others are cited doing exactly this. Mapped onto JustSearch this is the
+   canonical-docs (in-repo, durable) vs. tempdocs (archaeology) boundary — and it
+   raises a genuine road-not-taken: tempdoc churn arguably should not be mainline
+   *code-history* commits in the first place.
+   ([Pragmatic Engineer — RFCs and Design Docs](https://blog.pragmaticengineer.com/rfcs-and-design-docs/);
+   [Scheufler — Documenting design decisions with RFCs and ADRs](https://brunoscheufler.com/blog/2020-07-04-documenting-design-decisions-using-rfcs-and-adrs))
+
+6. **Agent-era guidance (2025-2026) confirms the problem and the fix shape: build
+   constraints into the workflow, do not expect agent self-regulation.** "git
+   hygiene around AI-generated code is a disaster — agents don't think about
+   branch strategy, commit granularity, or review ergonomics unless you build
+   those constraints into the workflow"; remedies are per-agent feature branches,
+   never committing to a shared branch, and squash on merge. DORA's 2025 data
+   quantifies the pressure: a 90% rise in AI adoption correlated with ~+154% PR
+   size and ~+91% review time. The agent variant does not change the answer; it
+   raises the stakes for *having* the convention.
+   ([buildmvpfast — Git workflow for AI-assisted development 2026](https://www.buildmvpfast.com/blog/git-workflow-ai-assisted-development-agent-commits-2026);
+   [Developers Digest — what HN gets right about AI coding agents 2026](https://www.developersdigest.tech/blog/what-hacker-news-gets-right-about-ai-coding-agents-2026))
+
+### What this means for 653
+
+- **Nothing needs inventing.** Axis-2 mitigations are conventions the industry
+  already settled; 653 can cite Microsoft/Kubernetes rather than argue from first
+  principles. This matches the doc's standing posture — smallest native
+  mechanism, no bespoke framework.
+- **The gap is the convention half, not a missing tool.** The shipped settings
+  enforce *how* a PR lands; they cannot judge *whether a change deserves a public
+  unit*. That judgment is what conventions 3 + 4 supply.
+- **Distinguish the two doc classes precisely**, or the convention over-blocks:
+  canonical docs (`docs/{explanation,reference,how-to,decisions}`) are durable
+  current truth and a standalone update **is** a legitimate public unit; tempdocs
+  + observations (`docs/tempdocs/**`, `docs/observations*`) are dated archaeology
+  and should **ride-along or batch**, not stand alone on `main`.
+- **No CI gate.** Consistent with the existing "what not to design" guidance and
+  every external source: granularity is judgment; a gate cannot tell "worth a
+  public commit" from "not", and would false-positive on real ADR/decision
+  commits. Salience-at-commit-time (a non-blocking hook-hint) is the right tier.
+- **Road-not-taken, recorded not recommended (finding 5):** mature orgs keep
+  working-design notes off the code mainline entirely. That conflicts with 653's
+  explicit *Boundary* ("do not make tempdocs the problem") and the existing
+  in-repo tempdoc tooling (tempdoc-numbers gate, `tempdoc-age-hint`), so full
+  separation is out of scope here. The 653-compatible reduction of the same idea
+  is just: tempdoc edits ride-along/batch rather than each becoming a standalone
+  public commit.
+
+### Proposed axis-2 slice (design only)
+
+The smallest forward-only addition, mirroring axis 1's "settings + small native
+mechanism + docs" shape — but here the enforceable surface is a hook-hint, not a
+GitHub setting:
+
+1. **Convention text** (maintainer/agent-facing): in `MAINTAINING.md` and the
+   `branch-safety.md` merge workflow — *docs-only/tempdoc edits ride along with
+   the code PR they document, or batch into one periodic `docs(tempdocs): …` PR;
+   do not open a standalone PR for a single tempdoc append. Canonical-doc updates
+   may stand alone.* Keep `CONTRIBUTING.md` contributor-light (it must not grow
+   an agent-history burden).
+2. **Salience** (the enforcement tier): a non-blocking commit/PR-time hook-hint
+   that fires when a change's diff is *only* under `docs/tempdocs/**` /
+   `docs/observations*` (excluding canonical-doc dirs), pointing at the
+   ride-along/batch convention. ~85% delivery, never blocks, cannot misjudge
+   intent.
+3. **Governance bookkeeping:** if the convention is written as an anchored
+   `must`/`never` rule, it needs a `tier-register.md` row (tier `hook-hint`,
+   resolving to the new hook) plus a `new-rule-registered` changeset citing 653.
+   The lighter alternative — rationale in MAINTAINING/agent-guide with the
+   hook-hint as the registered enforcement — avoids minting a new always-loaded
+   must-rule and is preferred unless a hard rule is wanted.
+
+This pass is research + design only: no convention text, hook, or settings
+change is implemented here.

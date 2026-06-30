@@ -80,6 +80,10 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 **Behavior:** Before a `git commit` that touches discipline-gate baselines, this hook detects available rebalances (pinned values that could shrink) and emits a hint. Does NOT auto-write the baseline — the rebalance is explicit.
 **Action:** If the hint reports a rebalance available, run `node scripts/governance/run.mjs --gate <id> --rebalance` to update the baseline, then re-stage and commit.
 
+## docs-granularity-hint (PreToolUse → Bash, `git push`)
+**Behavior:** Before a `git push`, if the branch's whole diff vs `origin/main` is dated working history only (`docs/tempdocs/**` or `docs/observations*`), this hook emits a non-blocking reminder that a tempdoc-only change should ride along with its code PR or batch, not become its own standalone public commit (ADR-0045 axis-2 / tempdoc 653; rule `docs-ride-along`). Canonical-doc-only and docs+code branches intentionally do **not** trigger. Fail-open; honors `JUSTSEARCH_DISABLE_HOOKS=1`; never blocks.
+**Action:** If pushing a tempdoc-only branch, prefer to fold the edit into the code PR it documents, or batch tempdoc edits into one `docs(tempdocs): …` PR. Rationale: `docs/reference/contributing/agent-guide.md` §3.7.
+
 ## seam-hint (PostToolUse → Write)
 **Behavior:** When you `Write` a NEW production Java class in a module that hosts registered logic seams (`governance/logic-seams.v1.json`) and the class is branch/arithmetic-dense AND IO-free, this hook asks whether it is a law-bearing seam to declare (tempdoc 555 §5, the authoring-time oracle). It self-filters: only seam-bearing modules, only unregistered classes, never `Edit`s / IO-heavy / DTO files.
 **Action:** If the new class is pure logic whose failure mode is a silent wrong value (scoring, precedence, offsets, budgets, state guards), add it to `governance/logic-seams.v1.json` with its law + a guard test so the `test-efficacy` gate measures whether its tests bite. Otherwise ignore — it stays out of the register by design.

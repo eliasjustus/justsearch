@@ -475,3 +475,42 @@ Rule of thumb:
 - Changed a **leaf module** (ui, indexer-worker, app-launcher): use `:modules:X:build` — nothing depends on these.
 - Changed a **core module** (core, configuration, infra-core): use `:modules:X:buildDependents` — many modules depend on these.
 - **Unsure?** Run `node scripts/architecture/module-deps.mjs --include-staleness` to see the dependency graph.
+
+### 3.7. History publication (PR/commit granularity)
+
+Public `main` is a curated narrative, not a working log. The policy has two
+independent halves, and getting either wrong reintroduces the agent-transcript
+history shape this repo deliberately avoids (tempdoc 653; the old private repo
+reached 6,563 commits, 3,331 of them touching `docs/tempdocs`).
+
+**Axis 1 — how a branch lands (mechanized, you don't manage it).** ADR-0045 set
+the repo to squash-only: every PR collapses to one `main` commit whose title and
+body come from the *PR* title/body, not the branch commit list. So your branch
+commits can be as noisy as you like — checkpoint, retry, "wip" — they never reach
+`main`. The only thing that matters is a good PR title/body, because that *is* the
+public commit. Preview it before merge with
+`node scripts/ci/preview-squash-message.mjs --pr <N>`.
+
+**Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
+fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR
+per edit still produces one standalone public commit each. The convention (rule
+`docs-ride-along` in `branch-safety.md`; industry-standard — Microsoft's
+engineering playbook puts docs in the code PR, Kubernetes' guide says batch tiny
+fixes rather than open a PR each):
+
+| Change | How it should reach `main` |
+|---|---|
+| **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) — dated working history | Ride along in the same PR as the code it documents, **or** batch several into one `docs(tempdocs): …` PR. Do not open a standalone PR per tempdoc append. |
+| **canonical doc** (`docs/{explanation,reference,how-to,decisions}`) — durable current truth | May stand alone as its own PR/commit. |
+| **docs + code together** | Already a ride-along — publish normally. |
+
+Worked example: a post-merge research pass that only appends a "future
+directions" section to a tempdoc is working history, not a project-history unit.
+Landing it as its own PR (`docs(644): … (#16)`) is exactly the axis-2 miss —
+tidy under axis 1, but a standalone public commit for archaeology. It should have
+ridden along with the next substantive PR or batched.
+
+The `docs-granularity-hint` hook reminds you of this at `git push` if a branch's
+whole diff is working-history-only; it never blocks (granularity is judgment, not
+something a gate can adjudicate). Canonical-doc-only and docs+code branches don't
+trigger it.
