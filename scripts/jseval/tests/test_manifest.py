@@ -197,6 +197,16 @@ class TestComputeManifest:
             **self._baseline(dataset_name="nfcorpus"))
         assert baseline["manifest_hash"] != changed_dataset["manifest_hash"]
 
+    def test_realized_engine_set_is_cohort_identity(self):
+        # tempdoc 644: the realized engine SET is part of model_fingerprints, which is hashed into
+        # manifest_hash — so a CE-on run and a CE-off (cross-encoder silently absent) run form
+        # distinct cohorts and cannot be silently averaged.
+        ce_on = compute_manifest(
+            **self._baseline(models_snapshot={"realized_engines": ["dense", "reranker", "splade"]}))
+        ce_off = compute_manifest(
+            **self._baseline(models_snapshot={"realized_engines": ["dense", "splade"]}))
+        assert ce_on["manifest_hash"] != ce_off["manifest_hash"]
+
     def test_cohort_hash_invariant_to_env_fingerprint(self):
         # Phase 2.0: env_fingerprint is documented as non-stable by design
         # (top-N processes, captured_at timestamp). It must not enter the

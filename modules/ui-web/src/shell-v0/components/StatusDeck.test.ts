@@ -19,6 +19,11 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
     index: { documentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+    realized: {
+      reranker: { loaded: false, accelerator: null, failureReason: null },
+      embed: { loaded: false, accelerator: null, failureReason: null },
+      splade: { loaded: false, accelerator: null, failureReason: null },
+    },
     statusLabel: 'offline',
     statusTier: 'offline',
     statusTone: 'neutral',

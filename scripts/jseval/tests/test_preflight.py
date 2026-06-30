@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 from jseval.preflight import (
     assert_capabilities,
     derive_intended_engines,
+    project_realized_capability,
+    realized_engine_set,
     execute_preflight,
     format_console,
 )
@@ -180,6 +182,53 @@ class TestAssertCapabilities:
         )
         assert v["ok"] is True
         assert any("reranker_cpu_only" in w for w in v["warnings"])
+
+
+class TestProjectRealizedCapability:
+    """tempdoc 644: the one realized-capability projector the guard + cohort both read."""
+
+    def _status(self, **over):
+        base = {
+            "rerankerModelPath": "/models/onnx/reranker",
+            "embedBackend": "onnx",
+            "spladeModelPath": "/models/splade",
+            "rerankerOrtCuda": {"available": True},
+            "embedOrtCuda": {"available": False},
+            "spladeOrtCuda": {"available": None, "failureReason": ""},
+        }
+        base.update(over)
+        return base
+
+    def test_present_and_device_facets(self):
+        proj = project_realized_capability(self._status())
+        assert proj["reranker"]["present"] is True
+        assert proj["reranker"]["device"] == "gpu"           # available True
+        assert proj["dense"]["present"] is True
+        assert proj["dense"]["device"] == "cpu"              # available False
+        assert proj["splade"]["present"] is True
+        assert proj["splade"]["device"] is None              # available None (lazy/unprobed)
+
+    def test_absent_engine_present_false_device_none(self):
+        proj = project_realized_capability(self._status(rerankerModelPath=""))
+        assert proj["reranker"]["present"] is False
+        assert proj["reranker"]["device"] is None
+
+    def test_failure_reason_in_detail(self):
+        proj = project_realized_capability(
+            self._status(rerankerOrtCuda={"available": False,
+                                          "failureReason": "missing cuDNN dll"})
+        )
+        assert proj["reranker"]["detail"]["failure_reason"] == "missing cuDNN dll"
+
+    def test_realized_engine_set_is_sorted_present_engines(self):
+        assert realized_engine_set(self._status()) == ["dense", "reranker", "splade"]
+        # CE silently off (the worktree trap) → distinct engine set.
+        assert realized_engine_set(self._status(rerankerModelPath="")) == ["dense", "splade"]
+
+    def test_none_status_is_all_absent(self):
+        proj = project_realized_capability(None)
+        assert all(not proj[e]["present"] for e in ("reranker", "dense", "splade"))
+        assert realized_engine_set(None) == []
 
     def test_splade_intended_but_absent_refuses(self):
         v = assert_capabilities(self._status(spladeModelPath=""), {"splade"})

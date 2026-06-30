@@ -118,6 +118,27 @@ export interface AiIndex {
   vduQueueSize: Maybe<number>;
 }
 
+/**
+ * tempdoc 644 — realized retrieval-engine state, one entry per engine, projected by
+ * `computeRealized` from `status.worker.gpu`. The single FE authority for "which engine actually
+ * loaded, and on which device" (the `accelerator`), so a surface (HealthSurface) reads
+ * `aiState.realized.*` instead of re-deriving it from the raw snapshot — the fork-prevention the
+ * realized-capability register guards.
+ */
+export type EngineAccelerator = 'gpu' | 'cpu' | null;
+export interface EngineRealized {
+  loaded: boolean;
+  // null = not loaded, OR the ORT device is not yet probed (lazy init — e.g. the reranker only
+  // runs at query time), distinct from a known CPU realization.
+  accelerator: EngineAccelerator;
+  failureReason: string | null;
+}
+export interface AiRealized {
+  reranker: EngineRealized;
+  embed: EngineRealized;
+  splade: EngineRealized;
+}
+
 export type StatusTier = 'online' | 'degraded' | 'offline' | 'disconnected';
 
 /**
@@ -153,6 +174,8 @@ export interface AiState {
   runtime: AiRuntime;
   activity: AiActivity;
   index: AiIndex;
+  /** tempdoc 644 — realized retrieval-engine state (loaded? GPU/CPU? failure), per engine. */
+  realized: AiRealized;
   statusLabel: string;
   statusTier: StatusTier;
   /**
@@ -423,6 +446,39 @@ function computeIndex(): AiIndex {
   };
 }
 
+/**
+ * tempdoc 644 — the ONE realized retrieval-engine projection (reranker / embed / splade), read off
+ * `status.worker.gpu`. Exported as the authority the realized-capability register binds to; surfaces
+ * consume `aiState.realized.*` rather than re-reading `worker.gpu.*OrtCuda` ad-hoc (the fork-class).
+ * `accelerator` distinguishes a known GPU/CPU realization from a not-yet-probed device (lazy ORT
+ * init — `available` false but `attempted` false → `null`, not a false "CPU" claim). Per-query stage
+ * execution is a different record (the search trace) and is intentionally not projected here.
+ */
+export function computeRealized(): AiRealized {
+  const gpu = statusSig.get()?.worker?.gpu;
+  const project = (
+    loaded: boolean,
+    cuda:
+      | { available?: boolean | null; attempted?: boolean | null; failureReason?: string | null }
+      | null
+      | undefined,
+  ): EngineRealized => {
+    const accelerator: EngineAccelerator = !loaded
+      ? null
+      : cuda?.available
+        ? 'gpu'
+        : cuda?.attempted
+          ? 'cpu'
+          : null;
+    return { loaded, accelerator, failureReason: cuda?.failureReason || null };
+  };
+  return {
+    reranker: project(!!gpu?.rerankerModelPath, gpu?.rerankerOrtCuda),
+    embed: project(!!gpu?.embedBackend, gpu?.embedOrtCuda),
+    splade: project(!!gpu?.spladeModelPath, gpu?.spladeOrtCuda),
+  };
+}
+
 function computeStatusTier(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
@@ -515,6 +571,7 @@ function buildSnapshot(): AiState {
   const connection = computeConnection();
   const runtime = computeRuntime();
   const index = computeIndex();
+  const realized = computeRealized();
   const activity = activitySig.get();
   const status = statusSig.get();
   // 595 §4.1/§4.2 — derive the ONE stability axis + verdict, then project the
@@ -555,6 +612,7 @@ function buildSnapshot(): AiState {
     runtime,
     activity,
     index,
+    realized,
     statusLabel,
     statusTier,
     statusTone,

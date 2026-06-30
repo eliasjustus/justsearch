@@ -11,6 +11,54 @@ from .readiness import flatten_status
 log = logging.getLogger(__name__)
 
 
+# Retrieval engines whose realized state defines a run's pipeline (tempdoc 644 reach).
+# `present` = startup-stable model-presence predicate; `device` = `*OrtCuda.available`.
+_REALIZED_ENGINE_SOURCES = {
+    "reranker": {"present_key": "rerankerModelPath", "cuda_key": "rerankerOrtCuda"},
+    "dense": {"present_key": "embedBackend", "cuda_key": "embedOrtCuda"},
+    "splade": {"present_key": "spladeModelPath", "cuda_key": "spladeOrtCuda"},
+}
+
+
+def project_realized_capability(status: dict | None) -> dict:
+    """The single projection of realized retrieval-engine state from a *flattened* /api/status dict.
+
+    Returns ``{engine: {"present": bool, "device": "gpu"|"cpu"|None, "detail": {...}}}`` for
+    reranker / dense / splade. ``present`` uses the startup-stable predicate (model path / backend
+    non-empty); ``device`` reads ``*OrtCuda.available`` and is ``None`` until the engine's ORT
+    session is lazily initialized (e.g. the reranker only runs at query time — so its device bit is
+    intentionally NOT part of cohort identity; see ``release._MODEL_EXECUTION_FLAGS``).
+
+    This is the one realized-capability reader: ``assert_capabilities`` (the fail-closed guard) and
+    ``run._snapshot_models`` (the cohort engine set) both project from it, instead of each
+    re-deriving "is engine X realized" with a different predicate (tempdoc 644 — the representation
+    -drift class, 553). Per-query *execution* (did a stage run this query) is a different record —
+    the unified ``SearchTrace`` — and is deliberately not projected here. ``execute_preflight``'s
+    ``model_wiring`` keeps its own, stricter "ORT-status present" predicate + ``init_failed``
+    diagnostic, a distinct concept (only unify what shares a reason to change — AHA).
+    """
+    status = status or {}
+    out: dict = {}
+    for engine, src in _REALIZED_ENGINE_SOURCES.items():
+        present_val = status.get(src["present_key"]) or ""
+        present = bool(present_val)
+        cuda = status.get(src["cuda_key"]) or {}
+        available = cuda.get("available")
+        device = None if (not present or available is None) else ("gpu" if available else "cpu")
+        detail = {
+            ("backend" if engine == "dense" else "model_path"): present_val,
+            "failure_reason": cuda.get("failureReason") or None,
+        }
+        out[engine] = {"present": present, "device": device, "detail": detail}
+    return out
+
+
+def realized_engine_set(status: dict | None) -> list[str]:
+    """Sorted list of present retrieval engines — the run's cohort-identity engine set (644)."""
+    proj = project_realized_capability(status)
+    return sorted(engine for engine, facet in proj.items() if facet["present"])
+
+
 def execute_preflight(
     base_url: str,
     *,
@@ -323,21 +371,14 @@ def assert_capabilities(
             "backend_unreachable: cannot reach /api/status to verify the realized engine set"
         )
     else:
-        reranker_path = status.get("rerankerModelPath") or ""
-        embed_backend = status.get("embedBackend") or ""
-        splade_path = status.get("spladeModelPath") or ""
+        proj = project_realized_capability(status)
         reranker_cuda = status.get("rerankerOrtCuda") or {}
-
-        realized = {
-            "reranker": (bool(reranker_path), {"model_path": reranker_path,
-                                               "gpu": bool(reranker_cuda.get("available"))}),
-            "dense": (bool(embed_backend), {"backend": embed_backend}),
-            "splade": (bool(splade_path), {"model_path": splade_path}),
-        }
         for engine in sorted(intended):
-            is_realized, detail = realized.get(engine, (False, {}))
-            result["realized"][engine] = {"realized": is_realized, **detail}
-            if not is_realized:
+            facet = proj.get(engine, {"present": False, "device": None, "detail": {}})
+            result["realized"][engine] = {
+                "realized": facet["present"], "device": facet["device"], **facet["detail"]
+            }
+            if not facet["present"]:
                 result["refusals"].append(
                     f"{engine}_intended_but_absent: the run intends '{engine}' but the backend "
                     f"reports it is not loaded (model not discovered). In an agent worktree this "
@@ -347,7 +388,7 @@ def assert_capabilities(
                     f"degraded numbers."
                 )
         # Device dimension: warning only (GPU deferred — tempdoc 644 T3-6).
-        if "reranker" in intended and reranker_path and not reranker_cuda.get("available"):
+        if "reranker" in intended and proj["reranker"]["present"] and not reranker_cuda.get("available"):
             result["warnings"].append("reranker_cpu_only: reranker realized on CPU (no GPU)")
 
     if result["refusals"] and allow_degraded:

@@ -46,6 +46,7 @@ import {
   type InferenceSnapshot,
   type ConnectionPhase,
   type ReadinessView,
+  type EngineRealized,
 } from '../state/aiStateStore.js';
 import { presentVerdict, type SystemHealthVerdict } from '../state/verdict.js';
 import { formatRelativeMs } from '../../utils/relativeTime.js';
@@ -1136,6 +1137,60 @@ export class HealthSurface extends JfElement {
               ? `${NUM.format(this.inference.configuredContextTokens)}`
               : 'N/A'}</span
           >
+        </div>
+        ${this.renderRealizedEngines()}
+      </div>
+    `;
+  }
+
+  /**
+   * tempdoc 644 — per-engine realized state (reranker / embeddings / SPLADE): loaded? + a GPU/CPU
+   * accelerator pill + a failure-reason tooltip. Projects the ONE `aiState.realized` authority
+   * (computeRealized) — never re-reads `worker.gpu.*OrtCuda` here (the fork the
+   * realized-capability register prevents). Additive to the AI Engine card; no new route/surface.
+   */
+  private renderRealizedEngines(): TemplateResult | typeof nothing {
+    const realized = this.aiState?.realized;
+    if (!realized) return nothing;
+    const rows: Array<[string, EngineRealized]> = [
+      ['Reranker', realized.reranker],
+      ['Embeddings', realized.embed],
+      ['SPLADE', realized.splade],
+    ];
+    const pill = (e: EngineRealized): TemplateResult => {
+      if (!e.loaded) {
+        return html`<span style="color: var(--text-secondary); font-size: var(--font-size-xs)"
+          >not loaded</span
+        >`;
+      }
+      const onGpu = e.accelerator === 'gpu';
+      const text = onGpu ? 'GPU' : e.accelerator === 'cpu' ? 'CPU' : 'loaded';
+      return html`<span
+        title=${e.failureReason ?? ''}
+        style="padding: 0.0625rem 0.375rem; border-radius: 0.25rem; font-size: var(--font-size-xs); ${onGpu
+          ? 'background: var(--accent-success-16); color: var(--text-success);'
+          : 'background: var(--surface-2); color: var(--text-secondary);'}"
+        >${text}</span
+      >`;
+    };
+    return html`
+      <div
+        style="margin-top: 0.5rem; border-top: 1px solid var(--border-subtle); padding-top: 0.5rem"
+      >
+        <div
+          style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.375rem"
+        >
+          Retrieval engines
+        </div>
+        <div
+          style="display: grid; grid-template-columns: max-content 1fr; gap: 0.375rem 1rem; font-size: var(--font-size-sm)"
+        >
+          ${rows.map(
+            ([label, e]) => html`
+              <span class="key" style="color: var(--text-secondary)">${label}</span>
+              <span style="text-align: right">${pill(e)}</span>
+            `,
+          )}
         </div>
       </div>
     `;
