@@ -937,3 +937,45 @@ is a further witness for 625, **not** a license to build 625's generalized kerne
 the parity-leak framing of A1) is the 283→618→644 "a worktree inherits tracked text but not built/LFS/
 untracked assets" shape — orthogonal to the realized-capability record. It keeps its own §Reach note;
 merging the two would be a false unification.
+
+---
+
+## Implementation — realized-capability design SHIPPED 2026-06-30
+
+The settled design above is implemented (branch `worktree-644-capability`, 4 staged commits),
+conforming to existing seams (extended, not forked). What landed:
+
+- **A3 — one projector.** `preflight.project_realized_capability(status) → {engine: {present, device,
+  detail}}` for reranker/dense/splade (+ `realized_engine_set`). `assert_capabilities` (the 644 guard)
+  and `run._snapshot_models` both project from it. **Deviation from the plan:** `execute_preflight`'s
+  `model_wiring` was *left intact* — its predicate is the stricter "ORT-status present" with an
+  `init_failed` diagnostic that depends on the path-vs-status distinction; collapsing it onto the
+  projector's path predicate would *regress* that diagnostic (AHA — only unify what shares a reason to
+  change). So A3 unified the two genuinely-shared forks, not all three.
+- **B1 — engine set first-class in cohort identity.** `_snapshot_models` records `realized_engines`
+  (sorted present-engine list) + `reranker_model_path`/`reranker_gpu`. `realized_engines` +
+  `reranker_model_path` enter `model_identity` (CE-on vs CE-off ⇒ distinct cohorts); the flaky device
+  bit `reranker_gpu` joins `release._MODEL_EXECUTION_FLAGS` (stripped, like embed/splade_gpu).
+- **A1 — data-driven `flatten_status`** (iterate worker children, one-level, sibling-collision assert);
+  surfaces the formerly-omitted `visualExtraction` automatically.
+- **B2/B3 — engine-set homogeneity gate.** `ratchet_kernel.assert_cohort_engines` — relevance/perf/leak
+  refuse (exit 2) to compare a run whose `realized_engines` ≠ the baseline release's
+  (`cohort.realized_engines`); keyed on the **narrow engine set** (git_sha-independent), backward-compat
+  skip when unrecorded, `--allow-engine-mismatch` override. Mirrors `run_dataset_ok` + calibrate's
+  cohort raise.
+- **C — FE realized-capability surface.** `aiStateStore.computeRealized()` (exported authority) →
+  `aiState.realized`; HealthSurface's AI Engine card gains a "Retrieval engines" block (per-engine
+  GPU/CPU pill + failure tooltip). A light register `governance/realized-capability-surfaces.v1.json`
+  + `scripts/ci/check-realized-capability.mjs` (the 613 capability-availability template) prevents a
+  re-fork; wired into the CLAUDE.md shell-v0 pre-merge row.
+- **B4 — source integrity** was already met (`*OrtCuda.{available,failureReason}` exist); the
+  projections surface it.
+
+**Validation (all tiers).** `gradlew build -x test` SUCCESSFUL; full jseval pytest green (the 2
+`test_correction_probe` failures are a pre-existing gitignored data file); full ui-web unit suite (3401)
++ typecheck green; the applicable ui-web purity/token/a11y gates pass (`theme-token-closure` /
+`accent-as-text` reds are pre-existing in `RecentsMenu.ts` / `ActionLedgerView.ts`, logged to the inbox).
+**Live:** a worktree-resolved backend reported `realized_engines = [dense, reranker, splade]` with the
+reranker on GPU; and the **real browser** (FE served against that backend) rendered the AI Engine card's
+"Retrieval engines" block — **Reranker `GPU`**, Embeddings/SPLADE `loaded` (device unprobed ⇒ honest
+"loaded", never a false "CPU"), confirming the tri-state device logic end-to-end.
