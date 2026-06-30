@@ -644,7 +644,54 @@ feature code written). All resolved favorably; the design is unchanged.
 execution-risk (live verification under load is inherently fiddly) and two small build-time micro-decisions
 (conform-domain vs sibling register; reuse `catching-up` vs a sibling calm cause), not design risk.
 
+## Implementation (complete, 2026-06-30)
+
+Built on branch `worktree-649-connection-reachability`, conforming to the four seams exactly as designed.
+
+**Changes:**
+- **New `state/originContact.ts`** — the registered `connection` liveness authority: `bumpOriginContact()` /
+  `getLastOriginContactMs()` + the pure `isOriginReachable(lastContactMs, now, windowMs=STREAM_WATCHDOG_STALE_MS)`
+  (no signal import, so `EnvelopeStream` stays decoupled).
+- **`streaming/EnvelopeStream.ts`** — `bumpOriginContact()` in `handleFrame` + `handleOpen` (no `notify()`).
+- **`state/aiStateStore.ts`** — new `computeReachability()` (contact-based, 40 s) feeds `connection.reachable`;
+  poll-freshness (`computeStaleness`, 15 s) kept separate; `checkStaleness` bumps the tick on either flip;
+  `reachableViaContact` threaded into `computeStability` + `computeVerdict`; `__feedContactForTest` seam.
+- **`state/verdict.ts`** — new `'updating'` `ProvisionalCause`; `computeStability` stale branch →
+  `updating` (reachable) vs `channel-stale` (not); `computeVerdict` disconnected → `connecting` when reachable;
+  `verdictHeadline`/`verdictBody` `'updating'` → calm "Catching up…".
+- **`governance/inflight-liveness-projections.v1.json`** — registered the `connection` domain (authority
+  `isOriginReachable`, render site `aiStateStore.ts`).
+- **Tests** — `originContact.test.ts` (new); extended `verdict.test.ts`, `aiStateStore.test.ts`,
+  `EnvelopeStream.test.ts`.
+
+**Static verification (all green):** `tsc` typecheck ✓; 80 unit tests across the 4 files ✓; gates
+`check-verdict-derivation` ✓, `check-inflight-liveness` (3 domains) ✓, `check-observed-state-collapse` ✓,
+`check-presentation-purity` ✓, `check-message-single-model` ✓; eslint on changed files ✓ (exit 0). (Two
+**pre-existing** base-branch failures logged to the inbox, NOT caused by this work: `gen-stream-liveness
+--check` drift on `StreamLivenessWindows.java`, and 21 base eslint errors in `errorCatalog.ts`/registry imports.)
+
+**Live browser validation (real UI, dev stack on a worktree backend — required for a user-visible feature):**
+the four connection states were exercised through the real store → verdict → render pipeline by starving the
+polls (monkeypatched `fetch` on `/api/status` + `/api/inference/status`) while leaving the SSE `EventSource`
+streams heartbeating — the faithful 649 scenario:
+1. **Baseline** — `phase:connected`, `reachable:true` (green CONN; no false alarm).
+2. **Poll starved + SSE alive** — `phase:stale`, `reachable:true`, verdict `transitioning/updating` →
+   **status bar "Catching up…"** (calm amber, CONN dot green). *This is the fix — previously "Reconnecting…".*
+3. **Recovery** — fetch restored → `phase:connected`, "Catching up…" cleared.
+4. **Genuine unreachable** — backend stopped, ~71 s with no contact of any kind → `reachable:false` →
+   **status bar "Reconnecting…"**. *The true alarm is preserved — the fix removes the false alarm without
+   over-suppressing the real one.*
+
 ## Status
+
+`open` — investigation, theorization, settled design, de-risking, **and implementation + live browser
+validation** complete (2026-06-30, above). Code on `worktree-649-connection-reachability`; **not yet merged to
+`main`**. The OUT-of-scope resource/transport follow-up and the AI-brain re-architecture (Related finding)
+remain separate future tempdocs.
+
+---
+
+### (historical) pre-implementation status
 
 `open` — investigation, theorization, a settled general design, **and a pre-implementation de-risking pass**
 complete (2026-06-30, above); **implementation not started**.

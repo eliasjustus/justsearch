@@ -41,6 +41,14 @@ import {
 } from '../utils/statusPoll.js';
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
+// Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
+// the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
+import {
+  getLastOriginContactMs,
+  isOriginReachable,
+  bumpOriginContact,
+  __resetOriginContactForTest,
+} from './originContact.js';
 import {
   computeStability,
   computeVerdict,
@@ -265,12 +273,41 @@ function computeStaleness(): Staleness {
   };
 }
 
+/**
+ * Tempdoc 649 — REACHABILITY (is the backend alive at all?), derived from the most recent POSITIVE
+ * CONTACT of ANY channel: a poll success (`lastInference/StatusSuccessSig`) OR any SSE frame/heartbeat
+ * (`getLastOriginContactMs`). This is DELIBERATELY SEPARATE from poll-freshness (`computeStaleness`):
+ * under load the cheap polls get starved behind the browser's 6-per-host connection limit, but the
+ * always-on SSE streams keep heartbeating (15s) — so a poll-only signal wrongly reads "disconnected"
+ * while the backend is provably alive. Reachability via the ONE `isOriginReachable` authority fixes
+ * that. Before the first contact, the start-up grace window must elapse before we are willing to call
+ * the origin unreachable (mirrors `neverConnected`), so startup shows "Connecting…", not a false alarm.
+ */
+function computeReachability(): { reachable: boolean; lastContactMs: number | null } {
+  // Depend on the clock tick so reachability flips re-evaluate (the stream stamp is a plain global; the
+  // 5s `checkStaleness` tick bumps `clockTickSig` when the value would change — see checkStaleness).
+  void clockTickSig.get();
+  const lastInf = lastInferenceSuccessSig.get();
+  const lastStatus = lastStatusSuccessSig.get();
+  const lastStream = getLastOriginContactMs();
+  const lastContactMs = Math.max(lastInf ?? 0, lastStatus ?? 0, lastStream ?? 0) || null;
+  const now = Date.now();
+  if (lastContactMs === null) {
+    // No contact of any kind yet: not reachable, but not "disconnected" until the grace window elapses.
+    return { reachable: started && now - _startedAtMs <= STALE_THRESHOLD_MS, lastContactMs: null };
+  }
+  return { reachable: isOriginReachable(lastContactMs, now), lastContactMs };
+}
+
 function computeConnection(): AiConnection {
-  const { lastSuccessMs, neverConnected, stale } = computeStaleness();
+  // `lastSuccessMs` stays the last POLL success (the data-freshness stamp consumers read); `reachable`
+  // is the contact-based truth (tempdoc 649). They are different facts and must not be conflated.
+  const { lastSuccessMs } = computeStaleness();
+  const { reachable } = computeReachability();
   return {
-    reachable: !neverConnected && !stale,
+    reachable,
     lastSuccessMs,
-    consecutiveFailures: stale || neverConnected ? 1 : 0,
+    consecutiveFailures: reachable ? 0 : 1,
   };
 }
 
@@ -441,11 +478,15 @@ function buildSnapshot(): AiState {
     servingSearchGenerationId: migration?.servingSearchGenerationId,
     servingIngestGenerationId: migration?.servingIngestGenerationId,
     catchingUp: status?.catchingUp,
+    // Tempdoc 649 — poll-stale BUT reachable via another channel ⟹ calm "Catching up…", not "Reconnecting…".
+    reachableViaContact: connection.reachable,
   });
   const verdict = computeVerdict({
     phase,
     stability,
     readiness,
+    // Tempdoc 649 — distinguishes "no poll yet but origin alive" (Connecting…) from a true unreachable.
+    reachableViaContact: connection.reachable,
     // 595 §15.2 (E4) — project the backend's own stuck-rebuild signals so a wedged
     // generation cutover escalates from calm "Rebuilding…" to a warning.
     migrationPaused: migration?.migrationPaused,
@@ -585,15 +626,15 @@ function stampSettledIndex(snap: StatusSnapshot): void {
 }
 
 function checkStaleness(): void {
-  const now = Date.now();
-  const lastSuccess = Math.max(
-    lastInferenceSuccessSig.get() ?? 0,
-    lastStatusSuccessSig.get() ?? 0,
-  );
-  const wasReachable = aiState.get().connection.reachable;
-  const isStale = lastSuccess > 0 && now - lastSuccess > STALE_THRESHOLD_MS;
-  const neverConnected = lastSuccess === 0 && now - _startedAtMs > STALE_THRESHOLD_MS;
-  if ((isStale || neverConnected) !== !wasReachable) {
+  // Tempdoc 649 — two time-derived axes can change between input-signal updates: the poll-freshness
+  // PHASE (data current vs aged out) and contact-based REACHABILITY (the stream stamp is a plain
+  // global). Bump the clock tick when EITHER would flip vs the currently-displayed snapshot, so the
+  // memoized `computed` re-evaluates — covering both the calm "Catching up…" transition (poll goes
+  // stale while still reachable) and the unreachable transition (all contact ages out).
+  const current = aiState.get();
+  const phaseNow = computePhase();
+  const { reachable: reachableNow } = computeReachability();
+  if (phaseNow !== current.phase || reachableNow !== current.connection.reachable) {
     clockTickSig.set(clockTickSig.get() + 1);
   }
 }
@@ -668,6 +709,16 @@ export function __feedForTest(opts: {
   }
 }
 
+/**
+ * Test-only (tempdoc 649): record positive origin contact at `ms` (default now), mirroring an SSE
+ * frame/heartbeat, so tests can exercise reachable-but-poll-stale without a live stream. Bump the clock
+ * tick so the reachability derivation re-evaluates (the stream stamp is a plain global).
+ */
+export function __feedContactForTest(ms: number = Date.now()): void {
+  bumpOriginContact(ms);
+  clockTickSig.set(clockTickSig.get() + 1);
+}
+
 /** Test-only: force the staleness derivation to re-evaluate (mirrors the interval). */
 export function __tickClockForTest(): void {
   clockTickSig.set(clockTickSig.get() + 1);
@@ -685,5 +736,6 @@ export function __resetAiStateForTest(): void {
   lastSettledIndexSig.set(null);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
+  __resetOriginContactForTest();
   _startedAtMs = 0;
 }

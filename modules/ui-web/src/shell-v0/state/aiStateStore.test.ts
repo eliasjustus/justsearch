@@ -17,6 +17,7 @@ import {
   setInstallState,
   __resetAiStateForTest,
   __feedForTest,
+  __feedContactForTest,
   __tickClockForTest,
   type AiState,
 } from './aiStateStore.js';
@@ -88,28 +89,64 @@ describe('aiStateStore — R1a signal-core conversion', () => {
     expect(s.statusLabel).toBe('Connecting…');
   });
 
-  it('§2.B / B4: a connection lost AFTER data goes `stale` (last-known retained), not `disconnected`', () => {
+  it('§2.B / B4 + 649: poll stale then truly unreachable — staged "Catching up…" → "Reconnecting…", last-known retained', () => {
     vi.useFakeTimers();
     try {
       const t0 = new Date('2026-01-01T00:00:00Z').getTime();
       vi.setSystemTime(t0);
-      // One successful status poll: 42 docs.
+      // One successful status poll: 42 docs (a poll success is positive contact, tempdoc 649).
       __feedForTest({
         status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
       });
       __tickClockForTest();
       expect(getAiState().phase).toBe('connected');
+      expect(getAiState().connection.reachable).toBe(true);
       expect(getAiState().index.documentCount).toEqual(known(42));
 
-      // 16s later with no further success: past the 15s threshold.
+      // 16s later: past the 15s poll-freshness threshold, but the last contact (the t0 poll) is only
+      // 16s old — within the 40s reachability window. 649: data is behind but the backend is provably
+      // reachable, so the calm "Catching up…", NOT the "Reconnecting…" alarm.
       vi.setSystemTime(t0 + 16_000);
       __tickClockForTest();
-      const s = getAiState();
+      let s = getAiState();
       expect(s.phase).toBe('stale');
-      expect(s.statusLabel).toBe('Reconnecting…');
-      // Last-known is retained (NOT wiped to 0/Unknown) and the tier is degraded.
-      expect(s.index.documentCount).toEqual(known(42));
+      expect(s.connection.reachable).toBe(true);
+      expect(s.statusLabel).toBe('Catching up…');
+      expect(s.index.documentCount).toEqual(known(42)); // last-known retained, not wiped
       expect(s.statusTier).toBe('degraded');
+
+      // 41s later: NO contact of any kind within the 40s window ⇒ genuinely unreachable ⇒ the alarm.
+      vi.setSystemTime(t0 + 41_000);
+      __tickClockForTest();
+      s = getAiState();
+      expect(s.connection.reachable).toBe(false);
+      expect(s.statusLabel).toBe('Reconnecting…');
+      expect(s.index.documentCount).toEqual(known(42)); // still retained
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('649: a stale poll stays calm "Catching up…" while an SSE frame keeps contact fresh', () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+      vi.setSystemTime(t0);
+      __feedForTest({
+        status: { worker: { core: { indexedDocuments: 7 } } } as unknown as StatusSnapshot,
+      });
+      __tickClockForTest();
+
+      // 50s later: the poll is long stale (>40s) — WITHOUT a stream this would be "Reconnecting…".
+      // But an SSE frame arrived at t0+45s (positive contact), so the origin is reachable.
+      vi.setSystemTime(t0 + 45_000);
+      __feedContactForTest(t0 + 45_000); // mirrors EnvelopeStream.handleFrame bumping the stamp
+      vi.setSystemTime(t0 + 50_000);
+      __tickClockForTest();
+      const s = getAiState();
+      expect(s.phase).toBe('stale'); // poll data is behind
+      expect(s.connection.reachable).toBe(true); // but a recent SSE frame proves the backend is alive
+      expect(s.statusLabel).toBe('Catching up…'); // calm, not the false "Reconnecting…"
     } finally {
       vi.useRealTimers();
     }
