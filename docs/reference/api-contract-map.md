@@ -138,7 +138,7 @@ HTTP semantics: `200` for any state (meta-endpoint reports its own health, not a
 
 **Head envelope** (200 once HeadAssembly construction completes):
 
-```
+```json
 { "boot": {
     "process": "head",
     "bootStartedAtMs": ..., "bootCompletedAtMs": ..., "totalDurationMs": ...,
@@ -162,7 +162,7 @@ HTTP semantics: `200` for any state (meta-endpoint reports its own health, not a
 
 **Brain envelope** (200, co-resident projection from Head):
 
-```
+```json
 { "boot": {
     "process": "brain",
     "projection": true,
@@ -826,4 +826,3 @@ Three typed exception classes replace fragile message-sniffing patterns:
 
 - Search + RAG reason codes: `docs/reference/contracts/search-and-rag-reason-codes.md`
 - Lifecycle reason codes: `io.justsearch.app.api.lifecycle.LifecycleReasonCode` (validated by `LifecycleContractTest`)
-

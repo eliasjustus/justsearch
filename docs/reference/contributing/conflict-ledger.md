@@ -39,7 +39,7 @@ message naming the verdict and a committed follow-up slice id). See also the
 
 | ID | Conflict | Current handling |
 | --- | --- | --- |
-| — | _(none currently open)_ | — |
+| — | *(none currently open)* | — |
 
 ## History
 

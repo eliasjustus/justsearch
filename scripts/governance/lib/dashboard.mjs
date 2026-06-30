@@ -189,7 +189,7 @@ function generate() {
   lines.push('');
   lines.push('## See also');
   lines.push('');
-  lines.push('- [`docs/tempdocs/530-class-size-ratchet-automation.md`](../tempdocs/530-class-size-ratchet-automation.md) — design tempdoc');
+  lines.push('- Historical tempdoc 530 — original design note for the discipline-gate kernel');
   lines.push('- [`docs/reference/contributing/discipline-gate-kernel.md`](contributing/discipline-gate-kernel.md) — substrate reference');
   lines.push('- [`governance/registry.v1.json`](../../governance/registry.v1.json) — gate registry');
   lines.push('');

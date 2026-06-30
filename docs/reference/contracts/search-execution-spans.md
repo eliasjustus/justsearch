@@ -23,7 +23,7 @@ variant produces the keys declared below.
 
 ## Span topology
 
-```
+```text
 request span (Head, propagated via TracingServerInterceptor)
 ├── search/retrieval                      — parent of all retrieval-phase spans
 │   ├── search/branch{lexical}            — BM25 leg (3-way path)

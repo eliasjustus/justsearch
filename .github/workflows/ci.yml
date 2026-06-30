@@ -1,733 +1,262 @@
-# CI — manual-only per ADR-0026 (docs/decisions/0026-manual-ci-triggering.md).
+# PUBLIC CI - GitHub-hosted fact lanes for the open-source JustSearch repo.
 #
-# There is no `push`, `pull_request`, or `schedule` trigger. Agents invoke
-# CI explicitly with `gh workflow run ci.yml` when they need remote
-# verification beyond what local-first verification
-# (per CLAUDE.md "Verification Workflow" — `./gradlew.bat build`,
-# `./gradlew.bat test`, and the individual pre-merge checks under step 5)
-# provides. Rationale: the self-hosted runner is
-# not guaranteed to be online for auto-triggered runs, and local-first
-# verification is the documented primary discipline (CLAUDE.md
-# "Verification Workflow"). Regression detection depends on agent
-# discipline — see ADR-0026's "Consequences" for the trade-off.
+# Public pull requests should get fast, owner-specific feedback. Keep each job
+# named after the fact it proves because main branch protection requires these
+# meaningful checks instead of one opaque Windows bucket.
+
 name: CI
 
 on:
-  workflow_dispatch:
-    inputs:
-      skipFrontend:
-        description: 'Skip frontend (Vite) build for backend-only changes'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-      runStress:
-        description: 'Run @Tag("stress") tests (-PincludeStress=true)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-      runMutation:
-        description: 'Run PIT mutation testing on registered logic seams (test-efficacy gate, tempdoc 555)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+  workflow_dispatch: {}
+  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
-  actions: read
-  checks: write
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
-  CI: "true"
-  JUSTSEARCH_SIMULATE_BUDGET_MS: "60000"
   NODE_VERSION: "24.14.0"
   JAVA_VERSION: "25"
 
 jobs:
-  # Note: the former `fast_build` job was deleted with ADR-0026. Its trigger
-  # (`push || pull_request`) no longer exists, and under the manual-only
-  # policy the distinction between "fast" and "full" collapses — agents run
-  # `full_build` explicitly when they need remote verification, and rely on
-  # local-first verification (`./gradlew.bat build` + the individual
-  # pre-merge checks under CLAUDE.md "Verification Workflow" step 5) for
-  # fast feedback during development.
-  full_build:
-    name: Build & Test
-    runs-on: [self-hosted, Windows, X64, justsearch-perf]
-    timeout-minutes: 35
-    defaults:
-      run:
-        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
-
+  public-claims:
+    name: Public claims
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 (full history) is LOAD-BEARING for the
-          # contract-governance gate per slice 3a-1-8f §A.16: shallow
-          # clones break baseline-ref resolution for `buf breaking`.
-          # The runner detects shallow clones and emits an explicit
-          # SARIF error if this is ever lowered.
-          fetch-depth: 0
+        uses: actions/checkout@v7
 
-      - name: Resolve base commit for change detection
-        id: base-ref
-        run: |
-          $base = "${{ github.event.before }}"
-          if (-not $base) { $base = "${{ github.event.pull_request.base.sha }}" }
-          if (-not $base) { $base = (git rev-parse "HEAD~1") }
-          echo "sha=$base" >> $env:GITHUB_OUTPUT
-
-      - name: Detect changed modules
-        uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          base: ${{ steps.base-ref.outputs.sha }}
-          filters: scripts/ci/module-filter.yml
-
-      - name: Ensure cache compression tools on PATH
-        shell: cmd
-        run: echo C:\Program Files\Git\usr\bin>>"%GITHUB_PATH%"
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          # build-logic compiles with Java 21 toolchain; main project uses 25.
-          # Installing both prevents Foojay auto-provisioning failures (503 outages).
-          java-version: |
-            21
-            ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - name: Setup Node.js
-        if: ${{ !cancelled() }}
+      - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: |
-            modules/ui-web/package-lock.json
             package-lock.json
+            modules/ui-web/package-lock.json
 
-      - name: Install Node dependencies
-        if: ${{ !cancelled() }}
-        run: npm ci --no-audit --no-fund
+      - name: Install root dependencies
+        run: npm ci
 
       - name: Workflow trigger policy guard
-        if: ${{ !cancelled() }}
         run: node scripts/ci/check-workflow-triggers.mjs
 
+      - name: Unit-test shard policy guard
+        run: node scripts/ci/verify-unit-test-shard-policy.mjs
+
+      - name: Test evidence policy guard
+        run: node scripts/ci/verify-test-evidence-policy.mjs
+
       - name: Root README entrypoint guard
-        if: ${{ !cancelled() }}
         run: node scripts/ci/check-root-readme.mjs
 
-      - name: Benchmark-release no-fork guard (tempdoc 623 — release schema + register/ratchet projections in sync)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-release-baseline-sync.mjs
+      - name: README benchmark numbers match the canonical release
+        run: node scripts/ci/check-readme-benchmark-numbers.mjs
 
-      - name: NPM audit summary (warn-only)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/report-npm-audit.mjs --out tmp/npm-audit-report.json
+      - name: Verify frontend-stack claims
+        run: node scripts/docs/check-frontend-stack-claims.mjs
 
-      - name: NPM audit ratchet gate (high/critical) — tempdoc 530 kernel
-        # Tempdoc 530: migrated from scripts/ci/check-npm-audit-ratchet.mjs to the
-        # discipline-gate kernel (scripts/governance/run.mjs). The kernel adds
-        # the changeset escape-hatch protocol (silent --write-baseline bypass is
-        # closed). Legacy script kept in scripts/ci/ during the parity period;
-        # remove in a follow-up slice once this gate bakes in.
-        if: ${{ !cancelled() && (steps.changes.outputs.npm_audit_scope == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate npm-audit --mode gate --out tmp/governance-npm-audit-report.sarif
+      - name: Verify model-name freshness
+        run: node scripts/docs/check-model-freshness.mjs
 
-      - name: UI cycle gate
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-ui-cycles.mjs --root modules/ui-web/src --extensions ts,tsx --mode gate --out tmp/ui-cycles-report.json
+      - name: Verify privacy claims
+        run: node scripts/docs/check-privacy-claims.mjs
 
-      # ── tempdoc 557 presentation-authority gates (display / observed-state / theme) ──
-      - name: Presentation-purity gate (557 §2.A — display authority)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-presentation-purity.mjs
+      - name: Verify canonical docs links
+        run: node scripts/docs/verify-canonical-doc-links.mjs
 
-      - name: Chip-fact-authority gate (594 Move 2 — a chip's runtime/build fact is a fact-ref, not a baked literal)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-chip-fact-authority.mjs
-
-      - name: Observed-state-collapse gate (557 §2.B — one status authority)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-observed-state-collapse.mjs
-
-      - name: Theme-token-closure gate (557 §2.C — no ghost tokens; base totality)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-theme-token-closure.mjs
-
-      - name: TokenName codegen freshness (557 §2.C)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/gen-token-names.mjs --check
-
-      - name: Token-fallback strip freshness (557 §2.C — single source)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/strip-token-fallbacks.mjs --check modules/ui-web/src
-
-      - name: Color-token gate (557 §2.C / P1d — no bare colored literals)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-color-tokens.mjs
-
-      - name: Contrast-matrix gate (576 §6 — role pairings clear WCAG AA in both themes)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-contrast-matrix.mjs
-
-      - name: Accent-as-text ratchet (576 §6 rung-1 — no new accent FILL used as text)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-accent-as-text.mjs
-
-      # ── tempdoc 559 presentation-adjacent-authority gates (layout / a11y / messaging) ──
-      - name: A11y-closure gate (559 Authority II — landmarks / single h1 / results listbox)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-a11y-closure.mjs
-
-      - name: Layout-purity gate (559 Authority I — no new free position:fixed; OverlayHost ratchet)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-layout-purity.mjs
-
-      - name: Surface task-state retention gate (609 — don't-destroy-recoverable + settle-transient on hide)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-surface-task-state-retention.mjs
-
-      - name: Ambient-purity gate (574 Move 1/2 — Class-B ambient facets live in ambientStyles; JfElement base)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate ambient-purity --mode gate
-
-      - name: Style-literal-ratchet gate (574 Phase C — no new raw z-index/transition/font-size literals)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate style-literal-ratchet --mode gate
-
-      - name: Atom-fork-ratchet gate (574 §22.D Move 3 — no new raw .badge/.chip/.dot outside the atoms)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate atom-fork-ratchet --mode gate
-
-      - name: Modality-contract gate (574 §22.D Move 4 — showModal() must compose ModalityController)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate modality-contract --mode gate
-
-      - name: Transient-arbitration gate (574 §22.F Move 4 — every catalogued transient composes TransientController)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate transient-arbitration --mode gate
-
-      - name: Modal-arbitration gate (574 §22.G Move 4 — every catalogued modal composes ModalController)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate modal-arbitration --mode gate
-
-      - name: Steering-arbitration gate (565 §30 — run-control affordances compose the one dispatchRunControl seam)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-steering-arbitration.mjs
-
-      - name: Search-issuance gate (577 Ext II — the search surface issues through the one buildSearchIntent seam)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-search-issuance.mjs
-
-      - name: Verdict-derivation gate (595 §4.2 — the system-health verdict is derived once; surfaces consume it)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-verdict-derivation.mjs
-
-      - name: Readiness-reason-codes gate (600 PART IX/X — one closed degradation-cause vocabulary; producer↔CAUSE_ROWS correspond, no raw code reaches the user)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.ui == 'true' || steps.changes.outputs.governance == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-readiness-reason-codes.mjs
-
-      - name: Store-recoverability gate (629 #5 — one authoritative store classification; StoreCatalog↔register parity + no hardcoded cipher class)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui == 'true' || steps.changes.outputs.governance == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-store-recoverability.mjs
-
-      - name: Folder-status-derivation gate (599 §9.1 — folder indexing status derived once from job drain; rows consume it)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-folder-status-derivation.mjs
-
-      - name: Intent-tier-coverage gate (577 §3.7 Move H — every intent tier maps to one shape; retrieve is the shape-less base)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-intent-tier-coverage.mjs
-
-      - name: Language-agnostic-analysis gate (581/ADR-0043 — no per-language analyzer/field/synonym levers)
-        if: ${{ !cancelled() && (steps.changes.outputs.language_agnostic_analysis_scope == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-language-agnostic-analysis.mjs
-
-      - name: Message-single-model gate (559 Authority III — no new ad-hoc message channel)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-message-single-model.mjs
-
-      - name: Controls-a11y gate (559 Authority V — every affordance keyboard-operable; status metrics named)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-controls-a11y.mjs
-
-      - name: Adaptive-closure gate (559 Authority VI — item-bearing regions overflow, not clip)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-adaptive-closure.mjs
-
-      - name: Run-renderers gate (565 §12.6 — one tool-call primitive + one ordered run projection)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-run-renderers.mjs
-
-      - name: In-flight-liveness gate (575 §15 — RUNNING badges derive from the one liveness authority)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-inflight-liveness.mjs
-
-      - name: Liveness-constants regen gate (575 §17 Face A — worker+FE constants generated from the register)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-liveness-constants-regen.mjs
-
-      - name: Liveness-constants single-authority gate (575 §17 Face A — no hand-authored numeric copy)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-liveness-constants-single-authority.mjs
-
-      - name: Field-constants regen gate (594 Move 1a — FE embedding-dimension constant generated from the SSOT catalog)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-field-constants-regen.mjs
-
-      - name: Hook-wiring regen gate (592 — settings hooks block generated from the manifest)
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-agent-hooks-wiring-regen.mjs
-
-      - name: Composition-surfaces gate (565 §13 — multi-zone grids are GENERATED, positive coverage)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-composition-surfaces.mjs
-
-      - name: Declared-surfaces gate (569 §16 — the inversion stays inverted, positive coverage)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-declared-surfaces.mjs
-
-      - name: UI-step-coverage gate (615 §6.1a — screenshot harness freshness + rail coverage)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-ui-step-coverage.mjs
-
-      - name: Surface-composition gate (571 §11 / 578 — one home per surface; member integrity)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/ci/check-surface-composition.mjs
-
-      - name: Install wire-contract tooling (buf CLI for governance gate)
-        if: ${{ !cancelled() }}
-        run: npm ci --prefix scripts/wire-contract --no-audit --no-fund
-
-      - name: Wire-Category gate (tempdoc 530 Phase F — unified)
-        # Tempdoc 530 Pass-7 Phase F: the wire-Category enforcer was migrated
-        # from scripts/contract-governance/ into scripts/governance/gates/wire/
-        # and is now dispatched via the unified discipline-gate runner. The
-        # protobuf-shaped truth-table + buf-breaking enforcer + changeset
-        # parser all live under scripts/governance/gates/wire/.
-        #
-        # Slice 3a-1-8f §A.16 precondition: fetch-depth: 0 (full history)
-        # for baseline-ref resolution. Enforced upstream by actions/checkout.
-        if: ${{ !cancelled() && (steps.changes.outputs.wire == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate wire --mode gate --out tmp/governance-wire-report.sarif
-
-      - name: Upload SARIF to GitHub Code Scanning
-        # Tempdoc 530 §A.13: SARIF upload surfaces governance findings as
-        # default-branch alerts in the Security tab. Best-effort: this requires
-        # GitHub Code Scanning to be enabled on the repo; when it isn't, the
-        # upload errors ("Code scanning is not enabled for this repository").
-        # That is an observability nicety, not a gate — the same findings are
-        # written to the job summary by the "Governance gate summary" step and
-        # preserved in the failure-artifacts upload — so it must not fail the
-        # build. continue-on-error keeps it non-fatal until code scanning is
-        # enabled.
-        if: ${{ !cancelled() && hashFiles('tmp/governance-wire-report.sarif') != '' }}
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: tmp/governance-wire-report.sarif
-          category: wire-governance
-
-      - name: Install UI dependencies (bundle budget gate)
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        run: npm ci --prefix modules/ui-web --no-audit --no-fund
-
-      - name: Prose-rule tier-register gate — tempdoc 530 meta-loop
-        # Tempdoc 530 §Meta-loop: enforces that every load-bearing prose rule in
-        # CLAUDE.md / .claude/rules/ is tagged with its enforcement tier, that
-        # `gate:<id>` references resolve, and that tier-changes require a
-        # declared changeset. The fourth gate the tempdoc names as closure.
-        if: ${{ !cancelled() }}
-        run: node scripts/governance/run.mjs --gate prose-tier-register --mode gate --out tmp/governance-prose-tier-register-report.sarif
-
-      - name: Operation-surface anti-drift gate — tempdoc 550 Thesis III
-        # Tempdoc 550 Thesis III: every surface that reports indexing-job lifecycle state must be a
-        # declared projection of the one canonical record (the worker jobs table / IndexingJobView).
-        # Catches a NEW undeclared job-state surface (the §B.2 / F-2 fragmentation class). The
-        # count↔list agreement itself is guarded at runtime by SqliteJobQueueConformanceTest.
-        if: ${{ !cancelled() }}
-        run: node scripts/governance/run.mjs --gate operation-surface --mode gate --out tmp/governance-operation-surface-report.sarif
-
-      - name: Register-guard-resolution meta-pass (576 §3.1 — every register guard resolves)
-        if: ${{ !cancelled() && (steps.changes.outputs.governance == 'true' || steps.changes.outputs.all == 'true') }}
-        run: node scripts/governance/run.mjs --gate register-guard-resolution --mode gate --out tmp/governance-register-guard-resolution-report.sarif
-
-      - name: Hook-integrity gate (592 — wiring + cwd-invariant + load + bite for agent hooks)
-        if: ${{ !cancelled() }}
-        run: node scripts/governance/run.mjs --gate hook-integrity --mode gate --out tmp/governance-hook-integrity-report.sarif
-
-      - name: Logic-seams register integrity — tempdoc 555 Pillar A
-        # Cheap (file-existence only, no PIT): every registered seam's targetClass/targetTests
-        # resolve, its module applies conventions.mutation, and it has a baseline floor. Keeps the
-        # logic-seams register from drifting open (a typo'd FQCN would silently no-op the PIT scope).
-        # The actual mutation ratchet is the opt-in `mutation_tests` lane (runMutation dispatch).
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/check-logic-seams.mjs --mode gate
-
-      - name: Governance gate summary — tempdoc 530 Layer 3 §3.4
-        # Convert the most recent SARIF outputs into a markdown summary written
-        # to $GITHUB_STEP_SUMMARY. Cheap path (no PR-comment permission needed).
-        # Bash body (for-loop / [ -f ] / $GITHUB_STEP_SUMMARY): the job default
-        # shell is PowerShell, so this step must opt into bash explicitly.
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          for f in tmp/governance-*report.sarif; do
-            [ -f "$f" ] || continue
-            node scripts/governance/lib/sarif-to-markdown.mjs --in "$f" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          done
-
-      - name: UI dead code gate (Knip) + dead-code ratchet
-        # Tempdoc 530 §2.9: writes JSON for the dead-code gate, then runs the
-        # ratchet. The Knip CLI fails when issues exist; `|| true` lets the
-        # ratchet adjudicate (it allows pinned counts even when Knip is angry).
-        # Bash body (mkdir -p / pipe / `|| true`): the job default shell is
-        # PowerShell, so this step must opt into bash explicitly.
-        if: ${{ !cancelled() && (steps.changes.outputs.ui_web == 'true' || steps.changes.outputs.all == 'true') }}
-        shell: bash
-        run: |
-          mkdir -p tmp
-          npm run knip --prefix modules/ui-web -- --reporter json > tmp/knip-report.json || true
-          node scripts/governance/run.mjs --gate dead-code --mode gate --out tmp/governance-dead-code-report.sarif
-
-      - name: JVM dead-code gate (whole-program dead classes)
-        # Tempdoc 638: the dead-code-audit ArchUnit test (depends on every production module) writes
-        # tmp/dead-code-jvm-report.json; the dead-code-jvm ratchet then adjudicates it vs the
-        # baseline. Whole-program → any backend change can orphan a class, so this is not narrow-
-        # guarded. `--rerun-tasks` + the rm guarantee a fresh report (self-hosted runners persist
-        # tmp/). The report-only test passes (`|| true` covers the coverage-guard failure path).
-        # Bash body: the job default shell is PowerShell, so opt into bash explicitly.
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          mkdir -p tmp && rm -f tmp/dead-code-jvm-report.json
-          ./gradlew.bat :modules:dead-code-audit:test --rerun-tasks || true
-          node scripts/governance/run.mjs --gate dead-code-jvm --mode gate --out tmp/governance-dead-code-jvm-report.sarif
-
-      - name: CODEOWNERS coverage gate
-        run: node scripts/ci/verify-codeowners.mjs
-
-      - name: Playwright selector literal guard
-        run: node scripts/ci/check-playwright-hardcoded-testids.mjs --mode gate --root modules/ui-web/e2e
-
-      - name: Pure-Node unit tests (dev-runner + governance gate logic)
-        # Pure-Node tests for scripts/dev/dev-runner.cjs (run-pruning retention 271, op-lease
-        # admission 542 §B Layer 4) and the ui-bundle gate's persistent `covers`-bounded ratchet
-        # coverage (the PR-scoped-changeset treadmill fix). Fast (<1s); no backend spawn required.
-        if: ${{ !cancelled() }}
-        run: |
-          node scripts/dev/test-dev-runner-pruning.mjs
-          node scripts/dev/test-dev-runner-admission.mjs
-          node scripts/governance/lib/baseline-tamper-detector.test.mjs
-          node scripts/governance/lib/population-floor.test.mjs
-          node scripts/governance/lib/guard-resolver.test.mjs
-          node scripts/governance/gates/register-guard-resolution/enforcer.test.mjs
-          node scripts/governance/lib/explain-coverage.test.mjs
-          node scripts/ci/report-pit-strength.test.mjs
-          node scripts/governance/lib/covers.test.mjs
-          node scripts/codegen/gen-text-tokens.mjs --check
-          node scripts/ci/check-accent-as-text.test.mjs
-          node scripts/ci/check-readiness-reason-codes.test.mjs
-          node scripts/ci/check-store-recoverability.test.mjs
-          node scripts/codegen/gen-liveness-constants.test.mjs
-          node scripts/governance/gates/hook-integrity/truth-table.test.mjs
-          node scripts/governance/gates/hook-integrity/enforcer.test.mjs
-
-      - name: Gradle build and test
-        id: gradle_build
-        # Configuration cache enabled; exclusions:
-        #   pmdIntegrationTest: UnionFileCollection config-cache serialization failure (Gradle 9.1.0)
-        run: >-
-          ./gradlew.bat check --configuration-cache
-          :reports:testAggregateTestReport :reports:testCodeCoverageReport
-          -x pmdIntegrationTest
-          ${{ github.event.inputs.skipFrontend == 'true' && '-PskipWebBuild=true' || '' }}
-
-      # Tempdoc 632 — license allowlist gate + the NOTICE/THIRD_PARTY_NOTICES closure gate, live on the
-      # internal lane (not only the future public-ci.yml). checkLicense needs these flags on this repo
-      # (jk1 3.1.4 + config-cache + dependency-locking + cross-project resolution); the verification-metadata
-      # carries the license-report POMs, so no -Dverification=lenient. The three dumps (jk1 via checkLicense,
-      # cargo, npm) feed check-notices-regen, which fails if the committed notices drifted from their sources.
-      - name: License allowlist gate (checkLicense)
-        if: ${{ !cancelled() && steps.gradle_build.conclusion != 'skipped' }}
-        run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
-      - name: NOTICE projection in sync with sources (check-notices-regen)
-        if: ${{ !cancelled() && steps.gradle_build.conclusion != 'skipped' }}
-        run: >-
-          node scripts/codegen/dump-cargo-licenses.mjs &&
-          (cd modules/ui-web && npx --yes license-checker --production --json --relativeOnly > ../../build/npm-licenses.json) &&
-          node scripts/ci/check-notices-regen.mjs
-      - name: SPDX headers present on all first-party sources (tempdoc 632)
-        if: ${{ !cancelled() }}
-        run: node scripts/codegen/add-spdx-headers.mjs --check
-
-      - name: Dependency analysis gate
-        if: ${{ !cancelled() && steps.gradle_build.conclusion != 'skipped' }}
-        # Tempdoc 408 Tier 3: Dropped `--no-configuration-cache`. DAP 3.6.1's
-        # BuildHealthTask does NOT call `notCompatibleWithConfigurationCache`
-        # (verified by inspecting the plugin JAR); the flag was stale from an
-        # older DAP version. Local measurement: 8.85s → 4.26s (~52% faster).
-        run: ./gradlew.bat buildHealth --quiet
-
-      - name: SLF4J exception-logging guardrail (289 A15 / 400 LR6-d-A15)
-        if: ${{ !cancelled() && steps.gradle_build.conclusion != 'skipped' }}
-        # Scope: bare-form `log.<level>(<expr>.getMessage())` only — same scope
-        # the OpenRewrite recipe `CompleteExceptionLogging` catches (per
-        # tempdoc 289 line 507). Parameterized (`log.X("msg: {}",
-        # e.getMessage())`) and concatenated forms are out of scope, mirroring
-        # the recipe.
-        #
-        # Replaces the previous `./gradlew rewriteDryRun --no-configuration-cache
-        # ...` step. OpenRewrite is fundamentally config-cache-incompatible at
-        # v7.28.1 (`AbstractRewriteTask` calls
-        # `notCompatibleWithConfigurationCache`), so the rewrite step paid
-        # full Gradle configuration time on every CI run (~83s observed).
-        # The structured grep below runs in <1s on the full codebase.
-        # Developers can still use the recipe locally for AST-precise
-        # dry-runs:
-        #   ./gradlew rewriteDryRun --no-configuration-cache \
-        #     "-Drewrite.activeRecipes=org.openrewrite.java.logging.slf4j.CompleteExceptionLogging"
-        #
-        # History: this swap was first attempted alongside commit 3d1484997
-        # (artifact-upload) but the script wasn't committed; commit 474993d29
-        # reverted ci.yml; commit 4a5425c5b committed the script + logging-
-        # conventions doc; this commit re-applies the ci.yml swap now that
-        # the script is on main.
-        run: node scripts/ci/check-slf4j-bare-message-logging.mjs --mode gate
-
-      - name: Lock skew gate
-        if: ${{ !cancelled() }}
-        # report-lock-skew.mjs is now SCOPE-AWARE: it parses each coord's config
-        # list and only flags a coord when two versions share a scope class
-        # (processor / tool / main) — i.e. could actually co-resolve. Benign
-        # cross-scope duplicates auto-suppress WITHOUT an allowlist entry:
-        #   - org.yaml:snakeyaml (root `rewrite` OpenRewrite tool classpath 2.6
-        #     vs product runtime 2.5 — tool vs main, never co-load)
-        #   - com.google.auto.value:auto-value-annotations (annotationProcessor
-        #     1.9 vs runtime/compile 1.11.0 — processor vs main)
-        # The allowlist below holds GENUINE same-scope multi-version coords that
-        # are deliberately tolerated: the jackson 2↔3 bridge + transitive
-        # convergence helpers, plus BouncyCastle:
-        #   - org.bouncycastle:bc{prov,pkix,util}-jdk18on — a REAL same-scope
-        #     (main) skew: indexer-worker testFixturesRuntimeClasspath resolves
-        #     1.81 (transitively via Tika) while test/runtime resolve 1.81.1, and
-        #     a fixture-using test JVM loads both. Convergence via a root
-        #     resolutionStrategy force + resolveAndLockAll did NOT take in this
-        #     repo (the relock re-resolves only build-logic, not subprojects —
-        #     see docs/observations.md), so it stays allowlisted until a working
-        #     convergence/relock path is found. bcjmail excluded (only ever 1.81;
-        #     no trusted 1.81.1 in verification-metadata.xml).
-        run: >-
-          node scripts/ci/report-lock-skew.mjs
-          --families com.fasterxml.jackson,org.slf4j
-          --allow-duplicate-coords
-          org.apache.commons:commons-text,com.fasterxml.jackson.core:jackson-annotations,com.fasterxml.jackson.core:jackson-core,com.fasterxml.jackson.core:jackson-databind,com.fasterxml.jackson:jackson-bom,org.jetbrains.kotlin:kotlin-stdlib,com.github.ben-manes.caffeine:caffeine,jakarta.activation:jakarta.activation-api,jakarta.xml.bind:jakarta.xml.bind-api,net.bytebuddy:byte-buddy,org.jetbrains:annotations,org.objenesis:objenesis,org.hdrhistogram:HdrHistogram,org.bouncycastle:bcprov-jdk18on,org.bouncycastle:bcpkix-jdk18on,org.bouncycastle:bcutil-jdk18on
-          --fail-on-unexpected-skew
-          --out-json tmp/lock-skew-report.json
-
-      - name: Lockfile freshness check
-        if: ${{ !cancelled() }}
-        run: |
-          ./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks --quiet
-          $changed = & git -c core.autocrlf=false -c core.safecrlf=false diff --name-only -- "**/gradle.lockfile" "settings-gradle.lockfile"
-          if ($changed) {
-            Write-Error "Lockfiles are stale. Run: ./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks"
-            exit 1
-          }
-
-      - name: Schema and fixture freshness check
-        if: ${{ !cancelled() }}
-        run: |
-          ./gradlew.bat --no-configuration-cache :modules:app-api:updateSchemas --quiet
-          $changed = & git -c core.autocrlf=false -c core.safecrlf=false diff --name-only -- "modules/app-api/src/main/resources/schemas/" "modules/ui-web/src/api/__fixtures__/"
-          if ($changed) {
-            Write-Error "Schema baselines or contract fixtures are stale. Run: ./gradlew.bat :modules:app-api:updateSchemas"
-            exit 1
-          }
-
-      # TODO: RuntimeConfig.java was deleted in 314 F9 (config unification).
-      # This gate needs rewriting to parse the new config surface. Disabled
-      # until then to unblock CI.
-      # - name: Runtime config matrix gate
-      #   if: ${{ !cancelled() }}
-      #   run: node scripts/docs/verify-runtime-config-matrix.mjs
-
-      - name: Module dependency doc freshness gate
-        if: ${{ !cancelled() }}
-        # Side-effect: writes tmp/arch-preflight/module-deps.json, which the
-        # module-deps ratchet (tempdoc 530 §2.8) reads in the next step.
+      - name: Verify module dependency doc is up to date
         run: node scripts/architecture/module-deps.mjs --check-canonical
 
-      - name: Module-deps ratchet — tempdoc 530 §2.8
-        if: ${{ !cancelled() }}
-        run: node scripts/governance/run.mjs --gate module-deps --mode gate --out tmp/governance-module-deps-report.sarif
+      - name: Markdownlint canonical docs
+        run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
 
-      - name: Publish test results
-        uses: dorny/test-reporter@v3
-        if: ${{ !cancelled() }}
+      - name: Verify llms.txt is up to date
+        run: node scripts/docs/llmstxt-generate.mjs --check
+
+      - name: Verify synced skills are up to date
+        run: node scripts/docs/skills-sync.mjs --check
+
+  license-and-notices:
+    name: License and notices
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
         with:
-          name: Test Results
-          path: '**/build/test-results/**/TEST-*.xml'
-          reporter: java-junit
-          list-suites: failed
-          list-tests: failed
-          only-summary: true
-          fail-on-error: true
-          fail-on-empty: true
-          # v2 defaults use-actions-summary to true, which writes to the Job
-          # Summary file instead of creating a GitHub Check Run. Disable it
-          # so test results appear as a Check Run with inline annotations.
-          use-actions-summary: false
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
 
-      - name: PMD annotations
-        if: ${{ !cancelled() }}
-        run: ./scripts/ci/post-pmd-annotations.ps1
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: modules/ui-web/package-lock.json
 
-      # Failure-triage artifact: preserves PMD HTML, JaCoCo, buildHealth,
-      # rewrite patch, and tmp/ reports when `full_build` fails so the next
-      # agent can diagnose without re-running CI. No-op on success.
-      - name: Upload failure artifacts
-        if: failure()
+      - name: Install frontend dependencies
+        run: npm ci --prefix modules/ui-web
+
+      - name: Enforce the license allowlist
+        run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
+
+      - name: Dump Rust/Cargo licenses for the NOTICE projection
+        run: node scripts/codegen/dump-cargo-licenses.mjs
+
+      - name: Dump frontend npm licenses for the NOTICE projection
+        shell: cmd
+        run: |
+          cd modules\ui-web
+          npx --yes license-checker --production --json --relativeOnly > ..\..\build\npm-licenses.json
+
+      - name: NOTICE / THIRD_PARTY_NOTICES are in sync
+        run: node scripts/ci/check-notices-regen.mjs
+
+  build:
+    name: Build (no model blobs)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            modules/ui-web/package-lock.json
+
+      - name: Assemble without model blobs
+        run: ./gradlew.bat assemble -PskipWebBuild=false
+
+  unit-tests:
+    name: Unit tests (${{ matrix.lane }})
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: app-ui
+            artifact: unit-test-attribution-app-ui
+            runner_label: windows-latest/app-ui
+            gradle_tasks: >-
+              :modules:app-agent:test
+              :modules:app-agent-api:test
+              :modules:app-api:test
+              :modules:app-api-tck:test
+              :modules:app-config:test
+              :modules:app-launcher:test
+              :modules:app-observability:test
+              :modules:app-services:test
+              :modules:app-util:test
+              :modules:ui:test
+          - lane: search-worker
+            artifact: unit-test-attribution-search-worker
+            runner_label: windows-latest/search-worker
+            gradle_tasks: >-
+              :modules:adapters-lucene:test
+              :modules:configuration:test
+              :modules:core:test
+              :modules:core-contracts:test
+              :modules:indexer-worker:test
+              :modules:indexing:test
+              :modules:ipc-common:test
+              :modules:worker-core:test
+              :modules:worker-services:test
+          - lane: platform-contracts
+            artifact: unit-test-attribution-platform-contracts
+            runner_label: windows-latest/platform-contracts
+            gradle_tasks: >-
+              :modules:ai-backend:test
+              :modules:api-contract-projection-java:test
+              :modules:app-inference:test
+              :modules:benchmarks:test
+              :modules:dead-code-audit:test
+              :modules:extension-substrate:test
+              :modules:gpu-bridge:test
+              :modules:infra-core:test
+              :modules:ort-common:test
+              :modules:prompt-support:test
+              :modules:reranker:test
+              :modules:ssot-tools:test
+              :modules:system-tests:test
+              :modules:telemetry:test
+              :modules:test-support:test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Unit tests with model-dependent tests self-skipping
+        id: gradle-test
+        run: ./gradlew.bat ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+
+      - name: Report unit-test attribution
+        if: always()
+        run: node scripts/ci/report-unit-test-attribution.mjs --lane "${{ matrix.lane }}" --runner-label "${{ matrix.runner_label }}" --out-json build/ci/unit-test-attribution.json --out-md build/ci/unit-test-attribution.md --top 20 --allow-empty
+
+      - name: Report unit-test advisory budget
+        if: always()
+        run: node scripts/ci/report-unit-test-budget.mjs --lane "${{ matrix.lane }}" --attribution build/ci/unit-test-attribution.json --out-json build/ci/unit-test-budget.json --out-md build/ci/unit-test-budget.md
+
+      - name: Upload unit-test attribution
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ci-failure-reports-${{ github.run_id }}
+          name: ${{ matrix.artifact }}
           path: |
-            **/build/reports/**
-            build/reports/rewrite/rewrite.patch
-            tmp/*.json
-          retention-days: 14
-          if-no-files-found: ignore
+            build/ci/unit-test-attribution.json
+            build/ci/unit-test-attribution.md
+            build/ci/unit-test-budget.json
+            build/ci/unit-test-budget.md
+            modules/**/build/test-results/test/TEST-*.xml
+          if-no-files-found: warn
 
-  stress_tests:
-    # Opt-in at dispatch time via the `runStress` input. Exercises
-    # policy-covered @Tag("stress") suites that `full_build` skips by default.
-    # Under ADR-0026 (manual CI), there is no scheduled cadence: agents invoke
-    # this explicitly after touching concurrency-sensitive code or any
-    # @Tag("stress") test subject.
-    if: ${{ github.event.inputs.runStress == 'true' }}
-    name: Stress Tests (opt-in)
-    runs-on: [self-hosted, Windows, X64, justsearch-perf]
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
-
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Ensure cache compression tools on PATH
-        shell: cmd
-        run: echo C:\Program Files\Git\usr\bin>>"%GITHUB_PATH%"
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: |
-            21
-            ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Stress suite coverage gate
-        run: node scripts/ci/verify-stress-suite-policy.mjs --check
-
-      - name: Run stress tests
-        # -PincludeStress=true enables policy-covered stress suites. The
-        # policy file declares the Gradle tasks, and the coverage gate above
-        # fails if policy and discovered stress tags drift.
-        run: |
-          $tasks = (node scripts/ci/verify-stress-suite-policy.mjs --tasks) -split ' '
-          & ./gradlew.bat @tasks -PincludeStress=true --rerun-tasks
-
-      - name: Publish stress test results
-        uses: dorny/test-reporter@v3
-        if: ${{ !cancelled() }}
-        with:
-          name: Stress Test Results
-          path: '**/build/test-results/**/TEST-*.xml'
-          reporter: java-junit
-          list-suites: failed
-          list-tests: failed
-          only-summary: true
-          fail-on-error: true
-          fail-on-empty: false
-          use-actions-summary: false
-
-  mutation_tests:
-    # Opt-in at dispatch time via the `runMutation` input (tempdoc 555 Pillar C).
-    # PIT re-runs the suite per mutant, so — like the stress lane and per ADR-0026
-    # (manual CI) — it is NOT on the default build graph; agents dispatch it after
-    # touching a registered logic seam. The report producer runs PIT for every seam
-    # module (derived from governance/logic-seams.v1.json) and the test-efficacy gate
-    # ratchets per-seam mutation test-strength (and a no-coverage ceiling).
-    if: ${{ github.event.inputs.runMutation == 'true' }}
-    name: Mutation Tests (opt-in)
-    runs-on: [self-hosted, Windows, X64, justsearch-perf]
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Ensure cache compression tools on PATH
-        shell: cmd
-        run: echo C:\Program Files\Git\usr\bin>>"%GITHUB_PATH%"
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: |
-            21
-            ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Validate the logic-seams register
-        run: node scripts/ci/check-logic-seams.mjs --mode gate
-
-      - name: Run PIT on registered seams + produce strength report
-        run: node scripts/ci/report-pit-strength.mjs --run --out tmp/pit-strength-report.v1.json
-
-      - name: test-efficacy gate (per-seam strength + no-coverage ratchet)
-        run: node scripts/governance/run.mjs --gate test-efficacy --mode gate --out tmp/governance-test-efficacy-report.sarif
-
-      - name: Append governance findings to job summary
-        if: ${{ !cancelled() && hashFiles('tmp/governance-test-efficacy-report.sarif') != '' }}
-        run: node scripts/governance/lib/sarif-to-markdown.mjs --in tmp/governance-test-efficacy-report.sarif >> $env:GITHUB_STEP_SUMMARY
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

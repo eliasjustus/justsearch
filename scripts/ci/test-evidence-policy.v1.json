@@ -1,0 +1,116 @@
+{
+  "kind": "justsearch-test-evidence-policy.v1",
+  "version": 1,
+  "ciSkippedSites": [
+    {
+      "path": "modules/worker-services/src/test/java/io/justsearch/indexerworker/loop/VduEligibilityPdfFixturesTest.java",
+      "element": "class VduEligibilityPdfFixturesTest",
+      "tier": "local-parser-fixture",
+      "owner": "worker extraction / VDU eligibility",
+      "reason": "Real PDF fixtures exercise Tika/PDFBox cold-start behavior that has exceeded hosted Windows unit-test budgets.",
+      "replacementEvidence": "Local targeted run of :modules:worker-services:test with CI unset; future hosted parser lane if this becomes merge-required evidence.",
+      "cadence": "local before changing PDF extraction, VDU eligibility, or fixture resources"
+    },
+    {
+      "path": "modules/worker-services/src/test/java/io/justsearch/indexerworker/extract/StructuredExtractionIntegrationTest.java",
+      "element": "class PdfFixture",
+      "tier": "local-parser-fixture",
+      "owner": "worker structured extraction",
+      "reason": "Nested PDF fixture group exercises Tika PDF behavior that is too environment-sensitive for the broad hosted Windows unit lane.",
+      "replacementEvidence": "Local targeted run of :modules:worker-services:test with CI unset; hosted Unit tests still cover non-PDF structured extraction.",
+      "cadence": "local before changing structured extraction, PDF handling, or parser fixture resources"
+    },
+    {
+      "path": "modules/app-services/src/integrationTest/java/io/justsearch/app/services/worker/RichDocumentIntegrationTest.java",
+      "element": "class RichDocumentIntegrationTest",
+      "tier": "local-worker-process-integration",
+      "owner": "app-services worker integration",
+      "reason": "Spawns real worker processes and depends on local installDist/environment setup outside the public unit-test lane.",
+      "replacementEvidence": "Local :modules:app-services:integrationTest after worker process or rich-document ingestion changes.",
+      "cadence": "local before changing worker spawn, rich document ingestion, or integration wiring"
+    },
+    {
+      "path": "modules/app-services/src/integrationTest/java/io/justsearch/app/services/worker/KnowledgeServerIntegrationTest.java",
+      "element": "method config_loadsSuccessfully",
+      "tier": "local-worker-process-integration",
+      "owner": "app-services worker integration",
+      "reason": "Requires worker distribution/environment setup and is not part of hosted unit-test evidence.",
+      "replacementEvidence": "Local :modules:app-services:integrationTest after KnowledgeServerConfig or worker distribution changes.",
+      "cadence": "local before changing worker config loading or distribution layout"
+    },
+    {
+      "path": "modules/app-services/src/integrationTest/java/io/justsearch/app/services/worker/KnowledgeServerIntegrationTest.java",
+      "element": "method workerSpawner_canBeCreated",
+      "tier": "local-worker-process-integration",
+      "owner": "app-services worker integration",
+      "reason": "Requires worker distribution/environment setup and is not part of hosted unit-test evidence.",
+      "replacementEvidence": "Local :modules:app-services:integrationTest after worker spawning changes.",
+      "cadence": "local before changing WorkerSpawner or worker distribution layout"
+    },
+    {
+      "path": "modules/app-services/src/integrationTest/java/io/justsearch/app/services/worker/KnowledgeServerIntegrationTest.java",
+      "element": "method fullE2E_spawnConnectIngestAndSearch",
+      "tier": "local-worker-process-integration",
+      "owner": "app-services worker integration",
+      "reason": "Spawns a real worker JVM, connects over gRPC, ingests, and searches; this is heavier than hosted unit-test evidence.",
+      "replacementEvidence": "Local :modules:app-services:integrationTest after worker lifecycle, ingestion, or search wiring changes.",
+      "cadence": "local before changing worker lifecycle, ingestion, or search wiring"
+    },
+    {
+      "path": "modules/app-services/src/integrationTest/java/io/justsearch/app/services/worker/KnowledgeServerIntegrationTest.java",
+      "element": "method fullE2E_indexMultipleFilesAndSearchVaried",
+      "tier": "local-worker-process-integration",
+      "owner": "app-services worker integration",
+      "reason": "Spawns a real worker JVM and indexes/searches multiple files; this is heavier than hosted unit-test evidence.",
+      "replacementEvidence": "Local :modules:app-services:integrationTest after worker lifecycle, ingestion, or search wiring changes.",
+      "cadence": "local before changing worker lifecycle, ingestion, or search wiring"
+    },
+    {
+      "path": "modules/ui/src/integrationTest/java/io/justsearch/ui/api/SchemaMismatchStatusContractTest.java",
+      "element": "class SchemaMismatchStatusContractTest",
+      "tier": "local-server-integration",
+      "owner": "UI API status contract",
+      "reason": "Starts local API/server components and seeds a legacy index; this belongs to integration evidence rather than the hosted unit-test lane.",
+      "replacementEvidence": "Local :modules:ui:integrationTest after status schema, schema-mismatch, or LocalApiServer lifecycle changes.",
+      "cadence": "local before changing status contract, schema mismatch handling, or UI API server lifecycle"
+    }
+  ],
+  "declaredTags": [
+    {
+      "tag": "ai",
+      "tier": "opt-in-ai-evidence",
+      "owner": "system-tests AI / model quality",
+      "reason": "AI/model-dependent tests are excluded unless opt-in flags are set.",
+      "cadence": "manual or targeted before changing AI/model-dependent behavior"
+    },
+    {
+      "tag": "systemTest",
+      "tier": "opt-in-system-evidence",
+      "owner": "system-tests end-to-end coverage",
+      "reason": "System tests exercise multi-process behavior and are not part of default hosted unit-test evidence.",
+      "cadence": "manual or release-oriented verification before changing system lifecycle behavior"
+    },
+    {
+      "tag": "experiment",
+      "tier": "local-experiment-evidence",
+      "owner": "inference/search experiment owners",
+      "reason": "Experimental sweep tests provide development evidence and are not branch-protection candidates.",
+      "cadence": "local targeted runs when changing the experiment subject"
+    },
+    {
+      "tag": "evidence",
+      "tier": "local-evidence-fixture",
+      "owner": "search/worker evidence owners",
+      "reason": "Evidence-tagged tests preserve specific measurements or proof cases outside ordinary unit semantics.",
+      "cadence": "local targeted runs when changing the measured or proven behavior"
+    },
+    {
+      "tag": "vdu",
+      "tier": "vdu-integration-evidence",
+      "owner": "VDU processing",
+      "reason": "VDU integration tests are domain evidence and may overlap AI/system-test opt-in behavior.",
+      "cadence": "manual or targeted before changing VDU processing behavior"
+    }
+  ],
+  "stressSuitePolicy": "scripts/ci/stress-suite-policy.v1.json"
+}

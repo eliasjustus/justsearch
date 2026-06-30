@@ -55,6 +55,80 @@ def load_baselines_doc(
     return doc
 
 
+def compare_engine_sets(
+    run_engines: list[str] | None, baseline_engines: list[str] | None
+) -> tuple[str, str | None]:
+    """Pure verdict for the realized-engine-set homogeneity check (tempdoc 644).
+
+    Returns ``(verdict, reason)`` with verdict in ``{"ok", "skip", "mismatch"}``. ``skip`` when
+    either side does not record its engine set (an old release, or a run predating the field) —
+    so enforcement turns on only once a release is recomposed, never breaking existing baselines.
+    A ``mismatch`` is the apples-to-oranges comparison 644 guards (e.g. a CE-on baseline vs a
+    cross-encoder-silently-off HEAD run): comparing their nDCG/latency would average two pipelines.
+    """
+    if run_engines is None or baseline_engines is None:
+        return ("skip", "realized engine set not recorded on one side (backward-compatible no-op)")
+    if sorted(run_engines) == sorted(baseline_engines):
+        return ("ok", None)
+    return (
+        "mismatch",
+        f"the run realized engines {sorted(run_engines)} but the baseline was measured with "
+        f"{sorted(baseline_engines)} — comparing them averages two different pipelines "
+        f"(e.g. cross-encoder on vs off, tempdoc 644)",
+    )
+
+
+def baseline_engine_set(baselines_path: str | Path) -> list[str] | None:
+    """The realized engine set the baseline release was measured under, or ``None`` if not recorded.
+
+    Reads the baselines doc's ``current_release`` pointer → the release's ``cohort.realized_engines``
+    (recorded by ``release.compose``). ``None`` (→ skip) when there is no release pointer, the release
+    file is missing, or it predates the field — never raises.
+    """
+    path = Path(baselines_path)
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        current_release = doc.get("current_release")
+        if not current_release:
+            return None
+        release_path = (path.parent / current_release).resolve()
+        if not release_path.is_file():
+            return None
+        release = json.loads(release_path.read_text(encoding="utf-8"))
+        return (release.get("cohort") or {}).get("realized_engines")
+    except Exception:
+        return None
+
+
+def assert_cohort_engines(
+    run_dir: str | Path,
+    baselines_path: str | Path,
+    *,
+    allow_mismatch: bool = False,
+) -> None:
+    """Refuse a ratchet comparison when the HEAD run's engine set ≠ the baseline's (tempdoc 644).
+
+    Centralized so relevance / perf / leak all inherit one homogeneity check. Reads the run's
+    ``realized_engines`` from ``manifest.json`` and the baseline's from its release; on an
+    un-overridden ``mismatch`` echoes a legible error and ``sys.exit(2)`` (the infra-issue code, as
+    ``run_dataset_ok`` uses). ``skip``/``ok`` return silently. ``--allow-engine-mismatch`` overrides.
+    """
+    manifest_path = Path(run_dir) / "manifest.json"
+    run_manifest = (json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if manifest_path.is_file() else None)
+    run_engines = ((run_manifest or {}).get("model_fingerprints") or {}).get("realized_engines")
+    verdict, reason = compare_engine_sets(run_engines, baseline_engine_set(baselines_path))
+    if verdict == "mismatch" and not allow_mismatch:
+        click.echo(json.dumps({
+            "exit_code": 2,
+            "error": f"engine-set mismatch: {reason}. Re-run with the baseline's engine set, "
+                     f"recompose the release, or pass --allow-engine-mismatch.",
+            "run_engines": sorted(run_engines),
+            "baseline_engines": sorted(baseline_engine_set(baselines_path) or []),
+        }, indent=2), err=True)
+        sys.exit(2)
+
+
 def resolve_run_dir(run_dir: str | None, data_dir: str | Path) -> Path:
     """Return the explicit ``--run-dir`` or the latest eval-results run; echo + ``exit 2`` if none."""
     rd = Path(run_dir) if run_dir else _gate._latest_run_dir(Path(data_dir))

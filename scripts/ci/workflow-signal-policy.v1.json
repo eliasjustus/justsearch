@@ -1,18 +1,39 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 1,
+  "version": 4,
   "defaultStaleDays": 14,
   "workflows": [
     {
       "name": "CI",
       "path": ".github/workflows/ci.yml",
-      "class": "primary-manual-gate",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "ADR-0026 / local verification discipline",
+      "class": "public-hosted-fact-lanes",
+      "expectedTriggers": ["workflow_dispatch", "pull_request", "push"],
+      "owner": "ADR-0044 / public hosted CI fact lanes",
       "failureDefault": "product-regression",
-      "staleDays": 30,
-      "blocking": false,
-      "advisory": true
+      "staleDays": 14,
+      "blocking": true,
+      "advisory": false,
+      "requiredStatusChecks": [
+        "Public claims",
+        "License and notices",
+        "Build (no model blobs)",
+        "Unit tests (app-ui)",
+        "Unit tests (search-worker)",
+        "Unit tests (platform-contracts)",
+        "Secret scan"
+      ]
+    },
+    {
+      "name": "CLA Assistant",
+      "path": ".github/workflows/cla.yml",
+      "class": "contributor-provenance",
+      "expectedTriggers": ["issue_comment", "pull_request_target"],
+      "owner": "CLA.md / CONTRIBUTING.md",
+      "failureDefault": "contributor-policy",
+      "staleDays": 14,
+      "blocking": true,
+      "advisory": false,
+      "requiredStatusChecks": ["cla-assistant"]
     },
     {
       "name": "Build Installer",
@@ -28,7 +49,7 @@
     {
       "name": "Docs lint",
       "path": ".github/workflows/docs-lint.yml",
-      "class": "docs-fast-gate",
+      "class": "docs-manual-gate",
       "expectedTriggers": ["workflow_dispatch"],
       "owner": "documentation maintenance",
       "failureDefault": "product-regression",
@@ -37,13 +58,13 @@
       "advisory": false
     },
     {
-      "name": "Agent Live Eval Nightly",
-      "path": ".github/workflows/agent-live-eval-nightly.yml",
-      "class": "scheduled-quality-signal",
+      "name": "CodeQL",
+      "path": ".github/workflows/codeql.yml",
+      "class": "security-scan",
       "expectedTriggers": ["workflow_dispatch"],
-      "owner": "agent quality / workflow signal governance",
-      "failureDefault": "workflow-assumption-drift",
-      "staleDays": 7,
+      "owner": "security automation",
+      "failureDefault": "security-signal",
+      "staleDays": 30,
       "blocking": false,
       "advisory": true
     },
@@ -55,61 +76,6 @@
       "owner": "tempdocs 400/404 when jseval gate is reached; workflow signal governance for setup drift",
       "failureDefault": "workflow-assumption-drift",
       "staleDays": 7,
-      "blocking": false,
-      "advisory": true
-    },
-    {
-      "name": "RR219 Resilience Governance Nightly",
-      "path": ".github/workflows/rr219-resilience-governance-nightly.yml",
-      "class": "scheduled-governance-signal",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "resilience governance",
-      "failureDefault": "expected-advisory-failure",
-      "staleDays": 7,
-      "blocking": false,
-      "advisory": true
-    },
-    {
-      "name": "RR219 Resilience Soak Weekly",
-      "path": ".github/workflows/rr219-resilience-soak-weekly.yml",
-      "class": "scheduled-governance-signal",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "resilience governance",
-      "failureDefault": "expected-advisory-failure",
-      "staleDays": 14,
-      "blocking": false,
-      "advisory": true
-    },
-    {
-      "name": "CodeQL",
-      "path": ".github/workflows/codeql.yml",
-      "class": "security-scan",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "ADR-0026 / security automation",
-      "failureDefault": "security-signal",
-      "staleDays": 30,
-      "blocking": false,
-      "advisory": true
-    },
-    {
-      "name": "Claim A Report (Windows)",
-      "path": ".github/workflows/claim-a-report-win.yml",
-      "class": "benchmark-evidence",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "benchmark evidence",
-      "failureDefault": "expected-advisory-failure",
-      "staleDays": 30,
-      "blocking": false,
-      "advisory": true
-    },
-    {
-      "name": "Track G Report (Windows)",
-      "path": ".github/workflows/track-g-report-win.yml",
-      "class": "benchmark-evidence",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "benchmark evidence",
-      "failureDefault": "expected-advisory-failure",
-      "staleDays": 30,
       "blocking": false,
       "advisory": true
     },

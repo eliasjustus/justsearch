@@ -24,7 +24,7 @@ after a confidence-calibration pass found that:
 
 ## What lives where
 
-```
+```text
 scripts/governance/
 ├── lib/
 │   ├── git-utils.mjs              shallow-clone detect, baseline-ref resolution, PR-scope diff
@@ -95,7 +95,7 @@ count (no git diff).
 
 ## CLI
 
-```
+```bash
 node scripts/governance/run.mjs --mode warn|gate
                                 [--gate <id>]
                                 [--self-test]
@@ -127,9 +127,11 @@ ratchet-file gates.)
 The **`test-efficacy`** gate (tempdoc 555) ratchets per-seam mutation **test-strength**
 (killed/covered, with `TIMED_OUT` as killed) plus a per-seam `maxNoCoverage` ceiling, over the
 behavioral-law seams declared in `governance/logic-seams.v1.json`. It is **fail-closed** (a registered
-seam absent from an existing report → `seam-not-measured` error) and PIT-driven, so — like `npm-audit`
-under ADR-0026 — it runs in a dispatch-gated CI lane (`runMutation`), not in `check`. The
-cheap `scripts/ci/check-logic-seams.mjs` register-integrity validator runs in the normal gate job
+seam absent from an existing report → `seam-not-measured` error) and PIT-driven, so it is not wired
+into `check` or the public hosted `CI` fact lanes. Produce fresh evidence manually with
+`node scripts/ci/report-pit-strength.mjs --run`, then run
+`node scripts/governance/run.mjs --gate test-efficacy --mode gate`. The cheap
+`scripts/ci/check-logic-seams.mjs` register-integrity validator runs in the normal gate job
 (every CI run + locally). The `seam-hint` PostToolUse hook is the authoring-time oracle.
 
 The kernel briefly carried a non-ratchet, coverage-style gate, `independent-review`
@@ -199,6 +201,6 @@ Gates that don't conform fail-fast before they run.
 ## See also
 
 - tempdoc 530 (class-size ratchet automation) — design tempdoc
-- `docs/reference/contributing/class-size-standard.md` §Enforcement
+- Current gate registry entries describe the active enforcement surfaces.
 - `scripts/governance/gates/wire/` — the wire-Category gate (formerly `scripts/contract-governance/`, retired Pass-7 Phase F)
 - `.claude/rules/tier-register.md` — prose-rule enforcement-tier register

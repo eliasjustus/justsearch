@@ -36,7 +36,7 @@ path-resolution); this panel is where the user finally sees it.
 
 Existing endpoints (from tempdoc 410 §12, no backend changes needed):
 
-```
+```http
 GET /api/diagnostics/ingestion/summary?since=<epochMs>
   → { rollups: [{ outcomeClass, reasonCode, retryPolicy, count, lastObservedAtMs }], count }
 
@@ -50,7 +50,7 @@ GET /api/diagnostics/ingestion/recent?limit=<N>
 
 After T5 ships:
 
-```
+```http
 POST /api/library/resolve-hash
   body: { "pathHash": "<64-char hex>" }
   → 200: { found: true, path: "...", lastSeenAtMs: ..., removedAtMs: ... | null }
@@ -65,7 +65,7 @@ called inside an export / copy / share flow. See [Privacy contract](#privacy-con
 
 After T2-T4 ship:
 
-```
+```http
 GET /api/scans/{scanId}/progress  (Server-Sent Events stream)
   → events:
       progress { filesWalked, filesAdmitted, filesSkipped, bytesWalked, complete? }

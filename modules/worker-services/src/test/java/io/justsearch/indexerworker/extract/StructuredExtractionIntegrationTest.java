@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.DisabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -132,7 +134,10 @@ class StructuredExtractionIntegrationTest {
     }
   }
 
+  /** Local-only PDF fixture coverage; hosted Windows CI keeps Tika PDF fixtures out of broad unit lanes. */
   @Nested
+  @Timeout(60)
+  @DisabledIfEnvironmentVariable(named = "CI", matches = "true")
   class PdfFixture {
 
     @Test

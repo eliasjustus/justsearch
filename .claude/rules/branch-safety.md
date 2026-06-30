@@ -62,7 +62,8 @@ the session continues (e.g., merging from main).
 - **`ExitWorktree`**: Returns to main checkout; worktree is preserved for
   later re-entry or manual cleanup.
 - **Subagent worktrees**: Auto-cleaned if unchanged; returned path if changed.
-- **After merge**: `git branch -d worktree-<name>` from main checkout.
+- **After merge**: GitHub deletes merged source branches; delete local
+  branches only after verifying they were merged.
 
 ## Hard Rules
 
@@ -140,37 +141,52 @@ over (`OWNER_CONFLICT` / `ownership.verdict: CONTENTION`). A `force` takeover re
 direction. The tools return `ownership.verdict` + `recommendedAction` telling you what to do; stop the
 stack when you finish so other agents can use it.
 
-The full model — verdict states (`TAKEOVER_ABANDONED` / `IDLE_HOLD` / `CONTENTION`), the start-tool
-error codes, `acquire_when_free`, the takeover/handshake flow, and the read-only `serve-worktree-fe.cjs`
-FE live-validate — was relocated to the `/dev-stack` skill (tempdoc 620 Phase 3), since it is needed only
-when you run the live backend.
+The full dev-stack contention model moved to `/dev-stack`; load it before live
+backend work.
 
 ## Merge Workflow
 
-1. **Pre-merge verification (required):** From the main worktree, run <!-- rule:pre-merge-gradle-build -->
-   `./gradlew.bat build -x test` **before** merging. If it fails, fix the
-   issue in your worktree first. Do not merge broken code into `main` —
-   other agents and the CI pipeline depend on `main` compiling.
-2. Feature branch merges into `main` (merge commit, not rebase).
-3. **Post-merge verification:** Run `./gradlew.bat build -x test` again to
-   confirm the merge didn't introduce conflicts. If it fails, fix immediately.
-4. After merge: remove worktree, delete branch. On Windows, prefer
+1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
+   `./gradlew.bat build -x test` before marking a PR ready.
+2. Open/update a PR; title/body, review, CI are the durable record.
+3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
+   investigation, and retry commits off `main`.
+4. After merge, update local `main` and run `./gradlew.bat build -x test`.
+5. Remove the worktree. GitHub deletes merged remote branches; delete local
+   branches after verifying the merge. On Windows, prefer
    `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over
    `git worktree remove` — it survives long `node_modules` paths and unlinks
    `node_modules` junctions link-only, so a junction is removed without
    deleting through into main's real `node_modules` (tempdoc 618 §2).
-   This teardown step now also records the `session_id → merge_commit` link for
-   agent-telemetry outcome attribution (tempdoc 622 Layer B): it invokes
-   `record-merge.mjs` against the merge HEAD. A merge done without running the
-   teardown can be backfilled with `node scripts/agent-analytics/record-merge.mjs`.
+   This teardown also records the `session_id → merge_commit` link; backfill
+   with `node scripts/agent-analytics/record-merge.mjs` if needed.
+
+### Publishing docs-only changes (history granularity) <!-- rule:docs-ride-along -->
+
+Public `main` is a curated narrative, not a working log. ADR-0045 already makes
+the merge *squash* a branch into one commit; this rule governs the complementary
+question of whether a change should be its **own** public PR at all (tempdoc 653
+"axis 2").
+
+- A **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) is
+  dated working history. Do not open a standalone PR for a tempdoc-only change.
+  Ride it along in the same PR as the code it documents, or batch several tempdoc
+  edits into one periodic `docs(tempdocs): …` PR.
+- A **canonical-doc** update (`docs/{explanation,reference,how-to,decisions}`) is
+  durable current truth and may stand alone as its own PR/commit.
+- A branch mixing docs with code is already a ride-along — publish it normally.
+
+The `docs-granularity-hint` hook surfaces this at `git push` when a branch
+changes only working history; it never blocks. Rationale and the worked example
+live in `docs/reference/contributing/agent-guide.md` (History publication).
 
 ### Working on shared `main` safely (multi-agent)
 
-The main checkout routinely holds other agents' uncommitted WIP. To keep your
-merge clean and avoid sweeping a neighbour's edits (tempdoc 618 §4):
+The main checkout routinely holds other agents' uncommitted WIP. Keep PR
+publication and cleanup scoped to your branch:
 
-- Resolve the merge **inside your worktree**, then fast-forward `main`, so only
-  your files move and the neighbour's WIP stays untouched.
+- Do not use local merge/fast-forward as the normal public path; publish by PR
+  squash, then update `main`.
 - Stage your own files explicitly (`git add <paths>`), not `git add -A`.
 - For inbox notes, use `node scripts/agent-analytics/note-observation.mjs "…"`
   (618 Seam C) — it writes to *your* per-session shard under `docs/observations.d/`,

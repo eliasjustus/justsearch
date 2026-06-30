@@ -307,8 +307,13 @@ def test_fidelity_does_not_clobber_existing_memory_independence(tmp_path):
     meta = json.loads((ds / "metadata.json").read_text(encoding="utf-8"))
     meta["fidelity"] = {"memory_independence": 1.0, "retrieval_difficulty": None}
     (ds / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    # This test exercises the fidelity-metadata MERGE; it mocks the pipeline instead of
+    # running a real backend, so the tempdoc 644 Axis 2 capability guard (which would refuse
+    # on an unreachable backend) is neutralized here — it has dedicated coverage in
+    # tests/test_preflight.py::TestAssertCapabilities.
     with patch("jseval.run.execute_run", return_value=_summary(0.70)), \
-         patch("jseval.corpus_fidelity.shortcut_leak_rate", return_value=(0.0, 0)):
+         patch("jseval.corpus_fidelity.shortcut_leak_rate", return_value=(0.0, 0)), \
+         patch("jseval.commands.corpus.assert_run_capabilities"):
         r = CliRunner().invoke(main, ["corpus-fidelity", "--dataset", "x",
                                       "--datasets-dir", str(tmp_path / "datasets")])
     assert r.exit_code == 0, r.output

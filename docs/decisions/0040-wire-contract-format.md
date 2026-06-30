@@ -122,8 +122,10 @@ test:
   the report payload. **`bufbuild/buf-action` was considered and
   rejected** per slice 3a-1-8f §A.12 — its load-bearing value
   (`pull_request`-event PR-comment posting + label-as-escape-hatch)
-  is incompatible with ADR-0026's `workflow_dispatch`-only CI model;
-  the buf CLI is invoked directly. Format extensibility lives in the
+  did not fit the then-current ADR-0026 `workflow_dispatch`-only CI
+  model; ADR-0044 later narrowed ADR-0026 for public hosted CI, but it
+  does not by itself re-adopt `bufbuild/buf-action`. The buf CLI is
+  invoked directly. Format extensibility lives in the
   enforcer interface (one implementation per format), not in this
   ADR; concrete enforcers ship when a real second-format consumer
   surfaces.

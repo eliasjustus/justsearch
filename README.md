@@ -1,12 +1,12 @@
 # JustSearch
 
-**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Cloud-grade hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine, in any language.**
+**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Cloud-grade hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine, in 70+ languages.**
 
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 <!-- badges: <<build status>> · <<latest release>> · <<nDCG benchmark badge>> -->
 
-JustSearch indexes your local documents — PDF, email, Office, and hundreds of formats — and answers questions
+JustSearch is local-first: it indexes your local documents — PDF, email, Office, and hundreds of formats — and answers questions
 over them with cited passages, **without anything leaving your machine.** It combines three retrieval paradigms
 (keyword, dense-vector, learned-sparse) with a cross-encoder reranker, and exposes that retrieval over the
 **Model Context Protocol (MCP)** so any AI agent — local or cloud — can use it as a **private retrieval
@@ -37,7 +37,7 @@ performance versus generic file tools — *is in development; reproducible figur
 project's benchmark methodology* (no bare percentage ships until it clears that bar).
 
 **As a desktop app** *(for non-developers)*
-Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch-releases**
+Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch/releases/latest**
 *(Windows; alpha; currently unsigned — see [Status](#status).)*
 
 ## Why JustSearch
@@ -58,16 +58,17 @@ missing cell: **semantic *and* fully offline.** No surveyed alternative occupies
 
 ## Benchmarks
 
-Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json` — commit
-`691d5c5a0`, RTX 4070, ~300 queries/corpus). Numbers are the **default `hybrid` config** unless noted:
+Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
+~300 queries/corpus; measured on the canonical 2026-06-21 release tree in pre-public development). Numbers are
+the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
-| BEIR / SciFact | **0.751** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
-| Enron-QA | 0.740 | |
-| MIRACL-de (German) | 0.725 | multilingual — no per-language tuning |
-| MIRACL-fr (French) | 0.701 | |
-| CourtListener (legal) | **0.97** (`full`) | hybrid default ≈0.62; legal benefits from `full` mode (all retrievers + rerank) |
+| BEIR / SciFact | **0.757** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
+| Enron-QA | 0.719 | |
+| MIRACL-de (German) | 0.728 | multilingual — no per-language tuning |
+| MIRACL-fr (French) | 0.707 | |
+| CourtListener (legal) | 0.608 | hybrid default; legal rises to **0.97** in `full` mode (all retrievers + rerank) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
@@ -108,7 +109,8 @@ Three local processes, isolated for reliability and so the UI **never touches th
 - **Worker** — owns the Lucene index + the retrieval pipeline (BM25/dense/SPLADE/rerank) + OCR.
 - **Inference** — a local `llama-server` for chat/RAG.
 
-They talk over gRPC on `127.0.0.1`. More: [`docs/explanation/`](docs/explanation/).
+They talk over gRPC on `127.0.0.1`. More: [`docs/explanation/01-system-overview.md`](docs/explanation/01-system-overview.md).
+The public API surface is mapped in [`docs/reference/api-contract-map.md`](docs/reference/api-contract-map.md).
 
 ## Privacy
 
@@ -120,7 +122,7 @@ Nothing leaves your machine, and you can check:
 
 ## Status
 
-**Alpha** (`2.0.0-alpha.27`), **Windows-only** (macOS/Linux are not in the current scope). The installer is currently **unsigned**,
+**Alpha** (`0.1.0`), **Windows-only** (macOS/Linux are not in the current scope). The installer is currently **unsigned**,
 so Windows SmartScreen shows an "unknown publisher" warning on first run — signing is in progress. In active
 development since 2025; published 2026. Built in the open with heavy AI-agent assistance — the development
 tooling, the governance/discipline gates, and the design history (`docs/tempdocs/`) all live in this repo, and
@@ -128,7 +130,7 @@ commits are co-authored.
 
 ## Contributing
 
-Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (DCO sign-off; no CLA). Please read
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (CLA required). Please read
 [`NON-GOALS.md`](NON-GOALS.md) first so a change fits the project's scope. Security: [`SECURITY.md`](SECURITY.md).
 You **don't** need any of the agent/governance machinery to contribute — it's published as transparency
 ([`MAINTAINING.md`](MAINTAINING.md)), not a required path.

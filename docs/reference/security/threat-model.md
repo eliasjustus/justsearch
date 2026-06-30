@@ -100,12 +100,15 @@ spirit: read tools (`justsearch_search`/`answer`/`browse`/`status`) vs. the priv
 First run downloads models once. Integrity + availability considerations:
 
 - **Integrity.** Each model package pins a `sha256` in `model-registry.v2.json`; a tampered download
-  fails verification.
-- **Availability / single points of failure.** Project-controlled artifacts resolve from the project's
-  own releases repo. The third-party chat-model GGUF (`huggingface.co/bartowski/...`) and the
-  `ggml-org/llama.cpp` binaries are external; the project mirrors the chat-model GGUF to remove the
-  single point of failure (see tempdoc 633 #6). *(Drift guard: `ModelRegistryLoaderTest` asserts every
-  `downloadUrl` resolves from an allowlisted public host.)*
+  fails verification. Every model/runtime `downloadUrl` must use HTTPS and resolve from an allowlisted
+  public host.
+- **Availability / single points of failure.** Project-controlled model assets resolve from the
+  project's own releases repo. The packaged chat GGUF and mmproj currently resolve from
+  `huggingface.co/bartowski/...`, and the `llama.cpp` binaries resolve from `github.com/ggml-org/...`;
+  those upstream locations remain availability dependencies until the registry points at a
+  project-controlled mirror. *(Drift guard: `ModelRegistryLoaderTest` asserts every `downloadUrl`
+  resolves from an allowlisted public host, and `scripts/docs/check-privacy-claims.mjs` fails if future
+  mirror wording conflicts with the current registry URLs.)*
 
 ## What this model deliberately does not claim
 

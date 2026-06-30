@@ -17,7 +17,7 @@ describe('formatDisplayPath (602 R3)', () => {
   });
 
   it('middle-ellipsis on long paths, preserving the filename', () => {
-    const long = '/Users/elias/Documents/projects/justsearch/modules/ui-web/src/shell-v0/quarterly-report.md';
+    const long = '/Users/alex/Documents/projects/justsearch/modules/ui-web/src/shell-v0/quarterly-report.md';
     expect(long.length).toBeGreaterThan(PATH_DISPLAY_MAX);
     const out = formatDisplayPath(long);
     expect(out).toContain('…');

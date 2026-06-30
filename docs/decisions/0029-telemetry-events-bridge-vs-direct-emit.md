@@ -98,7 +98,7 @@ bridge.
 
 ## Concrete shape (bridge variant)
 
-```
+```text
 modules/<domain>/.../telemetry/
   XxxTelemetryEvents.java          # interface — no telemetry dep
   NoopXxxTelemetryEvents.java      # static INSTANCE singleton
@@ -109,7 +109,7 @@ modules/<consumer-of-domain>/.../<scope>/
   XxxTelemetryAdapter.java         # implements XxxTelemetryEvents,
                                    # holds catalog instruments,
                                    # wired at construction
-```
+```text
 
 The domain class accepts an `XxxTelemetryEvents events` field, defaulted
 to `NoopXxxTelemetryEvents.INSTANCE`. Its construction site (typically
@@ -118,7 +118,7 @@ passes the adapter as the `events` parameter.
 
 ## Concrete shape (direct-emit variant)
 
-```
+```text
 modules/<domain>/.../
   XxxMetricCatalog.java            # public final class implements MetricCatalog
   XxxTags.java                     # typed tag schemas

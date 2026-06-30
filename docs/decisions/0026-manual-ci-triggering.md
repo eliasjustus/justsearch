@@ -1,15 +1,20 @@
 ---
 title: "Manual-Only CI Triggering"
 type: decision
-status: stable
-description: "Repository workflows run only on `workflow_dispatch`. No push, pull_request, or schedule triggers. Agents invoke workflows explicitly when they need remote verification; local-first verification is the primary discipline."
+status: accepted - narrowed by ADR-0044
+description: "Manual-only workflow policy for the former self-hosted/local-runner model; ADR-0044 now narrows this for the public hosted CI lane."
 date: 2026-04-22
 ---
 
 # ADR-0026: Manual-Only CI Triggering
 
 ## Status
-Accepted
+Accepted, narrowed by [ADR-0044](0044-public-hosted-ci-fact-lanes.md).
+
+ADR-0044 supersedes this ADR for the public repository's standard GitHub-hosted
+`CI` lane: that workflow may run on `pull_request`, `push`, and
+`workflow_dispatch`. This ADR remains the historical basis for manual-only
+self-hosted and specialty workflows unless a later decision changes them.
 
 ## Context
 
@@ -25,16 +30,26 @@ The forces at play:
 - Stress tests (`@Tag("stress")`), added in tempdoc 397 §14.21 R3, were initially gated behind a weekly cron. Under the same runner-availability reality, a weekly cron produces the same queue-or-fail problem as auto-triggered runs.
 - A manual-dispatch policy requires agent discipline: if CI is never auto-triggered, regressions can reach `main` undetected unless agents explicitly remember to trigger it.
 
-## Decision
+## Original decision
 
-`.github/workflows/ci.yml` runs on `workflow_dispatch` only. Specifically:
+This was the 2026-04-22 decision for the former self-hosted/local-runner
+primary CI model. ADR-0044 supersedes it for the public repository's standard
+GitHub-hosted `CI` lane.
+
+At the time, `.github/workflows/ci.yml` was changed to run on
+`workflow_dispatch` only. Specifically:
 
 1. **Triggers**: `workflow_dispatch` with two boolean inputs (`skipFrontend`, `runStress`). No `push:`, no `pull_request:`, no `schedule:`.
 2. **Jobs**: `full_build` (always runs on dispatch; the former `fast_build` is deleted) and `stress_tests` (opt-in via `runStress=true`).
 3. **Invocation**: Agents call `gh workflow run ci.yml` (optionally with `-f skipFrontend=true` or `-f runStress=true`) and watch completion with `gh run list --workflow=ci.yml --limit=1`.
 4. **Local gate is mandatory**: agents complete `./gradlew.bat build -x test` and `./gradlew.bat test` (plus the per-subject pre-merge checks in CLAUDE.md "Verification Workflow" step 5 — workflow-triggers, README, contract-governance kernel — when their subjects change) before every commit that touches build-gated surfaces. CI is a secondary remote-verification tool, not a replacement.
 
-Branch-protection rules on `main` **must not** require a CI check. Requiring a check under this policy would deadlock merges because CI never auto-runs; an agent would have to dispatch CI and wait for it before every merge, which defeats the local-first discipline.
+Branch-protection rules on `main` **must not** require this historical manual
+CI check. Requiring a check under the old policy would have deadlocked merges
+because CI never auto-ran; an agent would have had to dispatch CI and wait for
+it before every merge, which defeated the local-first discipline. ADR-0044
+later created stable public-hosted check names that may be required by future
+branch protection, but this ADR does not configure those settings.
 
 ## Alternatives considered
 
@@ -48,21 +63,21 @@ Branch-protection rules on `main` **must not** require a CI check. Requiring a c
 
 ## Consequences
 
-**Positive:**
+**Positive at the time:**
 - CI runs always have a runner. No "no runner available" failures cluttering the notification inbox.
 - CI minutes (or self-hosted wall time) spent only when intentionally requested.
 - Workflow config matches documented policy — new agents reading either source land on the same answer.
 - Stress tests run only when an agent is working on concurrency-relevant code, the moment when their signal matters most.
 - Branch-protection configuration simplifies: no required CI check, no flaky external gates on merge readiness.
 
-**Negative (accepted):**
-- **No auto-regression trap on `main`.** If an agent forgets to trigger CI after a risky change, a regression can reach `main` unnoticed until the next manual run. Mitigated by local-gate discipline (`CLAUDE.md` Verification Workflow) and by the self-hosted runner being fast enough that manual CI after substantive work isn't an ergonomic burden.
-- **Stress-test cadence is discipline-dependent.** The weekly cron that tempdoc 397 §14.21 R3 assumed for concurrency-regression safety is gone. Agents working on `NativeSessionHandle` / ORT session state must remember to set `-f runStress=true`. The `inference-runtime` skill and `/ci-triage` skill should remind agents of this when they touch those files.
-- **PR review can't lean on a CI check.** Human reviewers must verify the author ran CI before merging, or run CI themselves. The risk of "merged without CI" is borne by the merger, not detected automatically.
+**Negative accepted at the time:**
+- **No auto-regression trap on `main`.** Under the old manual-only model, if an agent forgot to trigger CI after a risky change, a regression could reach `main` unnoticed until the next manual run. ADR-0044 supersedes this for the public hosted `CI` lane.
+- **Stress-test cadence is discipline-dependent.** The weekly cron that tempdoc 397 §14.21 R3 assumed for concurrency-regression safety is gone. Agents working on `NativeSessionHandle` / ORT session state should run the local Gradle stress-test opt-in; the public hosted `CI` lane no longer has a `runStress` dispatch input.
+- **PR review couldn't lean on a CI check.** Under the old policy, human reviewers had to verify the author ran CI before merging, or run CI themselves. ADR-0044 supersedes this for the public hosted `CI` lane, though branch protection is still a separate repository-settings decision.
 
-**Neutral:**
-- Workflow still supports `skipFrontend=true` and `runStress=true` as dispatch inputs for flexibility.
-- Other workflows (`docs-lint.yml`, nightly eval/observability/resilience soak, installer builds, dependabot automerge) retain their existing triggers. The policy in this ADR applies specifically to `ci.yml` — the primary build/test suite — not to specialty flows whose failure modes and triggers are tuned separately.
+**Neutral at the time:**
+- The historical workflow supported `skipFrontend=true` and `runStress=true` as dispatch inputs. ADR-0044's public hosted `CI` lane does not.
+- Other workflows (`docs-lint.yml`, nightly eval/observability/resilience soak, installer builds, dependabot automerge) retained their existing triggers at this stage. Later amendments narrowed that behavior, and ADR-0044 later narrowed it again for public hosted `CI`.
 
 ## Related
 
@@ -107,7 +122,7 @@ rather than the self-hosted workstation runner. The user decision on
 2026-05-08 retires that carve-out: **all repository workflows are
 manual-only, regardless of runner class**.
 
-Current policy:
+Policy at the time of this amendment:
 
 1. Every `.github/workflows/*.yml` workflow must expose
    `workflow_dispatch`.
@@ -119,6 +134,8 @@ Current policy:
 4. Security workflows such as CodeQL are also manually dispatched unless
    this ADR is amended again.
 
-This amendment is enforced mechanically by
-`scripts/ci/check-workflow-triggers.mjs`, which fails if any workflow
-reintroduces a forbidden trigger.
+ADR-0044 later narrowed this repository-wide rule for the public hosted `CI`
+lane, which may run on `pull_request`, `push`, and `workflow_dispatch`. The
+mechanical guard is now `scripts/ci/check-workflow-triggers.mjs`, which fails
+when actual workflow triggers do not match
+`scripts/ci/workflow-signal-policy.v1.json`.

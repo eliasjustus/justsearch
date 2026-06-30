@@ -4,7 +4,7 @@
  *
  * The desktop shell (modules/shell/src-tauri) statically links its Cargo dependencies into the
  * shipped binary, so they are redistributed and must be attributed. `cargo metadata` is built-in
- * (no extra tooling), resolves from Cargo.lock, and carries each crate's SPDX `license`. Writes a
+ * (no extra tooling), resolves against Cargo.lock, and carries each crate's SPDX `license`. Writes a
  * sorted {name, version, license}[] to build/cargo-licenses.json (mirrors the npm-dump pattern;
  * gen-notices.mjs reads this pre-generated dump rather than invoking cargo itself).
  *
@@ -21,7 +21,7 @@ const OUT = join(REPO_ROOT, 'build', 'cargo-licenses.json');
 
 const raw = execFileSync(
   'cargo',
-  ['metadata', '--format-version', '1', '--offline', '--manifest-path', MANIFEST],
+  ['metadata', '--format-version', '1', '--locked', '--manifest-path', MANIFEST],
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
 );
 const meta = JSON.parse(raw);

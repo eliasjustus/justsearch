@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-06-18.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-06-29.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -40,6 +40,11 @@ Precedence note:
 | index.hybrid.cc_weight_splade | JUSTSEARCH_HYBRID_CC_WEIGHT_SPLADE | index.hybrid.cc_weight_splade | HYBRID_CC_WEIGHT_SPLADE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.cc_zero_exclude | JUSTSEARCH_HYBRID_CC_ZERO_EXCLUDE | index.hybrid.cc_zero_exclude | HYBRID_CC_ZERO_EXCLUDE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.fusion_strategy | JUSTSEARCH_HYBRID_FUSION_STRATEGY | index.hybrid.fusion_strategy | HYBRID_FUSION_STRATEGY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| - | JUSTSEARCH_HYBRID_LEG_ARBITRATION_ALPHA_DIVERGE | index.hybrid.leg_arbitration_alpha_diverge | HYBRID_LEG_ARBITRATION_ALPHA_DIVERGE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_HYBRID_LEG_ARBITRATION_BM25_INCOHERENCE_MIN | index.hybrid.leg_arbitration_bm25_incoherence_min | HYBRID_LEG_ARBITRATION_BM25_INCOHERENCE_MIN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED | index.hybrid.leg_arbitration_enabled | HYBRID_LEG_ARBITRATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_HYBRID_RERANK_POOL_RECALL_COMPLETE | index.hybrid.leg_recall_complete_enabled | HYBRID_RERANK_POOL_RECALL_COMPLETE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_HYBRID_RERANK_POOL_TOP_N | index.hybrid.leg_recall_complete_top_n | HYBRID_RERANK_POOL_TOP_N | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | index.hybrid.rrf_k | JUSTSEARCH_INDEX_RRF_K | index.hybrid.rrf_k | HYBRID_RRF_K | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.text_candidate_multiplier | JUSTSEARCH_INDEX_HYBRID_TEXT_CANDIDATE_MULTIPLIER | index.hybrid.text_candidate_multiplier | HYBRID_TEXT_CANDIDATE_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.vector_candidate_multiplier | JUSTSEARCH_INDEX_HYBRID_VECTOR_CANDIDATE_MULTIPLIER | index.hybrid.vector_candidate_multiplier | HYBRID_VECTOR_CANDIDATE_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -48,6 +53,7 @@ Precedence note:
 | index.hybrid.vector_rrf_weight | JUSTSEARCH_INDEX_VECTOR_RRF_WEIGHT | index.hybrid.vector_rrf_weight | HYBRID_VECTOR_RRF_WEIGHT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.vector_rrf_weight_low_signal | JUSTSEARCH_INDEX_VECTOR_RRF_WEIGHT_LOW_SIGNAL | index.hybrid.vector_rrf_weight_low_signal | HYBRID_VECTOR_RRF_WEIGHT_LOW_SIGNAL | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.vector_skip_min_chars | JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_CHARS | index.hybrid.vector_skip_min_chars | HYBRID_VECTOR_SKIP_MIN_CHARS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.integrity_check | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.merge.tiered.max_merged_segment_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.merge.tiered.segs_per_tier | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | index.migration.cutover.max_failed_jobs | INDEX_MIGRATION_CUTOVER_MAX_FAILED_JOBS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -61,6 +67,7 @@ Precedence note:
 | index.ocr.limits.per_file_timeout_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.trigger.min_image_pixels | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.queue.max_depth | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.recovery.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.schema_mismatch.policy | JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY | index.schema_mismatch.policy | INDEX_SCHEMA_MISMATCH_POLICY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.similarity.text.b | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.similarity.text.k1 | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
@@ -136,6 +143,7 @@ Precedence note:
 | - | JUSTSEARCH_GPL_REEVAL_SIZE_FACTOR | justsearch.gpl.reeval_size_factor | GPL_REEVAL_SIZE_FACTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_GPU_ENABLED | justsearch.gpu.enabled | GPU_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_GPU_LAYERS | justsearch.gpu.layers | GPU_LAYERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_HEAD_PID | justsearch.head.pid | HEAD_PID | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_HEAD_BUILD_STAMP | justsearch.head.stamp | HEAD_BUILD_STAMP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_HEAD_TRACING_LEVEL | justsearch.head.tracing_level | HEAD_TRACING_LEVEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_HOME | justsearch.home | HOME | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -211,6 +219,7 @@ Precedence note:
 | - | JUSTSEARCH_ORT_PROFILING_DIR | justsearch.ort.profiling_dir | ORT_PROFILING_DIR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_ORT_VERBOSE | justsearch.ort.verbose | ORT_VERBOSE_LOGGING | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_PATH_RESOLUTION_RETENTION_DAYS | justsearch.path_resolution.retention_days | PATH_RESOLUTION_RETENTION_DAYS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_POWER_FORCE_ENERGY_STATE | justsearch.power.force_energy_state | POWER_FORCE_ENERGY_STATE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_PROD | justsearch.prod | PROD_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_QU_ENABLED | justsearch.qu.enabled | QU_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RAG_TOP_K | justsearch.rag.top_k | RAG_TOP_K | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

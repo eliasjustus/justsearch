@@ -92,6 +92,62 @@ describe('computeStability (595 §4.1)', () => {
       cause: 'catching-up',
     });
   });
+
+  it('649: stale poll BUT reachable via another channel ⇒ updating (not channel-stale)', () => {
+    expect(
+      computeStability({ ...settledInput, phase: 'stale', reachableViaContact: true }),
+    ).toEqual({ kind: 'provisional', cause: 'updating' });
+    // No contact ⇒ the genuine lost-channel case stays channel-stale.
+    expect(
+      computeStability({ ...settledInput, phase: 'stale', reachableViaContact: false }),
+    ).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+    // A real higher-severity flux still dominates even when reachable.
+    expect(
+      computeStability({
+        ...settledInput,
+        phase: 'stale',
+        reachableViaContact: true,
+        indexState: 'UNAVAILABLE',
+      }),
+    ).toEqual({ kind: 'provisional', cause: 'worker-restart' });
+  });
+});
+
+describe('649: connection truthfulness under load', () => {
+  it('updating verdict is a calm transition headed "Catching up…"', () => {
+    const v = computeVerdict({
+      phase: 'stale',
+      stability: { kind: 'provisional', cause: 'updating' },
+      readiness: known(readyReadiness),
+      reachableViaContact: true,
+    });
+    expect(v.kind).toBe('transitioning');
+    expect(v.severity).toBe('busy');
+    expect(verdictTone(v.severity)).toBe('info'); // calm, NOT the "Reconnecting…" alarm
+    expect(verdictHeadline(v)).toBe('Catching up…');
+  });
+
+  it('disconnected phase but reachable via contact ⇒ Connecting…, not a false unreachable', () => {
+    const v = computeVerdict({
+      phase: 'disconnected',
+      stability: { kind: 'settled' },
+      readiness: UNKNOWN,
+      reachableViaContact: true,
+    });
+    expect(v.kind).toBe('connecting');
+    expect(verdictHeadline(v)).toBe('Connecting…');
+  });
+
+  it('disconnected with NO contact still escalates to unreachable (no false calm)', () => {
+    const v = computeVerdict({
+      phase: 'disconnected',
+      stability: { kind: 'settled' },
+      readiness: UNKNOWN,
+      reachableViaContact: false,
+    });
+    expect(v.kind).toBe('unreachable');
+    expect(verdictHeadline(v)).toBe('Backend disconnected');
+  });
 });
 
 describe('630: catching-up verdict is a calm transition', () => {
@@ -274,14 +330,17 @@ describe('computeVerdict — stuck-transition escalation (595 §15.2 / E4)', () 
     expect(verdictHeadline(v)).toBe('Rebuilding… (taking longer than expected)');
   });
 
-  it('escalation applies only to rebuild/switch, not e.g. channel-stale', () => {
+  it('migration escalation flags do not attach to channel-stale (it has its own 649 severity)', () => {
     const v = computeVerdict({
       phase: 'connected',
       stability: { kind: 'provisional', cause: 'channel-stale' },
       readiness: UNKNOWN,
       migrationPaused: true, // irrelevant to a connection-stale transition
     });
-    expect(v.severity).toBe('busy');
+    // 649: channel-stale (lost contact, "Reconnecting…") is its OWN warning — distinct from the calm
+    // `updating`/`busy` catch-up. The `reasons` prove the migration `paused` flag did NOT attach (no
+    // 'paused' reason), so the E4 escalation path is still scoped to rebuild/switch only.
+    expect(v.severity).toBe('warn');
     expect(v.reasons).toEqual(['channel-stale']);
   });
 });

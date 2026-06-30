@@ -141,8 +141,8 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [API Responses Declare Runtime Context](decisions/0023-api-responses-declare-runtime-context.md): Any endpoint whose behavior varies by runtime mode must surface that mode in its response to prevent silent behavioral switches.
 - [App Packaging: NSIS, Per-User Install, Download-on-Demand](decisions/0024-app-packaging-nsis-per-user-download.md): Use NSIS installer with per-user install to LocalAppData and post-install model download via Install AI flow.
 - [Core DTO Dual-Type Layering (gRPC vs REST)](decisions/0025-core-dto-dual-type-layering.md): Maintain separate core DTOs (gRPC-aligned) and app-api records (REST-aligned) as intentional layering, not duplication.
-- [Manual-Only CI Triggering](decisions/0026-manual-ci-triggering.md): Repository workflows run only on `workflow_dispatch`. No push, pull_request, or schedule triggers. Agents invoke workflows explicitly when they need remote verification; local-first verification is the primary discipline.
 - [MetricCatalog as the Telemetry Contract](decisions/0027-metric-catalog-as-telemetry-contract.md): Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired.
+- [Public main history publication](decisions/0045-public-main-history-publication.md): Public main receives curated squash commits from pull requests while branch commits remain workspace history.
 
 ### Known Issues
 - [Known Issues](reference/issues/README.md): Severity levels, status values, and issue format.
