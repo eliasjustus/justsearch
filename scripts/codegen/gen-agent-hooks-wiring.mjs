@@ -20,6 +20,14 @@
  *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-public-template  # compose the public settings.json
  *       template (guards-only — drops the founder-analytics hooks; no permissions/env) into the cutover-package.
  *       The go-public flip swaps that template in as .claude/settings.json (tempdoc 631 #2 / F3).
+ *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example    # write .claude/settings.local.json.example
+ *       (the maintainer re-wire seed promised by 631 #2: FULL hooks — incl. the founder-analytics set the
+ *       public template drops — plus documented permissions/env stubs. A maintainer copies it to
+ *       settings.local.json (gitignored) to restore session attribution/telemetry in the public checkout.)
+ *
+ * Bootstrap: when .claude/settings.local.json is ABSENT (the post-cutover public checkout), the default
+ * write and --check seed from settings.local.json.example (else the public settings.json base) instead of
+ * crashing with ENOENT — so a maintainer with no local file yet can still generate one.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -39,6 +47,11 @@ const SETTINGS = join(REPO_ROOT, '.claude', 'settings.local.json');
 const PUBLIC_BASE = join(REPO_ROOT, '.claude', 'settings.json');
 const PUBLIC_TEMPLATE_OUT = join(
   REPO_ROOT, 'docs', 'business', 'go-to-market', 'cutover-package', 'public-settings.json');
+
+// The committable maintainer re-wire seed (631 #2): FULL hooks + documented permissions/env stubs.
+// Committed (not gitignored) so a fresh maintainer clone has a seed; copying it to settings.local.json
+// (which IS gitignored) restores the founder-analytics wiring the public template intentionally drops.
+const LOCAL_EXAMPLE_OUT = join(REPO_ROOT, '.claude', 'settings.local.json.example');
 
 // Founder-local-analytics hooks EXCLUDED from the public template (go-public item 2 / G3 /
 // the "present-but-opt-in, not imposed" finding): each depends on founder-only infra (the
@@ -139,6 +152,37 @@ function renderPublicTemplate(manifest) {
     { ...safeBase, hooks: renderHooksBlock(manifest, PUBLIC_EXCLUDED_HOOKS) }, null, 2) + '\n';
 }
 
+/**
+ * Compose the maintainer re-wire SEED (.claude/settings.local.json.example, 631 #2): the public base
+ * (worktree/mcp/plugins) + the FULL hooks block (no exclusions — the founder-analytics hooks the public
+ * template drops are present here, which is what re-enables session attribution/telemetry) + empty
+ * permissions/env stubs a maintainer fills in per-machine. JSON has no comments, so the copy+customize
+ * step is documented in MAINTAINING.md; the stubs just mark where the per-machine posture goes.
+ */
+function renderLocalExample(manifest) {
+  const base = { ...JSON.parse(readFileSync(PUBLIC_BASE, 'utf8')) };
+  delete base.hooks; // regenerated below as the full set
+  base.permissions = base.permissions ?? { allow: [], deny: [], ask: [] };
+  base.env = base.env ?? {};
+  return JSON.stringify({ ...base, hooks: renderHooksBlock(manifest) }, null, 2) + '\n';
+}
+
+/**
+ * Resolve the base settings object the default write / --check regenerates the `hooks` block into.
+ * Precedence: a maintainer's existing settings.local.json (never clobber their permissions/env) →
+ * the committed example seed → the public settings.json base. The last two paths are the ENOENT
+ * hardening: a public checkout with no local file yet can still generate one instead of crashing.
+ */
+function loadBaseSettings() {
+  if (existsSync(SETTINGS)) return JSON.parse(readFileSync(SETTINGS, 'utf8'));
+  if (existsSync(LOCAL_EXAMPLE_OUT)) {
+    console.error('[gen-agent-hooks-wiring] settings.local.json absent — seeding from settings.local.json.example');
+    return JSON.parse(readFileSync(LOCAL_EXAMPLE_OUT, 'utf8'));
+  }
+  console.error('[gen-agent-hooks-wiring] settings.local.json + .example absent — seeding from public settings.json base');
+  return JSON.parse(readFileSync(PUBLIC_BASE, 'utf8'));
+}
+
 function main() {
   const check = process.argv.includes('--check');
   const manifest = readManifest();
@@ -149,7 +193,21 @@ function main() {
     return;
   }
 
-  const currentSettings = JSON.parse(readFileSync(SETTINGS, 'utf8'));
+  if (process.argv.includes('--emit-local-example')) {
+    writeFileSync(LOCAL_EXAMPLE_OUT, renderLocalExample(manifest));
+    console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, LOCAL_EXAMPLE_OUT));
+    return;
+  }
+
+  // The regen drift-guard is a maintainer-local check: a public checkout legitimately has no
+  // settings.local.json (it is gitignored + analytics-only), so there is nothing to drift. Skip
+  // cleanly rather than fail/crash — keeps `--check` honest where the file is intentionally absent.
+  if (check && !existsSync(SETTINGS)) {
+    console.log('[gen-agent-hooks-wiring] no .claude/settings.local.json (public checkout) — nothing to check; skipping');
+    return;
+  }
+
+  const currentSettings = loadBaseSettings();
   const content = renderSettings(manifest, currentSettings);
 
   if (check) {
