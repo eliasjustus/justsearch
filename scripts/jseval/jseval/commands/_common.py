@@ -22,6 +22,32 @@ _DEFAULT_BASE_URL = f"http://127.0.0.1:{os.environ.get('JUSTSEARCH_API_PORT', '3
 _DEFAULT_BASE_URL_EVAL = "http://127.0.0.1:33221"
 
 
+def assert_run_capabilities(base_url, modes, *, cross_encoder=False, allow_degraded=False):
+    """Tempdoc 644 Axis 2: fail closed when the intended cross-encoder is not realized.
+
+    Derives the intended engine(s) from the run's modes + flags (scoped to the reranker — the
+    documented silent-off trap with a startup-stable signal; see
+    ``preflight.derive_intended_engines``), reads the realized set from ``/api/status``, prints
+    any warnings, and ``sys.exit(1)`` on an un-overridden refusal. Shared by the run + corpus
+    commands. A no-op when nothing is intended (e.g. a pure lexical leg run, or a fidelity run
+    without a hybrid mode).
+    """
+    import sys
+
+    from .. import preflight as _preflight
+
+    intended = _preflight.derive_intended_engines(modes, cross_encoder=cross_encoder)
+    if not intended:
+        return
+    verdict = _preflight.assert_capabilities(base_url, intended, allow_degraded=allow_degraded)
+    for warning in verdict["warnings"]:
+        click.echo(f"Capability warning: {warning}", err=True)
+    if not verdict["ok"]:
+        for refusal in verdict["refusals"]:
+            click.echo(f"Capability refusal: {refusal}", err=True)
+        sys.exit(1)
+
+
 def _write_bench_output(result: dict, output_dir: str | None, filename: str) -> None:
     """Write benchmark result JSON if output_dir is specified."""
     if not output_dir:
