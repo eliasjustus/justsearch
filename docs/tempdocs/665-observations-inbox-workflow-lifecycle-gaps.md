@@ -588,3 +588,26 @@ Per the design pass's own reach judgment, no repo-wide "declared-transience" gat
 principle is recorded (§Reach) but its confirmed current scope is this one artifact. Auditing the 262 open
 entries carried over from "Post-push handoff" (or the 377 open entries now in `## Inbox` overall) for whether
 they are still true on current `main` was explicitly out of scope and not attempted.
+
+### Handoff — where this work lives, and one thing to know before relying on it
+
+Committed on branch `worktree-665-observations-lifecycle` (worktree `.claude/worktrees/665-observations-lifecycle`),
+commit `62a0248` plus a small follow-up commit folding one more observation found while closing out this
+tempdoc (see below). Open a PR from this branch if one does not already exist by the time this is read; check
+GitHub for its merge state before assuming any of this is on `main` yet.
+
+**One caveat that matters for anyone verifying `observation-shard-hint` after this merges**: hook wiring is
+generated, not automatic. `governance/agent-hooks.v1.json` is the tracked, committed authority, but
+`.claude/settings.local.json` (what Claude Code actually reads) is gitignored and generated per-checkout by
+`node scripts/codegen/gen-agent-hooks-wiring.mjs`. Merging this tempdoc's manifest change does **not** by itself
+make the new hook fire in any *other* existing worktree or checkout — each one needs that command run once
+locally first. This is not new to this tempdoc (every hook in the manifest has always worked this way, and
+there is no regen-reminder hook for manifest edits, unlike `lockfile-hint` for `build.gradle.kts` or
+`docs-regen-hint` for canonical docs) — it was simply re-discovered while wiring this hook, and is now logged
+as its own one-line entry in `docs/observations.md`'s Inbox so it isn't forgotten as a separate, unrelated gap.
+Do not assume `observation-shard-hint` is "live everywhere" post-merge without checking this.
+
+**Git state at session end**: the worktree is clean (nothing uncommitted). The main checkout has pre-existing
+ambient state unrelated to this tempdoc — a modified `gradlew.bat` and several untracked `models/**/*.onnx`
+files — present before this session started and not touched by it; left as-is per the rule against altering
+files in the main checkout that this session did not create.
