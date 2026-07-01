@@ -10,7 +10,10 @@
  */
 
 export interface InferenceSnapshot {
-  mode?: string;
+  // Tempdoc 663 Stage 2 — matches the backend's Mode enum (app-api Mode.java) 1:1. Previously an
+  // untyped `string`, which let 'transitioning' (a real backend value) escape the FE's type system;
+  // `aiStateStore.computeRuntime()` silently collapsed it to 'unknown'.
+  mode?: 'online' | 'indexing' | 'transitioning' | 'offline';
   available?: boolean;
   starting?: boolean;
   embeddingQueueSize?: number;
