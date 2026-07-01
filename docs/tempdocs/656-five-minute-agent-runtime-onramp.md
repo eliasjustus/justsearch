@@ -1,7 +1,7 @@
 ---
 title: "Dev inference should be GPU-only with a shared, acquire-once runtime: remove the silent CPU llama-server fallback (a cross-worktree DOS that contradicts the settled GPU-primary direction) and give the GPU runtime the download-once/share-across-worktrees property models already have. (AI-readiness diagnosability substrate already shipped as Tasks 0-5.)"
 type: tempdocs
-status: "§Long-term design settled (seventh pass, 2026-07-01) — NOT yet implemented. The design has two coupled moves: (Move 1) remove the CPU llama-server from the dev environment entirely — dev-runner's 618 §3 auto-staging of a CPU baseline creates a silent fallback where an agent that fails to get GPU runs the 9B GGUF on CPU (10x slower + saturates all cores → DOSes every concurrent worktree), which directly contradicts the settled GPU-primary direction (tempdoc 381: CPU GGUF chat is 'not degraded — it's unusable', CPU profiles never download the GGUF); removing the CPU baseline makes inference fail *closed* (truthfully 'unavailable' via the shipped Tasks 0-5 substrate) by construction, since there is then nothing to silently fall back to. (Move 2) give the GPU (cuda12) runtime the same acquire-once/share-across-worktrees property models already have via JUSTSEARCH_MODELS_DIR — it currently has NO shared-location mechanism at all, so without this Move 1 would leave dev with no inference. The moves are coupled: Move 1 alone = no dev inference; Move 2 alone = trap remains. Production bundling (bundleSidecarResources, no-GPU users) is a SEPARATE seam and stays untouched. Earlier passes: diagnosability (Tasks 0-5) shipped + live-verified; §Root-cause + §Reframing traced the acquisition gap and its coupling to worktree-sharing; 618 cross-referenced. Nothing implemented this pass — design/theorization only, per instruction."
+status: "IMPLEMENTED + live/browser-verified 2026-07-01 (ninth pass, see §Implementation). Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -1409,4 +1409,62 @@ mostly-mechanical change with a couple of bounded decisions, which is squarely S
 Effort should be medium (not low) because production-non-regression and the "don't reintroduce a
 silent CPU path via some other seam" check reward care, and the implementer must live-verify GPU-only
 dev end-to-end (exactly the run this pass proved is achievable).
+
+## §Implementation (ninth pass, 2026-07-01)
+
+Move 1 + Move 2 implemented. **Node-only change** (zero Java / gradle / production touched), confirmed
+by `git status`. Files:
+
+- **`scripts/dev/dev-runner.cjs`** — the heart of both moves.
+  - `ensureLlamaStagedInNativeBin()` (618 §3, staged a CPU baseline into the worktree) →
+    **`ensureSharedCuda12Staged()`**: never stages a CPU baseline; instead one-time-populates the
+    **shared main-checkout** cuda12 (`mainRepoRoot/modules/ui/native-bin/llama-server/variants/cuda12`)
+    from the Gradle cuda stage, idempotent, `hasAnyLlamaRuntime` don't-clobber guard preserved.
+  - New pure helper **`resolveCuda12ServerExe(worktreeRoot, sharedRoot, exeName)`** (exported in
+    `__test`): resolves the worktree's own cuda12 first, else the shared main-checkout cuda12; returns
+    `null` (→ `JUSTSEARCH_SERVER_EXE` unset → fail closed) otherwise. **Never resolves a CPU baseline.**
+    `resolveAiDevEnv()`'s server-exe block now calls it (dropped the flat-CPU-baseline + legacy-root
+    candidates).
+- **`scripts/dev/prepare-worktree.cjs`** — corrected the now-false "auto-stages a CPU baseline" docs;
+  documents the one-time `./gradlew :modules:ui:stageLlamaCudaVariant` at the main checkout (GPU-only).
+- **`scripts/dev/justsearch-dev-mcp/server.mjs`** — the REPORT-ONLY runtime-readiness check now probes
+  cuda12 only (worktree + shared main, via `resolveMainRepoRoot`) and its message points at the
+  `stageLlamaCudaVariant` remedy instead of advertising a CPU baseline.
+- **`scripts/dev/test-dev-runner-runtime-resolution.mjs`** (new) — regression test pinning the
+  load-bearing guarantee: cuda12-only resolution, shared-vs-worktree precedence, and — the core
+  anti-regression — a CPU baseline is **never** resolved even when present (returns `null`).
+
+### Deferred (documented in §Long-term design; not in this pass, by scope)
+The mode-transition manifest-reason polish and the ORT-CUDA (GPU embedding) sharing — both explicitly
+optional/orthogonal; the reported problem (the 9B-LLM CPU DOS) is fully addressed without them.
+
+### Validation (all passed)
+1. **Static/tests:** `node -c` on all edited files; the new resolution test green; existing
+   `test-dev-runner-{pruning,admission,gate-integration}.mjs` green (regression clean). No Java changed.
+2. **Auto-populate (my `ensureSharedCuda12Staged`), live:** seeded the main checkout's Gradle build
+   stage with a complete cuda12 (from the already-present 643 runtime, cuda prebuilt zips confirmed
+   cached — the acquisition path is real, just not re-downloaded), started a dev stack from this
+   worktree with **no env override** → console logged `[dev] 656: staged shared cuda12 GPU runtime
+   into F:\justsearch-public\...\variants\cuda12`, and the previously-absent shared native-bin cuda12
+   was **populated**. No CPU baseline was staged anywhere (Move 1 confirmed).
+3. **End-to-end GPU-only dev with the ACTUAL dev-runner logic:** the running llama-server was verifiably
+   the **shared main-checkout** exe (`F:\justsearch-public\modules\ui\native-bin\llama-server\variants\
+   cuda12\llama-server.exe ... -ngl 99`), resolved by `resolveCuda12ServerExe` from the shared location
+   (not the worktree). A real API query (`/api/chat/free`) answered coherently on GPU ("Red, green,
+   blue").
+4. **Browser (required — user-visible surface):** loaded the real UI (`localhost:5173`); status bar
+   showed **"Online — Qwen Qwen3.5-9B"** (green) — the only banner a mild "LambdaMART reranker not
+   configured", not "AI offline"; a Document Q&A ("cross-encoder reranking arbitration") returned a
+   coherent, grounded, **cited** answer rendered in the chat surface. GPU inference works end-to-end
+   in the real UI via the shared runtime.
+5. **Fail-closed** (re-confirmed this session, confidence pass): with no cuda12 resolvable, the stack
+   starts, search works (HYBRID), and chat fails gracefully (`AI_OFFLINE`) — no CPU fallback, no crash.
+6. Dev stack stopped cleanly; no llama-server left running. The shared cuda12 populated at the main
+   checkout is **left in place** — that is the intended one-time bootstrap, and GPU dev now works for
+   every worktree with zero per-worktree download (Move 2 delivered).
+
+**Outcome:** dev inference is now GPU-only with a shared, acquire-once runtime. An agent that can't
+reach the GPU no longer silently drops onto a 9B-on-CPU path that DOSes concurrent worktrees — it gets
+fast GPU inference (shared) or a clean, truthful "unavailable" (fail closed). The reported incident's
+root cause is fixed. Production bundling untouched.
 

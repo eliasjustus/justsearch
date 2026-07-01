@@ -367,62 +367,74 @@ function hasAnyLlamaRuntime(nativeBin, exeName) {
 }
 
 /**
- * Tempdoc 618 §3: make the CPU `default` llama-server resolvable for a FRESH dev checkout so
- * `ai_activate {variantId:"default"}` can verify the LLM tier without the ~3 GB "Install AI" GPU
- * download.
+ * Tempdoc 656 (Move 1 + Move 2): provision the SHARED GPU (cuda12) llama-server runtime ONCE, at the
+ * MAIN checkout, so every worktree references one copy with zero per-worktree download — the same
+ * share-from-the-main-checkout property models already have via JUSTSEARCH_MODELS_DIR (see below).
  *
- * CRITICAL: native-bin/llama-server is the RUNTIME's install directory — "Install AI" extracts the
- * cuda12 GPU variant into native-bin/llama-server/variants/cuda12/ (AiInstallService), and that
- * install persists across sessions. So this function treats native-bin as read-only the moment it
- * holds ANY runtime (flat baseline OR any variant) and bails — it must never overwrite or prune a
- * user-installed cuda12 (the build's prebuilt cuda12 is a DIFFERENT artifact, and on GPU hosts
- * RuntimeActivationService auto-selects cuda12 with no CPU fallback, so a clobber hard-breaks
- * activation). When native-bin is genuinely empty it copies the CPU baseline ONLY (flat files, never
- * variants/) — cuda12 stays exclusively "Install AI"'s domain. Idempotent; target is gitignored.
+ * This deliberately NO LONGER stages a CPU llama-server baseline (that was tempdoc 618 §3). Per the
+ * settled GPU-primary product direction (tempdoc 381: CPU GGUF chat is "not degraded — it's
+ * unusable") and tempdoc 656, dev inference is GPU-only: a CPU baseline in dev is a silent fallback
+ * that runs the 9B model on CPU (~10x slower + saturates every core → DOSes concurrent worktrees).
+ * With no CPU baseline present, inference fails CLOSED (truthful "unavailable" via the runtime
+ * manifest's reason codes) instead of silently degrading onto CPU.
+ *
+ * Populate source: the Gradle cuda stage (`stageLlamaCudaVariant` → build/llama-server/stage/
+ * variants/cuda12), produced by a one-time `./gradlew :modules:ui:stageLlamaCudaVariant` at the main
+ * checkout. Target: the main checkout's shared native-bin. Idempotent; never clobbers an existing
+ * runtime (`hasAnyLlamaRuntime` guard — e.g. an Install-AI'd cuda12); target is gitignored.
  */
-function ensureLlamaStagedInNativeBin() {
+function ensureSharedCuda12Staged() {
   if (process.platform !== 'win32') return; // prebuilt llama-server staging is Windows-only in dev
   const exeName = 'llama-server.exe';
-  const nativeBin = path.join(repoRoot, 'modules', 'ui', 'native-bin', 'llama-server');
-  // Never touch a native-bin that already holds a runtime — protects an Install-AI'd cuda12.
-  if (hasAnyLlamaRuntime(nativeBin, exeName)) return;
-  const stageCandidates = [
-    path.join(repoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage'),
-    path.join(mainRepoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage'),
+  // The ONE shared runtime location every worktree references (main checkout, gitignored).
+  const sharedNativeBin = path.join(mainRepoRoot, 'modules', 'ui', 'native-bin', 'llama-server');
+  const sharedCuda12 = path.join(sharedNativeBin, 'variants', 'cuda12');
+  // Idempotent + don't-clobber: if the shared native-bin already holds any runtime, leave it.
+  if (hasAnyLlamaRuntime(sharedNativeBin, exeName)) return;
+  // Source: a Gradle-built cuda12 stage (main checkout preferred; worktree accepted as a fallback).
+  const cudaStageCandidates = [
+    path.join(mainRepoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage', 'variants', 'cuda12'),
+    path.join(repoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage', 'variants', 'cuda12'),
   ];
-  const stageDir = stageCandidates.find((d) => fs.existsSync(path.join(d, exeName)));
-  if (!stageDir) return; // not built yet — preflight reports the remedy
+  const srcDir = cudaStageCandidates.find((d) => fs.existsSync(path.join(d, exeName)));
+  if (!srcDir) return; // no cuda12 built yet — `./gradlew :modules:ui:stageLlamaCudaVariant` once (the MCP readiness message reports this remedy)
   try {
-    fs.mkdirSync(nativeBin, { recursive: true });
-    // CPU baseline ONLY: copy flat files, skip variants/ (and any subdir) so we never introduce a
-    // build-cuda12 alongside / over an Install-AI one.
-    for (const ent of fs.readdirSync(stageDir, { withFileTypes: true })) {
+    fs.mkdirSync(sharedCuda12, { recursive: true });
+    // Copy the full cuda12 dir (exe + adjacent CUDA DLLs — llama-server loads them from its own dir).
+    for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
       if (ent.isDirectory()) continue;
-      fs.copyFileSync(path.join(stageDir, ent.name), path.join(nativeBin, ent.name));
+      fs.copyFileSync(path.join(srcDir, ent.name), path.join(sharedCuda12, ent.name));
     }
-    console.error(`[dev] 618 §3: staged CPU baseline into empty native-bin from ${stageDir}`);
+    console.error(`[dev] 656: staged shared cuda12 GPU runtime into ${sharedCuda12} from ${srcDir}`);
   } catch (err) {
-    console.error(`[dev] 618 §3: warn — failed to stage CPU baseline into native-bin: ${err.message}`);
+    console.error(`[dev] 656: warn — failed to stage shared cuda12 runtime: ${err.message}`);
   }
+}
+
+/**
+ * Tempdoc 656: pure cuda12-only server-exe resolution — a worktree's own (deliberately Install-AI'd)
+ * cuda12 first, else the SHARED main-checkout cuda12. Returns the resolved exe path, or null (→
+ * JUSTSEARCH_SERVER_EXE stays unset → inference fails CLOSED). NEVER returns a CPU baseline: dev is
+ * GPU-only (a CPU 9B fallback DOSes concurrent worktrees). Pure (params + fs only) so it is unit
+ * testable; the anti-regression it guards is "a CPU llama-server never gets resolved in dev."
+ */
+function resolveCuda12ServerExe(worktreeRoot, sharedRoot, exeName) {
+  const cuda12 = ['modules', 'ui', 'native-bin', 'llama-server', 'variants', 'cuda12', exeName];
+  const candidates = [
+    path.join(worktreeRoot, ...cuda12),   // worktree's own cuda12 (rare — a deliberate local install)
+    path.join(sharedRoot, ...cuda12),     // the shared main-checkout cuda12 (the normal path)
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
 function resolveAiDevEnv() {
   const env = {};
-  // Tempdoc 618 §3: stage the runtime into native-bin so the exe probe below (and `ai_activate`)
-  // can resolve it on a fresh dev checkout.
-  ensureLlamaStagedInNativeBin();
+  // Tempdoc 656: provision the shared cuda12 GPU runtime (once, at the main checkout) so this and
+  // every other worktree can reference it. Deliberately NO CPU baseline staging (GPU-only dev).
+  ensureSharedCuda12Staged();
   if (!process.env.JUSTSEARCH_SERVER_EXE) {
     const exeName = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
-    const uiNativeBin = path.join(repoRoot, 'modules', 'ui', 'native-bin', 'llama-server');
-    const candidates = [
-      // Prefer cuda12 variant if available (statically-linked CUDA, no toolkit needed)
-      path.join(uiNativeBin, 'variants', 'cuda12', exeName),
-      // CPU baseline staged into modules/ui native-bin (618 §3 auto-stage)
-      path.join(uiNativeBin, exeName),
-      // Legacy/root native-bin location
-      path.join(repoRoot, 'native-bin', 'llama-server', exeName),
-    ];
-    const found = candidates.find((p) => fs.existsSync(p));
+    const found = resolveCuda12ServerExe(repoRoot, mainRepoRoot, exeName);
     if (found) env.JUSTSEARCH_SERVER_EXE = found;
   }
   if (!process.env.JUSTSEARCH_MODELS_DIR) {
@@ -1810,6 +1822,7 @@ if (require.main === module) {
       resolveMainRepoRoot,
       mainRepoRoot,
       repoRoot,
+      resolveCuda12ServerExe,
     },
   };
 }
