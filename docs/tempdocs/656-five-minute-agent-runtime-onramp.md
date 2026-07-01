@@ -1468,3 +1468,19 @@ reach the GPU no longer silently drops onto a 9B-on-CPU path that DOSes concurre
 fast GPU inference (shared) or a clean, truthful "unavailable" (fail closed). The reported incident's
 root cause is fixed. Production bundling untouched.
 
+### Post-implementation review fix (2026-07-01)
+
+A critical review of the above found one substantive bug: `ensureSharedCuda12Staged`'s populate guard
+used `hasAnyLlamaRuntime` (flat CPU baseline OR any variant), so a **stray flat CPU baseline** in the
+shared native-bin (e.g. left by the old dev-runner if ever run from the main checkout) would trip the
+guard and silently block cuda12 auto-provisioning — GPU dev would fail closed with no clear cause even
+after the documented `stageLlamaCudaVariant` step. Fixed by guarding **specifically on the cuda12
+exe's presence** (still protects an Install-AI'd/staged cuda12; a stray CPU baseline no longer blocks),
+extracting the populate into a pure, unit-tested `stageSharedCuda12(sharedNativeBin, cudaStageCandidates,
+exeName)` helper (mirroring `resolveCuda12ServerExe`), and removing the now-unused `hasAnyLlamaRuntime`.
+The regression is pinned by a new test case (stray CPU baseline present + no cuda12 → still provisions).
+Re-verified: extended + existing dev-runner tests green; live smoke — the wrapper correctly skips when
+cuda12 is already present, resolves the shared main-checkout cuda12 (`-ngl 99`), and a real query
+answers on GPU. Other review items were ruled out (clean rename; nothing depends on `ai_activate
+{default}`; a harmless `mainRepoRoot` shadow in the MCP readiness message). No security/privacy issues.
+

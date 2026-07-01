@@ -350,20 +350,28 @@ async function pruneHistoricRuns({
 }
 
 /**
- * Does native-bin/llama-server already hold ANY llama-server runtime — a flat `default` baseline
- * OR any `variants/<id>/llama-server.exe` (e.g. the cuda12 variant that "Install AI" extracts)?
+ * Tempdoc 656: pure one-time populate of the shared cuda12 GPU runtime. Guarded specifically on the
+ * cuda12 exe (NOT "any llama-server runtime") — an existing cuda12 (Install-AI'd or previously staged)
+ * is protected, but a stray flat CPU baseline in the same native-bin does NOT block provisioning
+ * (that would silently break GPU dev after a stale CPU baseline was left behind). Copies the Gradle
+ * cuda stage (exe + adjacent CUDA DLLs) into the shared native-bin. Pure (params + fs) → unit testable.
+ *
+ * @returns the staged cuda12 exe path if it copied, else null (already present, or no stage source).
  */
-function hasAnyLlamaRuntime(nativeBin, exeName) {
-  if (fs.existsSync(path.join(nativeBin, exeName))) return true;
-  const variantsDir = path.join(nativeBin, 'variants');
-  try {
-    for (const d of fs.readdirSync(variantsDir, { withFileTypes: true })) {
-      if (d.isDirectory() && fs.existsSync(path.join(variantsDir, d.name, exeName))) return true;
-    }
-  } catch {
-    /* no variants/ dir */
+function stageSharedCuda12(sharedNativeBin, cudaStageCandidates, exeName) {
+  const sharedCuda12 = path.join(sharedNativeBin, 'variants', 'cuda12');
+  const sharedCuda12Exe = path.join(sharedCuda12, exeName);
+  // Idempotent + don't-clobber, cuda12-SPECIFIC: skip only if a cuda12 runtime is already present.
+  if (fs.existsSync(sharedCuda12Exe)) return null;
+  const srcDir = cudaStageCandidates.find((d) => fs.existsSync(path.join(d, exeName)));
+  if (!srcDir) return null; // no cuda12 built yet — the MCP readiness message reports the remedy
+  fs.mkdirSync(sharedCuda12, { recursive: true });
+  // Copy the full cuda12 dir (exe + adjacent CUDA DLLs — llama-server loads them from its own dir).
+  for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (ent.isDirectory()) continue;
+    fs.copyFileSync(path.join(srcDir, ent.name), path.join(sharedCuda12, ent.name));
   }
-  return false;
+  return sharedCuda12Exe;
 }
 
 /**
@@ -380,32 +388,22 @@ function hasAnyLlamaRuntime(nativeBin, exeName) {
  *
  * Populate source: the Gradle cuda stage (`stageLlamaCudaVariant` → build/llama-server/stage/
  * variants/cuda12), produced by a one-time `./gradlew :modules:ui:stageLlamaCudaVariant` at the main
- * checkout. Target: the main checkout's shared native-bin. Idempotent; never clobbers an existing
- * runtime (`hasAnyLlamaRuntime` guard — e.g. an Install-AI'd cuda12); target is gitignored.
+ * checkout. Target: the main checkout's shared native-bin (gitignored). Idempotent; the cuda12-specific
+ * guard protects an existing cuda12 while ignoring a stray flat CPU baseline (see stageSharedCuda12).
  */
 function ensureSharedCuda12Staged() {
   if (process.platform !== 'win32') return; // prebuilt llama-server staging is Windows-only in dev
   const exeName = 'llama-server.exe';
   // The ONE shared runtime location every worktree references (main checkout, gitignored).
   const sharedNativeBin = path.join(mainRepoRoot, 'modules', 'ui', 'native-bin', 'llama-server');
-  const sharedCuda12 = path.join(sharedNativeBin, 'variants', 'cuda12');
-  // Idempotent + don't-clobber: if the shared native-bin already holds any runtime, leave it.
-  if (hasAnyLlamaRuntime(sharedNativeBin, exeName)) return;
   // Source: a Gradle-built cuda12 stage (main checkout preferred; worktree accepted as a fallback).
   const cudaStageCandidates = [
     path.join(mainRepoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage', 'variants', 'cuda12'),
     path.join(repoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage', 'variants', 'cuda12'),
   ];
-  const srcDir = cudaStageCandidates.find((d) => fs.existsSync(path.join(d, exeName)));
-  if (!srcDir) return; // no cuda12 built yet — `./gradlew :modules:ui:stageLlamaCudaVariant` once (the MCP readiness message reports this remedy)
   try {
-    fs.mkdirSync(sharedCuda12, { recursive: true });
-    // Copy the full cuda12 dir (exe + adjacent CUDA DLLs — llama-server loads them from its own dir).
-    for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
-      if (ent.isDirectory()) continue;
-      fs.copyFileSync(path.join(srcDir, ent.name), path.join(sharedCuda12, ent.name));
-    }
-    console.error(`[dev] 656: staged shared cuda12 GPU runtime into ${sharedCuda12} from ${srcDir}`);
+    const staged = stageSharedCuda12(sharedNativeBin, cudaStageCandidates, exeName);
+    if (staged) console.error(`[dev] 656: staged shared cuda12 GPU runtime into ${path.dirname(staged)}`);
   } catch (err) {
     console.error(`[dev] 656: warn — failed to stage shared cuda12 runtime: ${err.message}`);
   }
@@ -1823,6 +1821,7 @@ if (require.main === module) {
       mainRepoRoot,
       repoRoot,
       resolveCuda12ServerExe,
+      stageSharedCuda12,
     },
   };
 }

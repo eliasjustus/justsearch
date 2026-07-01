@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { resolveCuda12ServerExe } = require(path.join(__dirname, 'dev-runner.cjs')).__test;
+const { resolveCuda12ServerExe, stageSharedCuda12 } = require(path.join(__dirname, 'dev-runner.cjs')).__test;
 
 const EXE = 'llama-server.exe';
 
@@ -67,7 +67,48 @@ function main() {
       '(3) a CPU baseline must NEVER be resolved — GPU-only dev fails closed instead',
     );
 
-    console.log('OK  test-dev-runner-runtime-resolution: cuda12-only resolution, no CPU fallback (656)');
+    // ---- stageSharedCuda12: the populate guard must be cuda12-specific ----
+    const sharedNb = (root) => path.join(root, 'modules', 'ui', 'native-bin', 'llama-server');
+    const stageSrc = (root) => path.join(root, 'modules', 'ui', 'build', 'llama-server', 'stage', 'variants', 'cuda12');
+    function withStageSource(root) {
+      // a minimal but complete-looking cuda12 stage (exe + a DLL, to prove the whole dir copies).
+      touch(path.join(stageSrc(root), EXE));
+      touch(path.join(stageSrc(root), 'ggml-cuda.dll'));
+      return [stageSrc(root)];
+    }
+
+    // (4) THE REGRESSION: a stale flat CPU baseline present in the shared native-bin, but NO cuda12,
+    // and a valid cuda12 stage source → stageSharedCuda12 STILL provisions cuda12 (the old
+    // hasAnyLlamaRuntime guard would have wrongly skipped, silently breaking GPU dev).
+    const m4 = path.join(tmp, 'm4');
+    touch(path.join(sharedNb(m4), EXE)); // stray flat CPU baseline (must NOT block)
+    const staged4 = stageSharedCuda12(sharedNb(m4), withStageSource(m4), EXE);
+    assert.equal(
+      staged4,
+      path.join(sharedNb(m4), 'variants', 'cuda12', EXE),
+      '(4) a stray flat CPU baseline must NOT block cuda12 provisioning',
+    );
+    assert.ok(fs.existsSync(path.join(sharedNb(m4), 'variants', 'cuda12', 'ggml-cuda.dll')),
+      '(4) the full cuda12 dir (incl. DLLs) should be copied');
+
+    // (5) idempotent/protect: cuda12 already present → returns null, does not re-copy.
+    const m5 = path.join(tmp, 'm5');
+    touch(path.join(sharedNb(m5), 'variants', 'cuda12', EXE));
+    assert.equal(
+      stageSharedCuda12(sharedNb(m5), withStageSource(m5), EXE),
+      null,
+      '(5) an existing cuda12 must be protected (no re-copy)',
+    );
+
+    // (6) no stage source → returns null (nothing to do).
+    const m6 = path.join(tmp, 'm6');
+    assert.equal(
+      stageSharedCuda12(sharedNb(m6), [stageSrc(m6)], EXE),
+      null,
+      '(6) no cuda12 stage source → returns null',
+    );
+
+    console.log('OK  test-dev-runner-runtime-resolution: cuda12-only resolution + cuda12-specific populate guard (656)');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
