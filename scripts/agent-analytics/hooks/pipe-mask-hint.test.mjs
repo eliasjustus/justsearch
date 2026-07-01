@@ -51,6 +51,10 @@ const CORPUS = [
   ['ctest | grep Failed', true],
   ['gradlew.bat check | tail -100', true],
   ['npm test | rg FAIL', true],
+  // `$?` / `&& echo` AFTER a pipe read the pipe's (tail's) exit, not the build's —
+  // still masked, so these MUST fire. `| tail; echo $?` is the exact §10a recurrence.
+  ['./gradlew build -x test | tail; echo $?', true],
+  ['./gradlew build | tail -25 && echo done', true],
 
   // NEGATIVES — must NOT fire.
   ['cat build.log | tail -25', false], // reading a log, not running a build
@@ -58,10 +62,10 @@ const CORPUS = [
   ['ls -la | grep gradle', false], // build word is a search arg, not the executable
   ['grep -rn "gradlew" scripts/ | head', false],
   ['cat package.json | grep test', false],
-  ['./gradlew build && echo BUILD DONE', false], // no masking sink; exit preserved
+  ['./gradlew build && echo BUILD DONE', false], // no masking sink (no pipe)
   ['./gradlew build', false], // bare, correct
-  ['set -o pipefail; ./gradlew build | tail -25', false], // author guarded
-  ['./gradlew build | tail -25; echo ${PIPESTATUS[0]}', false], // exit re-exposed
+  ['set -o pipefail; ./gradlew build | tail -25', false], // pipefail: genuine preserver
+  ['./gradlew build | tail -25; echo ${PIPESTATUS[0]}', false], // PIPESTATUS: genuine preserver
   ['npm test > out.txt 2>&1', false], // redirect, not pipe-to-filter
   ['docker logs api | tail -50', false],
   ['journalctl -u svc | grep error', false],
@@ -86,6 +90,14 @@ run('pipefail is the reason a guarded build stays silent (not "no sink")', () =>
   // Same command, sink present, differs only by pipefail → detector must flip on the guard.
   assert.equal(detectPipeMaskedExit('./gradlew build | tail -25'), true);
   assert.equal(detectPipeMaskedExit('set -o pipefail; ./gradlew build | tail -25'), false);
+});
+run('suppression is driven by GENUINE preservation, not the mere presence of echo/$?', () => {
+  // `; echo $?` after a pipe reads tail's exit (masked) → MUST still fire; only a real
+  // preserver (pipefail / PIPESTATUS) suppresses. This is the §10a regression guard.
+  assert.equal(detectPipeMaskedExit('./gradlew build | tail; echo $?'), true);
+  assert.equal(detectPipeMaskedExit('./gradlew build | tail && echo done'), true);
+  assert.equal(detectPipeMaskedExit('set -o pipefail; ./gradlew build | tail; echo $?'), false);
+  assert.equal(detectPipeMaskedExit('./gradlew build | tail; echo ${PIPESTATUS[0]}'), false);
 });
 
 run('empty / undefined command does not fire', () => {

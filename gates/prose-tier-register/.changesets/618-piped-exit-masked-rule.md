@@ -20,7 +20,9 @@ is a build/test command) but the hint must NOT block — a legitimate `log | tai
 `… | grep` read must still pass, and even a masked build is sometimes intentional. So
 salience at the command boundary is mechanized while judgment stays with the agent.
 `pipe-mask-hint.mjs` (PreToolUse Bash) fires only on the stage-aware positive and stays
-silent when the author preserved the exit (`set -o pipefail` / `${PIPESTATUS}` / `$?`)
+silent when the author genuinely preserved the exit (`set -o pipefail` / `${PIPESTATUS}`
+— the only two that recover a first-stage exit through a pipe; `$?` / `&&` after a pipe
+read the pipe's last-stage exit, so the hook fires on `… | tail; echo $?` too)
 — non-blocking, fail-open, honors `JUSTSEARCH_DISABLE_HOOKS=1`. Rule anchored in
 `agent-lessons.md` (`<!-- rule:piped-exit-masked -->`); `Resolves to` is
 `hook:pipe-mask-hint.mjs`. Detection precision is guarded by the corpus in

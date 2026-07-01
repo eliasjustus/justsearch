@@ -1826,9 +1826,10 @@ The settlement's one buildable item shipped. §10a (pipe-masked exit) is now del
 relevance by a **non-blocking PreToolUse/Bash advisory hook**, `scripts/agent-analytics/hooks/pipe-mask-hint.mjs`
 (mirroring `docs-granularity-hint.mjs`), registered via the manifest (`governance/agent-hooks.v1.json`) +
 codegen wiring. The detector is stage-aware — it fires only when a masking filter (`tail`/`grep`/`head`) is the
-*last* pipeline stage AND an earlier stage's leading executable is a build/test command, and stays silent when
-the exit is preserved (`set -o pipefail`/`${PIPESTATUS}`/`$?`) — so legitimate `log | tail` reads are
-un-hinted. Precision is guarded by a 44-case corpus in `pipe-mask-hint.test.mjs` (the living tuning surface).
+*last* pipeline stage AND an earlier stage's leading executable is a build/test command, and stays silent only
+when the exit is genuinely preserved (`set -o pipefail`/`${PIPESTATUS}` — not `$?`/`&&` after a pipe, which
+read the masked last-stage exit, so `… | tail; echo $?` still fires) — while legitimate `log | tail` reads are
+un-hinted. Precision is guarded by a corpus in `pipe-mask-hint.test.mjs` (the living tuning surface).
 The rule is anchored `piped-exit-masked` in `agent-lessons.md`, recorded as tier-register **row 37**
 (`hook-hint`), with changeset `618-piped-exit-masked-rule.md`. The always-loaded §10a prose stays as the
 public-checkout fallback; the hook adds delivery, not replacement (matching the row-32 precedent).

@@ -22,9 +22,14 @@
  *
  * Precision (see pipe-mask-hint.test.mjs corpus): it fires ONLY when the LAST
  * pipeline stage is a masking filter AND an earlier stage's leading executable is
- * a build/test command, and NOT when the author already preserved the exit
- * (`set -o pipefail`, `${PIPESTATUS[...]}`, `; echo $?`, `&& echo …`). This keeps
- * legitimate `log | tail` / `… | grep` reads un-hinted.
+ * a build/test command, and NOT when the author genuinely preserved the exit
+ * (`set -o pipefail`, `${PIPESTATUS[...]}` — the only two that recover a
+ * first-stage exit through a pipe). It deliberately DOES fire on `… | tail; echo $?`
+ * and `… | tail && echo done`: after a pipe, `$?` and `&&` both key off the pipe's
+ * last stage (tail's exit), NOT the build's — so those are masked, and telling the
+ * agent so is the point (this exact `| tail; echo $?` shape caused the §10a
+ * recurrence). Legitimate `log | tail` / `… | grep` reads stay un-hinted because
+ * their leading stage isn't a build/test command.
  *
  * Advisory: never blocks, fail-open on any error, honors `JUSTSEARCH_DISABLE_HOOKS=1`.
  * Delivers the rule `piped-exit-masked` (tier-register row 37) at its moment of relevance.
@@ -64,8 +69,12 @@ const BUILD_LEAD = [
   /^jseval\s+(?:run|build)\b/i,
 ];
 
-/** Author already preserved the real exit → do NOT hint. */
-const PRESERVES_EXIT = /set\s+-o\s+pipefail|PIPESTATUS|;\s*echo\s+\$\?|&&\s*echo\s+(?:BUILD|done|PASS)/i;
+/**
+ * Author genuinely preserved the first-stage exit → do NOT hint. Only `pipefail`
+ * and `PIPESTATUS` recover a build's exit through a pipe; `$?`/`&&` after a pipe
+ * read the pipe's last-stage exit (the masked value), so they are NOT preservers.
+ */
+const PRESERVES_EXIT = /set\s+-o\s+pipefail|PIPESTATUS/i;
 
 /**
  * True when a build/test command's exit is masked by a trailing pipe into a
