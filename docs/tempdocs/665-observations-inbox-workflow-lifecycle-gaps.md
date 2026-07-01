@@ -1,7 +1,7 @@
 ---
 title: "Observations-inbox workflow — lifecycle gaps beyond the parallel-write fix, settled to a design direction that aligns retirement with the issues/ tier's already-working convention"
 type: tempdocs
-status: "investigation complete 2026-07-01 (first pass) + theorization pass (second pass) surveying reframings + a broader-pattern question + design pass (third pass, same day) settling a general (non-implementation) design direction and judging its reach + a scoped external-research pass (fourth pass, same day) that refined two design points and externally validated a third — no code changed, no doc changed, implementation not started"
+status: "implemented 2026-07-01 (fifth pass, same day as passes 1-4) — shard-durability Stop hook, fold wired to merge-teardown, delete-on-resolve convention shipped, one-time cleanup applied (removed 199 resolved entries + merged the accidental second inbox), fold-observations.mjs gained a report-only stale-entry check. Two corrections found during implementation are recorded in the Implementation section: the design pass's SessionEnd hook choice was wrong (corrected to Stop) and the Post-push handoff section was much larger and more substantive than Finding 8 assumed (merged, not dissolved)."
 created: 2026-07-01
 updated: 2026-07-01
 author: agent critical-analysis + design-theorization pass (live repo inspection: docs/observations.md, docs/observations.d/, scripts/agent-analytics/{note-observation,fold-observations,record-merge}.mjs, docs/reference/issues/, docs/reference/contributing/development-philosophy.md, scripts/governance/ discipline-gate kernel, git history of the shard directory and the fold script)
@@ -25,8 +25,15 @@ related:
 > the already-existing merge-teardown boundary) rather than introducing new ones. §Reach then judges whether
 > this generalizes: it names the underlying principle plainly, checks where else it currently applies (one
 > other place — the same artifact, from its canonical-doc side), and deliberately does not build shared
-> structure beyond this one artifact, per the recognize-vs-build discipline tempdoc 646 already models. **No
-> code or doc has been changed as part of this tempdoc; it records a design, not an implementation.**
+> structure beyond this one artifact, per the recognize-vs-build discipline tempdoc 646 already models.
+>
+> **UPDATE (2026-07-01, fifth pass) — IMPLEMENTED.** §Implementation (foot of document) records what shipped:
+> the wording fix, the merge-teardown wiring, the new `observation-shard-hint` Stop hook, the report-only
+> stale-entry check in `fold-observations.mjs`, and a one-time historical cleanup of `docs/observations.md`
+> itself. Two corrections surfaced during implementation and are recorded there rather than silently folded
+> into the earlier passes: the design pass picked the wrong hook event (`SessionEnd` → corrected to `Stop`),
+> and Finding 8's characterization of "Post-push handoff" as a small stale dump was wrong — full investigation
+> found it was a much larger accidental second inbox, fixed by merging rather than dissolving.
 
 # 665 — Observations-inbox workflow: lifecycle gaps beyond the parallel-write fix
 
@@ -476,7 +483,7 @@ here.
   design change: this repository's existing worktree-plus-shard approach is aligned with where the field has
   converged, not behind it, so nothing here motivates revisiting the write-path half of the design.
 
-## Status
+## Status (superseded by §Implementation below — kept as dated history of the design pass)
 
 Design settled at a general level, refined by a scoped external-research pass; nothing has been implemented. No
 code, hook, or documentation file has been changed as part of this tempdoc. Proceeding to implementation —
@@ -484,3 +491,100 @@ including the exact hook mechanics (anchored at `SessionEnd`, per the research p
 `development-philosophy.md` and `docs/observations.md`, wiring `fold-observations.mjs` to merge-teardown, and
 cleaning up the "Post-push handoff" section — needs the user's explicit go-ahead first, per
 `tempdoc-is-your-contract` and `ask-when-uncertain`.
+
+## Implementation (fifth pass, 2026-07-01)
+
+Implemented in worktree `665-observations-lifecycle`, following a plan approved via Plan Mode. Two corrections
+to the design pass surfaced during investigation, before any code was written; both are recorded here rather
+than silently absorbed into the earlier sections, since those sections are dated history of the design as it
+stood before implementation.
+
+### Correction 1: the design pass named the wrong hook event
+
+The design/research passes (§Design item 1, §Research pass) anchored the shard-durability reminder at
+`SessionEnd`, on the strength of external Claude Code hook documentation describing `SessionEnd` as suited to
+"an end-of-session check." Re-reading this repository's own existing `SessionEnd` hook
+(`scripts/agent-analytics/hooks/compact-restore.mjs`) before implementing showed it only ever performs silent
+file cleanup and never emits `additionalContext` — because by the time `SessionEnd` fires, the session has
+already ended and nothing reads the hook's output. A reminder the agent needs to *act on* (stage and commit a
+file) has to fire while the session is still live. `maintain-doc-hint.mjs` already solves exactly this shape — a
+non-blocking, once-per-session nudge on `Stop`, deduplicated via `stop_hook_active` plus a per-session marker
+file — so the shipped hook (`observation-shard-hint.mjs`) follows that precedent instead. This is exactly the
+class of mistake the `wrong-gate` discipline (`docs/reference/contributing/agent-postmortems.md`) names: trusting
+that a symbol/event exists and fits, rather than checking the set-site/precedent in the target codebase.
+
+### Correction 2: "Post-push handoff" was not what Finding 8 assumed
+
+Finding 8 (first pass) characterized `## Post-push handoff (2026-05-18)` as a small, stale, mostly-resolved
+dump of process notes, based on a ~25-line sample. Reading the full section before implementing (345 lines,
+lines 266–610 of the pre-cleanup file) found something different: genuine behavioral/bug-report entries running
+from 2026-05-18 through at least 2026-06-21 — in parallel with `## Inbox`'s own entries (2026-05-05 through
+2026-06-30) for most of that period, with 72 resolved and 262 open entries. The two sections were the same kind
+of content, split by a historical accident (an agent once appended after a stray heading instead of under
+`## Inbox`, and subsequent agents kept extending whichever section they found at the bottom of the file). The
+fix implemented was **merge, not dissolve**, and deliberately mechanical: delete already-`[x]`-resolved lines
+(safe, syntactic), relocate the remaining `[ ]` lines verbatim under `## Inbox`, and do **not** adjudicate
+whether any of the 262 open items are still true on current `main` — that is a large, unrelated audit spanning
+ui-bundle budgets, ts-any gates, wire-contract drift, and dead-code-gate parsing bugs, out of this tempdoc's
+scope per `log-pre-existing-issues` / `stay-focused-on-assigned-work`.
+
+### A live instance of the exact durability gap this tempdoc analyzes
+
+The orphaned shard `docs/observations.d/5555b628-....md`, flagged as live evidence during the first pass, was
+gone from the main checkout by the time implementation began — not folded, not committed, just no longer
+present anywhere. Its two findings did not exist in `docs/observations.md` either: this was not a hypothetical
+risk, it was the failure mode actually occurring, mid-investigation. The content was recoverable only because
+it had been read verbatim into this session's own transcript earlier; it was reconstructed and folded in for
+real via `fold-observations.mjs --apply`, exercising the exact trigger this tempdoc wires up. Had the content
+not already been captured, it would have been lost permanently. This is stronger evidence for Finding 1 than
+the tempdoc originally had, and it is the closest thing to a controlled demonstration that the fix is needed,
+not merely theorized.
+
+### What shipped
+
+- **Retirement convention** — `docs/reference/contributing/development-philosophy.md` and `docs/observations.md`
+  `## Rules` both now say to delete a resolved observation, matching the already-working
+  `docs/reference/issues/` convention ("deleted, not marked closed"), instead of the two-step
+  "check off, then prune later" wording that had gone unfollowed for 127+ entries.
+- **One-time historical cleanup** — applied the new convention retroactively and merged the accidental second
+  inbox. `docs/observations.md` went from 628 lines (610 at the start of this tempdoc, +18 from the recovered
+  shard and wording edits) to 427: 199 resolved entries removed (127 from `## Inbox`, 72 from
+  `## Post-push handoff`), the `## Post-push handoff (2026-05-18)` heading removed, and its 262 surviving open
+  entries relocated verbatim into one unified `## Inbox`. Verified with a scratchpad migration script,
+  cross-checked against a pre-migration backup (spot-checked start/middle/end, confirmed a multi-line
+  continuation entry with indented sub-bullets survived intact, confirmed zero `[x]` and zero "Post-push"
+  residue afterward). This does **not** solve the file-size problem outright — 377 open entries remain, a real
+  backlog outside this tempdoc's scope — but it removes the structural duplication and the resolved-entry noise
+  that made the file harder to scan than it needed to be.
+- **Fold wired to merge-teardown** — `.claude/rules/branch-safety.md`'s Merge Workflow step 4 now runs
+  `node scripts/agent-analytics/fold-observations.mjs --apply`, completing the boundary tempdoc 618 §P1.2
+  proposed and never connected.
+- **`fold-observations.mjs` gained a report-only stale-entry check** (`countStaleResolved`) — prints a count of
+  any `[x]` entries still present in `## Inbox` after a fold, matching the design's explicit "report, not
+  auto-delete" choice; 3 new unit tests.
+- **`observation-shard-hint.mjs`** (new, `Stop` event, advisory/non-blocking) — reminds an agent once per
+  session if its own shard is uncommitted, reusing `note-observation.mjs`'s session-id resolver and
+  `maintain-doc-hint.mjs`'s dedupe-marker pattern. Registered in `governance/agent-hooks.v1.json` (the single
+  wiring authority; `.claude/settings.local.json` is generated from it, not hand-edited, and is gitignored —
+  every checkout regenerates its own), documented in `.claude/rules/hooks-reference.md`. No new
+  `tier-register.md` row: confirmed other advisory hooks (`consult-doc-hint`, `governance-hint`) also have none,
+  since this hook delivers an existing expectation rather than a new anchored rule.
+- **Budget ratchet** — `.claude/rules/branch-safety.md` and `.claude/rules/hooks-reference.md` both bumped via
+  the sanctioned `--bump --reason` mechanism (`branch-safety.md` was already over its ceiling from unrelated
+  prior work; the bump reason cites both that and this tempdoc's addition honestly).
+
+### Verification
+
+`note-observation.test.mjs` (11), `fold-observations.test.mjs` (13, incl. 3 new), `observation-shard-hint.test.mjs`
+(6, new) all green. `hook-integrity` gate: pass (new hook's wiring, cwd-invariant form, and load all verified).
+`always-loaded-budget` check: pass after the two bumps. `prose-tier-register` gate: pass (no new rule anchors
+added, confirmed unaffected). `./gradlew.bat build -x test`: `BUILD SUCCESSFUL`. No product UI surface was
+touched (everything is under `scripts/agent-analytics/`, `.claude/rules/`, `docs/`), so no browser/dev-server
+verification applied.
+
+### Deliberately not done
+
+Per the design pass's own reach judgment, no repo-wide "declared-transience" gate or check was built — the
+principle is recorded (§Reach) but its confirmed current scope is this one artifact. Auditing the 262 open
+entries carried over from "Post-push handoff" (or the 377 open entries now in `## Inbox` overall) for whether
+they are still true on current `main` was explicitly out of scope and not attempted.
