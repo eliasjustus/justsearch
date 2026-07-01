@@ -1,0 +1,89 @@
+name: CI wall-clock trend
+
+# Tempdoc 667. Post-hoc wall-clock TREND analyzer over the last N public CI runs
+# on `main` — the durable "is a lane drifting up / are we at the floor" signal that
+# per-run budgets are too noisy to give. Advisory only: it never fails anything and
+# only opens a SINGLE de-duped issue on SUSTAINED drift (per-lane median over the
+# window above its advisory ceiling). Mirrors phase-3-observability-nightly.yml
+# (post-hoc analyzer + actions:read + issues:write + var gate).
+
+# Manual-only, matching the repo's ADR-0026 convention (the sibling
+# phase-3-observability-nightly analyzer is likewise workflow_dispatch-only, with
+# its cron intentionally not enabled). A scheduled cadence can be added later if
+# the repo decides to enable scheduled analyzers — it would also need its
+# expectedTriggers updated in workflow-signal-policy.v1.json.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Number of recent successful main runs to sample (default 20)
+        required: false
+        default: '20'
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: ci-walltime-trend
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.14.0'
+
+jobs:
+  trend:
+    name: CI wall-clock trend
+    # Gate consistent with the other analyzer workflow; lets the repo disable
+    # scheduled analyzers via a single repo variable without editing YAML.
+    if: ${{ vars.BENCH_WORKFLOWS_ENABLED != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Analyze wall-clock trend
+        id: trend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci
+          node scripts/ci/report-ci-walltime-trend.mjs \
+            --limit "${{ github.event.inputs.limit || '20' }}" \
+            --workflow ci.yml \
+            --out-json build/ci/ci-walltime-trend.json \
+            --out-md build/ci/ci-walltime-trend.md
+          drift=$(node -e "process.stdout.write(String(require('./build/ci/ci-walltime-trend.json').sustainedDrift))")
+          echo "sustained_drift=$drift" >> "$GITHUB_OUTPUT"
+
+      - name: Upload trend report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-walltime-trend
+          path: |
+            build/ci/ci-walltime-trend.json
+            build/ci/ci-walltime-trend.md
+          if-no-files-found: warn
+
+      - name: Open or update drift issue
+        if: ${{ steps.trend.outputs.sustained_drift == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="CI wall-clock: sustained lane drift"
+          body_file=build/ci/ci-walltime-trend.md
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body_file"
+          else
+            gh issue create --title "$title" --body-file "$body_file" --label "ci-walltime" || \
+              gh issue create --title "$title" --body-file "$body_file"
+          fi

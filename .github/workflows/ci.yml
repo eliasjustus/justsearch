@@ -14,6 +14,9 @@ on:
 
 permissions:
   contents: read
+  # Read-only Actions API access for the advisory `ci-walltime` job, which reads
+  # this run's own job/step timings. Grantable on fork PRs (read scope). Tempdoc 667.
+  actions: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -260,3 +263,48 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Advisory only — NOT a required check (see workflow-signal-policy.v1.json
+  # requiredStatusChecks; do not add this job's name there). Runs after every
+  # lane so it can read all sibling job/step timings and attribute the run's
+  # wall-clock: which lane is the critical path, and how much of each lane is
+  # fixed runner tax vs work. Warn-only budget; never fails the run. Tempdoc 667.
+  ci-walltime:
+    name: CI wall-clock attribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [public-claims, license-and-notices, build, unit-tests, secret-scan]
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Fetch this run's job timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs" --paginate > build/ci/run-jobs.json
+
+      - name: Report wall-clock attribution
+        run: node scripts/ci/report-ci-walltime-attribution.mjs --jobs-json build/ci/run-jobs.json --run-id "${{ github.run_id }}" --repository "${{ github.repository }}" --workflow "${{ github.workflow }}" --self-job "CI wall-clock attribution" --out-json build/ci/ci-walltime-attribution.json --out-md build/ci/ci-walltime-attribution.md
+
+      - name: Report wall-clock advisory budget
+        run: node scripts/ci/report-ci-walltime-budget.mjs --attribution build/ci/ci-walltime-attribution.json --out-json build/ci/ci-walltime-budget.json --out-md build/ci/ci-walltime-budget.md
+
+      - name: Upload wall-clock attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-walltime-attribution
+          path: |
+            build/ci/ci-walltime-attribution.json
+            build/ci/ci-walltime-attribution.md
+            build/ci/ci-walltime-budget.json
+            build/ci/ci-walltime-budget.md
+          if-no-files-found: warn

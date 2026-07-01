@@ -80,6 +80,17 @@
       "advisory": true
     },
     {
+      "name": "CI wall-clock trend",
+      "path": ".github/workflows/ci-walltime-trend.yml",
+      "class": "scheduled-quality-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 667 / public CI wall-clock attribution",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 30,
+      "blocking": false,
+      "advisory": true
+    },
+    {
       "name": "Dependabot Updates",
       "path": "github-managed",
       "class": "dependency-automation",
