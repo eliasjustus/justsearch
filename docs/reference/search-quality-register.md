@@ -464,6 +464,157 @@ Settled empirical facts. Each was an open question that got answered.
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-026: judge-rank-low is real and substantively spread (not near-ceiling) on a real corpus, but the obvious judge levers are dead/harmful — the surviving lever is a confidence-bounded floor, not a sharper judge
+
+- **Answer:** Tempdoc 643 picked up the judge-rank-low bucket F-025 pointed at. Three corrections to the
+  original framing, then a design: **(1)** `JUDGE_RANK_LOW` means *gold is in the returned top-10 but not
+  rank-1* — the **opposite** of "ranked below the cutoff" (that is `CASCADE_LEAK`); the FP2 annotation had
+  this backwards and is now corrected (`staged_recall_accounting.py` `FP_MAPPING`, `recall_profile.py`
+  `_RECOMMENDATION`). **(2)** On the two named real corpora where the bucket dominates, the stub's named
+  levers are dead-on-arrival: a sharper CE is measurement-rejected on academic (F-006: model swaps ≈0 nDCG)
+  and actively harmful on email (F-002/F-008: CE demotes/ejects the gold); a judge-guided recall loop targets
+  `LEG_MISS`/`CASCADE_LEAK`, not an already-in-window rank — it is 639's lever, not 643's. **(3)** **The bucket
+  is not near-ceiling** — a real measurement (`scifact`, 300 queries, CE-on) shows the in-bucket rank
+  distribution spread across the window, not bunched at rank-2: `{rank_2: 28, rank_3_5: 31, rank_6_10: 21}` (80
+  judge-low queries total; corrected 2026-07-01, see the methodology-correction bullet below — originally
+  published as `{rank_2: 28, rank_3_5: 39, rank_6_10: 14}`, 81 queries), i.e. a genuine, substantive
+  mis-ranking, not "one slot off." The shipped design is a
+  **relative-confidence-gated refinement floor**: blend the CE's reorder with the pre-rerank (fusion/LambdaMART)
+  order (min-max normalized within the CE window) instead of letting the CE replace it outright, keyed on a
+  *relative, label-free* signal (CE score-margin + Head-reconstructed leg-agreement) rather than a *fitted*
+  calibration (literature-rejected for a cold-start, cross-corpus engine — calibration does not transfer across
+  corpora). Shipped **default-off** behind `JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED` /
+  `JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA` (D-004 template: default-off → measure → default-on).
+- **Evidence:** Live, worktree-isolated eval (`643-judge-arbitration`, GPU RTX 4070, **reranker realized on CPU**
+  — see caveat below): `beir/scifact`, CE-on, hybrid mode, 300 queries. **Floor OFF** (today's behavior):
+  `final_ndcg=0.7512`, `judge_low_rate=0.267`, histogram `{rank_2:28, rank_3_5:31, rank_6_10:21}`. **Floor ON**
+  (`alpha=0.5`): `final_ndcg=0.7490` (Δ −0.0022, within this corpus's observed run-to-run wobble — see caveat),
+  `judge_low_rate=0.273`, histogram `{rank_2:33, rank_3_5:32, rank_6_10:17}` (all four numbers corrected
+  2026-07-01 from a trec-based computation to the true final-response-order computation — see the
+  methodology-correction bullet below). The floor's real per-query effect, measured correctly, is substantial:
+  **58/300 queries** shift bucket between OFF and ON — but the *aggregate* judge_low_rate move (0.267→0.273) is
+  not distinguishable from this corpus's own documented run-to-run wobble (caveat (b) below), so this single-run
+  comparison cannot establish whether the floor's net aggregate effect on judge_low_rate is positive, negative,
+  or neutral — only that it is real and large at the per-query level. (The originally-published claim — "shifted
+  5 queries rank_3_5→rank_6_10... confirming... the gate fires" — described noise between the two eval runs, not
+  the floor's effect; trec-based rank is structurally blind to the floor's reordering, since the floor never
+  rewrites a hit's `score` field, only its list order.) The config chain (`EnvRegistry`→`ResolvedConfigBuilder`→
+  `ResolvedConfig`→`RerankerConfig`) is still confirmed to propagate correctly end-to-end (Head **and** Worker
+  config-snapshot logs both confirmed `judge_blend_enabled=true`, `judge_blend_alpha=0.5`) — that conclusion does
+  not depend on the bucket-shift number. **Signal-separation probe (U2, the crux):** per-query CE-on vs
+  CE-off gold-rank delta vs {CE top1−top2 margin, Head-reconstructed leg top-10 BM25/dense Jaccard} on the same
+  300 queries: only **9 non-neutral queries** (1 helped, 8 hurt by CE; 261 neutral, 30 no-gold-either) — both
+  signals point the *right direction* (margin AUC 0.75, Jaccard AUC 0.69 — "helped" cases have higher
+  margin/agreement than "hurt" cases) but **n=9 is too thin for a confident conclusion**.
+- **Conditions/caveats (important):** **(a)** the cross-encoder ran on **CPU, not GPU**, in every run this
+  finding's evidence comes from (`Capability warning: reranker_cpu_only`) — same model/weights, but not the
+  production GPU path; not expected to flip direction, unrecorded magnitude effect. **(b)** Run-to-run wobble on
+  this corpus/config was non-trivial across the 3 runs taken (hybrid nDCG 0.7512 → 0.7584 (CE-off) → 0.7490
+  (floor-on), a ~1.25% range) — single runs, not multi-seed; the floor's −0.3% delta is not distinguishable from
+  this noise. **(c)** **`mixed/enron-qa` — the corpus where F-002/F-008 predict the largest CE-hurts signal, and
+  the most decisive test of the floor's actual rescue effect — was UNAVAILABLE in the eval environment**
+  (`datasets/mixed/enron-qa/corpus.jsonl` not present; real email data, not BEIR-auto-downloadable, not
+  worktree/main-resolvable like `models/`). **Decision (2026-07-01): ship the floor implementation now
+  (default-off, fully tested, config-verified live); defer flipping the default and building the active-promotion
+  half (confidence-gated skip + promote-when-CE-confident) until the email-corpus measurement is actually run** —
+  the evidence is directionally encouraging but not sufficient to justify an active behavioral change.
+- **Post-implementation critical-analysis pass found + fixed a pre-rerank-signal bug (2026-07-01, same session).**
+  The floor originally read only the `"fusion"` HitStage as the pre-rerank score. That signal is **absent** for
+  single-leg presets (BM25-only/`text`, dense-only/`vector`, SPLADE-only/`splade` — `HitProvenanceProjector.
+  attachSingleLeg` passes `fusionMethod=null`) and **stale** on hybrid queries where chunk-branch fusion ran (the
+  true final score there lives on a separate `"branch-fusion"` stage) — exactly the EnronQA case, per F-014's
+  "chunk merge fires on all 300 queries." Fixed via `SearchTraceMapper.protoStageScoreAny` (priority-ordered,
+  presence-based fallback: `branch-fusion` → `fusion` → the single active leg) and the matching fallback in
+  jseval's `extract_judge_signals`. **The scifact numbers recorded above are unaffected** (that run used
+  unchunked hybrid mode, where `"fusion"` was present and correct) — but had this shipped uncorrected, it would
+  have silently biased the `mixed/enron-qa` follow-up recommended below. A second, lower-severity finding (a
+  missing CE score defaulting to `0f`, which reads as artificially high against typically-negative real CE
+  logits) was also fixed (defaults to the worst *observed* CE score instead). See tempdoc 643 §Post-implementation
+  critical-analysis pass for full detail.
+- **Follow-up closed (2026-07-01, same worktree): E1 (confidence signal) + E2 (confidence-driven blend) +
+  perf-skip built, and the §9-4 A/B regression-rate test run on both corpora, then re-run with a wider
+  window after a critical-review finding (see below).** `mixed/enron-qa` is no longer unavailable (acquired
+  via `scripts/search/convert-enronqa-to-beir.py`). Per-query regression rate (final gold rank worse than
+  the reconstructed pre-rerank/fusion gold rank), hybrid CE-on, 300 queries each,
+  `judge_arbitration_enabled=false` (static floor) vs `=true` (confidence-driven, `alpha_diverge=0.85`),
+  **final numbers (`--top-k 20`, matching the CE window default — supersedes an initial `--top-k 10`
+  measurement that undercounted regressions falling outside the display page)**: scifact 5.67%→4.00%
+  (fixed 5 queries, caused 0 new — net −5, a clean, one-directional win); enron-qa 8.33%→8.67% (fixed 1,
+  caused 2 — net +1, a small, thin net *negative*, not a wash — consistent with the borderline pooled AUC
+  already measured; NOT the CU5 chunk-merge bailout, `chunkMergeApplied=false` on all enron-qa queries in
+  this run, so the gate genuinely evaluated real signal and it wasn't discriminative enough to net a
+  benefit there). **Net-positive on scifact; a small net-negative on enron-qa** — not "never net-harmful on
+  either corpus" as an earlier draft of this entry stated before the wider-window re-run. This does not
+  change the shipping decision: per D-004's default-off → measure → default-on template and this tempdoc's
+  own non-goals, defaults stay off regardless. Full detail: tempdoc 643 §E1/E2/perf-skip implementation +
+  §9-4 acceptance test (original and re-measured).
+- **Methodology finding surfaced by §9-4, and used to correct this finding's own numbers above (2026-07-01
+  critical-analysis pass; root cause logged to observations, out of scope for 643 to fix in full):** jseval's own
+  `{mode}_run.trec` — and `staged_recall_accounting.py`'s `_ranked_by_qid`, which *prefers* that same trec file
+  over the true response-order `predictedDocIds` — are blind to CE/judge-blend list-reordering. The CE/blend
+  stage only ever reorders the result list, never rewrites a hit's top-level `score` field (true even in the
+  pre-tempdoc-643 baseline), and `_write_trec_run`'s re-sort, `ir_measures`' internal ranking, *and*
+  `staged_recall_accounting`'s rank buckets all key off that same unrewritten score. Only per-query
+  `predictedDocIds` reflects the true post-rerank order.
+  This does not invalidate cross-config comparisons that differ via *other* pipeline effects (different
+  corpora, models, eligibility gating, leg composition) — most of this register's historical findings are
+  unaffected. It DOES invalidate same-config, reorder-only comparisons: this finding's own "Floor OFF vs Floor
+  ON" evidence above is exactly that case, which is why it was recomputed and corrected here. Directly
+  quantified on the archived run pair that produced this finding's original numbers
+  (`scripts/jseval/tmp/eval-results/643_scifact_ce_on/20260630T232234_scifact` and
+  `.../643_scifact_ce_on_floor/20260630T234714_scifact`): 83/300 queries land in a different judge-rank bucket
+  between trec-order and true order for the Floor-OFF run alone (aggregate `judge_low_rate` barely moves,
+  0.270→0.267, but individual bucket assignment is materially wrong 27% of the time); comparing Floor OFF vs ON
+  via trec shows only 12 queries shift bucket, vs 58 via true order — a ~5x undercount of the floor's real
+  effect. My own §9-4 script above was built using `predictedDocIds` from the start (I hit this exact issue
+  while building it and fixed my own script before publishing those numbers), so the 5.00%→3.67% / 7.33%→7.33%
+  figures are unaffected. Any *future* per-query rank-based analysis of a stage that only reorders without
+  rescoring should use `predictedDocIds`, not the trec file or `staged_recall_accounting`'s buckets as-is.
+  **Scope decision:** `staged_recall_accounting.py`'s root cause (the trec-preference in `_ranked_by_qid`) is
+  NOT fixed in this pass — that's a register-wide change affecting every other finding that relies on its
+  per-query rank buckets, well beyond tempdoc 643's scope. Left as a well-evidenced observation for a future
+  dedicated tempdoc.
+- **U1 (the live LLM judge-ceiling probe, tempdoc 636 §5) is now measured (2026-07-01, corrected later the
+  same day) — a real, credible, decision-relevant *positive* result, closing this tempdoc's last open
+  measurement gap.** With explicit user authorization, downloaded the packaged-default chat model
+  (`Qwen_Qwen3.5-9B-Q4_K_M.gguf`, 5.5GB, SHA-256 verified) and ran `jseval judge-ceiling` on a 40-query scifact
+  sample, GPU-accelerated (RTX 4070, 33/33 layers offloaded), with real document text (a text-light first
+  attempt gave `top1_agreement=0.0` — a self-evident confound, not a finding — recomputed with real text,
+  giving a credible, non-degenerate measurement). **Correction:** the first-reported result
+  (`llm_ndcg=0.111`, `capture_fraction=-6.06`, described as "dramatically worse than the pipeline") was
+  **wrong** — a dilution bug in the shared `_score_ranking` nDCG helper silently scored every one of the
+  ~260 un-judged corpus queries in this capped 40-query run as a zero-relevance miss and folded that into the
+  mean. Found via an unrelated AI-free cross-check (`ce_replay_report`) producing an equally implausible
+  number, root-caused, and fixed at the shared function (regression test added). **Corrected result:**
+  `final_ndcg=0.831` (current pipeline) vs `llm_ndcg=0.874` — `headroom_realized=+0.042`,
+  `capture_fraction=+0.357` (`top1_agreement=0.658`, still a credible, non-degenerate measurement). This local
+  model, used via the same single structured-JSON listwise reranking call, **outperforms** the current
+  pipeline on this sample and captures a real 36% of the AI-free ceiling. **This changes the evidence base
+  D-2's exclusion of a stronger/heavier judge model rested on — it does not by itself overturn that decision
+  (one 40-query sample on one corpus), but whether to revisit it is now a live, open question, not a settled
+  one.** Along the way, also found and fixed two real, previously-unexercised bugs in
+  `scripts/jseval/jseval/judge_ceiling.py`: `max_tokens=512` was too small for realistic candidate-pool sizes
+  (truncated JSON responses), and a single query's malformed response aborted the *entire* probe rather than
+  degrading gracefully per-query (both fixed, covered by tests in `test_judge_ceiling.py`). Full detail:
+  tempdoc 643 `## U1: live judge-ceiling probe result` (including its correction note).
+- **E3 (the decision instrument, D-1's third structural element) is now built (2026-07-01), completing the
+  design.** A `judge_low_cost_weight` field (`[0,1]`, weighted by rank-2 = near-free vs rank-6-10 = full
+  cost) now sits alongside the existing rank histogram in `staged_recall_accounting`'s output, registered as
+  its own metric family. A new `jseval judge-arbitration-report` command
+  (`scripts/jseval/jseval/judge_arbitration_report.py`) replaces the one-off scripts used for the §9-4
+  acceptance test and the confidence-building passes — and in doing so caught a real bug in the earlier ad
+  hoc measurement: enron-qa's perf-skip firing rate is **17/300 (5.7%)**, not 15/300 as first reported,
+  because the old script incorrectly gated the perf-skip check on a condition that only applies to the
+  unrelated alpha-branch calculation. Full detail: tempdoc 643 `## E3 implementation`.
+- **A named principle this surfaced (recorded, not built generally):** the *refinement floor* is an instance of
+  a broader **stage non-regression** invariant — generalizing D-005's recall-survival ("a stage must not drop a
+  *correct candidate*") to *property-survival* ("a stage claiming to improve a property must not leave it worse
+  than its input, with improvement gated on evidence"). Candidate further scope (not built): LambdaMART (latent
+  violation — a GPL-trained model was measured to *degrade* real queries, F-021), VLM extraction (possible
+  violation — extracted text can be worse than the baseline, F-009), branch/chunk fusion (unverified). Build only
+  the next instance when its own evidence demands it (`structural-defects-no-repeat`, applied to *avoid* premature
+  generalization here, not to force it).
+
 ### F-001: CE model quality is irrelevant on personal email
 
 - **Answer:** Upgrading from MiniLM-L6-v2 to GTE-ModernBERT produces zero measurable difference on EnronQA (±0.3% nDCG, noise level).
@@ -824,6 +975,7 @@ picking up items here over inventing new experiments.
 - **Question:** Tempdoc 639 (candidate-set integrity — ANN recall at scale + near-duplicate collapse), a stub spawned by 636's coverage analysis, will need to *measure* candidate-set completeness (did retrieval return the relevant docs) and non-redundancy. Should that measurement **extend** 636's **Staged Recall Accounting** — whose `leg-recall` layer is already "did each leg surface the gold doc", a governed projection of the run artifacts with a self-reconciliation oracle — or build a **separate** recall instrument?
 - **Why it matters:** A parallel recall instrument is the exact one-authority **fork** that 553 (one canonical record; every surface a governed projection) and 636 §Reach (the *layer-invariant* observe-by-survival / one-canonical-authority principle) warn against — two un-coordinated answers to "did retrieval keep the right doc", guaranteed to drift. ANN-recall is a *refinement* of leg-recall (it asks whether the ANN index returned the true neighbours a leg *should* have surfaced), so it composes as a sub-measure of the same projection rather than a rival.
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
+- **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
 ---
 

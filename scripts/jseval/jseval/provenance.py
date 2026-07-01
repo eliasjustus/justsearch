@@ -261,6 +261,45 @@ def _extract_from_trace(trace: list, splade_executed: bool) -> dict:
     }
 
 
+def extract_judge_signals(hit: dict) -> dict:
+    """Per-hit judge-arbitration signals (tempdoc 643): explicit per-leg rank/score.
+
+    Unlike :func:`extract_hit_evidence`, BM25 and SPLADE are kept **separate** rather than
+    collapsed via ``splade_executed`` — tempdoc 643's leg-agreement signal (do the legs agree on
+    this hit?) needs both ranks distinctly when SPLADE runs alongside BM25 in the same hybrid
+    query. Sibling reader of the same ``hit.trace`` slice; does not replace
+    :func:`extract_hit_evidence`, which other consumers (component-status aggregation) still use.
+
+    ``fusion_score`` prefers ``branch-fusion`` over ``fusion`` when both are present (tempdoc 643
+    critical-analysis-pass correction, 2026-07-01): ``fusion`` alone is stale (pre-branch-merge)
+    whenever chunk-branch fusion ran — the true final score there is on the ``branch-fusion``
+    stage. Checked by value (``is not None``), not key-presence, so a ``branch-fusion`` stage that
+    is present but score-less (`HitProvenanceProjector.attachBranchFusion` with no fused score)
+    correctly falls through to ``fusion`` rather than reporting ``None``.
+    """
+    trace = hit.get("trace") or []
+    by_id = {s.get("id"): s for s in trace if isinstance(s, dict)}
+    sparse = by_id.get("sparse-retrieval") or {}
+    splade = by_id.get("splade-retrieval") or {}
+    dense = by_id.get("dense-retrieval") or {}
+    branch_fusion = by_id.get("branch-fusion") or {}
+    fusion = by_id.get("fusion") or {}
+    ce = by_id.get("cross-encoder") or {}
+    fusion_score = branch_fusion.get("score")
+    if fusion_score is None:
+        fusion_score = fusion.get("score")
+    return {
+        "bm25_rank": _to_int(sparse.get("rank")),
+        "bm25_score": sparse.get("score"),
+        "splade_rank": _to_int(splade.get("rank")),
+        "splade_score": splade.get("score"),
+        "dense_rank": _to_int(dense.get("rank")),
+        "dense_score": dense.get("score"),
+        "fusion_score": fusion_score,
+        "ce_score": ce.get("score"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

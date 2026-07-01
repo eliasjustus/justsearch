@@ -48,7 +48,9 @@ Output shape v1::
       "aggregate": {
         "leak_rate": 0.55, "leg_miss_rate": 0.0,
         "judge_low_rate": 0.2, "ok_rate": 0.25,
-        "leg_union_recall": 1.0, "final_recall": 0.45
+        "leg_union_recall": 1.0, "final_recall": 0.45,
+        "judge_rank_histogram": {"rank_2": 2, "rank_3_5": 1, "rank_6_10": 1, "rank_11_plus": 0},
+        "judge_low_cost_weight": 0.4
       },
       "per_leg_recall": {"vector": 1.0, "lexical": 0.0, "splade": 0.0},
       "buckets": {"LEG_MISS": [...qids], "CASCADE_LEAK": [...], ...},
@@ -77,14 +79,23 @@ FINAL_MODE_PREFERENCE = ("hybrid", "full")
 
 BUCKETS = ("LEG_MISS", "CASCADE_LEAK", "JUDGE_RANK_LOW", "OK_RANK1")
 
-# Conform the three *failure* buckets to the field's canonical retrieval failure-point
-# vocabulary (Seven Failure Points, arXiv 2401.05856) so the output is legible to anyone
-# who knows it — an annotation, not a rename (the keys above stay authoritative).
-# OK_RANK1 is the success case and has no failure-point.
+# Conform the *failure* buckets to the field's canonical retrieval failure-point vocabulary
+# (Seven Failure Points, arXiv 2401.05856) so the output is legible to anyone who knows it — an
+# annotation, not a rename (the keys above stay authoritative). OK_RANK1 is the success case and
+# has no failure-point.
+#
+# Correction (tempdoc 643 investigation, 2026-07-01): the original mapping had CASCADE_LEAK and
+# JUDGE_RANK_LOW backwards. FP2 "Missed the Top Ranked Documents" is defined verbatim by the paper
+# as "did not rank highly enough to be returned to the user ... the top K documents are returned"
+# — i.e. dropped before the returned cutoff, which is exactly CASCADE_LEAK (a leg had it; a
+# pre-judge stage dropped it), not JUDGE_RANK_LOW. JUDGE_RANK_LOW ("reached the final/returned
+# list but ranked > 1") has NO match in the Seven Failure Points taxonomy — it is a finer-grained
+# distinction this instrument introduces *within* what the paper's FP2 would otherwise lump
+# together as "missed the top." Deliberately left out of FP_MAPPING rather than mapped to a wrong
+# FP (the dict is conform-don't-coin, not conform-don't-omit).
 FP_MAPPING = {
-    "LEG_MISS": "FP1 Missing-Content",        # no leg surfaced the gold doc
-    "CASCADE_LEAK": "FP3 Not-in-Context",      # a leg had it; a pre-judge stage dropped it
-    "JUDGE_RANK_LOW": "FP2 Missed-Top-Ranked",  # reached the final list but ranked > 1
+    "LEG_MISS": "FP1 Missing-Content",     # no leg surfaced the gold doc
+    "CASCADE_LEAK": "FP2 Missed-Top-Ranked",  # a leg had it; dropped before the returned cutoff
 }
 
 
@@ -186,6 +197,27 @@ def _gold_set(qrels: dict, qid: str) -> set[str]:
     return {d for d, r in (qrels.get(qid) or {}).items() if isinstance(r, (int, float)) and r > 0}
 
 
+# Tempdoc 643 (E3): rank-2 is "nearly free" product-wise (T1-a — an interactive user scans past
+# it for free; the RAG/agent path feeds the whole top-k as a set); rank-6-10 is a genuine
+# mis-rank. A monotonically increasing weight per bucket turns a flat failure COUNT into a
+# cost-weighted severity (T6-a "dominant-count ≠ dominant-cost") — a heuristic default, not a
+# fitted/calibrated value (this projection stays label-free, per Research pass 2).
+JUDGE_RANK_COST_WEIGHTS = {"rank_2": 0.1, "rank_3_5": 0.4, "rank_6_10": 1.0, "rank_11_plus": 1.0}
+
+
+def _judge_low_cost_weight(histogram: dict[str, int]) -> float | None:
+    """[0,1] weighted average of ``judge_rank_histogram`` via ``JUDGE_RANK_COST_WEIGHTS``.
+
+    ``None`` when the histogram is empty (no JUDGE_RANK_LOW queries to weight) — mirrors this
+    file's existing None-on-empty convention (e.g. ``judge_headroom_ceiling``).
+    """
+    total = sum(histogram.values())
+    if total == 0:
+        return None
+    weighted = sum(JUDGE_RANK_COST_WEIGHTS[bucket] * count for bucket, count in histogram.items())
+    return weighted / total
+
+
 def _empty(reason: str, legs: list[str], final: str | None) -> dict:
     return {
         "status": "insufficient-modes",
@@ -223,6 +255,10 @@ def produce(run_dir: Path) -> dict:
     judged = 0
     recon_checked = 0
     recon_mismatch = 0
+    # Tempdoc 643: in-bucket rank distribution for JUDGE_RANK_LOW — a flat rate hides whether
+    # the bucket is mostly rank-2 (near-ceiling: one slot off) or rank-6-10 (a real mis-rank).
+    # "rank_11_plus" is a defensive catch-all (top_n is observed, not assumed to be exactly 10).
+    judge_rank_histogram = {"rank_2": 0, "rank_3_5": 0, "rank_6_10": 0, "rank_11_plus": 0}
 
     for qid in sorted(qrels):
         gold = _gold_set(qrels, qid)
@@ -257,7 +293,18 @@ def produce(run_dir: Path) -> dict:
 
         # classify
         if in_final:
-            buckets["OK_RANK1" if f_rank == 1 else "JUDGE_RANK_LOW"].append(qid)
+            if f_rank == 1:
+                buckets["OK_RANK1"].append(qid)
+            else:
+                buckets["JUDGE_RANK_LOW"].append(qid)
+                if f_rank == 2:
+                    judge_rank_histogram["rank_2"] += 1
+                elif f_rank <= 5:
+                    judge_rank_histogram["rank_3_5"] += 1
+                elif f_rank <= 10:
+                    judge_rank_histogram["rank_6_10"] += 1
+                else:
+                    judge_rank_histogram["rank_11_plus"] += 1
         elif in_union:
             buckets["CASCADE_LEAK"].append(qid)
         else:
@@ -276,6 +323,7 @@ def produce(run_dir: Path) -> dict:
     judge_headroom_ceiling = (
         max(0.0, leg_union_recall - final_ndcg) if isinstance(final_ndcg, (int, float)) else None
     )
+    judge_low_cost_weight = _judge_low_cost_weight(judge_rank_histogram)
     return {
         "status": "ok",
         "leg_modes": legs,
@@ -292,6 +340,15 @@ def produce(run_dir: Path) -> dict:
             "final_ndcg": final_ndcg,
             "oracle_judge_ndcg_ceiling": leg_union_recall,
             "judge_headroom_ceiling": judge_headroom_ceiling,
+            # Tempdoc 643: JUDGE_RANK_LOW rank distribution (counts, not rates — sums to
+            # len(buckets["JUDGE_RANK_LOW"])). near-ceiling (rank_2-heavy) vs real mis-rank
+            # (rank_6_10-heavy) changes whether the bucket is worth a lever at all.
+            "judge_rank_histogram": judge_rank_histogram,
+            # Tempdoc 643 (E3, T6-a "dominant-count ≠ dominant-cost"): a [0,1] weighted average
+            # over judge_rank_histogram turning a flat failure COUNT into a cost-weighted severity
+            # — rank-2 is near-free (one slot off), rank-6-10 is a real mis-rank. None when the
+            # bucket is empty (no judge-rank-low queries to weight).
+            "judge_low_cost_weight": judge_low_cost_weight,
         },
         "per_leg_recall": {m: per_leg_hits[m] / n for m in legs},
         "buckets": buckets,
