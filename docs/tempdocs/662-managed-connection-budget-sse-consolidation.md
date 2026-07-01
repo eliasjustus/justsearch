@@ -1348,3 +1348,38 @@ correctly-scoped candidate for the next build pass on this tempdoc or a short st
 Severity note: contained to the visual affordance only — `isConnected` was traced through `AdvisoryStore.ts`
 and confirmed to gate nothing else (toast delivery, unread counts, and the inbox drawer all read off frame
 data directly, not the connection flag), so this is a truthfulness/polish defect, not a data-loss risk.
+
+## Research-currency check (2026-07-01) — is anything actively moving that changes this design?
+
+Before another research pass, worth asking directly: this tempdoc has already run three research rounds this
+same day (Investigation/Design §D6; Future Directions; the retraction round above) covering the 6-per-host
+cap, WebView2 Worker APIs, Tauri-IPC streaming, and MCP's Streamable-HTTP/Last-Event-ID trend — and the two
+externally-inspired ideas that came out of that research were both retracted for *local* reasons, not for
+lack of research quality. Running a fourth broad "what's trending" pass risks reproducing the exact
+"pattern availability is not evidence of local need" bias just named above. So: **not a broad pass.** But one
+narrow, high-consequence question hadn't been checked — is there a platform-level change coming that would
+make the multiplexer's whole reason for existing (the browser can't multiplex plain HTTP/1.1 connections)
+obsolete at the root? That's worth checking periodically regardless of any specific idea, because if the
+premise moves, the whole design should be reconsidered — a different kind of check than "here's a shiny
+pattern," and the kind D6 already validated once.
+
+**Checked: does cleartext HTTP/2 (h2c) show any sign of browser adoption?** No — confirmed still unsupported
+by any major browser, Chrome explicitly rejects the "opportunistic security" approach on design-philosophy
+grounds, unchanged from D6's finding. **This reconfirms the core premise: multiplexing (or an equivalent
+application-level consolidation) remains the only viable path** — there is no browser-level fix arriving
+that would let a local app just switch to HTTP/2 and sidestep the 6-connection cap without TLS. No design
+change from this; a reassuring confirmation of the existing direction, not new information.
+
+**Found, but out of this tempdoc's scope: Chrome/WebView2's new "Local Network Access" (LNA) policy is
+actively rolling out.** Chrome 142 shipped LNA (gating cross-origin access to loopback/private-network
+destinations behind a permission prompt); WebView2 (the shipped desktop runtime) has the same enforcement
+landing in versions 143-145, currently off by default behind a kill-switch/test flag
+(`msWebViewAllowLocalNetworkAccessChecks`), with the upstream Chromium spec still evolving. Chrome's own LNA
+exempts same-space (loopback-to-loopback) requests, which this app's Head/Worker/FE architecture likely
+qualifies for (everything binds loopback-only per the Hard Invariant), but WebView2's exemption rules aren't
+independently confirmed to match. **This is a real, current, actively-changing risk — but it is a whole-app
+loopback-network concern (the `loopback-only-network` Hard Invariant), not specific to the SSE multiplexer**:
+if it ever affects anything, it affects every loopback call the app makes, multiplexed or not, so expanding
+this tempdoc's scope to cover it would misattribute a platform-wide risk to one subsystem. Logged to the
+observations inbox instead (per `log-pre-existing-issues`) rather than investigated further here — recorded
+in this tempdoc only because it surfaced while researching for it, not because 662 owns it.
