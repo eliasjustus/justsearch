@@ -14,6 +14,7 @@ import {
   entriesFromShard,
   insertIntoInbox,
   foldShards,
+  countStaleResolved,
   INBOX_FILE,
 } from './fold-observations.mjs';
 import { appendObservation, SHARD_DIR } from './note-observation.mjs';
@@ -68,6 +69,21 @@ try {
   run('insertIntoInbox dedupes an entry already present (idempotent)', () => {
     const next = insertIntoInbox(INBOX_FIXTURE, ['- [ ] pre-existing entry (2026-06-01)']);
     assert.equal(next, INBOX_FIXTURE);
+  });
+
+  // --- countStaleResolved (tempdoc 665: report-only retire-on-resolve signal) ---
+  run('countStaleResolved is 0 when the Inbox has no [x] entries', () => {
+    assert.equal(countStaleResolved(INBOX_FIXTURE), 0);
+  });
+  run('countStaleResolved counts [x] entries inside Inbox only, not other sections', () => {
+    const withResolved = INBOX_FIXTURE.replace(
+      '- [ ] pre-existing entry (2026-06-01)',
+      '- [ ] pre-existing entry (2026-06-01)\n- [x] fixed one (2026-06-02)\n- [X] fixed two, capital X (2026-06-03)',
+    ).replace('- archived', '- [x] archived-but-outside-inbox (2026-06-01)');
+    assert.equal(countStaleResolved(withResolved), 2); // the two inside Inbox; the one in Post-push handoff doesn't count
+  });
+  run('countStaleResolved returns 0 when there is no "## Inbox" heading', () => {
+    assert.equal(countStaleResolved('# Doc\n\n## Other\n- [x] x\n'), 0);
   });
 
   // --- foldShards: the core data-loss-proof behaviour ---

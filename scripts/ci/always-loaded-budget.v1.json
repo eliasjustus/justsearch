@@ -5,13 +5,13 @@
   "ceilings": {
     "CLAUDE.md": 25051,
     ".claude/rules/agent-lessons.md": 8906,
-    ".claude/rules/branch-safety.md": 9763,
+    ".claude/rules/branch-safety.md": 10654,
     ".claude/rules/context-efficiency.md": 1960,
-    ".claude/rules/hooks-reference.md": 15524,
+    ".claude/rules/hooks-reference.md": 16159,
     ".claude/rules/slice-execution.md": 4667,
     ".claude/rules/tier-register.md": 15790
   },
-  "totalCeiling": 81661,
+  "totalCeiling": 83187,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -54,6 +54,20 @@
       "to": 15524,
       "reason": "618 §10a: pipe-mask-hint catalog entry",
       "ts": "2026-07-01T01:37:40.549Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 9763,
+      "to": 10654,
+      "reason": "pre-existing overage from prior unrelated work + tempdoc 665's fold-observations merge-workflow step",
+      "ts": "2026-07-01T10:19:10.760Z"
+    },
+    {
+      "file": ".claude/rules/hooks-reference.md",
+      "from": 15524,
+      "to": 16159,
+      "reason": "tempdoc 665: observation-shard-hint catalog entry",
+      "ts": "2026-07-01T10:21:26.948Z"
     }
   ]
 }

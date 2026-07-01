@@ -75,6 +75,26 @@ export function insertIntoInbox(inboxText, entries) {
 }
 
 /**
+ * Count already-resolved (`[x]`) entries still present in the `## Inbox` section
+ * (tempdoc 665: the retire-on-resolve convention — development-philosophy.md /
+ * observations.md Rules — says delete a resolved line, not check it off and
+ * leave it). Report-only: this never deletes anything itself, matching the
+ * `docs/reference/issues/` precedent of human-applied, not tool-applied,
+ * removal. Surfaced at fold time so the already-scheduled maintenance boundary
+ * (merge-teardown) is also the natural moment to notice this.
+ */
+export function countStaleResolved(inboxText) {
+  const lines = inboxText.split(/\r?\n/);
+  const inboxIdx = lines.findIndex((l) => /^##\s+Inbox\b/.test(l));
+  if (inboxIdx === -1) return 0;
+  let endIdx = lines.length;
+  for (let i = inboxIdx + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i])) { endIdx = i; break; }
+  }
+  return lines.slice(inboxIdx + 1, endIdx).filter((l) => /^- \[[xX]\] /.test(l)).length;
+}
+
+/**
  * Fold all shards into the inbox.
  * @returns {{folded: number, entries: number, shards: string[], changed: boolean}}
  */
@@ -100,17 +120,32 @@ export function foldShards({ root = repoRoot, apply = false } = {}) {
   return result;
 }
 
+function reportStaleResolved(root = repoRoot) {
+  try {
+    const stale = countStaleResolved(fs.readFileSync(path.join(root, INBOX_FILE), 'utf8'));
+    if (stale > 0) {
+      console.log(
+        `fold-observations: ${stale} resolved ([x]) entr${stale === 1 ? 'y' : 'ies'} still present in Inbox — ` +
+          'delete them (development-philosophy.md: resolve by deleting, not checking off).',
+      );
+    }
+  } catch {
+    /* best-effort report only — never fail the fold over this */
+  }
+}
+
 function main() {
   const apply = process.argv.includes('--apply');
   const r = foldShards({ apply });
   if (r.entries === 0) {
     console.log('fold-observations: no shard entries to fold.');
-    return;
+  } else {
+    console.log(
+      `fold-observations: ${apply ? 'folded' : 'would fold'} ${r.entries} entr${r.entries === 1 ? 'y' : 'ies'} ` +
+        `from ${r.folded} shard(s)${r.changed ? '' : ' (all already present — no change)'}${apply ? '; shards removed.' : ' [dry run — pass --apply].'}`,
+    );
   }
-  console.log(
-    `fold-observations: ${apply ? 'folded' : 'would fold'} ${r.entries} entr${r.entries === 1 ? 'y' : 'ies'} ` +
-      `from ${r.folded} shard(s)${r.changed ? '' : ' (all already present — no change)'}${apply ? '; shards removed.' : ' [dry run — pass --apply].'}`,
-  );
+  reportStaleResolved();
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))) {
