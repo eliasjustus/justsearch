@@ -1530,8 +1530,10 @@ to.
    ~70%): **promoting a parked lesson to a prose home reduces but does not remove recurrence.** This reframes
    Part 4 bucket 1: the higher-value question per lesson is not *"is it written down"* but *"is it enforced at
    a tier matched to its blast radius?"* §10a's blast radius (fast-forwarding `main` on a red build) arguably
-   warrants a *mechanical* signal — e.g. a `bash-guard` advisory when a `gradlew`/test command is piped into
-   `tail|grep|head` in a way that masks its exit — not another prose line.
+   warrants a *mechanical* signal — e.g. a *separate* non-blocking PreToolUse advisory hook (not `bash-guard`,
+   which is block-or-silent and structurally short-circuits on any pipe at `bash-guard.mjs:217`, so it can
+   neither emit an advisory nor even see a piped command) that fires when a `gradlew`/test command is piped
+   into `tail|grep|head` in a way that masks its exit — not another prose line.
 
 2. **Seam C fixed shard *content* isolation but not the *identity* that selects the shard.** The shipped
    per-session inbox worked, but the `<session>` resolution feeding `note-observation.mjs` (a shared
@@ -1817,4 +1819,29 @@ No change. This tempdoc's spine is the **worktree↔environment correspondence**
 designed); the lesson-delivery settlement is a *satellite* that resolves into 620's domain, and the title
 already scopes the doc to its substrate-seam core. Filing the settlement here as history is correct; renaming
 the doc around it would over-claim the satellite as the subject.
+
+### Implementation (2026-07-01)
+
+The settlement's one buildable item shipped. §10a (pipe-masked exit) is now delivered at the moment of
+relevance by a **non-blocking PreToolUse/Bash advisory hook**, `scripts/agent-analytics/hooks/pipe-mask-hint.mjs`
+(mirroring `docs-granularity-hint.mjs`), registered via the manifest (`governance/agent-hooks.v1.json`) +
+codegen wiring. The detector is stage-aware — it fires only when a masking filter (`tail`/`grep`/`head`) is the
+*last* pipeline stage AND an earlier stage's leading executable is a build/test command, and stays silent when
+the exit is preserved (`set -o pipefail`/`${PIPESTATUS}`/`$?`) — so legitimate `log | tail` reads are
+un-hinted. Precision is guarded by a 44-case corpus in `pipe-mask-hint.test.mjs` (the living tuning surface).
+The rule is anchored `piped-exit-masked` in `agent-lessons.md`, recorded as tier-register **row 37**
+(`hook-hint`), with changeset `618-piped-exit-masked-rule.md`. The always-loaded §10a prose stays as the
+public-checkout fallback; the hook adds delivery, not replacement (matching the row-32 precedent).
+
+**Triage result (the "few" question, resolved to "one").** Walking the ~24 `agent-lessons.md` bullets against
+the rubric *(deterministic trigger) × (high blast radius = silent wrong outcome)*: §10a is the **sole** clean
+new conversion. Read-truncation is already mechanized by the `intervene` hook; §11d (background-server) and the
+browser/scoop/tabs bullets fail the test (loud, observable failures, or no crisp command trigger); the
+named-principle handles are judgment/reference. So the design's "§10a + at most 1–2" tightened to exactly one —
+which is itself evidence for 616/620's thesis that the delivery-conversion lever is small.
+
+**Correction applied.** The theorization pass's earlier phrasing ("a `bash-guard` advisory") was mechanically
+wrong and is corrected in-doc: `bash-guard` is block-or-silent (no advisory channel) and short-circuits on any
+pipe (`bash-guard.mjs:217`), so it can neither emit the hint nor see a piped command — hence a *separate*
+advisory hook.
 

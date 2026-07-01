@@ -78,6 +78,7 @@ why prose-tier is intentionally the right choice).
 |---|---|---|---|---|---|
 | 27 | `subagents-no-inheritance` | Subagents do NOT inherit CLAUDE.md / `.claude/rules/` — brief inline | `prose-only` | — | Platform constraint (Anthropic limitation); brief-inline is judgment. But the *baseline* brief (Hard Invariants live-projected from CLAUDE.md + platform + risk profile) IS auto-injected by the `subagent-guide` SubagentStart hook (620 Part V); only the task-specific brief is honor-system |
 | 28 | `parent-hooks-dont-fire-in-subagents` | Parent session hooks don't fire in subagents — limit delegation scope | `prose-only` | — | Platform constraint |
+| 37 | `piped-exit-masked` | A build/test command piped into `tail`/`grep`/`head` reports the pipe's exit code, not its own — a red build can read as green (tempdoc 618 §10a) | `hook-hint` | `hook:pipe-mask-hint.mjs` | `pipe-mask-hint.mjs` (PreToolUse Bash) fires when a build/test command's exit is masked by a trailing pipe into a `tail`/`grep`/`head` filter and no `pipefail`/`PIPESTATUS`/`$?` preserves it — a non-blocking delivery assist (~85%); the always-loaded §10a prose in `agent-lessons.md` stays as the public-checkout fallback, the hook adds moment-of-relevance salience (the residence→delivery conversion, 618 settlement / 620 Part V) |
 
 ## .claude/rules/slice-execution.md
 
