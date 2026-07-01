@@ -1291,3 +1291,122 @@ warranting a web-research pass. Conclusion: **no research pass** — reasoning r
   aging. No external code/text/assets were copied or adapted; nothing to attribute under the
   license/notices lane.
 
+## §Confidence pass (eighth pass, 2026-07-01)
+
+Confidence-building before implementing Move 1 + Move 2. Live experiments (dev stack) + my-own
+re-verification of the subagent traces. **No feature code changed.** Enabling discovery: a *complete*
+cuda12 GPU runtime (25 files, all 4 required DLLs + exe) already exists on this machine in a sibling
+worktree (`.claude/worktrees/643-judge-arbitration/native-bin/llama-server/variants/cuda12/`) and in
+`F:\JustSearch` — so GPU viability and cross-location referencing were testable with zero download.
+
+### Resolved (per the ranked uncertainties)
+
+**#1 GPU viability [make-or-break] — CONFIRMED, clean live pass.** Started a dev stack in this
+worktree with `JUSTSEARCH_SERVER_EXE` pointed at the *foreign* 643-worktree cuda12 exe, configured the
+Qwen 9B GGUF + `gpuLayers:99`, triggered `POST /api/inference/mode {online}` → transition succeeded.
+`/api/inference/status`: `mode:online, available:true, activeModelId:Qwen_Qwen3.5-9B-Q4_K_M.gguf,
+lastStartupDurationMs:13467, tier:gpu_12gb_plus, cudaAvailable:true`. The OS process was verifiably
+the foreign exe: `...\643-judge-arbitration\native-bin\llama-server\variants\cuda12\llama-server.exe
+-m ...Qwen_Qwen3.5-9B-Q4_K_M.gguf ... -ngl 99 -fa on`. A real query (`/api/chat/free`, prompt "capital
+of France") streamed a coherent grounded answer: *"The capital of France is Paris."* (22 prompt / 32
+total tokens). **GPU-only dev inference is viable here — the design's foundational premise holds.**
+
+**#2 Does Move 2 need the Install-AI/`restore_runtime` flow? — CONFIRMED NO (big simplification).**
+The entire GPU run above bypassed Install AI, `RuntimeActivationService`, and `RuntimeRestoreUtil`
+completely — the runtime was made available purely by pointing `JUSTSEARCH_SERVER_EXE` at a foreign
+path. So the sixth-pass "`restore_runtime` hard-gate blocks populating cuda12" concern is **irrelevant
+to the design**: Move 2 is a reference/env-var concern, not a download-flow concern. The install-flow
+fix contemplated in the sixth pass (Options A/B/C) is not needed for this design at all.
+
+**#3 Is "fail closed" clean? — CONFIRMED graceful (with one minor polish gap).** Restarted with no
+runtime (this worktree has no `native-bin` and, notably, `installDist` produces no CPU stage dir — so
+dev-runner had nothing to auto-stage: it was *already* naturally fail-closed). Stack came up cleanly:
+Head + Worker `READY`, 5 docs indexed, and `POST /api/knowledge/search` returned 3 HYBRID results —
+**search fully works with inference down.** The online-transition attempt returned a graceful
+structured error (`MODE_SWITCH_FAILED / INVALID_CONFIG: "llama-server executable not found"`,
+non-retryable); a direct `/api/chat/free` returned a graceful `AI_OFFLINE` SSE error. **No crash, no
+hang, Head stayed up.** *Minor gap:* the manifest's `ai.pendingReason` on this path shows the generic
+`"Inference offline"`, not a specific reason code — because the `switchToOnlineMode`
+(`InferenceLifecycleManager`) failure path is distinct from the `RuntimeActivationService` path that
+Tasks 0-5 wired to specific manifest reasons. Fully delivering "fail closed AND specifically diagnosed
+on the manifest" would extend Tasks-0-5-style wiring to the mode-transition path — optional polish,
+not a blocker (the outcome is already graceful + truthful to the caller).
+
+**#4 Move 2 mechanism feasibility + read-only safety — CONFIRMED (mechanism already exists).** The
+runtime-sharing primitive Move 2 needs **already exists as `JUSTSEARCH_SERVER_EXE`** (registered in
+`EnvRegistry`, and `dev-runner.cjs` already sets it). Pointing it at a foreign cuda12 exe worked
+end-to-end (the DLLs load adjacent to the exe from that foreign dir). Read-only check: after the full
+GPU run, the foreign cuda12 dir was **untouched** — still 25 files, all mtimes at the pre-run baseline,
+nothing created/modified. So **cross-worktree read-only sharing of the runtime is safe** (llama-server
+reads exe+DLLs, writes nothing there). Also mapped the resolution model: `aiHome = JUSTSEARCH_HOME
+override | dataDir`; `native-bin = {aiHome}/native-bin` (no independent native-bin env var); but the
+two things inside native-bin that matter each have a dedicated env hook — the LLM exe
+(`JUSTSEARCH_SERVER_EXE`) and the ORT-CUDA DLLs (`JUSTSEARCH_ONNXRUNTIME_NATIVE_PATH`). So Move 2 for
+the LLM needs **no new structure** — it's "point the existing env var at a shared location," exactly
+as `JUSTSEARCH_MODELS_DIR` already does for models.
+
+**#5 Blast radius — CONFIRMED small and understood.** Re-verified `InferenceConfig.findServerExecutable`
+myself: `JUSTSEARCH_SERVER_EXE` is resolution candidate #1 and short-circuits everything, so in dev
+**dev-runner is the sole gatekeeper** (the other fallbacks — `{dataDir}/native-bin`,
+`{repoRoot}/native-bin`, the shell-headless dev-layout path — are all empty in a clean worktree).
+`BootstrapInferenceFactory` (eval-autostart) uses the *resolved* server executable
+(`Files.exists(config.serverExecutable())`), no CPU-baseline dependency — cuda12 satisfies it.
+`jseval` LLM eval (`backend.py`, `qu_spike.py`) uses the `JUSTSEARCH_SERVER_EXE`-resolved runtime, not
+a hardcoded CPU path; jseval's `cpu_only` refers to the ONNX *reranker*, not the LLM — so the explicit
+CPU test lane is ONNX and is unaffected. The MCP dev-tools runtime check
+(`justsearch-dev-mcp/server.mjs` ~1650) is explicitly **REPORT-ONLY ("does NOT gate ready")** — removing
+CPU staging only changes a cosmetic readiness message (which the implementation should update to stop
+advertising the CPU baseline).
+
+### What this pass changed about the design (net simplification)
+
+Move 1 + Move 2 collapse to a **change concentrated almost entirely in `scripts/dev/dev-runner.cjs`**:
+(a) stop `ensureLlamaStagedInNativeBin()` from staging a CPU baseline; (b) change `resolveAiDevEnv()`
+to resolve `JUSTSEARCH_SERVER_EXE` from a *shared canonical cuda12 location* and drop the CPU-baseline
+candidate. Plus: pick the canonical shared location + populate it once (trivially satisfiable — an
+existing cuda12 can simply be referenced/copied there; two already exist on disk), and update the
+cosmetic MCP readiness message. Optional follow-ons: extend the truthful-reason wiring to the
+mode-transition path (#3 gap), and share the ORT-CUDA path (`JUSTSEARCH_ONNXRUNTIME_NATIVE_PATH`) for
+GPU *embedding* too (secondary — CPU ONNX embedding is tolerable). Production bundling
+(`bundleSidecarResources`) is untouched, confirmed cleanly separate.
+
+### Residuals (not fully de-risked)
+
+- **Fresh-acquisition-at-the-canonical-location** was not tested — I *referenced* an existing cuda12,
+  I did not *acquire a new one* at the chosen shared location. But "populate once" is a one-time
+  bootstrap with multiple trivially-working options (copy an on-disk runtime; run Install AI once at a
+  production-like AI home), not the recurring mechanism — a choice, not a risk.
+- **Canonical-location choice** (main checkout vs dedicated shared dir vs production `%APPDATA%` AI
+  home) is an open decision, not a risk.
+- The actual `dev-runner.cjs` edits (vs my manual env-var simulation of the identical target behavior)
+  are not yet written — but the target behavior itself is now proven end-to-end.
+
+### Confidence rating: **8 / 10**
+
+Up from what would have been ~4/10 before this pass. The single make-or-break risk (is GPU-only dev
+even viable here?) is resolved with a clean live pass; the sharing mechanism turned out to **already
+exist** (`JUSTSEARCH_SERVER_EXE`) and I ran the *exact* target behavior end-to-end; the scary Move-2
+coupling to the `restore_runtime` install bug is **eliminated** (reference, not install); fail-closed
+is proven graceful; the blast radius is small, concentrated in one Node file, with the rest cosmetic;
+production is cleanly separate. Held below 9 by: the canonical-location decision + one-time-populate
+bootstrap (choices, low-risk but unmade), the optional manifest-reason polish, and the secondary
+ORT-GPU-embedding sharing question.
+
+### Difficulty + recommended model/effort
+
+**Difficulty: LOW-to-MODERATE.** The core is a small, concentrated edit to one Node file
+(`dev-runner.cjs`), plus a one-time populate and a cosmetic message update — mostly config-plumbing,
+not deep Java architecture. The judgment calls (canonical location; how much of the optional
+manifest-reason + ORT-GPU polish to fold in; careful production-non-regression verification) are
+bounded and already framed by the tempdoc.
+
+**Recommended: Sonnet at medium effort for the core** (dev-runner CPU-removal + shared-cuda12
+resolution + populate + MCP message + live re-verify), bumping to **medium-high** only if the same pass
+also takes on the optional cross-language polish (the mode-transition manifest-reason wiring, which
+touches Java + the reason-code substrate + its gate, and the ORT-CUDA sharing). **Not Opus** — the
+hard design and the viability/mechanism unknowns are resolved; what remains is well-understood,
+mostly-mechanical change with a couple of bounded decisions, which is squarely Sonnet's strength.
+Effort should be medium (not low) because production-non-regression and the "don't reintroduce a
+silent CPU path via some other seam" check reward care, and the implementer must live-verify GPU-only
+dev end-to-end (exactly the run this pass proved is achievable).
+
