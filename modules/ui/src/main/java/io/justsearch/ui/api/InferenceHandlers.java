@@ -10,6 +10,9 @@ import io.justsearch.app.api.BrainRuntimeService;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.ModeTransitionException;
+import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
+import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -38,6 +41,10 @@ final class InferenceHandlers {
   private final io.justsearch.app.services.settings.UiSettingsStore settingsStore;
   private final Runnable offlineProcessingTrigger;
   private final Telemetry telemetry;
+  // Tempdoc 656 O2: nullable — lets a failed online-mode transition project a SPECIFIC reason onto
+  // the runtime manifest's ai.pendingReason (the mode-transition path otherwise shows generic
+  // "Inference offline"; Tasks 0-5 wired only the RuntimeActivationService path).
+  private final InferenceCapability inferenceCapability;
 
   InferenceHandlers(
       OnlineAiService onlineAiService,
@@ -46,7 +53,8 @@ final class InferenceHandlers {
       EnterprisePolicyService enterprisePolicyService,
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
       Runnable offlineProcessingTrigger,
-      Telemetry telemetry) {
+      Telemetry telemetry,
+      InferenceCapability inferenceCapability) {
     this.onlineAiService = onlineAiService;
     this.knowledgeServer = knowledgeServer;
     this.gpuCapabilitiesService = gpuCapabilitiesService;
@@ -54,6 +62,7 @@ final class InferenceHandlers {
     this.settingsStore = settingsStore;
     this.offlineProcessingTrigger = offlineProcessingTrigger;
     this.telemetry = telemetry;
+    this.inferenceCapability = inferenceCapability;
   }
 
   /** Late-binds the Knowledge Server after async Worker startup. */
@@ -371,6 +380,17 @@ final class InferenceHandlers {
 
       // Check cause chain for typed ModeTransitionException (wrapped by OnlineAiServiceImpl)
       ModeTransitionException mte = findCause(e, ModeTransitionException.class);
+
+      // Tempdoc 656 O2: project the SPECIFIC failure cause onto the runtime manifest. The rollback's
+      // mode-change listener already fired a generic OFFLINE→"Inference offline"; this runs after
+      // switchToOnlineMode returned, so it is the last write and wins. Only meaningful for an
+      // online-mode failure (indexing failures don't change the AI-availability reason). Skips when
+      // the capability is currently READY (an unrelated failure must not regress a working runtime).
+      if (inferenceCapability != null
+          && "online".equalsIgnoreCase(mode)
+          && inferenceCapability.health() != CapabilityHealth.READY) {
+        inferenceCapability.transition(CapabilityHealth.OFFLINE, mapModeReason(mte).code());
+      }
       if (mte != null
           && mte.reason() == ModeTransitionException.Reason.EXTERNAL_SERVER_POLICY_BLOCKED) {
         Map<String, Object> payload = ApiErrorHandler.toResponse(
@@ -399,6 +419,25 @@ final class InferenceHandlers {
       }
       ctx.status(statusCode).json(payload);
     }
+  }
+
+  /**
+   * Tempdoc 656 O2: maps a mode-transition failure {@link ModeTransitionException.Reason} onto the
+   * closed {@link LifecycleReasonCode} taxonomy, reusing the inference codes added in Tasks 0-5 (no
+   * new code, so no readiness-reason-codes gate change). Mirrors
+   * {@code RuntimeActivationService.mapToLifecycleReason}. A null/untyped failure (or any unmapped
+   * reason) falls back to the activation-failed catch-all.
+   */
+  private static LifecycleReasonCode mapModeReason(ModeTransitionException mte) {
+    if (mte == null) return LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED;
+    return switch (mte.reason()) {
+      // "the llama-server executable / a required DLL is missing" — the runtime isn't installed.
+      case EXECUTABLE_NOT_FOUND, MISSING_DLL -> LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED;
+      // config validation "executable/model not found" also reduces to runtime-not-installed for the
+      // user's purposes (the doctor's next remedy is the same: provision the runtime).
+      case INVALID_CONFIG, CONFIG_REQUIRED -> LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED;
+      default -> LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED;
+    };
   }
 
   /**

@@ -340,7 +340,9 @@ for (const check of modelChecks) {
 
 // 8. Optional citation scorer model files
 console.log('\n8. Citation scorer model files (optional)');
-const citationModelDir = 'models/citation-scorer/ms-marco-MiniLM-L2-v2';
+// Tempdoc 656: the registry targetDir is onnx/citation-scorer (the model is ms-marco-MiniLM-L-6-v2,
+// not the old L2-v2 path) — the previous hardcoded path was a standing false-positive.
+const citationModelDir = 'models/onnx/citation-scorer';
 const citationModel = join(citationModelDir, 'model.onnx');
 const citationTokenizer = join(citationModelDir, 'tokenizer.json');
 if (existsSync(citationModel) && existsSync(citationTokenizer)) {

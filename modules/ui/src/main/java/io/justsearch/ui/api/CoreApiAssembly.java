@@ -143,7 +143,8 @@ final class CoreApiAssembly {
             enterprisePolicyService,
             b.settingsStore,
             b.offlineProcessingTrigger,
-            telemetry);
+            telemetry,
+            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     Supplier<String> diskPressureSupplier = null;
     if (telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt) {
       diskPressureSupplier = () -> lt.getHealthState().getDiskPressureLevel().name();

@@ -60,7 +60,9 @@ download** — the models are fetched on first *run* of the app, not to build or
 
 **To run the full desktop app** (not needed to contribute code):
 
-- NVIDIA GPU with 8 GB+ VRAM is optional (CPU works); the local AI models download once on first run.
+- Keyword search works with **no models and no GPU** (see "First run from source" below). Semantic
+  search adds the ONNX models (~3.5 GB); cited AI answers additionally need an NVIDIA GPU (8 GB+ VRAM)
+  and the chat model. The packaged installer's "Install AI" flow downloads what your hardware supports.
 
 ### Building
 
@@ -74,6 +76,22 @@ download** — the models are fetched on first *run* of the app, not to build or
 # Run the desktop UI
 ./gradlew.bat :modules:ui:run
 ```
+
+### First run from source (the onramp)
+
+Running from source does **not** auto-download the AI models (that's the packaged app's "Install AI"
+flow). You still reach a useful result immediately — the capability is **tiered**, and each tier is a
+complete success:
+
+- **Tier 0 — keyword search, zero download.** Start the dev stack, index the bundled demo corpus
+  (`examples/onramp-corpus/`), and a keyword query returns a real result — no models, no GPU.
+- **Tier 1 — semantic/hybrid search.** Add the ONNX models (~3.5 GB) for meaning-based retrieval.
+- **Tier 2 — cited AI answers.** Add the chat model **and** a GPU runtime (`./gradlew.bat
+  :modules:ui:stageLlamaCudaVariant`, once, at the main checkout) for grounded, cited answers.
+
+`node scripts/dev/doctor.mjs` reports which tier your environment is at and the single next step to
+reach the next one. The runnable proof `node scripts/dev/test-onramp-first-success.mjs` starts the
+stack, indexes the demo corpus, and asserts a first result end-to-end.
 
 ### Testing
 
