@@ -309,14 +309,15 @@ class TestMigration:
 class TestPerfTrend:
     """tempdoc 640 R3: perf families trended alongside quality, direction-aware."""
 
-    def _append_perf(self, output_dir, ce, ts):
+    def _append_perf(self, output_dir, ce, ts, retrieval=4.0, unaccounted=20.0):
         summary = {"timestamp": ts, "git_sha": "abc", "dataset": "scifact"}
         return append_run(
             summary, "hybrid",
             {"nDCG@10": 0.7, "AP@10": 0.4, "RR@10": 0.6, "R@10": 0.8, "P@1": 0.5},
             True, output_dir,
             perf_metrics={"ce_p50_ms": ce, "primary_docs_s": 90.0,
-                          "enrich_docs_s": 12.0, "resident_bytes": 2_000_000_000},
+                          "enrich_docs_s": 12.0, "resident_bytes": 2_000_000_000,
+                          "retrieval_p50_ms": retrieval, "unaccounted_p50_ms": unaccounted},
         )
 
     def test_perf_columns_persist(self, tmp_path):
@@ -325,6 +326,20 @@ class TestPerfTrend:
         assert row["ce_p50_ms"] == 150.0
         assert row["primary_docs_s"] == 90.0
         assert row["resident_bytes"] == 2_000_000_000
+        # tempdoc 647: the latency-decomposition columns persist too
+        assert row["retrieval_p50_ms"] == 4.0
+        assert row["unaccounted_p50_ms"] == 20.0
+
+    def test_unaccounted_creep_is_flagged_direction_aware(self, tmp_path):
+        # tempdoc 647: a rising `unaccounted` remainder (dark-latency creep) is a lower-is-better
+        # regression — the observability the design wanted, on the trend path (no calibrate cohort).
+        for day in ("01", "02", "03"):
+            self._append_perf(tmp_path, ce=150.0, ts=f"2026-06-{day}T10:00:00Z", unaccounted=20.0)
+        self._append_perf(tmp_path, ce=150.0, ts="2026-06-20T10:00:00Z", unaccounted=35.0)  # latest
+        rep = check_trend("scifact", "hybrid", tmp_path, metric="unaccounted_p50_ms")
+        assert rep["status"] == "regression" and rep["lower_is_better"] is True
+        # CE is flat over the same rows -> the creep is scoped to the unaccounted metric
+        assert check_trend("scifact", "hybrid", tmp_path, metric="ce_p50_ms")["status"] == "ok"
 
     def test_latency_regression_is_direction_aware(self, tmp_path):
         # Stable CE-stage history at 150 ms, then the latest jumps to 200 ms. For a
@@ -359,6 +374,9 @@ class TestPerfTrend:
         legacy = next(r for r in rows if r["ndcg_10"] == 0.42)
         assert legacy["ce_p50_ms"] is None  # legacy row keeps NULL
         assert any(r["ce_p50_ms"] == 150.0 for r in rows)
+        # tempdoc 647: the idempotent migration also adds the latency-decomposition columns
+        assert legacy["unaccounted_p50_ms"] is None  # legacy row keeps NULL for the new column too
+        assert any(r["unaccounted_p50_ms"] == 20.0 for r in rows)
 
 
 class TestAppendRunReturnsRunId:

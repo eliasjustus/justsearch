@@ -195,28 +195,76 @@ def aggregate_run_evidence(query_evidences: list[dict]) -> dict:
 
 
 def _aggregate_stage_timing(query_evidences: list[dict]) -> dict:
-    """Aggregate per-query stage timing into per-stage p50/mean/p95."""
+    """Aggregate per-query stage timing into per-stage p50/mean/p95, and CLOSE the
+    decomposition with an ``unaccounted_ms`` remainder + a per-entry ``share`` (tempdoc 647).
+
+    ``unaccounted_ms`` = per-query ``took_ms − Σ present stage ms`` — Critical Path Tracing's
+    "unaccounted" node (serialization / gRPC transport / head-side glue not captured as a named
+    stage). ``took_ms`` is the head-side end-to-end latency that encloses every stage
+    (``KnowledgeSearchEngine.totalSearchMs``), so ``Σ stages ≤ took_ms`` by construction; tiny
+    negatives from sub-millisecond rounding are clamped to 0 and counted (``clamped_negative_count``).
+    ``share`` is each entry's fraction of total latency, computed from SUMMED totals (an absent stage
+    counts 0) so the parts close to 1 by construction. The remainder + shares are REPORT-ONLY
+    drill-down — never gated (a share is a zero-sum simplex; only absolute per-stage floors gate).
+    Backward-compatible: when no query carries ``took_ms`` (e.g. legacy/unit inputs), neither
+    ``unaccounted_ms`` nor ``share`` is emitted.
+    """
     stage_keys = list(_STAGE_TIMING_PY_KEYS)
     collected: dict[str, list[float]] = {k: [] for k in stage_keys}
+    unaccounted: list[float] = []
+    clamped_negative = 0
+    total_took = 0.0
+    stage_totals: dict[str, float] = {k: 0.0 for k in stage_keys}
+    unaccounted_total = 0.0
 
     for qe in query_evidences:
         st = qe.get("stage_timing") or {}
+        present_sum = 0.0
         for key in stage_keys:
             val = st.get(key)
             if val is not None:
                 collected[key].append(val)
+                stage_totals[key] += val
+                present_sum += val
+        took = qe.get("took_ms")
+        if isinstance(took, (int, float)):
+            rem = took - present_sum
+            if rem < 0:
+                clamped_negative += 1
+                rem = 0.0
+            unaccounted.append(rem)
+            total_took += took
+            unaccounted_total += rem
 
-    result: dict[str, dict] = {}
-    for key, values in collected.items():
-        if not values:
-            continue
-        values.sort()
+    def _stats(values: list[float]) -> dict:
+        values = sorted(values)
         n = len(values)
-        result[key] = {
+        return {
             "mean": round(sum(values) / n, 1),
             "p50": values[n // 2],
             "p95": values[min(int(n * 0.95 + 0.5), n - 1)],
         }
+
+    result: dict[str, dict] = {}
+    for key, values in collected.items():
+        if values:
+            result[key] = _stats(values)
+
+    # Tempdoc 647: close the decomposition — the unaccounted remainder ...
+    if unaccounted:
+        entry = _stats(unaccounted)
+        if clamped_negative:
+            entry["clamped_negative_count"] = clamped_negative
+        result["unaccounted_ms"] = entry
+
+    # ... and a per-entry share of total latency (summed totals → closes to 1).
+    if total_took > 0:
+        for key in stage_keys:
+            if key in result:
+                result[key]["share"] = round(stage_totals[key] / total_took, 4)
+        if "unaccounted_ms" in result:
+            result["unaccounted_ms"]["share"] = round(unaccounted_total / total_took, 4)
+
     return result
 
 

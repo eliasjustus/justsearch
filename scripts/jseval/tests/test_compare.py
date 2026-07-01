@@ -5,7 +5,73 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from jseval.compare_runs import _bootstrap_ci, compare, per_query_diff
+from jseval.compare_runs import (
+    _bootstrap_ci,
+    compare,
+    compare_stage_decomposition,
+    per_query_diff,
+)
+
+
+def _summary_with_stages(
+    mode: str, stages: dict[str, float], total_p50: float | None = None
+) -> dict:
+    pm: dict = {"stage_timing_stats": {k: {"p50": v} for k, v in stages.items()}}
+    if total_p50 is not None:
+        pm["latency_stats"] = {"p50_ms": total_p50}
+    return {"per_mode": {mode: pm}}
+
+
+class TestStageDecomposition:
+    """Tempdoc 647: the which-stage-moved query-latency decomposition diff."""
+
+    def test_diffs_and_attributes_primary_mover(self):
+        a = _summary_with_stages(
+            "hybrid", {"retrieval_ms": 4, "cross_encoder_ms": 150, "unaccounted_ms": 20}, 174)
+        b = _summary_with_stages(
+            "hybrid", {"retrieval_ms": 5, "cross_encoder_ms": 170, "unaccounted_ms": 22}, 197)
+        d = compare_stage_decomposition(a, b, "hybrid")
+        assert d["stages"]["cross_encoder_ms"]["delta"] == 20
+        assert d["stages"]["retrieval_ms"]["delta"] == 1
+        # the cross-encoder is the largest single-stage shift → the primary mover
+        assert d["attribution"]["primary_mover"] == "cross_encoder_ms"
+        assert d["attribution"]["mover_delta_ms"] == 20
+        # total is the run-level p50 delta, reported separately (not a sum of stage deltas)
+        assert d["attribution"]["total_p50_delta_ms"] == 23
+
+    def test_regression_flag_at_band(self):
+        a = _summary_with_stages("hybrid", {"cross_encoder_ms": 100})
+        b = _summary_with_stages("hybrid", {"cross_encoder_ms": 130})  # 1.30x > 1.10 band
+        d = compare_stage_decomposition(a, b, "hybrid")
+        assert d["stages"]["cross_encoder_ms"]["regressed"] is True
+
+    def test_missing_stage_in_one_run_is_zero_not_crash(self):
+        a = _summary_with_stages("hybrid", {"cross_encoder_ms": 150})
+        b = _summary_with_stages("hybrid", {"cross_encoder_ms": 150, "retrieval_ms": 5})
+        d = compare_stage_decomposition(a, b, "hybrid")
+        assert d["stages"]["retrieval_ms"]["a"] == 0 and d["stages"]["retrieval_ms"]["b"] == 5
+
+    def test_empty_when_no_stage_data(self):
+        a = {"per_mode": {"hybrid": {}}}
+        assert compare_stage_decomposition(a, a, "hybrid") == {}
+
+    def test_empty_when_mode_unresolved(self):
+        a = _summary_with_stages("hybrid", {"cross_encoder_ms": 150})
+        assert compare_stage_decomposition(a, a, None) == {}
+
+    def test_old_format_without_unaccounted_tolerated(self):
+        # runs predating the tempdoc-647 materialization carry only retrieval + CE, no unaccounted_ms
+        a = _summary_with_stages("hybrid", {"retrieval_ms": 4, "cross_encoder_ms": 150})
+        b = _summary_with_stages("hybrid", {"retrieval_ms": 4, "cross_encoder_ms": 155})
+        d = compare_stage_decomposition(a, b, "hybrid")
+        assert "unaccounted_ms" not in d["stages"]
+        assert d["attribution"]["primary_mover"] == "cross_encoder_ms"
+
+    def test_identical_runs_have_no_mover(self):
+        a = _summary_with_stages("hybrid", {"cross_encoder_ms": 150, "retrieval_ms": 4}, 170)
+        d = compare_stage_decomposition(a, a, "hybrid")
+        assert d["attribution"]["primary_mover"] is None
+        assert d["attribution"]["total_p50_delta_ms"] == 0
 
 
 def _make_run(per_query: dict[str, dict[str, float]]) -> dict:
