@@ -1,7 +1,7 @@
 ---
-title: "Five-minute agent/runtime onramp: make the first successful developer path deterministic by finishing the AI capability's runtime-manifest/reason-code wiring, not by adding a new diagnostics subsystem"
+title: "Five-minute agent/runtime onramp: make AI-readiness diagnosis truthful (shipped), then fix why agents end up without the model/runtime files in the first place (root-cause investigation, not yet fixed)"
 type: tempdocs
-status: "Tasks 0-5 implemented and live-verified 2026-07-01 (see §Implementation). The AI capability's failure reasons now route through the same LifecycleReasonCode/RuntimeManifest substrate every other capability already used; a registry-driven /api/ai/models/status preflight endpoint exists; the stale model-inventory.md presence claim is fixed. Live-reproduced both the original bug and the fix in the actual browser: the degradation banner now reads 'The local AI runtime (llama-server) is not installed' instead of the generic 'The local AI model is offline'. One mid-implementation finding not anticipated by the confidence pass: StatusLifecycleHandler (which feeds /api/status and the FE banner) had its own, separate hardcoded-generic-reason bug beside the manifest's — fixed as part of Task 2's closure once browser validation surfaced it. Remaining open items: the two explicit non-goals (verify-prerequisites.mjs's citation-scorer path bug, dev-runner.cjs's soft-clean keep-set gap) and the broader design questions owned by 654/655/657/660."
+status: "Diagnosability substrate (Tasks 0-5) shipped and live-verified 2026-07-01 — but this only makes failures easier to *see*, it does not fix why 2 agents ended up without models/llama-server in the first place. §Root-cause investigation (sixth pass, 2026-07-01) traces that separately: confirmed live that POST /api/ai/install/start (the existing headless, Tauri-independent model-download flow) hard-fails at a 'restore_runtime' precondition before it ever downloads anything, because RuntimeRestoreUtil.ensureRuntimePresent() looks for a 'bundled' llama-server source at a packaged-installer-only path that does not exist in a dev/monorepo checkout. The Gradle task that actually fetches llama-server.exe is confirmed standalone-invokable but wired into no dev-facing bootstrap. Candidate designs recorded, none chosen or implemented yet — this pass is investigation/theorization only, per instruction. Original diagnosability work (Tasks 0-5) remains as shipped; not reverted."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -776,4 +776,181 @@ javadoc summary-line warning the first pass of this fix introduced and this pass
 `:modules:app-services:test` green, `check-readiness-reason-codes.mjs` green, frontend typecheck
 green. Live re-checked `GET /api/ai/models/status` against this checkout's real (unchanged) state —
 structure and the decoupling behave as intended.
+
+## §Conceptual alignment check against the original tempdoc (2026-07-01, requested by user)
+
+Re-read the original, unedited Purpose/Boundary/First-questions (lines 31-68) against everything
+shipped so far. **Honest finding: Tasks 0-5 satisfy only "failure explanations" and part of
+"expected status output" from the original ask list.** Demo corpus, first query, a *doctor as an
+actual discoverable tool* (not just its two constituent read-paths), MCP attach instructions, and
+formalizing the no-model/small-model tier remain entirely unaddressed — my own §Design theorization
+D1 narrowed scope to "truthful readiness diagnosis" with a stated justification (654/655/657 own
+the product-identity/MCP-matrix/mode-decomposition pieces), but that justification does not
+actually cover the demo-corpus or doctor-as-a-tool gaps, which were simply deferred, not blocked on
+anything. **What shipped is necessary groundwork, not the onramp itself** — you cannot build a
+trustworthy doctor on a system that lies about why it's broken, but a truthful lie-detector is not
+yet a doctor. Recorded here so the tempdoc's status accurately reflects partial completion rather
+than reading as "656 is done."
+
+**Separately, and more importantly**: the user asked directly whether the *original incident*
+(2 agents reporting missing models/llama-server) was actually fixed. It was not. Tasks 0-5 make the
+system *report* the absence precisely; they do nothing to prevent the absence. The two agents would
+almost certainly hit the same wall today, just with a clearer error message. The remainder of this
+pass retargets investigation at that actual gap.
+
+## §Root-cause investigation of the acquisition gap (sixth pass, 2026-07-01)
+
+Per the user's redirect: stop treating diagnosability as the goal and investigate *why* agents end
+up without the model/runtime files at all. The original investigation pass (finding A.2) said "no
+path acquires models or `llama-server.exe` outside the Tauri installer build" — true as far as it
+went, but this pass found a sharper, more precise, and partly more hopeful picture by actually
+running the existing mechanisms rather than reading about them.
+
+### Finding 1 — the headless model-download path already exists and is real, not hypothetical
+
+`POST /api/ai/install/start` (`AiInstallService.startInstall`, routed via `AiRoutes.java`, already
+present before this tempdoc) is a plain Head-process REST endpoint with **zero Tauri dependency** —
+confirmed by reading the method body (spawns a virtual thread, does a registry-driven download plan
+and file fetch) and by running it live: started the dev stack via `dev-runner.cjs` (no Tauri shell
+anywhere in the process tree), called `GET /api/ai/install/manifest` (returned the real
+model-registry.v2.json contents) and `POST /api/ai/install/start {"acceptTerms":true}`, and watched
+it transition through real phases (`preflight` → `plan` → `restore_runtime`) with a real computed
+download plan (`downloadProfile: "GPU_FULL"`, `totalBytes: 3032935158` ≈ 2.8 GB for this machine's
+detected hardware profile). This is the single most encouraging finding of this pass: **the
+"how does a dev/agent get models without the Tauri installer" mechanism is not missing — it already
+exists, is headless, and is reachable from a plain `:modules:ui:run`/dev-runner Head process.**
+
+### Finding 2 — but it hard-fails before downloading anything, on a precondition that only makes sense inside a packaged install
+
+The live run above did not proceed past `restore_runtime`: it terminated
+`{"state":"failed","errorCode":"RUNTIME_MISSING","message":"Bundled AI runtime is missing and could
+not be restored."}` — **before any model bytes were fetched**, confirmed by `downloadedBytes: 0`
+staying at 0 across every poll. Traced the cause:
+`AiInstallService.runInstallInternal()` (`modules/app-services/.../ai/install/
+AiInstallService.java:369-373`) calls `RuntimeRestoreUtil.ensureRuntimePresent(homeDir)`
+unconditionally, immediately after computing the download plan and **before** constructing the
+`DownloadExecutor` — a hard gate, not a soft warning. If it returns `false`, the entire install
+aborts, including the ONNX/GGUF model downloads that have nothing to do with llama-server.
+
+`RuntimeRestoreUtil.ensureRuntimePresent` (`modules/app-services/.../ai/install/
+RuntimeRestoreUtil.java`) copies llama-server files from a "bundled" source directory into AI Home,
+but only if that source exists — it does not *fetch* anything itself. Its source-location logic
+(`resolveBundledRuntimeDir()`, lines 60-75) resolves to
+`<ConfigStore's repoRoot, or cwd>/native-bin/llama-server` — i.e., in this worktree,
+`F:\justsearch-public\.claude\worktrees\656-onramp-investigation\native-bin\llama-server`, a
+directory that **structurally only exists in a packaged installer's app-root layout** (where the
+installer's own build step stages llama-server directly at the app root). In a monorepo/dev
+checkout, no such directory exists or is ever populated by anything — confirmed: `find . -maxdepth 1
+-iname native-bin` at repo root returns nothing in this checkout, and nothing in the codebase writes
+to that exact path outside of the installer bundling step. So `ensureRuntimePresent` was *never
+going to succeed* in this environment, regardless of what models are or aren't already present on
+disk — this is a structural mismatch, not a one-off missing file.
+
+### Finding 3 — the actual llama-server-fetching mechanism exists too, standalone-invokable, just never run and never wired to anything dev/agent-facing
+
+The Gradle task chain that actually *downloads* llama-server.exe —
+`downloadLlamaServerPrebuilt` → `stageLlamaServerFromPrebuilt` (`modules/ui/build.gradle.kts`,
+fetches the CPU prebuilt from `github.com/ggml-org/llama.cpp` releases, confirmed in the very first
+investigation pass) — is invokable on its own: `./gradlew.bat :modules:ui:stageLlamaServerFromPrebuilt
+--dry-run` resolved and would execute cleanly, entirely independent of `bundleSidecarResources` or
+`npm run tauri build`. It's real, working infrastructure that nobody points a dev/agent workflow at,
+because in the main task graph it's wired only as `bundleSidecarResources`'s dependency (the
+installer-packaging path) — confirmed already in the original investigation pass (finding A.2).
+
+### Finding 4 — there is no registry entry for the CPU llama-server binary at all; models and the runtime binary are acquired by two structurally different mechanisms
+
+Grepped `model-registry.v2.json` for every package: `embedding`, `splade`, `reranker`, `ner`,
+`citation-scorer`, `chat` (the GGUF weights) — all registry-driven, runtime-downloadable via
+`AiInstallService`. `cuda-runtime` — also registry-driven (CUDA DLLs, same
+`github.com/ggml-org/llama.cpp` release family). **The base CPU `llama-server.exe` itself has no
+registry entry anywhere** — it is the *only* AI-stack artifact that is exclusively a build-time
+(Gradle-task) acquisition, never a runtime (registry/REST) one. This asymmetry is not documented as
+an intentional decision anywhere found (ADR-0024 describes the llama-server binary being packaged
+into the app bundle by the Gradle build, but does not flag this as a barrier to any non-packaged use
+of "Install AI").
+
+### Finding 5 — three different, only-partly-agreeing ideas of "where does llama-server live in dev mode" already coexist in this codebase
+
+- `RuntimeRestoreUtil.resolveBundledRuntimeDir()` (Finding 2): `<repoRoot>/native-bin/llama-server`.
+- `scripts/dev/dev-runner.cjs`'s `ensureLlamaStagedInNativeBin()` (read in the very first
+  investigation pass, tempdoc 618 §3): stages from `modules/ui/build/llama-server/stage` into
+  `modules/ui/native-bin/llama-server`.
+- `RuntimeActivationService.resolveVariantsRoot()`'s dev-mode fallback (read in the confidence
+  pass): also `modules/ui/native-bin/llama-server/variants` — **agrees with dev-runner**.
+
+So two of the three already agree on the correct dev-mode convention
+(`modules/ui/native-bin/llama-server`); `RuntimeRestoreUtil` is the outlier, carrying a
+packaged-app-only path assumption inside the one mechanism (`AiInstallService`) that's supposed to
+also serve as a runtime/headless flow. This is not a three-way ambiguity to resolve from scratch —
+it's one outlier to reconcile against an already-established, already-correct majority convention.
+
+### External grounding — is hand-derived dev-vs-packaged path resolution a known anti-pattern?
+
+Checked whether this specific class of bug (a component resolving "where are my bundled resources"
+by guessing a path per call site, rather than one canonical resolver) is a recognized anti-pattern
+outside this codebase, since JustSearch happens to sit on Tauri. Confirmed: Tauri's own
+documentation prescribes exactly one API (`PathResolver` / `resolveResource`) specifically so
+resource-path resolution is consistent across dev and packaged modes, rather than each call site
+hand-deriving it — "this approach works consistently in both development and packaged modes by
+automatically resolving to the correct location based on how the application is being run"
+([Tauri: Embedding Additional Files](https://v2.tauri.app/develop/resources/)). This validates the
+diagnosis, not just as an internal convention violation but as a recognized general anti-pattern:
+`RuntimeRestoreUtil` is exactly the kind of ungoverned, hand-derived path guess this pattern exists
+to prevent — and the fix direction should be "converge on the one already-correct convention this
+codebase already has" (the dev-runner/RuntimeActivationService agreement), not invent a new
+resolver mechanism from scratch.
+
+### Critical analysis — candidate designs, not yet chosen
+
+**Option A — wire the existing Gradle task into the dev/worktree bootstrap.**
+`stageLlamaServerFromPrebuilt` already populates exactly the directory
+(`modules/ui/build/llama-server/stage`) that `dev-runner.cjs`'s auto-stage logic already knows how
+to consume. If `scripts/dev/prepare-worktree.cjs` (or `dev-runner.cjs`'s own startup sequence) ran
+this task once, the *existing* dev-runner auto-stage mechanism would then work end-to-end with zero
+new code — this closes the loop using 100% pre-existing plumbing. Narrowest, lowest-risk option.
+Downside: only fixes the dev-runner-driven path; the REST `/api/ai/install/start` flow (Finding 1-2)
+would still hard-fail for anyone calling it directly (e.g. an agent driving the app over HTTP/MCP
+without going through dev-runner at all).
+
+**Option B — make `RuntimeRestoreUtil` dev-mode-aware, matching the majority convention.**
+Extend `resolveBundledRuntimeDir()` (or add a fallback ahead of it) to also check
+`modules/ui/native-bin/llama-server` and `modules/ui/build/llama-server/stage` — the two locations
+`dev-runner.cjs` and `RuntimeActivationService` already agree on — before concluding the runtime is
+missing. This would make the REST `/api/ai/install/start` flow itself dev-mode-functional: an agent
+could trigger the *entire* bootstrap (runtime + models) with one HTTP call, matching how a packaged
+end user's "Install AI" button already works. Directly fixes Finding 2 at its source rather than
+only working around it via dev-runner. Larger question this raises: should `AiInstallService` also
+gain the ability to *download* llama-server (not just restore a pre-staged copy) when neither a
+bundled nor a dev-staged copy exists — i.e., should Option B extend to also invoking (or
+functionally mirroring) `downloadLlamaServerPrebuilt`'s fetch logic from Java, so the REST flow
+never needs the Gradle task at all? That would be a bigger, structurally different change (Option
+C, below) — worth naming as a fork in the design, not deciding here.
+
+**Option C — give the CPU llama-server binary a real registry entry, closing Finding 4 entirely.**
+Add a `llama-server-runtime` (or similar) package to `model-registry.v2.json` pointing at the same
+`github.com/ggml-org/llama.cpp` release asset the Gradle task already downloads, so
+`AiInstallService`'s existing registry-driven download loop acquires it the same way as every other
+artifact — eliminating the Gradle-task/REST-flow split entirely (Finding 4) and, as a side effect,
+resolving Finding 2 for free (no separate "restore" step needed if the runtime is just another
+downloaded package). Most unifying, but the largest change: touches the packaging/licensing lineage
+tempdoc 632 established for llama.cpp binary provenance, and would need someone to decide whether
+`RuntimeRestoreUtil`'s "restore from bundled" step still has a reason to exist afterward (probably
+only for the packaged-installer fast-path, where the file is already sitting in the app bundle and
+a network fetch would be wasteful) — a genuine design question, not just a mechanical addition.
+
+**A question this pass does not resolve: is "Install AI via REST in dev mode" even meant to work at
+all**, or is the Gradle-task-then-dev-runner path (Option A) the *intended* dev/agent bootstrap by
+design, with the REST flow deliberately scoped to the packaged end-user app only? This pass found no
+document stating either position — ADR-0024 describes the packaged-app flow only and is silent on
+dev/headless use entirely. Whoever picks between Option A/B/C should settle this framing question
+first, since it changes whether Finding 2 is "a bug to fix" or "a boundary correctly enforced with a
+bad error message."
+
+### What this pass deliberately did not do
+
+No code changed. No option chosen. No new tempdoc opened (this is squarely 656's own subject —
+"why agents end up without the files" is the literal live incident 656 exists to explain). The
+Task-0-5 diagnosability work already shipped is left as-is, not reverted — it remains correct and
+useful regardless of which acquisition-gap option is eventually chosen; a future fix to the
+acquisition gap will make the now-truthful error messages fire less often, not become wrong.
 
