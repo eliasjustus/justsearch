@@ -8,7 +8,7 @@
  * report-unit-test-attribution.mjs — that script reads JUnit XML (test-suite
  * time); this one reads the Actions jobs JSON (job wall-clock), a different and
  * complementary layer (job wall-clock is ~2x summed-suite time; the gap is JVM
- * cold start + Gradle configuration + fork serialization). Tempdoc 667.
+ * cold start + Gradle configuration + fork serialization). Tempdoc 668.
  *
  * Input is the parsed JSON from
  *   gh api /repos/{owner}/{repo}/actions/runs/{run_id}/jobs --paginate
@@ -123,7 +123,7 @@ export function buildWalltimeReport({ run = {}, jobs = [], selfJob = null, suite
     // captures) into actual test CPU vs framework overhead by correlating the
     // summed suite time from that lane's already-uploaded unit-test-attribution
     // artifact. This is a DERIVED projection over two existing records, never a
-    // re-measurement (tempdoc 667 design). `testCpu` is summed suite time — CPU,
+    // re-measurement (tempdoc 668 design). `testCpu` is summed suite time — CPU,
     // not wall, when a module runs parallel forks — so overhead is a conservative
     // floor and is clamped at 0 to stay non-negative under that overcount.
     const laneMatch = UNIT_LANE_JOB.exec(report.name);

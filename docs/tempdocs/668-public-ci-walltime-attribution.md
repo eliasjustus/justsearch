@@ -14,7 +14,7 @@ related:
 > NOTE: Noncanonical working note. Verify against `.github/workflows/`, current GitHub
 > Actions status, and the code before treating any detail as current truth.
 
-# 667 - Public CI wall-clock attribution and advisory latency budgets
+# 668 - Public CI wall-clock attribution and advisory latency budgets
 
 > **Reframe (2026-07-01).** This tempdoc opened as "license-lane split + build-lane attribution."
 > The measurement pass below killed the license-split premise (it is never the critical path) and
@@ -304,7 +304,7 @@ flagged only as a pattern worth watching for, not a direction to pursue yet.
 
 ## Design settlement - 2026-07-01
 
-This is the authoritative design for 667. It supersedes the Thread A / Thread B framing above. It is
+This is the authoritative design for 668. It supersedes the Thread A / Thread B framing above. It is
 a design direction, not implementation-level YAML or schema.
 
 ### What the problem actually is, restated
@@ -356,7 +356,7 @@ existing one (JUnit test-suite time), and a missing *coverage* (all lanes, not j
 
 ### The correct long-term design
 
-667 owns the **CI wall-clock attribution band** — the direct analogue of what 647 is to 640 on the
+668 owns the **CI wall-clock attribution band** — the direct analogue of what 647 is to 640 on the
 engine side, and the concrete build-out of the "cross-check timing / build-lane attribution / trend
 reporting" scope that 651 declared for itself but shipped only as a stub. The band has three parts,
 each an *extension* of the substrate above, ordered by how strictly the present problem requires them.
@@ -435,7 +435,7 @@ between recognizing a general principle and building general structure):
   two rungs (640) and left the attribution/budget rungs unbuilt (647); CI grew the first two rungs
   (651/652) and left the same rungs unbuilt (this tempdoc). The pattern is domain-independent.
   *Candidate scope:* any aggregate the repo guards without decomposing it — engine latency (647,
-  already recognized), CI wall-clock (667, this), indexing throughput (278 is the stale precedent).
+  already recognized), CI wall-clock (668, this), indexing throughput (278 is the stale precedent).
   *Do not* build a shared cross-domain "budget framework" — the two instances share a shape, not yet
   a reason to change together (AHA: unify only what shares a reason to change).
 
@@ -564,7 +564,7 @@ What landed:
   conservative defaults on a 16 GiB / 4 vCPU runner (memory non-binding; vCPU-bound), value changes
   deferred to the optimization band pending hosted validation;
 - renamed this tempdoc from `667-public-ci-license-and-build-lane-attribution.md` to
-  `667-public-ci-walltime-attribution.md` to match the settled scope (the license split was dropped
+  `668-public-ci-walltime-attribution.md` to match the settled scope (the license split was dropped
   after measurement showed it is never the critical path).
 
 Deliberate deviation from the Design settlement: the settlement described the trend analyzer as a
@@ -964,7 +964,7 @@ overhead (Gradle config + JVM/class-load startup + fork serialization + inter-mo
 that in large multi-module Gradle builds the **configuration phase in particular can exceed the
 execution phase**. So the finding is trustworthy and general.
 
-Crucially, it **self-corrected this tempdoc's own opening premise.** 667 opened treating the fork-count
+Crucially, it **self-corrected this tempdoc's own opening premise.** 668 opened treating the fork-count
 throttles (`app-services maxParallelForks = 1`, CI `testParallelism = 1`) as the critical-path lever.
 The instrument now shows those govern only the ~2–3 min *test-execution* slice — they cannot touch the
 ~7 min of framework overhead. The real levers are elsewhere.
@@ -1012,7 +1012,7 @@ thing and conform to existing patterns.
 ### Reach — a principle this surfaces
 
 - **Principle D — an attribution instrument's value is realised when it changes a decision; past that
-  point, additional instrumentation is a substitute for acting on what it already told you.** 667's
+  point, additional instrumentation is a substitute for acting on what it already told you.** 668's
   attribution reached that point: it redirected effort from the fork-count throttles to config-cache
   (blocked) and CDS (actionable). *Candidate scope:* any measure → attribute → act loop, including the
   engine's own attribution band (647 — once it reports "cross-encoder is ~82% of query latency," more
@@ -1043,7 +1043,7 @@ per-component overhead budget — both **correctly deferred** (no captured sourc
 664 discipline), their shape already recorded; and (b) **acting on the ~70% overhead finding** (Dynamic
 CDS, unblocking config-cache). (b) is the only substantial remaining work, and this tempdoc has
 repeatedly scoped it **out** ("the 648 band", Principle D). So the real design question is structural:
-does that optimization work belong *in* 667, or does 667 terminate and hand off?
+does that optimization work belong *in* 668, or does 668 terminate and hand off?
 
 ### The correct long-term design: conform to the measure / attribute / optimize band-separation
 
@@ -1056,10 +1056,10 @@ Investigation settles it against an existing, load-bearing seam. The engine's pe
 - **648** — *optimize → act* (a purpose-only stub; "actually reduce the dominant cost the attribution
   names… evidence-led by 647; no design chosen, nothing implemented").
 
-667 is the **CI instance of this same shape, with the first two bands collapsed into one tempdoc**:
-because CI's advisory guard (the wall-clock budget + trend) and its attribution shipped together, 667
+668 is the **CI instance of this same shape, with the first two bands collapsed into one tempdoc**:
+because CI's advisory guard (the wall-clock budget + trend) and its attribution shipped together, 668
 *is* CI's 640+647. What it must **not** do is also become CI's 648. The correct design is therefore the
-same hand-off 647 makes to 648: **667 terminates at the attribution/guard boundary and delegates the
+same hand-off 647 makes to 648: **668 terminates at the attribution/guard boundary and delegates the
 optimization to a separate, purpose-only stub** (the CI analogue of 648), created *when the band is
 picked up* — not now. The gap is not "silently dropped" (664's reason for a proactive stub) because
 this tempdoc's second-ideation pass already records the dominant cost (~70% framework overhead) and the
@@ -1069,17 +1069,17 @@ own number only when someone acts. When they do, that stub should also consult t
 work — **275 (gradle-cold-start), 284 (local-build-performance), 287 (test-execution-performance)** —
 which may already have explored CDS/config-cache locally.
 
-So the design conclusion for 667's remaining work is: **it is design-complete as an
+So the design conclusion for 668's remaining work is: **it is design-complete as an
 attribution-plus-advisory-guard tempdoc.** No new attribution structure is warranted — adding any would
 violate three things at once: this tempdoc's own Principle D (more instrument ≠ progress once the
 decision has changed), 664's defer-until-a-consumer discipline, and the scope boundary the
 band-separation enforces. The title needs no change; "attribution and advisory latency budgets" names
-exactly the two bands 667 owns.
+exactly the two bands 668 owns.
 
 ### Reach
 
 **This conforms to an existing seam rather than creating one.** The engine's 640 / 647 / 648 split is
-the precedent; 667 (+ a future optimize stub) is the CI instance. I am extending that shape, not
+the precedent; 668 (+ a future optimize stub) is the CI instance. I am extending that shape, not
 forking a parallel one.
 
 The recurring shape worth naming plainly — an instance of **AHA** (unify only what shares a reason to
@@ -1089,9 +1089,9 @@ change), applied to *tempdoc scope*:
   reasons to change — *measure/guard*, *attribute/budget*, *optimize* — and each is its own (often
   purpose-only-stub) tempdoc, **led by the prior's evidence, never folded into it.** An attribution
   tempdoc ends at a clean delegation; it does not absorb the optimization. *Candidate scope:* any
-  measure→act domain in the repo — the engine (640/647/648, the exemplar), CI latency (667 + a future
+  measure→act domain in the repo — the engine (640/647/648, the exemplar), CI latency (668 + a future
   optimize stub), and plausibly indexing throughput (278, the stale precedent the attribution band
-  already flags). *Where it would be violated:* (i) folding the CDS/config-cache work into 667 —
+  already flags). *Where it would be violated:* (i) folding the CDS/config-cache work into 668 —
   scope-creep that couples two things with different reasons to change; or (ii) the Principle-D
   failure — continuing to add CI-attribution surfaces here instead of handing off to the act. This is
   the structural expression of Principle D: *knowing an instrument is finished is knowing when to hand

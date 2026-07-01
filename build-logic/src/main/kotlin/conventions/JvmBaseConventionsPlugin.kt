@@ -32,9 +32,9 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
     // 96s -> 75.9s = -20.1%, non-overlapping IQRs. Thermally safe (Gradle build measured
     // 86 C max vs 100 C TjMax, CPU Package Power p95 148W of 190W PL2).
     // The CI value of 1 is a conservative default, NOT a measured memory constraint: the
-    // hosted runner is 16 GiB / 4 vCPU (tempdoc 667), so memory is not binding and the real
+    // hosted runner is 16 GiB / 4 vCPU (tempdoc 668), so memory is not binding and the real
     // ceiling on useful test parallelism is the 4 vCPUs. Whether CI can move to 2 is an
-    // optimization-band question requiring hosted validation, deferred (tempdoc 667), unlike
+    // optimization-band question requiring hosted validation, deferred (tempdoc 668), unlike
     // the local value which is measurement-backed (tempdoc 390 above).
     // Override: -PtestParallelism=N
     val testParallelism = project.providers.gradleProperty("testParallelism")

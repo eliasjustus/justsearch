@@ -84,7 +84,7 @@
       "path": ".github/workflows/ci-walltime-trend.yml",
       "class": "scheduled-quality-signal",
       "expectedTriggers": ["workflow_dispatch"],
-      "owner": "tempdoc 667 / public CI wall-clock attribution",
+      "owner": "tempdoc 668 / public CI wall-clock attribution",
       "failureDefault": "workflow-assumption-drift",
       "staleDays": 30,
       "blocking": false,

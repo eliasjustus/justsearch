@@ -15,7 +15,7 @@ on:
 permissions:
   contents: read
   # Read-only Actions API access for the advisory `ci-walltime` job, which reads
-  # this run's own job/step timings. Grantable on fork PRs (read scope). Tempdoc 667.
+  # this run's own job/step timings. Grantable on fork PRs (read scope). Tempdoc 668.
   actions: read
 
 concurrency:
@@ -268,7 +268,7 @@ jobs:
   # requiredStatusChecks; do not add this job's name there). Runs after every
   # lane so it can read all sibling job/step timings and attribute the run's
   # wall-clock: which lane is the critical path, and how much of each lane is
-  # fixed runner tax vs work. Warn-only budget; never fails the run. Tempdoc 667.
+  # fixed runner tax vs work. Warn-only budget; never fails the run. Tempdoc 668.
   ci-walltime:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest

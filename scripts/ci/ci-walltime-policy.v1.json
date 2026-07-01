@@ -2,7 +2,7 @@
   "kind": "justsearch-ci-walltime-policy.v1",
   "version": 1,
   "budgetsAreAdvisory": true,
-  "note": "Warn-only per-job wall-clock ceilings for the public CI run (tempdoc 667). Ceilings are seeded from the measured median x ~1.25 over a 15-run sample of successful `main` runs (2026-07-01); per-lane CV was ~6-10%, so a 1.25x-median ceiling rarely false-alarms while still catching a real regression. These are ADVISORY ONLY: the CI checks themselves remain the pass/fail authority, and this budget never fails a run. Ceilings are a property of the hosted-runner environment over time, not of a release, so they are hand-set here (mirroring unit-test-shard-policy.v1.json) rather than projected from a release record. Refresh deliberately when the runner image or lane membership changes; do not chase per-run noise.",
+  "note": "Warn-only per-job wall-clock ceilings for the public CI run (tempdoc 668). Ceilings are seeded from the measured median x ~1.25 over a 15-run sample of successful `main` runs (2026-07-01); per-lane CV was ~6-10%, so a 1.25x-median ceiling rarely false-alarms while still catching a real regression. These are ADVISORY ONLY: the CI checks themselves remain the pass/fail authority, and this budget never fails a run. Ceilings are a property of the hosted-runner environment over time, not of a release, so they are hand-set here (mirroring unit-test-shard-policy.v1.json) rather than projected from a release record. Refresh deliberately when the runner image or lane membership changes; do not chase per-run noise.",
   "lanes": [
     {
       "job": "Unit tests (app-ui)",

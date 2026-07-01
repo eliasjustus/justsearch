@@ -1,6 +1,6 @@
 name: CI wall-clock trend
 
-# Tempdoc 667. Post-hoc wall-clock TREND analyzer over the last N public CI runs
+# Tempdoc 668. Post-hoc wall-clock TREND analyzer over the last N public CI runs
 # on `main` — the durable "is a lane drifting up / are we at the floor" signal that
 # per-run budgets are too noisy to give. Advisory only: it never fails anything and
 # only opens a SINGLE de-duped issue on SUSTAINED drift (per-lane median over the
