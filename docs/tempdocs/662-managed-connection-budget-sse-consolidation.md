@@ -1349,7 +1349,22 @@ Severity note: contained to the visual affordance only — `isConnected` was tra
 and confirmed to gate nothing else (toast delivery, unread counts, and the inbox drawer all read off frame
 data directly, not the connection flag), so this is a truthfulness/polish defect, not a data-loss risk.
 
-## Research-currency check (2026-07-01) — is anything actively moving that changes this design?
+**Correction (2026-07-01, confidence-building pass) — the fix target named above was imprecise; the correct
+one is narrower.** "Route through `aiStateStore`/`statusTone`" was wrong in a subtle but real way:
+`statusTone` (`aiStateStore.ts:522` `computeStatusTone`) blends connection-reachability verdicts with
+AI-*runtime-mode* (online/indexing/starting/offline) — live-verified this session, `statusTone` read
+`"warning"` in a normal dev-mode boot with AI simply not activated, which has nothing to do with whether the
+advisory SSE connection is healthy. Routing the badge through it would make the badge flicker to "problem"
+for reasons unrelated to advisories. **The correct target is `AiState.phase` (`ConnectionPhase`,
+`aiStateStore.ts:156`)** — derived purely from poll-success timestamps with an existing 15s staleness
+threshold (`STALE_THRESHOLD_MS`, `aiStateStore.ts:222`), with no AI-runtime-mode blending. Live-verified,
+not just reasoned: reproduced the exact reconnect that flips the badge to `disconnected` and subscribed to
+`aiStateStore` at the same time — the badge's class flipped (t=358ms→364ms) while `phase` never emitted a
+change at all across the full 2.5s observation window, staying `'connected'` throughout. This confirms the
+corrected fix target directly, not by inference: `AdvisoryRailBadge` should read `AiState.phase !== 'stale'
+&& phase !== 'disconnected'` (or equivalent) instead of `AdvisoryStore`'s raw `isConnected`, reusing the
+existing `subscribeAiState`/`__feedContactForTest`/`__tickClockForTest` test seams already used by
+`aiStateStore.test.ts`, with no new debounce logic to invent. (2026-07-01) — is anything actively moving that changes this design?
 
 Before another research pass, worth asking directly: this tempdoc has already run three research rounds this
 same day (Investigation/Design §D6; Future Directions; the retraction round above) covering the 6-per-host
