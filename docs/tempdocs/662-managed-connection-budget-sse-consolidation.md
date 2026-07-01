@@ -1077,8 +1077,8 @@ Theorization section above.
    facing trust signal (in the same spirit as 649's "show your own measured contact" philosophy).
 2. **Move the multiplexer's resume protocol toward the SSE-standard `Last-Event-ID` + one session-scoped
    cursor**, closing the alignment goal Design §D6 already named but Confidence-pass §U7 found nothing to
-   reuse yet (the project's own MCP endpoint hadn't implemented SSE resume). Research this session found the
-   ecosystem has moved decisively since: the MCP spec's bare SSE transport is now being *deprecated*
+   reuse yet (the project's own MCP endpoint hadn't implemented SSE resume). Research for this pass (2026-07-01)
+   found the ecosystem has moved decisively since: the MCP spec's bare SSE transport is now being *deprecated*
    (end-of-life April 2026 per the spec's own migration guidance) in favor of Streamable HTTP's unified
    POST+GET+SSE-upgrade endpoint with `Last-Event-ID`-based resumability, now the de facto standard this
    project's own production `/mcp` endpoint direction points toward (tempdoc 655). Replacing the current
@@ -1088,15 +1088,15 @@ Theorization section above.
    protocol change, not a small edit. **RETRACTED (2026-07-01, see Long-term design theorization below) —
    deeper investigation found this trades a working, reuse-preserving design for standards-alignment alone;
    the "tempdoc 655" citation also overstated what that doc actually commits to.**
-3. **Minor**: the late-subscribe debounced reconnect (this session's fix) could shorten its post-reconnect
+3. **Minor**: the late-subscribe debounced reconnect (Bug fix #1 above) could shorten its post-reconnect
    "regained trust" window by bumping heartbeat frequency briefly after a forced reconnect — a small UX
    polish (faster "connected" confirmation), low priority, not investigated further.
 
 ### Extend — generalizing the mechanism to problems it wasn't built for but structurally matches
 
-1. **Cross-tab connection sharing (SharedWorker + BroadcastChannel) — the standout candidate.** This
-   session's own design-alignment review surfaced a genuine gap: opening several browser tabs of the app
-   causes real contention (a manual probe stalled 8+ seconds under a 3-tab load, Verified above), because
+1. **Cross-tab connection sharing (SharedWorker + BroadcastChannel) — the standout candidate.** Live testing
+   for this pass surfaced a genuine gap: opening several browser tabs of the app
+   causes real contention (a manual probe measured an 8+ second stall under a 3-tab load), because
    each tab boots its own independent multiplexer + polls, and Chrome's connection pool is shared *across
    tabs*, not per-tab. This is the tempdoc's **own named principle — "a finite platform quota consumed by
    independently-authored components needs one owner/multiplexer" — recurring one level up**: from N streams
@@ -1119,7 +1119,7 @@ Theorization section above.
    section flags `BrainSurface`'s `pollInstall`/`pollPack`/`pollRuntime`/`pollDiagnostics` timers
    (`views/BrainSurface.ts:270-273`) as the same violation shape (an always-on claim on a scarce
    client-side resource — timers here, not sockets) and explicitly assigns it to tempdoc 663, deliberately
-   not building the generalization until a second instance justifies it. Spot-checked this session:
+   not building the generalization until a second instance justifies it. Spot-checked (2026-07-01):
    `pollInstall`/`pollPack`/`pollRuntime` are already gated on their respective operation actually being
    `running` (not literally unconditional), so the violation may be narrower than the Reach section implied —
    worth a proper audit (mirroring this tempdoc's own U1 consumer-tracing discipline) before 663 assumes the
@@ -1135,7 +1135,7 @@ Theorization section above.
 1. **Multi-window/multi-tab as a supported workflow, not an accidental degradation.** If extension #1 above
    (cross-tab sharing) is built, this becomes a legitimate, marketable capability for a public-alpha product
    where power users commonly want multiple windows (e.g. one on Search, one on Chat) — currently that
-   workflow silently degrades (this session's finding). Framed as a UX feature ("JustSearch now behaves
+   workflow silently degrades (this pass's finding, above). Framed as a UX feature ("JustSearch now behaves
    correctly across multiple windows") rather than only as a technical fix, it's a concrete, user-visible
    payoff for the cross-tab extension, not just an internal robustness improvement.
 2. **A visible "connection health" affordance**, building on Polish #1 — not just a raw number, but a calm,
@@ -1193,8 +1193,9 @@ nothing beyond the one `main` window). Combined with there being no browser-host
 mode anywhere in the docs (checked `docs/explanation/01-system-overview.md` and the dev-tooling references —
 the only browser-facing path is the Vite dev server, which is explicitly a *development* tool, not a shipped
 target) — **the shipped product structurally allows at most one window, hence at most one Shell instance,
-hence at most one multiplexer, permanently.** The multi-tab contention this session's earlier verification
-pass measured (a genuine, reproduced 8-second stall under 3 simultaneous tabs) can only be observed by running
+hence at most one multiplexer, permanently.** A live measurement (3 simultaneous browser tabs, each running
+the raw Vite dev server independently against the same backend) reproduced a genuine 8-second connection
+stall — but that stall can only be observed by running
 the raw Vite dev server directly in an ordinary browser and manually opening extra tabs — a workflow that
 exists (`scripts/dev/serve-worktree-fe.cjs`) but is explicitly a contributor/agent iteration tool, not
 something an end user of the shipped app can ever reach.
@@ -1287,7 +1288,7 @@ directly visible. But four things are: (1) the calm connection-status affordance
 (`LivenessReadout`, the status pill, the System Health "CONNECTION" card) whose *inputs* this tempdoc's
 reconnect behavior feeds; (2) the advisory rail badge/toasts/inbox, action-ledger digest, and task tray —
 the actual consumers riding the multiplexed channel, whose *freshness* is what this whole tempdoc exists to
-protect; (3) the debounced reconnect this session's own bug fix introduced (`MultiplexedStream`'s
+protect; (3) the debounced reconnect Bug fix #1 (above) introduced (`MultiplexedStream`'s
 late-subscribe handling), which is new *behavior*, not just new plumbing, and had never been checked against
 a real running UI, only unit tests with fake timers; (4) the "Future Directions" runtime-peak-signal idea,
 still unbuilt. Investigated live via an isolated dev stack + Chrome, not judged from the tempdoc alone.
@@ -1301,7 +1302,7 @@ stale)". No other multiplexed consumer does this: `AiActivityDigest`/`ActionLedg
 grepped and neither renders anything off a raw `isConnected` value.
 
 Verified live, not assumed: patched a `MutationObserver` onto the badge's rendered button and manually
-triggered exactly the reconnect this session's own fix performs (subscribing a new streamId on the already-
+triggered exactly the reconnect Bug fix #1's mechanism performs (subscribing a new streamId on the already-
 open shared multiplex, the identical code path a late `AdvisoryStore`/intent registration exercises every
 normal boot). Measured result: the badge's class flipped to `disconnected` (dimmed dot rendered) at **407ms**
 after the trigger and recovered at **413ms** — a real, observed ~6ms visible-disconnected window on a fast
@@ -1312,7 +1313,7 @@ clearly visible flicker of the advisory icon, not a sub-frame blip.
 **Why this is 662's concern even though the component predates it.** Before 662, an `EnvelopeStream`
 reconnect was an *abnormal* event (a real network blip or backend restart) — rare enough that a raw, un-
 debounced "flip to disconnected the instant the socket closes" was a reasonable, if crude, treatment. 662's
-own late-subscribe fix (this session) makes a reconnect a **routine, expected part of every normal healthy
+own late-subscribe fix (Bug fix #1) makes a reconnect a **routine, expected part of every normal healthy
 boot** — any time a consumer subscribes after the shared connection is already open, which is the *common*
 case for `AdvisoryStore` (gated behind the Resource Catalog fetch) and intent (gated behind the schema fetch).
 662 didn't create the raw-`isConnected` wiring, but it is what turns its blast radius from "rare edge case"
@@ -1352,7 +1353,7 @@ data directly, not the connection flag), so this is a truthfulness/polish defect
 **Correction (2026-07-01, confidence-building pass) — the fix target named above was imprecise; the correct
 one is narrower.** "Route through `aiStateStore`/`statusTone`" was wrong in a subtle but real way:
 `statusTone` (`aiStateStore.ts:522` `computeStatusTone`) blends connection-reachability verdicts with
-AI-*runtime-mode* (online/indexing/starting/offline) — live-verified this session, `statusTone` read
+AI-*runtime-mode* (online/indexing/starting/offline) — live-verified (2026-07-01), `statusTone` read
 `"warning"` in a normal dev-mode boot with AI simply not activated, which has nothing to do with whether the
 advisory SSE connection is healthy. Routing the badge through it would make the badge flicker to "problem"
 for reasons unrelated to advisories. **The correct target is `AiState.phase` (`ConnectionPhase`,
@@ -1436,7 +1437,7 @@ Both items closed.
 
 A critical review of everything implemented since the previous review (two independent adversarial
 subagents, both findings independently re-verified against the actual code before accepting) found two more
-real, substantive issues — both in code from this session's own fixes. No security/privacy issues found.
+real, substantive issues — both in code from the round-3 fixes above. No security/privacy issues found.
 
 **Bug #3 (Medium, FIXED) — the debounced late-subscribe reconnect could fire after it was no longer needed.**
 `MultiplexedStream.subscribe()`'s returned unsubscribe closure only removed the entry from `this.entries`; it
