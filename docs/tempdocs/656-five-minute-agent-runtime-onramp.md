@@ -1641,3 +1641,25 @@ capability-descriptor-truthfulness lane (650). Keep every onramp promise true an
 corpus license-clean. No claim in this design section is itself a public-facing assertion yet — it is
 design history; the public wording is authored only when O5 is implemented.
 
+### External-research judgment for the onramp design (2026-07-01)
+
+Considered whether the onramp design rests on actively-shifting external ground. **No research pass** —
+reasoning recorded for continuity.
+
+- The core (O1-O5: tiered progressive onboarding, a doctor diagnostic, a demo dataset, test-as-proof,
+  docs discoverability) is settled UX/engineering practice — `flutter doctor`/`brew doctor`,
+  time-to-first-value, sample corpora, claim-with-a-runnable-proof. Nothing fast-moving to check. The
+  doctor (O2) is additionally a *projection* of internal endpoints (501), so its shape is dictated
+  internally, not by an external convention.
+- The one genuinely fast-moving area — the MCP spec transition + competitive agent-onramp UX + product
+  positioning — maps exactly onto the seams this design **hands off** (655 MCP matrix, 657 tiers, 654
+  product identity). Researching them now would be doing those (unstarted) tempdocs' work; the earlier
+  Move-1/2 research pass already recorded that 655 should track the July-2026 MCP spec transition, so
+  the research is *owed to 655*, not skipped here.
+- The competitive premise the core leans on ("a fast, zero-download first success wins developer
+  trust") is the tempdoc's given Purpose (private close-project research), already grounded against
+  public examples (`shinpr/mcp-local-rag`, prior pass), and stable; the Tier-0-works claim rests on a
+  live measurement, not a web claim.
+- No external code/text/assets copied; O3's demo corpus is to be fabricated/public-domain content
+  authored at implementation — nothing to attribute under the license/notices lane.
+
