@@ -1,7 +1,7 @@
 ---
-title: "Five-minute agent/runtime onramp: make AI-readiness diagnosis truthful (shipped), then fix why agents end up without the model/runtime files in the first place (root-cause investigation, not yet fixed)"
+title: "Five-minute agent/runtime onramp: make AI-readiness diagnosis truthful (shipped); the long-term fix for why agents end up without the files is to extend the model-registry's own acquisition+sharing pattern to the llama-server binary, not to build a parallel mechanism (design theorized, not yet implemented)"
 type: tempdocs
-status: "Diagnosability substrate (Tasks 0-5) shipped and live-verified 2026-07-01 — but this only makes failures easier to *see*, it does not fix why 2 agents ended up without models/llama-server in the first place. §Root-cause investigation (sixth pass) traced that separately: POST /api/ai/install/start (the existing headless, Tauri-independent model-download flow) hard-fails at a 'restore_runtime' precondition before downloading anything, because RuntimeRestoreUtil.ensureRuntimePresent() checks a packaged-installer-only path. Tempdoc 618 (active) already diagnosed the same root cause but only fixed the *activation* consumer, not this *install* consumer — cross-referenced in both directions. §Reframing pass (user directive): the goal is NOT 'make the install succeed' — per-worktree redownload of multi-GB models is not viable. Confirmed models already have a working share-once-via-main-checkout mechanism (JUSTSEARCH_MODELS_DIR); the runtime binary has no equivalent at all. Confirmed live: the main checkout itself has never built/staged the runtime binary either, so 'populate the main checkout once' is the actual first milestone — propagation to worktrees already works via 618's existing fallback. Candidate designs (A/B/C) revised to require preserving this sharing property. Nothing implemented yet — investigation/theorization only, per instruction."
+status: "Diagnosability substrate (Tasks 0-5) shipped and live-verified 2026-07-01. Root cause of the acquisition gap traced (sixth pass) and reframed around worktree-sharing (per user directive, cross-referenced against tempdoc 618). §Long-term design theorization (seventh pass, 2026-07-01): the CPU llama-server binary is the one AI-stack artifact NOT flowing through the model-registry + AiInstallService acquisition pipeline that already correctly handles its sibling GPU variant (the registry's existing cuda-runtime package, sourced from the same github.com/ggml-org/llama.cpp releases) — it is a fork of an authority that already exists, not a missing capability. Separately, the JUSTSEARCH_MODELS_DIR sharing convention only covers modelsDir, not aiHome/native-bin — meaning even the already-registry-driven cuda-runtime package does not yet share across worktrees today, an existing violation found as a byproduct, not fixed here. Design conclusion: extend the registry with a CPU-baseline package (mirroring cuda-runtime's precedent) and extend the sharing convention to cover native-bin — both are extensions of proven existing mechanisms, not new structure. Names this as a third instance of the already-recorded canonical-authority-and-projection principle (650, and this tempdoc's own §D3), now in the acquisition-mechanism domain. Legal/licensing sign-off (per tempdoc 632's precedent and closure-gate) and the actual implementation are explicitly not done in this pass — theorization only, per instruction."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -1064,4 +1064,166 @@ chosen here) ultimately depends on. **"Populate the main checkout's runtime bina
 the actual first concrete milestone** — after that, 618's existing copy-fallback already propagates it
 to every worktree today with no further fix needed; only the *first* population (at the main
 checkout, once) requires one of Options A/B/C above.
+
+## §Long-term design theorization (seventh pass, 2026-07-01)
+
+Per instruction: think through the correct long-term design, check what already exists before
+proposing structure, and match scope to the actual problem — not a short-term patch, not
+over-building. Also read adjacent tempdocs (632, 633, 618 already cross-referenced above) before
+concluding.
+
+### D1. Restating the goal, precisely, given every prior pass's findings
+
+The problem is not "the CPU llama-server binary can't be downloaded" (Finding 3: it already can be,
+via a working Gradle task) and not "there's no shared-location convention in this codebase" (already
+established: `JUSTSEARCH_MODELS_DIR` works, model downloads already skip re-fetching what's already
+present). The problem is narrower and more precise than either: **the one artifact this whole
+incident is about (the CPU llama-server binary) is acquired through a *different, parallel*
+mechanism from every other AI-stack artifact, and that parallel mechanism has neither the download
+fallback nor the sharing property the primary mechanism already has.** The long-term fix is to stop
+that artifact from being the exception, not to build it a bespoke solution.
+
+### D2. Existing seam #1 — the model-registry + `AiInstallService` pipeline already handles this artifact's sibling correctly
+
+Re-read `model-registry.v2.json`'s `cuda-runtime` package in full: it downloads three files —
+`llama-b8571-bin-win-cuda-12.4-x64.zip` (**from `github.com/ggml-org/llama.cpp` releases** — the
+exact same upstream the Gradle task `downloadLlamaServerPrebuilt` already fetches the CPU prebuilt
+from), plus two NVIDIA-sourced zips — into `homeDir.resolve(installRoot).resolve(targetDir)`
+(`native-bin/llama-server/variants/cuda12`), through `AiInstallService`'s completely generic,
+already-correct, already-tested download/verify/plan loop. **This means the acquisition pipeline
+this incident needs already exists, already works, and already fetches from the identical upstream
+— just for the GPU variant of the same binary family, not the CPU baseline.** The CPU baseline
+`llama-server.exe` (+ adjacent DLLs) has no registry entry anywhere (confirmed by grep in the sixth
+pass) and instead depends entirely on the Gradle-task-then-installer-bundle-then-`RuntimeRestoreUtil`
+chain — a second, parallel authority for "how does this binary get onto disk," maintained separately
+from the one that already handles its sibling. This is exactly the shape CLAUDE.md's own
+`explore-before-implementing` rule names: *"check the relevant register and decide projection vs
+fork: a projection derives from the one canonical source; a fork is a second authority that will
+drift."* The CPU baseline is a fork. It has, in fact, already drifted — that drift is the root cause
+of the entire incident this tempdoc exists to explain.
+
+**Design conclusion**: add the CPU baseline llama-server binary (+ its adjacent runtime DLLs) as a
+model-registry package, following the `cuda-runtime` package's own precedent exactly — same upstream
+source, same `installRoot`-relative placement convention (`native-bin/llama-server`, flat, no
+`variants/` subdir, matching the existing G17 "default variant" flat-baseline convention
+`RuntimeActivationService` already recognizes), same SHA-256/size/`downloadUrl` shape, same required
+`license` field (every existing package has one — `cuda-runtime`'s is
+`LicenseRef-NVIDIA-CUDA-EULA`; the CPU baseline's would be llama.cpp's own MIT license, a materially
+simpler case). This is not new registry structure — it is one more entry in an existing table, using
+fields the schema already has.
+
+### D3. Existing seam #2 — the "shared, overridable canonical location" convention already exists, but only covers half of what needs it
+
+`JUSTSEARCH_MODELS_DIR` (`EnvRegistry.MODELS_DIR`) is the proven mechanism that makes "download once,
+every worktree gets it for free" real for `modelsDir`. But `installRoot`-based packages (currently
+only `cuda-runtime`) resolve against `aiHome`, not `modelsDir` — and `aiHome` has **no** analogous
+override. This means **`cuda-runtime` — an artifact that already goes through the correct,
+registry-driven pipeline today — does not yet benefit from cross-worktree sharing either.** This is
+a second, adjacent, currently-live gap this investigation surfaced as a byproduct: the acquisition
+half of the principle (D2) is satisfied for `cuda-runtime`; the sharing half (this section) is not.
+Confirmed live in the sixth pass that even the main checkout has never populated `native-bin/`, so
+this gap hasn't yet caused a *reported* incident the way the CPU-baseline fork has — but it is the
+same shape of problem, one step behind.
+
+**Design conclusion**: extend the shared/overridable-location convention to cover the `aiHome` root
+(or at minimum its `native-bin` subtree specifically — the part `installRoot`-based packages target),
+the same way `JUSTSEARCH_MODELS_DIR` covers `modelsDir` today: a registered `EnvRegistry` entry,
+set by `dev-runner.cjs` to the main checkout's equivalent path (mirroring its existing
+`JUSTSEARCH_MODELS_DIR`-setting logic exactly), honored by every Java-side consumer that currently
+resolves `native-bin` paths independently (`RuntimeRestoreUtil`, `RuntimeActivationService
+.resolveVariantsRoot()`, `AiInstallService`'s `installRoot` resolution) instead of each maintaining
+its own guess. This directly closes Finding 5 (three-way path-convention fragmentation) at its root,
+not just for the CPU baseline but for `cuda-runtime` too — one fix, two artifacts benefit.
+
+**Is a true zero-copy share (not just "share the download," but literally launch the executable from
+the shared directory, no local copy at all) actually feasible for an executable, unlike passive model
+data?** Checked rather than assumed: `LlamaServerOps.adjustPathForRuntimeDlls()` (confirmed in the
+implementation pass, Task 3 investigation) already prepends the *resolved* executable's directory to
+the child process's `PATH` before launch — meaning the process-launch code already tolerates the
+executable living anywhere, DLLs-adjacent, not requiring a fixed local directory. **Zero-copy sharing
+for the runtime binary, matching models' existing tier exactly, is already within reach of code that
+exists today** — this isn't a capability gap, just a location-resolution one.
+
+### D4. What happens to the mechanisms this design doesn't replace
+
+- **`RuntimeRestoreUtil`** stops being a hard gate and becomes a fast-path pre-check: "is a copy
+  already sitting in the packaged-installer bundle" (true for a real end-user install, false for
+  dev/agent contexts) — if not, fall through to the now-viable registry-driven download (D2) instead
+  of aborting the entire install flow. This preserves its original, legitimate purpose (avoid a
+  redundant network fetch when the installer already shipped a copy) while removing its current
+  behavior of taking down model downloads that have nothing to do with it.
+- **`downloadLlamaServerPrebuilt`/`stageLlamaServerFromPrebuilt`** (the Gradle tasks) remain exactly
+  as they are — they serve **packaging** (assembling the installer's bundled payload at build time),
+  a legitimately different concern from **runtime bootstrap** (getting the binary onto a dev/agent/
+  end-user's disk when nothing is pre-staged). Models already have this same two-trigger-point shape
+  (CI/eval-time acquisition vs. runtime "Install AI" acquisition) without conflict; the runtime binary
+  gaining a second, registry-driven acquisition trigger alongside its existing build-time one is not
+  a new shape, just an extension of one the codebase already tolerates elsewhere.
+- **`RuntimeActivationService.resolveVariantsRoot()` and `dev-runner.cjs`'s activation-side fallback**
+  (618's already-correct fix) stay as-is — they're about *finding* an already-acquired runtime, a
+  different concern from *acquiring* one. They gain a cleaner, unambiguous, registered source of
+  truth to resolve against instead of independently-maintained fallback guesses, but their own logic
+  doesn't need to change in shape.
+
+### D5. Licensing consideration (flagged, not resolved — this pass does not have authority to decide it)
+
+Tempdoc 632 already reviewed and the founder already **accepted** `cuda-runtime`'s registry-driven,
+runtime-HTTP-download posture for NVIDIA-licensed assets as compliant redistribution ("the
+application initiates and consumes the runtime... accepted as the operating posture"), and that same
+review explicitly characterized the *llama.cpp-sourced* zips within that same package as "llama.cpp's
+own public redistribution (lesser concern)" relative to the NVIDIA-licensed ones. The CPU baseline
+proposed in D2 is sourced from the identical upstream (`github.com/ggml-org/llama.cpp` releases,
+MIT-licensed) as those already-accepted, lesser-concern zips — a materially simpler licensing
+question than the NVIDIA case 632 already resolved. This is a supporting signal, not a substitute for
+an actual decision: per 632's own precedent, packaging/redistribution posture changes are a
+`[founder/legal]`-tagged decision, not an agent's to make unilaterally, and the registry's own
+closure-gate (632, §"every model-registry package carries a license") would need the new package's
+`license` + NOTICE-projection entries done correctly regardless of who signs off.
+
+### D6. Explicitly not designed here (matching scope to the problem)
+
+- **No generalized "artifact acquisition framework."** `model-registry.v2.json` + `AiInstallService`
+  already *is* that framework, for every artifact except this one. The fix is two extensions to two
+  existing mechanisms (a new registry entry; a new `EnvRegistry` shared-location entry), not a new
+  abstraction layer, not a plugin system for "artifact types," not a generic cache-directory service.
+- **No fix to the `cuda-runtime` sharing gap (D3) in this pass** — named because this investigation
+  surfaced it, not because 656 is now scoped to fix it. It hasn't caused a reported incident (no
+  worktree has ever needed a shared GPU runtime copy that wasn't there, per this pass's live checks),
+  so per this tempdoc's own `structural-defects-no-repeat` discipline it's recorded as a live,
+  real defect worth fixing, just not inside this already-broad tempdoc.
+- **No decision made between "Option A/B/C" language from the sixth pass** — D2-D4 supersede that
+  framing with a more specific conclusion (extend the registry + extend the sharing convention), but
+  the exact enum names, `EnvRegistry` entry name, and code-level wiring remain implementation-level
+  detail for whoever picks this up, per the instruction to keep this design general.
+
+### D7. Principle recognition and reach (recognizing ≠ building, again)
+
+**This is a third instance of the already-named `canonical-authority-and-projection` principle**
+(650: public capability narrative; this tempdoc's own earlier D3: runtime lifecycle reason-code
+plumbing; now: **artifact acquisition mechanisms**). Restated for this domain: *any downloadable,
+expensive-to-reacquire artifact the app depends on should be acquired through one registry-driven
+pipeline with one shared, overridable, canonical on-disk location — never a second,
+artifact-type-specific acquisition pipeline maintained in parallel.*
+
+**Candidate scope beyond this immediate fix (recorded, not built):**
+- The `cuda-runtime` sharing gap (D3) is a live, present-day instance of the *sharing* half of this
+  principle already being violated by an artifact that otherwise satisfies the *acquisition* half —
+  worth a dedicated look, not folded into this tempdoc.
+- Any future large native asset JustSearch adds (a different local-LLM runtime, a new native
+  extraction engine, etc.) should default to registry+shared-location from day one rather than
+  re-deriving a bespoke Gradle-task-only pipeline the way the CPU llama-server binary originally did
+  — this tempdoc's own history is the cautionary example for why that default matters.
+- Three independent lineages (650, this tempdoc's D3, and now D2/D3 here) having converged on the
+  same shape across public docs, runtime-lifecycle code, and now artifact-acquisition code is
+  stronger evidence than a single case that this is a genuine recurring invariant of how this system
+  tends to drift, not a coincidence worth naming once and forgetting.
+
+**What this pass deliberately does not build**: a generalized fork-detection gate (e.g., a governance
+check that flags any new native-binary-download code path that isn't registry-driven), a retrofit of
+`cuda-runtime`'s sharing gap, or a written policy doc mandating this pattern project-wide. The
+present problem is fully addressed by D2-D5; building enforcement infrastructure for a principle
+observed three times, from a single tempdoc's vantage point, would be exactly the premature
+abstraction the "recognize, don't build" instruction warns against. The principle is recorded here so
+a future agent recognizes the fourth instance faster, or picks up the `cuda-runtime` sharing gap with
+context already assembled, rather than re-deriving it.
 
