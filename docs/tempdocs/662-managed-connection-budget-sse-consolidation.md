@@ -1398,3 +1398,36 @@ if it ever affects anything, it affects every loopback call the app makes, multi
 this tempdoc's scope to cover it would misattribute a platform-wide risk to one subsystem. Logged to the
 observations inbox instead (per `log-pre-existing-issues`) rather than investigated further here — recorded
 in this tempdoc only because it surfaced while researching for it, not because 662 owns it.
+
+## Build, round 2 (2026-07-01) — the two remaining items, implemented and live-verified
+
+Executed the confidence-building pass's design exactly (confidence was 9/10; no surprises during
+implementation).
+
+- **`AdvisoryRailBadge.ts`**: replaced the raw `isConnected: { state: true }` property with `feedStale`,
+  derived from a new `subscribeAiState` subscription (`isStalePhase(phase)` — `'stale'`/`'disconnected'`),
+  alongside the unchanged `AdvisoryStore` subscription (now only feeding `unreadCount`). CSS class names
+  (`disconnected`, `disconnected-dot`) kept as-is; only the JS property driving them changed.
+- **`AdvisoryRailBadge.test.ts`**: rewrote the two Group B6 tests to drive `aiStateStore`'s test seams
+  (`__feedForTest`, `__tickClockForTest`, `vi.useFakeTimers`) instead of the store's raw `isConnected`, and
+  added the regression test that is the actual point of the fix — a raw `AdvisoryStore` `isConnected: false`
+  push, with `aiState.phase` staying `'connected'`, must **not** trigger the stale visual. All 8 tests green.
+- **`HealthSurface.ts`**: added one `data-row` ("Connections") to `renderConnection()`, reading
+  `getCurrentOpenChannelCount()`/`getPeakOpenChannelCount()` from `liveChannelBudget.ts` inline — no new
+  subscription or timer, since the component already re-renders on every `subscribeAiState` tick.
+
+**Verification performed:**
+- Unit: `AdvisoryRailBadge.test.ts` (8/8), full suite `npm run test:unit:run` (3442/3443 — the one failure
+  is the same pre-existing, unrelated `HealthLitView.test.ts` failure present on unmodified `main` all
+  session).
+- `npm run typecheck` — clean.
+- `node scripts/ci/check-presentation-purity.mjs` — clean (the `HealthSurface.ts` pin only requires the file
+  to still reference `present(` for its condition-label usage, unaffected by the new plain-text row).
+- **Live browser, isolated dev-stack** — the actual point of this verification, not a formality: reproduced
+  the exact `MutationObserver` + manual-late-subscribe-trigger measurement from the confidence-building pass
+  against the real fixed code. Result: **zero badge-class mutation events** across the full observation
+  window (previously: a `disconnected`→`''` flip at t≈407ms/413ms) — the flicker is gone, confirmed by
+  measurement, not inference. Separately confirmed the System Health "Connections" row renders a correct,
+  sane live value (`"1 open (peak 1)"`, matching the one active shell-events multiplexer connection).
+
+Both items closed. No further known unimplemented work remains on this tempdoc.
