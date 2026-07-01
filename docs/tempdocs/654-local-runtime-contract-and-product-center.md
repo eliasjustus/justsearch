@@ -1,9 +1,9 @@
 ---
 title: "Local runtime contract and product center: decide whether JustSearch's public center is the desktop app or a reusable local knowledge runtime with the desktop as reference client"
 type: tempdocs
-status: open
+status: open — product-center question RESOLVED 2026-07-01 (§Direction note); design pass commissioned with that as fixed input
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-01
 category: product-architecture / runtime-contract / public-positioning
 related:
   - 650-go-public-capability-descriptor-truthfulness
@@ -55,3 +55,16 @@ truthfulness. This note owns the missing product-contract shape behind that desc
 - How should the README and canonical docs describe the desktop app relative to the runtime?
 - What would make Headless or MCP Lite a product shape rather than a loose launch mode?
 
+
+---
+
+# Direction note (2026-07-01, founder-resolved)
+
+The open "product center" question this tempdoc poses is resolved: **JustSearch's public center is
+the local runtime for agents; the desktop app is the first-party reference client.**
+
+The design pass this tempdoc requests is now commissioned, with the above as fixed input plus one
+hard boundary: **under-promise.** The v1 contract should be the minimal surface we are confident
+holds stable (health/status lifecycle subset, the MCP endpoint + tool surface, a runtime manifest).
+Stability promises are cheap to add later and expensive to retract; a compatibility matrix and a
+semver policy are in scope, but broad API-subset stability promises are not (v1).

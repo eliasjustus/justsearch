@@ -2066,6 +2066,23 @@ dev-runner subcommand). **Not Opus** — the deep reasoning was the design pass,
 deliberately deferred; nothing remaining needs it. The one spot rewarding a little care is the CI lane
 (trigger policy + lane choice), comfortably within Sonnet.
 
+## Launch-context note (2026-07-02, founder direction — reconciliation of a parallel re-scope)
+
+While this tempdoc's implementation was merging (PR #44), a founder-directed re-scope was filed
+against the pre-merge stub in the main checkout, elevating "the five-minute first-success path" to
+**launch-blocker** status: the public launch sequence will not fire until a first success exists
+that does not require the full desktop install + ~9 GB first run. Reconciled against the merged
+state:
+
+- The **developer/from-source half is now shipped by this tempdoc** (Tier-0 zero-model search, the
+  doctor, `examples/onramp-corpus`, the runnable proof) — that half of the launch-blocker is
+  satisfied.
+- The **end-user / agent-developer trial half** (install modes, model-pack decomposition, a light
+  MCP-first shape) is exactly the framing this tempdoc already handed to **657/654/655**; the
+  launch-blocker elevation therefore lives on **657** (see its 2026-07-01 re-scope note), not here.
+- The demo-grade corpus question (messy, multilingual, OCR — beyond the four-file Tier-0 smoke
+  corpus) is carried by **669**.
+
 ## §Implementation (sixteenth pass, 2026-07-01) — the three warranted-now wins
 
 Implemented the remaining non-structural, un-coupled work (the big tier projection stays deferred by
