@@ -9,6 +9,8 @@ export type { StatusResponse } from './status-response.js';
 export { statusResponseSchema } from './status-response.js';
 export type { AiRuntimeStatusResponse } from './ai-runtime-status-response.js';
 export { aiRuntimeStatusResponseSchema } from './ai-runtime-status-response.js';
+export type { InferenceStatusResponse } from './inference-status-response.js';
+export { inferenceStatusResponseSchema } from './inference-status-response.js';
 export type { EffectivePolicy } from './effective-policy.js';
 export { effectivePolicySchema } from './effective-policy.js';
 export type { AiPackImportStatus } from './ai-pack-import-status.js';

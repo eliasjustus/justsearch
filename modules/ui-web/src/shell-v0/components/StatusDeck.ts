@@ -27,6 +27,7 @@ import { type NoticeTone } from '../utils/statusTone.js';
 import { LIFECYCLE } from '../../api/lifecycleState.js';
 import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
 import { presentVerdict, type VerdictKind } from '../state/verdict.js';
+import { presentAiEngineVerdict, type AiEngineKind } from '../state/aiVerdict.js';
 import { emitEphemeralToast } from './advisory/ephemeralToast.js';
 import './SystemNotice.js';
 import { orElse } from '../state/known.js';
@@ -147,6 +148,10 @@ export class StatusDeck extends JfElement {
   // through an intermediate `checking` (settled-but-readiness-unknown) before settling
   // to `operational`. An immediate `transitioning → operational` edge would miss that.
   private sawTransitioning = false;
+  // Tempdoc 663 Design pass 3 — the AI-engine sibling of `sawTransitioning`: true once `installing`
+  // has been seen since the last terminal outcome, so the one-shot completion/failure toast fires on
+  // reaching `online` or `install_failed`.
+  private sawInstalling = false;
 
   constructor() {
     super();
@@ -291,6 +296,9 @@ export class StatusDeck extends JfElement {
   override updated(): void {
     const kind = this.aiState?.verdict.kind ?? null;
     if (kind !== null) this.announceSettledIfNeeded(kind);
+    // Tempdoc 663 Design pass 3 — the AI-engine sibling tracker, same lifecycle hook.
+    const aiEngineKind = this.aiState?.aiEngine.kind ?? null;
+    if (aiEngineKind !== null) this.announceAiEngineSettledIfNeeded(aiEngineKind);
   }
 
   /**
@@ -318,6 +326,37 @@ export class StatusDeck extends JfElement {
         });
       }
       this.sawTransitioning = false;
+    }
+  }
+
+  /**
+   * Tempdoc 663 Design pass 3 — the AI-engine sibling of `announceSettledIfNeeded`, same shape: a
+   * one-shot toast fires on reaching a TERMINAL outcome (`online` = success, `install_failed` =
+   * failure) IFF `installing` was seen since the last terminal outcome. The flag is reset
+   * unconditionally in both terminal branches, so no double-fire is possible on repeated `updated()`
+   * calls with an unchanged kind (mirrors the confirmed-safe shape of the search-verdict tracker).
+   */
+  private announceAiEngineSettledIfNeeded(next: AiEngineKind): void {
+    if (next === 'installing') {
+      this.sawInstalling = true;
+    } else if (next === 'online') {
+      if (this.sawInstalling) {
+        emitEphemeralToast({
+          // The `core.ai-engine.settled` class declares defaultSeverity:'success'.
+          message: 'AI install complete',
+          classId: 'core.ai-engine.settled',
+        });
+      }
+      this.sawInstalling = false;
+    } else if (next === 'install_failed') {
+      if (this.sawInstalling) {
+        emitEphemeralToast({
+          // The `core.ai-engine.failed` class declares defaultSeverity:'error'.
+          message: 'AI install failed',
+          classId: 'core.ai-engine.failed',
+        });
+      }
+      this.sawInstalling = false;
     }
   }
 
@@ -472,17 +511,25 @@ export class StatusDeck extends JfElement {
           ${icon({ name: 'memory-stick', size: 11 })}
           <span class="val">${memUsedDisp}</span>
         </span>`;
-      case 'core.inference-mode':
+      case 'core.inference-mode': {
         // 595 §15.3 N3 — the system pill is operable: a `jf-control` (the one operability
         // primitive — native button, keyboard-activatable, named) that opens Health via the
         // `navigate-with-context` seam. The accessible name still PROJECTS the metric name.
+        // Tempdoc 663 Design pass 3 — when the actionable next step is "go install/retry" (a state
+        // Health cannot act on), route to the AI Brain surface instead — the ONE state where Health
+        // is not the right destination for this pill.
+        const aiEngineKind = this.aiState?.aiEngine.kind;
+        const needsBrain = aiEngineKind === 'not_installed' || aiEngineKind === 'install_failed';
+        const actionLabel = needsBrain ? 'Open AI Brain.' : 'Open Health.';
         return html`<jf-control
           class="status-pill group"
-          label="${name}: ${mode}. Open Health."
-          .onActivate=${() => this.openHealth()}
+          label="${name}: ${mode}. ${actionLabel}"
+          .onActivate=${() =>
+            needsBrain ? requestSurfaceNavigation('core.brain-surface') : this.openHealth()}
         >
           <jf-status-badge tone=${this.inferencePillTone()}>${mode}</jf-status-badge>
         </jf-control>`;
+      }
       case 'core.queue': {
         if (queue <= 0 && embed <= 0) return nothing;
         // 630: the global, main-surface home for energy-pause legibility. When the OS energy saver
@@ -547,6 +594,10 @@ export class StatusDeck extends JfElement {
     // only when the text changes (a real verdict change / escalation), silent across
     // identical polls. Reuses 559's `<jf-system-notice live>` role/aria-live authority.
     const announce = this.aiState ? presentVerdict(this.aiState.verdict).announce : null;
+    // Tempdoc 663 Design pass 3 — the AI-engine sibling announcer, same pattern, living in this
+    // ALWAYS-MOUNTED surface (not BrainSurface's own render) so a transition still announces even if
+    // the user has navigated away from the AI Brain page.
+    const aiEngineAnnounce = this.aiState ? presentAiEngineVerdict(this.aiState.aiEngine).announce : null;
     return html`
       ${announce
         ? html`<jf-system-notice
@@ -554,6 +605,14 @@ export class StatusDeck extends JfElement {
             live=${announce.politeness}
             data-testid="verdict-announcer"
             >${announce.text}</jf-system-notice
+          >`
+        : nothing}
+      ${aiEngineAnnounce
+        ? html`<jf-system-notice
+            class="visually-hidden"
+            live=${aiEngineAnnounce.politeness}
+            data-testid="ai-engine-announcer"
+            >${aiEngineAnnounce.text}</jf-system-notice
           >`
         : nothing}
       <div class="adaptive-bar">
