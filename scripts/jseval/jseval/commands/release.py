@@ -112,6 +112,54 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
         sys.exit(1)
 
     out = Path(out_path) if out_path else Path(data_dir) / "release.v1.json"
+
+    # tempdoc 664: recomposing over a prior release silently changes every projected ratchet
+    # floor (relevance-gate, perf-gate both read `current_release`) — a comment in
+    # perf-ratchet-baselines.v1.json already documents one such relaxation being absorbed this
+    # way. Refuse a per-corpus, per-metric relaxation vs. the prior release without a classified,
+    # justified changeset.
+    from .. import baseline_shift as _bshift
+    from .. import metric_families as _mf
+    lower_is_better = {k: v for fam in _mf.REGISTRY for k, v in fam.lower_is_better.items()}
+    old_measured = (
+        json.loads(out.read_text(encoding="utf-8")).get("measured") or {}
+        if out.is_file() else {}
+    )
+    changesets_dir = out.resolve().parent / ".changesets"
+    try:
+        for ds, entry in release_doc.get("measured", {}).items():
+            old_entry = old_measured.get(ds) or {}
+            old_metrics = old_entry.get("metrics") or {}
+            for metric, new_value in (entry.get("metrics") or {}).items():
+                old_value = old_metrics.get(metric)
+                if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+                    continue
+                _bshift.assert_baseline_not_relaxed(
+                    old_value, new_value,
+                    lower_is_better=lower_is_better.get(metric, False),
+                    gate="release", dataset=f"{ds}:{metric}",
+                    changesets_dir=changesets_dir,
+                )
+            # tempdoc 664 (post-review fix): `run_metrics` (throughput/footprint) is a sibling
+            # family to `metrics` on the same measured entry — perf_gate.py's own floor
+            # projection reads BOTH (project_release_to_perf_baselines falls back to run_metrics
+            # for primary_docs_s/enrich_docs_s/resident_bytes). The metrics-only loop above missed
+            # it, leaving 3 of 4 perf-gate metrics unguarded against a release-recompose regression.
+            old_run_metrics = old_entry.get("run_metrics") or {}
+            for metric, new_value in (entry.get("run_metrics") or {}).items():
+                old_value = old_run_metrics.get(metric)
+                if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+                    continue
+                _bshift.assert_baseline_not_relaxed(
+                    old_value, new_value,
+                    lower_is_better=lower_is_better.get(metric, False),
+                    gate="release", dataset=f"{ds}:{metric}",
+                    changesets_dir=changesets_dir,
+                )
+    except _bshift.BaselineRelaxedWithoutJustificationError as e:
+        click.echo(f"release refused: {e}", err=True)
+        sys.exit(1)
+
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(release_doc, indent=2, sort_keys=True, ensure_ascii=False),

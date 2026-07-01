@@ -4,29 +4,29 @@
   "answer": "crimson skack 0003",
   "question_type": "2_hop",
   "evidence_ids": [
-   "nuthholt1",
-   "brelreach2",
-   "nuththorn3"
+   "wendric1",
+   "nuthmire2",
+   "tasdac3"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the stargazing facility in the ridge to the east?",
-  "answer": "ochre ferrolite 0006",
+  "answer": "umber grist 0006",
   "question_type": "2_hop",
   "evidence_ids": [
-   "pellpost4",
-   "vorby5",
-   "orrdell6"
+   "pellgrove4",
+   "drulun5",
+   "orrwick6"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the grain-grinding works in the curve of the river?",
-  "answer": "russet perrin 0009",
+  "answer": "umber vellum 0009",
   "question_type": "2_hop",
   "evidence_ids": [
-   "limstone7",
-   "skocrag8",
-   "tasdac9"
+   "cavmond7",
+   "vorker8",
+   "brelstone9"
   ]
  },
  {
@@ -34,169 +34,169 @@
   "answer": "verdant perrin 0012",
   "question_type": "2_hop",
   "evidence_ids": [
-   "kanholt10",
-   "olmlun11",
-   "brelwick12"
+   "tasholt10",
+   "druric11",
+   "faldac12"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the metal-casting works in the quarter to the west?",
-  "answer": "azure quartzine 0015",
+  "answer": "pallid ferrolite 0015",
   "question_type": "2_hop",
   "evidence_ids": [
-   "limash13",
-   "taswick14",
-   "skolun15"
+   "rellash13",
+   "druthorn14",
+   "vexdell15"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the optical instrument in the Carpathian uplands?",
-  "answer": "umber brannik 0018",
+  "answer": "verdant brannik 0018",
   "question_type": "2_hop",
   "evidence_ids": [
-   "rellby16",
-   "mirby17",
-   "skowick18"
+   "tasgrove16",
+   "zelric17",
+   "nuthstone18"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the streetcar line in the city on the slopes?",
-  "answer": "verdant brannik 0021",
+  "answer": "pallid skack 0021",
   "question_type": "2_hop",
   "evidence_ids": [
-   "drudac19",
-   "drufen20",
-   "nuthmond21"
+   "vexash19",
+   "relldac20",
+   "vorthorn21"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the water channel in the hills to the south?",
-  "answer": "pallid brannik 0024",
+  "answer": "umber grist 0024",
   "question_type": "2_hop",
   "evidence_ids": [
-   "pelldell22",
-   "olmwick23",
-   "orrlun24"
+   "vormond22",
+   "mirreach23",
+   "rellker24"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the publishing works in the central marketplace?",
-  "answer": "ochre lansk 0027",
+  "answer": "azure grist 0027",
   "question_type": "2_hop",
   "evidence_ids": [
-   "skostone25",
-   "kanholt26",
-   "orrgrove27"
+   "breldac25",
+   "olmpost26",
+   "skopost27"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the coastal beacon in the stony promontory?",
-  "answer": "verdant grist 0030",
+  "answer": "verdant brannik 0030",
   "question_type": "2_hop",
   "evidence_ids": [
-   "skomond28",
-   "harnfen29",
-   "olmven30"
+   "harnfen28",
+   "rellven29",
+   "orrgrove30"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the wine estate in the sunlit dale?",
-  "answer": "russet brannik 0033",
+  "answer": "verdant brannik 0033",
   "question_type": "2_hop",
   "evidence_ids": [
-   "zelash31",
-   "falthorn32",
-   "harnric33"
+   "limvale31",
+   "vorfen32",
+   "limgrove33"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the thermal spa in the shoreline bluffs?",
-  "answer": "azure ferrolite 0036",
+  "answer": "verdant brannik 0036",
   "question_type": "2_hop",
   "evidence_ids": [
-   "wendmire34",
-   "vordell35",
-   "limash36"
+   "tasric34",
+   "falthorn35",
+   "skomire36"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the power station in the evergreen woodland?",
-  "answer": "indigo lansk 0039",
+  "answer": "verdant lansk 0039",
   "question_type": "2_hop",
   "evidence_ids": [
-   "pellholt37",
-   "drustone38",
-   "drupost39"
+   "skoash37",
+   "harnmire38",
+   "druric39"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the stargazing facility in the saline plains?",
-  "answer": "crimson perrin 0042",
+  "answer": "indigo ferrolite 0042",
   "question_type": "2_hop",
   "evidence_ids": [
-   "brelmond40",
-   "cavfen41",
-   "mirmond42"
+   "rellthorn40",
+   "skogrove41",
+   "orrvale42"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the grain-grinding works in the stone pit?",
-  "answer": "azure vellum 0045",
+  "answer": "pallid vellum 0045",
   "question_type": "2_hop",
   "evidence_ids": [
-   "relldell43",
-   "olmdell44",
-   "harnfen45"
+   "olmmire43",
+   "olmker44",
+   "rellreach45"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the records vault in the port entrance?",
-  "answer": "pallid lansk 0048",
+  "answer": "umber quartzine 0048",
   "question_type": "2_hop",
   "evidence_ids": [
-   "cavholt46",
-   "mirholt47",
-   "nuthash48"
+   "nuthdell46",
+   "harnven47",
+   "pellreach48"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the metal-casting works in the arid hollow?",
-  "answer": "azure lansk 0051",
+  "answer": "pallid grist 0051",
   "question_type": "2_hop",
   "evidence_ids": [
-   "olmfen49",
-   "quendell50",
-   "skoby51"
+   "zelker49",
+   "nuthreach50",
+   "tasholt51"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the optical instrument in the iced-over tarn?",
-  "answer": "indigo vellum 0054",
+  "answer": "russet lansk 0054",
   "question_type": "2_hop",
   "evidence_ids": [
-   "zeldac52",
-   "skoash53",
-   "zelby54"
+   "kandell52",
+   "rellcrag53",
+   "zeldell54"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the streetcar line in the enclosed grounds?",
-  "answer": "russet brannik 0057",
+  "answer": "verdant lansk 0057",
   "question_type": "2_hop",
   "evidence_ids": [
-   "pellfen55",
-   "falash56",
-   "wenddell57"
+   "skostone55",
+   "pellholt56",
+   "orrker57"
   ]
  },
  {
   "query": "What value is ultimately returned by the routine for the water channel in the belfry spire?",
-  "answer": "pallid lansk 0060",
+  "answer": "crimson grist 0060",
   "question_type": "2_hop",
   "evidence_ids": [
-   "harnholt58",
-   "vorholt59",
-   "quenholt60"
+   "tascrag58",
+   "skowick59",
+   "zelgrove60"
   ]
  }
 ]

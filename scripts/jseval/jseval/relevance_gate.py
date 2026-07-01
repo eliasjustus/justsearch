@@ -50,12 +50,21 @@ def project_release_to_baselines(
         ndcg = (measured.get("metrics") or {}).get("nDCG@10")
         if not isinstance(ndcg, (int, float)):
             continue
-        baselines[dataset] = {
+        entry = {
             "mode": measured.get("config_mode"),
             "nDCG@10": ndcg,
             "tolerance_abs": per_corpus_tolerance.get(dataset, tolerance_default_abs),
             "src": f"projected from release {src_tag}".strip(),
         }
+        # tempdoc 664 (seventh pass): `release.py`'s `_tolerance_band` already computes a
+        # measured, noise-aware ±2σ envelope for this exact (mode, nDCG@10) and stores it on
+        # `measured[dataset]["tolerance_band"]` at compose time — carry it forward here rather
+        # than re-deriving anything (this is a consumption fix, not new measurement). `evaluate`
+        # prefers this over the flat `tolerance_abs` default when present.
+        band = ((measured.get("tolerance_band") or {}).get("nDCG@10") or {}).get("two_sigma")
+        if isinstance(band, (int, float)):
+            entry["tolerance_band_abs"] = band
+        baselines[dataset] = entry
     return {
         "schema": "relevance-ratchet-baseline.v1",
         "tolerance_default_abs": tolerance_default_abs,
@@ -91,12 +100,22 @@ def evaluate(baselines: dict, summary: dict, dataset: str) -> dict:
 
     mode = pinned.get("mode")
     baseline_ndcg = pinned.get("nDCG@10")
-    tolerance = pinned.get(
-        "tolerance_abs", baselines.get("tolerance_default_abs", 0.02)
-    )
+    # tempdoc 664 (seventh pass): prefer the release's measured ±2σ envelope over the flat
+    # default when the projection carried one forward (mirrors perf_gate.py's envelope-preferred-
+    # else-fixed pattern, `perf_gate.py:_envelope_band` + its caller) — tight where the corpus's
+    # noise is measured and low, wide where it's measured and high, instead of one guessed number
+    # for every corpus. Falls back to the existing flat behavior when no band was projected
+    # (uncalibrated cohort, or a hand-typed baseline predating this field) — unchanged until then.
+    band_tolerance = pinned.get("tolerance_band_abs")
+    if isinstance(band_tolerance, (int, float)):
+        tolerance, tolerance_src = band_tolerance, "envelope±2σ"
+    else:
+        tolerance = pinned.get("tolerance_abs", baselines.get("tolerance_default_abs", 0.02))
+        tolerance_src = "default"
     report["mode"] = mode
     report["baseline"] = baseline_ndcg
     report["tolerance_abs"] = tolerance
+    report["tolerance_src"] = tolerance_src
 
     current = _ndcg_for_mode(summary, mode)
     if not isinstance(current, (int, float)):

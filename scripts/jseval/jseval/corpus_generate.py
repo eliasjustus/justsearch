@@ -23,8 +23,11 @@ to keep generation deterministic and gate-certifiable).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+import subprocess
+import sys
 from pathlib import Path
 
 # Fabricated syllable pools — combined by the seeded RNG into invented, unguessable
@@ -287,7 +290,14 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     code/tabular carry the descriptor in a head comment/caption; German uses the de synonym
     pools. Capped at the (lang-appropriate) place-pool size gold chains for unique descriptors.
     """
-    rng = random.Random(seed + hash(axis) % 1000)
+    # `hash(axis)` (a builtin str hash) is randomized per-process (PEP 456) unless
+    # PYTHONHASHSEED is pinned, which this repo never does — so the "seeded -> reproducible"
+    # claim above was false: two separate process invocations with the identical nominal `seed`
+    # produced a completely different corpus (confirmed empirically, tempdoc 664 confidence pass:
+    # 280/280 docs differed). A SHA-256 digest of `axis` is stable across processes, restoring
+    # the determinism the docstring already promised.
+    axis_offset = int(hashlib.sha256(axis.encode("utf-8")).hexdigest(), 16) % 1000
+    rng = random.Random(seed + axis_offset)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     rels = _RELATIONS["prose"]
@@ -331,6 +341,15 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
             all_docs.append({"_id": did, "title": title, "text": text})
             made += 1
 
+    # tempdoc 664 (twelfth pass): gold and distractor docs were previously written in two
+    # unbroken blocks (all gold first, all distractors after) -- the only real "positional
+    # non-uniformity" this generator has (there is no NoLiMa-style in-document depth to vary;
+    # each hop is a separate short document, not a buried fact within one long context).
+    # Interleaving with the same seeded `rng` (not a fresh Random()) keeps this inside the
+    # existing seed-derived determinism chain -- query evidence_ids reference doc _id strings,
+    # not positions, so this has no effect on query correctness.
+    rng.shuffle(all_docs)
+
     with (out_dir / "docs.jsonl").open("w", encoding="utf-8") as f:
         for d in all_docs:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")
@@ -338,9 +357,61 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     (out_dir / "meta.json").write_text(json.dumps({
         "version": "1.0", "type_axis": axis, "suite": suite,
         "contamination_class": "private-synthetic",
+        # tempdoc 664 (seventh pass): `n_chains`/`doc_words` were missing here, so a corpus's own
+        # recorded provenance could not reconstruct the exact `generate()` call that produced it —
+        # a regeneration-determinism check needs the FULL parameter set, not a partial one.
         "generation_provenance": {"method": "procedural-fabricated", "axis": axis, "lang": lang,
                                   "seed": seed, "hops": hops, "distractor_ratio": distractor_ratio,
-                                  "semantic": sem_active, "templated": True},
+                                  "semantic": sem_active, "templated": True,
+                                  "n_chains": n_chains, "doc_words": doc_words},
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"docs": len(all_docs), "gold_chains": n_chains, "queries": len(queries),
             "distractor_docs": made}
+
+
+def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio, semantic,
+                         n_chains, doc_words, timeout=60) -> dict:
+    """Spawn :func:`generate` twice, in two SEPARATE Python processes, into ``out1``/``out2`` with
+    identical parameters, then diff ``docs.jsonl``/``queries.json`` (tempdoc 664, twelfth pass).
+
+    Runs in separate processes deliberately: an in-process call would hide any per-process-random
+    source (like the original ``hash(axis)`` non-determinism bug this technique found — confirmed
+    empirically pre-fix: 280/280 docs differed between two "identical seed" runs) because such
+    sources are stable *within* one process.
+
+    Shared by :func:`jseval.corpus_certify.regeneration_determinism_report` (the certification-time
+    check) and the pytest regression test with the same name — a single implementation of the
+    subprocess-spawn-and-diff technique rather than two independent copies that could drift apart
+    (the "projection vs fork" principle this tempdoc is about, applied to test code).
+
+    ``out1``/``out2`` are caller-supplied directories, left populated on return (not cleaned up
+    here) so a caller that needs to inspect the generated content afterward — the interleave-order
+    regression test — can do so; a caller that only needs the verdict (certification) is expected to
+    pass ephemeral `tempfile.TemporaryDirectory()`-backed paths and let its own context manager
+    clean up.
+
+    :returns: ``{"ok": True, "mismatched_files": [...]}`` or ``{"ok": False, "error": "..."}`` if a
+      regeneration subprocess itself failed (not a mismatch — a hard error, e.g. bad parameters).
+    """
+    script = (
+        "from jseval import corpus_generate as cg; "
+        "cg.generate(sys.argv[1], axis=sys.argv[2], lang=sys.argv[3], seed=int(sys.argv[4]), "
+        "hops=int(sys.argv[5]), distractor_ratio=int(sys.argv[6]), "
+        "semantic=(sys.argv[7] == 'True'), n_chains=int(sys.argv[8]), doc_words=int(sys.argv[9]))"
+    )
+    args = [axis, lang, str(seed), str(hops), str(distractor_ratio),
+            str(bool(semantic)), str(n_chains), str(doc_words)]
+
+    for out in (Path(out1), Path(out2)):
+        result = subprocess.run(
+            [sys.executable, "-c", "import sys; " + script, str(out), *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": f"regeneration subprocess failed: {result.stderr[-500:]}"}
+
+    mismatches = [
+        fname for fname in ("docs.jsonl", "queries.json")
+        if (Path(out1) / fname).read_text(encoding="utf-8") != (Path(out2) / fname).read_text(encoding="utf-8")
+    ]
+    return {"ok": True, "mismatched_files": mismatches}
