@@ -4,14 +4,14 @@
   "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or verifyGovernanceGates once the doc set stabilizes (582 R3: extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
     "CLAUDE.md": 25051,
-    ".claude/rules/agent-lessons.md": 8677,
-    ".claude/rules/branch-safety.md": 9763,
+    ".claude/rules/agent-lessons.md": 8906,
+    ".claude/rules/branch-safety.md": 10654,
     ".claude/rules/context-efficiency.md": 1960,
-    ".claude/rules/hooks-reference.md": 11906,
+    ".claude/rules/hooks-reference.md": 16159,
     ".claude/rules/slice-execution.md": 4667,
-    ".claude/rules/tier-register.md": 14456
+    ".claude/rules/tier-register.md": 15790
   },
-  "totalCeiling": 76480,
+  "totalCeiling": 83187,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -33,6 +33,41 @@
       "to": 8677,
       "reason": "618 Phase 2 promotion: §10a piped-exit + §11d background-server platform bullets + 3 named-principle handles (unreachable-seed-green, subset-isnt-the-suite, green-masked-destructive)",
       "ts": "2026-06-21T12:32:50.624Z"
+    },
+    {
+      "file": ".claude/rules/agent-lessons.md",
+      "from": 8677,
+      "to": 8906,
+      "reason": "618 §10a: piped-exit-masked rule anchor",
+      "ts": "2026-07-01T01:37:40.389Z"
+    },
+    {
+      "file": ".claude/rules/tier-register.md",
+      "from": 14456,
+      "to": 15790,
+      "reason": "618 §10a: tier-register row 37 (piped-exit-masked hook-hint)",
+      "ts": "2026-07-01T01:37:40.460Z"
+    },
+    {
+      "file": ".claude/rules/hooks-reference.md",
+      "from": 11906,
+      "to": 15524,
+      "reason": "618 §10a: pipe-mask-hint catalog entry",
+      "ts": "2026-07-01T01:37:40.549Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 9763,
+      "to": 10654,
+      "reason": "pre-existing overage from prior unrelated work + tempdoc 665's fold-observations merge-workflow step",
+      "ts": "2026-07-01T10:19:10.760Z"
+    },
+    {
+      "file": ".claude/rules/hooks-reference.md",
+      "from": 15524,
+      "to": 16159,
+      "reason": "tempdoc 665: observation-shard-hint catalog entry",
+      "ts": "2026-07-01T10:21:26.948Z"
     }
   ]
 }

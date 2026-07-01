@@ -17,17 +17,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Loads and provides access to the Golden Corpus and truth manifest.
+ * Loads a document corpus + truth manifest (relevant-doc expectations) from classpath or
+ * filesystem resources.
  *
- * <p>The Golden Corpus is a curated set of documents designed to test
- * various aspects of search relevance:
- * <ul>
- *   <li><b>Lexical Truth</b> - Documents that should be found by keyword match</li>
- *   <li><b>Semantic Truth</b> - Documents that should be found by semantic similarity</li>
- *   <li><b>Hybrid Trap</b> - Documents that benefit from RRF fusion</li>
- * </ul>
+ * <p>Generic, not specific to any one manifest (tempdoc 664 disambiguation — this class was
+ * originally named {@code GoldenCorpusLoader}, which implied it was scoped to the
+ * {@code golden-corpus-truth.json} manifest; it is actually shared by two unrelated test
+ * manifests: {@link #loadDefault()}'s {@code golden-corpus-truth.json} and
+ * {@code PassageRetrievalIntegrationTest}'s {@code passage-retrieval-truth.json}. Each manifest
+ * describes documents, queries, and expected top-K/recall/nDCG results for that suite — the
+ * loader itself carries no per-suite assumptions.
+ *
+ * <p><b>Correction (tempdoc 664 post-review):</b> {@code RagQualityEvalTest} does NOT use this
+ * loader — it parses its own {@code rag-eval-truth.v1.json} manifest directly. The element
+ * actually shared with {@code RagQualityEvalTest} is the sibling {@code RelevanceMetrics}
+ * utility's scoring math (see its Javadoc), not this class.
  */
-public final class GoldenCorpusLoader {
+public final class ManifestCorpusLoader {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final TruthManifest manifest;
@@ -36,7 +42,7 @@ public final class GoldenCorpusLoader {
   /**
    * Creates a loader with the given manifest and document contents.
    */
-  public GoldenCorpusLoader(TruthManifest manifest, Map<String, String> documentContents) {
+  public ManifestCorpusLoader(TruthManifest manifest, Map<String, String> documentContents) {
     this.manifest = manifest;
     this.documentContents = Map.copyOf(documentContents);
   }
@@ -44,7 +50,7 @@ public final class GoldenCorpusLoader {
   /**
    * Loads the Golden Corpus from the default classpath resources.
    */
-  public static GoldenCorpusLoader loadDefault() throws IOException {
+  public static ManifestCorpusLoader loadDefault() throws IOException {
     return loadFromClasspath(
         "/manifests/golden-corpus-truth.json",
         "/corpus/standard/"
@@ -56,14 +62,14 @@ public final class GoldenCorpusLoader {
    *
    * @param manifestResource Path to the truth manifest JSON
    * @param corpusDir Base path for corpus document files
-   * @return Configured GoldenCorpusLoader
+   * @return Configured ManifestCorpusLoader
    */
-  public static GoldenCorpusLoader loadFromClasspath(
+  public static ManifestCorpusLoader loadFromClasspath(
       String manifestResource,
       String corpusDir) throws IOException {
 
     // Load manifest
-    try (InputStream is = GoldenCorpusLoader.class.getResourceAsStream(manifestResource)) {
+    try (InputStream is = ManifestCorpusLoader.class.getResourceAsStream(manifestResource)) {
       if (is == null) {
         throw new IOException("Manifest not found: " + manifestResource);
       }
@@ -73,13 +79,13 @@ public final class GoldenCorpusLoader {
       Map<String, String> contents = new java.util.HashMap<>();
       for (DocumentInfo doc : manifest.documents()) {
         String resourcePath = corpusDir + doc.file().replace("corpus/standard/", "");
-        try (InputStream docStream = GoldenCorpusLoader.class.getResourceAsStream(resourcePath)) {
+        try (InputStream docStream = ManifestCorpusLoader.class.getResourceAsStream(resourcePath)) {
           if (docStream != null) {
             contents.put(doc.id(), new String(docStream.readAllBytes(), UTF_8));
           } else {
             // Try alternative path
             String altPath = "/" + doc.file();
-            try (InputStream altStream = GoldenCorpusLoader.class.getResourceAsStream(altPath)) {
+            try (InputStream altStream = ManifestCorpusLoader.class.getResourceAsStream(altPath)) {
               if (altStream != null) {
                 contents.put(doc.id(), new String(altStream.readAllBytes(), UTF_8));
               }
@@ -88,7 +94,7 @@ public final class GoldenCorpusLoader {
         }
       }
 
-      return new GoldenCorpusLoader(manifest, contents);
+      return new ManifestCorpusLoader(manifest, contents);
     }
   }
 
@@ -97,9 +103,9 @@ public final class GoldenCorpusLoader {
    *
    * @param manifestPath Path to the truth manifest JSON
    * @param corpusDir Base directory for corpus document files
-   * @return Configured GoldenCorpusLoader
+   * @return Configured ManifestCorpusLoader
    */
-  public static GoldenCorpusLoader loadFromFilesystem(
+  public static ManifestCorpusLoader loadFromFilesystem(
       Path manifestPath,
       Path corpusDir) throws IOException {
 
@@ -113,7 +119,7 @@ public final class GoldenCorpusLoader {
       }
     }
 
-    return new GoldenCorpusLoader(manifest, contents);
+    return new ManifestCorpusLoader(manifest, contents);
   }
 
   private static TruthManifest parseManifest(InputStream is) throws IOException {

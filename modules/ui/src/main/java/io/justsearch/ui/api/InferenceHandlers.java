@@ -10,6 +10,8 @@ import io.justsearch.app.api.BrainRuntimeService;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.ModeTransitionException;
+import io.justsearch.app.api.status.InferenceGpuView;
+import io.justsearch.app.api.status.InferenceStatusResponseBuilder;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -61,24 +63,30 @@ final class InferenceHandlers {
     this.knowledgeServer = ks;
   }
 
-  /** Handles GET /api/inference/status - returns current inference mode and queue sizes. */
+  /**
+   * Handles GET /api/inference/status - returns current inference mode and queue sizes.
+   *
+   * <p>Tempdoc 663 §L/Stage 4 — builds the typed {@link InferenceStatusResponse} record instead of
+   * a hand-built {@code Map}. Every field/condition below is unchanged from the prior Map-based
+   * version (see git history if diffing behavior); only the assembly mechanism changed.
+   */
   void handleInferenceStatus(Context ctx) {
     OnlineAiService onlineAi = onlineAiService;
-    Map<String, Object> response = new HashMap<>();
-    response.put("mode", onlineAi.getCurrentMode());
-    response.put("available", onlineAi.isAvailable());
-    response.put("starting", onlineAi.isStartingUp());
-    response.put("llmContextTokens", onlineAi.llmContextTokens());
-    response.put("configuredContextTokens", onlineAi.configuredContextTokens());
-    response.put("embeddingQueueSize", countPendingEmbeddings());
-    response.put("vduQueueSize", countPendingVdu());
+    InferenceStatusResponseBuilder builder = InferenceStatusResponseBuilder.builder()
+        .mode(onlineAi.getCurrentMode())
+        .available(onlineAi.isAvailable())
+        .starting(onlineAi.isStartingUp())
+        .llmContextTokens(onlineAi.llmContextTokens())
+        .configuredContextTokens(onlineAi.configuredContextTokens())
+        .embeddingQueueSize(countPendingEmbeddings())
+        .vduQueueSize(countPendingVdu());
 
     // External server adoption diagnostics, CUDA warnings, and startup timer (best-effort; additive fields).
     if (onlineAi instanceof io.justsearch.app.api.OnlineAiRuntimeIntrospection introspection) {
       try {
         var ext = introspection.externalServerStatus();
         if (ext != null) {
-          response.put("externalServer", ext);
+          builder.externalServer(ext);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -86,7 +94,7 @@ final class InferenceHandlers {
       try {
         String cudaWarning = introspection.cudaRuntimeWarning();
         if (cudaWarning != null && !cudaWarning.isBlank()) {
-          response.put("cudaRuntimeWarning", cudaWarning);
+          builder.cudaRuntimeWarning(cudaWarning);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -94,20 +102,20 @@ final class InferenceHandlers {
       try {
         long startupMs = introspection.lastStartupDurationMs();
         if (startupMs >= 0) {
-          response.put("lastStartupDurationMs", startupMs);
+          builder.lastStartupDurationMs(startupMs);
         }
       } catch (Exception ignored) {
         // best-effort
       }
       try {
-        response.put("hasVisionCapability", introspection.hasVisionCapability());
+        builder.hasVisionCapability(introspection.hasVisionCapability());
       } catch (Exception ignored) {
         // best-effort
       }
       try {
         String modelId = introspection.activeModelId();
         if (modelId != null && !modelId.isBlank()) {
-          response.put("activeModelId", modelId);
+          builder.activeModelId(modelId);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -116,7 +124,7 @@ final class InferenceHandlers {
         // Tempdoc 518 Appendix F W3.3 — generation counter (frontend detects mid-session restart).
         long gen = introspection.currentGeneration();
         if (gen >= 0) {
-          response.put("generation", gen);
+          builder.generation(gen);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -160,38 +168,43 @@ final class InferenceHandlers {
         ? snapshot.effective().source()
         : (nvidiaSmiAvailable ? "nvidia-smi" : "none");
 
-    Map<String, Object> gpu = new HashMap<>();
-    gpu.put("cudaAvailable", cudaAvailable);
-    gpu.put("totalVramBytes", effectiveVramBytes);
-    gpu.put("vramDescription", vramDescription);
-    gpu.put("vramDetectionSource", vramDetectionSource);
-    gpu.put("nvidiaSmiAvailable", nvidiaSmiAvailable);
+    boolean nvmlAvailable = false;
+    Long nvmlTotalVramBytes = null;
+    String nvmlDriverVersion = null;
     try {
       var nvml = snapshot != null ? snapshot.nvml() : null;
       if (nvml != null) {
-        gpu.put("nvmlAvailable", nvml.available());
-        if (nvml.available()) {
-          gpu.put("nvmlTotalVramBytes", nvml.totalVramBytes());
-          gpu.put("nvmlDriverVersion", nvml.driverVersion());
+        nvmlAvailable = nvml.available();
+        if (nvmlAvailable) {
+          nvmlTotalVramBytes = nvml.totalVramBytes();
+          nvmlDriverVersion = nvml.driverVersion();
         }
-      } else {
-        gpu.put("nvmlAvailable", false);
       }
     } catch (Exception ignored) {
-      gpu.put("nvmlAvailable", false);
+      nvmlAvailable = false;
     }
 
     // Tempdoc 623 U7: record the pinned CUDA major (a constant — no ORT init) so the
     // benchmark-release hardware projection can publish it. The ORT *version* is captured
     // WORKER-side (where ORT is initialized) and surfaced via the health effective_config map
     // into /api/debug/state — NOT here, because the Head runs no ORT sessions. Best-effort.
+    String cudaVersion = null;
     try {
-      gpu.put("cudaVersion", io.justsearch.ort.OrtCudaHelper.CUDA_TOOLKIT_MAJOR);
+      cudaVersion = io.justsearch.ort.OrtCudaHelper.CUDA_TOOLKIT_MAJOR;
     } catch (Exception ignored) {
       // constant lookup is informational only.
     }
 
-    response.put("gpu", gpu);
+    builder.gpu(new InferenceGpuView(
+        cudaAvailable,
+        effectiveVramBytes,
+        vramDescription,
+        vramDetectionSource,
+        nvidiaSmiAvailable,
+        nvmlAvailable,
+        nvmlTotalVramBytes,
+        nvmlDriverVersion,
+        cudaVersion));
 
     // computeHardwareTier still wants a VRAM number; pass the effective bytes
     // (NVML-first, with nvidia-smi fallback handled internally by the snapshot).
@@ -202,10 +215,9 @@ final class InferenceHandlers {
         : null;
     long tierVramBytes = effectiveVramBytes != null ? effectiveVramBytes
         : (smiOnly != null ? smiOnly : -1L);
-    response.put(
-        "tier",
-        computeHardwareTier(tierVramBytes, onlineAi.isAvailable(), onlineAi.isStartingUp()));
-    ctx.json(response);
+    builder.tier(computeHardwareTier(tierVramBytes, onlineAi.isAvailable(), onlineAi.isStartingUp()));
+
+    ctx.json(builder.build());
   }
 
   /**

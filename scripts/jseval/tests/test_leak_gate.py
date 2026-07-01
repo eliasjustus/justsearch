@@ -74,3 +74,32 @@ class TestDeriveBaselines:
         assert evaluate(derived, _proj(0.10), "d")["exit_code"] == 0   # at baseline → pass
         assert evaluate(derived, _proj(0.15), "d")["exit_code"] == 0   # within tolerance → pass
         assert evaluate(derived, _proj(0.16), "d")["exit_code"] == 1   # beyond → regression
+
+
+# tempdoc 664 (twelfth pass): `leak-gate-derive` CLI-level canonicalization -- the bare-name-vs-
+# canonical-slug inconsistency (leak-gate-baselines.v1.json had "scifact" while relevance-/perf-gate
+# use "beir/scifact") was traced to this command never canonicalizing its --datasets input.
+
+def test_leak_gate_derive_canonicalizes_bare_beir_slug(tmp_path):
+    import json as _json
+    from click.testing import CliRunner
+    from jseval.cli import main
+
+    data_dir = tmp_path
+    run_dir = data_dir / "eval-results" / "20260701_000000_scifact"
+    (run_dir / "projections").mkdir(parents=True)
+    (run_dir / "projections" / "staged_recall_accounting.json").write_text(
+        _json.dumps({"status": "ok", "aggregate": {"leak_rate": 0.02}}), encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    r = CliRunner().invoke(main, [
+        "leak-gate-derive", "--data-dir", str(data_dir), "--datasets", "scifact",
+        "--out", str(out_path),
+    ])
+    assert r.exit_code == 0, r.output
+    derived = _json.loads(out_path.read_text(encoding="utf-8"))
+    # the RAW input "scifact" is what locates the run directory (named from jseval run's literal
+    # --dataset argument), but the OUTPUT key is canonicalized to match relevance-/perf-gate.
+    assert "beir/scifact" in derived["baselines"]
+    assert "scifact" not in derived["baselines"]
+    assert derived["baselines"]["beir/scifact"]["leak_rate_max"] == 0.02

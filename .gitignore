@@ -155,11 +155,15 @@ agent-review/
 
 # Inference runtime artifacts (model ID written at runtime). Slice 518's
 # inference-transitions NDJSON sidecar + head crash-dump writer can also
-# land at the repo root when the head launches from there during dev.
+# land at the repo root when the head launches from there during dev — OR
+# under modules/ui/ when the head launches via `:modules:ui:run` (Gradle
+# sets that module's own directory as the working directory), reproduced
+# tempdoc 663 (2026-07-01): modules/ui/telemetry/inference-transitions.ndjson.
 modules/app-inference/inference-model-id.txt
 /inference-model-id.txt
 /crashes/
 /telemetry/
+modules/ui/telemetry/
 
 # Playwright test result caches
 modules/ui-web/test-results-codex/

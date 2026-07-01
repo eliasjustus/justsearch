@@ -56,6 +56,10 @@
       "file": "docs-granularity-hint.mjs",
       "role": "advisory"
     },
+    "pipe-mask-hint": {
+      "file": "pipe-mask-hint.mjs",
+      "role": "advisory"
+    },
     "export-session-env": {
       "file": "export-session-env.mjs",
       "role": "advisory"
@@ -83,6 +87,10 @@
     },
     "lockfile-hint": {
       "file": "lockfile-hint.mjs",
+      "role": "advisory"
+    },
+    "observation-shard-hint": {
+      "file": "observation-shard-hint.mjs",
       "role": "advisory"
     },
     "maintain-doc-hint": {
@@ -251,6 +259,10 @@
           },
           {
             "hookId": "docs-granularity-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "pipe-mask-hint",
             "timeout": 5
           }
         ]
@@ -456,6 +468,14 @@
         "hooks": [
           {
             "hookId": "maintain-doc-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "observation-shard-hint",
             "timeout": 5
           }
         ]

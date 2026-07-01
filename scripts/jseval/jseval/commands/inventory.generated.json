@@ -24,6 +24,10 @@
     "group": "gates"
   },
   {
+    "name": "changeset-new",
+    "group": "gates"
+  },
+  {
     "name": "commands",
     "group": "ops"
   },
@@ -37,6 +41,14 @@
   },
   {
     "name": "corpus-certify",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-fetch-clerc",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-fetch-miracl",
     "group": "corpus"
   },
   {

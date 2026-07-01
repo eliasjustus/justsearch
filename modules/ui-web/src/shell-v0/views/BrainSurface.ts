@@ -23,6 +23,7 @@ import type { SurfaceTabItem } from '../components/SurfaceTabs.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';
 import { present } from '../display/present.js';
 import { formatBytes } from '../display/format.js';
+import { projectFact } from '../display/facts.js';
 import { takeMemberTabIntent, subscribeMemberTab } from '../router/memberTabIntent.js';
 import '../components/OpButton.js';
 import '../components/Button.js';
@@ -31,8 +32,15 @@ import { OperationClient, OperationError, getOperationClient } from '../operatio
 import { getOperation } from '../../api/registry/OperationCatalogClient.js';
 import { isTauriRuntime } from '../../utils/tauriRuntime.js';
 import { pickFolder } from '../../utils/folderPicker.js';
-import { subscribeAiState, type AiState as UnifiedAiState } from '../state/aiStateStore.js';
-import { unavailableBecause } from '../state/availability.js';
+import {
+  subscribeAiState,
+  type AiState as UnifiedAiState,
+  type InstallStatus,
+  type AiRuntimeStatus,
+  type PackImportStatus,
+} from '../state/aiStateStore.js';
+import { applyLocalIntent, type AiEngineVerdict, type AiStability } from '../state/aiVerdict.js';
+import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
@@ -47,20 +55,9 @@ import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 // Tempdoc 564 Phase B (4b): EffectivePolicy is the single generated wire-contract projection.
 import type { EffectivePolicy } from '../../api/generated/schema-types/effective-policy.js';
 
-interface InstallStatus {
-  state: string;
-  phase: string;
-  installedFully?: boolean;
-  message?: string;
-  errorCode?: string;
-  lastError?: string;
-  packages?: Array<{ id?: string; bytesDownloaded?: number; bytesTotal?: number }>;
-  downloadedBytes?: number;
-  totalBytes?: number;
-  startedAtEpochMs?: number;
-  updatedAtEpochMs?: number;
-  cancelRequested?: boolean;
-}
+// Tempdoc 663 Stage 3/5 — InstallStatus/AiRuntimeStatus/PackImportStatus moved to
+// `utils/aiInstallPoll.ts` (re-exported by `state/aiStateStore.ts`), the shared, always-on poller
+// that replaced this surface's one-shot `refreshAll()` fetches. Imported below, not redeclared.
 
 /**
  * Tempdoc 518 Appendix F W3.2 — one row of /api/inference/transitions response.
@@ -100,39 +97,9 @@ interface TraceExplorerResponse {
 // typed as the shared store's snapshot (`UnifiedAiState['inference']`), which was
 // extended with `generation` + `lastStartupDurationMs` (already on the wire).
 
-interface AiRuntimeStatus {
-  activation?: {
-    state?: string;
-    phase?: string;
-    message?: string;
-    activeVariantId?: string | null;
-  };
-  variants?: Array<{
-    id: string;
-    label?: string;
-    description?: string;
-    requiredVramBytes?: number;
-    available?: boolean;
-    reason?: string;
-  }>;
-  onnxFeatures?: Array<{
-    feature: string;
-    modelActive?: boolean;
-    modelDescription?: string;
-  }>;
-}
-
 // Tempdoc 586 §3 — local SystemStatus interface removed; `systemStatus` is now the
 // shared store's status snapshot (`UnifiedAiState['status']` = generated StatusResponse,
 // which carries the embedding/schema fields this surface reads).
-
-interface PackImportStatus {
-  state: string;
-  phase: string;
-  message?: string;
-  manifestSha256?: string;
-  packageId?: string;
-}
 
 interface UiSettings {
   mode?: 'simple' | 'advanced';
@@ -149,9 +116,10 @@ interface LlmSettings {
 
 const NUM = new Intl.NumberFormat();
 
-function friendlyModel(id: string): string {
-  return id.replace(/[-.](?:(?:I?Q|[Ff])\d[_A-Z0-9]*)\.gguf$/i, '').replace(/\.gguf$/i, '');
-}
+// Tempdoc 663 — the local `friendlyModel()` formatter (model-label cleanup) was removed; its one call
+// site now projects `core.ai.model` via `projectFact`, which reads `aiState.runtime.modelLabel` — the
+// SAME friendly-formatting `aiStateStore.ts`'s own `friendlyModel()` already applies at the source, so
+// this view no longer needs a second copy of that logic.
 
 /**
  * Tempdoc 518 Appendix F W3.1 — restart-ETA badge.
@@ -182,6 +150,28 @@ export function formatRestartEtaSub(
       : `AI is initializing — ${humanizeSeconds(elapsed)}`;
   }
   return typical === null ? 'AI is initializing.' : `AI is initializing. Usually takes ${typical}.`;
+}
+
+/**
+ * Tempdoc 663 Design pass 2 (critical-review fix, 2026-07-01) — should the Runtime section's
+ * GPU/VRAM/Tier grid dim (a previous reading, genuinely about to change)? Mirrors the ONE
+ * `provisional` convention used identically in StatusDeck/HealthSurface/BrowseSurface/LibrarySurface
+ * (`stability.kind === 'provisional'`) — but narrowed to only the causes that actually mean "this GPU
+ * reading may be superseded shortly": `installing`/`starting`/`switching-variant`. Deliberately
+ * EXCLUDES `checking`/`stale-poll` — those are about DATA FRESHNESS of a DIFFERENT fact (the
+ * install/runtime status hasn't arrived or confirmed yet), not about these specific GPU values being
+ * about to change. A retained `this.inference.gpu` snapshot from an earlier successful poll
+ * (inferencePoll retains last-known-good) can coexist with `aiEngine.kind === 'connecting'` right
+ * after a fresh mount — without this narrowing, the grid would dim for a reason unrelated to its own
+ * purpose.
+ */
+export function isGpuReadingProvisional(stability: AiStability | undefined): boolean {
+  return (
+    stability?.kind === 'provisional' &&
+    (stability.cause === 'installing' ||
+      stability.cause === 'starting' ||
+      stability.cause === 'switching-variant')
+  );
 }
 
 /**
@@ -267,9 +257,6 @@ export class BrainSurface extends JfElement {
   private _unifiedAiState: UnifiedAiState | null = null;
   private unsubAi: (() => void) | null = null;
   private memberTabUnsub: (() => void) | null = null;
-  private pollInstall: number | null = null;
-  private pollPack: number | null = null;
-  private pollRuntime: number | null = null;
   private pollDiagnostics: number | null = null;
 
   constructor() {
@@ -524,6 +511,14 @@ export class BrainSurface extends JfElement {
       // yet" (pre-first-poll) and must not clobber an already-known value.
       if (s.inference) this.inference = s.inference;
       if (s.status) this.systemStatus = s.status;
+      // Tempdoc 663 Stage 3/5 — install/runtime/pack status now come from the shared, always-on
+      // `aiInstallPoll` (via aiStateStore), replacing this surface's own one-shot fetch + the
+      // conditionally-armed pollInstall/pollPack/pollRuntime timers (which only ever self-armed
+      // AFTER a prior fetch had already succeeded — the structural cause of the "stuck on
+      // Connecting… forever" bug, tempdoc 663 §O). Same non-null-adopt rule as inference/status.
+      if (s.installStatus) this.installStatus = s.installStatus;
+      if (s.runtimeStatus) this.runtimeStatus = s.runtimeStatus;
+      if (s.packStatus) this.packStatus = s.packStatus;
       this.requestUpdate();
     });
   }
@@ -576,34 +571,19 @@ export class BrainSurface extends JfElement {
     if (!this.apiBase && this.apiBase !== '') return;
     this.refreshing = true;
     try {
-      // Tempdoc 586 §3 — inference + system status are NOT fetched here; they come
-      // from the shared aiStateStore subscription (connectedCallback). Only the
-      // brain-specific endpoints (no shared poller) are fetched on mount.
-      const [settings, install, policy, runtime, packStatus] =
-        await Promise.all([
-          this.fetchJson<{ ui?: UiSettings; llm?: LlmSettings }>('/api/settings/v2'),
-          this.fetchJson<InstallStatus>('/api/ai/install/status'),
-          this.fetchJson<EffectivePolicy>('/api/policy/effective'),
-          this.fetchJson<AiRuntimeStatus>('/api/ai/runtime/status'),
-          this.fetchJson<PackImportStatus>('/api/ai/packs/status'),
-        ]);
+      // Tempdoc 586 §3 / 663 Stage 3 — inference + system status AND install/runtime/pack status
+      // are NOT fetched here; all five come from the shared aiStateStore subscription
+      // (connectedCallback), which is always-on and self-healing. Only settings/policy — which have
+      // no shared poller and are genuinely one-shot facts — are fetched on mount.
+      const [settings, policy] = await Promise.all([
+        this.fetchJson<{ ui?: UiSettings; llm?: LlmSettings }>('/api/settings/v2'),
+        this.fetchJson<EffectivePolicy>('/api/policy/effective'),
+      ]);
       if (settings) {
         this.settings = settings.ui ?? {};
         this.llm = settings.llm ?? {};
       }
-      if (install) {
-        this.installStatus = install;
-        this.maybeStartInstallPolling();
-      }
       if (policy) this.policy = policy;
-      if (runtime) {
-        this.runtimeStatus = runtime;
-        this.maybeStartRuntimePolling();
-      }
-      if (packStatus) {
-        this.packStatus = packStatus;
-        this.maybeStartPackPolling();
-      }
     } finally {
       this.refreshing = false;
     }
@@ -625,53 +605,12 @@ export class BrainSurface extends JfElement {
     );
   }
 
-  private maybeStartInstallPolling(): void {
-    const running = this.installStatus?.state === 'running';
-    if (running && this.pollInstall === null) {
-      this.pollInstall = window.setInterval(async () => {
-        const s = await this.fetchJson<InstallStatus>('/api/ai/install/status');
-        if (s) {
-          this.installStatus = s;
-          if (s.state !== 'running' && this.pollInstall !== null) {
-            window.clearInterval(this.pollInstall);
-            this.pollInstall = null;
-          }
-        }
-      }, 1000);
-    }
-  }
-
-  private maybeStartPackPolling(): void {
-    const running = this.packStatus?.state === 'running';
-    if (running && this.pollPack === null) {
-      this.pollPack = window.setInterval(async () => {
-        const s = await this.fetchJson<PackImportStatus>('/api/ai/packs/status');
-        if (s) {
-          this.packStatus = s;
-          if (s.state !== 'running' && this.pollPack !== null) {
-            window.clearInterval(this.pollPack);
-            this.pollPack = null;
-          }
-        }
-      }, 1000);
-    }
-  }
-
-  private maybeStartRuntimePolling(): void {
-    const running = this.runtimeStatus?.activation?.state === 'running';
-    if (running && this.pollRuntime === null) {
-      this.pollRuntime = window.setInterval(async () => {
-        const s = await this.fetchJson<AiRuntimeStatus>('/api/ai/runtime/status');
-        if (s) {
-          this.runtimeStatus = s;
-          if (s.activation?.state !== 'running' && this.pollRuntime !== null) {
-            window.clearInterval(this.pollRuntime);
-            this.pollRuntime = null;
-          }
-        }
-      }, 1000);
-    }
-  }
+  // Tempdoc 663 Stage 3/5 — maybeStartInstallPolling/maybeStartPackPolling/maybeStartRuntimePolling
+  // removed. They only self-armed AFTER a prior fetch had already succeeded with `state:'running'`,
+  // so a failed/slow FIRST fetch never retried — the structural cause of the live-reproduced
+  // "stuck on Connecting… forever" bug (tempdoc 663 §O). Install/runtime/pack status now come from
+  // the shared, always-on `aiInstallPoll` (via aiStateStore's subscription above), which retries
+  // unconditionally on a fixed 3s cadence regardless of prior success/failure.
 
   // Tempdoc 586 §3 — inference status now flows from the shared aiStateStore; this
   // loop polls only the brain-specific transition timeline + trace explorer, which
@@ -701,12 +640,7 @@ export class BrainSurface extends JfElement {
   }
 
   private stopAllPolling(): void {
-    for (const id of [this.pollInstall, this.pollPack, this.pollRuntime, this.pollDiagnostics]) {
-      if (id !== null) window.clearInterval(id);
-    }
-    this.pollInstall = null;
-    this.pollPack = null;
-    this.pollRuntime = null;
+    if (this.pollDiagnostics !== null) window.clearInterval(this.pollDiagnostics);
     this.pollDiagnostics = null;
   }
 
@@ -827,7 +761,6 @@ export class BrainSurface extends JfElement {
       this.runtimeError = null;
       const data = (await this.invokeOp('core.start-ai-install', { acceptTerms: true })) as InstallStatus;
       if (data) this.installStatus = data;
-      this.maybeStartInstallPolling();
     });
   }
 
@@ -851,7 +784,6 @@ export class BrainSurface extends JfElement {
       this.runtimeError = null;
       const data = (await this.invokeOp('core.repair-ai-install', { acceptTerms: true })) as InstallStatus;
       if (data) this.installStatus = data;
-      this.maybeStartInstallPolling();
     });
   }
 
@@ -886,7 +818,6 @@ export class BrainSurface extends JfElement {
       const data = (await this.invokeOp('core.activate-runtime-variant', { variantId })) as AiRuntimeStatus;
       if (data) {
         this.runtimeStatus = data;
-        this.maybeStartRuntimePolling();
       }
     });
   }
@@ -896,7 +827,6 @@ export class BrainSurface extends JfElement {
       const data = (await this.invokeOp('core.deactivate-runtime-variant', {})) as AiRuntimeStatus;
       if (data) {
         this.runtimeStatus = data;
-        this.maybeStartRuntimePolling();
       }
     });
   }
@@ -926,7 +856,6 @@ export class BrainSurface extends JfElement {
       const data = (await this.invokeOp('core.import-ai-pack', { path })) as PackImportStatus;
       if (data) {
         this.packStatus = data;
-        this.maybeStartPackPolling();
       }
     });
   }
@@ -1011,43 +940,33 @@ export class BrainSurface extends JfElement {
 
   // ---------- Render: simple panel ----------
 
-  private deriveAiState():
-    | 'not_installed'
-    | 'installing'
-    | 'offline'
-    | 'starting'
-    | 'connecting'
-    | 'online' {
-    const installing = this.installStatus?.state === 'running' || this.busy['install-start'];
-    const installed =
-      this.installStatus?.installedFully === true ||
-      (this.runtimeStatus?.onnxFeatures?.some((f) => f.modelActive) ?? false);
-    if (installing) return 'installing';
-    // Check unified AI state — the runtime may be active even if install status is stale
-    if (this._unifiedAiState?.runtime?.mode === 'online') return 'online';
-    if (this._unifiedAiState?.runtime?.mode === 'starting') return 'starting';
-    if (!installed) {
-      // §2.B: only claim "Not Installed" when we actually have install data;
-      // with no data the honest state is "Connecting…" (no-data ≠ not-installed).
-      const haveInstallData =
-        this.installStatus !== null ||
-        this.runtimeStatus != null ||
-        this._unifiedAiState?.runtime?.installed?.known === true;
-      return haveInstallData ? 'not_installed' : 'connecting';
-    }
-    if (this.inference?.mode === 'online') return 'online';
-    if (
-      this.inference?.mode === 'transitioning' ||
-      this.inference?.starting ||
-      this.busy['inference-switch']
-    ) {
-      return 'starting';
-    }
-    return 'offline';
+  /**
+   * Tempdoc 663 Design pass 2 — the OBSERVED half (install/runtime/reachable) is now computed ONCE in
+   * `aiStateStore.ts`, exposed as `AiState.aiEngine` (the fourth 594/595/596 sibling, store-level like
+   * its siblings, not private to this component). This method is now a thin LOCAL overlay: it applies
+   * only this surface's own optimistic click-intent (`busy['install-start']`/`busy['inference-switch']`)
+   * on top of that shared observed result — `applyLocalIntent` (state/aiVerdict.ts). The fallback (before
+   * the store has ever emitted) mirrors what `computeAiEngineVerdict` itself would compute for "no data,
+   * not reachable yet".
+   */
+  private deriveAiEngineVerdict(): AiEngineVerdict {
+    const observed: AiEngineVerdict = this._unifiedAiState?.aiEngine ?? {
+      kind: 'connecting',
+      stability: { kind: 'provisional', cause: 'stale-poll' },
+      installFailure: null,
+    };
+    return applyLocalIntent(observed, {
+      switching: !!this.busy['inference-switch'],
+      installStarting: !!this.busy['install-start'],
+    });
   }
 
   private renderSimplePanel(): TemplateResult {
-    const aiState = this.deriveAiState();
+    // Tempdoc 663 — the string `kind` drives this panel's dot/label/sub lookup below, unchanged
+    // from before; only its SOURCE changed (the one `computeAiEngineVerdict` derivation, not the
+    // old 5-source ladder).
+    const aiVerdict = this.deriveAiEngineVerdict();
+    const aiState = aiVerdict.kind;
     const downloadsDisabled = this.policy?.downloadsEnabled === false;
     const onlineDisabled = this.policy?.onlineAiEnabled === false;
 
@@ -1063,6 +982,14 @@ export class BrainSurface extends JfElement {
         sub: this.installStatus?.phase
           ? `Phase: ${this.installStatus.phase.replace(/_/g, ' ')}`
           : 'Downloading models',
+      },
+      // Tempdoc 663 §E — install failure was previously unrepresented as a lifecycle state (folded
+      // silently into a generic 'offline'/'not_installed' render, with only a separate dismissable
+      // `runtimeError` banner hinting at it). Now a real, named state.
+      install_failed: {
+        dot: 'offline',
+        label: 'Install Failed',
+        sub: this.installStatus?.lastError || this.installStatus?.message || 'Installation failed — try again.',
       },
       offline: {
         dot: 'offline',
@@ -1082,6 +1009,9 @@ export class BrainSurface extends JfElement {
         ),
       },
       online: { dot: 'online', label: 'AI Online', sub: 'Chat and summaries ready.' },
+      // Tempdoc 663 — indexing is now a distinct, named state (the original ladder had no explicit
+      // branch for `runtime.mode === 'indexing'` and fell through to 'offline').
+      indexing: { dot: 'online', label: 'AI Online', sub: 'Indexing embeddings…' },
       connecting: { dot: 'starting', label: 'Connecting…', sub: 'Checking AI status…' },
     };
     const sc = statusConfig[aiState] ?? statusConfig.offline!;
@@ -1094,14 +1024,24 @@ export class BrainSurface extends JfElement {
     }
     const pct = bytesTotal > 0 ? Math.min(100, Math.floor((bytesDone / bytesTotal) * 100)) : null;
 
+    // Tempdoc 663 Stage 3 — the primary action's availability is now typed (596), not a bare boolean.
+    // Only the two states with a genuine, showable reason (a policy gate) use `unavailableBecause`; the
+    // pure busy-only/unconditional cases use `blocked` (596 §10/C2 — a hard intent gate stays the
+    // native-disabled-equivalent tier, not a soft "unavailable{reason}", since there is no reason beyond
+    // "wait" to show).
     const primaryAction = (() => {
       switch (aiState) {
         case 'not_installed':
+        case 'install_failed':
           return {
             label: 'Install AI',
             iconName: 'hard-drive' as const,
             onClick: () => void this.startInstall(),
-            disabled: downloadsDisabled || !!this.busy['install-start'],
+            availability: downloadsDisabled
+              ? unavailableBecause('Downloads are disabled by administrator policy.')
+              : this.busy['install-start']
+                ? ({ kind: 'blocked' } as const)
+                : AVAILABLE,
             primary: true,
           };
         case 'installing':
@@ -1109,7 +1049,7 @@ export class BrainSurface extends JfElement {
             label: 'Cancel',
             iconName: 'x' as const,
             onClick: () => void this.cancelInstall(),
-            disabled: !!this.busy['install-cancel'],
+            availability: this.busy['install-cancel'] ? ({ kind: 'blocked' } as const) : AVAILABLE,
             primary: false,
           };
         case 'offline':
@@ -1117,7 +1057,11 @@ export class BrainSurface extends JfElement {
             label: 'Start AI',
             iconName: 'check-circle-2' as const,
             onClick: () => void this.switchInference('online'),
-            disabled: onlineDisabled || !!this.busy['inference-switch'],
+            availability: onlineDisabled
+              ? unavailableBecause('Online AI is disabled by administrator policy.')
+              : this.busy['inference-switch']
+                ? ({ kind: 'blocked' } as const)
+                : AVAILABLE,
             primary: true,
           };
         case 'starting':
@@ -1125,7 +1069,7 @@ export class BrainSurface extends JfElement {
             label: 'Cancel',
             iconName: 'x' as const,
             onClick: () => void this.switchInference('indexing'),
-            disabled: false,
+            availability: AVAILABLE,
             primary: false,
           };
         case 'connecting':
@@ -1133,16 +1077,17 @@ export class BrainSurface extends JfElement {
             label: 'Checking…',
             iconName: 'x' as const,
             onClick: () => {},
-            disabled: true,
+            availability: { kind: 'blocked' } as const,
             primary: false,
           };
         case 'online':
+        case 'indexing':
         default:
           return {
             label: 'Shut Down AI',
             iconName: 'x' as const,
             onClick: () => void this.switchInference('indexing'),
-            disabled: !!this.busy['inference-switch'],
+            availability: this.busy['inference-switch'] ? ({ kind: 'blocked' } as const) : AVAILABLE,
             primary: false,
           };
       }
@@ -1192,24 +1137,32 @@ export class BrainSurface extends JfElement {
           ? html`
               <div style="margin-top: 1rem; padding: 0.75rem; background: var(--surface-tertiary); border-radius: 0.375rem">
                 <div class="grid">
-                  ${this.inference?.activeModelId
-                    ? html`<span class="key">Model</span
-                        ><span class="val" title=${this.inference.activeModelId}
-                          >${friendlyModel(this.inference.activeModelId)}</span
-                        >`
-                    : nothing}
-                  ${this.inference?.tier
-                    ? html`<span class="key">Tier</span
-                        ><span class="val">${this.inference.tier.replace(/_/g, ' ')}</span>`
-                    : nothing}
-                  ${this.inference?.llmContextTokens != null
-                    ? html`<span class="key">Context</span
-                        ><span class="val">${NUM.format(this.inference.llmContextTokens)} tokens</span>`
-                    : nothing}
-                  ${this.inference?.gpu?.vramDescription
-                    ? html`<span class="key">GPU</span
-                        ><span class="val">${this.inference.gpu.vramDescription}</span>`
-                    : nothing}
+                  ${(() => {
+                    // Tempdoc 663 — Model/Context/GPU are now projected via the shared Fact
+                    // authority (594) instead of formatted inline; Tier stays inline (out of this
+                    // stage's scope — no catalog row exists for it, and it's a single, single-use
+                    // read with no second consumer, so AHA says leave it).
+                    const model = projectFact('core.ai.model', this._unifiedAiState);
+                    const ctx = projectFact('core.ai.contextWindow', this._unifiedAiState);
+                    const gpu = projectFact('core.ai.gpu', this._unifiedAiState);
+                    return html`
+                      ${model.presence === 'present'
+                        ? html`<span class="key">${model.name}</span
+                            ><span class="val" title=${model.provenance ?? ''}>${model.value}</span
+                            >`
+                        : nothing}
+                      ${this.inference?.tier
+                        ? html`<span class="key">Tier</span
+                            ><span class="val">${this.inference.tier.replace(/_/g, ' ')}</span>`
+                        : nothing}
+                      ${ctx.presence === 'present'
+                        ? html`<span class="key">${ctx.name}</span><span class="val">${ctx.value}</span>`
+                        : nothing}
+                      ${gpu.presence === 'present'
+                        ? html`<span class="key">${gpu.name}</span><span class="val">${gpu.value}</span>`
+                        : nothing}
+                    `;
+                  })()}
                 </div>
               </div>
             `
@@ -1218,7 +1171,7 @@ export class BrainSurface extends JfElement {
         <div style="margin-top: 1rem">
           <jf-button
             variant=${primaryAction.primary ? 'primary' : 'secondary'}
-            ?disabled=${primaryAction.disabled}
+            .availability=${primaryAction.availability}
             .onActivate=${primaryAction.onClick}
             label=${primaryAction.label}
             data-testid="brain-simple-action"
@@ -1228,9 +1181,9 @@ export class BrainSurface extends JfElement {
           </jf-button>
         </div>
 
-        ${this.installStatus?.state === 'failed' && this.installStatus?.lastError
+        ${aiVerdict.kind === 'install_failed' && aiVerdict.installFailure
           ? html`<jf-error-alert tone="error" style="margin-top: 0.75rem"
-              >Install failed: ${this.installStatus.lastError}</jf-error-alert
+              >Install failed: ${aiVerdict.installFailure}</jf-error-alert
             >`
           : nothing}
 
@@ -1699,7 +1652,11 @@ export class BrainSurface extends JfElement {
                   <jf-button
                     variant="primary"
                     label="Import pack"
-                    ?disabled=${!!this.busy['pack-import'] || this.packStatus?.state === 'running'}
+                    .availability=${this.busy['pack-import']
+                      ? { kind: 'blocked' }
+                      : this.packStatus?.state === 'running'
+                        ? unavailableBecause('A pack import is already in progress.')
+                        : AVAILABLE}
                     .onActivate=${() => void this.importPack()}
                   >
                     ${icon({ name: 'hard-drive', size: 14 })} Import pack
@@ -1721,7 +1678,10 @@ export class BrainSurface extends JfElement {
 
   private renderInstallSection(): TemplateResult {
     const downloadsDisabled = this.policy?.downloadsEnabled === false;
-    const installing = this.installStatus?.state === 'running';
+    // Tempdoc 663 — consume the one AI-engine verdict instead of re-reading `installStatus.state`
+    // directly (the ai-verdict-derivation gate). Also picks up the instant `busy['install-start']`
+    // feedback the Simple panel already gets, closing the same gap here.
+    const installing = this.deriveAiEngineVerdict().kind === 'installing';
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} AI install</h3>
@@ -1737,7 +1697,13 @@ export class BrainSurface extends JfElement {
           <jf-button
             variant="primary"
             label="Install"
-            ?disabled=${installing || downloadsDisabled || !!this.busy['install-start']}
+            .availability=${installing
+              ? unavailableBecause('Already installing.')
+              : downloadsDisabled
+                ? unavailableBecause('Downloads are disabled by administrator policy.')
+                : this.busy['install-start']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
             .onActivate=${() => void this.startInstall()}
           >
             Install
@@ -1751,7 +1717,13 @@ export class BrainSurface extends JfElement {
           </jf-button>
           <jf-button
             label="Repair"
-            ?disabled=${installing || downloadsDisabled || !!this.busy['install-repair']}
+            .availability=${installing
+              ? unavailableBecause('Already installing.')
+              : downloadsDisabled
+                ? unavailableBecause('Downloads are disabled by administrator policy.')
+                : this.busy['install-repair']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
             .onActivate=${() => void this.repairInstall()}
           >
             Repair
@@ -1768,6 +1740,7 @@ export class BrainSurface extends JfElement {
     const activeId = this.runtimeStatus?.activation?.activeVariantId ?? null;
     const actState = this.runtimeStatus?.activation?.state ?? 'idle';
     const activating = actState === 'running' || !!this.busy['variant'];
+    const provisional = isGpuReadingProvisional(this._unifiedAiState?.aiEngine.stability);
 
     return html`
       <div class="section">
@@ -1775,13 +1748,17 @@ export class BrainSurface extends JfElement {
 
         ${this.inference?.gpu
           ? html`
-              <div class="grid" style="margin-bottom: 0.75rem">
+              <div class="grid" style="margin-bottom: 0.75rem; ${provisional ? 'opacity: 0.6' : ''}">
                 <span class="key">CUDA</span
                 ><span class="val">${this.inference.gpu.cudaAvailable ? 'available' : 'no'}</span>
-                ${this.inference.gpu.vramDescription
-                  ? html`<span class="key">VRAM</span
-                      ><span class="val">${this.inference.gpu.vramDescription}</span>`
-                  : nothing}
+                ${(() => {
+                  // Tempdoc 663 — same `core.ai.gpu` fact as renderSimplePanel's grid; the VRAM
+                  // description is one authority, projected wherever it renders.
+                  const gpu = projectFact('core.ai.gpu', this._unifiedAiState);
+                  return gpu.presence === 'present'
+                    ? html`<span class="key">VRAM</span><span class="val">${gpu.value}</span>`
+                    : nothing;
+                })()}
                 ${this.inference.tier
                   ? html`<span class="key">Tier</span
                       ><span class="val">${this.inference.tier.replace(/_/g, ' ')}</span>`
@@ -1848,7 +1825,11 @@ export class BrainSurface extends JfElement {
             <jf-button
               variant=${this.inference?.mode === 'online' ? 'primary' : 'secondary'}
               label="Online"
-              ?disabled=${!!this.busy['inference-switch'] || this.policy?.onlineAiEnabled === false}
+              .availability=${this.policy?.onlineAiEnabled === false
+                ? unavailableBecause('Online AI is disabled by administrator policy.')
+                : this.busy['inference-switch']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
               .onActivate=${() => void this.switchInference('online')}
             >
               Online

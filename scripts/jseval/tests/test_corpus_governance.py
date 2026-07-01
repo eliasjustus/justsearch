@@ -201,6 +201,129 @@ def test_retrieval_difficulty_label_from_ndcg():
 
 
 # ---------------------------------------------------------------------------
+# descriptor_collision_report — the qrel self-consistency check (tempdoc 664)
+# ---------------------------------------------------------------------------
+
+def test_descriptor_collision_report_flags_gold_involved_collision():
+    # gold1 and distractor1 accidentally share a title -> qrel-corrupting collision.
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor2", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is False
+    assert report["n_groups"] == 1
+    assert report["n_docs_involved"] == 2
+    assert report["n_gold_involved"] == 1
+    assert sorted(report["groups"][0]["doc_ids"]) == ["distractor1", "gold1"]
+
+
+def test_descriptor_collision_report_distractor_only_does_not_fail():
+    # Two distractors collide with each other, but no gold chain is involved — reported, not failed.
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The reactor in the eastern ridge", "text": "..."},
+        {"_id": "distractor2", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is True  # no gold-involved collision
+    assert report["n_groups"] == 1
+    assert report["n_docs_involved"] == 2
+    assert report["n_gold_involved"] == 0
+
+
+def test_descriptor_collision_report_clean_corpus_passes():
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is True
+    assert report["n_groups"] == 0
+    assert report["n_docs_involved"] == 0
+
+
+def test_descriptor_collision_report_without_queries_reports_but_cannot_fail():
+    docs = [
+        {"_id": "a", "title": "Same Title", "text": "..."},
+        {"_id": "b", "title": "Same Title", "text": "..."},
+    ]
+    report = corpus_certify.descriptor_collision_report(docs)  # queries omitted
+    assert report["n_groups"] == 1
+    assert report["n_gold_involved"] == 0
+    assert report["passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# regeneration_determinism_report — the certification-time "seeded -> reproducible"
+# verification check (tempdoc 664, seventh pass)
+# ---------------------------------------------------------------------------
+
+_FULL_PROVENANCE = {
+    "method": "procedural-fabricated", "axis": "prose", "lang": "en", "seed": 1,
+    "hops": 1, "distractor_ratio": 3, "semantic": True, "n_chains": 3, "doc_words": 60,
+}
+
+
+def test_regeneration_determinism_skips_when_provenance_missing():
+    report = corpus_certify.regeneration_determinism_report(None)
+    assert report["passed"] is None
+    assert "not applicable" in report["reason"]
+
+
+def test_regeneration_determinism_skips_hand_authored_corpus():
+    report = corpus_certify.regeneration_determinism_report({"method": "hand-authored-fabricated"})
+    assert report["passed"] is None
+    assert "hand-authored-fabricated" in report["reason"]
+
+
+def test_regeneration_determinism_skips_incomplete_provenance():
+    # missing n_chains/doc_words — a corpus certified before the tempdoc 664 provenance fix.
+    incomplete = {k: v for k, v in _FULL_PROVENANCE.items() if k not in ("n_chains", "doc_words")}
+    report = corpus_certify.regeneration_determinism_report(incomplete)
+    assert report["passed"] is None
+    assert "n_chains" in report["reason"] and "doc_words" in report["reason"]
+
+
+def test_regeneration_determinism_real_regeneration_passes():
+    """Unmocked — a real end-to-end run of the certify-level check (mirrors
+    test_generate_is_deterministic_across_processes but through the public certify-level
+    function, confirming the wiring, not just the underlying generate() fix)."""
+    report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+    assert report["passed"] is True
+    assert report["method"] == "cross-process-regeneration-diff"
+
+
+def test_regeneration_determinism_flags_a_real_mismatch():
+    """Mocked subprocess: simulate a mismatch (the pre-fix bug class) without needing to actually
+    reintroduce non-determinism into corpus_generate.py."""
+    import subprocess as _sp
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        # cmd = [python, "-c", script, out_dir, axis, lang, seed, hops, ratio, semantic,
+        #        n_chains, doc_words] -- the output dir is always the 4th element (index 3).
+        out_dir = Path(cmd[3])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        calls["n"] += 1
+        (out_dir / "docs.jsonl").write_text(f"run{calls['n']}\n", encoding="utf-8")
+        (out_dir / "queries.json").write_text("[]", encoding="utf-8")
+        return _sp.CompletedProcess(cmd, 0, "", "")
+
+    # tempdoc 664 (twelfth pass): the subprocess call now lives in corpus_generate.regenerate_and_diff
+    # (extracted, shared with the pytest determinism test) rather than in corpus_certify itself.
+    with patch("jseval.corpus_generate.subprocess.run", side_effect=fake_run):
+        report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+    assert report["passed"] is False
+    assert "docs.jsonl" in report["mismatched_files"]
+
+
+# ---------------------------------------------------------------------------
 # corpus_fidelity — the retrieval-difficulty gate (§D.5)
 # ---------------------------------------------------------------------------
 
@@ -257,6 +380,32 @@ def test_fidelity_records_incomparable_headline(tmp_path):
     # A non-comparable run (readiness/ANN/error-rate failed) must be flagged, not silently passed.
     r = _assess(tmp_path, ndcg=0.70, leak_rate=0.0, comparable=False)
     assert r["comparable"] is False
+
+
+def test_certify_computes_descriptor_collisions_end_to_end(tmp_path):
+    """tempdoc 664 (seventh-pass regression guard): `corpus-certify` must actually COMPUTE
+    descriptor_collisions against the real materialized `corpus.jsonl`, not just the pure
+    `descriptor_collision_report()` function in isolation. The sixth-pass fix was live-verified by
+    calling the function directly (bypassing the CLI's file-loading), which hid a wrong filename
+    (`docs.jsonl` instead of the real `corpus.jsonl` `corpus_build.py` writes) — this test exercises
+    the real CLI path end-to-end, mocking only the closed-book call."""
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    _write_source(tmp_path / "src")  # 4 clean, non-colliding docs (Alpha/Bex Ko/Gamma/Tas Vrel)
+    ds = tmp_path / "datasets" / "golden" / "x"
+    corpus_build.build_golden(tmp_path / "src", ds)
+    assert (ds / "corpus.jsonl").is_file()  # sanity: confirms the real filename this test guards
+
+    with patch("jseval.utility_calibrate.closed_book_filter", return_value=([], 0)):
+        r = CliRunner().invoke(main, ["corpus-certify", "--dataset", "x",
+                                      "--datasets-dir", str(tmp_path / "datasets")])
+    assert r.exit_code == 0, r.output
+    fid = json.loads((ds / "metadata.json").read_text(encoding="utf-8"))["fidelity"]
+    assert "descriptor_collisions" in fid, "descriptor_collisions was never computed by the real CLI path"
+    assert fid["descriptor_collisions"]["passed"] is True
+    assert fid["descriptor_collisions"]["n_groups"] == 0
 
 
 def test_certify_does_not_clobber_existing_retrieval_fidelity(tmp_path):
@@ -331,6 +480,85 @@ def test_validator_warns_on_failed_fidelity():
     assert any("FAILED the fidelity gate" in x for x in msgs)
 
 
+# tempdoc 664 (post-review fix): descriptor_collisions must surface the same way its two sibling
+# fidelity sub-checks already do — the original wiring computed and persisted the verdict but
+# never warned on it, so a corpus with a real collision defect (confirmed: `needle-burial-v1`)
+# produced zero signal in normal `jseval run`/corpus-load usage.
+
+def test_validator_warns_on_failed_descriptor_collisions():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "descriptor_collisions": {"passed": False, "n_groups": 24,
+                                                                 "n_docs_involved": 51, "n_gold_involved": 7}}})
+    assert any("FAILED the descriptor-collision check" in x for x in msgs)
+    assert any("7 gold chain(s)" in x for x in msgs)
+
+
+def test_validator_warns_on_missing_descriptor_collisions_verdict():
+    """A corpus certified before this check existed has no `descriptor_collisions` key at all —
+    flagged (symmetric to the missing closed_book_certification / fidelity checks), not silently
+    treated as passing."""
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0}})
+    assert any("no descriptor_collisions verdict" in x for x in msgs)
+
+
+def test_validator_quiet_on_passing_descriptor_collisions():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "descriptor_collisions": {"passed": True, "n_groups": 0,
+                                                                 "n_docs_involved": 0, "n_gold_involved": 0}}})
+    assert not any("descriptor-collision" in x or "descriptor_collisions" in x for x in msgs)
+
+
+# tempdoc 664 (seventh pass): regeneration_determinism validator warnings — symmetric to the three
+# checks above, plus the extra "skip is silent" state this check alone has.
+
+def test_validator_warns_on_failed_regeneration_determinism():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": False,
+                                                                    "mismatched_files": ["docs.jsonl"]}}})
+    assert any("FAILED regeneration-determinism" in x for x in msgs)
+
+
+def test_validator_warns_on_missing_regeneration_determinism_verdict():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0}})
+    assert any("no regeneration_determinism verdict" in x for x in msgs)
+
+
+def test_validator_quiet_on_passing_regeneration_determinism():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": True}}})
+    assert not any("regeneration-determinism" in x or "regeneration_determinism" in x for x in msgs)
+
+
+def test_validator_quiet_on_skipped_regeneration_determinism():
+    """A deliberate skip (hand-authored/incomplete-provenance corpus) is NOT a failure and NOT a
+    missing verdict — it must stay silent, distinct from the other two states."""
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": None,
+                                                                    "reason": "not applicable"}}})
+    assert not any("regeneration-determinism" in x or "regeneration_determinism" in x for x in msgs)
+
+
 def test_generate_produces_unique_multihop_source(tmp_path):
     from jseval import corpus_generate as cg
     stats = cg.generate(tmp_path / "g", axis="prose", n_chains=5, hops=2,
@@ -344,6 +572,38 @@ def test_generate_produces_unique_multihop_source(tmp_path):
     assert all(len(q["evidence_ids"]) >= 2 for q in qs)  # genuine multi-hop by construction
     answers = [q["answer"] for q in qs]
     assert len(answers) == len(set(answers))  # Issue-C: unique answer per chain (no shared pool)
+
+
+def test_generate_is_deterministic_across_processes(tmp_path):
+    """Regression guard for tempdoc 664: `generate()`'s docstring claims "seeded -> reproducible",
+    but the RNG seed used to derive `axis_offset` from `hash(axis)` was per-process-randomized
+    (Python's `str.__hash__`, PEP 456) unless `PYTHONHASHSEED` is pinned — invisible to an
+    in-process test (like `test_generate_produces_unique_multihop_source` above) because `hash()`
+    is stable *within* one process. This test spawns `generate()` in two SEPARATE `python`
+    processes with the identical nominal seed and diffs the output, closing the exact blind spot
+    that hid the bug (confirmed empirically pre-fix: 280/280 docs differed between two runs)."""
+    from jseval import corpus_generate as cg
+
+    out1, out2 = tmp_path / "run1", tmp_path / "run2"
+    result = cg.regenerate_and_diff(
+        out1, out2, axis="prose", lang="en", n_chains=5, hops=1,
+        distractor_ratio=3, doc_words=60, seed=42, semantic=True,
+    )
+    assert result["ok"], result.get("error")
+    assert not result["mismatched_files"], f"differs between two same-seed regenerations: {result['mismatched_files']}"
+    # meta.json isn't diffed by regenerate_and_diff (only docs.jsonl/queries.json -- the certification-
+    # relevant content); confirm it too, matching the original test's coverage.
+    assert (out1 / "meta.json").read_text(encoding="utf-8") == (out2 / "meta.json").read_text(encoding="utf-8")
+
+    # tempdoc 664 (twelfth pass): gold and distractor docs are now interleaved (not written as
+    # two unbroken blocks) -- confirm the change actually happened, not just that it's still
+    # deterministic. 5 gold chains x 2 docs (hops=1) = 10 gold doc ids among 40 total.
+    doc_ids = [json.loads(line)["_id"] for line in (out1 / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((out1 / "queries.json").read_text(encoding="utf-8"))
+    gold_ids = {eid for q in queries for eid in q["evidence_ids"]}
+    assert len(doc_ids) == 40 and len(gold_ids) == 10
+    gold_positions = [i for i, did in enumerate(doc_ids) if did in gold_ids]
+    assert gold_positions != list(range(10)), "gold docs are still one unbroken leading block -- not interleaved"
 
 
 @pytest.mark.parametrize("axis,lang", [("code", "en"), ("tabular", "en"), ("prose", "de")])

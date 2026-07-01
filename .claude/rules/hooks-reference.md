@@ -48,6 +48,10 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 **Behavior:** The exit-side complement to `consult-doc-hint` (the "Maintain" step of the tempdoc 579 protocol). When you try to finish a turn, if you edited a governed region this session (same shared `GOVERNED_REGIONS` map — currently `modules/ui-web/src/shell-v0/**`) **without** touching its governing doc, it **blocks once per region per session** (`{"decision":"block"}`) asking you to update the doc or say why not. Two de-dupe layers: `stop_hook_active` guards re-blocks within one forced continuation, and a per-session marker file (`tmp/agent-telemetry/maintain-nudged-<session>.json`) guards across turns (the transcript is cumulative, so a session-wide check would otherwise nag every turn-end). Narrow scope; honors `JUSTSEARCH_DISABLE_HOOKS=1`; fail-open on any error (never blocks on a bug).
 **Action:** If the change altered documented behavior, update the governing doc in the same turn. **Escape hatch:** if no documented behavior changed, just say so — that satisfies the block and you can finish. (Consult pushes the doc going in; Maintain checks it coming out.)
 
+## observation-shard-hint (Stop)
+**Behavior:** Tempdoc 665. If your CURRENT session wrote a `docs/observations.d/<session>.md` shard (via `note-observation.mjs`) and it is still uncommitted, this hook reminds you once per session — never blocks. Same dedupe shape as `maintain-doc-hint` (`stop_hook_active` + a per-session marker file, `tmp/agent-telemetry/observation-shard-nudged-<session>.json`). Fail-open; honors `JUSTSEARCH_DISABLE_HOOKS=1`.
+**Action:** `git add` the shard file explicitly (not `git add -A`) and commit it — an uncommitted shard can be silently lost if the worktree is torn down or the note is simply forgotten.
+
 ## docs-regen-hint (PostToolUse → Edit, Write)
 **Behavior:** When you edit a `.md` file in `docs/explanation/`, `docs/reference/`, `docs/how-to/`, or `docs/decisions/`, this hook reminds you to run the post-edit regeneration sequence.
 **Action:** Run `node scripts/docs/llmstxt-generate.mjs` and `node scripts/docs/skills-sync.mjs` before committing. Load `/docs-maintenance` for full checklist.
@@ -83,6 +87,10 @@ These hooks fire automatically. When one blocks you, don't retry — adapt.
 ## docs-granularity-hint (PreToolUse → Bash, `git push`)
 **Behavior:** Before a `git push`, if the branch's whole diff vs `origin/main` is dated working history only (`docs/tempdocs/**` or `docs/observations*`), this hook emits a non-blocking reminder that a tempdoc-only change should ride along with its code PR or batch, not become its own standalone public commit (ADR-0045 axis-2 / tempdoc 653; rule `docs-ride-along`). Canonical-doc-only and docs+code branches intentionally do **not** trigger. Fail-open; honors `JUSTSEARCH_DISABLE_HOOKS=1`; never blocks.
 **Action:** If pushing a tempdoc-only branch, prefer to fold the edit into the code PR it documents, or batch tempdoc edits into one `docs(tempdocs): …` PR. Rationale: `docs/reference/contributing/agent-guide.md` §3.7.
+
+## pipe-mask-hint (PreToolUse → Bash)
+**Behavior:** When a build/test command (`gradlew`/`gradle build|test|check`, `npm test`, `vitest`, `pytest`, `cargo test`, `mvn`, …) is piped into a trailing `tail`/`grep`/`head` — so the shell reports the filter's exit, not the build's (tempdoc 618 §10a) — emits a non-blocking reminder. Fires only when the masking filter is the last stage AND an earlier stage is a build/test command; silent when the exit is preserved (`set -o pipefail`/`${PIPESTATUS}`). Never blocks; fail-open; honors `JUSTSEARCH_DISABLE_HOOKS=1`. Delivers rule `piped-exit-masked` (tier-register row 37); precision guarded by `pipe-mask-hint.test.mjs`.
+**Action:** Run the command bare and read `BUILD SUCCESSFUL`/`BUILD FAILED`, or `set -o pipefail`, or assert on output text — don't trust a masked build's exit code.
 
 ## seam-hint (PostToolUse → Write)
 **Behavior:** When you `Write` a NEW production Java class in a module that hosts registered logic seams (`governance/logic-seams.v1.json`) and the class is branch/arithmetic-dense AND IO-free, this hook asks whether it is a law-bearing seam to declare (tempdoc 555 §5, the authoring-time oracle). It self-filters: only seam-bearing modules, only unregistered classes, never `Edit`s / IO-heavy / DTO files.

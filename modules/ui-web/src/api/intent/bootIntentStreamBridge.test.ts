@@ -24,10 +24,12 @@ import {
 import type { IntentRouter } from '../../shell-v0/router/intentRouter.js';
 import type { Intent } from '../../shell-v0/router/types.js';
 import type { SseEnvelope } from '../../shell-v0/streaming/envelope-types.js';
+import { MultiplexedStream } from '../../shell-v0/streaming/MultiplexedStream.js';
 
 class FakeEventSource extends EventTarget {
   url: string;
   closed = false;
+  readyState = 0;
   constructor(url: string) {
     super();
     this.url = url;
@@ -37,9 +39,25 @@ class FakeEventSource extends EventTarget {
       new MessageEvent('frame', { data: JSON.stringify(envelope) }),
     );
   }
+  emitOpen(): void {
+    this.readyState = 1;
+    this.dispatchEvent(new Event('open'));
+  }
   close(): void {
     this.closed = true;
   }
+}
+
+/** Builds a MultiplexedStream wired to `fakeEs` and already past the realistic
+ * 'open'-before-'frame' EventSource ordering (see MultiplexedStream.test.ts). */
+function multiplexOn(fakeEs: FakeEventSource): MultiplexedStream {
+  const mux = new MultiplexedStream({
+    url: 'http://test/api/shell-events/stream',
+    eventSourceFactory: () => fakeEs as unknown as EventSource,
+  });
+  mux.start();
+  fakeEs.emitOpen();
+  return mux;
 }
 
 function navigationIntent(target: string): Intent {
@@ -101,18 +119,14 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('dispatches a single intent envelope into intentRouter.dispatch', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     expect(dispatchSpy.mock.calls[0]?.[0]).toEqual(navigationIntent('core.library'));
   });
 
   it('dedups replays of the same envelope id (the load-bearing case)', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     // Same id delivered twice — simulates ring-buffer replay after reconnect
     // with stale resume-token.
     fakeEs.emitFrame(updateFrame(1, 'ie-dup-001'));
@@ -121,9 +135,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('dispatches distinct envelope ids independently', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     fakeEs.emitFrame(updateFrame(2, 'ie-002'));
     fakeEs.emitFrame(updateFrame(3, 'ie-003'));
@@ -131,9 +143,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('reset lifecycle clears the LRU so re-emitted ids dispatch again', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
 
@@ -150,9 +160,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('ignores payloads without the intent.envelope kind discriminator', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     const envelope: SseEnvelope = {
       streamId: 'system:intent-envelopes',
       frameKind: 'UPDATE',
@@ -166,9 +174,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('ignores payloads without a stable id', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     const envelope: SseEnvelope = {
       streamId: 'system:intent-envelopes',
       frameKind: 'UPDATE',
@@ -187,18 +193,14 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('teardown stops the bridge and a second boot becomes possible', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     expect(__isRunningForTest()).toBe(true);
     stopIntentStreamBridge();
     expect(__isRunningForTest()).toBe(false);
 
     // Booting again should construct a fresh stream.
     const fakeEs2 = new FakeEventSource('http://test/api/intent/stream');
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs2 as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs2), router);
     expect(__isRunningForTest()).toBe(true);
   });
 });

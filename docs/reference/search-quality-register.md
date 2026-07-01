@@ -48,9 +48,10 @@ Query variants of the same corpus get distinct slugs.
 | beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
 | mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
 | mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
-| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | |
-| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-03-28 | 343 D | |
-| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 316 | factoid | 2026-03-18 | 309 §37 | |
+| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | **RETIRED 2026-07-01 (tempdoc 666)** — replaced by `mixed/legal-clerc-200`; see Corpus provenance note under Findings. |
+| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-01 | 666 | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
 | mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
 | mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
 | mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
@@ -59,7 +60,7 @@ Query variants of the same corpus get distinct slugs.
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
-| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json` |
+| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
 
 ---
 
@@ -93,27 +94,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `bef184e333` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.47 · ORT 1.24.3
+**Release:** `84b305b2be` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.757 | — |
-| mixed/courtlistener-200 | hybrid | 0.608 | — |
+| beir/scifact | hybrid | 0.756 | — |
 | mixed/enron-qa | hybrid | 0.719 | — |
-| mixed/miracl-de-2k | hybrid | 0.728 | — |
-| mixed/miracl-fr-2k | hybrid | 0.707 | — |
+| mixed/legal-clerc-200 | hybrid | 0.516 | — |
+| mixed/miracl-de-2k | hybrid | 0.852 | — |
+| mixed/miracl-fr-2k | hybrid | 0.866 | — |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 152 | 93.7 | 22.0 | 2.02 |
-| mixed/courtlistener-200 | 143 | 13.5 | 1.1 | 2.02 |
+| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
 | mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/miracl-de-2k | 136 | 160.9 | 41.4 | 2.02 |
-| mixed/miracl-fr-2k | 134 | 161.5 | 49.7 | 2.02 |
+| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
+| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
+| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
 
 <!-- generated:end -->
 
@@ -186,7 +187,10 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Note:** splade-v3+gemma rows use chunk merge (active on EnronQA long emails). Chunk merge provides +1.3% nDCG on lexical (p=0.04, statistically significant). See 343 Phase 2.2.
 **Note:** All splade-v3+gemma `full` rows have CE OFF but dense ON (F-012 corrected — dense was working via gte-multilingual-base all along, tracking bug fixed). The full vs bm25_splade delta is the dense retrieval contribution. CE impact with splade-v3+gemma is unmeasured (jseval `--ce` flag needed).
 
-### mixed/courtlistener-200
+### mixed/courtlistener-200 (RETIRED 2026-07-01, tempdoc 666 — replaced by mixed/legal-clerc-200)
+
+*(all numbers below predate the retirement and are not reproducible against any corpus currently in this
+catalog — see Corpus provenance note above)*
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
@@ -200,10 +204,31 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Best known:** bge-m3 / minilm-512 / bm25-dom / full = **0.925**
 **Note:** BM25-dominant (0.925) is 11.8% better than balanced (0.816) on long legal docs. CE upgrade neutral (0.813 ≈ 0.816).
 
-### mixed/miracl-de-2k
+### mixed/legal-clerc-200 (new, tempdoc 666 — replaces mixed/courtlistener-200)
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | vector | 0.060 | — | — | dense | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | lexical | 0.686 | — | — | bm25 | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | splade | 0.059 | — | — | splade | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | hybrid | **0.521** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
+
+**Best known:** (HEAD default) / hybrid = **0.521** (first measurement — no ablations run yet).
+**Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
+retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
+observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
+form, `queries/test.single-removed.direct.tsv`, distinct from the old known-item task — see Corpus
+provenance note above). No cc/encoder ablation pass has been run yet.
+
+### mixed/miracl-de-2k
+
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.852** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | bm25-dom | lexical | 0.511 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | splade | 0.669 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.553 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -227,8 +252,13 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 
 ### mixed/miracl-fr-2k
 
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.866** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | balanced | lexical | 0.476 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -399,7 +429,75 @@ tempdoc citations that use P0/P1/P2 names.
 
 Settled empirical facts. Each was an open question that got answered.
 
+### Corpus provenance note (2026-07-01, tempdoc 664 twelfth pass)
+
+`golden/needle-burial-v1`'s corpus content was **regenerated** on this date: the original generator had a
+non-determinism bug (per-process `hash()` randomization) and lacked a positional interleave the twelfth pass
+added. Regenerating with the same recorded parameters (280 docs, 20 gold chains, seed=636, hops=1,
+distractor_ratio=6, semantic=True) produces the same corpus *shape* but different exact entity names/text —
+exact byte-reproduction of the pre-fix corpus was confirmed impossible (generator drift), so this is new
+content, not a restored original.
+
+**Findings below measured against the pre-regeneration content are historical and not reproducible against
+the corpus as currently committed**: F-023, F-024, F-025, D-004's shared-index A/B evidence, and Q-011's
+evidence. This is a fact about reproducibility, not a retraction — those measurements genuinely happened and
+the cited numbers accurately record what was found *then*. **Already-shipped decisions based on these
+numbers are unaffected** (e.g. D-004's leg-arbitration shipping default-off, F-024's recall-complete-pool /
+leg-arbitration shipping default-on) — those decisions used real measurements at the time; the regeneration
+does not retroactively invalidate a decision already made and shipped.
+
+Current corpus signature (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`
+— the same verified-binding mechanism already shared by run manifests and release records):
+`1ade35791b1db58b9a7e1ff21246278d8e588e1705cbeda36d8529ceab6699ec`. Anyone re-deriving or re-verifying the
+findings below should check this signature against the corpus they're measuring against, rather than
+assuming it matches what's described.
+
+### Corpus provenance note (2026-07-01, tempdoc 666)
+
+Neither `mixed/miracl-de-2k`/`mixed/miracl-fr-2k` nor `mixed/courtlistener-200` ever had a reproducible
+construction path anywhere in this project's history (confirmed via the private archive's full,
+un-squashed 6563-commit history — tempdoc 666 first pass). This pass fixed both:
+
+- **`mixed/miracl-de-2k` and `mixed/miracl-fr-2k` were regenerated** from the real MIRACL dataset via
+  `ir_datasets` (Apache 2.0), with a small, committed, seeded recipe (`scripts/jseval/666-corpora/<name>/
+  recipe.json`) recording exactly what to re-fetch and how to sample it deterministically — the corpus
+  content itself is never committed (`datasets/` is gitignored for every corpus, by this project's existing,
+  universal policy). The new sample targets the same original scale (all dev-split queries + a
+  deterministically-sampled distractor pool to the original doc count) but is **new content**, not a
+  byte-restoration of the unreproducible original — matching the same "accept new content, verified
+  reproducible" resolution tempdoc 664 already reached for `needle-burial-v1`. `mixed/miracl-fr-2k`'s query
+  count is corrected from 316 to 343 (all real dev-split queries with a qrel — the prior 316 had no recorded
+  sampling method to reproduce).
+- **`mixed/courtlistener-200` is retired and replaced by `mixed/legal-clerc-200`.** The original corpus's
+  human-authored relevance judgments were a one-off manual curation with no recoverable construction path;
+  CourtListener itself does not ship a retrieval benchmark (queries + qrels) to rebuild against. Replaced
+  with a corpus built from [CLERC](https://arxiv.org/pdf/2406.17186) (a real, citable NAACL 2025 academic
+  legal-case-retrieval benchmark, `jhu-clsp/CLERC` on HuggingFace, built on the Caselaw Access Project — the
+  same underlying data family as CourtListener, from the same organization, the Free Law Project), fetched
+  fresh via plain HTTP and sampled deterministically (`scripts/jseval/666-corpora/legal-clerc-200/
+  recipe.json`). CLERC's own added structure (query construction, citation pairing) has no stated license
+  anywhere — checked exhaustively across five channels (GitHub API file listing, GitHub's own license
+  detector, the HuggingFace Hub API's dataset-card metadata, and a full-text search of the paper's Ethical
+  Considerations/Data Availability sections) — but nothing from CLERC is ever committed to this repo (same
+  gitignored-`datasets/` policy as above), so this repo never redistributes it; only the underlying CC0
+  Caselaw Access Project text is ever fetched, and only transiently.
+
+**Findings below measured against `mixed/courtlistener-200` are historical and not reproducible against any
+corpus currently in this catalog** — that corpus no longer exists in any committed or regenerable form. The
+measurements genuinely happened and the cited numbers accurately record what was found *then*; this is a
+fact about reproducibility, not a retraction. **Already-shipped decisions based on these numbers are
+unaffected** (e.g. the BM25-dominance-on-long-legal-docs finding below) — those decisions used real
+measurements at the time. `mixed/legal-clerc-200` has no BM25-dominance ablation yet — a genuinely new corpus
+needs its own ablation pass, not an inherited assumption from the retired corpus's shape.
+
+Corpus signatures (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`):
+- `mixed/miracl-de-2k`: `d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1`
+- `mixed/miracl-fr-2k`: `a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297`
+- `mixed/legal-clerc-200`: `90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1`
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
+
+*(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
 
 - **Answer:** Graded the three tempdoc-636 buried-signal levers via `jseval --start-backend --llm`
   through the full `hybrid`+CE pipeline, on `golden/needle-burial-v1` (synthetic buried-fact target)
@@ -420,6 +518,9 @@ Settled empirical facts. Each was an open question that got answered.
   leg-arbitration's trigger to be pool-aware is the open follow-up (router Item-1).
 
 ### F-025: recall-survival is a measurable, regime-blind funnel — and it tracks the shipped fix
+
+*(needle-burial-v1 numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
 
 - **Answer:** The **Staged Recall Accounting** instrument (tempdoc 636 / D-005) decomposes every judged query
   into **leg-recall / cascade-leak / judge-rank** as a pure `jseval` projection over existing run artifacts
@@ -755,6 +856,8 @@ Settled empirical facts. Each was an open question that got answered.
 
 ### F-023: Whole-doc dense dilution is real and scales; lexical+CE legs suppress dense on paraphrase queries
 
+*(numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
+
 - **Answer:** On a purpose-built buried-signal corpus (`golden/needle-burial-v1` — long generic-filler docs, one buried distinctive head per chain, **zero-lexical-overlap paraphrase** queries, head-only qrels), the **whole-doc (`vector`) dense nDCG@10 collapses monotonically with distractor scale: 0.820 (280 docs) → 0.526 (1240) → 0.429 (2440)** — the maximally-diluted mean-of-means vector progressively loses the needle to near-identical filler twins. Separately, **`vector` ≫ `hybrid` on these paraphrase queries** (0.820 vs 0.318 at 280 docs; head@rank-1 12/20 vs 5/20, hybrid *misses* the needle on 9/20) — adding the lexical (BM25/SPLADE) + cross-encoder legs **actively demotes/drops the dense-found needle** on grep-defeating queries.
 - **Evidence:** tempdoc 636 §Phase-1 eval (2026-06-23). `jseval run --dataset golden/needle-burial-{s6,s30,s60} --modes vector,hybrid --start-backend --clean --embedding`; `vector` `comparable=True`.
 - **Conditions/caveats:** Synthetic extreme (100% zero-overlap paraphrase, 20 queries) — exaggerates the `vector≫hybrid` inversion vs real mixed queries. **jseval `hybrid` reported `chunkMergeApplied=null` on all queries** (the chunk-passage branch did not apply), which **contradicts the live interactive probe** (636 §Pre-impl pass: production hybrid fired `branch-fusion: executed` and ranked a needle decisively) — so jseval-`hybrid` is **not representative of the production default path** and its low numbers must not be read as "production hybrid collapses." See Q-011.
@@ -801,7 +904,8 @@ Design choices in the current production pipeline, with rationale.
 - **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
   the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
   "symmetric per-query leg arbitration".
-- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free):**
+- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free; the
+  needle-burial-v1 figure predates the 2026-07-01 corpus regeneration — see Corpus provenance note above):**
   `golden/needle-burial-v1` (paraphrase) **0.241 → 0.712 (+195%)**; `scifact` (academic) **0.7599 → 0.7641**
   (neutral); **`mixed/enron-qa` (personal email) 0.7422 → 0.7268 (−2.1%, REAL regression)**;
   `mixed/courtlistener-200` (legal) **0.6054 → 0.5893 (−2.7%)**.
@@ -953,6 +1057,9 @@ picking up items here over inventing new experiments.
 - **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
+
+*(needle-burial-v1 evidence below predates the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
 
 - **Question:** Two sub-questions opened by F-023's buried-signal eval: **(a)** jseval `hybrid` shows `chunkMergeApplied=null` (chunk branch not applying) and collapses, but the live interactive probe showed production hybrid *does* fire the chunk branch and ranks a needle well — so **does the *production* default path actually degrade on buried-signal at scale, or does the chunk-passage path hold?** The eval must be made to **isolate/exercise the chunk-dense path** before this is answerable (and before tempdoc 636's chunk-embedding seam P1a/P2 can be gated). **(b)** On grep-defeating paraphrase queries, `vector ≫ hybrid` (the lexical+CE legs *suppress* dense): should the engine **route toward dense / down-weight lexical+CE when a query is lexically poor against the corpus** (an FW-001 / low-signal-gating-in-reverse lever)?
 - **Why it matters:** (a) gates whether tempdoc 636's embedding seam is even the right fix (the Phase-1 eval measured the whole-doc vector, not the chunk vector the seam improves). (b) is plausibly the **higher-impact** lever for buried/paraphrase retrieval — the largest gap in the 636 experiment (0.82 vs 0.32) was fusion/routing, not embedding context.

@@ -13,9 +13,9 @@ import io.justsearch.indexing.api.IndexApi.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkSplitter;
 import io.justsearch.indexing.chunking.ChunkSplitter.Chunk;
 import io.justsearch.systemtests.corpus.FrozenEmbeddingBackend;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.DocumentInfo;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.QueryInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.DocumentInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.QueryInfo;
 import io.justsearch.systemtests.relevance.RelevanceMetrics;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -58,7 +58,7 @@ class PassageRetrievalIntegrationTest {
   private static final int RECALL_K = 3;
 
   private RunningRuntime runtime;
-  private GoldenCorpusLoader corpus;
+  private ManifestCorpusLoader corpus;
   private String prevConfig;
 
   /** Pre-computed results for all queries and both paths. */
@@ -89,7 +89,7 @@ class PassageRetrievalIntegrationTest {
 
     // Load corpus and frozen embeddings
     corpus =
-        GoldenCorpusLoader.loadFromClasspath(
+        ManifestCorpusLoader.loadFromClasspath(
             "/manifests/passage-retrieval-truth.json", "/corpus/passage-retrieval/");
 
     FrozenEmbeddingBackend embeddingBackend =

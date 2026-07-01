@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "tempdoc": 662,
+  "description": "Tempdoc 662 — the managed-connection-budget register. The browser caps HTTP/1.1 connections to ~6 per host (Chromium issue 275955, WontFix; WebView2 inherits it). The shell's 5 historically always-on SSE streams (intent, the two advisory classes, action-ledger, indexing-jobs) routinely saturated that pool, starving the cheap /api/status and /api/inference/status polls under enrichment/ingest load (tempdoc 649). Tempdoc 662 collapsed those 5 onto ONE multiplexed connection (/api/shell-events/stream, MultiplexedStream.ts + the backend MultiplexedSseWriter). This register is the budget's anti-drift teeth: every long-lived origin connection opener in modules/ui-web/src must be declared here with a class (always-on physical socket / lazy / transient / fallback / dormant), and the gate fails the build if (a) a NEW opener is undeclared, or (b) the declared always-on-class budget exceeds maxAlwaysOnPhysical. TRANSPORT-AGNOSTIC by design (tempdoc 662 Investigation §C): a long-lived streaming fetch (a chat/agent generation, a Health surface body-stream) consumes the SAME 6-slot pool as an EventSource, so the scan covers both, not just SSE.",
+  "budget": {
+    "maxAlwaysOnPhysical": 3,
+    "rationale": "6-per-host cap, minus 2 reserved for the status+inference polls, minus 1 headroom for transient fetches (lazy JS chunks, icons, search/file-action calls) and a concurrent AI generation stream — tempdoc 662 Investigation/Design §F. The single multiplexed connection (class always-on) is the only entry expected to consume this budget today; the headroom absorbs the rest."
+  },
+  "classes": {
+    "always-on": "Holds a socket for the whole session regardless of any surface being visible. Counted against maxAlwaysOnPhysical.",
+    "lazy": "Opens only while a specific surface/component is mounted; closes on unmount. Not counted (bounded by concurrently-open surfaces, which the budget's headroom absorbs).",
+    "transient": "A short-lived or one-at-a-time stream (a chat/agent generation). Not counted directly; its concurrency is the reason the budget reserves headroom rather than spending it all on always-on channels.",
+    "fallback": "A direct-connection code path that exists for when the shared multiplex is unavailable (tests, or — for AdvisoryStore — an unrecognized future advisory class). Dormant on the production boot path; not counted.",
+    "dormant": "An opener with no production boot path reaching it inside modules/ui-web/src today (host-driven from outside this module, or otherwise unwired). Not counted; re-classify if a boot path is added."
+  },
+  "demandClasses": {
+    "breadth": "Steady-state that must stay current even while its surface is hidden (a badge/count). Design §D1's preferred placement is the poll, not a socket.",
+    "depth": "Sub-second updates that only matter while a surface is open. Design §D1's preferred placement is a lazy stream, opened on mount.",
+    "event": "Must be live before any surface shows it (a notification, a router input). The only demand class that legitimately earns an always-on socket — Design §D1."
+  },
+  "demandClassesNote": "Annotates WHY a channel holds the mechanism `class` it does (Design §D2's literal ask: declare each channel's demand class, not just its mechanism). Optional per channel — only present where the demand reasoning isn't self-evident from the class alone. Documentation-only: the gate validates the enum if present but does not derive placement from it (that judgment call — e.g. tempdoc 662's design-alignment review §Gap-1 on indexing-jobs — stays in the tempdoc's prose, not mechanized here, per AHA scope discipline).",
+  "scan": {
+    "root": "modules/ui-web/src",
+    "excludeSuffixes": [".test.ts", ".test.tsx"],
+    "excludeFiles": [
+      "modules/ui-web/src/shell-v0/streaming/EnvelopeStream.ts",
+      "modules/ui-web/src/shell-v0/streaming/EnvelopeStreamPool.ts",
+      "modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts"
+    ],
+    "excludeFilesNote": "The 3 substrate files IMPLEMENT the openers (new EnvelopeStream / subscribePooled appear inside MultiplexedStream.ts and EnvelopeStreamPool.ts as their own transport, not as a registrable 'channel') — excluded the same way execution-surfaces.v1.json exempts the canonical record type's own defining file. A channel is declared at its CALL SITE, not inside the mechanism.",
+    "openers": [
+      { "id": "envelope-stream-direct", "pattern": "new EnvelopeStream\\b", "transport": "sse" },
+      { "id": "envelope-stream-pool", "pattern": "\\bsubscribePooled\\b", "transport": "sse" },
+      { "id": "multiplexed-stream", "pattern": "new MultiplexedStream\\b", "transport": "sse-multiplexed" },
+      { "id": "fetch-stream-shape", "pattern": "\\bconsumeShapeStream\\b", "transport": "fetch-stream" },
+      { "id": "fetch-stream-host-ai", "pattern": "\\bpumpHostAiStream\\b", "transport": "fetch-stream" },
+      { "id": "fetch-stream-body-reader", "pattern": "\\.body\\??\\.getReader\\(\\)", "transport": "fetch-stream" }
+    ],
+    "openersPatternNote": "Patterns match the bare call/constructor identifier, not the full call expression with its generic type argument — TypeScript generics (`subscribePooled<StrategyState<TabularData<X>>>(`) defeat naive balanced-bracket regex matching. A conservative over-detection bias (matching a bare identifier, e.g. a type-only import) is the safer failure direction for a budget gate than under-detection.",
+    "openersNote": "Honest limit (mirrors check-declared-surfaces.mjs / execution-surfaces.v1.json §5): import/grep-visible coverage only. A re-modeled opener (a renamed helper, a hand-rolled fetch-stream loop not matching these patterns) is import-invisible and slips past this gate — early-warning register, the accepted norm for every presentation/connection gate in this codebase. `multiplex.subscribe(...)` calls (the 4 migrated consumers' demux registrations) are deliberately NOT a scanned pattern — they register a LOGICAL stream on an ALREADY-open physical connection; they open no new socket, so they are out of scope for a connection-budget register by construction, not an oversight."
+  },
+  "channels": [
+    {
+      "file": "modules/ui-web/src/shell-v0/chrome/Shell.ts",
+      "openerId": "multiplexed-stream",
+      "class": "always-on",
+      "demandClass": "event",
+      "note": "THE shared multiplexed connection (tempdoc 662) carrying intent, the two advisory classes, action-ledger, and indexing-jobs. Constructed once at shell mount. demandClass 'event' holds for intent/advisory×2/action-ledger by Design §D1's own audit (U1); indexing-jobs is the one channel on this connection whose demand is actually BREADTH (an always-mounted tray's steady-state rows), kept here rather than poll-folded for a documented reason specific to it (design-alignment review §Gap-1, below) — not because its demand class is 'event' too."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/components/advisory/AdvisoryStore.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "fallback",
+      "note": "startDirectStreamForResource — used only when no `multiplex` is configured, or for an advisory Resource endpoint advisoryEndpointToShellEventStreamId doesn't recognize (a future 3rd advisory class added before that map is updated). Dormant on the production boot path: both known advisory classes are recognized and Shell always passes `multiplex`."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/operations/ActionLedgerClient.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "fallback",
+      "note": "openActionLedgerStream's direct-connection branch — used only when `multiplex` is omitted. Dormant on the production boot path (both AiActivityDigest and ActionLedgerView always receive/resolve a multiplex instance)."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/substrates/tasks/indexingJobsBridge.ts",
+      "openerId": "envelope-stream-pool",
+      "class": "fallback",
+      "note": "startIndexingJobsBridge's subscribePooled fallback branch — used only when `opts.multiplex` is omitted. Dormant on the production boot path (Shell always passes it)."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/handshake/CapabilitiesHandshake.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "dormant",
+      "note": "Pre-662 finding (Investigation §B): no production boot path in modules/ui-web/src instantiates CapabilitiesHandshake — only test files construct it. Host-driven from outside this module, if at all."
+    },
+    {
+      "file": "modules/ui-web/src/api/contract/contractEventsBridge.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "dormant",
+      "note": "Same finding as CapabilitiesHandshake — bootContractEventBridge has no production boot path inside modules/ui-web/src today."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/HealthLitView.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "lazy",
+      "note": "Opens only when the Health surface mounts (startStream from connectedCallback)."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/LogSurface.ts",
+      "openerId": "envelope-stream-direct",
+      "class": "lazy",
+      "note": "Opens only when the Log surface mounts (the diagnostic-channels/head-log stream)."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/components/ResourceView.ts",
+      "openerId": "envelope-stream-pool",
+      "class": "lazy",
+      "note": "Generic per-Resource SSE_STREAM viewer — opens only while a Resource surface with subscriptionMode SSE_STREAM is mounted. Pooled by URL, so it reuses the indexing-jobs bridge's socket if that Resource happens to be the same URL — except post-662, the bridge itself no longer uses the pool (it's on the multiplexer), so visiting the indexing-jobs Resource view now opens its own lazy socket (a documented, minor tradeoff — see the observations inbox note from this tempdoc's build)."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/plugin-api/capabilities/data.ts",
+      "openerId": "envelope-stream-pool",
+      "class": "lazy",
+      "note": "Two pooled subscribePooled call sites (registry-resource + health-events endpoints) — opened lazily on plugin host-data demand."
+    },
+    {
+      "file": "modules/ui-web/src/api/streams.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "transient",
+      "note": "consumeShapeStream — the chat/agent/summarize generation POST response-body stream (UnifiedChatView, SummarizeView, AgentSessionController, and other shape consumers). One in flight per active generation; this is the entry the budget's headroom reserves a slot for (Investigation §C/§F)."
+    },
+    {
+      "file": "modules/ui-web/src/api/streams.ts",
+      "openerId": "fetch-stream-body-reader",
+      "class": "transient",
+      "note": "consumeShapeStream's own implementation reads the response body via .body.getReader() — same generation-stream concern as the row above, matched by the second pattern."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/plugin-api/pumpHostAiStream.ts",
+      "openerId": "fetch-stream-host-ai",
+      "class": "transient",
+      "note": "Plugin-host AI stream pump — the plugin-API surface of the same generation-stream concern as consumeShapeStream."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/plugin-api/pumpHostAiStream.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "transient",
+      "note": "Delegates internally to consumeShapeStream — same generation-stream concern, matched by the second pattern."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/HealthSurface.ts",
+      "openerId": "fetch-stream-body-reader",
+      "class": "lazy",
+      "note": "Two doFetch-based response-body readers (/api/health/events/stream, /api/condition-recovery-index/stream) — open only while the Health surface is mounted."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/components/InspectorPane.ts",
+      "openerId": "fetch-stream-body-reader",
+      "class": "lazy",
+      "note": "Debug/dev inspector pane's AI response-body reader — opens only while the inspector is mounted and in use."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/state/conversationListStore.ts",
+      "openerId": "fetch-stream-body-reader",
+      "class": "transient",
+      "note": "One-shot conversation-title generation request — a transient streaming fetch, not a persistent connection."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "lazy",
+      "note": "Agent session resume/fork/attach via consumeShapeStream — open only while an agent run/session is active in the agent window."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/plugin-api/capabilities/ai.ts",
+      "openerId": "fetch-stream-body-reader",
+      "class": "transient",
+      "note": "Plugin-host AI capability's SSE parser — the plugin-driven generation-stream surface, same family as pumpHostAiStream.ts."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts",
+      "openerId": "fetch-stream-host-ai",
+      "class": "lazy",
+      "note": "References pumpHostAiStream (plugin-driven agent runs) alongside its own consumeShapeStream usage — open only while an agent run/session is active."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/NavigateView.ts",
+      "openerId": "fetch-stream-host-ai",
+      "class": "lazy",
+      "note": "Plugin-host AI stream consumer — open only while the Navigate view is mounted and a plugin-driven generation is in flight."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/SummarizeView.ts",
+      "openerId": "fetch-stream-host-ai",
+      "class": "lazy",
+      "note": "Plugin-host AI stream consumer — open only while the Summarize view is mounted and a plugin-driven generation is in flight."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "lazy",
+      "note": "consumeShapeStream-driven chat generation — open only while the chat view is mounted and a generation is in flight."
+    }
+  ]
+}
