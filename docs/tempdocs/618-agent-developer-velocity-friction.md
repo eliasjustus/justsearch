@@ -3,7 +3,7 @@ title: "Agent developer-velocity: the parallel-agent substrate seams — worktre
 type: tempdocs
 status: active
 created: 2026-06-20
-updated: 2026-06-21
+updated: 2026-07-01
 author: agent reflection (cross-session friction report), filed by agent
 category: dx / agent-tooling / worktrees / dev-stack / velocity
 related:
@@ -1499,4 +1499,139 @@ a shard): §15 hooks-reference note, 597 orphan, the stale-row pruning, the pre-
 breakage. Frontmatter moved `implemented → active` (substantially complete; merge pending — and 618 was
 itself a §14 offender, now corrected). Merge left to the user (resolve in worktree → fast-forward, staging
 only the files listed above).
+
+---
+
+# Takeover — theorization pass (2026-07-01): the reach beyond the catalogue
+
+> **What this is.** A takeover of 618 whose brief is *theorization, not execution*: think broadly about
+> directions, framings, tradeoffs, hidden assumptions, and whether the catalogue points to a broader recurring
+> shape — **without settling a design**. Grounded in fresh evidence from a large 2026-07-01 multi-PR run
+> (public PRs #17–#21 on `eliasjustus/justsearch`, plus the sibling `confirm-publish-actions` gate registered
+> as `tier-register.md` row 37) that *re-hit several of this doc's items live*. **No code, no final design.**
+> Where it revises 618, it says so.
+
+## First: the ledger is staler than Part 2 implies (and that is itself a finding)
+
+Part 2 lists §10a (piped-exit) and §11d (bare-background-server) as "not present in `agent-lessons.md` →
+OPEN." Both are now **present** on `main`, and Seam C **shipped** (the `docs/observations.d/<session>.md`
+shard + `note-observation.mjs` / `fold-observations.mjs`, both on `main` and used by this very takeover). So
+618's *design and most of its promotion tail are done* — the doc's own tail agrees. The small on-brand lesson
+(§14 / Part 3·B): **a tempdoc's own "what remains" ledger drifts stale the same way any hand-maintained status
+does.** The frontier is therefore not *finishing 618's tail* — it is what the accumulated evidence now points
+to.
+
+## Fresh evidence that *challenges* the doc, not just corroborates it
+
+1. **Promotion-to-prose has a measured efficacy ceiling — §10a recurred *after* being promoted.** In the
+   2026-07-01 run, §10a's exact failure (a backgrounded `./gradlew … | tail` reporting exit 0 while the build
+   had **FAILED**) recurred and briefly produced a wrong "safe to merge" conclusion — *despite §10a already
+   sitting in `agent-lessons.md`*. A live datapoint for what the tier-register asserts abstractly (prose
+   ~70%): **promoting a parked lesson to a prose home reduces but does not remove recurrence.** This reframes
+   Part 4 bucket 1: the higher-value question per lesson is not *"is it written down"* but *"is it enforced at
+   a tier matched to its blast radius?"* §10a's blast radius (fast-forwarding `main` on a red build) arguably
+   warrants a *mechanical* signal — e.g. a `bash-guard` advisory when a `gradlew`/test command is piped into
+   `tail|grep|head` in a way that masks its exit — not another prose line.
+
+2. **Seam C fixed shard *content* isolation but not the *identity* that selects the shard.** The shipped
+   per-session inbox worked, but the `<session>` resolution feeding `note-observation.mjs` (a shared
+   `tmp/agent-telemetry/current-session-id`) was **overwritten by a concurrent session**, so notes were filed
+   under the *wrong* session's shard (non-fatal — content preserved). This is the same shared-mutable-state
+   class Seam C set out to solve, **recursed up one level**: the *selector* of the isolated slot is itself
+   un-isolated shared state. The isolation principle looks incomplete unless "which slot I write to" is
+   *derived deterministically*, not read from a clobberable shared file.
+
+3. **A lifecycle transition 618 does not catalogue at all: publish (branch → PR → merged `main`).** 618's
+   seams cover session-start, worktree, dev-stack, shared-write. The 2026-07-01 run's *largest* time sinks
+   were on the **publish** transition: strict "require branches up-to-date" × ~10-min CI made a 7-PR
+   dependency batch an **O(n) serial cascade** (each merge invalidates the rest); `gh pr checks --watch`
+   **returned success before the required run registered** (a protocol race — the fix is "verify
+   `mergeStateStatus==CLEAN` immediately before merge," not the watch's exit); and dependency PRs needed
+   `THIRD_PARTY_NOTICES` / gradle verification-metadata regeneration Dependabot cannot do. The sibling
+   `confirm-publish-actions` gate hooks the publish *decision*; the publish *mechanics* are un-catalogued.
+   **Open routing question** (per §E's scope-drift caution): these plausibly belong in the public-CI tempdocs
+   (651/652), a new "publish-lifecycle friction" doc, or a thin extension here — not obviously 618.
+
+## The recurring shape the accumulated evidence points to (recognized, NOT to be built)
+
+618's principle is *"dev-environment ↔ worktree correspondence, asserted not assumed."* The
+`confirm-publish-actions` gate, Seam C, and Part 3·C's SessionStart idea are the *same principle at other
+transitions*. Stated at the level all four share:
+
+> **The agent lifecycle is a short, enumerable sequence of transitions — session-start · worktree
+> create/remove · dev-stack start · shared-state write · publish/merge. At each, some state must correspond to
+> expectation; the recurring high-cost defect is that the correspondence is *assumed* (or asserted only at
+> prose ~70%) when the blast radius warrants a mechanical assertion at the transition. The systemic remedy is
+> not one engine but a discipline: for each transition, assert its correspondence at the *strongest feasible
+> tier matched to its consequence*.**
+
+This is the join of two principles the repo already holds separately — 618's "assert correspondence at point
+of use" and the tier-register's "prose ~70% / hook ~100%." The join is *correspondence-at-transition,
+tier-matched to blast-radius*; 618, `confirm-publish-actions`, Seam C, and `compact-restore`'s worktree banner
+are all instances. **This is retrospective coherence, explicitly not a charter** — §D's caution stands
+doubled: naming a unifying shape must not become a mandate to build a "transition engine" / "correspondence
+authority." The trigger to build any single instance remains a concrete recurring failure.
+
+## Alternative framings worth holding (none chosen)
+
+- **Frame A — correspondence (618's).** State-matching. Covers §1/§2/§3/§7 well; by construction it does
+  **not** cover *timing/throughput* friction (the merge cascade, the `--watch` race, CI latency) — a
+  *protocol/throughput* axis 618 rightly excludes (as it already excludes §4/§5/§6). Worth stating so the
+  catalogue isn't mistaken for total.
+- **Frame B — unhooked-transition.** The repo hooks 7 of ~9 agent transitions; the frontier is *the
+  transitions with no tier-appropriate assertion* (worktree-create/remove → Seam A; publish → the confirm
+  gate). Its value: it makes the frontier **enumerable** — list the transitions, mark each with its current
+  assertion tier and the tier its blast-radius warrants.
+- **Frame C — tier-migration.** The lever isn't "write the lesson down" but "move each recurring lesson up the
+  strongest feasible tier." A small per-lesson ledger (recurring lesson · current tier · recurrence count ·
+  feasible tier-up) would operationalize Part 4's promotion tail and make the §10a-recurred datapoint
+  actionable rather than anecdotal.
+
+## Hidden assumptions a future design pass should test first
+
+- **"Worktrees are isolated → no contention layer needed" (Scope boundaries) is only true for the filesystem
+  *tree*.** Worktrees **share** the main checkout's `tmp/agent-telemetry/` — session-id, dev-stack lease, the
+  OTLP sink. The Seam-C session-id clobber (evidence #2) is one instance; that shared-tmp surface is a
+  *second* shared-mutable surface beyond `observations.md`, and the "no contention" claim doesn't cover it.
+- **Part 4 treats the promotion tail as "low-risk cleanup."** Evidence #1 says it's low-*efficacy*: correct to
+  do, but a prose home is the weakest promotion; don't expect it to change behaviour much.
+- **The correspondence frame assumes the failure is state mismatch.** A large share of the highest-cost
+  2026-07-01 friction was *timing/throughput* (protocol races, CI-latency cascades) the frame doesn't absorb —
+  worth naming so coverage isn't over-claimed.
+
+## Tradeoffs / risks any future tier-up must respect
+
+- **Hook-tier over-reach frustrates users without an override.** The `confirm-publish-actions` gate
+  deliberately chose `ask` (human-in-the-loop, resolvable in-turn) over a hard `block`, precisely because a
+  no-override block on a normal action is user-hostile. Any tier-up of a parked lesson must keep a legible
+  override (`ask`/advisory), not a dead-end deny.
+- **SessionStart correspondence-checks trade latency/noise for coverage.** Part 3·C's base-recency banner is
+  cheap; a full "correspondence tuple" (branch-on-expected · base-recency · local-vs-origin · neighbour-WIP
+  present) risks noise at every session start. Value-per-check must be weighed per element.
+- **The subagent blind spot recurs at *every* one of these transitions.** No parent-session hook fires in
+  subagents (618 §6; the confirm gate's own residual risk). Any transition tier-up is parent-session-only; the
+  subagent path stays prose ~70% by construction — a ceiling to state, not to paper over.
+
+## Ideas that may be useful later (explicitly not the answer)
+
+- A **session-start correspondence banner** generalizing Part 3·C from "base is N behind" to the whole "am I
+  where I think I am" tuple — would have caught the 2026-07-01 inverted-checkout case (a main checkout parked
+  *off* `main`, with `main` held by a worktree, and local `main` diverged from `origin`).
+- Recognizing **`tmp/agent-telemetry/` as the next Seam-C-class surface** (session-id, lease) — the identity
+  layer the shipped Seam C sits on.
+- A **named "false-green" postmortem family**: the doc already holds three members (§10a pipe-masked-exit, §3
+  precondition-satisfied-green, §10c subset-gate-blind, §10b unreachable-seed) plus a fourth the sibling gate
+  documented (a worktree-edited hook *appears* to fire live but the live wiring runs the main checkout's
+  copy). Part 3·F already argues §3 deserves promotion; the *family* is the better container.
+- A **per-lesson enforcement-tier ledger** (Frame C).
+- Deciding **where publish-mechanics friction lives** (evidence #3).
+
+## Scope discipline (unchanged)
+
+None of the above is a charter to build. This pass records *reach* and *candidate directions* only, in the
+spirit of the existing *"principle and its reach (recognized, not built)"* section. The bar for new
+scaffolding stays what 616 set and 618 honored: *removes a real recurring failure without colliding with what
+exists.* The one concrete, low-risk, already-evidenced candidate a future design pass might weigh first is
+Frame C's tier-migration ledger — because it turns the recurring "promote the lesson" motion (which evidence
+#1 shows is weak) into a decision about *tier*, which is where the leverage actually is.
 
