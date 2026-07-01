@@ -1663,3 +1663,83 @@ reasoning recorded for continuity.
 - No external code/text/assets copied; O3's demo corpus is to be fabricated/public-domain content
   authored at implementation — nothing to attribute under the license/notices lane.
 
+## §Confidence pass (eleventh pass, 2026-07-01) — onramp design (O1–O5)
+
+Confidence-building before implementing the onramp. Live experiment (a genuinely empty-models dev
+stack) + read-only tracing. **No feature code changed.**
+
+### Resolved
+
+**#1 [MAKE-OR-BREAK] Tier 0 = zero-model keyword search — CONFIRMED (and my earlier "proof" WAS
+contaminated, as suspected).** Started a dev stack with `JUSTSEARCH_MODELS_DIR` pointed at an empty
+temp dir + `--clean hard`. `GET /api/inference/encoders` returned `[]` (no ONNX encoders at all —
+override confirmed). Indexing the demo corpus **succeeded with no embedding model** (worker READY,
+docs indexed, IDLE). The decisive queries: `"cinnamon heist"` → **1 hit**, `"telescope"` → **1 hit**
+(each the correct demo doc), both `effectiveMode: TEXT` with `sparse-retrieval: executed` and
+`dense-retrieval / splade / cross-encoder: skipped`. So a genuinely zero-model checkout **indexes and
+returns a real keyword result** — the onramp's headline promise (index → keyword result, zero
+download) is valid. (The Move-1/2 confidence pass had returned `HYBRID` because dev-runner had pointed
+`JUSTSEARCH_MODELS_DIR` at the main checkout's ONNX models; that contamination is now corrected with a
+true zero-model run.)
+
+**#2 Tier degradation is clean — CONFIRMED.** The zero-model result was `effectiveMode: TEXT` with
+`degradation.hybridFallback: false` (genuinely TEXT, not a crashed/degraded hybrid) and every
+model-dependent stage gracefully `skipped` — no error, no crash. This supports the design's "each tier
+is a *complete* success, not a degraded fraction": Tier 0 is a clean floor.
+
+**#3 The manifest-reason polish footprint — SCOPED (bounded, moderate).** `handleSetInferenceMode`
+(`InferenceHandlers.java:329-402`) already extracts the typed `ModeTransitionException mte` and has
+`mte.reason()` in hand (line 373/394). So making the manifest reason specific = inject an
+`InferenceCapability` (the handler does **not** currently hold one → a small constructor-wiring add,
+exactly like Task 2's injection into `RuntimeActivationService`) + reuse the **existing** Tasks-0-5
+codes (`INFERENCE_RUNTIME_NOT_INSTALLED`, etc.) via the same `Reason→LifecycleReasonCode` mapping
+pattern Task 2 already established. **No new `LifecycleReasonCode` → no `readiness-reason-codes` gate
+change → no `readinessNotice.ts` row needed.** One ordering caveat: the rollback's mode-change listener
+fires a generic `OFFLINE→"Inference offline"` first, so the handler's post-catch `transition(OFFLINE,
+specificCode)` must be the last write (it is — it runs after `switchToOnlineMode` returns), or do it at
+the rollback source for robustness. ~1–2 Java files + one construction site.
+
+**#4 Doctor composition — CONFIRMED feasible (thin read, no new plumbing).** The three surfaces the
+doctor composes all exist and expose the needed data: `/api/ai/models/status` (correctly reported
+**all packages MISSING** under empty models — the "what tier / what's missing" answer),
+`/api/status` (a rich readiness surface: `lifecycle`, `components`, `readiness`, `aiReady`,
+`embeddingReady`, `modelDistribution`, `gpu`), and the runtime manifest. The **filesystem manifest**
+(`.dev-data/runtime/manifest.json`, 2 KB, current — `lifecycle`/`ai.phase`/`worker.state`) exists and
+is fresh, so a **CLI doctor can read runtime state without a live API**. `AiPreflightService` is the
+natural spine to extend; the composition is a read, not new machinery.
+
+**#5 Runnable proof + demo corpus — FEASIBLE.** The full `index → query → result` path works
+end-to-end (just exercised via `POST /api/knowledge/{ingest,search}`); the `util-smoke/corpus` docs
+(2, fabricated → license-clean) each return a correct single hit. A tier-conditional first-success
+smoke composes from existing tooling (jseval `ingest_and_wait`, the search call, dev-MCP `dev_ingest`)
+plus the doctor's tier detection for the conditional assertions. 2 docs suffice for a smoke; a few more
+would make a richer demo.
+
+### Confidence rating: **7 / 10**
+
+The make-or-break (Tier 0 zero-model search) is confirmed with a clean live run; the doctor is a thin
+read of three confirmed surfaces; the one Java change is bounded and reuses existing infrastructure;
+the end-to-end first-query path works. Held below 8 not by any unresolved *risk* but by *breadth*: the
+onramp is ~5 loosely-coupled pieces (doctor API composition + doctor CLI + demo corpus + runnable smoke
++ docs + the Java polish) across three languages, so there is more assembly + validation surface than a
+single-file change, plus two genuine *design-judgment* calls not yet nailed — the doctor's exact
+surface (CLI / MCP / both) and its tier-derivation semantics (how preflight+status map to a tier
+label), and O5's **tier-honest public wording** (the public-claims lane checks README/CONTRIBUTING;
+"zero-download keyword result" is true, "five-minute cited answer" is not universal).
+
+### Difficulty + recommended model/effort
+
+**Difficulty: MODERATE, and broader than Move 1/2.** Not hard — the technical unknowns are resolved and
+most of it is composition of confirmed-working parts — but it spans Java (the bounded manifest-reason
+polish + possibly the doctor endpoint), Node/CLI (the doctor CLI + runnable smoke), content (the demo
+corpus), and public docs, with real (if small) design judgment and public-honesty stakes.
+
+**Recommended: Sonnet at high effort for the bulk** (doctor composition, demo corpus, runnable smoke,
+the manifest-reason polish, the CLI) — all now well-scoped, mechanical-to-moderate, and squarely
+Sonnet's strength. **Reserve extra care (a focused review pass, or Opus for just these slices) for two
+things:** (a) O5's public-facing wording, where the over-claiming risk + the public-claims CI lane are
+real, and (b) the doctor's surface + tier-derivation semantics, a small but genuine UX/design judgment.
+**Not Opus for the whole pass** — the hard unknowns are de-risked and most work is well-specified
+composition. **Not Fable / low-effort** — the breadth, the cross-language assembly, the browser
+validation of the user-visible first-query, and the public-wording honesty all reward care.
+
