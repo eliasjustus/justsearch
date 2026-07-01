@@ -238,8 +238,25 @@ public final class ActionLedgerController {
         HEARTBEAT_SECONDS);
   }
 
-  /** The snapshot payload for a newly-attached stream client: the current ledger rows. */
-  private Map<String, Object> snapshotExtras() {
+  /**
+   * This controller's channel. Package-visible (tempdoc 662) so {@link
+   * ShellEventsStreamController} can subscribe this class's channel onto the multiplexed
+   * connection. Throws under the same legacy/test-wiring condition as {@link #handleStream}.
+   */
+  io.justsearch.app.observability.stream.SseStreamChannel channel() {
+    if (changes == null) {
+      throw new IllegalStateException(
+          "ActionLedgerController has no change registry — stream wiring missing");
+    }
+    return changes.channel();
+  }
+
+  /**
+   * The snapshot payload for a newly-attached stream client: the current ledger rows.
+   * Package-visible (tempdoc 662) so {@link ShellEventsStreamController} can reuse the exact
+   * projection/sort logic instead of forking it.
+   */
+  Map<String, Object> snapshotExtras() {
     List<ActionEvent> entries = currentEvents();
     entries.sort(Comparator.comparing(ActionEvent::occurredAt));
     List<Map<String, Object>> wire = new ArrayList<>(entries.size());

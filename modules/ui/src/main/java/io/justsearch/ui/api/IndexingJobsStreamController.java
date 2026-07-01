@@ -66,21 +66,31 @@ public final class IndexingJobsStreamController {
 
   public void handle(SseClient sseClient) {
     SseEnvelopeWriter.attach(
-        sseClient,
-        changes.channel(),
-        () -> {
-          // Read the (items, seq) pair as ONE atomic read so a concurrent worker delta can't tear
-          // them apart — a torn pair would make the new subscriber subscribe past an unseen delta
-          // and go permanently stale (tempdoc 550 §B.2 fix-pass).
-          var snap = bridge.latestSnapshotPair();
-          Map<String, Object> extras = new LinkedHashMap<>();
-          extras.put("items", snap.items());
-          extras.put("snapshotSeq", snap.seq());
-          return extras;
-        },
-        clock,
-        heartbeatScheduler,
-        HEARTBEAT_SECONDS);
+        sseClient, channel(), this::snapshotExtras, clock, heartbeatScheduler, HEARTBEAT_SECONDS);
+  }
+
+  /**
+   * This controller's channel. Package-visible (tempdoc 662) so {@link
+   * ShellEventsStreamController} can subscribe this class's channel onto the multiplexed
+   * connection.
+   */
+  io.justsearch.app.observability.stream.SseStreamChannel channel() {
+    return changes.channel();
+  }
+
+  /**
+   * This stream's snapshot-on-subscribe payload. Package-visible (tempdoc 662) so {@link
+   * ShellEventsStreamController} can reuse the exact atomic-read logic instead of forking it.
+   */
+  Map<String, Object> snapshotExtras() {
+    // Read the (items, seq) pair as ONE atomic read so a concurrent worker delta can't tear
+    // them apart — a torn pair would make the new subscriber subscribe past an unseen delta
+    // and go permanently stale (tempdoc 550 §B.2 fix-pass).
+    var snap = bridge.latestSnapshotPair();
+    Map<String, Object> extras = new LinkedHashMap<>();
+    extras.put("items", snap.items());
+    extras.put("snapshotSeq", snap.seq());
+    return extras;
   }
 
   /** Stops the heartbeat scheduler. Call on shutdown. */

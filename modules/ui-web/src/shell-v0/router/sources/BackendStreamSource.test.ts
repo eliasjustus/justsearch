@@ -17,6 +17,7 @@ import {
   createBackendStreamSource,
 } from './BackendStreamSource.js';
 import { stopIntentStreamBridge } from '../../../api/intent/bootIntentStreamBridge.js';
+import { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
 import type { Intent } from '../types.js';
 import type { DispatchOptions } from '../intentRouter.js';
 import type { SseEnvelope } from '../../streaming/envelope-types.js';
@@ -24,6 +25,7 @@ import type { SseEnvelope } from '../../streaming/envelope-types.js';
 class FakeEventSource extends EventTarget {
   url: string;
   closed = false;
+  readyState = 0;
   constructor(url: string) {
     super();
     this.url = url;
@@ -33,9 +35,25 @@ class FakeEventSource extends EventTarget {
       new MessageEvent('frame', { data: JSON.stringify(envelope) }),
     );
   }
+  emitOpen(): void {
+    this.readyState = 1;
+    this.dispatchEvent(new Event('open'));
+  }
   close(): void {
     this.closed = true;
   }
+}
+
+/** Builds a MultiplexedStream wired to `fakeEs`, past the realistic 'open'-before-'frame'
+ * EventSource ordering (see MultiplexedStream.test.ts). */
+function multiplexOn(fakeEs: FakeEventSource): MultiplexedStream {
+  const mux = new MultiplexedStream({
+    url: 'http://test/api/shell-events/stream',
+    eventSourceFactory: () => fakeEs as unknown as EventSource,
+  });
+  mux.start();
+  fakeEs.emitOpen();
+  return mux;
 }
 
 function updateFrame(seq: number, id: string, intent: Intent): SseEnvelope {
@@ -63,31 +81,24 @@ afterEach(() => {
 
 describe('BackendStreamSource — ref + dispatch wiring', () => {
   it('has the canonical Manifest-tier ref', () => {
-    const source = createBackendStreamSource({ apiBase: '' });
+    const source = createBackendStreamSource({ multiplex: multiplexOn(new FakeEventSource('http://test')) });
     expect(source.ref).toBe(BACKEND_STREAM_SOURCE_REF);
     expect(BACKEND_STREAM_SOURCE_REF).toBe('core.backend-stream');
   });
 
   it('forwards SSE intent envelopes into the SourceDispatch', () => {
-    let fakeEs: FakeEventSource | null = null;
-    const source = createBackendStreamSource({
-      apiBase: 'http://test',
-      eventSourceFactory: (url) => {
-        fakeEs = new FakeEventSource(url);
-        return fakeEs as unknown as EventSource;
-      },
-    });
+    const fakeEs = new FakeEventSource('http://test');
+    const source = createBackendStreamSource({ multiplex: multiplexOn(fakeEs) });
     const dispatched: Array<{ intent: Intent; options?: DispatchOptions }> = [];
     const teardown = source.start((intent, options) => {
       dispatched.push({ intent, options });
     });
 
-    expect(fakeEs).not.toBeNull();
     const intent: Intent = {
       address: { kind: 'navigate', target: 'core.search-surface', state: { query: 'foo' } },
       transport: 'LLM_EMISSION',
     };
-    (fakeEs as unknown as FakeEventSource).emitFrame(updateFrame(1, 'env-1', intent));
+    fakeEs.emitFrame(updateFrame(1, 'env-1', intent));
 
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]!.intent).toEqual(intent);
@@ -99,14 +110,8 @@ describe('BackendStreamSource — ref + dispatch wiring', () => {
   });
 
   it('teardown stops the underlying bridge', () => {
-    let fakeEs: FakeEventSource | null = null;
-    const source = createBackendStreamSource({
-      apiBase: 'http://test',
-      eventSourceFactory: (url) => {
-        fakeEs = new FakeEventSource(url);
-        return fakeEs as unknown as EventSource;
-      },
-    });
+    const fakeEs = new FakeEventSource('http://test');
+    const source = createBackendStreamSource({ multiplex: multiplexOn(fakeEs) });
     const dispatched: Intent[] = [];
     const teardown = source.start((intent) => {
       dispatched.push(intent);
@@ -119,7 +124,7 @@ describe('BackendStreamSource — ref + dispatch wiring', () => {
       address: { kind: 'navigate', target: 'core.x', state: {} },
       transport: 'LLM_EMISSION',
     };
-    (fakeEs as unknown as FakeEventSource).emitFrame(updateFrame(2, 'env-2', intent));
+    fakeEs.emitFrame(updateFrame(2, 'env-2', intent));
     expect(dispatched).toEqual([]);
   });
 });

@@ -11,6 +11,7 @@ import {
   type AdvisoryEvent,
 } from './AdvisoryStore.js';
 import type { SseEnvelope } from '../../streaming/envelope-types.js';
+import { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
 import {
   __resetUserStateForTest,
   getDocument,
@@ -514,5 +515,117 @@ describe('AdvisoryStore', () => {
     });
     expect(latest!.advisories.length).toBe(1);
     expect(latest!.advisories[0]!.toast?.message).toBe('Navigated to Search');
+  });
+});
+
+describe('AdvisoryStore — tempdoc 662 multiplexed path', () => {
+  beforeEach(() => {
+    __resetUserStateForTest();
+    __resetResourceCatalogForTest();
+    MockEventSource.instances = [];
+  });
+
+  function multiplexOn(): { multiplex: MultiplexedStream; source: MockEventSource } {
+    let source!: MockEventSource;
+    const multiplex = new MultiplexedStream({
+      url: 'http://test/api/shell-events/stream',
+      eventSourceFactory: (url) => {
+        source = new MockEventSource(url);
+        return source as unknown as EventSource;
+      },
+    });
+    multiplex.start();
+    source.fireOpen(); // realistic EventSource ordering: 'open' precedes any 'frame'
+    return { multiplex, source };
+  }
+
+  it('a Resource whose endpoint is recognized subscribes on the multiplexer — no EventSource opened', () => {
+    seedCatalog(
+      advisoryResource(
+        'core.advisory-operation-completed',
+        '/api/advisory/operation-completed/stream',
+      ),
+    );
+    const { multiplex, source } = multiplexOn();
+    const store = new AdvisoryStore({ multiplex });
+    store.start();
+
+    // Only the ONE multiplexed connection's EventSource was opened — no per-Resource socket.
+    expect(MockEventSource.instances.length).toBe(1);
+    expect(MockEventSource.instances[0]).toBe(source);
+
+    let lastSnapshot: { unreadCount: number } = { unreadCount: 0 };
+    store.subscribe((s) => {
+      lastSnapshot = { unreadCount: s.unreadCount };
+    });
+    source.fireFrame({
+      streamId: 'surface:advisory-operation-completed',
+      frameKind: 'LIFECYCLE',
+      seq: 1,
+      ts: '2026-07-01T00:00:00Z',
+      payload: { kind: 'snapshot', advisories: [SAMPLE_EVENT] },
+      resumeToken: 'tok-1',
+    });
+    expect(lastSnapshot.unreadCount).toBe(1);
+  });
+
+  it('an unrecognized advisory endpoint falls back to its own direct EnvelopeStream', () => {
+    seedCatalog(
+      advisoryResource('core.advisory-future-class', '/api/advisory/future-class/stream'),
+    );
+    const { multiplex } = multiplexOn();
+    (globalThis as unknown as { EventSource: typeof EventSource }).EventSource =
+      MockEventSource as unknown as typeof EventSource;
+    const store = new AdvisoryStore({ multiplex });
+    store.start();
+
+    // The multiplexed connection's socket (1) PLUS a direct fallback socket for the
+    // unrecognized endpoint (2) — the new advisory class is not silently dropped.
+    expect(MockEventSource.instances.length).toBe(2);
+    expect(MockEventSource.instances[1]?.url).toBe('/api/advisory/future-class/stream');
+  });
+
+  it('two recognized Resources share the one multiplexed connection (no second socket)', () => {
+    seedCatalog(
+      advisoryResource(
+        'core.advisory-operation-completed',
+        '/api/advisory/operation-completed/stream',
+      ),
+      advisoryResource(
+        'core.advisory-health-recoverable',
+        '/api/advisory/health-recoverable/stream',
+      ),
+    );
+    const { multiplex, source } = multiplexOn();
+    const store = new AdvisoryStore({ multiplex });
+    store.start();
+
+    expect(MockEventSource.instances.length).toBe(1); // both Resources share the ONE socket
+
+    let lastSnapshot: { advisories: { event: { classId: string } }[] } = { advisories: [] };
+    store.subscribe((s) => {
+      lastSnapshot = { advisories: s.advisories.map((a) => ({ event: { classId: a.event.classId } })) };
+    });
+    source.fireFrame({
+      streamId: 'surface:advisory-operation-completed',
+      frameKind: 'LIFECYCLE',
+      seq: 1,
+      ts: '2026-07-01T00:00:00Z',
+      payload: { kind: 'snapshot', advisories: [SAMPLE_EVENT] },
+      resumeToken: 'tok-a-1',
+    });
+    const healthEvent: AdvisoryEvent = { ...SAMPLE_EVENT, classId: 'health.recoverable', id: 'hr-1' };
+    source.fireFrame({
+      streamId: 'surface:advisory-health-recoverable',
+      frameKind: 'LIFECYCLE',
+      seq: 1,
+      ts: '2026-07-01T00:00:01Z',
+      payload: { kind: 'snapshot', advisories: [healthEvent] },
+      resumeToken: 'tok-b-1',
+    });
+    expect(lastSnapshot.advisories).toHaveLength(2);
+    expect(lastSnapshot.advisories.map((a) => a.event.classId)).toEqual(
+      expect.arrayContaining(['operation.completed', 'health.recoverable']),
+    );
   });
 });

@@ -152,6 +152,9 @@ import { dispatchEffectToChrome } from '../substrates/actions/index.js';
 import { startTask, completeTask } from '../substrates/tasks/index.js';
 // §32 #1 — project the backend indexing-jobs stream into the Task tray.
 import { startIndexingJobsBridge } from '../substrates/tasks/indexingJobsBridge.js';
+import { MultiplexedStream } from '../streaming/MultiplexedStream.js';
+import { setSharedShellEventsMultiplex } from '../streaming/shellEventsMultiplexInstance.js';
+import { SHELL_EVENTS_STREAM_PATH } from '../streaming/shellEventStreamIds.js';
 import { startEffectIngest } from '../operations/ActionLedgerClient.js';
 // Tempdoc 543 §3.C — Action substrate boot side-effect: registers
 // the canonical `core.action.cite-selection` Action at module-load
@@ -381,6 +384,17 @@ export class Shell extends JfElement {
    * singleton lookup that had a first-caller-wins apiBase race.
    */
   private advisoryStore: AdvisoryStore | null = null;
+  /**
+   * Tempdoc 662 — the ONE multiplexed connection to `/api/shell-events/stream`, replacing 5
+   * always-on EventSources (intent, the two advisory classes, action-ledger, indexing-jobs)
+   * that exhausted the browser's ~6-per-host connection pool and starved the cheap
+   * `/api/status`/`/api/inference/status` polls under load (tempdoc 649). Constructed once at
+   * mount, threaded explicitly to the consumers below, and ALSO published via
+   * `setSharedShellEventsMultiplex` for the one consumer the generic SurfaceCatalog mounter
+   * can't reach by direct property binding (`ActionLedgerView`, see
+   * `shellEventsMultiplexInstance.ts`).
+   */
+  private shellEventsMultiplex: MultiplexedStream | null = null;
   private operationClient: OperationClient | null = null;
   private _aiState: import('../state/aiStateStore.js').AiState | null = null;
   private _aiDependentIds: Set<string> = new Set();
@@ -670,17 +684,33 @@ export class Shell extends JfElement {
     // Tempdoc 609 §R (T1.3) — overlay components (TaskList, running-job chip) request "return to job"
     // navigation via a document-level event; route it through activateSurface.
     document.addEventListener(NAVIGATE_TO_SURFACE_EVENT, this.onNavigateToSurface);
+    // Tempdoc 662 — construct the ONE multiplexed connection before any consumer that needs
+    // it (advisory store, indexing-jobs bridge below; the intent source + action-ledger
+    // chrome elements further down this method / in the render template). Publish it via the
+    // singleton too, for the one consumer (ActionLedgerView, mounted through the generic
+    // SurfaceCatalog dispatcher) that direct property binding can't reach.
+    if (!this.shellEventsMultiplex) {
+      this.shellEventsMultiplex = new MultiplexedStream({
+        url: `${this.apiBase.replace(/\/$/, '')}${SHELL_EVENTS_STREAM_PATH}`,
+      });
+      if (typeof EventSource !== 'undefined') {
+        this.shellEventsMultiplex.start();
+      }
+      setSharedShellEventsMultiplex(this.shellEventsMultiplex);
+    }
     // Slice 490 Group B4 — construct the advisory store at mount with the
     // shell's apiBase. Children read it via .store property bindings; no
     // singleton, no first-caller-wins race.
     if (!this.advisoryStore) {
-      this.advisoryStore = createAdvisoryStore(this.apiBase);
+      this.advisoryStore = createAdvisoryStore(this.apiBase, this.shellEventsMultiplex ?? undefined);
     }
     // Parallel 508 — AI State Store subscription (main).
     startAiStateStore(this.apiBase);
     // §32 #1 — project live backend indexing jobs into the ambient Task tray
     // (read-only; cancel/retry stay on the core.indexing-jobs Resource view).
-    this.indexingJobsBridgeStop = startIndexingJobsBridge(this.apiBase);
+    this.indexingJobsBridgeStop = startIndexingJobsBridge(this.apiBase, {
+      multiplex: this.shellEventsMultiplex ?? undefined,
+    });
     // Tempdoc 550 thesis I (process-spanning ONE log): bridge FE-local effects into the one
     // authoritative backend action-event log, so the activity timeline is one log (no read-time
     // client merge). Always-mounted shell → ingests effects regardless of which surface is open.
@@ -1459,7 +1489,9 @@ export class Shell extends JfElement {
     const sources = [
       createURLSource(),
       createTauriDeepLinkSource(),
-      createBackendStreamSource({ apiBase: this.apiBase }),
+      // Tempdoc 662: subscribes the intent streamId on the shared multiplexer constructed
+      // earlier in this method, instead of opening its own EventSource.
+      createBackendStreamSource({ multiplex: this.shellEventsMultiplex! }),
     ];
     void fetchAndRegisterSurfaceSchemas(this.apiBase).then(() => {
       // Surface schemas arrived asynchronously. If we disconnected
@@ -1621,6 +1653,11 @@ export class Shell extends JfElement {
     deactivateProjection();
     this.advisoryStore?.stop();
     this.advisoryStore = null;
+    // Tempdoc 662 — close the multiplexed connection + clear the singleton so a stale
+    // instance can't be read by a component mounted after this shell unmounts.
+    this.shellEventsMultiplex?.stop();
+    this.shellEventsMultiplex = null;
+    setSharedShellEventsMultiplex(null);
   }
 
   /**
@@ -2132,7 +2169,11 @@ export class Shell extends JfElement {
             slot, which collides with the chat affordance bar's posture dial + History toggle (the
             digest's pointer-events:auto box intercepted their clicks — live-audit §2.11 #5). The
             top-center transient slot clears the top-right run controls. */ ''}
-        <jf-ai-activity-digest slot="top-center" api-base=${this.apiBase}></jf-ai-activity-digest>
+        <jf-ai-activity-digest
+          slot="top-center"
+          api-base=${this.apiBase}
+          .multiplex=${this.shellEventsMultiplex}
+        ></jf-ai-activity-digest>
         <jf-advisory-toast-host
           slot="top-right"
           .store=${this.advisoryStore}

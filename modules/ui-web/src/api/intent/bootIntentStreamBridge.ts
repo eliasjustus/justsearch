@@ -26,12 +26,19 @@
  *     existing `intentRouter.dispatch(intent)` — preserving slice 489 §10's
  *     "exactly one path to surface activation" commitment by routing
  *     remote envelopes through the same code path local intents take.
+ *
+ * Tempdoc 662: this bridge no longer opens its OWN EventSource — it subscribes its
+ * `system:intent-envelopes` streamId on the shared `MultiplexedStream` (one of the 5
+ * always-on streams collapsed onto `/api/shell-events/stream`, fixing the browser
+ * connection-pool exhaustion that starved the cheap status polls under load, tempdoc 649).
+ * The dedup LRU / reset / dispatch logic below is UNCHANGED — only the frame source moved.
  */
 
 import type { IntentRouter } from '../../shell-v0/router/intentRouter.js';
 import type { Intent } from '../../shell-v0/router/types.js';
-import { EnvelopeStream } from '../../shell-v0/streaming/EnvelopeStream.js';
+import type { MultiplexedStream } from '../../shell-v0/streaming/MultiplexedStream.js';
 import type { SseEnvelope } from '../../shell-v0/streaming/envelope-types.js';
+import { SHELL_EVENT_STREAM_IDS } from '../../shell-v0/streaming/shellEventStreamIds.js';
 
 /** Bounded LRU of seen envelope ids, sized to match the server ring buffer (9000). */
 const DEDUP_LRU_SIZE = 9000;
@@ -48,74 +55,65 @@ interface IntentEnvelopePayload {
  *
  * Idempotent: a second call while the bridge is running is a no-op.
  *
- * @param apiBase Absolute API base (e.g., `http://127.0.0.1:33221`).
+ * @param multiplex The shared `MultiplexedStream` (tempdoc 662) the bridge subscribes its
+ *     `system:intent-envelopes` streamId on. Callers own its lifecycle (construction/start).
  * @param intentRouter The FE IntentRouter that receives remote envelopes.
- * @param options.eventSourceFactory Test seam.
- * @returns A teardown handle. Calling it stops the underlying EventSource
- *     and clears the dedup LRU.
+ * @returns A teardown handle. Calling it unsubscribes from the multiplexed stream and
+ *     clears the dedup LRU.
  */
 export function bootIntentStreamBridge(
-  apiBase: string,
+  multiplex: MultiplexedStream,
   intentRouter: IntentRouter,
-  options: {
-    eventSourceFactory?: (url: string) => EventSource;
-  } = {},
 ): () => void {
-  if (bridgeStream) {
+  if (bridgeUnsubscribe) {
     return stopIntentStreamBridge;
   }
-  const url = `${apiBase.replace(/\/$/, '')}/api/intent/stream`;
 
   // Bounded LRU of seen envelope ids. Uses an ordered Map: insertion order is the
   // dedup order; eviction trims oldest entries when size exceeds DEDUP_LRU_SIZE.
   const seenIds = new Map<string, true>();
 
-  const stream = new EnvelopeStream<{ lastPayload: IntentEnvelopePayload | null }>({
-    url,
-    initialState: { lastPayload: null },
-    reducer: (state, env: SseEnvelope) => {
-      // LIFECYCLE: kind=reset signals replay-window-miss; clear the LRU so we accept
-      // any subsequent (potentially re-emitted) ids fresh. Other lifecycle kinds
-      // (connected, heartbeat, closing) are no-ops for state.
-      if (env.frameKind === 'LIFECYCLE') {
-        const payload = env.payload as { kind?: string } | null;
-        if (payload?.kind === 'reset') {
-          seenIds.clear();
+  bridgeUnsubscribe = multiplex.subscribe<{ lastPayload: IntentEnvelopePayload | null }>(
+    SHELL_EVENT_STREAM_IDS.INTENT,
+    () => ({
+      initialState: { lastPayload: null },
+      reducer: (state, env: SseEnvelope) => {
+        // LIFECYCLE: kind=reset signals replay-window-miss; clear the LRU so we accept
+        // any subsequent (potentially re-emitted) ids fresh. Other lifecycle kinds
+        // (connected, heartbeat, closing) are no-ops for state.
+        if (env.frameKind === 'LIFECYCLE') {
+          const payload = env.payload as { kind?: string } | null;
+          if (payload?.kind === 'reset') {
+            seenIds.clear();
+          }
+          return state;
         }
-        return state;
+        // UPDATE: record the most recent payload so the subscriber observes it.
+        return { lastPayload: env.payload as IntentEnvelopePayload | null };
+      },
+    }),
+    (snapshot) => {
+      const payload = snapshot.payload.lastPayload;
+      if (!payload) return;
+      if (payload.kind !== 'intent.envelope') return;
+      if (!payload.id) return;
+      if (seenIds.has(payload.id)) return; // dedup hit — silently drop the replay.
+      seenIds.set(payload.id, true);
+      // LRU trim: oldest insertion is the first key in the Map iteration order.
+      while (seenIds.size > DEDUP_LRU_SIZE) {
+        const oldest = seenIds.keys().next().value;
+        if (oldest === undefined) break;
+        seenIds.delete(oldest);
       }
-      // UPDATE: record the most recent payload so the subscriber observes it.
-      return { lastPayload: env.payload as IntentEnvelopePayload | null };
+      if (!payload.intent) return;
+      void intentRouter.dispatch(payload.intent);
     },
-    eventSourceFactory: options.eventSourceFactory,
-  });
+  );
 
-  bridgeUnsubscribe = stream.subscribe((snapshot) => {
-    const payload = snapshot.payload.lastPayload;
-    if (!payload) return;
-    if (payload.kind !== 'intent.envelope') return;
-    if (!payload.id) return;
-    if (seenIds.has(payload.id)) return; // dedup hit — silently drop the replay.
-    seenIds.set(payload.id, true);
-    // LRU trim: oldest insertion is the first key in the Map iteration order.
-    while (seenIds.size > DEDUP_LRU_SIZE) {
-      const oldest = seenIds.keys().next().value;
-      if (oldest === undefined) break;
-      seenIds.delete(oldest);
-    }
-    if (!payload.intent) return;
-    void intentRouter.dispatch(payload.intent);
-  });
-
-  stream.start();
-  bridgeStream = stream;
   return stopIntentStreamBridge;
 }
 
 /** Singleton state (module-scoped — at most one intent-stream bridge per FE process). */
-let bridgeStream: EnvelopeStream<{
-  lastPayload: IntentEnvelopePayload | null;
-}> | null = null;
 let bridgeUnsubscribe: (() => void) | null = null;
 
 /** Stop the bridge. Idempotent. */
@@ -124,13 +122,9 @@ export function stopIntentStreamBridge(): void {
     bridgeUnsubscribe();
     bridgeUnsubscribe = null;
   }
-  if (bridgeStream) {
-    bridgeStream.stop();
-    bridgeStream = null;
-  }
 }
 
 /** Test-only: assert the bridge is stopped (for cleanup verification). */
 export function __isRunningForTest(): boolean {
-  return bridgeStream !== null;
+  return bridgeUnsubscribe !== null;
 }
