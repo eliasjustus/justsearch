@@ -1543,7 +1543,12 @@ specific chat transcript, for whoever next does a similarly long, multi-round en
    had to be found and corrected. Tempdoc numbers are assigned by whoever authors the *next* tempdoc — there
    is no reservation mechanism, so any "this will become tempdoc NNN" prediction is fragile by construction.
    **Recommended fix:** never predict a future tempdoc's number. Name the follow-up work descriptively
-   ("a future tempdoc, not yet created, tracking BrainSurface's poll-timer cleanup") instead.
+   ("a future tempdoc, not yet created, tracking BrainSurface's poll-timer cleanup") instead. (Checked at
+   the end of this engagement: tooling in this repo repeatedly reported "the highest tempdoc on disk is 664,"
+   but no tempdoc 664 exists as a committed file anywhere on GitHub for this repo — it only ever existed as
+   another agent's local, uncommitted work. A "highest tempdoc number" figure surfaced by tooling can include
+   numbers that were never actually merged; treat it as a local hint, not a canonical fact, without checking
+   the file is actually committed.)
 
 4. **A citation referenced another tempdoc's committed scope without first reading its actual content** —
    based only on having seen the filename in passing, the citation asserted what that document "owns," and
