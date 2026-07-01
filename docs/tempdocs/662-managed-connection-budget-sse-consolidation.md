@@ -1050,3 +1050,110 @@ Scope sections describe *one shell's* long-lived-connection footprint, not N ind
 across browser tabs. The register/gate have no visibility across tabs by construction (each tab is a
 separate JS runtime). Recorded here as a genuine boundary condition for anyone extending this work to a
 multi-tab/multi-window scenario — not a regression, not a missed requirement of tempdoc 662 as scoped.
+
+## Future directions (2026-07-01) — what the shipped infrastructure now enables
+
+Open-ended, autonomous research pass (no implementation): now that the multiplexer, the transport-agnostic
+budget register, the demand-classification framework, and the runtime-peak signal all exist and work, what
+could reasonably be built with/on/around them? Approach: external research (current state of the art on the
+specific mechanisms this design touches — cross-tab connection sharing, the MCP transport ecosystem this
+design already tracks per §D6, WebView2 API support) paired with internal investigation (what the shipped
+code already collects but doesn't yet use; what related named-but-deferred violations already exist in the
+codebase). Organized as the three lenses requested: polish, extend, new UX. Nothing here is a commitment —
+recording candidates and their grounding, per the same "recognize, don't pre-build" discipline as the
+Theorization section above.
+
+### Polish — small, low-risk improvements to what's already shipped
+
+1. **Surface the runtime-peak signal — it's collected and currently shown nowhere.** `liveChannelBudget.ts`'s
+   `getPeakOpenChannelCount()`/`getCurrentOpenChannelCount()` are read only by their own module and test
+   (verified: no other file references them). The System Health surface already has a technical diagnostics
+   block (GPU/VRAM/Driver row) that a "connections: N open, peak M, budget 3" line would fit naturally,
+   giving the budget claim a visible, live witness instead of leaving it as an invisible internal counter —
+   cheap, uses data that already exists, and turns an internal governance mechanism into a user/developer-
+   facing trust signal (in the same spirit as 649's "show your own measured contact" philosophy).
+2. **Move the multiplexer's resume protocol toward the SSE-standard `Last-Event-ID` + one session-scoped
+   cursor**, closing the alignment goal Design §D6 already named but Confidence-pass §U7 found nothing to
+   reuse yet (the project's own MCP endpoint hadn't implemented SSE resume). Research this session found the
+   ecosystem has moved decisively since: the MCP spec's bare SSE transport is now being *deprecated*
+   (end-of-life April 2026 per the spec's own migration guidance) in favor of Streamable HTTP's unified
+   POST+GET+SSE-upgrade endpoint with `Last-Event-ID`-based resumability, now the de facto standard this
+   project's own production `/mcp` endpoint direction points toward (tempdoc 655). Replacing the current
+   bespoke comma-joined `?since=<streamId:seq,...>` bundle with a single monotonic session-scoped event id
+   would simplify the resume logic (no per-channel bundle parsing) and conform to a standard the project is
+   independently adopting elsewhere — genuine simplification, not speculative structure, but a real backend
+   protocol change, not a small edit.
+3. **Minor**: the late-subscribe debounced reconnect (this session's fix) could shorten its post-reconnect
+   "regained trust" window by bumping heartbeat frequency briefly after a forced reconnect — a small UX
+   polish (faster "connected" confirmation), low priority, not investigated further.
+
+### Extend — generalizing the mechanism to problems it wasn't built for but structurally matches
+
+1. **Cross-tab connection sharing (SharedWorker + BroadcastChannel) — the standout candidate.** This
+   session's own design-alignment review surfaced a genuine gap: opening several browser tabs of the app
+   causes real contention (a manual probe stalled 8+ seconds under a 3-tab load, Verified above), because
+   each tab boots its own independent multiplexer + polls, and Chrome's connection pool is shared *across
+   tabs*, not per-tab. This is the tempdoc's **own named principle — "a finite platform quota consumed by
+   independently-authored components needs one owner/multiplexer" — recurring one level up**: from N streams
+   in one tab to N tabs in one browser. External research confirms this is a known, solved problem with
+   working prior art: a `SharedWorker` holds the one real connection, coordinates via `BroadcastChannel` (and
+   optionally the Web Locks API for leader election), and every tab receives events from the worker instead
+   of opening its own — an existing library (`shared-event-source`, MIT-licensed, on GitHub) implements
+   exactly this pattern for the exact problem statement ("get around the browser limit of maximum 6 non
+   HTTP/2 SSE connections per domain"). WebView2 (the shipped desktop target) supports the Worker API family
+   including SharedWorker per Microsoft's own WebView2 API overview — **unconfirmed by a live spike**, only
+   by documentation, so verify-don't-guess applies before committing; note this is a different, simpler
+   surface than the Tauri-IPC custom-protocol streaming limitation Design §D6 already ruled out (SharedWorker
+   uses ordinary `fetch`/`EventSource` inside the worker, not a custom `tauri://` scheme, so that specific
+   WebView2 limitation likely doesn't apply — needs confirming, not assuming). No `SharedWorker`/
+   `BroadcastChannel` usage exists anywhere in the codebase today — this would be genuinely new
+   infrastructure, sized similarly to the original multiplexer build, not a small extension.
+2. **A second instance of the register+gate pattern is already named and waiting.** Design's own Reach
+   section flags `BrainSurface`'s `pollInstall`/`pollPack`/`pollRuntime`/`pollDiagnostics` timers
+   (`views/BrainSurface.ts:270-273`) as the same violation shape (an always-on claim on a scarce
+   client-side resource — timers here, not sockets) and explicitly assigns it to tempdoc 663, deliberately
+   not building the generalization until a second instance justifies it. Spot-checked this session:
+   `pollInstall`/`pollPack`/`pollRuntime` are already gated on their respective operation actually being
+   `running` (not literally unconditional), so the violation may be narrower than the Reach section implied —
+   worth a proper audit (mirroring this tempdoc's own U1 consumer-tracing discipline) before 663 assumes the
+   worst case. Flagging the correction here so 663 doesn't inherit a stale premise.
+3. **The demand-classification vocabulary (breadth/depth/event) is reusable beyond connections.** Now that
+   it's named and has one concrete worked example (indexing-jobs' breadth-riding-on-an-event-channel case),
+   it's a candidate lens for *any* future "should this be push or pull" design question in the codebase, not
+   just SSE — worth citing by name in future design discussions rather than re-deriving the same three-way
+   split from scratch each time.
+
+### New UX — features the freed connection headroom (or the multiplexer itself) makes newly viable
+
+1. **Multi-window/multi-tab as a supported workflow, not an accidental degradation.** If extension #1 above
+   (cross-tab sharing) is built, this becomes a legitimate, marketable capability for a public-alpha product
+   where power users commonly want multiple windows (e.g. one on Search, one on Chat) — currently that
+   workflow silently degrades (this session's finding). Framed as a UX feature ("JustSearch now behaves
+   correctly across multiple windows") rather than only as a technical fix, it's a concrete, user-visible
+   payoff for the cross-tab extension, not just an internal robustness improvement.
+2. **A visible "connection health" affordance**, building on Polish #1 — not just a raw number, but a calm,
+   649-style truthful indicator (e.g. in the System Health surface) that lets a curious user or support
+   session confirm "yes, the app really is using one shared connection, and it's well under budget" —
+   turning an architectural claim into something inspectable, in the spirit of this being a public,
+   trust-focused product without real users yet (a good time to make trust-building affordances cheap to add
+   before habits/expectations form around their absence).
+3. **Re-examined and NOT recommended: reviving the "dedicated liveness probe" (tempdoc 562's reverted
+   "move 2").** The freed budget headroom *could* make a third poll affordable again, but tracing why it was
+   reverted shows the reason it existed — distinguishing "reachable-but-stale" from "genuinely unreachable" —
+   was fully solved by 649's `originContact` model (derived from *any* existing channel's activity, needing
+   no dedicated connection at all). Reviving move 2 would reintroduce complexity for a problem that's already
+   solved by a cheaper mechanism; recorded here specifically to prevent it from being proposed again on the
+   mistaken assumption that "we have budget now, so let's add it back" — the original blocker (budget) is
+   gone, but the original need is also gone, for an unrelated reason. No action item.
+
+### What was NOT investigated further (honest limit)
+
+This pass was time-boxed research, not exhaustive. Not explored: whether the "one concurrent AI generation"
+assumption baked into the budget's headroom reservation (Design §F) is an enforced limit or just a design
+assumption (if it's not enforced, multiple concurrent generations might already be technically possible and
+worth a UX decision independent of this tempdoc); Electron/other desktop-shell prior art for connection-
+budget UX (the web search for this returned no established pattern — likely because this is a fairly
+uncommon problem to surface to end users, reinforcing that idea "New UX #2" above would be somewhat novel,
+not copying a known pattern); and any further MCP-transport-adjacent research beyond confirming the
+SSE-deprecation trend already noted (tempdoc 655 owns that certification work directly and is the better home
+for anything deeper here).
