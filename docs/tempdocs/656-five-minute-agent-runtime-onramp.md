@@ -1295,18 +1295,18 @@ warranting a web-research pass. Conclusion: **no research pass** — reasoning r
 
 Confidence-building before implementing Move 1 + Move 2. Live experiments (dev stack) + my-own
 re-verification of the subagent traces. **No feature code changed.** Enabling discovery: a *complete*
-cuda12 GPU runtime (25 files, all 4 required DLLs + exe) already exists on this machine in a sibling
-worktree (`.claude/worktrees/643-judge-arbitration/native-bin/llama-server/variants/cuda12/`) and in
-`F:\JustSearch` — so GPU viability and cross-location referencing were testable with zero download.
+cuda12 GPU runtime (25 files, all 4 required DLLs + exe) already existed on the dev machine — staged in
+another dev checkout under `native-bin/llama-server/variants/cuda12/` — so GPU viability and
+cross-location referencing were testable with zero download.
 
 ### Resolved (per the ranked uncertainties)
 
 **#1 GPU viability [make-or-break] — CONFIRMED, clean live pass.** Started a dev stack in this
-worktree with `JUSTSEARCH_SERVER_EXE` pointed at the *foreign* 643-worktree cuda12 exe, configured the
+worktree with `JUSTSEARCH_SERVER_EXE` pointed at that *foreign* (other-checkout) cuda12 exe, configured the
 Qwen 9B GGUF + `gpuLayers:99`, triggered `POST /api/inference/mode {online}` → transition succeeded.
 `/api/inference/status`: `mode:online, available:true, activeModelId:Qwen_Qwen3.5-9B-Q4_K_M.gguf,
 lastStartupDurationMs:13467, tier:gpu_12gb_plus, cudaAvailable:true`. The OS process was verifiably
-the foreign exe: `...\643-judge-arbitration\native-bin\llama-server\variants\cuda12\llama-server.exe
+the foreign exe: `...\native-bin\llama-server\variants\cuda12\llama-server.exe
 -m ...Qwen_Qwen3.5-9B-Q4_K_M.gguf ... -ngl 99 -fa on`. A real query (`/api/chat/free`, prompt "capital
 of France") streamed a coherent grounded answer: *"The capital of France is Paris."* (22 prompt / 32
 total tokens). **GPU-only dev inference is viable here — the design's foundational premise holds.**
