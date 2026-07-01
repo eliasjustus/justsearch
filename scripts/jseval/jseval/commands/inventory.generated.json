@@ -20,6 +20,10 @@
     "group": "calibrate"
   },
   {
+    "name": "changeset-new",
+    "group": "gates"
+  },
+  {
     "name": "commands",
     "group": "ops"
   },

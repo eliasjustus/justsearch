@@ -131,7 +131,11 @@ def _read_qrels_tsv(path: Path) -> dict[str, dict[str, int]]:
         if not line:
             continue
         cols = line.split("\t")
-        if len(cols) >= 4 and start == 0:
+        # Format is determined by column count alone, independent of whether a header row
+        # was stripped above — a headered 4-column TREC file must still take the TREC branch
+        # (previously gated on `start == 0`, which silently misrouted headered TREC files into
+        # the BEIR branch and misread the doc-id column).
+        if len(cols) >= 4:
             # TREC format: query-id  iter  doc-id  relevance
             qid, did, rel = cols[0], cols[2], int(cols[3])
         elif len(cols) >= 3:
@@ -139,7 +143,11 @@ def _read_qrels_tsv(path: Path) -> dict[str, dict[str, int]]:
             qid, did, rel = cols[0], cols[1], int(cols[2])
         else:
             continue
-        qrels.setdefault(qid, {})[did] = rel
+        # Lowercase the doc-id at the mint site (structural fix): filesystem-resolved doc-ids
+        # (retriever.py:_filename_to_doc_id) are compared against these keys, and Windows
+        # filesystems are case-preserving but not case-authoritative, so an un-normalized doc-id
+        # here can silently fail to match an otherwise-identical retrieved document.
+        qrels.setdefault(qid, {})[did.lower()] = rel
     return qrels
 
 
@@ -240,6 +248,48 @@ def _validate_golden_set(
                 f"(nDCG@10={fid.get('retrieval_ndcg')} outside band {fid.get('band')}, "
                 f"shortcut_leaks={fid.get('shortcut_leak_rate')}) — it is trivially easy, "
                 f"broken, or shortcut-leaky, not a realistic-difficulty self-demo.",
+                stacklevel=3,
+            )
+        # tempdoc 664 (post-review fix): descriptor_collisions is a THIRD, independent fidelity
+        # sub-check (a random distractor descriptor colliding with a gold chain's, corrupting its
+        # qrel) — symmetric to the two checks above: a missing verdict is flagged (an
+        # already-certified corpus predating this check) as well as an explicit fail. Without
+        # this branch the check computed and persisted correctly but never surfaced anywhere a
+        # human would see it (confirmed: the shipping `needle-burial-v1` corpus fails it today).
+        coll = fid.get("descriptor_collisions") or {}
+        if "passed" not in coll:
+            warnings.warn(
+                f"Self-demo corpus '{meta.name}' has no descriptor_collisions verdict — "
+                f"run `jseval corpus-certify` before trusting it (a random distractor can "
+                f"collide with a gold chain's descriptor and corrupt its qrel).",
+                stacklevel=3,
+            )
+        elif not coll.get("passed", False):
+            warnings.warn(
+                f"Self-demo corpus '{meta.name}' FAILED the descriptor-collision check "
+                f"({coll.get('n_gold_involved')} gold chain(s) collide with a distractor "
+                f"descriptor, corrupting their qrel; {coll.get('n_groups')} total colliding "
+                f"groups) — regenerate or fix the corpus before trusting its qrels.",
+                stacklevel=3,
+            )
+        # tempdoc 664 (seventh pass): regeneration_determinism is a FOURTH fidelity sub-check —
+        # symmetric to the three above, with one difference: `passed` can be `None` (a deliberate
+        # skip for hand-authored/incomplete-provenance corpora, not a failure and not a missing
+        # verdict) as well as True/False. Only "never run at all" (key absent) and "ran and failed"
+        # warn; a documented skip is silent, matching the plan's explicit design.
+        det = fid.get("regeneration_determinism")
+        if det is None:
+            warnings.warn(
+                f"Self-demo corpus '{meta.name}' has no regeneration_determinism verdict — "
+                f"run `jseval corpus-certify` before trusting its 'seeded -> reproducible' claim.",
+                stacklevel=3,
+            )
+        elif det.get("passed") is False:
+            warnings.warn(
+                f"Self-demo corpus '{meta.name}' FAILED regeneration-determinism "
+                f"(two fresh regenerations from its own recorded seed produced different output; "
+                f"mismatched files: {det.get('mismatched_files')}) — its 'seeded -> reproducible' "
+                f"claim does not hold.",
                 stacklevel=3,
             )
 

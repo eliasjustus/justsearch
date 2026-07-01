@@ -295,7 +295,8 @@ class RagQualityEvalTest {
     // 1. Retrieve documents via TEXT search
     List<String> retrievedDocIds = retrieveDocuments(query.question, 5);
 
-    // 2. Compute retrieval recall
+    // 2. Compute retrieval recall (tempdoc 664: reflects frozen-vector fusion/ranking-code
+    // behavior, not real embedding-model retrieval quality — see RelevanceMetrics' Javadoc).
     double retrievalRecall =
         RelevanceMetrics.recallAtK(
             retrievedDocIds, new HashSet<>(query.expectedSourceDocs), 5);

@@ -108,3 +108,50 @@ def test_projected_floor_drives_evaluate_end_to_end():
     assert ok["exit_code"] == 0  # 0.615 ≥ 0.620 - 0.02 = 0.600
     bad = evaluate(proj, _summary("hybrid", 0.590), "mixed/courtlistener-200")
     assert bad["exit_code"] == 1  # 0.590 < 0.600 floor → regression
+
+
+# --- tempdoc 664 (seventh pass): the release's measured ±2σ envelope, when present, is
+# preferred over the flat tolerance_abs default --------------------------------------------
+
+_RELEASE_WITH_ENVELOPE = {
+    "release_id": "rel-envelope-test",
+    "cohort": {"git_sha": "1b43bbe45f"},
+    "measured": {
+        # a corpus WITH a measured (tighter) envelope: two_sigma=0.005 vs the flat 0.02 default.
+        "beir/scifact": {
+            "config_mode": "hybrid", "metrics": {"nDCG@10": 0.755},
+            "tolerance_band": {"nDCG@10": {"mean": 0.755, "stdev": 0.0025, "two_sigma": 0.005, "n": 5}},
+        },
+        # a corpus with NO envelope (uncalibrated cohort) — must fall back to the flat default,
+        # unchanged behavior.
+        "mixed/courtlistener-200": {"config_mode": "hybrid", "metrics": {"nDCG@10": 0.620}},
+    },
+}
+
+
+def test_projection_carries_tolerance_band_forward_when_present():
+    proj = project_release_to_baselines(_RELEASE_WITH_ENVELOPE, tolerance_default_abs=0.02)
+    assert proj["baselines"]["beir/scifact"]["tolerance_band_abs"] == 0.005
+    # the flat tolerance_abs is still recorded too (the envelope is additive, not a replacement).
+    assert proj["baselines"]["beir/scifact"]["tolerance_abs"] == 0.02
+    # the uncalibrated corpus gets no tolerance_band_abs field at all.
+    assert "tolerance_band_abs" not in proj["baselines"]["mixed/courtlistener-200"]
+
+
+def test_evaluate_prefers_envelope_tolerance_over_flat_default():
+    proj = project_release_to_baselines(_RELEASE_WITH_ENVELOPE, tolerance_default_abs=0.02)
+    # Without the envelope fix, tolerance would be the flat 0.02 -> floor 0.735 -> this would PASS.
+    # With the tighter measured envelope (two_sigma=0.005), floor is 0.755-0.005=0.750 -> FAILS.
+    # This is the case that shows the switch actually matters, not just that it's plumbed through.
+    r = evaluate(proj, _summary("hybrid", 0.745), "beir/scifact")
+    assert r["tolerance_abs"] == 0.005
+    assert r["tolerance_src"] == "envelope±2σ"
+    assert r["exit_code"] == 1  # 0.745 < 0.750 floor -> regression (would have passed pre-fix)
+
+
+def test_evaluate_falls_back_to_flat_default_without_envelope():
+    proj = project_release_to_baselines(_RELEASE_WITH_ENVELOPE, tolerance_default_abs=0.02)
+    r = evaluate(proj, _summary("hybrid", 0.615), "mixed/courtlistener-200")
+    assert r["tolerance_abs"] == 0.02
+    assert r["tolerance_src"] == "default"
+    assert r["exit_code"] == 0  # 0.615 >= 0.620 - 0.02 = 0.600, unchanged behavior

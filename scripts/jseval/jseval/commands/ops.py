@@ -307,11 +307,73 @@ def cmd_logs(source, pattern, min_level, tail_mode, max_lines, base_url):
                 fh.close()
 
 
+def _gate_coverage() -> dict[str, set[str]]:
+    """tempdoc 664 (seventh pass): which dataset slugs each ratchet currently pins a floor/ceiling
+    for.
+
+    Read-only, best-effort over the three committed floor files (relevance/perf/leak) at their
+    real, fixed location (`scripts/jseval/`, `parents[2]` from this file — the same off-by-one
+    `commands/gates.py`'s defaults were fixed for in the sixth pass). A missing or malformed file
+    is treated as "gates nothing" rather than crashing this command — `datasets` is meant to be
+    safe to run at any time, including before any gate has ever been pinned.
+
+    relevance-gate and perf-gate's committed files are POINTERS (`current_release` +
+    `fallback_baselines`, confirmed empty at HEAD) — their real per-corpus floors are PROJECTED
+    LIVE from `release.v1.json`, not statically listed in the file (tempdoc 623 T-5). Reusing
+    `ratchet_kernel.load_baselines_doc` (the exact function `commands/gates.py` already calls for
+    both) resolves this correctly instead of re-deriving the projection logic here. leak-gate's
+    file has no such pointer (confirmed: a plain static `baselines` dict) and needs no projection.
+    """
+    from .. import ratchet_kernel as _rk
+    from .. import relevance_gate as _rgate
+    from .. import perf_gate as _pgate
+
+    root = Path(__file__).resolve().parents[2]
+    covered: dict[str, set[str]] = {"relevance-gate": set(), "perf-gate": set(), "leak-gate": set()}
+    projectors = {
+        "relevance-gate": (
+            "relevance-ratchet-baselines.v1.json",
+            lambda rel, base: _rgate.project_release_to_baselines(
+                rel, tolerance_default_abs=base.get("tolerance_default_abs", 0.02),
+                per_corpus_tolerance=base.get("per_corpus_tolerance"),
+            ),
+        ),
+        "perf-gate": (
+            "perf-ratchet-baselines.v1.json",
+            lambda rel, base: _pgate.project_release_to_perf_baselines(rel),
+        ),
+    }
+    for gate, (filename, project_release) in projectors.items():
+        try:
+            doc = _rk.load_baselines_doc(root / filename, project_release=project_release)
+            covered[gate] = set((doc.get("baselines") or {}).keys())
+        except (OSError, json.JSONDecodeError):
+            pass  # no file / unreadable / malformed -> "gates nothing", not a crash
+
+    try:
+        leak_doc = json.loads((root / "leak-gate-baselines.v1.json").read_text(encoding="utf-8"))
+        covered["leak-gate"] = set((leak_doc.get("baselines") or {}).keys())
+    except (OSError, json.JSONDecodeError):
+        pass
+    return covered
+
+
 @click.command("datasets")
 @click.pass_context
 def cmd_datasets(ctx):
-    """List available datasets (BEIR, golden, mixed)."""
-    from .. import corpora
+    """List available datasets (BEIR, golden, mixed), with which ratchets gate each one.
+
+    tempdoc 664 (seventh pass, gate-coverage visibility): each entry's `gated_by` lists which of
+    relevance-gate/perf-gate/leak-gate currently pin a floor for it — making today's silent
+    coverage gap visible rather than something each gate separately, silently hand-picks.
+    Whether every listed dataset SHOULD be gated is a separate policy question this command does
+    not answer. HONEST LIMIT: this list is only what BEIR (`corpora.BEIR_DATASETS`) plus whatever
+    is currently materialized under `datasets/mixed|golden/` on THIS machine (gitignored,
+    machine-dependent) — a corpus documented in the search-quality register's prose Dataset
+    Catalog but never locally materialized here still won't appear at all. No canonical,
+    machine-readable "every registered corpus" catalog exists yet (tempdoc 664 confidence pass).
+    """
+    from .. import corpora, release
 
     datasets: list[dict] = []
 
@@ -328,12 +390,22 @@ def cmd_datasets(ctx):
                 if sub.is_dir():
                     datasets.append({"name": f"{prefix}/{sub.name}", "source": prefix})
 
+    coverage = _gate_coverage()
+    for d in datasets:
+        # tempdoc 664 (twelfth pass): all three baseline files now key BEIR entries by their
+        # canonical slug ("beir/scifact") -- leak-gate-derive's bare-name inconsistency (found in
+        # the seventh pass) was fixed at its source (`cmd_leak_gate_derive`) rather than worked
+        # around here, so a single canonical-slug check is sufficient again.
+        slug = release.canonical_dataset_slug(d["name"])
+        d["gated_by"] = sorted(gate for gate, slugs in coverage.items() if slug in slugs)
+
     if ctx.obj.get("json"):
         click.echo(json.dumps(datasets, indent=2))
     else:
         click.echo("Available datasets:")
         for d in datasets:
-            click.echo(f"  {d['name']:<30s}  ({d['source']})")
+            gates = ", ".join(d["gated_by"]) if d["gated_by"] else "UNGATED"
+            click.echo(f"  {d['name']:<30s}  ({d['source']})  gated_by: {gates}")
 
 
 @click.command("modes")

@@ -86,6 +86,12 @@ class TestFilenameToDocId:
     def test_no_extension(self):
         assert _filename_to_doc_id("abc") == "abc"
 
+    def test_case_normalized(self):
+        """Windows filesystems are case-preserving but not case-authoritative; the resolved
+        doc-id must lowercase so it matches `corpora.py:_read_qrels_tsv`'s lowercased qrel keys
+        regardless of on-disk casing."""
+        assert _filename_to_doc_id("MiXeDCaSe.TXT") == "mixedcase"
+
 
 # ---------------------------------------------------------------------------
 # Request building
