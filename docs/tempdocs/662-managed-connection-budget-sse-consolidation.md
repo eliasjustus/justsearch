@@ -1273,3 +1273,78 @@ Every finding this round *narrows* scope back toward what was already built (con
 architecture already closes the multi-tab question; confirms the current resume protocol is the long-term
 design) rather than discovering new scope the title should reflect. A title change would be warranted if the
 design had grown; it didn't — staying matched to the original, narrower problem is itself the finding.
+
+## User-facing consequences (2026-07-01) — live UI investigation, not implemented
+
+A dedicated pass asking a narrower question than the design-alignment/theorization rounds above: what does
+this tempdoc's shipped design actually look like and feel like to a *user*, verified live in the browser
+rather than reasoned about from code or from this doc's own prose. Read-only; no code changes.
+
+### What is user-facing here, directly or indirectly
+
+The multiplexer itself, the register/gate, and the resume protocol are backend/transport plumbing — never
+directly visible. But four things are: (1) the calm connection-status affordances 649 already built
+(`LivenessReadout`, the status pill, the System Health "CONNECTION" card) whose *inputs* this tempdoc's
+reconnect behavior feeds; (2) the advisory rail badge/toasts/inbox, action-ledger digest, and task tray —
+the actual consumers riding the multiplexed channel, whose *freshness* is what this whole tempdoc exists to
+protect; (3) the debounced reconnect this session's own bug fix introduced (`MultiplexedStream`'s
+late-subscribe handling), which is new *behavior*, not just new plumbing, and had never been checked against
+a real running UI, only unit tests with fake timers; (4) the "Future Directions" runtime-peak-signal idea,
+still unbuilt. Investigated live via an isolated dev stack + Chrome, not judged from the tempdoc alone.
+
+### What was found — a real, measured, pre-existing gap that 662 makes load-bearing
+
+`AdvisoryRailBadge.ts` (Slice 490, predates 662) renders its "feed may be stale" cue directly from a raw,
+un-mediated `isConnected` boolean — `AdvisoryStore.deriveIsConnected()` → the badge's `isConnected` property
+→ a `disconnected` CSS class + a dimmed `jf-status-dot` + the tooltip "Advisories (offline — feed may be
+stale)". No other multiplexed consumer does this: `AiActivityDigest`/`ActionLedgerView` and `TaskList` were
+grepped and neither renders anything off a raw `isConnected` value.
+
+Verified live, not assumed: patched a `MutationObserver` onto the badge's rendered button and manually
+triggered exactly the reconnect this session's own fix performs (subscribing a new streamId on the already-
+open shared multiplex, the identical code path a late `AdvisoryStore`/intent registration exercises every
+normal boot). Measured result: the badge's class flipped to `disconnected` (dimmed dot rendered) at **407ms**
+after the trigger and recovered at **413ms** — a real, observed ~6ms visible-disconnected window on a fast
+idle localhost round-trip. That window scales with the reconnect's actual duration (network latency, backend
+load, TLS handshake on a real deployment) — on anything slower than idle localhost, this would render as a
+clearly visible flicker of the advisory icon, not a sub-frame blip.
+
+**Why this is 662's concern even though the component predates it.** Before 662, an `EnvelopeStream`
+reconnect was an *abnormal* event (a real network blip or backend restart) — rare enough that a raw, un-
+debounced "flip to disconnected the instant the socket closes" was a reasonable, if crude, treatment. 662's
+own late-subscribe fix (this session) makes a reconnect a **routine, expected part of every normal healthy
+boot** — any time a consumer subscribes after the shared connection is already open, which is the *common*
+case for `AdvisoryStore` (gated behind the Resource Catalog fetch) and intent (gated behind the schema fetch).
+662 didn't create the raw-`isConnected` wiring, but it is what turns its blast radius from "rare edge case"
+into "fires on a large fraction of app launches." That is a direct, measured, user-visible consequence of
+this tempdoc's own design that this tempdoc is the right place to record.
+
+### The correct design — extend the existing calm authority, don't invent a new one
+
+This is precisely the problem 649 already solved, generally, for exactly this class of surface: distinguish
+a momentary, within-tolerance gap from a genuine, worth-alarming disconnect, so the UI never flashes an alarm
+it can't back up with sustained evidence. That authority already exists — `originContact`'s positive-evidence
+model feeding `aiStateStore`'s `statusTone`, consumed today by `LivenessReadout` and the status pill
+(`subscribeAiState`, `aiStateStore.ts:778`) — and is the SAME underlying fact `AdvisoryRailBadge` is trying to
+express, made more exact by 662 itself: post-662, every multiplexed consumer's `isConnected` is literally the
+*same* boolean (`MultiplexedStream.broadcastConnectionChange` notifies every entry with the one shared
+`lastConnected` value), so the badge's "advisory feed disconnected" claim is not advisory-specific information
+any more — it is a second, un-mediated read of the exact same shared-connection fact 649's calm authority
+already interprets correctly elsewhere. There is no advisory-specific signal left to justify a bespoke
+treatment.
+
+**The correct long-term design: `AdvisoryRailBadge`'s stale-feed cue should derive from the same calm
+`aiStateStore`/`statusTone` authority every other liveness-sensitive surface already reads, not from
+`AdvisoryStore`'s own raw `isConnected` snapshot.** This is extension, not new structure — the calm-tone
+mechanism, the debounce/staleness-window logic, and the tone vocabulary all already exist and are reused
+verbatim; only the badge's *wiring* changes (subscribe to `aiStateStore` instead of deriving from the advisory
+snapshot). Scope holds at exactly this one component: the two grepped siblings (digest, task tray) don't
+have the problem, and the underlying principle — *"a stream's own raw `isConnected` must never directly drive
+a degraded-state affordance; route through the positive-evidence authority instead"* — is exactly 649's
+existing invariant restated, not a new one, so nothing needs to be generalized or built beyond fixing the one
+component that never migrated onto it. Not implemented here (read-only pass, per instruction); this is a
+correctly-scoped candidate for the next build pass on this tempdoc or a short standalone follow-up.
+
+Severity note: contained to the visual affordance only — `isConnected` was traced through `AdvisoryStore.ts`
+and confirmed to gate nothing else (toast delivery, unread counts, and the inbox drawer all read off frame
+data directly, not the connection flag), so this is a truthfulness/polish defect, not a data-loss risk.
