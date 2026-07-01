@@ -946,3 +946,86 @@ platform-contracts **77%**, search-worker **64%** — making the tempdoc's headl
 unit lane is overhead, not tests") a one-glance standing fact, and quantifying the ceiling the
 config-cache follow-on could reclaim. Local self-tests + regressions green; live-CI confirmation rides
 in the same PR run.
+
+## Second ideation pass — from measuring to acting - 2026-07-01
+
+A forward pass now that the *whole* band (attribution + overhead decomposition + budget + trend) is
+built. Documentation only; two web-research rounds (JVM/Gradle overhead-reduction techniques; whether
+"overhead ratio" is a tracked metric) informed it. It deliberately does **not** repeat the first
+ideation pass's surfacing menu (PR comment, chart, carbon, OTel, delta) — those remain recorded and
+consumer-less. It focuses on what the now-built decomposition changed.
+
+### What the decomposition changed
+
+The decomposition produced a pointed, actionable finding — **~64–77% of each unit lane is framework
+overhead (Gradle config + JVM/class-load startup + fork serialization + inter-module gaps); only
+~2–3 min is real test work.** Web research confirms this is the *common* CI reality, not a repo quirk
+("tests are often the faster part; setup/overhead dominates" is a recognised buildevents pattern), and
+that in large multi-module Gradle builds the **configuration phase in particular can exceed the
+execution phase**. So the finding is trustworthy and general.
+
+Crucially, it **self-corrected this tempdoc's own opening premise.** 667 opened treating the fork-count
+throttles (`app-services maxParallelForks = 1`, CI `testParallelism = 1`) as the critical-path lever.
+The instrument now shows those govern only the ~2–3 min *test-execution* slice — they cannot touch the
+~7 min of framework overhead. The real levers are elsewhere.
+
+### The optimization directions the decomposition points to (the deferred "648 band", now concrete)
+
+Attribution's job is to *lead* optimization (Principle A). It now does, with a ranked, researched list:
+
+- **Configuration phase** (likely the largest slice, per the multi-module Gradle reality) → **Gradle
+  Configuration Cache** (~2× configuration time). **Blocked in this repo** by the documented
+  diffplug/spotless Windows config-cache bug (this tempdoc's follow-on). The decomposition *quantifies
+  what that blocker costs* per run. Action: track the blocker; re-test on Spotless/Gradle bumps.
+- **JVM / class-load fork startup** → **Dynamic CDS** (JDK 13+: `-XX:ArchiveClassesAtExit` to record,
+  `-XX:SharedArchiveFile` to reuse), ~16–47% startup reduction, available on the repo's JDK 21/25, and
+  — unlike config-cache — **not blocked.** This is the standout *actionable, unblocked* first move: add
+  CDS `jvmArgs` to the shared test convention plus a training run. It is the single lever the instrument
+  identifies as both meaningful and available today.
+- **Fork / daemon reuse** → already optimised (`maxParallelForks = 1` reuses the fork per module, so
+  startup is ~once per module, not per class).
+- **Sub-decomposition (config vs JVM vs fork)** → possible from a Gradle `--profile` report (free,
+  local, config-vs-execution breakdown) but it is **HTML**, so capturing it machine-readably is real
+  work. Only worth it once someone commits to the optimization band and needs to choose between waiting
+  on config-cache vs. investing in CDS. Until then, CDS is actionable regardless (config-cache is
+  blocked), so the sub-decomposition is not yet on the critical path.
+
+### Practicality — the honest turn: measure less, act (or freeze)
+
+For a public-alpha repo with **no users and ~one human contributor**, the band is now *complete-enough
+— arguably slightly past its audience.* The first ideation pass already ruled the contributor-facing
+surfaces (PR bots, badges, carbon, OTel, facts page) premature; that still holds. The new judgment is
+sharper: **the instrument has done its defining job — it changed the decision** (throttles → config-
+cache/CDS). The high-value next move is therefore **not more attribution** (finer sub-decomposition,
+delta bots, more surfaces — all still consumer-less) but one of:
+
+1. **Act** on the finding — attempt the one unblocked, meaningful lever the instrument named (Dynamic
+   CDS for the test JVM), in the optimization band (648). This is where remaining CI-latency value now
+   lives.
+2. **Freeze** the band as-is and stop; it already answers "where does CI time go / is it drifting."
+
+Candidate **simplification** if trimming is ever wanted: the **trend workflow** is the most speculative
+shipped piece (drift-watching for a repo no one watches) — cheap and dispatch-only, so harmless, but
+the first thing to defer/remove. Nothing else obviously over-built; the three small scripts each do one
+thing and conform to existing patterns.
+
+### Reach — a principle this surfaces
+
+- **Principle D — an attribution instrument's value is realised when it changes a decision; past that
+  point, additional instrumentation is a substitute for acting on what it already told you.** 667's
+  attribution reached that point: it redirected effort from the fork-count throttles to config-cache
+  (blocked) and CDS (actionable). *Candidate scope:* any measure → attribute → act loop, including the
+  engine's own attribution band (647 — once it reports "cross-encoder is ~82% of query latency," more
+  attribution is procrastination versus optimising the cross-encoder). *Where it would be violated:*
+  continuing to add CI-attribution surfaces here without acting on the overhead finding. Recording the
+  principle is the deliverable; the "act" belongs to the optimization band (648), outside this
+  attribution tempdoc's scope — deliberately separating recognising the lever from pulling it.
+
+Sources: [Improve the performance of Gradle builds](https://docs.gradle.org/current/userguide/performance.html),
+[Gradle Configuration Cache](https://docs.gradle.org/current/userguide/configuration_cache.html),
+[Gradle config-cache: 2× faster, ready for 9.0](https://gradle.com/events/gradle-configuration-cache-05-25/),
+[Speed up Java startup with AppCDS (Red Hat)](https://developers.redhat.com/articles/2024/01/23/speed-java-application-startup-time-appcds),
+[JEP 350: Dynamic CDS Archives](https://openjdk.org/jeps/310),
+[Java 11 AppCDS with Gradle (worked example)](https://blog.jdbevan.com/2020/09/30/java-11-appcds-example-with-gradle/),
+[Build times: the most important developer-productivity metric (Honeycomb)](https://www.honeycomb.io/blog/most-important-developer-productivity-metric-build-times),
+[How to monitor and optimize CI build performance (Semaphore)](https://semaphore.io/how-to-monitor-and-optimize-ci-build-performance).
