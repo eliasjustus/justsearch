@@ -1266,3 +1266,28 @@ truthful reason code instead of a silent 10x degradation. So Move 1 is simultane
 the new Principle A (multi-tenant externalized cost) *and* of the existing capability-projection
 principle — the two framings agree on "fail closed, report truthfully."
 
+### External-research judgment for this design (2026-07-01)
+
+Considered whether any load-bearing part of the design sits on actively-shifting external ground
+warranting a web-research pass. Conclusion: **no research pass** — reasoning recorded for continuity.
+
+- **Fail-closed-on-capability-loss (Move 1), shared acquire-once resolution (Move 2), and the
+  multi-tenant-externalized-cost principle (Reach A)** are settled engineering practice (fail-fast /
+  bulkhead / load-shedding; shared machine-global caches, the same shape as `HF_HOME`/`HF_HUB_CACHE`
+  and the codebase's own `JUSTSEARCH_MODELS_DIR`). Not fast-moving; nothing to check.
+- **The one genuinely fast-moving input is local-LLM *CPU* inference performance** (llama.cpp CPU
+  kernels / quantization / AMX are actively improving). It is nonetheless **not decision-relevant**
+  here, for three reasons: (1) the design rests on a *first-hand, current* operator observation on the
+  actual dev hardware+model ("CPU fallback is ~10x slower and completely halts all other work") — a
+  stronger primary source than any general web claim about CPU inference speed; (2) the load-bearing
+  harm is *structural*, not throughput-dependent — a 9B model on CPU saturates all cores and DOSes
+  co-tenant worktrees whether it runs at 3 or 8 tok/s, so a faster-CPU finding cannot flip the
+  contention argument; (3) the one alternative external trends might favour (keep CPU but *bound* it
+  via resource limits instead of removing it) is foreclosed by the operator directive that the CPU
+  llama-server should not exist in dev at all. So there is no open design fork a search would resolve.
+- **Public-doc currency caveat:** the "CPU 9B is unusable" claim is attributed to the settled internal
+  direction (381) + the operator observation, not asserted as a universal fact, and the tempdoc
+  carries the standard dated-history caveat — so the public-claims lane is not at risk from this claim
+  aging. No external code/text/assets were copied or adapted; nothing to attribute under the
+  license/notices lane.
+
