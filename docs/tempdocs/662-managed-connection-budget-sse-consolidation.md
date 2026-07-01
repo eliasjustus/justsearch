@@ -1,8 +1,9 @@
 ---
 title: "Managed connection budget — classify long-lived origin channels by demand and gate the always-on footprint"
 type: tempdoc
-status: open
+status: shipped
 created: 2026-06-30
+updated: 2026-07-01
 related:
   - 649-connection-truthfulness-under-load   # parent: 649 fixed the truthfulness; this fixes the cause
   - 562-installer-build-pipeline-smoothness   # grandparent: the alpha.28 "Reconnecting under load" finding
@@ -1498,3 +1499,128 @@ stop early and that suppressed exceptions accumulate rather than overwrite.
 suite green. No frontend or tempdoc-design changes this round — Java test-only.
 
 No further known unimplemented work remains on this tempdoc.
+
+## Shipped
+
+Merged to `main`: [PR #22](https://github.com/eliasjustus/justsearch/pull/22), squash-merged as commit
+`a9694aa1e70577fe49c322d4a378789adeb0c008` on 2026-07-01. All CI checks green at merge time (build,
+license/notices, three unit-test suites, secret scan, public-claims check).
+
+## Process retrospective (2026-07-01) — what cost time or risk on this engagement, and what should change
+
+This tempdoc was built and hardened across many iterative passes (design → build → four rounds of
+independent critical review → UX/design-alignment investigation → merge). Recorded here, standalone from any
+specific chat transcript, for whoever next does a similarly long, multi-round engagement in this repo.
+
+### What cost time or added risk
+
+1. **Orphaned dev-server processes silently persist and can break an unrelated build much later.**
+   `TaskStop`/killing the wrapper shell around `npx vite` does not reliably kill the underlying `node.exe`
+   child (a known issue — `.claude/rules/agent-lessons.md` already documents the port-scoped version). Across
+   this engagement's several isolated dev-stack verification cycles, at least one orphan survived
+   unnoticed for hours and later caused `./gradlew.bat build` to fail with `EPERM` on a locked native
+   module file (`lightningcss.win32-x64-msvc.node` under `node_modules`) — nothing to do with the actual code
+   change being verified at that point. Diagnosing it required correlating `Get-NetTCPConnection` output
+   against `Get-Process`/`Get-CimInstance` to find a process not tied to any port the current work session
+   remembered using. **Recommended fix:** after any dev-stack teardown, verify cleanup by port **and** by
+   scanning for `node.exe`/`npm.cmd` processes whose working directory resolves under the current worktree —
+   not just the specific port last used. Consider adding this as an explicit troubleshooting entry: *"if a
+   build fails with `EPERM` unlinking a file under `node_modules`, check for orphaned node processes across
+   the whole session, not just recently-used ports."*
+
+2. **The `justsearch-dev-mcp` ownership/lease tooling was unavailable this engagement**, forcing every
+   isolated backend verification (there were several) to manually probe `Get-NetTCPConnection` for a free
+   port and pick the next unused one by hand, to avoid colliding with a concurrently-running agent in a
+   different worktree. This is exactly the coordination problem that tooling exists to solve
+   (`.claude/rules/branch-safety.md` "Shared Dev Stack"); doing it by hand worked but is a repeated,
+   avoidable tax whenever that MCP surface isn't reachable. **Recommended fix:** if the dev-tools MCP server
+   is unavailable, treat that as worth surfacing early (a startup check), not silently working around it
+   every single time a new isolated backend is needed.
+
+3. **A tempdoc cited a not-yet-created future tempdoc by a guessed number ("tempdoc 663") for a follow-up
+   that hadn't been written yet.** By the time tempdoc 663 was actually created, its number had been used for
+   an unrelated topic (`663-ai-engine-verdict-single-authority.md`), leaving a stale, misleading citation that
+   had to be found and corrected. Tempdoc numbers are assigned by whoever authors the *next* tempdoc — there
+   is no reservation mechanism, so any "this will become tempdoc NNN" prediction is fragile by construction.
+   **Recommended fix:** never predict a future tempdoc's number. Name the follow-up work descriptively
+   ("a future tempdoc, not yet created, tracking BrainSurface's poll-timer cleanup") instead.
+
+4. **A citation referenced another tempdoc's committed scope without first reading its actual content** —
+   based only on having seen the filename in passing, the citation asserted what that document "owns," and
+   the assertion turned out to overstate it once actually read. **Recommended fix:** never cite what a
+   document commits to without opening and reading it first, even (especially) when it's tempting to infer
+   from a title alone.
+
+5. **A recurring, self-reinfecting CRLF-only diff** appeared in `git status` after nearly every `npm`/`gradle`
+   run across this engagement (4+ occurrences on `modules/ui-web/src/api/__fixtures__/settings-v2-live.json`;
+   also reproduced on `gradlew.bat`), requiring a manual single-file `git checkout --` before every commit —
+   and in `gradlew.bat`'s case, the diff **reappeared immediately after** a `git checkout --` discard,
+   confirming it isn't a one-off tool touch. **Root cause confirmed this engagement:** `git config
+   core.autocrlf` is `true` repo-wide, while `.gitattributes` declares at least `gradlew.bat` as `text
+   eol=crlf` explicitly (`git check-attr text eol -- gradlew.bat` → `text: set`, `eol: crlf`) — the combination
+   makes git's own checkout/diff normalization disagree with itself, so the file shows modified on every
+   checkout regardless of any tool touching it. **Recommended fix:** for files with an explicit `eol=`
+   attribute, `core.autocrlf` should not also be doing line-ending conversion — either drop the redundant
+   `eol=crlf` attributes in favor of relying on `core.autocrlf` alone, or set `core.autocrlf=false` and let
+   `.gitattributes`' explicit `eol=` rules be the single source of truth. Whichever direction, this needs a
+   deliberate fix, not a habit of discarding the diff by hand on every commit.
+
+6. **A design recommendation ("route the fix through the existing X signal") was accepted on the strength of
+   X's name/typical usage, without tracing what X actually computes.** The first version of the
+   `AdvisoryRailBadge` fix design pointed at `aiStateStore`'s `statusTone`, which turned out to blend
+   connection-reachability with AI-runtime-mode (online/indexing/offline) — a real semantic mismatch caught
+   only in a later, dedicated confidence-building pass that traced the signal's actual derivation
+   (`aiStateStore.ts`'s `computeStatusTone`/`computePhase`) and live-measured it. The correction (routing
+   through `AiState.phase` instead) was small, but the wrong design lived in the tempdoc for a full round
+   before being caught. **Recommended fix:** when a fix design says "use the existing authority for X," trace
+   that authority's actual inputs before committing the design to a plan — not just its name or where else
+   it's used.
+
+7. **Long-running, many-round tempdocs accumulate cross-references that go stale as new sections are
+   inserted.** A later section referenced an earlier finding as "recorded... above," written without
+   confirming the referenced section actually preceded it in document order; a subsequent readability pass
+   found the reference pointed the wrong direction. The append-only/dated-history convention is valuable and
+   should stay, but **avoid relative positional references ("above"/"below"/"earlier") in a tempdoc that will
+   keep growing — cite the specific dated section by name, or restate the fact directly, instead.**
+
+8. **Several isolated dev-stack verification cycles in quick succession, each a full backend+frontend
+   startup/teardown**, likely could have shared one running stack across adjacent verification checkpoints
+   within the same round where only frontend code changed (hot-reload-eligible), rather than a fresh
+   `--clean` backend start each time. Worth weighing per-round: does this specific check need a clean
+   backend, or just a fresh browser session against an already-running one?
+
+### What worked well and should be preserved
+
+- **Independent adversarial review, verified before accepting.** Every subagent-reported finding across four
+  review rounds was re-checked directly against the source before being treated as real — this caught that
+  one round's "test gap" finding was accurate but also confirmed several other candidate findings were false
+  positives once traced through the actual code (e.g., the `resumeToken` monotonic-ratchet question,
+  `Throwable.addSuppressed` accumulation semantics). Subagent output is a hypothesis, not a verdict.
+- **Verify-before-build, applied literally**, including at the bytecode level (confirming Javalin's
+  `Emitter.emit()` is internally synchronized via `javap`, not by trusting documentation or assumption) and at
+  the dependency-version level (confirming Mockito 5.22's inline mock maker supports final-class mocking
+  *before* writing a test that depended on it, avoiding a wasted debugging cycle).
+- **Multi-agent coordination discipline** — every dev-stack port collision with a concurrently-running agent
+  was resolved by picking a different port and verifying by PID that the other session's process was
+  untouched, never by assuming ownership or killing an unidentified process.
+- **The per-session observations-inbox shard** (`node scripts/agent-analytics/note-observation.mjs`) cleanly
+  captured an out-of-scope platform-risk finding (Chrome/WebView2's Local Network Access rollout) without
+  polluting this tempdoc's scope or risking a write conflict with concurrent agents editing the shared inbox.
+- **The register+gate governance pattern** made re-verifying "did this change break the connection budget
+  invariant" a single fast, reliable command (`node scripts/ci/check-live-channels.mjs`) throughout, instead
+  of manual re-inspection.
+
+### Known context for a future reader (not this tempdoc's concern, recorded so it isn't rediscovered blind)
+
+- The local `main` checkout in this environment routinely carries uncommitted work from other concurrent
+  agents (observed this engagement: changes to `docs/business/**` and `scripts/cutover/**`, unrelated to this
+  tempdoc). That is expected in this repo's multi-worktree workflow, not a sign of a broken checkout — do not
+  touch or discard it without knowing whose it is.
+- A Chrome/WebView2 platform-security change (Local Network Access) that could eventually affect this app's
+  entire loopback-network architecture was found and logged to the observations inbox during this engagement,
+  not fixed — it is out of this tempdoc's scope. See the "Research-currency check" section above for detail
+  and sources.
+- Everything in this document above this retrospective section reflects the state as of 2026-07-01 and the
+  final shipped code on `main` at the merge commit above — treat any earlier-dated internal reasoning in this
+  file as historical working notes (per this file's own append-only convention), not as a current design
+  spec; the current design is whatever `main` actually runs.
