@@ -400,6 +400,47 @@ current problem does not require. The principle is recorded here so it's recogni
 future tempdoc hits the fourth instance; building the generalized enforcement is that future tempdoc's
 call, not this one's.
 
+### D7b. External research pass — is any of this design sitting on ground that's actively shifting? (2026-07-01)
+
+Checked whether a research pass was warranted before treating D1-D7 as settled. Judgment, by piece:
+
+- **The core mechanism (single authoritative state machine + closed reason-code enum + multi-transport
+  projection, k8s-style readiness/liveness)** is settled software-engineering practice (the manifest doc
+  itself already cites the k8s readiness/liveness pattern by name). No active research churn here; no
+  search performed for this part.
+- **"Doctor"-style local preflight tooling and zero-setup onboarding** (`flutter doctor`, `brew doctor`,
+  the "one command, zero setup, offline after first model download" framing already validated in the
+  prior investigation pass against `shinpr/mcp-local-rag`) is an established, stable pattern, not a
+  fast-moving one. No further search needed.
+- **MCP itself is not settled** — this one is worth a targeted check, since D2/D5 lean on "the MCP tool
+  is one of the manifest's already-existing transports" as a given. Searched and fetched the current
+  spec state directly (`blog.modelcontextprotocol.io`, official source) rather than relying on
+  secondary summaries.
+
+**Finding:** JustSearch pins MCP protocol version `2025-11-25` (`docs/reference/mcp-production-server.md:62`).
+A **2026-07-28 release candidate** — described by the MCP maintainers as "the largest revision of the
+protocol since launch" — finalizes in about four weeks from this pass (RC locked 2026-05-21, final spec
+2026-07-28; source: [MCP blog, "The 2026-07-28 MCP Specification Release Candidate"](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/)).
+Relevant specifics: it **removes the `initialize`/`initialized` handshake and session model entirely**
+(any request can land on any server instance, no sticky session store), replaces connection-time
+capability negotiation with an on-demand `server/discover` method, and — most relevant here — gives
+`tools/list` and resource reads `ttlMs`/`cacheScope` fields "modeled on HTTP `Cache-Control`,"
+explicitly **"eliminating reliance on persistent SSE streams for change notifications."**
+
+**Implication for this design, kept general (no implementation decided here):** D2/D5's core claim —
+"project the manifest's `ai.phase`/`ai.pendingReason` through MCP, don't build a parallel prober" —
+still holds and is actually reinforced by this shift, not undermined: a snapshot field read through a
+ttl-cached MCP resource/tool call is a *better* fit for the incoming stateless model than the
+manifest's own SSE stream would be if naively carried over. What should **not** be assumed is that the
+current session/SSE-shaped MCP tool wiring survives unchanged — that's exactly the kind of transport
+detail 655 (`mcp-conformance-and-capability-policy`) owns, not this tempdoc. Flagging so 655's own pass
+tracks the July 2026 spec transition when it designs MCP conformance, rather than 656 quietly baking in
+an assumption about MCP transport mechanics that may not survive the month.
+
+**No external code, text, or assets were copied or adapted into this tempdoc or the codebase** —
+this was a factual/currency check, cited by URL above; nothing to attribute under the license/notices
+CI lane beyond the citation itself.
+
 ### D8. Public-repo caution
 
 This tempdoc is design history in a public repository and may be read externally once merged. Nothing
