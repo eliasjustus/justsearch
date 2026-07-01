@@ -237,7 +237,7 @@ jobs:
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
-          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain --continue
 
       - name: Report unit-test attribution
         if: always()
