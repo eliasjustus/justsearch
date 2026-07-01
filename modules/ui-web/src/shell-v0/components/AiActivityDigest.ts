@@ -43,6 +43,7 @@ import {
   openActionLedgerStream,
   type UnifiedActionEntry,
 } from '../operations/ActionLedgerClient.js';
+import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import {
   summarizeAgentRecall,
   type AgentRecallDigest,
@@ -56,6 +57,9 @@ import {
 export class AiActivityDigest extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
+    // Tempdoc 662: the shared MultiplexedStream (mirrors AdvisoryToastHost's `store` property
+    // shape — an object, not an attribute-able primitive).
+    multiplex: { attribute: false },
     digest: { state: true },
     pendingAgent: { state: true },
     // 543-fwd #8 — entries staged for the mass-undo confirm preview; empty = not confirming.
@@ -63,6 +67,7 @@ export class AiActivityDigest extends JfElement {
   };
 
   declare apiBase: string;
+  declare multiplex?: MultiplexedStream;
   declare digest: AgentRecallDigest;
   declare pendingAgent: number;
   declare undoPreview: ReadonlyArray<JournalEntry>;
@@ -94,10 +99,13 @@ export class AiActivityDigest extends JfElement {
     // ALWAYS-MOUNTED chrome, so it degrades when EventSource is unavailable (non-browser test env /
     // SSR) exactly as startEffectIngest guards a missing fetch — the digest just stays empty.
     const canStream =
-      this.eventSourceFactory !== undefined || typeof EventSource !== 'undefined';
+      this.multiplex !== undefined ||
+      this.eventSourceFactory !== undefined ||
+      typeof EventSource !== 'undefined';
     this.stopStream = canStream
       ? openActionLedgerStream({
           apiBase: this.apiBase,
+          ...(this.multiplex ? { multiplex: this.multiplex } : {}),
           ...(this.eventSourceFactory ? { eventSourceFactory: this.eventSourceFactory } : {}),
           onActivity: (rows) => {
             this.entries = rows;

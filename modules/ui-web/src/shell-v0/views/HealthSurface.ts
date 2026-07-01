@@ -48,6 +48,9 @@ import {
   type ReadinessView,
   type EngineRealized,
 } from '../state/aiStateStore.js';
+// Tempdoc 662 post-implementation: the connection-budget runtime-peak signal was
+// collected but shown nowhere — surfaced here alongside the other connection facts.
+import { getCurrentOpenChannelCount, getPeakOpenChannelCount } from '../state/liveChannelBudget.js';
 import { presentVerdict, type SystemHealthVerdict } from '../state/verdict.js';
 import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
@@ -1013,6 +1016,12 @@ export class HealthSurface extends JfElement {
       <div class="data-row">
         <span class="key">Data updated</span>
         <span class="val">${formatRelativeMs(this.aiState?.connection.lastSuccessMs ?? null)}</span>
+      </div>
+      <div class="data-row">
+        <span class="key">Connections</span>
+        <span class="val"
+          >${getCurrentOpenChannelCount()} open (peak ${getPeakOpenChannelCount()})</span
+        >
       </div>
     `;
     // 569 §15 — when CORE_DECLARED declares the connection status region, the live STATUS line is
