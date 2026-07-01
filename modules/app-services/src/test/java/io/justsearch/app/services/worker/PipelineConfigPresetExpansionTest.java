@@ -19,7 +19,8 @@ import org.junit.jupiter.api.Test;
 class PipelineConfigPresetExpansionTest {
 
   private static final RerankerConfig ENABLED =
-      new RerankerConfig(true, null, 20, 200L, 5, 512, false, 0, 16_000);
+      new RerankerConfig(
+          true, null, 20, 200L, 5, 512, false, 0, 16_000, false, 0.5, false, 0.85, false);
 
   private static io.justsearch.ipc.PipelineConfig toProtoPipelineConfig(PipelineConfig cfg) {
     // Tempdoc 556: toProtoPipelineConfig moved to SearchPipelinePresets (package-private static);

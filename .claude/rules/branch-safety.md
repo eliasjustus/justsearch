@@ -152,6 +152,9 @@ backend work.
 3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
    investigation, and retry commits off `main`.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
+   Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
+   (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is
+   already back on `main` doing post-merge maintenance).
 5. Remove the worktree. GitHub deletes merged remote branches; delete local
    branches after verifying the merge. On Windows, prefer
    `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over

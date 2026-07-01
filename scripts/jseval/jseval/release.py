@@ -323,6 +323,15 @@ def compose(
 
     # 2. Reference cohort tuple (from the first member's manifest — all equal).
     ref_manifest = run_summaries[0]["manifest"]
+    # tempdoc 664: `config_cohort_key` deliberately excludes GPU/hardware execution flags
+    # (`_MODEL_EXECUTION_FLAGS`) — intentional, and guarded by
+    # `test_config_key_ignores_gpu_execution_flags`, so relevance-style comparisons aren't
+    # needlessly split by hardware. That leaves a real gap for hardware-SENSITIVE metric
+    # families (perf: latency/throughput): `cohort["hardware"]` below was silently sourced from
+    # only the FIRST member, with no check the rest agree. Record that agreement explicitly here
+    # — additive, does not change `config_cohort_key` or cohort membership — so a
+    # hardware-sensitive projection (perf_gate.py) can refuse to trust a mixed-hardware release.
+    hardware_snapshots = [_hardware_projection(s["manifest"]) for s in run_summaries]
     cohort = {
         "config_cohort_key": cohort_key,
         "git_sha": ref_manifest.get("git_sha"),
@@ -334,6 +343,7 @@ def compose(
         # HEAD run against). All members share it — engine-set differences split config_cohort_key.
         "realized_engines": (ref_manifest.get("model_fingerprints") or {}).get("realized_engines"),
         "hardware": _hardware_projection(ref_manifest),
+        "hardware_homogeneous": all(h == hardware_snapshots[0] for h in hardware_snapshots),
     }
 
     # 3. Per-corpus measured projection (one row per dataset) + ablations.

@@ -3,7 +3,7 @@ title: "Agent developer-velocity: the parallel-agent substrate seams — worktre
 type: tempdocs
 status: active
 created: 2026-06-20
-updated: 2026-06-21
+updated: 2026-07-01
 author: agent reflection (cross-session friction report), filed by agent
 category: dx / agent-tooling / worktrees / dev-stack / velocity
 related:
@@ -1499,4 +1499,403 @@ a shard): §15 hooks-reference note, 597 orphan, the stale-row pruning, the pre-
 breakage. Frontmatter moved `implemented → active` (substantially complete; merge pending — and 618 was
 itself a §14 offender, now corrected). Merge left to the user (resolve in worktree → fast-forward, staging
 only the files listed above).
+
+---
+
+# Takeover — theorization pass (2026-07-01): the reach beyond the catalogue
+
+> **What this is.** A takeover of 618 whose brief is *theorization, not execution*: think broadly about
+> directions, framings, tradeoffs, hidden assumptions, and whether the catalogue points to a broader recurring
+> shape — **without settling a design**. Grounded in fresh evidence from a large 2026-07-01 multi-PR run
+> (public PRs #17–#21 on `eliasjustus/justsearch`, plus the sibling `confirm-publish-actions` gate registered
+> as `tier-register.md` row 37) that *re-hit several of this doc's items live*. **No code, no final design.**
+> Where it revises 618, it says so.
+
+## First: the ledger is staler than Part 2 implies (and that is itself a finding)
+
+Part 2 lists §10a (piped-exit) and §11d (bare-background-server) as "not present in `agent-lessons.md` →
+OPEN." Both are now **present** on `main`, and Seam C **shipped** (the `docs/observations.d/<session>.md`
+shard + `note-observation.mjs` / `fold-observations.mjs`, both on `main` and used by this very takeover). So
+618's *design and most of its promotion tail are done* — the doc's own tail agrees. The small on-brand lesson
+(§14 / Part 3·B): **a tempdoc's own "what remains" ledger drifts stale the same way any hand-maintained status
+does.** The frontier is therefore not *finishing 618's tail* — it is what the accumulated evidence now points
+to.
+
+## Fresh evidence that *challenges* the doc, not just corroborates it
+
+1. **Promotion-to-prose has a measured efficacy ceiling — §10a recurred *after* being promoted.** In the
+   2026-07-01 run, §10a's exact failure (a backgrounded `./gradlew … | tail` reporting exit 0 while the build
+   had **FAILED**) recurred and briefly produced a wrong "safe to merge" conclusion — *despite §10a already
+   sitting in `agent-lessons.md`*. A live datapoint for what the tier-register asserts abstractly (prose
+   ~70%): **promoting a parked lesson to a prose home reduces but does not remove recurrence.** This reframes
+   Part 4 bucket 1: the higher-value question per lesson is not *"is it written down"* but *"is it enforced at
+   a tier matched to its blast radius?"* §10a's blast radius (fast-forwarding `main` on a red build) arguably
+   warrants a *mechanical* signal — e.g. a *separate* non-blocking PreToolUse advisory hook (not `bash-guard`,
+   which is block-or-silent and structurally short-circuits on any pipe at `bash-guard.mjs:217`, so it can
+   neither emit an advisory nor even see a piped command) that fires when a `gradlew`/test command is piped
+   into `tail|grep|head` in a way that masks its exit — not another prose line.
+
+2. **Seam C fixed shard *content* isolation but not the *identity* that selects the shard.** The shipped
+   per-session inbox worked, but the `<session>` resolution feeding `note-observation.mjs` (a shared
+   `tmp/agent-telemetry/current-session-id`) was **overwritten by a concurrent session**, so notes were filed
+   under the *wrong* session's shard (non-fatal — content preserved). This is the same shared-mutable-state
+   class Seam C set out to solve, **recursed up one level**: the *selector* of the isolated slot is itself
+   un-isolated shared state. The isolation principle looks incomplete unless "which slot I write to" is
+   *derived deterministically*, not read from a clobberable shared file.
+
+3. **A lifecycle transition 618 does not catalogue at all: publish (branch → PR → merged `main`).** 618's
+   seams cover session-start, worktree, dev-stack, shared-write. The 2026-07-01 run's *largest* time sinks
+   were on the **publish** transition: strict "require branches up-to-date" × ~10-min CI made a 7-PR
+   dependency batch an **O(n) serial cascade** (each merge invalidates the rest); `gh pr checks --watch`
+   **returned success before the required run registered** (a protocol race — the fix is "verify
+   `mergeStateStatus==CLEAN` immediately before merge," not the watch's exit); and dependency PRs needed
+   `THIRD_PARTY_NOTICES` / gradle verification-metadata regeneration Dependabot cannot do. The sibling
+   `confirm-publish-actions` gate hooks the publish *decision*; the publish *mechanics* are un-catalogued.
+   **Open routing question** (per §E's scope-drift caution): these plausibly belong in the public-CI tempdocs
+   (651/652), a new "publish-lifecycle friction" doc, or a thin extension here — not obviously 618.
+
+## The recurring shape the accumulated evidence points to (recognized, NOT to be built)
+
+618's principle is *"dev-environment ↔ worktree correspondence, asserted not assumed."* The
+`confirm-publish-actions` gate, Seam C, and Part 3·C's SessionStart idea are the *same principle at other
+transitions*. Stated at the level all four share:
+
+> **The agent lifecycle is a short, enumerable sequence of transitions — session-start · worktree
+> create/remove · dev-stack start · shared-state write · publish/merge. At each, some state must correspond to
+> expectation; the recurring high-cost defect is that the correspondence is *assumed* (or asserted only at
+> prose ~70%) when the blast radius warrants a mechanical assertion at the transition. The systemic remedy is
+> not one engine but a discipline: for each transition, assert its correspondence at the *strongest feasible
+> tier matched to its consequence*.**
+
+This is the join of two principles the repo already holds separately — 618's "assert correspondence at point
+of use" and the tier-register's "prose ~70% / hook ~100%." The join is *correspondence-at-transition,
+tier-matched to blast-radius*; 618, `confirm-publish-actions`, Seam C, and `compact-restore`'s worktree banner
+are all instances. **This is retrospective coherence, explicitly not a charter** — §D's caution stands
+doubled: naming a unifying shape must not become a mandate to build a "transition engine" / "correspondence
+authority." The trigger to build any single instance remains a concrete recurring failure.
+
+## Alternative framings worth holding (none chosen)
+
+- **Frame A — correspondence (618's).** State-matching. Covers §1/§2/§3/§7 well; by construction it does
+  **not** cover *timing/throughput* friction (the merge cascade, the `--watch` race, CI latency) — a
+  *protocol/throughput* axis 618 rightly excludes (as it already excludes §4/§5/§6). Worth stating so the
+  catalogue isn't mistaken for total.
+- **Frame B — unhooked-transition.** The repo hooks 7 of ~9 agent transitions; the frontier is *the
+  transitions with no tier-appropriate assertion* (worktree-create/remove → Seam A; publish → the confirm
+  gate). Its value: it makes the frontier **enumerable** — list the transitions, mark each with its current
+  assertion tier and the tier its blast-radius warrants.
+- **Frame C — tier-migration.** The lever isn't "write the lesson down" but "move each recurring lesson up the
+  strongest feasible tier." A small per-lesson ledger (recurring lesson · current tier · recurrence count ·
+  feasible tier-up) would operationalize Part 4's promotion tail and make the §10a-recurred datapoint
+  actionable rather than anecdotal.
+
+## Hidden assumptions a future design pass should test first
+
+- **"Worktrees are isolated → no contention layer needed" (Scope boundaries) is only true for the filesystem
+  *tree*.** Worktrees **share** the main checkout's `tmp/agent-telemetry/` — session-id, dev-stack lease, the
+  OTLP sink. The Seam-C session-id clobber (evidence #2) is one instance; that shared-tmp surface is a
+  *second* shared-mutable surface beyond `observations.md`, and the "no contention" claim doesn't cover it.
+- **Part 4 treats the promotion tail as "low-risk cleanup."** Evidence #1 says it's low-*efficacy*: correct to
+  do, but a prose home is the weakest promotion; don't expect it to change behaviour much.
+- **The correspondence frame assumes the failure is state mismatch.** A large share of the highest-cost
+  2026-07-01 friction was *timing/throughput* (protocol races, CI-latency cascades) the frame doesn't absorb —
+  worth naming so coverage isn't over-claimed.
+
+## Tradeoffs / risks any future tier-up must respect
+
+- **Hook-tier over-reach frustrates users without an override.** The `confirm-publish-actions` gate
+  deliberately chose `ask` (human-in-the-loop, resolvable in-turn) over a hard `block`, precisely because a
+  no-override block on a normal action is user-hostile. Any tier-up of a parked lesson must keep a legible
+  override (`ask`/advisory), not a dead-end deny.
+- **SessionStart correspondence-checks trade latency/noise for coverage.** Part 3·C's base-recency banner is
+  cheap; a full "correspondence tuple" (branch-on-expected · base-recency · local-vs-origin · neighbour-WIP
+  present) risks noise at every session start. Value-per-check must be weighed per element.
+- **The subagent blind spot recurs at *every* one of these transitions.** No parent-session hook fires in
+  subagents (618 §6; the confirm gate's own residual risk). Any transition tier-up is parent-session-only; the
+  subagent path stays prose ~70% by construction — a ceiling to state, not to paper over.
+
+## Ideas that may be useful later (explicitly not the answer)
+
+- A **session-start correspondence banner** generalizing Part 3·C from "base is N behind" to the whole "am I
+  where I think I am" tuple — would have caught the 2026-07-01 inverted-checkout case (a main checkout parked
+  *off* `main`, with `main` held by a worktree, and local `main` diverged from `origin`).
+- Recognizing **`tmp/agent-telemetry/` as the next Seam-C-class surface** (session-id, lease) — the identity
+  layer the shipped Seam C sits on.
+- A **named "false-green" postmortem family**: the doc already holds three members (§10a pipe-masked-exit, §3
+  precondition-satisfied-green, §10c subset-gate-blind, §10b unreachable-seed) plus a fourth the sibling gate
+  documented (a worktree-edited hook *appears* to fire live but the live wiring runs the main checkout's
+  copy). Part 3·F already argues §3 deserves promotion; the *family* is the better container.
+- A **per-lesson enforcement-tier ledger** (Frame C).
+- Deciding **where publish-mechanics friction lives** (evidence #3).
+
+## Scope discipline (unchanged)
+
+None of the above is a charter to build. This pass records *reach* and *candidate directions* only, in the
+spirit of the existing *"principle and its reach (recognized, not built)"* section. The bar for new
+scaffolding stays what 616 set and 618 honored: *removes a real recurring failure without colliding with what
+exists.* The one concrete, low-risk, already-evidenced candidate a future design pass might weigh first is
+Frame C's tier-migration ledger — because it turns the recurring "promote the lesson" motion (which evidence
+#1 shows is weak) into a decision about *tier*, which is where the leverage actually is.
+
+---
+
+## Long-term design settlement (takeover, 2026-07-01)
+
+The theorization pass above enumerated candidate directions. This section settles which one is the *correct*
+long-term shape for the remaining problem in this tempdoc's ledger — the one the framing prompt asked for: a
+design matched to the problem, conforming to what already exists rather than paralleling it, general rather
+than implementation-level.
+
+### The problem, stated precisely
+
+Strip away the incidentals and the residual problem is narrow. `.claude/rules/agent-lessons.md` accumulates
+**cross-cutting platform constraints** — the "if you do X the harness does Y, so do Z instead" lessons. It
+currently holds two *anchored* rules (rows 27–28 in the tier-register: subagent-inheritance and
+parent-hooks-in-subagents) and roughly two dozen **un-anchored bullets** (the `## Claude Code platform
+constraints` list plus the `Verifying … claims` and `Named substrate-discipline` lists). Those bullets are
+real, load-bearing lessons — but they sit in the *always-loaded* layer while being *un-tiered*: the
+tier-register (which records how each rule is enforced/delivered) never triaged them, and tempdoc 620 Part V's
+prose-to-infrastructure sweep only classified the ~25 rules that *were* anchored.
+
+The proof that this is a genuine gap, not a bookkeeping nicety, is **§10a**: the pipe-masked-exit lesson is an
+always-loaded bullet, and it still **recurred this session** (a `./gradlew … | tail` reported the pipe's
+exit 0 while the build had failed — one step from fast-forwarding `main` on red). Maximum residence, minimum
+salience: the lesson was *present in context the whole time* and did not fire at the moment it was needed. That
+is the exact failure mode 616/620 already named — **delivery beats residence** — reproduced on a surface those
+tempdocs didn't sweep.
+
+### The settled design: conform to 620, don't fork it
+
+The correct long-term design is **not a new 618 mechanism**. It is: *route the few high-blast-radius,
+deterministic-trigger bullets in `agent-lessons.md` through tempdoc 620 Part V's existing
+enforcement-tier rubric* — the same Tier-1/2/3 classification, the same tier-register ledger, the same
+hook-hint delivery tier, the same 530 changeset discipline. Concretely:
+
+1. **Triage, don't migrate wholesale.** For each `agent-lessons.md` bullet, apply 620 Part V's test: does it
+   have a *deterministic trigger* (a tool call or command shape a hook can pattern-match) **and** a
+   *high blast radius* (silent wrong outcome, not mere annoyance)? Most bullets fail this — they are
+   judgment/orientation notes (evidence chains, "prefer resolved path for scoop shims") with no crisp trigger.
+   Those **stay prose**, correctly. Only the few that pass become tier candidates.
+
+2. **§10a is the one proven Tier-1 delivery-conversion.** It has a deterministic trigger (a Bash command whose
+   exit matters, piped into `tail`/`grep`/`head`) and a high blast radius (a red build read as green). It
+   belongs at the **hook-hint delivery tier** — a *non-blocking* advisory that fires at the moment the
+   masking command is issued (the same tier as `tempdoc-age-hint`/`compact-restore`, adherence ~85%), not a
+   blocking guard (a legitimate `… | tail` to *read* output must still be allowed). This is the same move 620
+   Part V made for `tempdocs-are-dated-history` → `tempdoc-age-hint`: take an always-loaded prose rule that
+   wasn't firing and *deliver it at relevance*.
+
+3. **Anchor whatever gets a tier.** Any bullet promoted to a tier gets a `<!-- rule:<slug> -->` anchor + a
+   tier-register row + a 530 changeset — so the `prose-tier-register` meta-loop gate keeps the ledger honest.
+   This is why the design *is* 620's: the register and its gate are 620/530's machinery, and the bullets
+   simply become new rows in the table that already exists.
+
+**What the design explicitly refuses:**
+
+- **No recurrence counter / "wait for a second instance."** `structural-defects-no-repeat` forbids it: §10a's
+  single recurrence — indeed its single documented instance — proves the class. The trigger for converting a
+  bullet is *"deterministic trigger + high blast radius,"* never *"it has happened N times."*
+- **No parallel lesson-ledger.** A second register beside the tier-register would be exactly the fork
+  (doc-as-projection / 553) this codebase's discipline exists to prevent. The tier-register is the one
+  authority for "how is this rule enforced/delivered"; un-tiered bullets are a *gap in that authority's
+  coverage*, closed by extending it, not by standing up a rival.
+- **No wholesale hookification.** 616 §7.2's data (0 block events across 8.6k tool calls) and 620 Part V.5's
+  finding (only ~3 of ~25 prose rules were clean high-value conversions) both say the leverage is small and in
+  *delivery*, not enforcement. The design honors that: triage yields *a few* hook-hints, most bullets stay
+  prose.
+
+This **refines the theorization pass's Frame C.** Frame C floated a "per-lesson enforcement-tier ledger" as
+the lead candidate. The settlement keeps Frame C's *insight* — the recurring motion is "promote the lesson,"
+and the right axis is *tier* — but corrects its *shape*: the ledger already exists (the tier-register), so the
+work is **coverage extension of an existing authority**, not a new ledger. Frame C over-weighted
+"tier-migration is the big lever"; 620/616's evidence caps the lever's size at a handful of delivery
+conversions.
+
+### The two out-of-scope problems, routed not solved
+
+Two items in the ledger are *not* this design and should not be absorbed into it:
+
+- **Session-identity / `tmp/agent-telemetry/` as the next Seam-C-class surface** (§evidence, Part 3·A). This is
+  a *shared-state provenance* problem in the Seam-C family, not a lesson-delivery problem. It has its own
+  natural home (the worktree/telemetry substrate work) and should be designed there.
+- **Where publish-mechanics friction lives** (evidence #3 — the `gh pr create/ready/merge` confirmation
+  question). Tempdoc 664/665 already owns this exact surface (a `permissionDecision:'ask'` on publish
+  actions in `bash-guard`). It is *already being designed elsewhere*; 618 should cite it, not re-open it.
+
+Keeping these out is itself an application of the design's own principle: conform to the authority that already
+owns the concern.
+
+### Principle and its reach (recognized, not built)
+
+The settlement is an **instance**, not a new principle. It instantiates, in order of directness:
+
+- **620's "delivery beats enforcement"** — a maximally-resident rule (§10a, always loaded) that still didn't
+  fire is the canonical case *for* the delivery tier.
+- **620/553's "doc-as-projection, not fork"** — the fix extends the one tier-register authority instead of
+  minting a parallel lesson-ledger.
+- **530's ratchet/meta-loop** — every promoted bullet flows through the `prose-tier-register` gate + changeset
+  grammar that already governs tier changes.
+
+The one *general shape* worth naming for reuse — stated so a future agent can spot it elsewhere, not so we
+build structure for it now:
+
+> **Residence is not delivery.** A lesson placed in an always-loaded surface has maximal *residence* and can
+> still have minimal *salience* — it is present but does not fire at the moment of relevance. A lesson with a
+> **deterministic trigger** and a **high blast radius** is mis-filed as always-loaded prose; its correct home
+> is a moment-of-relevance delivery hook (lower residence, higher salience). "Always-loaded" is a cost
+> (context budget) masquerading as a guarantee.
+
+**Candidate scope of this shape:** the ~two dozen un-tiered bullets in `agent-lessons.md` are the population to
+scan; §10a is the one confirmed member. **Existing violation it names:** those bullets escape *both* the
+tier-register's ledger *and* 620 Part V's triage — a coverage seam between two authorities that each assumed
+the other covered the always-loaded prose rules. Recording that seam is the deliverable here; **closing it
+(anchoring + tiering the qualifying bullets, wiring the §10a hook-hint) is a scoped implementation a future
+pass executes** under 620/530's existing machinery — not new structure, and not this theorization pass's job.
+
+### External research pass (2026-07-01)
+
+Two claims in this settlement sit on globally fast-moving ground — the *principle* (a claim about LLM context
+behaviour) and the *mechanism* (a Claude Code harness fact). A bounded web pass on both, with the two
+load-bearing sources verified against their primaries, confirmed the design and sharpened it. Findings, and how
+each moves the design:
+
+1. **The principle is not novel — it is a local name for a named external principle.** Anthropic's own
+   *Effective context engineering for AI agents* frames the core rule as *"find the smallest set of high-signal
+   tokens that maximize the likelihood of some desired outcome,"* and names **just-in-time context** (keep
+   lightweight identifiers, load on demand) as the pattern, explicitly because always-loading everything is
+   *worse* — it cites **context rot** (accuracy falls as token count rises), a finite **attention budget**, and
+   the transformer's n² token-pair cost. Our *"residence is not delivery"* is therefore **the just-in-time
+   principle applied to rule delivery**, not a new coinage. The anti-fork discipline this repo applies to data
+   representations (§553 projection-vs-fork) applies to *concepts* too: cite the canonical framing, don't
+   parallel it. **Design change:** frame the principle as an instance of just-in-time context engineering, with
+   the external citation, rather than as a house term.
+
+2. **§10a now has a mechanistic cause, not just an anecdote.** The independent *context rot* line of work
+   (Chroma's "Context Rot: How Increasing Input Tokens Impacts LLM Performance"; the lost-in-the-middle /
+   position-bias literature) explains *why* an always-loaded rule can fail to fire: attention dilutes across a
+   growing window and mid-context constraints get buried — ">30% degradation" when the relevant token sits in
+   the middle. Adjacent 2026 preprints on *instruction adherence in coding-agent configuration files* report a
+   **within-session compliance attenuation** (adherence odds falling as a session lengthens) and find that
+   *structural* formatting of the always-loaded rule barely moves adherence — i.e. reformatting residence is
+   not the lever; delivery is. (These preprints are search-surfaced, not primary-verified; cited as
+   directional corroboration, not as measured fact.) **Design change:** §10a's recurrence is reframed from
+   "a lesson that happened to be ignored" to "the predicted failure of a max-residence / mid-context rule under
+   attention dilution" — which is exactly what the delivery tier exists to fix.
+
+3. **A new harness fact — verified against the primary doc — that the design must account for but that does
+   *not* supersede it.** Claude Code now documents an **`InstructionsLoaded`** hook event (fires when a
+   `CLAUDE.md` / `.claude/rules/*.md` file is loaded — matchers `session_start` / `nested_traversal` /
+   `path_glob_match` / `include` / `compact`). Crucially, per the primary docs it is **side-effects-only: it
+   cannot block and cannot inject context** (exit code ignored). So it is an *ingestion-side observability*
+   surface, **not** a delivery mechanism — it does not replace the moment-of-action hook-hint (which rides
+   `PostToolUse` / `PreToolUse` `additionalContext`, both confirmed current). Its real value to *this* design
+   is measurement: `InstructionsLoaded` lets you log *which* rules loaded and when (residence), which can be
+   cross-referenced against whether the rule actually fired (salience) — turning the "residence ≠ delivery"
+   gap from an assertion into something instrumentable. **Design change:** none to the settlement; added as a
+   noted, verified substrate the future implementation pass can use, and as a guard against the design silently
+   assuming a stale hook surface (`verify-don't-guess` / `tempdocs-are-dated-history`).
+
+4. **The broader "prose → executable constraint" program is externally active, which bounds our claim
+   correctly.** Work on deriving executable checks from agent instruction files (e.g. the "ContextCov" preprint
+   extracting checks from instruction files across public repos) is the *gate/lint*-tier direction — the same
+   move 620/530 already make. This corroborates that converting instruction prose to mechanism is a live,
+   validated direction; it also reinforces our scope discipline: the external programs are large and
+   general-purpose, whereas our settlement stays deliberately small (triage a few bullets, one confirmed
+   hook-hint) because 616/620's *local* evidence caps the lever — we adopt the direction, not a general
+   framework.
+
+**Attribution / licensing note (public-repo `license-and-notices` check):** this pass **copied no external
+code, text, or assets** into the repo or docs — findings are paraphrased and the sources are cited by URL /
+title inline above. Short attributed phrases from Anthropic's article (e.g. "smallest set of high-signal
+tokens") are quoted as citation, not vendored. No new dependency, snippet, or asset was introduced, so there
+is nothing for the notices pipeline to track. Primary sources verified:
+`anthropic.com/engineering/effective-context-engineering-for-ai-agents` and
+`code.claude.com/docs/en/hooks`; corroborating (search-surfaced, not primary-verified): Chroma "Context Rot"
+research, and 2026 arXiv preprints on coding-agent instruction adherence / executable-constraint extraction.
+
+### Title
+
+No change. This tempdoc's spine is the **worktree↔environment correspondence** seams (A/B shipped, C
+designed); the lesson-delivery settlement is a *satellite* that resolves into 620's domain, and the title
+already scopes the doc to its substrate-seam core. Filing the settlement here as history is correct; renaming
+the doc around it would over-claim the satellite as the subject.
+
+### Implementation (2026-07-01)
+
+The settlement's one buildable item shipped. §10a (pipe-masked exit) is now delivered at the moment of
+relevance by a **non-blocking PreToolUse/Bash advisory hook**, `scripts/agent-analytics/hooks/pipe-mask-hint.mjs`
+(mirroring `docs-granularity-hint.mjs`), registered via the manifest (`governance/agent-hooks.v1.json`) +
+codegen wiring. The detector is stage-aware — it fires only when a masking filter (`tail`/`grep`/`head`) is the
+*last* pipeline stage AND an earlier stage's leading executable is a build/test command, and stays silent only
+when the exit is genuinely preserved (`set -o pipefail`/`${PIPESTATUS}` — not `$?`/`&&` after a pipe, which
+read the masked last-stage exit, so `… | tail; echo $?` still fires) — while legitimate `log | tail` reads are
+un-hinted. Precision is guarded by a corpus in `pipe-mask-hint.test.mjs` (the living tuning surface).
+The rule is anchored `piped-exit-masked` in `agent-lessons.md`, recorded as tier-register **row 37**
+(`hook-hint`), with changeset `618-piped-exit-masked-rule.md`. The always-loaded §10a prose stays as the
+public-checkout fallback; the hook adds delivery, not replacement (matching the row-32 precedent).
+
+**Triage result (the "few" question, resolved to "one").** Walking the ~24 `agent-lessons.md` bullets against
+the rubric *(deterministic trigger) × (high blast radius = silent wrong outcome)*: §10a is the **sole** clean
+new conversion. Read-truncation is already mechanized by the `intervene` hook; §11d (background-server) and the
+browser/scoop/tabs bullets fail the test (loud, observable failures, or no crisp command trigger); the
+named-principle handles are judgment/reference. So the design's "§10a + at most 1–2" tightened to exactly one —
+which is itself evidence for 616/620's thesis that the delivery-conversion lever is small.
+
+**Correction applied.** The theorization pass's earlier phrasing ("a `bash-guard` advisory") was mechanically
+wrong and is corrected in-doc: `bash-guard` is block-or-silent (no advisory channel) and short-circuits on any
+pipe (`bash-guard.mjs:217`), so it can neither emit the hint nor see a piped command — hence a *separate*
+advisory hook.
+
+### Verification, review, and open threads (2026-07-01)
+
+**Verification tiers passed** (all local; no user-visible surface, so no browser/dev-stack tier applies): the
+`pipe-mask-hint.test.mjs` corpus (positive/negative + a right-reason guard); an emit probe (positive command →
+`additionalContext` JSON, negative → silent); `gen-agent-hooks-wiring.mjs --check` (settings in sync);
+`prose-tier-register` gate `pass` — verified *for the right reason* (the gate's baseline is `HEAD~1`, which
+lacks the new rule, and a bite-test confirmed the rule is genuinely evaluated, not grandfathered); the
+always-loaded budget check (the three grown files `--bump`ed with reasons); and `./gradlew.bat build -x test`
+(exit 0 — no Java touched). CI on PR #23: the **Build** lane (which carries the governance gate),
+**License and notices**, **Public claims**, and **Secret scan** all green on the implementation commit.
+
+**A review caught one real bug (fixed).** The first implementation's `PRESERVES_EXIT` wrongly treated
+`; echo $?` and `&& echo …` as exit-preservers and stayed *silent* on `./gradlew build | tail; echo $?` — the
+exact masked-exit shape §10a is about (`$?`/`&&` after a pipe read the pipe's last-stage exit, not the
+build's). Only `set -o pipefail` and `PIPESTATUS` genuinely recover a first-stage exit through a pipe. Fixed
+by narrowing the predicate to those two, with regression cases added. Lesson for a future editor: the corpus
+in `pipe-mask-hint.test.mjs` is the contract — extend it, don't loosen it.
+
+**Integration caveat (important for "is it actually live?").** The hook is wired through
+`.claude/settings.local.json`, which is **git-ignored** and materialized per-checkout from the manifest by
+`gen-agent-hooks-wiring.mjs`. So the tracked authority that propagates is `governance/agent-hooks.v1.json`; the
+hook only *fires* in a checkout whose `settings.local.json` has been (re)generated. A public checkout without
+that step keeps only the always-loaded §10a prose (the intended fallback). This is the established model for
+every advisory hook here, not new to this one.
+
+**Honest scope/alignment note (unresolved design judgment, flagged for a future owner).** By this tempdoc's
+*own* Part 3·E, §10-§15 (including §10a) "mostly belong to tempdoc **620**'s substrate, not 618." §10a's
+tempdoc-prescribed outcome (Part 2 / Part 4 bucket 1) was only "promote it to `agent-lessons.md` prose" — which
+was *already done* in the 2026-06-21 Phase 2 promotion. This hook is therefore an **enhancement beyond the
+tempdoc's ledger** (importing 620's delivery-tier idea), motivated by §10a *recurring despite* being prose —
+which is real evidence, and consistent with Part 3·E's complaint that prose "protects nobody." Two caveats a
+future agent should weigh, not silently inherit: (a) **homing** — the durable home for this delivery-tier work
+is arguably 620, and cross-filing it there (or moving the tier-register row's rationale) would resolve the
+Part 3·E tension; (b) **"keep it small"** — Part 3·D cautions that 618 is "a handful of small fixes, not new
+machinery," and a hook+row+changeset is heavier than the one prose line §10a's ledger asked for (justified
+here by the recurrence, but heavier).
+
+**Remaining 618 Part-4 thread NOT addressed by this work.** The `tempdoc-status-check` re-canonicalize-or-retire
+decision (Part 3·B — deferred ~5×) is still open and was outside this settlement's scope. The other Part-4
+items (§10a/§11d/§10b/§10c/§3 promotions; the §12 append-only observations path) were shipped before this
+takeover via the Phase 2 promotion and Seam C, so they are done.
+
+**Pre-existing issues discovered and logged (not fixed here — out of scope).** Recorded in this session's
+observations shard (`docs/observations.d/`, folded into `## Inbox` at merge): (1) `.claude/rules/branch-safety.md`
+is ~622 B over its always-loaded budget ceiling on `origin/main` (a prior PR grew it without a `--bump`);
+(2) `scripts/agent-analytics/test-pipeline.mjs:361` throws on empty `intervene` output for the large-file
+fixture — fails on `origin/main` too, i.e. environmental/pre-existing; (3) `branch-safety.md` states
+`.claude/settings.local.json` is "tracked" when it is git-ignored (doc drift).
+
+**Cross-branch note.** Tier-register **row 37** may collide with a row number another in-flight branch (664)
+also claims; the `prose-tier-register` gate only enforces in-file uniqueness, so the collision resolves at
+merge — renumber whichever lands second.
 

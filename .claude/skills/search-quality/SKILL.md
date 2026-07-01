@@ -57,9 +57,10 @@ Query variants of the same corpus get distinct slugs.
 | beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
 | mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
 | mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
-| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | |
-| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-03-28 | 343 D | |
-| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 316 | factoid | 2026-03-18 | 309 §37 | |
+| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | **RETIRED 2026-07-01 (tempdoc 666)** — replaced by `mixed/legal-clerc-200`; see Corpus provenance note under Findings. |
+| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-01 | 666 | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
 | mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
 | mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
 | mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
@@ -68,7 +69,7 @@ Query variants of the same corpus get distinct slugs.
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
-| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json` |
+| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
 
 ---
 
@@ -102,27 +103,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `bef184e333` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.47 · ORT 1.24.3
+**Release:** `84b305b2be` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.757 | — |
-| mixed/courtlistener-200 | hybrid | 0.608 | — |
+| beir/scifact | hybrid | 0.756 | — |
 | mixed/enron-qa | hybrid | 0.719 | — |
-| mixed/miracl-de-2k | hybrid | 0.728 | — |
-| mixed/miracl-fr-2k | hybrid | 0.707 | — |
+| mixed/legal-clerc-200 | hybrid | 0.516 | — |
+| mixed/miracl-de-2k | hybrid | 0.852 | — |
+| mixed/miracl-fr-2k | hybrid | 0.866 | — |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 152 | 93.7 | 22.0 | 2.02 |
-| mixed/courtlistener-200 | 143 | 13.5 | 1.1 | 2.02 |
+| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
 | mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/miracl-de-2k | 136 | 160.9 | 41.4 | 2.02 |
-| mixed/miracl-fr-2k | 134 | 161.5 | 49.7 | 2.02 |
+| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
+| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
+| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
 
 <!-- generated:end -->
 
@@ -195,7 +196,10 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Note:** splade-v3+gemma rows use chunk merge (active on EnronQA long emails). Chunk merge provides +1.3% nDCG on lexical (p=0.04, statistically significant). See 343 Phase 2.2.
 **Note:** All splade-v3+gemma `full` rows have CE OFF but dense ON (F-012 corrected — dense was working via gte-multilingual-base all along, tracking bug fixed). The full vs bm25_splade delta is the dense retrieval contribution. CE impact with splade-v3+gemma is unmeasured (jseval `--ce` flag needed).
 
-### mixed/courtlistener-200
+### mixed/courtlistener-200 (RETIRED 2026-07-01, tempdoc 666 — replaced by mixed/legal-clerc-200)
+
+*(all numbers below predate the retirement and are not reproducible against any corpus currently in this
+catalog — see Corpus provenance note above)*
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
@@ -209,10 +213,31 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Best known:** bge-m3 / minilm-512 / bm25-dom / full = **0.925**
 **Note:** BM25-dominant (0.925) is 11.8% better than balanced (0.816) on long legal docs. CE upgrade neutral (0.813 ≈ 0.816).
 
-### mixed/miracl-de-2k
+### mixed/legal-clerc-200 (new, tempdoc 666 — replaces mixed/courtlistener-200)
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | vector | 0.060 | — | — | dense | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | lexical | 0.686 | — | — | bm25 | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | splade | 0.059 | — | — | splade | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | hybrid | **0.521** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
+
+**Best known:** (HEAD default) / hybrid = **0.521** (first measurement — no ablations run yet).
+**Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
+retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
+observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
+form, `queries/test.single-removed.direct.tsv`, distinct from the old known-item task — see Corpus
+provenance note above). No cc/encoder ablation pass has been run yet.
+
+### mixed/miracl-de-2k
+
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.852** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | bm25-dom | lexical | 0.511 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | splade | 0.669 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.553 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -236,8 +261,13 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 
 ### mixed/miracl-fr-2k
 
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.866** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | balanced | lexical | 0.476 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -408,7 +438,75 @@ tempdoc citations that use P0/P1/P2 names.
 
 Settled empirical facts. Each was an open question that got answered.
 
+### Corpus provenance note (2026-07-01, tempdoc 664 twelfth pass)
+
+`golden/needle-burial-v1`'s corpus content was **regenerated** on this date: the original generator had a
+non-determinism bug (per-process `hash()` randomization) and lacked a positional interleave the twelfth pass
+added. Regenerating with the same recorded parameters (280 docs, 20 gold chains, seed=636, hops=1,
+distractor_ratio=6, semantic=True) produces the same corpus *shape* but different exact entity names/text —
+exact byte-reproduction of the pre-fix corpus was confirmed impossible (generator drift), so this is new
+content, not a restored original.
+
+**Findings below measured against the pre-regeneration content are historical and not reproducible against
+the corpus as currently committed**: F-023, F-024, F-025, D-004's shared-index A/B evidence, and Q-011's
+evidence. This is a fact about reproducibility, not a retraction — those measurements genuinely happened and
+the cited numbers accurately record what was found *then*. **Already-shipped decisions based on these
+numbers are unaffected** (e.g. D-004's leg-arbitration shipping default-off, F-024's recall-complete-pool /
+leg-arbitration shipping default-on) — those decisions used real measurements at the time; the regeneration
+does not retroactively invalidate a decision already made and shipped.
+
+Current corpus signature (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`
+— the same verified-binding mechanism already shared by run manifests and release records):
+`1ade35791b1db58b9a7e1ff21246278d8e588e1705cbeda36d8529ceab6699ec`. Anyone re-deriving or re-verifying the
+findings below should check this signature against the corpus they're measuring against, rather than
+assuming it matches what's described.
+
+### Corpus provenance note (2026-07-01, tempdoc 666)
+
+Neither `mixed/miracl-de-2k`/`mixed/miracl-fr-2k` nor `mixed/courtlistener-200` ever had a reproducible
+construction path anywhere in this project's history (confirmed via the private archive's full,
+un-squashed 6563-commit history — tempdoc 666 first pass). This pass fixed both:
+
+- **`mixed/miracl-de-2k` and `mixed/miracl-fr-2k` were regenerated** from the real MIRACL dataset via
+  `ir_datasets` (Apache 2.0), with a small, committed, seeded recipe (`scripts/jseval/666-corpora/<name>/
+  recipe.json`) recording exactly what to re-fetch and how to sample it deterministically — the corpus
+  content itself is never committed (`datasets/` is gitignored for every corpus, by this project's existing,
+  universal policy). The new sample targets the same original scale (all dev-split queries + a
+  deterministically-sampled distractor pool to the original doc count) but is **new content**, not a
+  byte-restoration of the unreproducible original — matching the same "accept new content, verified
+  reproducible" resolution tempdoc 664 already reached for `needle-burial-v1`. `mixed/miracl-fr-2k`'s query
+  count is corrected from 316 to 343 (all real dev-split queries with a qrel — the prior 316 had no recorded
+  sampling method to reproduce).
+- **`mixed/courtlistener-200` is retired and replaced by `mixed/legal-clerc-200`.** The original corpus's
+  human-authored relevance judgments were a one-off manual curation with no recoverable construction path;
+  CourtListener itself does not ship a retrieval benchmark (queries + qrels) to rebuild against. Replaced
+  with a corpus built from [CLERC](https://arxiv.org/pdf/2406.17186) (a real, citable NAACL 2025 academic
+  legal-case-retrieval benchmark, `jhu-clsp/CLERC` on HuggingFace, built on the Caselaw Access Project — the
+  same underlying data family as CourtListener, from the same organization, the Free Law Project), fetched
+  fresh via plain HTTP and sampled deterministically (`scripts/jseval/666-corpora/legal-clerc-200/
+  recipe.json`). CLERC's own added structure (query construction, citation pairing) has no stated license
+  anywhere — checked exhaustively across five channels (GitHub API file listing, GitHub's own license
+  detector, the HuggingFace Hub API's dataset-card metadata, and a full-text search of the paper's Ethical
+  Considerations/Data Availability sections) — but nothing from CLERC is ever committed to this repo (same
+  gitignored-`datasets/` policy as above), so this repo never redistributes it; only the underlying CC0
+  Caselaw Access Project text is ever fetched, and only transiently.
+
+**Findings below measured against `mixed/courtlistener-200` are historical and not reproducible against any
+corpus currently in this catalog** — that corpus no longer exists in any committed or regenerable form. The
+measurements genuinely happened and the cited numbers accurately record what was found *then*; this is a
+fact about reproducibility, not a retraction. **Already-shipped decisions based on these numbers are
+unaffected** (e.g. the BM25-dominance-on-long-legal-docs finding below) — those decisions used real
+measurements at the time. `mixed/legal-clerc-200` has no BM25-dominance ablation yet — a genuinely new corpus
+needs its own ablation pass, not an inherited assumption from the retired corpus's shape.
+
+Corpus signatures (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`):
+- `mixed/miracl-de-2k`: `d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1`
+- `mixed/miracl-fr-2k`: `a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297`
+- `mixed/legal-clerc-200`: `90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1`
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
+
+*(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
 
 - **Answer:** Graded the three tempdoc-636 buried-signal levers via `jseval --start-backend --llm`
   through the full `hybrid`+CE pipeline, on `golden/needle-burial-v1` (synthetic buried-fact target)
@@ -429,6 +527,9 @@ Settled empirical facts. Each was an open question that got answered.
   leg-arbitration's trigger to be pool-aware is the open follow-up (router Item-1).
 
 ### F-025: recall-survival is a measurable, regime-blind funnel — and it tracks the shipped fix
+
+*(needle-burial-v1 numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
 
 - **Answer:** The **Staged Recall Accounting** instrument (tempdoc 636 / D-005) decomposes every judged query
   into **leg-recall / cascade-leak / judge-rank** as a pure `jseval` projection over existing run artifacts
@@ -472,6 +573,157 @@ Settled empirical facts. Each was an open question that got answered.
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+
+### F-026: judge-rank-low is real and substantively spread (not near-ceiling) on a real corpus, but the obvious judge levers are dead/harmful — the surviving lever is a confidence-bounded floor, not a sharper judge
+
+- **Answer:** Tempdoc 643 picked up the judge-rank-low bucket F-025 pointed at. Three corrections to the
+  original framing, then a design: **(1)** `JUDGE_RANK_LOW` means *gold is in the returned top-10 but not
+  rank-1* — the **opposite** of "ranked below the cutoff" (that is `CASCADE_LEAK`); the FP2 annotation had
+  this backwards and is now corrected (`staged_recall_accounting.py` `FP_MAPPING`, `recall_profile.py`
+  `_RECOMMENDATION`). **(2)** On the two named real corpora where the bucket dominates, the stub's named
+  levers are dead-on-arrival: a sharper CE is measurement-rejected on academic (F-006: model swaps ≈0 nDCG)
+  and actively harmful on email (F-002/F-008: CE demotes/ejects the gold); a judge-guided recall loop targets
+  `LEG_MISS`/`CASCADE_LEAK`, not an already-in-window rank — it is 639's lever, not 643's. **(3)** **The bucket
+  is not near-ceiling** — a real measurement (`scifact`, 300 queries, CE-on) shows the in-bucket rank
+  distribution spread across the window, not bunched at rank-2: `{rank_2: 28, rank_3_5: 31, rank_6_10: 21}` (80
+  judge-low queries total; corrected 2026-07-01, see the methodology-correction bullet below — originally
+  published as `{rank_2: 28, rank_3_5: 39, rank_6_10: 14}`, 81 queries), i.e. a genuine, substantive
+  mis-ranking, not "one slot off." The shipped design is a
+  **relative-confidence-gated refinement floor**: blend the CE's reorder with the pre-rerank (fusion/LambdaMART)
+  order (min-max normalized within the CE window) instead of letting the CE replace it outright, keyed on a
+  *relative, label-free* signal (CE score-margin + Head-reconstructed leg-agreement) rather than a *fitted*
+  calibration (literature-rejected for a cold-start, cross-corpus engine — calibration does not transfer across
+  corpora). Shipped **default-off** behind `JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED` /
+  `JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA` (D-004 template: default-off → measure → default-on).
+- **Evidence:** Live, worktree-isolated eval (`643-judge-arbitration`, GPU RTX 4070, **reranker realized on CPU**
+  — see caveat below): `beir/scifact`, CE-on, hybrid mode, 300 queries. **Floor OFF** (today's behavior):
+  `final_ndcg=0.7512`, `judge_low_rate=0.267`, histogram `{rank_2:28, rank_3_5:31, rank_6_10:21}`. **Floor ON**
+  (`alpha=0.5`): `final_ndcg=0.7490` (Δ −0.0022, within this corpus's observed run-to-run wobble — see caveat),
+  `judge_low_rate=0.273`, histogram `{rank_2:33, rank_3_5:32, rank_6_10:17}` (all four numbers corrected
+  2026-07-01 from a trec-based computation to the true final-response-order computation — see the
+  methodology-correction bullet below). The floor's real per-query effect, measured correctly, is substantial:
+  **58/300 queries** shift bucket between OFF and ON — but the *aggregate* judge_low_rate move (0.267→0.273) is
+  not distinguishable from this corpus's own documented run-to-run wobble (caveat (b) below), so this single-run
+  comparison cannot establish whether the floor's net aggregate effect on judge_low_rate is positive, negative,
+  or neutral — only that it is real and large at the per-query level. (The originally-published claim — "shifted
+  5 queries rank_3_5→rank_6_10... confirming... the gate fires" — described noise between the two eval runs, not
+  the floor's effect; trec-based rank is structurally blind to the floor's reordering, since the floor never
+  rewrites a hit's `score` field, only its list order.) The config chain (`EnvRegistry`→`ResolvedConfigBuilder`→
+  `ResolvedConfig`→`RerankerConfig`) is still confirmed to propagate correctly end-to-end (Head **and** Worker
+  config-snapshot logs both confirmed `judge_blend_enabled=true`, `judge_blend_alpha=0.5`) — that conclusion does
+  not depend on the bucket-shift number. **Signal-separation probe (U2, the crux):** per-query CE-on vs
+  CE-off gold-rank delta vs {CE top1−top2 margin, Head-reconstructed leg top-10 BM25/dense Jaccard} on the same
+  300 queries: only **9 non-neutral queries** (1 helped, 8 hurt by CE; 261 neutral, 30 no-gold-either) — both
+  signals point the *right direction* (margin AUC 0.75, Jaccard AUC 0.69 — "helped" cases have higher
+  margin/agreement than "hurt" cases) but **n=9 is too thin for a confident conclusion**.
+- **Conditions/caveats (important):** **(a)** the cross-encoder ran on **CPU, not GPU**, in every run this
+  finding's evidence comes from (`Capability warning: reranker_cpu_only`) — same model/weights, but not the
+  production GPU path; not expected to flip direction, unrecorded magnitude effect. **(b)** Run-to-run wobble on
+  this corpus/config was non-trivial across the 3 runs taken (hybrid nDCG 0.7512 → 0.7584 (CE-off) → 0.7490
+  (floor-on), a ~1.25% range) — single runs, not multi-seed; the floor's −0.3% delta is not distinguishable from
+  this noise. **(c)** **`mixed/enron-qa` — the corpus where F-002/F-008 predict the largest CE-hurts signal, and
+  the most decisive test of the floor's actual rescue effect — was UNAVAILABLE in the eval environment**
+  (`datasets/mixed/enron-qa/corpus.jsonl` not present; real email data, not BEIR-auto-downloadable, not
+  worktree/main-resolvable like `models/`). **Decision (2026-07-01): ship the floor implementation now
+  (default-off, fully tested, config-verified live); defer flipping the default and building the active-promotion
+  half (confidence-gated skip + promote-when-CE-confident) until the email-corpus measurement is actually run** —
+  the evidence is directionally encouraging but not sufficient to justify an active behavioral change.
+- **Post-implementation critical-analysis pass found + fixed a pre-rerank-signal bug (2026-07-01, same session).**
+  The floor originally read only the `"fusion"` HitStage as the pre-rerank score. That signal is **absent** for
+  single-leg presets (BM25-only/`text`, dense-only/`vector`, SPLADE-only/`splade` — `HitProvenanceProjector.
+  attachSingleLeg` passes `fusionMethod=null`) and **stale** on hybrid queries where chunk-branch fusion ran (the
+  true final score there lives on a separate `"branch-fusion"` stage) — exactly the EnronQA case, per F-014's
+  "chunk merge fires on all 300 queries." Fixed via `SearchTraceMapper.protoStageScoreAny` (priority-ordered,
+  presence-based fallback: `branch-fusion` → `fusion` → the single active leg) and the matching fallback in
+  jseval's `extract_judge_signals`. **The scifact numbers recorded above are unaffected** (that run used
+  unchunked hybrid mode, where `"fusion"` was present and correct) — but had this shipped uncorrected, it would
+  have silently biased the `mixed/enron-qa` follow-up recommended below. A second, lower-severity finding (a
+  missing CE score defaulting to `0f`, which reads as artificially high against typically-negative real CE
+  logits) was also fixed (defaults to the worst *observed* CE score instead). See tempdoc 643 §Post-implementation
+  critical-analysis pass for full detail.
+- **Follow-up closed (2026-07-01, same worktree): E1 (confidence signal) + E2 (confidence-driven blend) +
+  perf-skip built, and the §9-4 A/B regression-rate test run on both corpora, then re-run with a wider
+  window after a critical-review finding (see below).** `mixed/enron-qa` is no longer unavailable (acquired
+  via `scripts/search/convert-enronqa-to-beir.py`). Per-query regression rate (final gold rank worse than
+  the reconstructed pre-rerank/fusion gold rank), hybrid CE-on, 300 queries each,
+  `judge_arbitration_enabled=false` (static floor) vs `=true` (confidence-driven, `alpha_diverge=0.85`),
+  **final numbers (`--top-k 20`, matching the CE window default — supersedes an initial `--top-k 10`
+  measurement that undercounted regressions falling outside the display page)**: scifact 5.67%→4.00%
+  (fixed 5 queries, caused 0 new — net −5, a clean, one-directional win); enron-qa 8.33%→8.67% (fixed 1,
+  caused 2 — net +1, a small, thin net *negative*, not a wash — consistent with the borderline pooled AUC
+  already measured; NOT the CU5 chunk-merge bailout, `chunkMergeApplied=false` on all enron-qa queries in
+  this run, so the gate genuinely evaluated real signal and it wasn't discriminative enough to net a
+  benefit there). **Net-positive on scifact; a small net-negative on enron-qa** — not "never net-harmful on
+  either corpus" as an earlier draft of this entry stated before the wider-window re-run. This does not
+  change the shipping decision: per D-004's default-off → measure → default-on template and this tempdoc's
+  own non-goals, defaults stay off regardless. Full detail: tempdoc 643 §E1/E2/perf-skip implementation +
+  §9-4 acceptance test (original and re-measured).
+- **Methodology finding surfaced by §9-4, and used to correct this finding's own numbers above (2026-07-01
+  critical-analysis pass; root cause logged to observations, out of scope for 643 to fix in full):** jseval's own
+  `{mode}_run.trec` — and `staged_recall_accounting.py`'s `_ranked_by_qid`, which *prefers* that same trec file
+  over the true response-order `predictedDocIds` — are blind to CE/judge-blend list-reordering. The CE/blend
+  stage only ever reorders the result list, never rewrites a hit's top-level `score` field (true even in the
+  pre-tempdoc-643 baseline), and `_write_trec_run`'s re-sort, `ir_measures`' internal ranking, *and*
+  `staged_recall_accounting`'s rank buckets all key off that same unrewritten score. Only per-query
+  `predictedDocIds` reflects the true post-rerank order.
+  This does not invalidate cross-config comparisons that differ via *other* pipeline effects (different
+  corpora, models, eligibility gating, leg composition) — most of this register's historical findings are
+  unaffected. It DOES invalidate same-config, reorder-only comparisons: this finding's own "Floor OFF vs Floor
+  ON" evidence above is exactly that case, which is why it was recomputed and corrected here. Directly
+  quantified on the archived run pair that produced this finding's original numbers
+  (`scripts/jseval/tmp/eval-results/643_scifact_ce_on/20260630T232234_scifact` and
+  `.../643_scifact_ce_on_floor/20260630T234714_scifact`): 83/300 queries land in a different judge-rank bucket
+  between trec-order and true order for the Floor-OFF run alone (aggregate `judge_low_rate` barely moves,
+  0.270→0.267, but individual bucket assignment is materially wrong 27% of the time); comparing Floor OFF vs ON
+  via trec shows only 12 queries shift bucket, vs 58 via true order — a ~5x undercount of the floor's real
+  effect. My own §9-4 script above was built using `predictedDocIds` from the start (I hit this exact issue
+  while building it and fixed my own script before publishing those numbers), so the 5.00%→3.67% / 7.33%→7.33%
+  figures are unaffected. Any *future* per-query rank-based analysis of a stage that only reorders without
+  rescoring should use `predictedDocIds`, not the trec file or `staged_recall_accounting`'s buckets as-is.
+  **Scope decision:** `staged_recall_accounting.py`'s root cause (the trec-preference in `_ranked_by_qid`) is
+  NOT fixed in this pass — that's a register-wide change affecting every other finding that relies on its
+  per-query rank buckets, well beyond tempdoc 643's scope. Left as a well-evidenced observation for a future
+  dedicated tempdoc.
+- **U1 (the live LLM judge-ceiling probe, tempdoc 636 §5) is now measured (2026-07-01, corrected later the
+  same day) — a real, credible, decision-relevant *positive* result, closing this tempdoc's last open
+  measurement gap.** With explicit user authorization, downloaded the packaged-default chat model
+  (`Qwen_Qwen3.5-9B-Q4_K_M.gguf`, 5.5GB, SHA-256 verified) and ran `jseval judge-ceiling` on a 40-query scifact
+  sample, GPU-accelerated (RTX 4070, 33/33 layers offloaded), with real document text (a text-light first
+  attempt gave `top1_agreement=0.0` — a self-evident confound, not a finding — recomputed with real text,
+  giving a credible, non-degenerate measurement). **Correction:** the first-reported result
+  (`llm_ndcg=0.111`, `capture_fraction=-6.06`, described as "dramatically worse than the pipeline") was
+  **wrong** — a dilution bug in the shared `_score_ranking` nDCG helper silently scored every one of the
+  ~260 un-judged corpus queries in this capped 40-query run as a zero-relevance miss and folded that into the
+  mean. Found via an unrelated AI-free cross-check (`ce_replay_report`) producing an equally implausible
+  number, root-caused, and fixed at the shared function (regression test added). **Corrected result:**
+  `final_ndcg=0.831` (current pipeline) vs `llm_ndcg=0.874` — `headroom_realized=+0.042`,
+  `capture_fraction=+0.357` (`top1_agreement=0.658`, still a credible, non-degenerate measurement). This local
+  model, used via the same single structured-JSON listwise reranking call, **outperforms** the current
+  pipeline on this sample and captures a real 36% of the AI-free ceiling. **This changes the evidence base
+  D-2's exclusion of a stronger/heavier judge model rested on — it does not by itself overturn that decision
+  (one 40-query sample on one corpus), but whether to revisit it is now a live, open question, not a settled
+  one.** Along the way, also found and fixed two real, previously-unexercised bugs in
+  `scripts/jseval/jseval/judge_ceiling.py`: `max_tokens=512` was too small for realistic candidate-pool sizes
+  (truncated JSON responses), and a single query's malformed response aborted the *entire* probe rather than
+  degrading gracefully per-query (both fixed, covered by tests in `test_judge_ceiling.py`). Full detail:
+  tempdoc 643 `## U1: live judge-ceiling probe result` (including its correction note).
+- **E3 (the decision instrument, D-1's third structural element) is now built (2026-07-01), completing the
+  design.** A `judge_low_cost_weight` field (`[0,1]`, weighted by rank-2 = near-free vs rank-6-10 = full
+  cost) now sits alongside the existing rank histogram in `staged_recall_accounting`'s output, registered as
+  its own metric family. A new `jseval judge-arbitration-report` command
+  (`scripts/jseval/jseval/judge_arbitration_report.py`) replaces the one-off scripts used for the §9-4
+  acceptance test and the confidence-building passes — and in doing so caught a real bug in the earlier ad
+  hoc measurement: enron-qa's perf-skip firing rate is **17/300 (5.7%)**, not 15/300 as first reported,
+  because the old script incorrectly gated the perf-skip check on a condition that only applies to the
+  unrelated alpha-branch calculation. Full detail: tempdoc 643 `## E3 implementation`.
+- **A named principle this surfaced (recorded, not built generally):** the *refinement floor* is an instance of
+  a broader **stage non-regression** invariant — generalizing D-005's recall-survival ("a stage must not drop a
+  *correct candidate*") to *property-survival* ("a stage claiming to improve a property must not leave it worse
+  than its input, with improvement gated on evidence"). Candidate further scope (not built): LambdaMART (latent
+  violation — a GPL-trained model was measured to *degrade* real queries, F-021), VLM extraction (possible
+  violation — extracted text can be worse than the baseline, F-009), branch/chunk fusion (unverified). Build only
+  the next instance when its own evidence demands it (`structural-defects-no-repeat`, applied to *avoid* premature
+  generalization here, not to force it).
 
 ### F-001: CE model quality is irrelevant on personal email
 
@@ -613,6 +865,8 @@ Settled empirical facts. Each was an open question that got answered.
 
 ### F-023: Whole-doc dense dilution is real and scales; lexical+CE legs suppress dense on paraphrase queries
 
+*(numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
+
 - **Answer:** On a purpose-built buried-signal corpus (`golden/needle-burial-v1` — long generic-filler docs, one buried distinctive head per chain, **zero-lexical-overlap paraphrase** queries, head-only qrels), the **whole-doc (`vector`) dense nDCG@10 collapses monotonically with distractor scale: 0.820 (280 docs) → 0.526 (1240) → 0.429 (2440)** — the maximally-diluted mean-of-means vector progressively loses the needle to near-identical filler twins. Separately, **`vector` ≫ `hybrid` on these paraphrase queries** (0.820 vs 0.318 at 280 docs; head@rank-1 12/20 vs 5/20, hybrid *misses* the needle on 9/20) — adding the lexical (BM25/SPLADE) + cross-encoder legs **actively demotes/drops the dense-found needle** on grep-defeating queries.
 - **Evidence:** tempdoc 636 §Phase-1 eval (2026-06-23). `jseval run --dataset golden/needle-burial-{s6,s30,s60} --modes vector,hybrid --start-backend --clean --embedding`; `vector` `comparable=True`.
 - **Conditions/caveats:** Synthetic extreme (100% zero-overlap paraphrase, 20 queries) — exaggerates the `vector≫hybrid` inversion vs real mixed queries. **jseval `hybrid` reported `chunkMergeApplied=null` on all queries** (the chunk-passage branch did not apply), which **contradicts the live interactive probe** (636 §Pre-impl pass: production hybrid fired `branch-fusion: executed` and ranked a needle decisively) — so jseval-`hybrid` is **not representative of the production default path** and its low numbers must not be read as "production hybrid collapses." See Q-011.
@@ -659,7 +913,8 @@ Design choices in the current production pipeline, with rationale.
 - **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
   the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
   "symmetric per-query leg arbitration".
-- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free):**
+- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free; the
+  needle-burial-v1 figure predates the 2026-07-01 corpus regeneration — see Corpus provenance note above):**
   `golden/needle-burial-v1` (paraphrase) **0.241 → 0.712 (+195%)**; `scifact` (academic) **0.7599 → 0.7641**
   (neutral); **`mixed/enron-qa` (personal email) 0.7422 → 0.7268 (−2.1%, REAL regression)**;
   `mixed/courtlistener-200` (legal) **0.6054 → 0.5893 (−2.7%)**.
@@ -812,6 +1067,9 @@ picking up items here over inventing new experiments.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
 
+*(needle-burial-v1 evidence below predates the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
+
 - **Question:** Two sub-questions opened by F-023's buried-signal eval: **(a)** jseval `hybrid` shows `chunkMergeApplied=null` (chunk branch not applying) and collapses, but the live interactive probe showed production hybrid *does* fire the chunk branch and ranks a needle well — so **does the *production* default path actually degrade on buried-signal at scale, or does the chunk-passage path hold?** The eval must be made to **isolate/exercise the chunk-dense path** before this is answerable (and before tempdoc 636's chunk-embedding seam P1a/P2 can be gated). **(b)** On grep-defeating paraphrase queries, `vector ≫ hybrid` (the lexical+CE legs *suppress* dense): should the engine **route toward dense / down-weight lexical+CE when a query is lexically poor against the corpus** (an FW-001 / low-signal-gating-in-reverse lever)?
 - **Why it matters:** (a) gates whether tempdoc 636's embedding seam is even the right fix (the Phase-1 eval measured the whole-doc vector, not the chunk vector the seam improves). (b) is plausibly the **higher-impact** lever for buried/paraphrase retrieval — the largest gap in the 636 experiment (0.82 vs 0.32) was fusion/routing, not embedding context.
 - **Prior art:** tempdoc 636 §Phase-1 eval + §Pre-impl pass (F-023); FW-001 (corpus/query-adaptive recipe, superseded as a binary switch but live as a general policy); low-signal gating (`HybridSearchOps`, caps vector on *weak* dense — here the opposite case).
@@ -833,6 +1091,7 @@ picking up items here over inventing new experiments.
 - **Question:** Tempdoc 639 (candidate-set integrity — ANN recall at scale + near-duplicate collapse), a stub spawned by 636's coverage analysis, will need to *measure* candidate-set completeness (did retrieval return the relevant docs) and non-redundancy. Should that measurement **extend** 636's **Staged Recall Accounting** — whose `leg-recall` layer is already "did each leg surface the gold doc", a governed projection of the run artifacts with a self-reconciliation oracle — or build a **separate** recall instrument?
 - **Why it matters:** A parallel recall instrument is the exact one-authority **fork** that 553 (one canonical record; every surface a governed projection) and 636 §Reach (the *layer-invariant* observe-by-survival / one-canonical-authority principle) warn against — two un-coordinated answers to "did retrieval keep the right doc", guaranteed to drift. ANN-recall is a *refinement* of leg-recall (it asks whether the ANN index returned the true neighbours a leg *should* have surfaced), so it composes as a sub-measure of the same projection rather than a rival.
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
+- **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
 ---
 

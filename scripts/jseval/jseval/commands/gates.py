@@ -93,7 +93,12 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
 
     if baselines is None:
         # Baselines live with the jseval consumer (this is a jseval gate, not a kernel gate).
-        baselines = Path(__file__).resolve().parents[1] / "relevance-ratchet-baselines.v1.json"
+        # tempdoc 664 (post-review fix): this file is scripts/jseval/jseval/commands/gates.py, so
+        # parents[0]=commands, parents[1]=jseval (the package dir) -- the baseline .v1.json files
+        # actually live one level higher, at scripts/jseval/ (parents[2]). The previous
+        # parents[1] computation pointed at a nonexistent path; every default-baselines/--out
+        # computation in this file shared the identical off-by-one, fixed uniformly here.
+        baselines = Path(__file__).resolve().parents[2] / "relevance-ratchet-baselines.v1.json"
     # Tempdoc 640 K: the shared load→project→locate→evaluate→report flow lives in ratchet_kernel.
     # The `current_release` projection (tempdoc 623 T-5: floors PROJECTED live, never hand-typed)
     # reads this gate's tolerance from the baselines doc (the projector's 2nd arg).
@@ -153,7 +158,7 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
 
     if baselines is None:
         # Baselines live with the jseval consumer (a jseval gate, not a kernel gate).
-        baselines = Path(__file__).resolve().parents[1] / "perf-ratchet-baselines.v1.json"
+        baselines = Path(__file__).resolve().parents[2] / "perf-ratchet-baselines.v1.json"
     # Tempdoc 640 K: shared load + `current_release` projection (the perf floor projects from the
     # canonical release, closing the per-run fork) via the kernel; the perf-specific dataset guard +
     # --update-baseline stay below.
@@ -189,6 +194,31 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
         proj = _pgate.project_run_to_perf_baselines(
             run_summary, dataset, use_mode, manifest=run_manifest, src=src)
         entry = proj["baselines"][dataset]
+
+        # tempdoc 664: a re-pin can silently launder a regression into the new "baseline" — a
+        # perf-ratchet-baselines.v1.json comment already documented this happening once. Refuse
+        # per-metric unless the relaxation carries a classified, justified changeset.
+        from .. import baseline_shift as _bshift
+        from .. import metric_families as _mf
+        lower_is_better = {k: v for fam in _mf.REGISTRY for k, v in fam.lower_is_better.items()}
+        old_entry = (baselines_doc.get("baselines") or {}).get(dataset)
+        old_metrics = (old_entry or {}).get("metrics") or {}
+        changesets_dir = Path(baselines).resolve().parent / ".changesets"
+        try:
+            for metric, new_value in (entry.get("metrics") or {}).items():
+                old_value = old_metrics.get(metric)
+                if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+                    continue
+                _bshift.assert_baseline_not_relaxed(
+                    old_value, new_value,
+                    lower_is_better=lower_is_better.get(metric, True),
+                    gate="perf-gate", dataset=f"{dataset}:{metric}",
+                    changesets_dir=changesets_dir,
+                )
+        except _bshift.BaselineRelaxedWithoutJustificationError as e:
+            click.echo(json.dumps({"exit_code": 1, "error": str(e)}, indent=2), err=True)
+            sys.exit(1)
+
         baselines_doc.setdefault("baselines", {})[dataset] = entry
         Path(baselines).write_text(
             json.dumps(baselines_doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -232,7 +262,7 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
     from .. import ratchet_kernel as _rk
 
     if baselines is None:
-        baselines = Path(__file__).resolve().parents[1] / "leak-gate-baselines.v1.json"
+        baselines = Path(__file__).resolve().parents[2] / "leak-gate-baselines.v1.json"
 
     def _read_projection(rd: Path):
         # Leak's source is a projection artifact (not the run summary) — exit 2 if it's absent.
@@ -280,7 +310,7 @@ def cmd_llm_gate(ctx, bench_file, baselines, report_out, update_baseline):
     from .. import ratchet_kernel as _rk
 
     if baselines is None:
-        baselines = Path(__file__).resolve().parents[1] / "llm-gen-ratchet-baselines.v1.json"
+        baselines = Path(__file__).resolve().parents[2] / "llm-gen-ratchet-baselines.v1.json"
     baselines_doc = json.loads(Path(baselines).read_text(encoding="utf-8"))
     bench_doc = json.loads(Path(bench_file).read_text(encoding="utf-8"))
 
@@ -316,31 +346,108 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
     is no table of numbers to drift. ``evaluate`` adds ``tolerance_abs`` on top.
     """
     from .. import leak_gate as _lgate
+    from .. import release as _release
 
     eval_results = Path(data_dir) / "eval-results"
-    slugs = [s.strip() for s in datasets.split(",") if s.strip()]
+    raw_slugs = [s.strip() for s in datasets.split(",") if s.strip()]
     projections: dict = {}
-    for slug in slugs:
-        suffix = "_" + slug.replace("/", "_")
+    for raw_slug in raw_slugs:
+        # Directory lookup MUST use the raw, operator-typed slug: run directories are named from
+        # `jseval run --dataset`'s literal argument (e.g. bare "scifact"), never canonicalized —
+        # confirmed via artifacts.py's `dataset_slug = summary["dataset"].replace("/", "_")`.
+        suffix = "_" + raw_slug.replace("/", "_")
         cands = sorted(
             (p for p in eval_results.iterdir()
              if p.is_dir() and p.name.endswith(suffix)
              and (p / "projections" / "staged_recall_accounting.json").is_file()),
             key=lambda p: p.name, reverse=True)
         if not cands:
-            click.echo(f"WARN: no run with a staged_recall_accounting projection for {slug}", err=True)
+            click.echo(f"WARN: no run with a staged_recall_accounting projection for {raw_slug}", err=True)
             continue
+        # tempdoc 664 (twelfth pass): canonicalize only the OUTPUT key (e.g. "scifact" ->
+        # "beir/scifact") to match relevance-gate/perf-gate's convention — leak-gate-baselines.v1.json
+        # had drifted to a bare-name key for scifact specifically because this command never
+        # canonicalized its output, forcing `jseval datasets`' coverage check to work around the
+        # inconsistency instead of it being fixed at the source.
+        slug = _release.canonical_dataset_slug(raw_slug)
         projections[slug] = json.loads(
             (cands[0] / "projections" / "staged_recall_accounting.json").read_text(encoding="utf-8"))
 
     kwargs = {} if tolerance is None else {"tolerance_default_abs": tolerance}
     derived = _lgate.derive_baselines(projections, **kwargs)
-    out_path = Path(out) if out else (Path(__file__).resolve().parents[1] / "leak-gate-baselines.v1.json")
+    out_path = Path(out) if out else (Path(__file__).resolve().parents[2] / "leak-gate-baselines.v1.json")
+
+    # tempdoc 664: a higher leak_rate_max ceiling is a relaxation (leak_rate is
+    # lower-is-better/ceiling-comparator) — refuse to derive over a prior pin without a
+    # classified, justified changeset.
+    from .. import baseline_shift as _bshift
+    old_baselines = (
+        json.loads(out_path.read_text(encoding="utf-8")).get("baselines") or {}
+        if out_path.is_file() else {}
+    )
+    changesets_dir = out_path.resolve().parent / ".changesets"
+    try:
+        for slug, entry in derived.get("baselines", {}).items():
+            old_ceiling = (old_baselines.get(slug) or {}).get("leak_rate_max")
+            new_ceiling = entry.get("leak_rate_max")
+            if not isinstance(old_ceiling, (int, float)) or not isinstance(new_ceiling, (int, float)):
+                continue
+            _bshift.assert_baseline_not_relaxed(
+                old_ceiling, new_ceiling, lower_is_better=True,
+                gate="leak-gate", dataset=slug, changesets_dir=changesets_dir,
+            )
+    except _bshift.BaselineRelaxedWithoutJustificationError as e:
+        click.echo(json.dumps({"exit_code": 1, "error": str(e)}, indent=2), err=True)
+        sys.exit(1)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(derived, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     click.echo(json.dumps(
         {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
+
+
+@click.command("changeset-new")
+@click.option("--gate", required=True, type=click.Choice(["perf-gate", "leak-gate", "release", "*"]),
+              help="Which gate's relaxation this justifies.")
+@click.option("--dataset", required=True,
+              help="\"<dataset>:<metric>\" for perf-gate/release, \"<dataset>\" for leak-gate, or "
+                   "\"*\" (any dataset/metric for this gate).")
+@click.option("--tempdoc", required=True, help="The tempdoc/decision number that accepted this regression.")
+@click.option("--reason", default=None, help="Free-form justification body. Omit to write a placeholder.")
+@click.option("--changesets-dir", type=click.Path(), default=None,
+              help="Default: jseval/.changesets/ (sibling to the baseline files).")
+@click.pass_context
+def cmd_changeset_new(ctx, gate, dataset, tempdoc, reason, changesets_dir):
+    """Scaffold a `.changesets/*.md` baseline-relaxation-justification file (tempdoc 664).
+
+    Writes the exact frontmatter shape `.changesets/README.md` documents, so authoring a
+    justification doesn't require hand-typing YAML — lowering the friction of using the
+    baseline-relaxation-justification mechanism correctly. Refuses to overwrite an existing file at
+    the same path; the file itself is what `baseline_shift.load_changesets` already parses, so no
+    new parser is introduced here.
+    """
+    dest_dir = Path(changesets_dir) if changesets_dir else (Path(__file__).resolve().parents[2] / ".changesets")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = f"{gate}-{dataset}-tempdoc{tempdoc}".replace("/", "_").replace(":", "_").replace("*", "any")
+    dest_path = dest_dir / f"{slug}.md"
+    if dest_path.exists():
+        click.echo(f"Error: {dest_path} already exists — refusing to overwrite.", err=True)
+        sys.exit(1)
+
+    body = reason or "TODO: explain why this relaxation was accepted."
+    content = (
+        "---\n"
+        f'classification: "baseline-relaxation"\n'
+        f'gate: "{gate}"\n'
+        f'dataset: "{dataset}"\n'
+        f'tempdoc: "{tempdoc}"\n'
+        "---\n\n"
+        f"{body}\n"
+    )
+    dest_path.write_text(content, encoding="utf-8")
+    click.echo(f"Wrote {dest_path}")
 
 
 @click.command("recall-profile")
@@ -384,6 +491,48 @@ def cmd_recall_profile(ctx, data_dir, datasets, report_out):
         Path(report_out).write_text(
             json.dumps(profile, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     click.echo(json.dumps(profile, indent=2))
+
+
+@click.command("ce-replay")
+@click.option("--run-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Eval run dir (with leg + final per_query.json, qrels.json, projections/).")
+@click.option("--mode", default=None, help="Final mode to read judgeSignals from (default: hybrid/full).")
+@click.option("--report-out", type=click.Path(), default=None, help="Write the full report JSON here.")
+@click.pass_context
+def cmd_ce_replay(ctx, run_dir, mode, report_out):
+    """AI-free realizable-headroom probe (tempdoc 643) — replays the ACTUAL production judge.
+
+    Re-ranks a run's leg-union pool by the cross-encoder's own already-captured scores (no
+    live model, no LLM, no new eval run) and reports how much of the AI-free
+    judge_headroom_ceiling the judge that is actually shipped captures when given the full
+    pool. Distinct from judge-ceiling, which asks whether a DIFFERENT (LLM) judge would do
+    better — this asks whether the judge already in production would.
+    """
+    from .. import judge_ceiling as _jc
+
+    rd = Path(run_dir)
+    qrels = json.loads((rd / "qrels.json").read_text(encoding="utf-8")) if (rd / "qrels.json").is_file() else {}
+
+    proj_path = rd / "projections" / "staged_recall_accounting.json"
+    if proj_path.is_file():
+        proj = json.loads(proj_path.read_text(encoding="utf-8"))
+    else:
+        from ..projections import staged_recall_accounting as _sra
+        proj = _sra.produce(rd)
+    agg = proj.get("aggregate") or {}
+    ceiling = agg.get("judge_headroom_ceiling")
+    final_ndcg = agg.get("final_ndcg")
+
+    pool = _jc.assemble_pool(rd)
+    ce_scores_by_qid = _jc.load_ce_scores(rd, mode=mode)
+    report = _jc.ce_replay_report(pool, ce_scores_by_qid, qrels, final_ndcg=final_ndcg, ceiling=ceiling)
+    report["run_dir"] = str(rd)
+
+    if report_out:
+        Path(report_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_out).write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False),
+                                    encoding="utf-8")
+    click.echo(json.dumps(report, indent=2))
 
 
 @click.command("judge-ceiling")
@@ -461,6 +610,47 @@ def cmd_judge_ceiling(ctx, run_dir, corpus_dir, llm_url, engine_generator, repor
     click.echo(json.dumps(report, indent=2), err=True)
 
 
+@click.command("judge-arbitration-report")
+@click.option("--run-dir-a", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Eval run dir with {mode}_per_query.json (judgeSignals) — arbitration-on run.")
+@click.option("--run-dir-b", type=click.Path(exists=True, resolve_path=True), default=None,
+              help="Second run dir for regression_rate comparison (e.g. the arbitration-off run). Optional.")
+@click.option("--mode", default="hybrid", show_default=True, help="Retrieval mode to read.")
+@click.option("--base-alpha", type=float, default=0.5, show_default=True)
+@click.option("--fusion-protect-alpha", type=float, default=0.85, show_default=True)
+@click.option("--report-out", type=click.Path(), default=None, help="Write the full report JSON here.")
+@click.pass_context
+def cmd_judge_arbitration_report(ctx, run_dir_a, run_dir_b, mode, base_alpha, fusion_protect_alpha, report_out):
+    """Judge-arbitration decision instrument (tempdoc 643 E3).
+
+    Re-derives computeJudgeArbitrationAlpha's branch split and isFusionDecisiveForSkip's firing
+    rate from a run's already-archived judgeSignals — no new eval run needed. With --run-dir-b,
+    also reports how many queries' true (predictedDocIds) result order changed between the two
+    runs. Promotes the one-off scripts written for 643's §9-4/theorization passes into durable,
+    tested tooling.
+    """
+    from .. import judge_arbitration_report as _jar
+
+    rd_a = Path(run_dir_a)
+    records_a = json.loads((rd_a / f"{mode}_per_query.json").read_text(encoding="utf-8"))
+
+    report = {
+        "run_dir_a": str(rd_a),
+        "mode": mode,
+        "alpha_branch_breakdown": _jar.alpha_branch_breakdown(
+            records_a, base_alpha=base_alpha, fusion_protect_alpha=fusion_protect_alpha),
+        "perf_skip_firing_rate": _jar.perf_skip_firing_rate(records_a),
+    }
+    if run_dir_b:
+        report["regression_rate"] = _jar.regression_rate(rd_a, Path(run_dir_b), mode=mode)
+
+    if report_out:
+        Path(report_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_out).write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False),
+                                    encoding="utf-8")
+    click.echo(json.dumps(report, indent=2))
+
+
 @click.command("extraction-gate")
 @click.option("--baseline-run", required=True, type=click.Path(exists=True, resolve_path=True),
               help="Run dir (with summary.json) from the BASELINE extraction profile (e.g. qwen-vl).")
@@ -536,4 +726,4 @@ def cmd_extraction_gate(ctx, baseline_run, candidate_run, mode, guard_modes,
     sys.exit(report["exit_code"])
 
 
-COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_recall_profile, cmd_judge_ceiling, cmd_extraction_gate]
+COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]

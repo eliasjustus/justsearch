@@ -18,7 +18,7 @@ This project follows **organic development**: issues and rough edges are capture
 | Observations | `docs/observations.md` | Low (one line) | Long-lived | Notice something mid-task |
 | Formal issues | `docs/reference/issues/` | High (ID, severity, evidence) | Until resolved or decided | Verified bugs, known trade-offs, tracked risks |
 
-Observations get promoted to formal issues when they need code evidence and severity assignment. Resolved observations get checked off and periodically pruned.
+Observations get promoted to formal issues when they need code evidence and severity assignment. Resolved observations are **deleted** from `docs/observations.md` when fixed, the same as formal issues below — not checked off and left in place. The commit (or tempdoc) that made the fix is the permanent record; the inbox does not need to also carry one.
 
 Architectural trade-offs and conscious design tensions are tracked as formal issues with `accepted-trade-off` status in the appropriate issue file. Intentionally closed items (won't-fix, deferred, accepted) move to `docs/reference/issues/decisions.md` with rationale preserved.
 

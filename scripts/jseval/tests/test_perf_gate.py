@@ -197,6 +197,28 @@ def test_projected_release_floor_gates_a_run():
     assert evaluate(proj, bad, "beir/scifact")["exit_code"] == 1
 
 
+# --- tempdoc 664: refuse to project a perf floor from a hardware-mixed release ---
+
+def test_project_release_refuses_when_hardware_not_homogeneous():
+    release_mixed_hw = {**_RELEASE, "cohort": {"hardware_homogeneous": False}}
+    proj = project_release_to_perf_baselines(release_mixed_hw)
+    assert proj["hardware_homogeneous"] is False
+    assert proj["baselines"] == {}  # refuses to project ANY perf floor, not just the mixed one
+
+
+def test_project_release_still_projects_when_hardware_homogeneous_true():
+    release_same_hw = {**_RELEASE, "cohort": {"hardware_homogeneous": True}}
+    proj = project_release_to_perf_baselines(release_same_hw)
+    assert set(proj["baselines"]) == {"beir/scifact"}
+
+
+def test_project_release_still_projects_when_hardware_field_missing():
+    """A release composed before this check existed has no `hardware_homogeneous` key — treated
+    as permissive (backward compatible), not refused. `_RELEASE` itself has no `cohort` key."""
+    proj = project_release_to_perf_baselines(_RELEASE)
+    assert set(proj["baselines"]) == {"beir/scifact"}
+
+
 # --- tempdoc 640 R2: envelope-derived band (data-driven; graceful fallback) ---
 
 def test_envelope_band_is_data_driven_with_graceful_fixed_fallback():

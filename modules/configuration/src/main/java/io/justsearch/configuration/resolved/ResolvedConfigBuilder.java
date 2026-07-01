@@ -1107,6 +1107,13 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.rerank.min_hits", 5),
         resolveInt("justsearch.rerank.max_seq_len", 512),
         resolveInt("justsearch.rerank.max_avg_doc_length_chars", 16000),
+        // Tempdoc 643: judge-stage refinement floor — default off (D-004 template).
+        resolveBoolean("justsearch.rerank.judge_blend_enabled", false),
+        resolveDouble("justsearch.rerank.judge_blend_alpha", 0.5),
+        // Tempdoc 643 (E1/E2): per-query confidence-driven arbitration + perf-skip — default off.
+        resolveBoolean("justsearch.rerank.judge_arbitration_enabled", false),
+        resolveDouble("justsearch.rerank.judge_arbitration_alpha_diverge", 0.85),
+        resolveBoolean("justsearch.rerank.judge_arbitration_skip_enabled", false),
         buildChunkReranker());
   }
 

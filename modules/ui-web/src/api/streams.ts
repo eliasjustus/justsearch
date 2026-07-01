@@ -8,6 +8,7 @@
 
 import { getSessionToken, resolveSessionTokenFromTauri, SESSION_TOKEN_HEADER } from './http';
 import { parseSseBuffer, parseSseBufferJson } from './sse';
+import { bumpChannelClosed, bumpChannelOpened } from '../shell-v0/state/liveChannelBudget.js';
 
 // ==================== Stream Event Types ====================
 
@@ -569,6 +570,9 @@ export async function consumeShapeStream(
   }
 
   const reader = response.body.getReader();
+  // Tempdoc 662 — the one shared chat/agent/summarize generation entry point; bump the runtime
+  // peak signal for the duration the response body stream is held open.
+  bumpChannelOpened();
   const decoder = new TextDecoder();
   let buffer = '';
   let errorFromEvent: (Error & { code?: string; errorClass?: string }) | null = null;
@@ -612,6 +616,7 @@ export async function consumeShapeStream(
     }
   } finally {
     reader.releaseLock();
+    bumpChannelClosed();
   }
 
   if (errorFromEvent) throw errorFromEvent;

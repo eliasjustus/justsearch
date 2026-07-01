@@ -5,6 +5,7 @@ from __future__ import annotations
 from jseval.provenance import (
     aggregate_run_evidence,
     extract_hit_evidence,
+    extract_judge_signals,
     extract_query_evidence,
 )
 
@@ -81,6 +82,84 @@ class TestExtractHitEvidence:
         ev = extract_hit_evidence(hit)
         assert ev["fusion_score"] == 0.88
         assert ev["fusion_method"] == "cc"
+
+
+# ---------------------------------------------------------------------------
+# Per-hit judge-arbitration signals (tempdoc 643)
+# ---------------------------------------------------------------------------
+
+class TestExtractJudgeSignals:
+    def test_bm25_and_splade_kept_separate(self):
+        # Unlike extract_hit_evidence's splade_executed collapsing, both legs' own ranks
+        # must survive distinctly when BOTH run in the same hybrid query.
+        hit = {
+            "trace": [
+                {"id": "sparse-retrieval", "rank": 1, "score": 5.5},
+                {"id": "splade-retrieval", "rank": 4, "score": 2.1},
+                {"id": "dense-retrieval", "rank": 2, "score": 0.9},
+                {"id": "fusion", "score": 1.2},
+                {"id": "cross-encoder", "score": 3.7},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["bm25_rank"] == 1
+        assert sig["bm25_score"] == 5.5
+        assert sig["splade_rank"] == 4
+        assert sig["splade_score"] == 2.1
+        assert sig["dense_rank"] == 2
+        assert sig["dense_score"] == 0.9
+        assert sig["fusion_score"] == 1.2
+        assert sig["ce_score"] == 3.7
+
+    def test_no_trace_returns_all_none(self):
+        sig = extract_judge_signals({})
+        assert sig == {
+            "bm25_rank": None, "bm25_score": None,
+            "splade_rank": None, "splade_score": None,
+            "dense_rank": None, "dense_score": None,
+            "fusion_score": None, "ce_score": None,
+        }
+
+    def test_no_cross_encoder_stage(self):
+        hit = {"trace": [{"id": "sparse-retrieval", "rank": 1, "score": 1.0}]}
+        sig = extract_judge_signals(hit)
+        assert sig["ce_score"] is None
+        assert sig["bm25_rank"] == 1
+
+    def test_branch_fusion_preferred_over_stale_fusion(self):
+        # Tempdoc 643 critical-analysis-pass correction: when chunk-branch fusion ran, "fusion"
+        # reflects only the whole-doc branch's own internal score (stale) -- the true final
+        # score is on "branch-fusion", which must win.
+        hit = {
+            "trace": [
+                {"id": "fusion", "score": 0.42},
+                {"id": "branch-fusion", "score": 0.91},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 0.91
+
+    def test_falls_back_to_fusion_when_no_branch_fusion(self):
+        hit = {"trace": [{"id": "fusion", "score": 1.23}]}
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 1.23
+
+    def test_falls_back_to_fusion_when_branch_fusion_present_but_scoreless(self):
+        # HitProvenanceProjector.attachBranchFusion can emit a "branch-fusion" stage with no
+        # score (fusionScore()==null) -- must fall through to "fusion", not report None.
+        hit = {
+            "trace": [
+                {"id": "fusion", "score": 1.5},
+                {"id": "branch-fusion"},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 1.5
+
+    def test_fusion_score_none_when_neither_stage_present(self):
+        hit = {"trace": [{"id": "sparse-retrieval", "score": 1.0}]}
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] is None
 
 
 # ---------------------------------------------------------------------------

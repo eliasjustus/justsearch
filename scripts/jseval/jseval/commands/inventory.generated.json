@@ -20,6 +20,14 @@
     "group": "calibrate"
   },
   {
+    "name": "ce-replay",
+    "group": "gates"
+  },
+  {
+    "name": "changeset-new",
+    "group": "gates"
+  },
+  {
     "name": "commands",
     "group": "ops"
   },
@@ -33,6 +41,14 @@
   },
   {
     "name": "corpus-certify",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-fetch-clerc",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-fetch-miracl",
     "group": "corpus"
   },
   {
@@ -82,6 +98,10 @@
   {
     "name": "ingest-bench",
     "group": "bench"
+  },
+  {
+    "name": "judge-arbitration-report",
+    "group": "gates"
   },
   {
     "name": "judge-ceiling",

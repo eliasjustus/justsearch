@@ -32,6 +32,10 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     status: null,
     inference: null,
     lastSettledIndex: null,
+    installStatus: null,
+    runtimeStatus: null,
+    packStatus: null,
+    aiEngine: { kind: 'offline', stability: { kind: 'settled' }, installFailure: null },
     ...overrides,
   };
 }
@@ -323,5 +327,70 @@ describe('StatusDeck (slice 461)', () => {
     const texts = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []).map((v) => v.textContent?.trim());
     expect(texts[0]).toBe(formatCount(1234)); // Files last-known
     expect(texts[1]).toBe('…'); // Size: no observed size → not a fake "0 B"
+  });
+
+  describe('Tempdoc 663 Design pass 3 — AI-engine toast tracker + click-routing', () => {
+    function captureToasts(): { specs: Array<{ classId?: string; message: string }>; stop: () => void } {
+      const specs: Array<{ classId?: string; message: string }> = [];
+      const listener = (e: Event) => specs.push((e as CustomEvent).detail);
+      document.addEventListener(EPHEMERAL_TOAST_EVENT, listener);
+      return { specs, stop: () => document.removeEventListener(EPHEMERAL_TOAST_EVENT, listener) };
+    }
+
+    it('installing → online fires exactly one "core.ai-engine.settled" toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'installing', stability: { kind: 'provisional', cause: 'installing' }, installFailure: null } });
+      await el.updateComplete;
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      // A second, unrelated re-render at the SAME settled kind must not re-fire (one-shot, not per-render).
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      stop();
+      const ai = specs.filter((s) => s.classId === 'core.ai-engine.settled');
+      expect(ai).toHaveLength(1);
+    });
+
+    it('installing → install_failed fires exactly one "core.ai-engine.failed" toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'installing', stability: { kind: 'provisional', cause: 'installing' }, installFailure: null } });
+      await el.updateComplete;
+      el.aiState = makeAiState({ aiEngine: { kind: 'install_failed', stability: { kind: 'settled' }, installFailure: 'disk full' } });
+      await el.updateComplete;
+      stop();
+      const ai = specs.filter((s) => s.classId === 'core.ai-engine.failed');
+      expect(ai).toHaveLength(1);
+    });
+
+    it('reaching "online" WITHOUT a preceding "installing" (e.g. first load already online) does not toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      stop();
+      expect(specs.filter((s) => s.classId === 'core.ai-engine.settled')).toHaveLength(0);
+    });
+
+    it('the inference-mode pill routes to the AI Brain surface when not_installed/install_failed', async () => {
+      const el = make();
+      el.aiState = makeAiState({
+        aiEngine: { kind: 'not_installed', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      const control = el.shadowRoot?.querySelector('[label*="AI Brain"]');
+      expect(control).not.toBeNull();
+    });
+
+    it('the inference-mode pill still routes to Health for ordinary states (e.g. online)', async () => {
+      const el = make();
+      el.aiState = makeAiState({
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      const control = el.shadowRoot?.querySelector('[label*="Open Health"]');
+      expect(control).not.toBeNull();
+    });
   });
 });

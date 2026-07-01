@@ -7,7 +7,10 @@ from jseval import metric_families as mf
 
 def test_registry_covers_the_families():
     names = {f.name for f in mf.REGISTRY}
-    assert names == {"quality", "perf-latency", "perf-throughput", "perf-footprint", "leak", "llm-gen"}
+    assert names == {
+        "quality", "perf-latency", "perf-throughput", "perf-footprint", "leak",
+        "judge-low-cost-weight", "llm-gen",
+    }
 
 
 def test_every_metric_key_has_a_direction():

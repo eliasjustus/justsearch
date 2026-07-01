@@ -20,11 +20,24 @@ public record RerankerConfig(
     int maxSequenceLength,
     boolean gpuEnabled,
     int gpuDeviceId,
-    long maxAvgDocLengthChars) {
+    long maxAvgDocLengthChars,
+    // Tempdoc 643: judge-stage refinement floor — blend the CE reorder with the pre-rerank
+    // (fusion/LambdaMART) order so the CE cannot regress a hit past what the blend weight
+    // allows. Default off; judgeBlendAlpha is only consulted when judgeBlendEnabled is true.
+    boolean judgeBlendEnabled,
+    double judgeBlendAlpha,
+    // Tempdoc 643 (E1/E2): compute judgeBlendAlpha per query from a runtime confidence signal
+    // instead of reading the static value above. Requires judgeBlendEnabled. Default off.
+    boolean judgeArbitrationEnabled,
+    double judgeArbitrationAlphaDiverge,
+    // Tempdoc 643 (perf-skip): skip the CE RPC entirely (not just re-weight it) when the
+    // arbitration gate says fusion is decisive. Requires judgeArbitrationEnabled. Default off.
+    boolean judgeArbitrationSkipEnabled) {
 
   /** Default configuration with reranking disabled. */
   public static final RerankerConfig DISABLED =
-      new RerankerConfig(false, null, 20, 200, 5, 512, true, 0, 16_000);
+      new RerankerConfig(
+          false, null, 20, 200, 5, 512, true, 0, 16_000, false, 0.5, false, 0.85, false);
 
   /**
    * Creates configuration from environment variables, system properties, and auto-discovery.
@@ -59,6 +72,27 @@ public record RerankerConfig(
    *       MiniLM-L6-v2 truncates at 512 tokens; documents longer than ~4K tokens lose most content,
    *       causing catastrophic ranking degradation (measured: -0.606 nDCG on 6K-token docs).
    *       Set to 0 to disable this gate.
+   *   <li>{@code JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED} / {@code
+   *       justsearch.rerank.judge_blend_enabled} - Tempdoc 643: blend the cross-encoder's reorder
+   *       with the pre-rerank order instead of replacing it outright (default: false)
+   *   <li>{@code JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA} / {@code
+   *       justsearch.rerank.judge_blend_alpha} - Weight on the fusion score in the blend, in
+   *       [0,1]; 1.0 = ignore the CE, 0.0 = today's CE-only order (default: 0.5)
+   *   <li>{@code JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ENABLED} / {@code
+   *       justsearch.rerank.judge_arbitration_enabled} - Tempdoc 643 (E1/E2): controls two
+   *       independent effects. (1) Compute the judge blend alpha per query from a runtime
+   *       confidence signal (CE margin + leg agreement) instead of the static {@code
+   *       judge_blend_alpha} — this effect requires {@code judge_blend_enabled}. (2) Gate {@code
+   *       judge_arbitration_skip_enabled} (perf-skip) — this effect does NOT require {@code
+   *       judge_blend_enabled}; it decides whether the cross-encoder is called at all, independent
+   *       of the blend (default: false)
+   *   <li>{@code JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE} / {@code
+   *       justsearch.rerank.judge_arbitration_alpha_diverge} - Alpha to use when the arbitration
+   *       gate decides fusion is decisive and the CE is not confident (default: 0.85)
+   *   <li>{@code JUSTSEARCH_RERANK_JUDGE_ARBITRATION_SKIP_ENABLED} / {@code
+   *       justsearch.rerank.judge_arbitration_skip_enabled} - Tempdoc 643 (perf-skip): skip the
+   *       CE RPC entirely (not just re-weight it) when the arbitration gate says fusion is
+   *       decisive. Requires {@code judge_arbitration_enabled} (default: false)
    * </ul>
    */
   /** Convenience: reads from {@link ConfigStore#global()}. Prefer {@link #from} in new code. */
@@ -93,7 +127,10 @@ public record RerankerConfig(
         enabled, modelPath, reranker.topK(), reranker.deadlineMs(),
         reranker.minHits(), reranker.maxSeqLen(),
         reranker.gpuEnabled(), reranker.gpuDeviceId(),
-        reranker.maxAvgDocLengthChars());
+        reranker.maxAvgDocLengthChars(),
+        reranker.judgeBlendEnabled(), reranker.judgeBlendAlpha(),
+        reranker.judgeArbitrationEnabled(), reranker.judgeArbitrationAlphaDiverge(),
+        reranker.judgeArbitrationSkipEnabled());
   }
 
   /** Returns true if reranking is enabled and model path is configured. */
