@@ -7,7 +7,7 @@
       "lane": "app-ui",
       "requiredCheck": "Unit tests (app-ui)",
       "artifact": "unit-test-attribution-app-ui",
-      "runnerLabel": "windows-latest/app-ui",
+      "runnerLabel": "ubuntu-latest/app-ui",
       "owner": "app and UI hosted unit evidence",
       "platformClass": "mixed/needs targeted experiment",
       "platformRiskNotes": [

@@ -159,15 +159,20 @@ jobs:
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
-    runs-on: windows-latest
+    # Per-lane runner OS (tempdoc 668 option B). app-ui is migrated to Linux (~2.8x
+    # faster, validated); its Windows-specific tests are @Tag("windows") and run on
+    # the separate windows-native-tests lane. search-worker / platform-contracts stay
+    # on Windows pending their own Linux validation.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: app-ui
+            os: ubuntu-latest
             artifact: unit-test-attribution-app-ui
-            runner_label: windows-latest/app-ui
+            runner_label: ubuntu-latest/app-ui
             gradle_tasks: >-
               :modules:app-agent:test
               :modules:app-agent-api:test
@@ -180,6 +185,7 @@ jobs:
               :modules:app-util:test
               :modules:ui:test
           - lane: search-worker
+            os: windows-latest
             artifact: unit-test-attribution-search-worker
             runner_label: windows-latest/search-worker
             gradle_tasks: >-
@@ -193,6 +199,7 @@ jobs:
               :modules:worker-core:test
               :modules:worker-services:test
           - lane: platform-contracts
+            os: windows-latest
             artifact: unit-test-attribution-platform-contracts
             runner_label: windows-latest/platform-contracts
             gradle_tasks: >-
@@ -226,7 +233,11 @@ jobs:
 
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
-        run: ./gradlew.bat ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+        shell: bash
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
+          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
 
       - name: Report unit-test attribution
         if: always()
@@ -248,6 +259,30 @@ jobs:
             build/ci/unit-test-budget.md
             modules/**/build/test-results/test/TEST-*.xml
           if-no-files-found: warn
+
+  # Tempdoc 668 option B — runs ONLY the @Tag("windows") tests (single-instance lock,
+  # job objects, power status) on Windows, preserving coverage of genuinely Windows-
+  # specific product behaviour that the Linux-migrated lanes (app-ui) skip. Small + fast
+  # (a handful of classes via -PwindowsOnly). Covers the modules moved to Linux so far.
+  windows-native-tests:
+    name: Windows-native tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
+        run: ./gradlew.bat :modules:app-util:test -PwindowsOnly=true --console=plain
 
   secret-scan:
     name: Secret scan

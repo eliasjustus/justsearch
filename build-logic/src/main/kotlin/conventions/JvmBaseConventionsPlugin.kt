@@ -70,21 +70,29 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
 
       val includeExperiment = project.findProperty("includeExperiment")?.toString()?.toBoolean() ?: false
       val includeStress = project.findProperty("includeStress")?.toString()?.toBoolean() ?: false
+      // Tempdoc 668 Windows→Linux migration (option B): tests tagged "windows" exercise
+      // genuinely Windows-specific product behaviour (single-instance lock, job objects,
+      // power status). They are EXCLUDED by default so the bulk of CI can run on the ~2.8x
+      // faster Linux runners, and run ONLY on the small dedicated Windows lane via
+      // -PwindowsOnly=true (includeTags "windows"), preserving their coverage.
+      val windowsOnly = project.findProperty("windowsOnly")?.toString()?.toBoolean() ?: false
       project.tasks.withType(Test::class.java).configureEach {
         usesService(testGate)
         useJUnitPlatform {
-          val excluded = mutableListOf<String>()
-          if (!includeExperiment) {
-            excluded.add("evidence")
-            excluded.add("experiment")
-          }
-          // Tempdoc 397 §14.21 R3: stress tests (e.g.,
-          // OrtSessionManagerConcurrentStressTest) are designed for nightly / merge-gate
-          // runs, not fast inner loops. Opt in with -PincludeStress=true to run them.
-          if (!includeStress) {
-            excluded.add("stress")
-          }
-          if (excluded.isNotEmpty()) {
+          if (windowsOnly) {
+            includeTags("windows")
+          } else {
+            val excluded = mutableListOf("windows")
+            if (!includeExperiment) {
+              excluded.add("evidence")
+              excluded.add("experiment")
+            }
+            // Tempdoc 397 §14.21 R3: stress tests (e.g.,
+            // OrtSessionManagerConcurrentStressTest) are designed for nightly / merge-gate
+            // runs, not fast inner loops. Opt in with -PincludeStress=true to run them.
+            if (!includeStress) {
+              excluded.add("stress")
+            }
             excludeTags(*excluded.toTypedArray())
           }
         }
