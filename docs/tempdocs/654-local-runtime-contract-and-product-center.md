@@ -541,15 +541,42 @@ survives `publicProjection()` while the token is stripped). `LifecycleContractTe
 documented in `observations.md` 6×; worker-services untouched by this branch).
 
 **Disclosed verification limit (honest).** The serve path is validated deterministically at every tier
-that does not need the multi-process stack: the projection transform (`publicProjection` preserves
-`runtimeContract` + strips the token), the JSON round-trip (real Jackson), and the MCP `initialize`
-response (real `handlePost`). A live-stack HTTP probe of the *running* backend was **not** run: the
-coordinated dev-stack MCP tooling is not wired in this worktree session (`.mcp.json` is maintainer-local,
-seeded at session start), and starting an uncoordinated raw backend risks colliding with a parallel
-agent's shared stack (the lease model that guards this can't be consulted without the MCP tools). This is
-not a user-visible/UI feature, so no browser tier applies. The residual unproven step is only that the
-assembled backend *invokes* `publishHead` (a trivial builder call, exercised by the existing live-stack
-harness referenced in `RuntimeManifestControllerRedactionTest`'s javadoc). A one-line live check when a
-coordinated stack is available: `GET /api/runtime/manifest` shows `runtimeContract`, and MCP `initialize`
-`serverInfo.version` matches `runtimeContract.constituents.mcpToolSurfaceVersion`.
+that does not require a running multi-process backend: the projection transform (`publicProjection`
+preserves `runtimeContract` while stripping the session token), the JSON round-trip (real Jackson), and
+the MCP `initialize` response (real `handlePost`). A live HTTP probe against a *running* instance was
+not performed in the session that implemented this (local dev-environment constraint), and this is not a
+user-visible/UI feature, so no UI verification tier applies. The one step not covered by the unit tiers
+is that the assembled backend *invokes* `publishHead` at HTTP bind (a one-line builder call; the
+existing manifest live-stack integration harness already exercises `publishHead`). Recommended
+follow-up check against any running instance: `GET /api/runtime/manifest` includes a `runtimeContract`
+block, and the MCP `initialize` response's `serverInfo.version` equals
+`runtimeContract.constituents.mcpToolSurfaceVersion`.
+
+### Follow-ups (not forgotten)
+
+For the next agent — nothing here blocks the shipped v1; these are deferred or downstream:
+
+1. **Deferred live check** — run the one-line probe above once a running instance is available (the
+   only serve-path step not covered by a unit tier).
+2. **Founder-overridable version labels** — Runtime Contract `0.1.0`, MCP tool surface `0.1.0`,
+   deprecation window ≥90 days were chosen as under-promise defaults (D11). Bumping them is a one-place
+   edit: the constants in `RuntimeContract`/`McpContractVersions` + the tables in
+   `docs/reference/runtime-contract.md`. Reach 1.0 only when "we will not break this" is true.
+2b. **A version bump adds a changelog row** — `docs/reference/runtime-contract.md` §Changelog, one
+   entry per (bump-only-on-break) bump.
+3. **Downstream tempdocs build on this v1 contract, do not re-litigate it:** 655 (MCP conformance +
+   capability policy for state-mutating tools — owns the *certification* depth this note deliberately
+   avoids), 656 (developer onramp — introduces the object), 657 (install modes: Full Desktop / Headless
+   Runtime / MCP Lite packaging — 654 named them official shapes, 657 makes them real), 659 (externally
+   verifiable trust evidence — the honest "listed + namespace-verified" lever, never "certified").
+4. **Staged, deliberately not built (D7)** — a per-route stability-tier field + a drift-gate that
+   projects the public/reference/internal classification from per-surface declarations. Justified only
+   if/when the promised boundary grows well beyond three surfaces; for a three-surface core the doc
+   table is the right size. Recognized principle recorded in D10; do not build it prematurely.
+5. **External-standard watch (D4)** — the MCP tool-surface version is versioned by JustSearch because
+   MCP has no shipped tool-surface versioning; if the in-flight MCP proposals (per-tool SemVer / spec
+   SemVer) land, align `mcpToolSurfaceVersion` to them (conform, don't fork). MCP protocol `2025-11-25`
+   was current-stable as of 2026-07-02.
+6. **Coordination with 650** — only one alignment line was changed in `01-system-overview.md`; 650 owns
+   the broader public "what JustSearch is" narrative and may carry a fuller runtime-first reframe.
 
