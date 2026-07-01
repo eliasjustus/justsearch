@@ -1,7 +1,7 @@
 ---
 title: "Five-minute agent/runtime onramp: make the first successful developer path deterministic by finishing the AI capability's runtime-manifest/reason-code wiring, not by adding a new diagnostics subsystem"
 type: tempdocs
-status: "open — investigation + design theorization pass 2026-07-01 (see §Investigation, §Design theorization). Triggered by a live incident: 2 agents independently reported missing models / missing llama-server after the go-public cutover. Root cause traced to the Inference capability being the one capability that doesn't route its failure reasons through the existing LifecycleReasonCode/RuntimeManifest substrate. Design conclusion: extend that existing substrate (§D3/§D4), do not build a parallel doctor subsystem. No implementation started."
+status: "open — investigation + design theorization + confidence pass, all 2026-07-01 (see §Investigation, §Design theorization, §Confidence pass). Triggered by a live incident: 2 agents independently reported missing models / missing llama-server after the go-public cutover. Root cause traced to and live-reproduced: the Inference capability doesn't route its failure reasons through the existing LifecycleReasonCode/RuntimeManifest substrate — confirmed by a live dev-stack run showing `/api/ai/runtime/status` correctly reporting RUNTIME_VARIANT_NOT_INSTALLED while `/api/runtime/manifest`'s `ai.pendingReason` stayed stuck on generic prose at the same moment. Design conclusion: extend that existing substrate (§D3/§D4), do not build a parallel doctor subsystem. Overall implementation confidence 7/10; recommended tier Sonnet at high effort (see §Confidence rating). No implementation started."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -440,6 +440,199 @@ an assumption about MCP transport mechanics that may not survive the month.
 **No external code, text, or assets were copied or adapted into this tempdoc or the codebase** —
 this was a factual/currency check, cited by URL above; nothing to attribute under the license/notices
 CI lane beyond the citation itself.
+
+## §Confidence pass (2026-07-01, third pass)
+
+Per the approved investigation plan, this pass converts the design's unverified assumptions into
+traced, read facts (or corrects them), plus one live experiment. No feature code changed.
+
+### Resolved
+
+**1. Confirmed — no existing wiring between `RuntimeActivationService.fail()` and
+`InferenceCapability.transition()`.** Grepped `RuntimeActivationService.java` for
+`InferenceCapability`/`transition(`: zero matches. The assumption holds as stated.
+
+**2. Corrected — the "missing llama-server executable" failure does not collapse into
+`StartupCode.PROCESS_EXITED`/`UNKNOWN` as originally guessed; it collapses into something even
+coarser.** Traced the real call chain: `LlamaServerOps.startLlamaServer()` → `launchManagedLlamaServer()`
+→ `startManagedProcessAndMonitor()` → `process = pb.start()` (`LlamaServerOps.java:563`), declared
+`throws IOException` with **no catch** at any point in that chain. The caller,
+`InferenceLifecycleManager` (e.g. around line 371), only has typed handling for
+`ModeTransitionException` (line 403, which maps to `StartupCode` via `TransitionRunner`) — a raw
+`IOException` from `pb.start()` failing (Windows error 2, file not found, is what a missing
+`llama-server.exe` actually throws) falls through to the generic `catch (Exception e)` at line 412
+and becomes `TransitionCode.ONLINE_START_FAILED` — a **different, more generic enum family**
+(`TransitionCode`, not `StartupCode`) — with the real cause preserved only as a `safeMessage(e)`
+free-text substring, not any stable code. Contrast with the precedent that *does* exist:
+`MISSING_DLL` (`LlamaServerOps.java:391-405`) is detected by inspecting the **Windows exit code**
+of an already-launched process (`0xC0000135`) — a fundamentally later failure point than "the exe
+was never found to launch in the first place." **Correction for implementation**: the fix is not
+"add a `StartupCode` entry and it'll get hit" — it requires an explicit pre-launch existence check
+(or a dedicated catch around `pb.start()`) inside `LlamaServerOps`/`launchManagedLlamaServer` that
+throws a proper `ModeTransitionException` with a new `Reason`, mirroring the `MISSING_DLL` pattern
+structurally (detect condition → throw typed reason) even though the detection mechanism differs
+(pre-launch file check vs. post-launch exit code).
+
+**3. Confirmed and precisely bounded — adding new codes is mechanical, not free, and the mechanism
+differs per enum family.** For `LifecycleReasonCode`: a real, live gate exists —
+`scripts/ci/check-readiness-reason-codes.mjs` + register `governance/readiness-reason-codes.v1.json`
+— enforcing FORWARD (every non-exempt enum code must have a row in `readinessNotice.ts`'s
+`CAUSE_ROWS`, so no raw code ever renders to a user) and BACKWARD (no dead FE rows) correspondence.
+A new inference-specific `LifecycleReasonCode` member therefore requires exactly one of: (a) a
+`CAUSE_ROWS` wording entry, or (b) a justified `noWordingExempt` register entry — a bounded,
+well-precedented, 2-3 file change. For `StartupCode` (and its siblings `HealthCode`/`ConfigCode`/
+`TransitionCode`): a Java contract test, `InferenceFailureMessagesContractTest`, enforces that every
+`wireValue()` has a matching key in `messages/inference-failures.en.properties` (missing-key and
+orphan-key checks, plus a count-match check). A new `StartupCode` (or a new `ModeTransitionException.Reason`
+feeding a new `TransitionCode`) requires exactly one new properties-file entry. Both mechanisms are
+proven, low-risk, and already handle exactly this shape of change — this is good news for
+implementation confidence, not a blocker.
+
+**4. Corrected — the reusable registry→path resolution logic is `AiInstallService`, not
+`PackStagingOps`/`AiPackValidator`.** `PackStagingOps` operates on an already-downloaded,
+already-validated `AiPackManifestV1` ("pack") — a *second*, separate model-acquisition mechanism
+(offline/pre-bundled pack import) distinct from the direct "Install AI" download flow. The actual
+registry-driven path resolution the preflight design (D4) should reuse lives in
+`AiInstallService.java` — confirmed via `modelsDir.resolve(pkg.targetDir())` (line 704) and
+`modelsDir.resolve(chat.targetDir()).resolve(chatVariant.filename())` (line 648), both reading
+directly from the loaded `ModelRegistry` (`getManifest()` → `ModelRegistryLoader.loadFromClasspath`).
+This is the class a preflight implementation should call into or mirror — not `PackStagingOps`.
+
+**6. Refined — the violation is at call-site discipline, not at the type level, and Worker is not
+a clean counter-example.** `WorkerCapability.pendingReason()` (`WorkerCapability.java:40`) is
+**also** a raw mutable string field (`WorkerCapability.java:25`, same shape as `InferenceCapability`)
+— the `Capability` interface itself does not type-enforce `LifecycleReasonCode`. The real
+distinction found: `StatusLifecycleHandler.java:1052` compares
+`LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code().equals(workerCapability.pendingReason())`,
+confirming Worker's call sites *discipline themselves* to always pass an enum's `.code()` string,
+even though nothing enforces it. Inference's call sites do not follow this discipline at all: the
+capability's default reasons are free English prose (`"Inference not yet activated"`,
+`"Inference not configured"` — `InferenceCapability.java:20,29`), which don't match any
+`LifecycleReasonCode.code()` value (e.g. `"inference.offline"`). **Revised framing for
+implementation**: this is a call-site-discipline gap to close (make Inference's `transition()` callers
+pass enum codes like Worker's already do), not a type-system gap requiring a new mechanism — the
+existing `Capability` interface doesn't need to change.
+
+**7. Spot-checked, hedge confirmed — `OcrSkipReason` and `ValidationReason` are proper closed
+`enum`s** (matching the `LifecycleReasonCode` shape); `IngestionReasonCodes` is a `final class`
+(constants holder, not an enum, but still a closed/discrete set by construction). No violation
+found on a quick shape check. Not deep-audited further, per the plan's stated priority (this is
+candidate-scope, not required for 656's own problem).
+
+### Live experiment (5, 8)
+
+Attempted per plan: `node scripts/dev/prepare-worktree.cjs --no-dist` succeeded quickly (FE deps
+only). Starting the actual dev stack surfaced a real, useful precondition failure of its own:
+`dev-runner.cjs start` requires `modules/ui/build/install/ui/bin/ui.bat` to exist first — i.e. a full
+`:modules:ui:installDist :modules:indexer-worker:installDist` Gradle build, which `--no-dist` prep
+deliberately skips. This is itself a small, consistent data point for the tempdoc's own subject
+matter (getting from zero to a running instance has more preconditions than a single prepare
+script covers) but is not itself a new finding to act on here.
+
+The full install-dist build was run (`:modules:ui:installDist :modules:indexer-worker:installDist`,
+succeeded), then the dev stack was started clean (`dev-runner.cjs start --clean hard`) in this
+worktree's actual current state (4 of 9 model blobs + `native-bin` still absent, per the original
+investigation pass). This is a **live, measured** result, not an inference from source.
+
+**`GET /api/runtime/manifest` while genuinely broken:**
+```json
+"ai": {"phase":"PENDING","required":true,"pendingReason":"Inference not yet activated"}
+```
+Generic, exactly as the static read predicted — no hint of a specific cause.
+
+**Triggered `POST /api/ai/runtime/activate {"variantId":"default"}`, then polled `GET
+/api/ai/runtime/status` at the same moment:**
+```json
+"activation": {"errorCode":"RUNTIME_VARIANT_NOT_INSTALLED","message":"Variant not installed: default","state":"failed", ...}
+```
+The system **already knows** the precise, correct, actionable cause — sitting right there in the
+activation-status endpoint. The manifest, polled in parallel at the exact same moment, still read
+`"Inference not yet activated"`, completely unchanged. This is the D3 gap caught live, not
+theorized: the precise answer and the generic answer coexist in the same running process, and the
+one channel this tempdoc's onramp/doctor design would read (the manifest) is the one that doesn't
+have it. `GET /api/status` shows the same generic ceiling from a third angle:
+`"inference":{"state":"LIFECYCLE_STATE_DEGRADED","reason_code":"inference.offline"}` — coarser
+still, confirming `INFERENCE_OFFLINE` really is the only code this path ever emits today.
+
+**Search with the LLM/chat capability fully offline:** `POST /api/knowledge/search
+{"query":"the","limit":5}` against the worker's already-indexed 5-document dev-data index returned
+**4 real, ranked results** — not an error, not empty. `searchTrace` shows `effectiveMode: "HYBRID"`,
+with `dense-retrieval: executed` and `embeddingCoverage: 1` — i.e. **the ONNX embedding/dense
+retrieval stack ran successfully while the GGUF chat model / llama-server was completely offline.**
+This directly, empirically confirms D5's speculative claim (previously flagged as untested): search
+value does not require the LLM tier at all. It also sharpens D5's tier taxonomy further than the
+design pass could from statics alone — the real dividing line observed is not "zero models vs. some
+models," it's specifically **"LLM/chat (GGUF + llama-server) vs. everything else (ONNX embedding +
+SPLADE + Lucene/BM25)"** — the latter cluster functions as one unit, live-confirmed, independent of
+the former. One loose end not resolved in this pass: `onnxFeatures` in the activation-status payload
+listed `reranker`/`citation_scorer` as `"reason":"not_found"` while the search response's
+`crossEncoderAvailable` read `true` — plausibly two different things (an optional GPU-accelerated
+variant install-status vs. the base CPU model actually loaded), but this pass did not chase it
+further; noted honestly rather than papered over.
+
+Cleanly stopped the dev stack afterward (`dev-runner.cjs stop --active`) — no state left running.
+
+### Confidence rating and implementation-effort recommendation (2026-07-01)
+
+**Confidence in the design, for the core wiring fix (D3): 8/10.** Every load-bearing claim for this
+piece is now either directly read from the call chain or, for the central claim, live-measured
+against a running instance in this exact worktree (the `RUNTIME_VARIANT_NOT_INSTALLED` vs.
+`"Inference not yet activated"` split above is not a guess). The two points holding this back from a
+higher score: (a) the exact shape of the fix for the "exe not found before launch" case (finding 2)
+needs a small design decision next-agent-side (pre-launch `Files.exists()` check vs. a dedicated
+catch around `pb.start()`) that this pass intentionally left as implementation-level judgment; (b)
+the `onnxFeatures` vs. `crossEncoderAvailable` discrepancy noticed during the live experiment was not
+chased to ground — low risk, but an honest unknown.
+
+**Confidence in the preflight piece (D4): 6/10.** `AiInstallService`'s registry-driven path
+resolution is confirmed to exist and be the right reuse target, but this pass did not verify it is
+cleanly *extractable* as a read-only, side-effect-free query — it may be entangled with the download
+mutation flow, which would make "reuse it for preflight" require a small refactor (splitting
+resolution from action) rather than a pure call-out. Next agent should read the surrounding class
+structure before assuming a one-line reuse.
+
+**Confidence in the doc-drift fix (D6, `model-inventory.md`) and the "no-model tier" tier naming
+(D5): 9/10.** Both are now either directly git-verified (the doc drift) or live-measured (the tier
+split), the highest-confidence findings of the whole pass.
+
+**Overall confidence for the remaining implementation work: 7/10.** Materially higher than before
+this pass (would have rated 4-5/10 going in — the design rested on several unverified assumptions,
+two of which (findings 2 and 4) turned out to need correction, not just confirmation). What raised it:
+a live, reproduced, unambiguous demonstration of the exact bug this tempdoc exists to fix, plus a
+bounded, precedented, low-risk blast radius for every enum/register touch point. What keeps it from
+higher: the pre-launch-exception-handling shape (finding 2) and the preflight extractability question
+(D4) are genuine open implementation judgment calls, not fully resolved facts — reasonable for an
+investigation pass to leave to implementation, but real enough to name plainly rather than round up.
+
+### Recommended model / effort tier for implementation
+
+**Recommend Sonnet at high effort, not Opus, and not a low/default effort tier.** Reasoning:
+
+- **Why not a low-effort tier**: the change touches four files across two languages in ways that must
+  stay mutually consistent (`LifecycleReasonCode.java` new members ↔ `readinessNotice.ts` `CAUSE_ROWS`
+  rows or `governance/readiness-reason-codes.v1.json` exemptions ↔ `messages/inference-failures.en.properties`
+  keys ↔ the actual `RuntimeActivationService`/`InferenceCapability`/`LlamaServerOps` wiring) — a
+  shallow pass would satisfy the compiler but miss one of the three gate/test mechanisms found in
+  this pass (`check-readiness-reason-codes.mjs`, `InferenceFailureMessagesContractTest`, and whatever
+  `RuntimeManifestSchemaCompatibilityTest` requires for a schema bump if one is judged necessary),
+  producing a red CI gate discovered late rather than avoided.
+- **Why not Opus/Fable**: this is not a novel-design problem — the design is already settled by this
+  pass and the prior two, down to naming the exact classes and precedent patterns (`MISSING_DLL`,
+  `VDU_MISSING_MMPROJ`, the `AiInstallService.targetDir()` resolution). What remains is careful,
+  convention-following extension of an existing, well-precedented pattern into a handful of named
+  files — exactly the shape of work Sonnet at high effort handles reliably, and where Opus's extra
+  judgment capacity would be spent re-deriving conclusions this pass already reached, not adding new
+  ones.
+- **Why "high" and not default effort**: the two open judgment calls left in this pass (the
+  pre-launch exception-handling shape for finding 2, and confirming/refactoring `AiInstallService`'s
+  extractability for D4) need a careful read of surrounding code before committing to an approach —
+  worth the extra effort budget over a quick mechanical pass, but not worth a full architecture-grade
+  model.
+- **One condition**: if the implementing agent's own read of `AiInstallService` (D4) reveals the
+  path-resolution logic is *not* cleanly extractable and needs a real refactor (splitting resolution
+  from the download side-effect) rather than a small reuse, that specific sub-slice is worth a second,
+  focused Sonnet-high (or Opus, if the refactor turns out to have non-obvious blast radius into the
+  pack-import path) pass rather than folding it into the same implementation session by default.
 
 ### D8. Public-repo caution
 
