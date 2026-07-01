@@ -1029,3 +1029,71 @@ Sources: [Improve the performance of Gradle builds](https://docs.gradle.org/curr
 [Java 11 AppCDS with Gradle (worked example)](https://blog.jdbevan.com/2020/09/30/java-11-appcds-example-with-gradle/),
 [Build times: the most important developer-productivity metric (Honeycomb)](https://www.honeycomb.io/blog/most-important-developer-productivity-metric-build-times),
 [How to monitor and optimize CI build performance (Semaphore)](https://semaphore.io/how-to-monitor-and-optimize-ci-build-performance).
+
+## Design theorization — band closure and the optimization hand-off - 2026-07-01
+
+A design pass on "what is the correct long-term design for the remaining work." The disciplined
+answer turns out to be **no new structure** — and arriving there is the design conclusion, not a
+dodge. Design only.
+
+### What the remaining work actually is
+
+After the decomposition, the follow-ons this tempdoc names are: (a) Build-lane sub-decomposition and a
+per-component overhead budget — both **correctly deferred** (no captured source / no second consumer;
+664 discipline), their shape already recorded; and (b) **acting on the ~70% overhead finding** (Dynamic
+CDS, unblocking config-cache). (b) is the only substantial remaining work, and this tempdoc has
+repeatedly scoped it **out** ("the 648 band", Principle D). So the real design question is structural:
+does that optimization work belong *in* 667, or does 667 terminate and hand off?
+
+### The correct long-term design: conform to the measure / attribute / optimize band-separation
+
+Investigation settles it against an existing, load-bearing seam. The engine's performance work is
+**three separate tempdocs**, each with a distinct reason to change and each led by the prior's evidence:
+
+- **640** — *measure → guard* (the standing ratchet);
+- **647** — *attribute → budget* (a purpose-only stub; "extend the standing attribution + declared
+  allowances");
+- **648** — *optimize → act* (a purpose-only stub; "actually reduce the dominant cost the attribution
+  names… evidence-led by 647; no design chosen, nothing implemented").
+
+667 is the **CI instance of this same shape, with the first two bands collapsed into one tempdoc**:
+because CI's advisory guard (the wall-clock budget + trend) and its attribution shipped together, 667
+*is* CI's 640+647. What it must **not** do is also become CI's 648. The correct design is therefore the
+same hand-off 647 makes to 648: **667 terminates at the attribution/guard boundary and delegates the
+optimization to a separate, purpose-only stub** (the CI analogue of 648), created *when the band is
+picked up* — not now. The gap is not "silently dropped" (664's reason for a proactive stub) because
+this tempdoc's second-ideation pass already records the dominant cost (~70% framework overhead) and the
+ranked, researched levers (Dynamic CDS — unblocked; config-cache — blocked upstream; `--profile`
+sub-decomposition — deferred). That record *is* the hand-off payload; a dedicated stub becomes worth its
+own number only when someone acts. When they do, that stub should also consult the older local-build
+work — **275 (gradle-cold-start), 284 (local-build-performance), 287 (test-execution-performance)** —
+which may already have explored CDS/config-cache locally.
+
+So the design conclusion for 667's remaining work is: **it is design-complete as an
+attribution-plus-advisory-guard tempdoc.** No new attribution structure is warranted — adding any would
+violate three things at once: this tempdoc's own Principle D (more instrument ≠ progress once the
+decision has changed), 664's defer-until-a-consumer discipline, and the scope boundary the
+band-separation enforces. The title needs no change; "attribution and advisory latency budgets" names
+exactly the two bands 667 owns.
+
+### Reach
+
+**This conforms to an existing seam rather than creating one.** The engine's 640 / 647 / 648 split is
+the precedent; 667 (+ a future optimize stub) is the CI instance. I am extending that shape, not
+forking a parallel one.
+
+The recurring shape worth naming plainly — an instance of **AHA** (unify only what shares a reason to
+change), applied to *tempdoc scope*:
+
+- **The performance-work band separation.** Performance work decomposes into three bands with distinct
+  reasons to change — *measure/guard*, *attribute/budget*, *optimize* — and each is its own (often
+  purpose-only-stub) tempdoc, **led by the prior's evidence, never folded into it.** An attribution
+  tempdoc ends at a clean delegation; it does not absorb the optimization. *Candidate scope:* any
+  measure→act domain in the repo — the engine (640/647/648, the exemplar), CI latency (667 + a future
+  optimize stub), and plausibly indexing throughput (278, the stale precedent the attribution band
+  already flags). *Where it would be violated:* (i) folding the CDS/config-cache work into 667 —
+  scope-creep that couples two things with different reasons to change; or (ii) the Principle-D
+  failure — continuing to add CI-attribution surfaces here instead of handing off to the act. This is
+  the structural expression of Principle D: *knowing an instrument is finished is knowing when to hand
+  off.* Recording the shape is the deliverable; the generalized structure (a proactive optimize stub)
+  is deliberately **not** built now — it is created when a consumer acts, exactly as 664 prescribes.
