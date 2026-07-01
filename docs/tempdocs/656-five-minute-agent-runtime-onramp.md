@@ -2066,3 +2066,43 @@ dev-runner subcommand). **Not Opus** — the deep reasoning was the design pass,
 deliberately deferred; nothing remaining needs it. The one spot rewarding a little care is the CI lane
 (trigger policy + lane choice), comfortably within Sonnet.
 
+## §Implementation (sixteenth pass, 2026-07-01) — the three warranted-now wins
+
+Implemented the remaining non-structural, un-coupled work (the big tier projection stays deferred by
+design). No new logic — entry points + a CI lane + a doc fix over the already-shipped doctor/smoke.
+
+### What shipped
+- **Discoverable doctor (D1).** `package.json` now has `"doctor": "node scripts/dev/doctor.mjs"`
+  (`npm run doctor`), and `dev-runner.cjs` gained a `doctor` subcommand (`cmdDoctor` — a thin
+  `spawnSync` passthrough to `doctor.mjs`, inheriting stdio + propagating the exit code, so `--json`
+  and the informational/exit-2 contract pass through; the tier logic keeps exactly one home). Usage
+  line added.
+- **Onramp Tier-0 CI proof-lane (D2).** New `.github/workflows/onramp-smoke.yml` —
+  `workflow_dispatch`, `windows-latest`, advisory/non-blocking — checks out, sets up Java/Node,
+  installs `modules/ui-web` deps (the stack spawns the Vite frontend; readiness is backend-only but the
+  deps keep the spawn clean), forces the model-less **Tier 0** path via an empty
+  `JUSTSEARCH_MODELS_DIR`, and runs `test-onramp-first-success.mjs` (plus a `doctor` diagnostic step).
+  Declared in `workflow-signal-policy.v1.json` as class `scheduled-quality-signal` (mirrors the Phase-3
+  nightly). Conforms to CLAUDE.md's "specialty workflows remain manual; local-first primary."
+- **Dangling-ref fix (D3).** `examples/onramp-corpus/README.md` no longer points at the nonexistent
+  `docs/how-to/onramp.md` (the only site).
+
+### Verification
+- D1: `npm run doctor` and `dev-runner doctor` both print the tiered report; `dev-runner doctor --json`
+  emits the JSON object and exit 0; `node --check` clean.
+- D2 (locally checkable): `check-workflow-triggers` **passes** (the new entry ↔ the `workflow_dispatch`
+  block correspond); policy JSON + workflow YAML well-formed; the Tier-0 smoke re-run **green**
+  end-to-end with empty models (1 result, TEXT mode, tier 0) — the exact path the CI lane runs.
+- D3: grep confirms zero remaining `how-to/onramp.md` references in shipped content.
+- Sanity: `./gradlew.bat build -x test` SUCCESSFUL (no Java touched); no stray llama-server; no stack.
+
+### Honest validation boundary (not a gap)
+A GitHub Actions workflow's *live* green only runs on a push + dispatch — an outward action not taken
+autonomously. Everything locally checkable is green; the first live Actions run is a **user dispatch
+after merge** (`gh workflow run "Onramp Smoke"`), inherent to CI work.
+
+### Deliberately not built (recorded elsewhere)
+The deferred tier projection / declared ladder / UI-MCP renderers (wait for the 2nd consumer); a
+`dev-runner --no-frontend` flag (future trim of the CI frontend spawn); an `ubuntu-latest` lane
+(dev-runner has Linux paths but the stack is only *proven* on Windows).
+

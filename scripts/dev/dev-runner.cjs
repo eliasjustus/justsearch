@@ -224,6 +224,7 @@ function printUsage() {
       '  status  [--run <runId>|--active] [--json]',
       '  stop    [--run <runId>|--active] [--force] [--json]',
       '  cleanup [--run <runId>|--active] [--force] [--clean soft|hard|none] [--json]',
+      '  doctor  [--json]   report the onramp capability tier / what is missing / next remedy',
       '',
       'Notes:',
       '  - start is a long-running supervisor (foreground). Use Ctrl+C or run stop/cleanup to tear down the stack.',
@@ -1764,6 +1765,19 @@ async function cmdStop(opts) {
   if (!res.portsClosed && !opts.force) process.exit(1);
 }
 
+/**
+ * Tempdoc 656: `dev-runner doctor` — a discoverable entry point for the onramp doctor. Delegates to
+ * scripts/dev/doctor.mjs (ESM), inheriting stdio and propagating its exit code, so `--json` and the
+ * informational/exit-2-when-broken contract pass through unchanged. Kept a thin passthrough so the
+ * tier/remedy logic has exactly one home.
+ */
+function cmdDoctor() {
+  const doctorPath = path.join(__dirname, 'doctor.mjs');
+  const passthrough = process.argv.slice(3); // args after `doctor` (e.g. --json)
+  const res = spawnSync(process.execPath, [doctorPath, ...passthrough], { stdio: 'inherit' });
+  process.exit(res.status == null ? 1 : res.status);
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const cmd = opts.cmd;
@@ -1778,6 +1792,7 @@ async function main() {
   if (cmd === 'status') return cmdStatus(opts);
   if (cmd === 'stop') return cmdStop(opts);
   if (cmd === 'cleanup') return cmdCleanup(opts);
+  if (cmd === 'doctor') return cmdDoctor();
 
   throw new Error(`Unknown command: ${cmd}`);
 }

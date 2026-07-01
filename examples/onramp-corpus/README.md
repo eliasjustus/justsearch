@@ -6,7 +6,7 @@ are invented (contamination-free — they won't collide with anything a model "a
 directory is license-clean by construction (no third-party content).
 
 Used by:
-- the onramp first-query walkthrough (see `CONTRIBUTING.md` / `docs/how-to/onramp.md`), and
+- the onramp first-query walkthrough (see `CONTRIBUTING.md`), and
 - the runnable proof `scripts/dev/test-onramp-first-success.mjs`.
 
 Ingest it into a running stack:
