@@ -13,6 +13,12 @@
     "fallback": "A direct-connection code path that exists for when the shared multiplex is unavailable (tests, or — for AdvisoryStore — an unrecognized future advisory class). Dormant on the production boot path; not counted.",
     "dormant": "An opener with no production boot path reaching it inside modules/ui-web/src today (host-driven from outside this module, or otherwise unwired). Not counted; re-classify if a boot path is added."
   },
+  "demandClasses": {
+    "breadth": "Steady-state that must stay current even while its surface is hidden (a badge/count). Design §D1's preferred placement is the poll, not a socket.",
+    "depth": "Sub-second updates that only matter while a surface is open. Design §D1's preferred placement is a lazy stream, opened on mount.",
+    "event": "Must be live before any surface shows it (a notification, a router input). The only demand class that legitimately earns an always-on socket — Design §D1."
+  },
+  "demandClassesNote": "Annotates WHY a channel holds the mechanism `class` it does (Design §D2's literal ask: declare each channel's demand class, not just its mechanism). Optional per channel — only present where the demand reasoning isn't self-evident from the class alone. Documentation-only: the gate validates the enum if present but does not derive placement from it (that judgment call — e.g. tempdoc 662's design-alignment review §Gap-1 on indexing-jobs — stays in the tempdoc's prose, not mechanized here, per AHA scope discipline).",
   "scan": {
     "root": "modules/ui-web/src",
     "excludeSuffixes": [".test.ts", ".test.tsx"],
@@ -38,7 +44,8 @@
       "file": "modules/ui-web/src/shell-v0/chrome/Shell.ts",
       "openerId": "multiplexed-stream",
       "class": "always-on",
-      "note": "THE shared multiplexed connection (tempdoc 662) carrying intent, the two advisory classes, action-ledger, and indexing-jobs. Constructed once at shell mount."
+      "demandClass": "event",
+      "note": "THE shared multiplexed connection (tempdoc 662) carrying intent, the two advisory classes, action-ledger, and indexing-jobs. Constructed once at shell mount. demandClass 'event' holds for intent/advisory×2/action-ledger by Design §D1's own audit (U1); indexing-jobs is the one channel on this connection whose demand is actually BREADTH (an always-mounted tray's steady-state rows), kept here rather than poll-folded for a documented reason specific to it (design-alignment review §Gap-1, below) — not because its demand class is 'event' too."
     },
     {
       "file": "modules/ui-web/src/shell-v0/components/advisory/AdvisoryStore.ts",

@@ -825,7 +825,9 @@ the multiplexer's resume is per-channel-bundle (§D6) regardless of channel coun
   budget-ceiling gate (`maxAlwaysOnPhysical: 3`). Verified both failure modes live (an undeclared opener, a
   budget breach) before declaring it correct. Wired into the CLAUDE.md pre-merge ui-web gate-set row (this
   family of FE gates is not individually `ci.yml`-wired — confirmed by checking the siblings — so that table
-  is the actual wiring point, matching the established pattern).
+  is the actual wiring point, matching the established pattern). **(2026-07-01 addendum)** the register also
+  carries an optional per-channel `demandClass` (breadth/depth/event, Design §D2's literal ask) alongside the
+  existing mechanism `class` — documentation-only, enum-validated by the gate, not placement-deriving.
 - **Runtime peak signal:** `state/liveChannelBudget.ts` — a module-global high-water-mark, bumped at the
   `EnvelopeStream` open/close instants (the universal SSE seam, covering every consumer including fallbacks)
   and at `consumeShapeStream`'s body-reader open/close (the shared chat/agent-generation entry point). Honest
@@ -951,3 +953,100 @@ not a shared flag); `stop()`/`start()` reuse self-heals via the existing resume-
 touches the shared instance's lifecycle; `ActionLedgerClient`/`indexingJobsBridge` multiplexed-path
 teardowns return only the per-subscriber unsubscribe; and the `live-channels` register's `fallback`-class
 rows still match real, currently-present code (not stale).
+
+## Design-alignment review (2026-07-01) — does the Build actually satisfy the settled Design?
+
+A separate pass re-read the Design (§D1–D6) and Theorization sections in full, conceptually — not
+line-level code review — and compared them against what shipped. Verdict: the *governance* half (register +
+gate + runtime-peak signal) matches the design closely. Three gaps against the *classification* thesis and
+the verification bar. This section resolves the first and records the schema/measurement follow-ups (below).
+
+### Gap #1 (RESOLVED — investigated, current Build decision confirmed correct) — indexing-jobs on the multiplexer vs poll-fold
+
+**The question.** §D1's central move is *classify demand, route each class to its cheapest placement,
+multiplex only the irreducible remainder*. The pre-implementation audit (Confidence pass, U1) applied that
+and concluded indexing-jobs is DEPTH → lazy. The Build then reclassified it back onto the multiplexer with
+one paragraph of reasoning ("the always-mounted tray needs live rows") — never weighing the design's own
+preferred cheaper tier for a steady-state/always-visible need: fold it into the poll, the same way
+indexing-jobs' own progress *count* already does (U2). Does that shortcut hold up, or was it a real
+regression from the design's classification discipline?
+
+**Investigation.** Traced the actual data/cost path rather than assuming:
+- `TaskList.ts` (`modules/ui-web/src/shell-v0/components/TaskList.ts`) — the always-mounted tray — renders
+  per-job STATE badges (queued/running/failed), not a smooth percentage. `IndexingJobView`
+  (`modules/app-api/.../indexing/IndexingJobView.java:20-27`) carries `state, attempts, lastUpdatedMs,
+  errorMessage, retryAfterMs` — no per-job progress field. Job state transitions happen on the order of
+  seconds-to-minutes, so a poll cadence would be visually indistinguishable from push for this UI. The
+  *literal* poll-fold is not blocked by data granularity.
+- The per-job list is already cheap to expose: `RemoteIndexingJobsBridge.latestSnapshot()`
+  (`modules/app-services/.../worker/RemoteIndexingJobsBridge.java:152`) is a synchronously-readable cache
+  kept fresh by a gRPC subscription started unconditionally at Head boot (`HeadAssembly.java:986`),
+  independent of any SSE consumer. Adding it to `StatusResponse`/`CoreIndexView` would reuse that cache — no
+  new Worker query, no new subscription. The literal mechanics are cheap, contrary to an initial assumption
+  that this would require substantial new backend plumbing.
+- **The actual blocker:** `indexingJobsBridge.ts` carries a purpose-built defect detector —
+  `isFeedStalled`/`STALE_FEED_MS` (tempdoc 595 §4.4, `indexingJobsBridge.ts:157-222`) — that compares the
+  SSE feed's own frame-arrival cadence against the `/api/status` poll's cadence to catch the *specific*
+  documented defect where the tray silently freezes while the status bar keeps advancing. That detector is
+  **meaningful only because indexing-jobs is independent of the poll**. Folding indexing-jobs onto the poll
+  would make the tray and the status bar read the same source, so they could never diverge — the detector
+  becomes vacuous. Removing it would mean either accepting the regression risk of retiring a mechanism
+  purpose-built against a documented past defect, or building a replacement signal.
+- **The marginal connection-budget cost of leaving indexing-jobs on the multiplexer is ~zero.** Unlike the
+  original 5-vs-6 problem (every stream's own socket counted), the multiplexer socket already exists for
+  advisory×2/action-ledger/intent regardless of whether indexing-jobs also rides it. The budget pressure
+  that motivates poll-folding elsewhere does not actually apply to this specific stream once it is already
+  sharing an open connection.
+
+**Conclusion.** Keeping indexing-jobs on the multiplexer is the *correct* call, not a shortcut, once the
+595 §4.4 detector and the near-zero marginal connection cost are both weighed — reversing it would trade a
+working, purpose-built defect detector for a connection-budget win this specific stream doesn't actually
+need (the socket is already open). This satisfies the design's own "prefer extending a usable existing
+design over creating new structure" instinct: the existing multiplexer inclusion is the design to keep. The
+gap the design-alignment review found was real, but it was in the *documentation* (a one-line assertion
+where a weighed comparison belonged), not in the code.
+
+**Scope note for the future.** This conclusion is specific to indexing-jobs' history (it has an existing
+detector riding on its channel independence). A *future* always-mounted-but-steady-state stream that lacks
+an analogous purpose-built staleness detector should default to poll-folding first, per §D1's original
+preference order — this instance does not license a blanket "always keep everything on the multiplexer"
+reading.
+
+### Gap #3 (RESOLVED) — the register now carries a demand-class annotation
+
+`governance/live-channels.v1.json` gained an optional `demandClass` field per channel (`breadth`/`depth`/
+`event`, defined in a new `demandClasses` map alongside the existing mechanism `classes` map), enum-validated
+by `scripts/ci/check-live-channels.mjs` when present. Documentation-only by design (the gate does not derive
+placement from it — that judgment stays in tempdoc prose, per AHA scope discipline: the register's job is
+anti-drift enforcement, not encoding every design rationale as machine-checked structure). The multiplexer's
+channel row is annotated `"demandClass": "event"` with an explicit note that indexing-jobs is the one
+BREADTH-demand stream riding along on it for the documented reason above, not because its demand is `event`
+too — so a future reader of the register sees the real shape, not a flattened "everything here is the same
+kind of always-on."
+
+### Gap #2 (RESOLVED) — measured load repro
+
+Ran the tempdoc's own named acceptance test live: isolated dev-stack backend (`jseval dev --clean --port
+33273`) + Vite, real Chrome automation, direct `fetch()` timing probes (bypassing the app's own poll
+scheduling to get precise per-call latency) against `/api/status` / `/api/inference/status`.
+
+**In-scope test (one session, the tempdoc's actual claim).** One browser tab, navigated to the Health
+surface (its 2 lazy fetch-body streams: `/api/health/events/stream`, `/api/condition-recovery-index/stream`)
+alongside the baseline (`/api/shell-events/stream` multiplexer + the 2 native polls) — confirmed via
+`read_network_requests` that all 3 long-lived connections were live (200, after an initial transient 503
+warm-up unrelated to pooling). Six consecutive ad-hoc `/api/status` probes at this baseline: **43ms, 48ms,
+43ms, 47ms, 43ms, 53ms** (plus one 379ms cold-start call) — every call resolved promptly, no queuing, no
+growing backlog. `/api/inference/status` resolved in 325ms. This is the literal claim from the tempdoc's
+Verification section and Design §D5's superseding version: **confirmed, measured, live.**
+
+**Out-of-scope discovery (recorded honestly, not claimed as a tempdoc failure).** An earlier attempt tested
+3 simultaneous browser *tabs* of the app (each tab boots its own full Shell → its own multiplexer + 2 polls;
+3 tabs = 9 baseline connections competing for the same origin's 6-slot pool, plus Health/Log lazy streams on
+top). Under that load, the app's own scheduled polls kept succeeding (49/49 observed 200s), but a single
+ad-hoc extra `fetch()` genuinely stalled for 8+ seconds (`Promise.race` against an 8000ms timeout fired). This
+is a real, reproduced contention effect — but it is **outside this tempdoc's stated scope**: the Problem/
+Scope sections describe *one shell's* long-lived-connection footprint, not N independent Shell instances
+(each with its own module-level state, including its own `liveChannelBudget.ts` peak counter) competing
+across browser tabs. The register/gate have no visibility across tabs by construction (each tab is a
+separate JS runtime). Recorded here as a genuine boundary condition for anyone extending this work to a
+multi-tab/multi-window scenario — not a regression, not a missed requirement of tempdoc 662 as scoped.

@@ -160,6 +160,17 @@ for (const ch of reg.channels) {
   }
 }
 
+// demandClass (Design §D2's literal ask — breadth/depth/event) is optional per channel and
+// documentation-only (no placement is derived from it), but if present it must be a real value.
+const validDemandClasses = new Set(Object.keys(reg.demandClasses || {}));
+for (const ch of reg.channels) {
+  if (ch.demandClass !== undefined && !validDemandClasses.has(ch.demandClass)) {
+    failures.push(
+      `channels[] entry for "${norm(ch.file)}" has demandClass "${ch.demandClass}", not one of [${[...validDemandClasses].join(', ')}].`,
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error('✗ live-channels gate FAILED:\n' + failures.map((x) => '  - ' + x).join('\n'));
   process.exit(1);
