@@ -1097,3 +1097,64 @@ change), applied to *tempdoc scope*:
   the structural expression of Principle D: *knowing an instrument is finished is knowing when to hand
   off.* Recording the shape is the deliverable; the generalized structure (a proactive optimize stub)
   is deliberately **not** built now — it is created when a consumer acts, exactly as 664 prescribes.
+
+## CI improvement theory — grounded investigation - 2026-07-01
+
+This band never actually made CI faster — it built the instrument and deferred every lever. Prompted
+to *use* the instrument, I ran real local measurements (Gradle 9.6.1 / Spotless 8.7.0) instead of
+theorizing. The result **corrects two earlier claims in this tempdoc** and produces a ranked, honest
+optimization theory. Every lever below needs a hosted A/B to *quantify* (my box is 12-core; CI is a
+4-vCPU Windows runner), but the direction and rough sizing are evidenced.
+
+### Two corrections to this tempdoc's own earlier framing
+
+- **Config-cache is NOT blocked, and NOT the big lever.** The tempdoc (and its research pass) asserted
+  a diffplug/spotless Windows bug blocks Gradle configuration cache for the whole build. Measured: it
+  is **already enabled repo-wide** (`org.gradle.configuration-cache=true`) and **stores cleanly with
+  zero problems** (`help --configuration-cache` → "entry stored"; the kotlinGradle-omission workaround
+  already neutralised the spotless issue). And the configuration phase is only **~11s** of the app-ui
+  lane (`--dry-run` timing) — a rounding error against the ~426s overhead. Its CI value today is
+  ~nil anyway, because the config-cache entry is **not persisted across cold runners**. So config-cache
+  is neither blocked nor impactful — the earlier "biggest blocked lever" framing was wrong.
+- **The parallelism throttles are NOT a minor lever — they are likely the biggest.** The
+  second-ideation pass concluded the fork-count / `testParallelism` throttles govern "only the small
+  test-execution slice." That was a mistake: it conflated "config-cache won't help" with "parallelism
+  won't help." The ~426s overhead is dominated not by config but by **10 modules' test tasks running
+  serially** (`testParallelism=1` gates concurrent Test tasks to 1) on a **4-vCPU** runner — i.e. the
+  critical-path lane uses ~1/4 of the runner's parallel capacity, and each of the 10 modules serially
+  re-pays fork startup + jacoco + execution + cold-JVM cost. Parallelising the modules attacks the
+  bulk of the overhead directly.
+
+### Ranked improvement theory (evidence-grounded; each needs a hosted A/B to size)
+
+1. **Raise CI test parallelism on the critical path.** `testParallelism=1` in CI (and `app-services`/
+   `ui` `maxParallelForks=1`) serialise the app-ui lane's 10 module test-tasks. Memory is not the
+   constraint (16 GiB; 2–3 × 384 MB forks + a 1 GB daemon ≪ 16 GiB) — the "conservative" default is
+   the constraint. Raising `testParallelism` to 2–3 could roughly **halve** the critical-path lane's
+   serial execution up to the 4-vCPU ceiling. Highest impact, lowest effort, unblocked. **This is the
+   lever this tempdoc originally named and then wrongly dismissed.**
+2. **Move the JVM lanes off Windows to Linux (`ubuntu-latest`).** All three heavy lanes (unit shards,
+   Build, License) run on `windows-latest`; Linux Gradle/JVM is materially faster for test-heavy builds
+   and Linux runners are less contended — plausibly the single largest win. Gated on the
+   Windows-assumption audit 652 flagged (Lucene FS, paths, worker processes); start with an advisory
+   Ubuntu duplicate, migrate the lanes that prove clean.
+3. **Persist build-output cache across jobs/runs.** `cache: gradle` (setup-java) caches *dependencies*,
+   not the project build-output cache, so the four JVM jobs recompile shared modules independently.
+   Adopt `gradle/actions/setup-gradle` (or an explicit `actions/cache` of the build cache + config-cache)
+   to reuse compiled output — the `gradle/actions` A/B 652 already flagged.
+4. **Trim per-critical-path work: jacoco + retries.** jacoco runs `finalizedBy` on every module's test
+   task; moving coverage off the fast-feedback path (or computing it once) removes per-module cost on
+   the critical lane. CI runs `maxRetries=2` — audit the flaky rate; if non-trivial, re-execution
+   silently inflates the critical path and the real fix is at the flake source.
+5. **Dynamic CDS for JVM/class-load startup.** Stacks with the above; attacks the fork-startup slice
+   (~seconds per module × ~10). Moderate, unblocked.
+6. **Config-cache persistence.** Small (~11s), already-enabled, just not persisted across cold runners;
+   lowest priority — recorded mainly to retire the "big blocked lever" myth.
+
+### What this means for the band structure
+
+The optimize band (still a separate concern per the band-separation seam) now has an **evidence-led,
+ranked candidate list** — exactly what 648 is to 647 on the engine side. The honest headline: the two
+biggest levers (CI test-parallelism; Windows→Linux) were both *under-weighted* by this tempdoc's
+earlier passes, and the lever it fixated on (config-cache) is a non-starter. Actually investigating,
+rather than theorizing, is what surfaced that — the point of building the instrument in the first place.
