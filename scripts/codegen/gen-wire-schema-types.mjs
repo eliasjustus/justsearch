@@ -58,6 +58,12 @@ const TARGETS = [
     outFile: 'ai-runtime-status-response.ts',
     rootName: 'AiRuntimeStatusResponse',
   },
+  // Tempdoc 663 §L/Stage 4 — /api/inference/status, moved off a hand-built Map onto a typed record.
+  {
+    schema: 'SSOT/schemas/inference-status-response.v1.json',
+    outFile: 'inference-status-response.ts',
+    rootName: 'InferenceStatusResponse',
+  },
   {
     schema: 'SSOT/schemas/effective-policy.v1.json',
     outFile: 'effective-policy.ts',

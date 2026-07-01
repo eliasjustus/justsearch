@@ -20,6 +20,10 @@
     "group": "calibrate"
   },
   {
+    "name": "ce-replay",
+    "group": "gates"
+  },
+  {
     "name": "changeset-new",
     "group": "gates"
   },
@@ -96,6 +100,10 @@
     "group": "bench"
   },
   {
+    "name": "judge-arbitration-report",
+    "group": "gates"
+  },
+  {
     "name": "judge-ceiling",
     "group": "gates"
   },
@@ -142,6 +150,10 @@
   {
     "name": "perf-gate",
     "group": "gates"
+  },
+  {
+    "name": "perf-report",
+    "group": "analysis"
   },
   {
     "name": "preflight",

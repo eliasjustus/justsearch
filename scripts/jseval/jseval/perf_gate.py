@@ -49,8 +49,13 @@ _DEFAULT_BANDS: dict[str, float] = {
 _LOWER_IS_BETTER: dict[str, bool] = {
     k: v for fam in metric_families.perf_families() for k, v in fam.lower_is_better.items()
 }
-# Footprint is best-effort: if it cannot be derived it SKIPs (never a data error).
-_BEST_EFFORT = {"resident_bytes"}
+# Footprint (total + per-component) is best-effort: if it cannot be derived it SKIPs (never a data
+# error). Sourced from the registry so the set stays in sync with the perf-footprint family.
+_BEST_EFFORT = set(metric_families.BY_NAME["perf-footprint"].metric_keys)
+# The per-component footprint keys (everything in the footprint family except the summed total).
+_FOOTPRINT_COMPONENT_KEYS = tuple(
+    k for k in metric_families.BY_NAME["perf-footprint"].metric_keys if k != "resident_bytes"
+)
 
 # When a pinned metric is missing from a run, name the run shape that produces it: a bare
 # `jseval run --modes hybrid` runs neither the cross-encoder (--ce defaults off) nor the
@@ -65,14 +70,26 @@ _RUN_SHAPE_HINT = {
 
 # --- current-value readers (from a run's summary.json) ----------------------
 
-def ce_p50_ms(summary: dict, mode: str) -> Any:
-    """CE-stage p50. Canonical: `aggregate_metrics.ce_p50_ms` (tempdoc 640, promoted so it flows like
-    a quality metric); fallback to `stage_timing_stats.cross_encoder_ms.p50` for legacy runs."""
+def _promoted_stage_p50(summary: dict, mode: str, agg_key: str, stage_key: str) -> Any:
+    """A promoted stage's p50: canonical `aggregate_metrics.<agg_key>` (tempdoc 640/647, promoted so it
+    flows like a quality metric), falling back to `stage_timing_stats.<stage_key>.p50` for legacy runs."""
     pm = (summary.get("per_mode") or {}).get(mode) or {}
-    v = (pm.get("aggregate_metrics") or {}).get("ce_p50_ms")
+    v = (pm.get("aggregate_metrics") or {}).get(agg_key)
     if isinstance(v, (int, float)):
         return v
-    return ((pm.get("stage_timing_stats") or {}).get("cross_encoder_ms") or {}).get("p50")
+    return ((pm.get("stage_timing_stats") or {}).get(stage_key) or {}).get("p50")
+
+
+def ce_p50_ms(summary: dict, mode: str) -> Any:
+    """Cross-encoder STAGE p50 — the dominant, noise-robust latency metric (tempdoc 640 §C-2)."""
+    return _promoted_stage_p50(summary, mode, "ce_p50_ms", "cross_encoder_ms")
+
+
+def retrieval_p50_ms(summary: dict, mode: str) -> Any:
+    """Retrieval STAGE p50 — the second gated latency stage (tempdoc 647; the only non-CE stage present
+    on every query). The full per-stage decomposition (incl. the `unaccounted_ms` remainder + shares)
+    stays in `stage_timing_stats` for drill-down."""
+    return _promoted_stage_p50(summary, mode, "retrieval_p50_ms", "retrieval_ms")
 
 
 def primary_docs_s(summary: dict, mode: str) -> Any:
@@ -96,6 +113,7 @@ def enrich_docs_s(summary: dict, mode: str) -> Any:
 
 _READERS = {
     "ce_p50_ms": ce_p50_ms,
+    "retrieval_p50_ms": retrieval_p50_ms,
     "primary_docs_s": primary_docs_s,
     "enrich_docs_s": enrich_docs_s,
 }
@@ -155,16 +173,14 @@ def _llm_resident_bytes(manifest: dict | None, models_dir: Path) -> int:
     return total
 
 
-def derive_resident_model_bytes(manifest: dict | None) -> int | None:
-    """Derive the engine's resident model footprint deterministically from a run's
-    ``manifest`` (``model_fingerprints`` + the captured inference snapshot) + the fixed model-dir layout.
-
-    Sums the active ONNX variants (embed + SPLADE + reranker + NER) **and the LLM** gguf (+ mmproj if
-    vision) when the run captured an AI-online inference snapshot (tempdoc 640 R1 — the LLM dominates the
-    stack at ~75%). Returns ``None`` (→ the footprint check SKIPs) if the model dir / paths cannot be
-    resolved, so this is a best-effort metric that never turns the gate into a data error. The LLM
-    portion is itself best-effort: AI-offline eval runs (no ``activeModelId``) yield the ONNX-only
-    footprint, since the LLM is not resident then.
+def derive_resident_component_bytes(manifest: dict | None) -> dict[str, int] | None:
+    """The per-component resident footprint (tempdoc 647) — the deterministic split behind
+    ``resident_bytes``: the active ONNX variants (``embed`` + ``splade`` + ``reranker`` + ``ner``)
+    **and the LLM** gguf (+ mmproj if vision) when the run captured an AI-online inference snapshot
+    (tempdoc 640 R1 — the LLM is ~75% of the stack). Returns a dict of the components that resolve
+    (> 0 bytes), or ``None`` when the model dir / paths cannot be resolved — so every component stays
+    best-effort and never turns the gate into a data error. AI-offline eval runs omit ``llm_bytes``
+    (the LLM is not resident then), so per-component *shares* are only meaningful on AI-online runs.
     """
     mf = (manifest or {}).get("model_fingerprints") or {}
     splade_path = mf.get("splade_model_path")
@@ -199,31 +215,53 @@ def derive_resident_model_bytes(manifest: dict | None) -> int | None:
                 return v
         return None
 
-    files: list[Path] = []
-    for resolved in (
-        _resolve(splade_path),                                            # SPLADE
-        _pick_variant(models_dir / "onnx" / "gte-multilingual-base", prefer_gpu),  # embed
-        _pick_variant(models_dir / "onnx" / "reranker", prefer_gpu),      # reranker
-        _resolve(mf.get("ner_model_path"), models_dir / "onnx" / "ner"),  # NER
-    ):
-        if resolved and resolved.is_file():
-            files.append(resolved)
+    resolved: dict[str, Path | None] = {
+        "splade_bytes": _resolve(splade_path),
+        "embed_bytes": _pick_variant(models_dir / "onnx" / "gte-multilingual-base", prefer_gpu),
+        "reranker_bytes": _pick_variant(models_dir / "onnx" / "reranker", prefer_gpu),
+        "ner_bytes": _resolve(mf.get("ner_model_path"), models_dir / "onnx" / "ner"),
+    }
+    components: dict[str, int] = {}
+    for key, path in resolved.items():
+        if path and path.is_file():
+            try:
+                components[key] = _file_bytes(path)
+            except OSError:
+                continue
+    llm = _llm_resident_bytes(manifest, models_dir)  # tempdoc 640 R1: the LLM when resident; 0 offline
+    if llm > 0:
+        components["llm_bytes"] = llm
+    return components or None
 
-    if not files:
+
+def derive_resident_model_bytes(manifest: dict | None) -> int | None:
+    """The summed resident model footprint (tempdoc 640) — the total of
+    :func:`derive_resident_component_bytes`. Returns ``None`` (→ the footprint check SKIPs) if the model
+    dir / paths cannot be resolved, so it is best-effort and never turns the gate into a data error.
+    """
+    components = derive_resident_component_bytes(manifest)
+    if not components:
         return None
-    total = 0
-    for f in files:
-        try:
-            total += _file_bytes(f)
-        except OSError:
-            continue
-    total += _llm_resident_bytes(manifest, models_dir)  # tempdoc 640 R1: include the LLM when resident
-    return total or None
+    return sum(components.values()) or None
 
 
-def _current_value(metric: str, summary: dict, mode: str, manifest: dict | None) -> Any:
+def _current_value(
+    metric: str,
+    summary: dict,
+    mode: str,
+    manifest: dict | None,
+    components: dict | None = None,
+) -> Any:
+    """Current value of ``metric``. ``components`` (the per-model footprint dict from
+    :func:`derive_resident_component_bytes`) may be precomputed by the caller so the footprint metrics
+    do not each re-derive it (tempdoc 647 cleanup); when ``None`` it is derived on demand."""
     if metric == "resident_bytes":
+        if components is not None:
+            return sum(components.values()) or None
         return derive_resident_model_bytes(manifest)
+    if metric in _FOOTPRINT_COMPONENT_KEYS:
+        comps = components if components is not None else derive_resident_component_bytes(manifest)
+        return (comps or {}).get(metric)
     reader = _READERS.get(metric)
     return reader(summary, mode) if reader else None
 
@@ -313,8 +351,9 @@ def evaluate(
 
     regressed_any = False
     data_error = False
+    _components = derive_resident_component_bytes(manifest)  # derived once; reused per footprint metric
     for metric, baseline_val in metrics.items():
-        current = _current_value(metric, summary, mode, manifest)
+        current = _current_value(metric, summary, mode, manifest, _components)
         if not isinstance(current, (int, float)):
             if metric in _BEST_EFFORT:
                 report["checks"].append({
@@ -386,8 +425,9 @@ def project_run_to_perf_baselines(
     consumes. Metrics that the run does not expose are simply omitted.
     """
     measured: dict[str, float] = {}
+    _components = derive_resident_component_bytes(manifest)  # derived once; reused per footprint metric
     for metric in _DEFAULT_BANDS:
-        val = _current_value(metric, summary, mode, manifest)
+        val = _current_value(metric, summary, mode, manifest, _components)
         if isinstance(val, (int, float)):
             measured[metric] = float(val)
     entry = {

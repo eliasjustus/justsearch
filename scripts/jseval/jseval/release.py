@@ -242,6 +242,13 @@ def _measured_for_mode(summary: dict, mode: str) -> dict | None:
     _footprint = _pg.derive_resident_model_bytes(manifest)
     if isinstance(_footprint, (int, float)):
         run_metrics["resident_bytes"] = float(_footprint)
+    # tempdoc 647: the per-component footprint allocation (embed/SPLADE/reranker/NER/LLM) projects the
+    # same way, so the perf gate can guard each component's resident bytes from bloating (best-effort —
+    # AI-offline runs omit `llm_bytes`).
+    _components = _pg.derive_resident_component_bytes(manifest)
+    if _components:
+        for _ckey, _cval in _components.items():
+            run_metrics[_ckey] = float(_cval)
     return {
         "config_mode": mode,
         "metrics": dict(metrics),

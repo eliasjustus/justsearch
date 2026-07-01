@@ -1,7 +1,7 @@
 ---
 title: "Mixed-corpus reproducibility: MIRACL-de/fr-2k and CourtListener-200 have no committed build path anywhere in this project's history — research pass on what a real fix would look like"
 type: tempdocs
-status: "IMPLEMENTED + POST-IMPLEMENTATION FIXES APPLIED + FUTURE-WORK RESEARCH RECORDED (fifth pass, 2026-07-01). Third pass shipped: mixed/miracl-de-2k and mixed/miracl-fr-2k regenerated from real ir_datasets data (3103/305 and 5407/343 docs/queries); mixed/courtlistener-200 retired and replaced by mixed/legal-clerc-200 (198 docs, 200 queries, built from CLERC/jhu-clsp on HuggingFace). Fourth pass (critical-analysis review) found and fixed 4 real bugs: a spurious-warning bug (a `suite` metadata field wrongly tagged these real corpora as tempdoc-635 self-demo members), a silently-dropped provenance record (a field-name mismatch with `corpus_build.build_golden()`), an incomplete/non-runnable regeneration command documented in the register, and an unverified reproducibility claim — now verified live via a byte-identical diff across two fully independent CLERC fetches. Fifth pass (research only, no code changed): identified the single most important open risk — neither fetcher pins an upstream revision, so the reproducibility guarantee is technically conditional on CLERC's/MIRACL's sources never silently changing (HuggingFace confirms a pinnable commit SHA exists) — plus two concrete extension candidates already sharing the same fixed problem class (mixed/miracl-zh-2k, likely mixed/cord19-qddf), and a set of real, directly-observed contributor-experience gaps (silent multi-minute fetches, a bare FileNotFoundError on a fresh checkout, hand-retyping a recipe that's already committed). Real, comparable, live-measured nDCG@10 unchanged throughout: miracl-de-2k 0.852, miracl-fr-2k 0.866, legal-clerc-200 0.521. Full jseval suite green (1120 passed; 2 pre-existing unrelated failures). See §Implementation (third pass), §Post-implementation fixes (fourth pass), and §Future work (fifth pass) for full detail."
+status: "MERGED TO MAIN, CLOSED (sixth pass, 2026-07-01). Implemented, critically reviewed, and merged via PR #29 (feat(666), commit b276a11) + a small follow-on docs-only PR #30 (observation-shard fold, commit 344a7d8); public CI on main confirmed green after both. mixed/miracl-de-2k and mixed/miracl-fr-2k regenerated from real ir_datasets data (3103/305 and 5407/343 docs/queries); mixed/courtlistener-200 retired and replaced by mixed/legal-clerc-200 (198 docs, 200 queries, built from CLERC/jhu-clsp on HuggingFace). A critical-analysis pass (fourth pass) found and fixed 4 real bugs before merge: a spurious-warning bug (a `suite` metadata field wrongly tagged these real corpora as tempdoc-635 self-demo members), a silently-dropped provenance record (a field-name mismatch with `corpus_build.build_golden()`), an incomplete/non-runnable regeneration command documented in the register, and an unverified reproducibility claim — verified live via a byte-identical diff across two fully independent CLERC fetches. The merge itself surfaced one more real gap: CI's `check-readme-benchmark-numbers.mjs` caught that README.md/methodology.md/scorecard.md still showed the retired corpus and stale nDCG@10 numbers — fixed as part of the same PR (see §Session closeout). A research-only fifth pass recorded future-work ideas (no code changed) — most importantly that neither fetcher pins an upstream source revision, so reproducibility is technically conditional on CLERC's/MIRACL's sources never silently changing. Real, comparable, live-measured nDCG@10 (canonical values, matching release.v1.json/README.md/methodology.md — see §Session closeout for a numbering note): miracl-de-2k 0.852, miracl-fr-2k 0.866, legal-clerc-200 0.516. Full jseval suite green (1120 passed; 2 pre-existing unrelated failures, present before this tempdoc started). See §Implementation (third pass), §Post-implementation fixes (fourth pass), §Future work (fifth pass), and §Session closeout (sixth pass) for full detail."
 created: 2026-07-01
 updated: 2026-07-01
 author: agent research pass, prompted by an external agent's grant-plan investigation into these same two corpora's reproducibility
@@ -23,9 +23,18 @@ committed, reproducible construction path in the public repo, and asked whether 
 "confirmed" their finding.
 
 Checking the actual tempdoc 664 text showed the mention was too vague to confirm anything corpus-specific.
-That prompted a direct investigation of the archive repo (`F:\JustSearch`, the frozen, un-squashed private
-history predating the public-release cutover — see ADR-0044/tempdoc 634) — 6563 commits, versus the public
-repo's curated few. This tempdoc records what that investigation and the following research found.
+That prompted a direct investigation of the archive repo (the frozen, un-squashed private history predating
+the public-release cutover — see ADR-0044/tempdoc 634) — 6563 commits, versus the public repo's curated few.
+This tempdoc records what that investigation and the following research found.
+
+*A note for readers of this history who don't have access to that archive (it is a private, internal-only
+mirror, not published anywhere public):* the archive was consulted only to trace *how* the two corpora
+originally came to exist — it is not load-bearing for this tempdoc's conclusion or fix. The core fact this
+tempdoc acts on — that neither corpus has a committed, reproducible construction path — is independently
+verifiable in the **public** repo's own history (`git log` on `datasets/mixed/courtlistener-200/` or the
+`mixed_miracl-de-2k`-era tempdocs shows the same absence, just with fewer, squashed commits), and the actual
+fix (§Implementation, third pass onward) is fully public, reviewable, and reproducible without needing the
+archive at all.
 
 ## What the archive investigation established
 
@@ -231,9 +240,14 @@ are the kind of "looked like it worked" trap CLAUDE.md's Interrogate Results rul
 - **Real, live, comparable measurements** (`jseval run --modes hybrid --pipeline --start-backend --clean`,
   retried once each after a documented cold-start race — `dense_requested_but_embedding_compat_blocked`,
   resolved on retry exactly as `docs/reference/jseval-pipeline-reference.md` already describes): miracl-de-2k
-  nDCG@10=**0.852**, miracl-fr-2k=**0.866**, legal-clerc-200=**0.521** (full leg-mode breakdown: vector 0.060,
+  nDCG@10=**0.852**, miracl-fr-2k=**0.866**, legal-clerc-200=**0.516** (full leg-mode breakdown: vector 0.060,
   lexical 0.686, splade 0.059 — BM25-dominant on this corpus too, consistent with the retired corpus's own
-  finding, but measured fresh, not inherited).
+  finding, but measured fresh, not inherited). A second, separate hybrid-only run of legal-clerc-200 measured
+  0.521 — ordinary run-to-run variance (~1%, within this project's own cohort-envelope tolerance), not a
+  discrepancy to chase; **0.516 is the canonical figure**, since it's what fed `release.v1.json` and is
+  therefore what `README.md`/`methodology.md`/`scorecard.md` all show (a stray `0.521` reference elsewhere in
+  this tempdoc's earlier passes was corrected in §Session closeout, sixth pass, to avoid exactly the kind of
+  cross-doc drift this whole tempdoc exists to prevent).
 - **`leak-gate-baselines.v1.json`**: `mixed/courtlistener-200`'s entry replaced with `mixed/legal-clerc-200`
   (measured `leak_rate_max=0.205` from a fresh leg-mode run's `staged_recall_accounting` projection).
   Justified via a `.changesets/leak-gate-mixed_legal-clerc-200-tempdoc666.md` entry (the existing
@@ -426,3 +440,73 @@ version-pin dataset revisions for exactly this reason. This is the one item wort
 
 None of the above was implemented this pass — this is deliberately a research/ideation record, matching the
 user's request that this stay documentation-only.
+
+## Session closeout (sixth pass, 2026-07-01)
+
+This tempdoc's work is merged and closed. Recorded here for anyone (agent or human) picking this up cold,
+without the originating conversation.
+
+### What actually merged, and where
+
+- **PR [#29](https://github.com/eliasjustus/justsearch/pull/29)** — squash-merged to `main` as commit
+  `b276a11` (`feat(666): reproducible MIRACL-de/fr + CLERC-based legal corpus, replacing courtlistener-200`).
+  This is everything in §Implementation (third pass) and §Post-implementation fixes (fourth pass): the new
+  `corpus_fetch.py`, both CLI commands, the 3 rebuilt/new corpora's recipes, `leak-gate-baselines.v1.json`,
+  `release.v1.json`, the search-quality register updates, and the new unit tests.
+- **PR [#30](https://github.com/eliasjustus/justsearch/pull/30)** — squash-merged as commit `344a7d8`
+  (`docs(observations): fold tempdoc-666 session shard into the inbox`). Docs-only: folds this session's
+  observation-inbox shard (the `mixed/enron-qa` gap and a local Tesseract-environment note, both logged
+  during this work) into the shared `docs/observations.md`. Unrelated to this tempdoc's actual fix; recorded
+  here only because it shipped in the same session.
+- Public CI on `main` was confirmed green (via `gh run list`/`gh run view`, not just each PR's own checks)
+  after **both** merges.
+
+### One thing PR #29 caught that this tempdoc hadn't anticipated
+
+Merging surfaced a real gap outside this tempdoc's own drafting: `main`'s `check-readme-benchmark-numbers.mjs`
+CI gate failed because `README.md`, `docs/reference/benchmarks/methodology.md`, and
+`docs/reference/benchmarks/scorecard.md` still showed the retired `mixed/courtlistener-200` corpus and its
+stale nDCG@10 numbers — none of §Implementation's "what shipped" list had mentioned these three public-facing
+docs at all. Fixed as part of PR #29 (regenerated `methodology.md`/`scorecard.md` via their existing
+generators — `gen-public-benchmark.mjs`, `gen-scorecard.mjs` — and hand-updated `README.md`'s editorial
+table and reproduction-command slug list; also removed a README claim — "legal rises to 0.97 in full mode" —
+that was specific to the retired corpus and has not been re-measured for the replacement). **Lesson for
+future corpus-retirement/replacement work in this project:** the search-quality register is not the only
+place a corpus name and its numbers live — check `README.md` and anything under
+`docs/reference/benchmarks/` too, and prefer running `node scripts/ci/check-readme-benchmark-numbers.mjs`
+locally before opening a PR, not after CI catches it.
+
+### A stray numbering inconsistency fixed in this pass
+
+§Implementation (third pass) originally reported `legal-clerc-200`'s nDCG@10 as `0.521` — a real number from
+a real run, but not the one that ended up canonical in `release.v1.json` (a separate, slightly earlier
+hybrid-only run measured `0.516`, and that's the value `README.md`/`methodology.md`/`scorecard.md` all show).
+Both figures were genuine measurements; this pass corrected the tempdoc's own text to state the canonical
+`0.516` and explain the ~1% difference as ordinary run-to-run variance, so a reader cross-checking this
+tempdoc against the live public docs doesn't hit an unexplained mismatch.
+
+### Verified, not assumed, at closeout
+
+- `git status` clean in both the implementation worktree and the main checkout before ending the session —
+  no uncommitted or unpushed work left behind. (The only uncommitted content in the main checkout — a
+  pre-existing `gradlew.bat` line-ending diff and several `.onnx` model files — predates this tempdoc, is not
+  documentation, and was deliberately left untouched; it is not this tempdoc's concern.)
+- The reproducibility claim itself: verified live (§Post-implementation fixes, item 4), not just asserted.
+- Public CI on `main`: verified green via the GitHub API directly, not inferred from a PR's own checks.
+
+### Genuine open items for whoever picks this up next (not forgotten, not blocking)
+
+These are real, not resolved by this tempdoc, and deliberately left for later — see §Future work (fifth
+pass) for the full list and reasoning. Restated briefly so they aren't lost in the detail above:
+
+1. **No upstream revision pinning** (the one item worth prioritizing — see §Future work for why).
+2. `mixed/miracl-zh-2k` and possibly `mixed/cord19-qddf` likely share the exact problem this tempdoc fixed,
+   unaddressed.
+3. `mixed/enron-qa` has the same kind of missing-fetch-mechanism gap (logged as an observation, not fixed
+   here — out of this tempdoc's scope).
+4. The contributor-experience gaps in §Future work (silent long fetches, a bare `FileNotFoundError` on a
+   fresh checkout, no `--from-recipe` mode) are real and directly experienced during this work, not
+   speculative.
+
+None of the above blocks anything currently shipped — `main` is green, the retired corpus is fully replaced,
+and the reproducibility goal this tempdoc set out to fix is met for the three corpora in scope.

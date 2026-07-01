@@ -183,6 +183,270 @@ final class KnowledgeSearchEngine {
     return resultCount > 0;
   }
 
+  /**
+   * Tempdoc 643: judge-stage refinement floor. Blends each candidate's pre-rerank (fusion /
+   * LambdaMART) score with its cross-encoder score, both min-max normalized within the CE window,
+   * instead of letting the cross-encoder replace that order outright (today's behavior). Bounds
+   * the CE's influence so a low-confidence/wrong CE call cannot regress a hit further than the
+   * blend weight allows — the CE-side instance of D-004's per-query arbitration shape
+   * ({@code HybridSearchOps.computeArbitrationAlpha}), applied to the judge stage instead of fusion.
+   *
+   * <p>{@code alpha=0.0} reduces to today's CE-only order (min-max normalization is monotonic, so
+   * sorting by normalized CE score is identical to sorting by raw CE score). {@code alpha=1.0}
+   * ignores the CE entirely (pure pre-rerank order).
+   *
+   * <p>Pure + static for unit testing, mirroring the {@code computeArbitrationAlpha} testability
+   * pattern. Both arrays must have equal length, indexed by the pre-rerank position (the same
+   * indexing {@code RerankResponse.getScores(i)} already uses).
+   *
+   * @param preRerankScores preRerankScores[i] = pre-rerank (fusion-stage) score at position i.
+   * @param crossEncoderScores crossEncoderScores[i] = cross-encoder score at position i.
+   * @param alpha weight on the pre-rerank score in [0,1].
+   * @return positions 0..n-1, reordered descending by the blended score.
+   */
+  static List<Integer> blendPreRerankAndCrossEncoder(
+      float[] preRerankScores, float[] crossEncoderScores, double alpha) {
+    int n = preRerankScores.length;
+    Integer[] order = new Integer[n];
+    for (int i = 0; i < n; i++) order[i] = i;
+    if (n == 0) return List.of();
+
+    double[] preNorm = minMaxNormalize(preRerankScores);
+    double[] ceNorm = minMaxNormalize(crossEncoderScores);
+    double[] blended = new double[n];
+    for (int i = 0; i < n; i++) {
+      blended[i] = alpha * preNorm[i] + (1 - alpha) * ceNorm[i];
+    }
+    // Ties (incl. the flat-range case, where every candidate normalizes to the same value) are
+    // broken by Arrays.sort's stability, preserving the pre-rerank position order — the "no
+    // information to act on" case.
+    Arrays.sort(order, (a, b) -> Double.compare(blended[b], blended[a]));
+    return Arrays.asList(order);
+  }
+
+  /**
+   * Min-max normalizes {@code scores} to [0,1]; a flat (zero-range) input normalizes every entry
+   * to {@code 1.0} (matching {@link #blendPreRerankAndCrossEncoder}'s "no information to act on"
+   * convention — ties fall through to whatever stable order the caller started with).
+   */
+  private static double[] minMaxNormalize(float[] scores) {
+    int n = scores.length;
+    double[] norm = new double[n];
+    if (n == 0) return norm;
+    double min = scores[0];
+    double max = scores[0];
+    for (int i = 1; i < n; i++) {
+      min = Math.min(min, scores[i]);
+      max = Math.max(max, scores[i]);
+    }
+    double range = max - min;
+    for (int i = 0; i < n; i++) {
+      norm[i] = range > 0 ? (scores[i] - min) / range : 1.0;
+    }
+    return norm;
+  }
+
+  /** Top-K doc-ids (within the CE window) at/below the given per-leg HitStage rank, for judge-arbitration
+   * leg agreement (tempdoc 643 E1). Only counts a candidate whose stage rank is PRESENT (proto3 {@code
+   * optional}) and {@code <= topK} — mirrors {@code HybridSearchOps.topKDocIds}'s rank-based selection. */
+  private static Set<String> judgeArbitrationTopKDocIds(
+      List<io.justsearch.ipc.SearchResult> window, String stageWireId, int topK) {
+    Set<String> ids = new HashSet<>();
+    for (io.justsearch.ipc.SearchResult sr : window) {
+      for (io.justsearch.ipc.HitStage hs : sr.getTraceList()) {
+        if (hs.getId().equals(stageWireId) && hs.hasRank() && hs.getRank() <= topK) {
+          ids.add(sr.getId());
+        }
+      }
+    }
+    return ids;
+  }
+
+  /** Min CE margin (normalized top1-top2 gap) at/above which the CE's top pick counts as confident. */
+  private static final double JUDGE_ARBITRATION_MARGIN_CONFIDENT_MIN = 0.2;
+  /** Cross-leg top-K doc-id Jaccard at/above which the legs "agree" (fusion is decisive). */
+  private static final double JUDGE_ARBITRATION_OVERLAP_MIN = 0.5;
+  /** Top-K hits per leg used to measure cross-leg rank overlap (mirrors {@code ARBITRATION_TOP_K}). */
+  private static final int JUDGE_ARBITRATION_TOP_K = 10;
+
+  /**
+   * Tempdoc 643 (E1/E2, critical-analysis-pass correction): per-query judge-arbitration gate — the
+   * CE-side instance of D-004's fusion-side per-query arbitration
+   * ({@code HybridSearchOps.computeArbitrationAlpha}), same 3-condition-gate shape, applied to the
+   * judge stage. Computes the {@code alpha} to pass to {@link #blendPreRerankAndCrossEncoder} from two
+   * runtime signals over the CE window, instead of reading a static operator-configured value:
+   *
+   * <ul>
+   *   <li><b>CE margin</b> — normalized (not raw-logit) top1-top2 gap of the CE's own scores in this
+   *       window: how decisively it prefers its top pick. Normalized because raw CE logits are not
+   *       comparable in absolute terms across queries/corpora (observed range e.g. -0.86 to +0.30).
+   *   <li><b>Leg agreement</b> — top-K doc-id Jaccard between the {@code sparse-retrieval} and
+   *       {@code dense-retrieval} HitStages within the window: do the legs concur on what's relevant?
+   * </ul>
+   *
+   * <p><b>Structurally bounded to never do MORE than today's baseline</b> (unconditional CE trust,
+   * {@code alpha=0}): when the CE is confident AND the legs disagree (it is arbitrating a real
+   * disagreement, not noise) AND chunk-branch status is known, {@code alpha} stays at
+   * {@code baseAlpha} — today's behavior, unchanged. The only NEW behavior is the reverse case: when
+   * the CE margin is thin AND the legs strongly agree (fusion is already decisive), {@code alpha}
+   * moves toward {@code fusionProtectAlpha} — protect via fusion. This mirrors D-004's
+   * {@code divergeAlpha} but in the opposite direction (D-004 raises alpha toward dense on leg
+   * disagreement; this raises alpha toward fusion on judge uncertainty).
+   *
+   * <p>When chunk-branch fusion ran on this window (a {@code "chunk-merge"} HitStage is present on
+   * any candidate), the top-level leg stages reflect only the whole-doc branch and are not a reliable
+   * agreement signal (tempdoc 643 critical-analysis-pass finding — the same staleness class as the
+   * fusion-score bug fixed in {@code protoStageScoreAny}). Treated as "unknown" and degrades to
+   * {@code baseAlpha} — the same "can't act on an untrustworthy signal, don't intervene" philosophy as
+   * D-004's {@code topKDocIdOverlap} empty-leg case (returns 1.0 / "agree, don't act").
+   *
+   * <p>Pure + static for unit testing, mirroring {@code computeArbitrationAlpha}'s testability pattern.
+   *
+   * @param window the CE window's candidates, same indexing as {@code crossEncoderScores}.
+   * @param crossEncoderScores window's raw CE scores, same indexing as
+   *     {@link #blendPreRerankAndCrossEncoder}.
+   * @param baseAlpha the operator-configured alpha (today's behavior when no condition fires).
+   * @param fusionProtectAlpha the alpha to use when fusion is decisive and the CE is not confident.
+   * @return the alpha to pass to {@link #blendPreRerankAndCrossEncoder}.
+   */
+  static double computeJudgeArbitrationAlpha(
+      List<io.justsearch.ipc.SearchResult> window,
+      float[] crossEncoderScores,
+      double baseAlpha,
+      double fusionProtectAlpha) {
+    int n = crossEncoderScores.length;
+    if (n < 2) {
+      return baseAlpha; // no margin signal with <2 candidates
+    }
+
+    double[] ceNorm = minMaxNormalize(crossEncoderScores);
+    // Top-2 scan: sentinels must start below any possible normalized score ([0,1]), NOT at
+    // ceNorm[0] -- seeding top2 with ceNorm[0] silently zeroes the margin whenever the window's
+    // true top score happens to sit at position 0 (position 0 is the pre-rerank rank, not sorted
+    // by CE score, so this is not a rare case).
+    double top1 = Double.NEGATIVE_INFINITY;
+    double top2 = Double.NEGATIVE_INFINITY;
+    for (double v : ceNorm) {
+      if (v > top1) {
+        top2 = top1;
+        top1 = v;
+      } else if (v > top2) {
+        top2 = v;
+      }
+    }
+    double ceMargin = top1 - top2;
+
+    if (chunkBranchActive(window)) {
+      return baseAlpha; // chunk-branch active → leg signal untrustworthy → don't intervene
+    }
+
+    double jaccard = legAgreementJaccard(window);
+    // No comparable signal (either leg empty) → treat as "agree" → don't intervene (mirrors
+    // D-004's topKDocIdOverlap empty-leg case, which returns 1.0 for the same reason).
+    boolean legsAgree = jaccard < 0 || jaccard >= JUDGE_ARBITRATION_OVERLAP_MIN;
+
+    boolean ceConfident = ceMargin >= JUDGE_ARBITRATION_MARGIN_CONFIDENT_MIN;
+    if (!ceConfident && legsAgree) {
+      return Math.max(baseAlpha, fusionProtectAlpha); // CE unsure + fusion decisive → protect via fusion
+    }
+    return baseAlpha; // CE confident and/or legs disagree → today's behavior, unchanged
+  }
+
+  /**
+   * True if a {@code "chunk-merge"} HitStage is present on any candidate in {@code window} — the
+   * top-level {@code sparse-retrieval}/{@code dense-retrieval} leg stages then reflect only the
+   * whole-doc branch and are not a reliable leg-agreement signal (tempdoc 643
+   * critical-analysis-pass finding).
+   */
+  private static boolean chunkBranchActive(List<io.justsearch.ipc.SearchResult> window) {
+    for (io.justsearch.ipc.SearchResult sr : window) {
+      for (io.justsearch.ipc.HitStage hs : sr.getTraceList()) {
+        if (hs.getId().equals("chunk-merge")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Top-K doc-id Jaccard between the {@code sparse-retrieval} and {@code dense-retrieval} legs
+   * within {@code window}, or {@code -1.0} if either leg has no rank-bearing candidates (no
+   * comparable signal — callers decide what "no signal" means for their own safe default).
+   */
+  private static double legAgreementJaccard(List<io.justsearch.ipc.SearchResult> window) {
+    Set<String> sparseTopK =
+        judgeArbitrationTopKDocIds(window, "sparse-retrieval", JUDGE_ARBITRATION_TOP_K);
+    Set<String> denseTopK =
+        judgeArbitrationTopKDocIds(window, "dense-retrieval", JUDGE_ARBITRATION_TOP_K);
+    if (sparseTopK.isEmpty() || denseTopK.isEmpty()) {
+      return -1.0;
+    }
+    int inter = 0;
+    for (String id : sparseTopK) {
+      if (denseTopK.contains(id)) {
+        inter++;
+      }
+    }
+    int union = sparseTopK.size() + denseTopK.size() - inter;
+    return union == 0 ? 1.0 : (double) inter / union;
+  }
+
+  /**
+   * Tempdoc 643 (perf-skip): true when the leg-agreement signal ALONE (no CE score exists yet —
+   * this runs before the RPC, so the CE-margin half of {@link #computeJudgeArbitrationAlpha}'s
+   * gate is unavailable) is decisively confident that fusion order is already right, allowing the
+   * CE call to be skipped rather than just re-weighted afterward.
+   *
+   * <p>Deliberately a STRICTER bar than the blend gate: an inconclusive signal (chunk-branch
+   * active, or either leg empty — {@link #legAgreementJaccard} returns {@code -1.0}) means "not
+   * decisive" here, so the default is to call the CE as normal — the opposite mapping from the
+   * blend gate's "unknown → don't intervene" (which, for the blend, means "keep baseAlpha", i.e.
+   * still call the CE). Skipping a query the CE would have fixed is a sharper risk than
+   * re-weighting it, so it needs its own strict evidence, not a free ride on the blend gate's own
+   * convention.
+   *
+   * @param window the pre-RPC candidate window (same slice that would become the CE's docTexts).
+   * @return true if the CE RPC can be safely skipped for this query.
+   */
+  static boolean isFusionDecisiveForSkip(List<io.justsearch.ipc.SearchResult> window) {
+    if (chunkBranchActive(window)) {
+      return false;
+    }
+    return legAgreementJaccard(window) >= JUDGE_ARBITRATION_OVERLAP_MIN;
+  }
+
+  /**
+   * Tempdoc 643 (critical-analysis-pass): resolves the alpha to pass to
+   * {@link #blendPreRerankAndCrossEncoder}, extracted out of the inline wiring so the exact gate
+   * (arbitration enabled -> computed per-query signal; disabled -> the static config value) is a
+   * pure, directly-testable decision that does not require mocking the cross-encoder RPC to
+   * exercise. A wrong flag or a `||` typo here would silently change ranking behavior without
+   * touching {@link #computeJudgeArbitrationAlpha} itself, so this gate needs its own test.
+   */
+  static double resolveBlendAlpha(
+      RerankerConfig config,
+      List<io.justsearch.ipc.SearchResult> window,
+      float[] crossEncoderScores) {
+    return config.judgeArbitrationEnabled()
+        ? computeJudgeArbitrationAlpha(
+            window, crossEncoderScores, config.judgeBlendAlpha(), config.judgeArbitrationAlphaDiverge())
+        : config.judgeBlendAlpha();
+  }
+
+  /**
+   * Tempdoc 643 (perf-skip, critical-analysis-pass): resolves whether the cross-encoder RPC can be
+   * skipped entirely, extracted out of the inline wiring for the same reason as
+   * {@link #resolveBlendAlpha} — the two-flag-plus-signal gate is the actual "wrong gate" risk
+   * here (independent of RPC/reranker correctness), so it should be unit-testable on its own.
+   */
+  static boolean shouldSkipCrossEncoder(
+      RerankerConfig config, List<io.justsearch.ipc.SearchResult> window) {
+    return config.judgeArbitrationEnabled()
+        && config.judgeArbitrationSkipEnabled()
+        && isFusionDecisiveForSkip(window);
+  }
+
   /** 306: reads query classification enabled flag from ConfigStore (default: true). */
   private static boolean isQueryClassificationEnabled() {
     ConfigStore cs = ConfigStore.globalOrNull();
@@ -614,43 +878,60 @@ final class KnowledgeSearchEngine {
       // 256-F4: PipelineConfig window overrides global config default
       int configWindow = pipelineConfig.crossEncoderWindow();
       int topK = Math.min(configWindow > 0 ? configWindow : rerankConfig.topK(), results.size());
-      List<String> docTexts = new ArrayList<>(topK);
-      for (int i = 0; i < topK; i++) {
-        SearchResult sr = results.get(i);
-        String title = sr.getFieldsMap().getOrDefault("title", "");
-        String preview = sr.getFieldsMap().getOrDefault("content_preview", "");
-
-        // Use query-focused snippet extraction for better reranker context
-        // (centers snippet on first query match instead of document start)
-        var spans = SearchResultMapper.extractMatchSpans(sr);
-        String snippet = SearchResultMapper.extractQueryFocusedSnippet(
-            preview, spans, RERANK_SNIPPET_LENGTH);
-        docTexts.add(title + " " + snippet);
-      }
 
       RerankResponse reranked;
-      Span ceSpan =
-          tracer.spanBuilder("search/cross_encoder").setParent(Context.current()).startSpan();
-      try (Scope ceScope = ceSpan.makeCurrent()) { // NOPMD - scope used for auto-close
-        reranked = knowledgeServer.client().rerank(
-            req.query(), docTexts, rerankConfig.deadlineBudgetMs());
-        // Tempdoc 553 Phase D (head): OpenInference RERANKER projection of the CE-scored output —
-        // the reranked docs (id + CE score + content), in the cross-encoder's chosen order.
-        if (reranked != null && !reranked.getSkipped()) {
-          ceSpan.setAllAttributes(
-              io.justsearch.telemetry.OpenInferenceSpans.reranker(
-                  "cross-encoder", topK, SearchTraceMapper.ceOutputDocs(results, reranked)));
-        }
-      } catch (Exception e) {
-        log.warn("Remote rerank failed, using original order: {}", e.getMessage());
-        crossEncoderSkipReason = "RPC_FAILED";
+      // Tempdoc 643 (perf-skip): when arbitration + skip are both enabled and the leg-agreement
+      // signal ALONE (no CE score exists yet — this runs before the RPC) is decisively confident
+      // that fusion is already right, skip the CE RPC entirely instead of paying its latency only
+      // to blend it back down toward fusion afterward. A stricter bar than the blend gate: an
+      // inconclusive signal (chunk-branch active, or either leg empty) means "not decisive" here,
+      // so the default stays "call the CE" — skipping a query the CE would have fixed is a
+      // sharper risk than re-weighting it, so it needs its own evidence, not a free ride on the
+      // blend gate's own "unknown -> don't intervene" convention. Kept behind its own flag.
+      if (shouldSkipCrossEncoder(rerankConfig, results.subList(0, topK))) {
+        crossEncoderSkipReason = "FUSION_CONFIDENT";
         reranked = null;
-      } finally {
-        ceSpan.end();
+      } else {
+        List<String> docTexts = new ArrayList<>(topK);
+        for (int i = 0; i < topK; i++) {
+          SearchResult sr = results.get(i);
+          String title = sr.getFieldsMap().getOrDefault("title", "");
+          String preview = sr.getFieldsMap().getOrDefault("content_preview", "");
+
+          // Use query-focused snippet extraction for better reranker context
+          // (centers snippet on first query match instead of document start)
+          var spans = SearchResultMapper.extractMatchSpans(sr);
+          String snippet = SearchResultMapper.extractQueryFocusedSnippet(
+              preview, spans, RERANK_SNIPPET_LENGTH);
+          docTexts.add(title + " " + snippet);
+        }
+
+        Span ceSpan =
+            tracer.spanBuilder("search/cross_encoder").setParent(Context.current()).startSpan();
+        try (Scope ceScope = ceSpan.makeCurrent()) { // NOPMD - scope used for auto-close
+          reranked = knowledgeServer.client().rerank(
+              req.query(), docTexts, rerankConfig.deadlineBudgetMs());
+          // Tempdoc 553 Phase D (head): OpenInference RERANKER projection of the CE-scored
+          // output — the reranked docs (id + CE score + content), in the cross-encoder's chosen
+          // order.
+          if (reranked != null && !reranked.getSkipped()) {
+            ceSpan.setAllAttributes(
+                io.justsearch.telemetry.OpenInferenceSpans.reranker(
+                    "cross-encoder", topK, SearchTraceMapper.ceOutputDocs(results, reranked)));
+          }
+        } catch (Exception e) {
+          log.warn("Remote rerank failed, using original order: {}", e.getMessage());
+          crossEncoderSkipReason = "RPC_FAILED";
+          reranked = null;
+        } finally {
+          ceSpan.end();
+        }
       }
 
       if (reranked != null && !reranked.getSkipped()) {
-        // 250 Phase 2: capture CE scores by docId before reordering
+        // 250 Phase 2: capture CE scores by docId before reordering (the TRUE raw CE score,
+        // independent of the judge-blend floor below — ceScoresByDocId feeds the canonical
+        // SearchTrace CROSS_ENCODER HitStage and must reflect what the CE actually scored).
         ceScoresByDocId = new HashMap<>();
         for (int origIdx : reranked.getSortedIndicesList()) {
           if (origIdx < results.size() && origIdx < reranked.getScoresCount()) {
@@ -658,9 +939,57 @@ final class KnowledgeSearchEngine {
                 results.get(origIdx).getId(), reranked.getScores(origIdx));
           }
         }
-        // Reorder results based on reranked indices
+        // Tempdoc 643: judge-stage refinement floor — when enabled, blend the CE's reorder with
+        // the pre-rerank (fusion/LambdaMART) order instead of letting the CE replace it outright.
+        // Default off (judgeBlendEnabled=false) is a strict no-op: blendPreRerankAndCrossEncoder
+        // with alpha effectively unused reduces to the CE-only order (see its javadoc).
+        List<Integer> orderToApply;
+        if (rerankConfig.judgeBlendEnabled()) {
+          // Window = topK (not getScoresCount()) so every pre-rerank candidate the CE was asked
+          // to score stays in the blended order — a short getScoresCount() (defensively handled,
+          // not expected in normal operation) fills the missing tail rather than silently
+          // dropping those candidates from the result set entirely (see the min-fill below).
+          //
+          // Critical-analysis-pass fix (2026-07-01): a single "fusion" stage read is not a
+          // reliable pre-rerank score across all pipeline shapes — it is null'd out entirely for
+          // single-leg presets and stale (pre-branch-merge) whenever chunk-branch fusion ran.
+          // protoStageScoreAny tries the true final score first, falling back in priority order.
+          float[] preRerankScores = new float[topK];
+          float[] crossEncoderScores = new float[topK];
+          float ceMinObserved = Float.MAX_VALUE;
+          for (int i = 0; i < topK; i++) {
+            if (i < reranked.getScoresCount()) {
+              float ce = reranked.getScores(i);
+              crossEncoderScores[i] = ce;
+              ceMinObserved = Math.min(ceMinObserved, ce);
+            }
+          }
+          // A missing CE score defaults to the worst OBSERVED score, not a literal 0f — real CE
+          // scores are raw logits and frequently negative, so 0f would read as an artificially
+          // high (favorable) score for a candidate the CE never actually judged.
+          float missingCeDefault = ceMinObserved == Float.MAX_VALUE ? 0f : ceMinObserved;
+          for (int i = 0; i < topK; i++) {
+            preRerankScores[i] = SearchTraceMapper.protoStageScoreAny(
+                results.get(i), "branch-fusion", "fusion",
+                "sparse-retrieval", "dense-retrieval", "splade-retrieval");
+            if (i >= reranked.getScoresCount()) {
+              crossEncoderScores[i] = missingCeDefault;
+            }
+          }
+          // Tempdoc 643 (E1/E2): when arbitration is enabled, compute alpha per query from a
+          // runtime confidence signal (CE margin + leg agreement) instead of reading the static
+          // judgeBlendAlpha unconditionally. Off (default) is a strict no-op — resolveBlendAlpha
+          // returns exactly judgeBlendAlpha(), byte-identical to the pre-arbitration wiring above.
+          double alphaToApply = resolveBlendAlpha(
+              rerankConfig, results.subList(0, topK), crossEncoderScores);
+          orderToApply = blendPreRerankAndCrossEncoder(
+              preRerankScores, crossEncoderScores, alphaToApply);
+        } else {
+          orderToApply = reranked.getSortedIndicesList();
+        }
+        // Reorder results based on the (possibly blended) order
         List<SearchResult> rerankedResults = new ArrayList<>(results.size());
-        for (int idx : reranked.getSortedIndicesList()) {
+        for (int idx : orderToApply) {
           rerankedResults.add(results.get(idx));
         }
         // Append any results beyond topK that weren't reranked

@@ -76,6 +76,22 @@ describe('aiStateStore — R1a signal-core conversion', () => {
     expect(getAiState().statusLabel).toBe('Connecting…');
   });
 
+  it('Design pass 3 — statusLabel gains install-awareness: known "not installed" now reads "Not Installed", not a generic/lowercase "offline" fallback', () => {
+    // The search-verdict "Connecting…" check is checked FIRST (backend connectivity outranks AI-install
+    // state), so a successful status poll must be established before the AI-specific branch is reached —
+    // matching the precedence Design pass 3 confirmed should stay unchanged.
+    __feedForTest({
+      status: { worker: { core: { indexedDocuments: 5 } } } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+    // §2.B: install state known-and-false (not merely absent) satisfies `computeAiEngineVerdict`'s
+    // "have install data" check, so the settled state resolves to a DISTINCT label — previously this
+    // fell through to the ad hoc, inconsistently-cased 'offline' string.
+    setInstallState(false, false);
+    expect(getAiState().statusLabel).toBe('Not Installed');
+    expect(getAiState().statusTone).toBe('neutral');
+  });
+
   it('§2.B: with no stream data, state is Unknown/connecting — never a concrete default', () => {
     // No poll has succeeded (beforeEach reset; no start). The store must NOT
     // seed concrete values — that is the "0 files / Not Installed" defect class.

@@ -68,6 +68,22 @@ export const LOCAL_MESSAGE_CLASSES = {
     defaultSeverity: 'info',
     locality: 'window',
   },
+  // Tempdoc 663 Design pass 3 — "AI install complete" one-shot toast (mirrors `core.verdict.settled`'s
+  // exact policy shape for the AI-engine axis).
+  'core.ai-engine.settled': {
+    renderHint: 'EPHEMERAL',
+    supersede: false,
+    defaultSeverity: 'success',
+    locality: 'window',
+  },
+  // Tempdoc 663 Design pass 3 — "AI install failed" one-shot toast. Supersede: a repeated failure
+  // notice about the same ongoing problem replaces rather than stacks.
+  'core.ai-engine.failed': {
+    renderHint: 'EPHEMERAL',
+    supersede: true,
+    defaultSeverity: 'error',
+    locality: 'window',
+  },
 } as const satisfies Record<string, LocalMessageClassPolicy>;
 
 export type LocalMessageClass = keyof typeof LOCAL_MESSAGE_CLASSES;

@@ -182,6 +182,68 @@ def compare_pipeline_timing(
     return result
 
 
+def compare_stage_decomposition(
+    summary_a: dict,
+    summary_b: dict,
+    mode: str | None,
+    regression_threshold: float = 1.10,
+) -> dict:
+    """Compare the per-query latency STAGE decomposition between two runs (tempdoc 647).
+
+    Diffs each stage's p50 from ``per_mode.<mode>.stage_timing_stats`` (retrieval / cross-encoder /
+    the ``unaccounted_ms`` remainder / any other present stage) and attributes the latency change to
+    the **primary mover** — the stage whose p50 shifted most. It reads the *materialized* decomposition
+    (never re-deriving shares/unaccounted — tempdoc 647 "consumers read, never re-derive") and reuses
+    :func:`_compare_field`, the same comparator :func:`compare_pipeline_timing` uses.
+
+    The overall latency delta is taken from ``latency_stats.p50_ms`` and reported **separately**; the
+    stage deltas are NOT claimed to sum to it (a median is not additive), so "primary mover" is the
+    where-to-look signal — the largest single-stage p50 shift — not an additive split of the total.
+
+    Returns ``{"stages": {<stage>: {a,b,delta,ratio,regressed}}, "attribution": {...}}``, or ``{}`` when
+    ``mode`` is unresolved or neither run exposes ``stage_timing_stats`` for it (mirrors
+    :func:`compare_pipeline_timing` returning ``{}``).
+    """
+    if not mode:
+        return {}
+    pm_a = (summary_a.get("per_mode") or {}).get(mode) or {}
+    pm_b = (summary_b.get("per_mode") or {}).get(mode) or {}
+    st_a = pm_a.get("stage_timing_stats") or {}
+    st_b = pm_b.get("stage_timing_stats") or {}
+    if not st_a and not st_b:
+        return {}
+
+    # Flatten each stage entry to its p50 so the shared field comparator applies unchanged. The
+    # `share`/`unaccounted_ms` fields the decomposition materialized are read as-is, not recomputed.
+    p50_a = {k: v.get("p50") for k, v in st_a.items() if isinstance(v, dict)}
+    p50_b = {k: v.get("p50") for k, v in st_b.items() if isinstance(v, dict)}
+
+    stages: dict = {}
+    for key in sorted(set(p50_a) | set(p50_b)):
+        _compare_field(stages, key, p50_a, p50_b, regression_threshold)
+
+    # Primary mover: the stage whose p50 shifted most in absolute terms (None if nothing changed).
+    primary_mover, mover_delta = None, 0.0
+    for key, comp in stages.items():
+        if abs(comp["delta"]) > abs(mover_delta):
+            primary_mover, mover_delta = key, comp["delta"]
+
+    # Overall latency delta from the run-level p50 — NOT the sum of stage deltas (medians don't add).
+    lat_a, lat_b = pm_a.get("latency_stats") or {}, pm_b.get("latency_stats") or {}
+    total_delta = None
+    if isinstance(lat_a.get("p50_ms"), (int, float)) and isinstance(lat_b.get("p50_ms"), (int, float)):
+        total_delta = round(lat_b["p50_ms"] - lat_a["p50_ms"], 1)
+
+    return {
+        "stages": stages,
+        "attribution": {
+            "total_p50_delta_ms": total_delta,
+            "primary_mover": primary_mover,
+            "mover_delta_ms": round(mover_delta, 1) if primary_mover else None,
+        },
+    }
+
+
 def _compare_field(
     result: dict,
     key: str,
