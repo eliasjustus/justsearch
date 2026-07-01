@@ -101,6 +101,45 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.reload-inference' },
   },
   { code: 'inference.starting', wording: 'The local AI model is still starting', severity: 'info' },
+  // Tempdoc 656 — the AI capability's previously-generic "offline" reason, now specific. No
+  // remedy operation is registered for install/import actions today (unlike
+  // core.reload-inference), so these fall back to the Open-Health reference — same pattern as
+  // vdu.missing_mmproj / ocr.engine_missing below, rather than pointing at a nonexistent operation.
+  {
+    code: 'inference.model_not_configured',
+    wording: 'No local AI chat model is configured yet',
+    severity: 'warn',
+  },
+  {
+    code: 'inference.model_not_found',
+    wording: 'The configured local AI chat model file could not be found',
+    severity: 'warn',
+  },
+  {
+    code: 'inference.runtime_not_installed',
+    wording: 'The local AI runtime (llama-server) is not installed',
+    severity: 'warn',
+  },
+  {
+    code: 'inference.policy_online_ai_disabled',
+    wording: 'Local AI is disabled by administrator policy',
+    severity: 'info',
+  },
+  {
+    code: 'inference.policy_gpu_disabled',
+    wording: 'GPU acceleration for local AI is disabled by administrator policy',
+    severity: 'info',
+  },
+  {
+    // Tempdoc 656 (post-implementation review fix): this code is the shared catch-all for both
+    // activation failures (self-test/apply) AND deactivation failures (rollback) in
+    // RuntimeActivationService.mapToLifecycleReason — worded direction-neutrally so it isn't wrong
+    // when the user was actually deactivating.
+    code: 'inference.activation_failed',
+    wording: 'The local AI runtime failed to switch modes',
+    remedy: { kind: 'operation', operationId: 'core.reload-inference' },
+    severity: 'warn',
+  },
   {
     code: 'ocr.disabled',
     wording: 'OCR is disabled, so scanned text cannot be indexed yet',

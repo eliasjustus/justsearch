@@ -6,6 +6,7 @@
     "doc": "docs"
   },
   "scripts": {
+    "doctor": "node scripts/dev/doctor.mjs",
     "lint:md": "markdownlint docs/explanation/**/*.md docs/reference/**/*.md docs/how-to/**/*.md docs/decisions/**/*.md",
     "check:llmstxt": "node scripts/docs/llmstxt-generate.mjs --check",
     "docs:anchor-audit": "node scripts/docs/anchor-audit.mjs --root docs",
