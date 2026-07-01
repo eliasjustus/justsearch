@@ -1,5 +1,5 @@
 ---
-title: "Five-minute agent/runtime onramp: the runtime foundation is shipped (GPU-only shared dev runtime + truthful AI-readiness diagnosis); the remaining onramp is designed as an assembly problem — a tiered, proven first-success path (a doctor composing existing read-paths + a demo corpus + a runnable smoke), not new capability, with tier/MCP/product-identity framing handed to 657/655/654."
+title: "Five-minute agent/runtime onramp: the runtime foundation is shipped (GPU-only shared dev runtime + truthful AI-readiness diagnosis); the remaining onramp is designed as an assembly problem — a tiered, proven first-success path (a doctor composing existing read-paths + a demo corpus + a runnable smoke), not new capability, with tier/MCP/product-identity framing handed to 657/655/654. Long-term design (14th pass): the onramp tier is a capability PROJECTION (conform to 587's probe→effective→policy substrate + the readiness code→wording register/gate), promoted to a declared tier-ladder + one canonical projection rendered by the UI/MCP at the FIRST second-renderer — recorded with a promotion trigger, not built (single consumer today)."
 type: tempdocs
 status: "FOUNDATION + ONRAMP IMPLEMENTED (live + browser verified 2026-07-01, §Implementation twelfth pass): the doctor (scripts/dev/doctor.mjs), demo corpus (examples/onramp-corpus), runnable proof (scripts/dev/test-onramp-first-success.mjs), the manifest-reason polish, and the tier-honest CONTRIBUTING onramp section all shipped and verified. Earlier: Two things are done + live/browser-verified: the AI-readiness diagnosability substrate (Tasks 0-5) and the GPU-only shared dev runtime (Move 1 + Move 2, ninth pass). §Onramp design (tenth pass, 2026-07-01) then returns to the tempdoc's ORIGINAL purpose (the five-minute onramp) and settles its long-term shape: it is an ASSEMBLY problem — the ingredients (ingest/search endpoints, MCP connect surface, the preflight endpoint, the runtime manifest, a tiny corpus candidate) already exist scattered; the remaining core is composing them into a tiered, evidence-producing first-success path (O1 tier ladder — Tier 0 zero-model search proven; O2 doctor extending AiPreflightService as a projection of manifest+status; O3 demo corpus; O4 a runnable proof; O5 minimal honest discoverability), plus fixing the deferred manifest-reason polish inside the doctor. NOT yet built. Explicitly NOT the whole 'five-minute onramp': the identity/MCP-matrix/tier-naming framing is coupled to the unstarted 654/655/657 and is handed to them. Detail on the implemented foundation follows. --- Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
 created: 2026-06-28
@@ -1899,4 +1899,111 @@ wins are **A1-A4 + B6** (docs/dev-tool polish + CI proof-lane); the rest wait on
   useronboard.com, eleken.co, setproduct.com.
 - MCP auto-discovery (`.well-known/mcp/server-card.json`, SEP-1649 fields): ekamoira.com 2026 guide;
   MCP 2026 roadmap (getknit.dev, tedt.org).
+
+## §Long-term design theorization (fourteenth pass, 2026-07-01) — activation readiness as one capability projection
+
+Design-theory (general, not implementation-level). Turns the thirteenth-pass idea backlog into a
+single coherent architecture. **No code; records the target shape + a promotion trigger.**
+
+### The backlog is one architecture, not eleven features
+
+The eleven ideas collapse to one structural question. The onramp's core derived fact — *"which
+capability tier is this environment at, what's missing, and the single next remedy"* — lives today
+**only** as hardcoded logic in the Node CLI (`doctor.mjs::deriveTier`). The research showed the *same*
+fact must reach the desktop UI (empty-state/first-run) and the agent (MCP). Three surfaces each
+re-deriving the tier is a **3-way fork of a derived fact** — the representation-drift class this
+codebase guards with registers + gates. So the only real design question is: where does the ONE
+canonical tier answer live, and how do audiences *render* (not re-derive) it?
+
+### The design: conform to the capability-projection substrate that already exists (don't invent a tier authority)
+
+The tier is not a new concept — it is an instance of patterns already running in the system. Conform:
+
+- **It is a capability projection (587).** *"A capability answer is a PROJECTION of its probes, never
+  a second authority"* — probe → effective view → policy, with consumers reading the merged view and
+  **foreclosed** from re-deriving it (587's raw-probe foreclosure gate). 587 ships the GPU **host**-capability
+  as the reference instance; the onramp tier is an **asset**-capability instance (model/runtime presence
+  → tier) of the *same substrate*. The tier = the "effective view"; the next-remedy = the
+  "requirements/policy projection" (the analogue of `VramRequirements` over the effective value).
+- **Its inputs already exist as two probe-halves.** Static/declared-vs-present → `AiPreflightService`
+  (registry vs disk + runtime-exe; zero new deps, but **no live readiness by design**). Live → the
+  capability layer (`InferenceCapability`/`WorkerCapability`) + the manifest reason codes +
+  `/api/status`'s derived `aiReady`/`embeddingReady`. The CLI merges the two halves client-side today;
+  a canonical projection merges them once.
+- **The render pattern is already CI-enforced.** One Java producer emits a CODE; the FE/MCP render
+  code→wording *purely*; a `governance/*.v1.json` register + a `scripts/ci/check-*-reason-codes.mjs`
+  gate enforce producer↔renderer bijection. The onramp's per-cause remedies **already live here**
+  (`readinessNotice.ts` CAUSE_ROWS + `LifecycleReasonCode`, added under this tempdoc). A tier
+  projection conforms — a small tier fact rendered as pure code→wording, register + gate enforced.
+- **The FE already has a remedy-carrying capability projection to EXTEND.** `state/availability.ts::
+  projectAvailability` is literally *"two tiers, one authority"*: it projects
+  `available`/`blocked`/`unavailable{reason,remedy}`/`degraded{caveat}` from ONE authority
+  (`aiStateStore`) and already models `no_documents`. The FE tier renderer is an *extension of this* +
+  the existing `EmptyStateRegistry` (`search-no-results`/`library-empty`) + `WalkthroughRegistry` — not
+  new scaffolding, a new projection field on scaffolding that exists.
+- **The ladder becomes DECLARED data.** The tier→package mapping (embedding→Tier 1; chat+cuda→Tier 2)
+  is hardcoded in the CLI and declared nowhere (the registry has no `tier`/`enables`/`role` field, no
+  schema). Correct home: an `enables`/`role` field on registry packages **or** a
+  `capability-tiers.v1.json` SSOT catalog conforming to `fields.v1.json` (`$schema` + versioned +
+  role-array shape + dual-copy sync + a `check-capability-tiers` gate enforcing tier↔package-id
+  bijection). Data-driven ⇒ the JVM projection, the FE, and the offline CLI read ONE declaration ⇒ no
+  per-runtime logic to drift.
+
+### Scope judgment — record the shape + the promotion trigger; build nothing structural now
+
+- Exactly ONE consumer of the tier exists today (the CLI), which correctly derives+renders inline. The
+  second renderer (FE first-run per 654; agent doctor per 655) is unstarted; 587's own generalized
+  capability catalog is likewise still design-theory (only the GPU instance shipped).
+- Therefore, per the codebase's consistent *"a second consumer justifies the projection"* discipline +
+  the YAGNI rule: **building the canonical Head projection + the declared-tier catalog now is
+  premature.** One renderer does not justify promoting logic out of the CLI, and declaring a ladder as
+  data for a single reader is abstraction-for-nobody.
+- **Warranted now (non-structural, un-coupled, current-audience):** make the CLI renderer discoverable
+  (an `npm run doctor` / `dev-runner doctor` subcommand); wire the smoke into CI as a continuous
+  proof-lane; fix the dangling `docs/how-to/onramp.md` reference. None touch the tier authority.
+- **The promotion trigger (recorded, precise).** At the FIRST second-renderer, in order: (1) declare
+  the ladder as data (registry field or `capability-tiers` catalog + schema + gate); (2) render it by
+  **extending `availability.ts`** (FE) or adding a `tier`/`nextRemedy` field to `justsearch_status`
+  (MCP), conforming to the code→wording + register + gate pattern; (3) repoint the CLI's *live* path at
+  the canonical projection, keeping ONLY its offline registry-read fallback (the one legitimate second
+  implementation — a dev needs "you're at Tier 0, start here" before any JVM is up; the declared ladder
+  keeps it drift-free). **Do not let the second surface re-implement `deriveTier`.**
+
+### Public-repo caution
+Tier names become public surface once rendered (UI/README) — keep them tier-honest (Tier 0 keyword =
+zero-download; Tier 2 cited answers needs the GPU model); no "five-minute cited answer" universal
+claim, no compliance/certification framing (the capability-descriptor lane, 650). This section is
+design history, not a public claim.
+
+## §Reach extension (fourteenth pass) — the tier is an instance, not an invention
+
+### Conforms to (do not re-invent)
+- **587 host-capability-sensing substrate** — the onramp tier is another instance of *"capability =
+  projection of probes, never a second authority; consumers read the merged view (foreclosure)."*
+  587's GPU is the host-axis reference; the onramp tier is the asset-axis instance. When 587's
+  generalized capability catalog lands, the tier is a candidate axis for it — record it there.
+- **The code→wording + register + gate pattern** (`check-readiness-reason-codes`) — the tier/remedy
+  render conforms to that enforced bijection, not a parallel scheme.
+- **`availability.ts` "two tiers, one authority"** — the FE tier renderer extends this existing
+  remedy-carrying projection. (Already recorded: 501 canonical-authority-and-projection; 657/381
+  tiered modes.)
+
+### New sub-principle: *readiness is a projection, rendered per-audience — never re-derived per surface*
+*A user-facing DERIVED readiness fact (capability tier, degradation cause, availability, "why this
+result") must be ONE canonical projection that each audience surface RENDERS as pure code→wording; it
+must never be re-derived per surface.* The projection principle (501/553/564) specialized to the
+cross-audience activation/readiness domain.
+- **Already conforms (the evidence it's right):** the degradation reason codes (one producer →
+  CAUSE_ROWS → gate); `availability.ts` (one authority → per-affordance projection); 587's GPU
+  Effective view (one merge → foreclosed consumers).
+- **Candidate scope (record, don't build):** 658 retrieval "why this result" (one trace projection,
+  many renderers); 587's remaining host axes; the onramp tier (this doc — the one currently
+  NOT-yet-canonical instance, acceptable while single-consumer).
+- **The near-violation this design forecloses:** the doctor already had to compose FOUR disjoint status
+  surfaces (preflight, `/api/status`, manifest, `verify-prerequisites`) because "is the environment
+  ready" was never projected once. The tier projection is the merge that stops a fifth renderer forking
+  a fifth answer.
+- **Recognize, don't build:** the principle + the promotion trigger are recorded; the general
+  capability catalog / Head projection are not built until the second renderer arrives (587's own
+  phasing; the YAGNI rule).
 
