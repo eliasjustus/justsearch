@@ -237,7 +237,7 @@ jobs:
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
-          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain --continue
+          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
 
       - name: Report unit-test attribution
         if: always()
@@ -282,7 +282,7 @@ jobs:
           cache: gradle
 
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
-        run: ./gradlew.bat :modules:app-util:test -PwindowsOnly=true --console=plain
+        run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test -PwindowsOnly=true --console=plain
 
   secret-scan:
     name: Secret scan

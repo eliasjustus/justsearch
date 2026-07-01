@@ -8,8 +8,14 @@ import io.justsearch.app.api.knowledge.FolderFilesResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+// Windows-specific: asserts Windows path-form semantics (drive-letter absolutes,
+// backslash/unix-slash handling, rooted-path resolution). The tool logic is
+// cross-platform; these assertions encode Windows behavior, so they run on the
+// windows-native lane (tempdoc 668 option B).
+@Tag("windows")
 class BrowseToolTest {
 
   private static BrowseTool browseOnly(BrowseTool.BrowseCallback cb) {
