@@ -1797,3 +1797,18 @@ from the ingested set or seeding a clean index for the demo — logged, not fixe
 Tier taxonomy/packaging → 657; MCP client matrix + attach guide → 655; product-identity framing → 654;
 retrieval "why this result" → 658. ORT-CUDA GPU-embedding sharing remains a noted follow-on.
 
+### Post-implementation review fixes (2026-07-01)
+A critical review of the committed onramp caught two substantive issues (the rest verified correct —
+the Java manifest-reason polish mirrors `RuntimeActivationService.transition(OFFLINE, reason.code())`
+exactly, `pendingReason`-as-code is the system convention, and the citation-scorer path matches the
+registry):
+1. **Doctor tier derivation was not cumulative** — `if (chat && runtime) tier = 2` ran independent of
+   embedding, so {embedding absent, chat + GPU runtime present} reported "Tier 2" while listing
+   embedding as missing and setting `nextRemedy = null` (self-contradictory). Fixed: Tier 2 now
+   requires embedding ∧ chat ∧ runtime (cumulative); `nextRemedy` names the first unmet rung
+   (embedding → runtime → chat). Verified with a bug-repro state (chat GGUF only, cuda12 resolvable →
+   now correctly Tier 0 pointing at embedding).
+2. **Smoke omitted the plan's conditional higher-tier assertion** — added a deterministic Tier-1 check
+   (when tier ≥ 1, the query must not fall back to pure `TEXT` mode); Tier-2's cited answer is
+   intentionally not asserted (LLM-flaky). Smoke re-run PASS (tier 2, HYBRID).
+

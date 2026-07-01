@@ -85,11 +85,21 @@ async function main() {
     });
     const results = r.results || [];
     const mode = r.searchTrace?.effectiveMode;
+
+    // Tier 0 (the guaranteed floor): a keyword query returns a real hit. Asserted unconditionally.
     if (results.length < 1) throw new Error(`FIRST-SUCCESS FAILED: query returned 0 results (mode=${mode})`);
     if (!mode) throw new Error('FIRST-SUCCESS FAILED: no searchTrace.effectiveMode');
 
+    // Ask the doctor which tier this environment is at (drives the conditional higher-tier check).
     let tier = '(unknown)';
     try { tier = JSON.parse(execFileSync('node', [path.join(__dirname, 'doctor.mjs'), '--json'], { cwd: repoRoot }).toString()).tier; } catch { /* best-effort */ }
+
+    // Tier 1 (conditional): when the embedding model is present (tier ≥ 1), the semantic path must
+    // actually engage — the query must NOT have fallen back to pure keyword (TEXT) mode. Deterministic.
+    // (Tier 2's cited answer is intentionally NOT asserted here — it's LLM-dependent, slow and flaky.)
+    if (typeof tier === 'number' && tier >= 1 && mode === 'TEXT') {
+      throw new Error(`TIER-1 FAILED: embedding present (tier ${tier}) but query ran in TEXT mode — semantic retrieval did not engage`);
+    }
 
     console.log(`\nOK  onramp first-success: ingested demo corpus → query "${DEMO_QUERY}" returned ${results.length} result(s) in ${mode} mode (tier ${tier}).\n`);
   } catch (err) {

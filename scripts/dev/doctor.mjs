@@ -92,19 +92,21 @@ function deriveTier({ present, runtime }) {
   const embedding = !!present.embedding;
   const chat = !!present.chat;
   const missing = [];
+  // Tiers are CUMULATIVE (Tier 2 ⊃ Tier 1 ⊃ Tier 0): a higher tier is only "reached" once every
+  // lower tier's requirement is met. Reporting Tier 2 while embedding is absent would contradict the
+  // `missing` list, so gate each rung on the ones below it.
   let tier = 0; // Tier 0 (keyword search) needs no models — always reachable.
   if (embedding) tier = 1; else missing.push('embedding model (semantic/hybrid search)');
-  if (chat && runtime) tier = 2;
-  else {
-    if (!chat) missing.push('chat GGUF model (cited AI answers)');
-    if (!runtime) missing.push('GPU llama-server runtime (cited AI answers)');
-  }
+  if (embedding && chat && runtime) tier = 2;
+  if (!chat) missing.push('chat GGUF model (cited AI answers)');
+  if (!runtime) missing.push('GPU llama-server runtime (cited AI answers)');
+  // nextRemedy names the FIRST unmet rung, in ladder order (embedding → runtime → chat).
   let nextRemedy;
-  if (tier === 0 && !embedding) {
-    nextRemedy = 'Reach Tier 1 (semantic search): install the ONNX models (Install AI, or place them under the models dir).';
-  } else if (tier < 2 && !runtime) {
+  if (!embedding) {
+    nextRemedy = 'Reach Tier 1 (semantic search): install the ONNX embedding model (Install AI, or place it under the models dir).';
+  } else if (!runtime) {
     nextRemedy = 'Reach Tier 2 (cited answers): provision the GPU runtime once — `./gradlew :modules:ui:stageLlamaCudaVariant` at the main checkout (then the dev-runner shares it to every worktree).';
-  } else if (tier < 2 && !chat) {
+  } else if (!chat) {
     nextRemedy = 'Reach Tier 2 (cited answers): install the chat GGUF model (Install AI).';
   } else {
     nextRemedy = null; // Tier 2 — nothing missing for the onramp.
