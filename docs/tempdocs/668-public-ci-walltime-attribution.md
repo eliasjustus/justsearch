@@ -1158,3 +1158,38 @@ ranked candidate list** — exactly what 648 is to 647 on the engine side. The h
 biggest levers (CI test-parallelism; Windows→Linux) were both *under-weighted* by this tempdoc's
 earlier passes, and the lever it fixated on (config-cache) is a non-starter. Actually investigating,
 rather than theorizing, is what surfaced that — the point of building the instrument in the first place.
+
+### A/B result — lever #1 (test parallelism) is EMPIRICALLY REFUTED - 2026-07-01
+
+I ran the #1 lever on real CI (single variable: CI `testParallelism` 1→2, run `28550468403`) and
+measured with the instrument. **It failed, twice over:**
+
+- **Zero speedup.** app-ui lane = **597s at `p=2`** vs a 554–632s (median ~598s) baseline at `p=1`.
+  No gain at all — the 4-vCPU runner is already CPU-saturated by a single test task, so a second
+  concurrent task just time-slices the same cores.
+- **It broke a lane.** The added CPU contention blew a timing-sensitive test's timebox —
+  `worker-services` `ProcessExtractionSandboxTest` → `ExtractionTimeoutException` → the search-worker
+  lane **FAILED**. (Reverted; comment in `JvmBaseConventionsPlugin` now records this so it isn't
+  re-tried.)
+
+**What this means (a real correction, not a footnote):** the critical-path lane is **CPU-bound** on
+the 4-vCPU runner. That invalidates *every within-run CPU-parallelism lever* — raising
+`testParallelism`, raising `maxParallelForks`, more concurrent jobs — they will all hit the same
+saturation and the same timeout-under-contention risk. `testParallelism=1` in CI was *correct*, and is
+now empirically validated rather than "conservative." The re-ranked reality:
+
+1. **Faster/more hardware is the only way to beat CPU-boundness** → **Windows→Linux migration**
+   (`ubuntu-latest`) is now the top real lever (Linux Gradle is faster *and* Linux runners are less
+   contended; free tier, no paid upgrade). But it is gated on the Windows-assumption audit (Lucene FS,
+   paths, worker processes, app-instance locking) — a real investigation, and app-ui in particular
+   holds Windows-sensitive modules, so it must start as an advisory Ubuntu *duplicate*, not a flip.
+2. **Do less non-test work without adding contention** → cut jacoco / audit the `maxRetries=2` flake
+   cost on the critical path; Dynamic CDS for JVM startup (helps latency without CPU contention).
+3. Deeper caching (build-output across jobs) — but note `cache: gradle` already persists the Gradle
+   build cache (`~/.gradle/caches`), so compile may already be largely cached; needs its own check.
+
+Meta-honesty: this is the **second** time actually measuring overturned my theory (config-cache first,
+parallelism now). The pattern is the lesson — CI-lever intuition is unreliable here; the instrument's
+whole value is that it gives a clean before/after that kills a wrong hypothesis in one run. It just
+did. The remaining real lever (Linux) is a bigger, audit-gated change, not a one-line tweak — so the
+honest next step is that audit, not another blind value bump.
