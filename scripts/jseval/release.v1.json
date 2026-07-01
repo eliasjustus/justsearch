@@ -1,27 +1,39 @@
 {
   "ablations": {},
   "cohort": {
-    "config_cohort_key": "3f43654963fcf6c16fad3ab53472e7924f5c6370dfc77e1405079552f3d96b86",
+    "config_cohort_key": "109ce2832109bd79a3c876f8f799eb7d3bee2115727e7c7caf598ed613e0c291",
     "eval_protocol_hash": "24ce3446d4fb0ff5b78c94c53a79f185ee40932dbd8bb379fd6e04cab64df2b6",
-    "git_sha": "bef184e3338732d12c480032642fb74c51466cce",
+    "git_sha": "84b305b2be79d66de78d29435d49102b3c03e35b",
     "hardware": {
       "cuda_version": "12",
-      "gpu_driver_version": "610.47",
+      "gpu_driver_version": "610.62",
       "gpu_name": "NVIDIA GeForce RTX 4070",
       "gpu_vram_bytes": 12878610432,
       "ort_version": "1.24.3",
       "tier": "gpu_12gb_plus"
     },
+    "hardware_homogeneous": true,
     "model_identity": {
       "embed_backend": "onnx",
       "embed_compat_state": "COMPATIBLE",
       "embed_fingerprint": "f1d0f4ec988a6c17387d3b256e631deea506a891aed3a6ded4f9bf09386cc38e",
-      "ner_model_path": "F:\\JustSearch\\models\\onnx\\ner",
-      "splade_model_path": "F:\\JustSearch\\models\\splade\\naver-splade-v3"
+      "ner_model_path": "",
+      "realized_engines": [
+        "dense",
+        "reranker",
+        "splade"
+      ],
+      "reranker_model_path": "F:\\justsearch-public\\models\\onnx\\reranker",
+      "splade_model_path": "F:\\justsearch-public\\models\\splade\\naver-splade-v3"
     },
-    "policy_hash": "60fb2aa6ec7ba0e263dde63595154e22939206d87f358fd8f34aed0744bbe3c7"
+    "policy_hash": "638e63b74334bd7db2605ec591566de9ea5e60ddbc4ec5c6d1c6e7623a792108",
+    "realized_engines": [
+      "dense",
+      "reranker",
+      "splade"
+    ]
   },
-  "composed_at": "2026-06-24T19:59:28.165027+00:00",
+  "composed_at": "2026-07-01T12:43:54.661290+00:00",
   "coverage": {
     "does_not_measure": "document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling)",
     "measures": "retrieval ranking quality (per-corpus metrics above)"
@@ -42,46 +54,102 @@
         "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d"
       },
       "metrics": {
-        "AP@10": 0.7095970899470898,
-        "P@1": 0.63,
+        "AP@10": 0.7085732804232803,
+        "P@1": 0.6266666666666667,
         "R@10": 0.8875555555555555,
-        "RR@10": 0.7209021164021164,
-        "ce_p50_ms": 152.0,
-        "nDCG@10": 0.757174965574359
+        "RR@10": 0.7188783068783069,
+        "ce_p50_ms": 167.0,
+        "nDCG@10": 0.7560933805510752
       },
       "qrels_id": "binary",
       "run_metrics": {
-        "enrich_docs_s": 22.0,
-        "primary_docs_s": 93.7,
-        "resident_bytes": 2024327753.0
+        "enrich_docs_s": 25.0,
+        "primary_docs_s": 111.1,
+        "resident_bytes": 1754705267.0
       },
       "tolerance_band": null
     },
-    "mixed/courtlistener-200": {
+    "mixed/legal-clerc-200": {
       "ann_proof_status": "PASS",
       "comparable": true,
       "confidence_tier": "A",
       "config_mode": "hybrid",
       "corpus_source": {
-        "dataset": "mixed/courtlistener-200",
-        "doc_count": 200,
+        "dataset": "mixed/legal-clerc-200",
+        "doc_count": 198,
         "query_count": 200,
-        "sha256": "ec41ffc21c89703c602b0ccd1bc974aa4185e55b57ae36c45cdb4a1a9a1218d8",
-        "signature": "ec41ffc21c89703c602b0ccd1bc974aa4185e55b57ae36c45cdb4a1a9a1218d8"
+        "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+        "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1"
       },
       "metrics": {
-        "AP@10": 0.5941666666666666,
-        "P@1": 0.555,
-        "R@10": 0.65,
-        "RR@10": 0.6016666666666667,
-        "ce_p50_ms": 143.0,
-        "nDCG@10": 0.6083918389107155
+        "AP@10": 0.46860317460317463,
+        "P@1": 0.37,
+        "R@10": 0.665,
+        "RR@10": 0.46860317460317463,
+        "ce_p50_ms": 214.0,
+        "nDCG@10": 0.5164492083288844
       },
       "qrels_id": "binary",
       "run_metrics": {
-        "enrich_docs_s": 1.1,
-        "primary_docs_s": 13.5,
-        "resident_bytes": 2024327753.0
+        "enrich_docs_s": 1.3,
+        "primary_docs_s": 11.0,
+        "resident_bytes": 1754705267.0
+      },
+      "tolerance_band": null
+    },
+    "mixed/miracl-de-2k": {
+      "ann_proof_status": "PASS",
+      "comparable": true,
+      "confidence_tier": "A",
+      "config_mode": "hybrid",
+      "corpus_source": {
+        "dataset": "mixed/miracl-de-2k",
+        "doc_count": 3103,
+        "query_count": 305,
+        "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+        "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1"
+      },
+      "metrics": {
+        "AP@10": 0.803587041373927,
+        "P@1": 0.6688524590163935,
+        "R@10": 0.9934426229508196,
+        "RR@10": 0.8019476971116319,
+        "ce_p50_ms": 168.0,
+        "nDCG@10": 0.8515762996367597
+      },
+      "qrels_id": "binary",
+      "run_metrics": {
+        "enrich_docs_s": 36.7,
+        "primary_docs_s": 73.7,
+        "resident_bytes": 1754705267.0
+      },
+      "tolerance_band": null
+    },
+    "mixed/miracl-fr-2k": {
+      "ann_proof_status": "PASS",
+      "comparable": true,
+      "confidence_tier": "A",
+      "config_mode": "hybrid",
+      "corpus_source": {
+        "dataset": "mixed/miracl-fr-2k",
+        "doc_count": 5407,
+        "query_count": 343,
+        "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+        "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297"
+      },
+      "metrics": {
+        "AP@10": 0.8232299042065806,
+        "P@1": 0.7026239067055393,
+        "R@10": 0.9941690962099126,
+        "RR@10": 0.8232299042065806,
+        "ce_p50_ms": 169.0,
+        "nDCG@10": 0.8664115914636191
+      },
+      "qrels_id": "binary",
+      "run_metrics": {
+        "enrich_docs_s": 50.0,
+        "primary_docs_s": 124.6,
+        "resident_bytes": 1754705267.0
       },
       "tolerance_band": null
     },
@@ -111,68 +179,14 @@
         "primary_docs_s": 96.4,
         "resident_bytes": 2024327753.0
       },
-      "tolerance_band": null
-    },
-    "mixed/miracl-de-2k": {
-      "ann_proof_status": "PASS",
-      "comparable": true,
-      "confidence_tier": "A",
-      "config_mode": "hybrid",
-      "corpus_source": {
-        "dataset": "mixed/miracl-de-2k",
-        "doc_count": 3103,
-        "query_count": 305,
-        "sha256": "c930e9ed9e00ba24d4ede3da20abf92684f12478c90c6711157a437adbc1697a",
-        "signature": "c930e9ed9e00ba24d4ede3da20abf92684f12478c90c6711157a437adbc1697a"
-      },
-      "metrics": {
-        "AP@10": 0.5972305149746602,
-        "P@1": 0.521311475409836,
-        "R@10": 0.9801092896174863,
-        "RR@10": 0.687841530054645,
-        "ce_p50_ms": 136.0,
-        "nDCG@10": 0.7277384298064394
-      },
-      "qrels_id": "binary",
-      "run_metrics": {
-        "enrich_docs_s": 41.4,
-        "primary_docs_s": 160.9,
-        "resident_bytes": 2024327753.0
-      },
-      "tolerance_band": null
-    },
-    "mixed/miracl-fr-2k": {
-      "ann_proof_status": "PASS",
-      "comparable": true,
-      "confidence_tier": "A",
-      "config_mode": "hybrid",
-      "corpus_source": {
-        "dataset": "mixed/miracl-fr-2k",
-        "doc_count": 5407,
-        "query_count": 343,
-        "sha256": "3e2e113de8bfa05127fe45d2ab4dc3c66df68a300b6fb56d8478a62372feaf92",
-        "signature": "3e2e113de8bfa05127fe45d2ab4dc3c66df68a300b6fb56d8478a62372feaf92"
-      },
-      "metrics": {
-        "AP@10": 0.5796238036840906,
-        "P@1": 0.48104956268221577,
-        "R@10": 0.9813411078717201,
-        "RR@10": 0.653193113980286,
-        "ce_p50_ms": 134.0,
-        "nDCG@10": 0.7070287151636128
-      },
-      "qrels_id": "binary",
-      "run_metrics": {
-        "enrich_docs_s": 49.7,
-        "primary_docs_s": 161.5,
-        "resident_bytes": 2024327753.0
-      },
-      "tolerance_band": null
+      "tolerance_band": null,
+      "_cohort_note": "Carried over from a prior release cohort (git_sha bef184e333, config_cohort_key 3f43654963fc...) -- NOT remeasured in this composition (tempdoc 666). mixed/enron-qa has no committed fetch/materialization mechanism in this worktree (datasets/ is gitignored and no corpus-fetch-enron equivalent exists), a sibling gap to what tempdoc 666 fixed for MIRACL/CourtListener -- logged as a pre-existing issue, out of this tempdoc scope."
     }
   },
   "notes": {
     "missing_default_mode": [],
-    "tolerance_semantics": "reproduction tolerance is the within-machine ±2sigma envelope, scoped to equivalent hardware/setup (tempdoc 623 F-alpha)"
+    "tolerance_semantics": "reproduction tolerance is the within-machine ±2sigma envelope, scoped to equivalent hardware/setup (tempdoc 623 F-alpha)",
+    "enron_qa_stale_cohort": "mixed/enron-qa was NOT remeasured in this composition -- see its entry _cohort_note."
   },
   "release_id": null,
   "schema": "release.v1",

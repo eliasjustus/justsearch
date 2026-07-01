@@ -48,9 +48,10 @@ Query variants of the same corpus get distinct slugs.
 | beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
 | mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
 | mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
-| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | |
-| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-03-28 | 343 D | |
-| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 316 | factoid | 2026-03-18 | 309 §37 | |
+| mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | **RETIRED 2026-07-01 (tempdoc 666)** — replaced by `mixed/legal-clerc-200`; see Corpus provenance note under Findings. |
+| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-01 | 666 | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
 | mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
 | mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
 | mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
@@ -93,27 +94,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `bef184e333` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.47 · ORT 1.24.3
+**Release:** `84b305b2be` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.757 | — |
-| mixed/courtlistener-200 | hybrid | 0.608 | — |
+| beir/scifact | hybrid | 0.756 | — |
 | mixed/enron-qa | hybrid | 0.719 | — |
-| mixed/miracl-de-2k | hybrid | 0.728 | — |
-| mixed/miracl-fr-2k | hybrid | 0.707 | — |
+| mixed/legal-clerc-200 | hybrid | 0.516 | — |
+| mixed/miracl-de-2k | hybrid | 0.852 | — |
+| mixed/miracl-fr-2k | hybrid | 0.866 | — |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 152 | 93.7 | 22.0 | 2.02 |
-| mixed/courtlistener-200 | 143 | 13.5 | 1.1 | 2.02 |
+| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
 | mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/miracl-de-2k | 136 | 160.9 | 41.4 | 2.02 |
-| mixed/miracl-fr-2k | 134 | 161.5 | 49.7 | 2.02 |
+| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
+| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
+| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
 
 <!-- generated:end -->
 
@@ -186,7 +187,10 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Note:** splade-v3+gemma rows use chunk merge (active on EnronQA long emails). Chunk merge provides +1.3% nDCG on lexical (p=0.04, statistically significant). See 343 Phase 2.2.
 **Note:** All splade-v3+gemma `full` rows have CE OFF but dense ON (F-012 corrected — dense was working via gte-multilingual-base all along, tracking bug fixed). The full vs bm25_splade delta is the dense retrieval contribution. CE impact with splade-v3+gemma is unmeasured (jseval `--ce` flag needed).
 
-### mixed/courtlistener-200
+### mixed/courtlistener-200 (RETIRED 2026-07-01, tempdoc 666 — replaced by mixed/legal-clerc-200)
+
+*(all numbers below predate the retirement and are not reproducible against any corpus currently in this
+catalog — see Corpus provenance note above)*
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
@@ -200,10 +204,31 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 **Best known:** bge-m3 / minilm-512 / bm25-dom / full = **0.925**
 **Note:** BM25-dominant (0.925) is 11.8% better than balanced (0.816) on long legal docs. CE upgrade neutral (0.813 ≈ 0.816).
 
-### mixed/miracl-de-2k
+### mixed/legal-clerc-200 (new, tempdoc 666 — replaces mixed/courtlistener-200)
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | vector | 0.060 | — | — | dense | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | lexical | 0.686 | — | — | bm25 | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | splade | 0.059 | — | — | splade | A | 84b305b | 666 |
+| (HEAD default) | (default) | (default) | hybrid | **0.521** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
+
+**Best known:** (HEAD default) / hybrid = **0.521** (first measurement — no ablations run yet).
+**Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
+retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
+observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
+form, `queries/test.single-removed.direct.tsv`, distinct from the old known-item task — see Corpus
+provenance note above). No cc/encoder ablation pass has been run yet.
+
+### mixed/miracl-de-2k
+
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
+| encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
+|---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.852** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | bm25-dom | lexical | 0.511 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | splade | 0.669 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | bm25-dom | bm25_splade | 0.553 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -227,8 +252,13 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 
 ### mixed/miracl-fr-2k
 
+*(ablation rows below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above; the
+search-engine behavior they document remains informative, but exact numbers are not reproducible against the
+corpus as currently committed)*
+
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
+| (HEAD default) | (default) | (default) | hybrid | **0.866** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
 | bge-m3 | minilm-512 | balanced | lexical | 0.476 | — | — | bm25 | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
@@ -421,6 +451,49 @@ Current corpus signature (`jseval.corpus_identity.corpus_signature()`, `sha256(c
 `1ade35791b1db58b9a7e1ff21246278d8e588e1705cbeda36d8529ceab6699ec`. Anyone re-deriving or re-verifying the
 findings below should check this signature against the corpus they're measuring against, rather than
 assuming it matches what's described.
+
+### Corpus provenance note (2026-07-01, tempdoc 666)
+
+Neither `mixed/miracl-de-2k`/`mixed/miracl-fr-2k` nor `mixed/courtlistener-200` ever had a reproducible
+construction path anywhere in this project's history (confirmed via the private archive's full,
+un-squashed 6563-commit history — tempdoc 666 first pass). This pass fixed both:
+
+- **`mixed/miracl-de-2k` and `mixed/miracl-fr-2k` were regenerated** from the real MIRACL dataset via
+  `ir_datasets` (Apache 2.0), with a small, committed, seeded recipe (`scripts/jseval/666-corpora/<name>/
+  recipe.json`) recording exactly what to re-fetch and how to sample it deterministically — the corpus
+  content itself is never committed (`datasets/` is gitignored for every corpus, by this project's existing,
+  universal policy). The new sample targets the same original scale (all dev-split queries + a
+  deterministically-sampled distractor pool to the original doc count) but is **new content**, not a
+  byte-restoration of the unreproducible original — matching the same "accept new content, verified
+  reproducible" resolution tempdoc 664 already reached for `needle-burial-v1`. `mixed/miracl-fr-2k`'s query
+  count is corrected from 316 to 343 (all real dev-split queries with a qrel — the prior 316 had no recorded
+  sampling method to reproduce).
+- **`mixed/courtlistener-200` is retired and replaced by `mixed/legal-clerc-200`.** The original corpus's
+  human-authored relevance judgments were a one-off manual curation with no recoverable construction path;
+  CourtListener itself does not ship a retrieval benchmark (queries + qrels) to rebuild against. Replaced
+  with a corpus built from [CLERC](https://arxiv.org/pdf/2406.17186) (a real, citable NAACL 2025 academic
+  legal-case-retrieval benchmark, `jhu-clsp/CLERC` on HuggingFace, built on the Caselaw Access Project — the
+  same underlying data family as CourtListener, from the same organization, the Free Law Project), fetched
+  fresh via plain HTTP and sampled deterministically (`scripts/jseval/666-corpora/legal-clerc-200/
+  recipe.json`). CLERC's own added structure (query construction, citation pairing) has no stated license
+  anywhere — checked exhaustively across five channels (GitHub API file listing, GitHub's own license
+  detector, the HuggingFace Hub API's dataset-card metadata, and a full-text search of the paper's Ethical
+  Considerations/Data Availability sections) — but nothing from CLERC is ever committed to this repo (same
+  gitignored-`datasets/` policy as above), so this repo never redistributes it; only the underlying CC0
+  Caselaw Access Project text is ever fetched, and only transiently.
+
+**Findings below measured against `mixed/courtlistener-200` are historical and not reproducible against any
+corpus currently in this catalog** — that corpus no longer exists in any committed or regenerable form. The
+measurements genuinely happened and the cited numbers accurately record what was found *then*; this is a
+fact about reproducibility, not a retraction. **Already-shipped decisions based on these numbers are
+unaffected** (e.g. the BM25-dominance-on-long-legal-docs finding below) — those decisions used real
+measurements at the time. `mixed/legal-clerc-200` has no BM25-dominance ablation yet — a genuinely new corpus
+needs its own ablation pass, not an inherited assumption from the retired corpus's shape.
+
+Corpus signatures (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`):
+- `mixed/miracl-de-2k`: `d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1`
+- `mixed/miracl-fr-2k`: `a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297`
+- `mixed/legal-clerc-200`: `90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1`
 
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
 

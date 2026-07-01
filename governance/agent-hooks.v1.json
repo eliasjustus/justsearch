@@ -89,6 +89,10 @@
       "file": "lockfile-hint.mjs",
       "role": "advisory"
     },
+    "observation-shard-hint": {
+      "file": "observation-shard-hint.mjs",
+      "role": "advisory"
+    },
     "maintain-doc-hint": {
       "file": "maintain-doc-hint.mjs",
       "role": "blocking",
@@ -464,6 +468,14 @@
         "hooks": [
           {
             "hookId": "maintain-doc-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "observation-shard-hint",
             "timeout": 5
           }
         ]
