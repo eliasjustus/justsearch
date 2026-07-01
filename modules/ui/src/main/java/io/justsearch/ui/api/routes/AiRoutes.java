@@ -8,6 +8,7 @@ import io.justsearch.app.services.conversation.shapes.NavigateChatShape;
 import io.justsearch.app.services.conversation.shapes.RAGAskShape;
 import io.justsearch.app.services.conversation.shapes.SummarizeShape;
 import io.justsearch.ui.api.AiInstallController;
+import io.justsearch.ui.api.AiModelsController;
 import io.justsearch.ui.api.AiPackController;
 import io.justsearch.ui.api.AiRuntimeController;
 import io.justsearch.ui.api.ChatController;
@@ -22,6 +23,7 @@ public final class AiRoutes {
       AiInstallController aiInstallController,
       AiPackController aiPackController,
       AiRuntimeController aiRuntimeController,
+      AiModelsController aiModelsController,
       ChatController chatController) {
     // Tempdoc 491 Phase C1: /api/chat/summarize routes through ConversationEngine via the
     // SummarizeShape. The legacy /api/summarize + /api/summarize/stream endpoints are
@@ -111,6 +113,9 @@ public final class AiRoutes {
     app.get("/api/ai/runtime/status", aiRuntimeController::handleGetStatus);
     app.post("/api/ai/runtime/activate", aiRuntimeController::handleActivate);
     app.post("/api/ai/runtime/deactivate", aiRuntimeController::handleDeactivate);
+
+    // Tempdoc 656 Task 4: registry-vs-disk reconciliation, read-only.
+    app.get("/api/ai/models/status", aiModelsController::handleGetStatus);
 
     // Tempdoc 491 §9.B: /api/summarize/batch/stream removed in C2.2;
     // /api/summarize/hierarchical/stream removed in C2.3; /api/ask/stream removed in C3.

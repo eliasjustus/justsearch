@@ -1,7 +1,7 @@
 ---
 title: "Five-minute agent/runtime onramp: make the first successful developer path deterministic by finishing the AI capability's runtime-manifest/reason-code wiring, not by adding a new diagnostics subsystem"
 type: tempdocs
-status: "open — investigation + design theorization + confidence pass, all 2026-07-01 (see §Investigation, §Design theorization, §Confidence pass). Triggered by a live incident: 2 agents independently reported missing models / missing llama-server after the go-public cutover. Root cause traced to and live-reproduced: the Inference capability doesn't route its failure reasons through the existing LifecycleReasonCode/RuntimeManifest substrate — confirmed by a live dev-stack run showing `/api/ai/runtime/status` correctly reporting RUNTIME_VARIANT_NOT_INSTALLED while `/api/runtime/manifest`'s `ai.pendingReason` stayed stuck on generic prose at the same moment. Design conclusion: extend that existing substrate (§D3/§D4), do not build a parallel doctor subsystem. Overall implementation confidence 7/10; recommended tier Sonnet at high effort (see §Confidence rating). No implementation started."
+status: "Tasks 0-5 implemented and live-verified 2026-07-01 (see §Implementation). The AI capability's failure reasons now route through the same LifecycleReasonCode/RuntimeManifest substrate every other capability already used; a registry-driven /api/ai/models/status preflight endpoint exists; the stale model-inventory.md presence claim is fixed. Live-reproduced both the original bug and the fix in the actual browser: the degradation banner now reads 'The local AI runtime (llama-server) is not installed' instead of the generic 'The local AI model is offline'. One mid-implementation finding not anticipated by the confidence pass: StatusLifecycleHandler (which feeds /api/status and the FE banner) had its own, separate hardcoded-generic-reason bug beside the manifest's — fixed as part of Task 2's closure once browser validation surfaced it. Remaining open items: the two explicit non-goals (verify-prerequisites.mjs's citation-scorer path bug, dev-runner.cjs's soft-clean keep-set gap) and the broader design questions owned by 654/655/657/660."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -643,4 +643,100 @@ JustSearch as already telling developers "exactly why AI isn't ready" (or simila
 has actually shipped and been live-verified: an unshipped design conclusion stated as present-tense
 capability would be the same undercount-in-reverse class of falsehood 650 diagnosed on the public
 descriptor, just overclaiming instead of undercounting.
+
+## §Implementation (2026-07-01, fourth pass)
+
+Implemented Tasks 0-5 from the approved implementation plan, in the same worktree
+(`worktree-656-onramp-investigation`). All verification steps from the plan were run, including the
+required browser validation. No scope beyond the plan's explicit non-goals was added.
+
+### What shipped
+
+- **Task 0** — `InferenceCapability.transition()` and `WorkerCapability.transition()` now fire
+  listeners on a reason-only change (health unchanged), not just a health transition, without
+  disturbing `WorkerCapability`'s generation-counter gating (still `prev != newHealth` only).
+- **Task 1** — Six new `LifecycleReasonCode` members (`INFERENCE_MODEL_NOT_CONFIGURED`,
+  `INFERENCE_MODEL_NOT_FOUND`, `INFERENCE_RUNTIME_NOT_INSTALLED`,
+  `INFERENCE_POLICY_ONLINE_AI_DISABLED`, `INFERENCE_POLICY_GPU_DISABLED`,
+  `INFERENCE_ACTIVATION_FAILED`), each with a `CAUSE_ROWS` wording row in `readinessNotice.ts`.
+  `check-readiness-reason-codes.mjs` passes.
+- **Task 2** — `RuntimeActivationService` now takes a nullable `InferenceCapability` and, in
+  `fail()`, maps its existing error codes onto the six new reason codes and calls
+  `inferenceCapability.transition(...)` — but only when the capability isn't already `READY` (an
+  unrelated variant-switch failure must not regress a working capability). Wired at both
+  construction sites (`ServicePhase.java` via the existing `in.inferenceCapability()`;
+  `CoreApiAssembly.java`'s fallback path via the existing `resolveInferenceCapability` helper).
+- **Task 3** — New `ModeTransitionException.Reason.EXECUTABLE_NOT_FOUND` /
+  `StartupCode.EXECUTABLE_NOT_FOUND`, a pre-launch `Files.isRegularFile` check in
+  `LlamaServerOps.launchManagedLlamaServer` (mirroring the existing `MISSING_DLL` precedent at an
+  earlier failure point), an `inference-failures.executable_not_found` i18n entry, and the four
+  exhaustive-switch call sites the Java compiler forced (`TransitionRunner` ×2,
+  `ModeTransitionException.buildFailure`, `SwitchInferenceModeHandler` — one more mapping site than
+  the plan anticipated, caught immediately by the compiler, not missed).
+- **Task 4** — New `AiPreflightService` (app-services) + `AiModelsController` (ui) +
+  `GET /api/ai/models/status` (registered in `AiRoutes.java`). Named "models/status", not
+  "preflight", after discovering during implementation that `/api/ai/packs/preflight` already
+  exists for a different purpose (validating a specific offline pack file) — avoided the name
+  collision rather than reusing an already-claimed word. Reuses `AiInstallService.getManifest()` /
+  a new `modelsDir()`/`aiHome()` getter pair (two one-line additions) and
+  `RuntimeActivationService.getStatus()` — no new path-resolution logic, exactly per plan.
+- **Task 5** — `docs/reference/model-inventory.md`'s "Repo-Root Model Presence" section rewritten
+  to describe model *identity* only, pointing at `GET /api/ai/models/status` for live presence;
+  the fixed Qwen3VL row struck from "Stale script references," the still-broken citation-scorer
+  row kept.
+
+### A finding the plan didn't anticipate, caught by the required browser check
+
+Live-reproducing the original bug via the API alone (`GET /api/runtime/manifest`) showed the fix
+working exactly as designed. But loading the actual web UI showed the degradation banner still
+reading the old generic "The local AI model is offline." Investigating why: `StatusLifecycleHandler`
+(which feeds `/api/status` and, transitively, the FE banner) had its **own**, separately-hardcoded
+`LifecycleReasonCode.INFERENCE_OFFLINE.code()` for every non-READY/non-STARTING inference health
+state — never reading `inferenceCapability.pendingReason()` at all, unlike the `WORKER` component's
+switch three lines above it in the same file, which already does exactly that (comparing
+`workerCapability.pendingReason()` against `WORKER_RESTART_EXHAUSTED` to pick between two codes).
+Fixed by adding a small `resolveInferenceReasonCode` helper that prefers a known
+`LifecycleReasonCode` from `pendingReason()` over the generic fallback — mirroring the `WORKER`
+precedent that was sitting right there. This is exactly the kind of gap the user's instruction to
+validate through the real browser (not just the API) was written to catch: the manifest-only
+verification in the confidence pass would have reported success on a fix that was incomplete for
+the actual user-facing surface.
+
+### Live verification transcript (this worktree, real dev stack, real browser)
+
+1. Started dev stack; `GET /api/runtime/manifest` → `{"phase":"PENDING","pendingReason":"Inference
+   not yet activated"}` (baseline, pre-fix-equivalent state for a fresh poll).
+2. `POST /api/ai/runtime/activate {"variantId":"default"}` against this checkout's genuinely
+   incomplete model/native-bin state.
+3. `GET /api/runtime/manifest` → `{"phase":"OFFLINE","pendingReason":"inference.runtime_not_installed"}` —
+   fixed.
+4. `GET /api/status` → `components.inference.reason_code: "inference.runtime_not_installed"` —
+   fixed (after the `StatusLifecycleHandler` fix above; was still `"inference.offline"` before it).
+5. `GET /api/ai/models/status` → correctly reports `citation-scorer` incomplete (no variant files),
+   `chat` incomplete (GGUF present, `mmproj-F16.gguf` missing), `cuda-runtime` incomplete (all 4
+   archives missing via its `installRoot` path), `runtimeInstalled: false`,
+   `canActivateDefault: false` — cross-consistent with the other two endpoints.
+6. Loaded `http://localhost:5173` in the real browser (claude-in-chrome): degradation banner
+   rendered **"The local AI runtime (llama-server) is not installed"** with an "Open Health"
+   fallback action (no remedy operation registered for this code, as designed) — confirmed
+   end-to-end, backend to rendered pixels.
+7. Dev stack stopped cleanly after verification.
+
+### Test/build verification run
+
+`./gradlew.bat build -x test` (full build, all modules) — green. Targeted unit tests
+(`:modules:app-api:test`, `:modules:app-services:test`, `:modules:app-inference:test`,
+`:modules:ui:test`, including `InferenceFailureMessagesContractTest` and the updated
+`LegacyEndpointGuardTest`) — green. `node scripts/ci/check-readiness-reason-codes.mjs` — green.
+`cd modules/ui-web && npm run typecheck && npm run test:unit:run` — green except one **pre-existing,
+already-logged, unrelated** failure (`HealthLitView.test.ts`'s "604 Move B" SSE-reachability
+assertion — confirmed in `docs/observations.md` as reproducing on an unmodified `main` checkout since
+2026-06-30; not touched, not in scope). Docs regeneration (`llmstxt-generate.mjs`,
+`skills-sync.mjs`) run after the `model-inventory.md` edit, per the consult-doc-hint.
+
+### Explicitly not done (per the plan's non-goals, unchanged)
+
+No new MCP tool, no CLI command, no product-mode decision, no fix to
+`verify-prerequisites.mjs`'s citation-scorer path or `dev-runner.cjs`'s soft-clean keep-set gap
+(both remain open, independently logged findings for a future pass).
 

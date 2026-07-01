@@ -12,6 +12,9 @@ import io.justsearch.gpu.GpuCapabilitiesService;
 import io.justsearch.gpu.VramFlagsUtil;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
+import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
@@ -101,6 +104,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   private final GpuCapabilitiesService gpuCapabilitiesService;
   private final EnterprisePolicyService policyService;
   private final WorkerFeatureCache workerFeatureCache; // nullable
+  private final InferenceCapability inferenceCapability; // nullable — tempdoc 656 Task 2
 
   private final Path aiHome;
   private final Path statusPath;
@@ -118,7 +122,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       UiSettingsStore settingsStore,
       GpuCapabilitiesService gpuCapabilitiesService,
       EnterprisePolicyService policyService) {
-    this(onlineAi, settingsStore, gpuCapabilitiesService, policyService, null);
+    this(onlineAi, settingsStore, gpuCapabilitiesService, policyService, null, null);
   }
 
   public RuntimeActivationService(
@@ -127,11 +131,29 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       GpuCapabilitiesService gpuCapabilitiesService,
       EnterprisePolicyService policyService,
       WorkerFeatureCache workerFeatureCache) {
+    this(onlineAi, settingsStore, gpuCapabilitiesService, policyService, workerFeatureCache, null);
+  }
+
+  /**
+   * Tempdoc 656 Task 2: {@code inferenceCapability} lets this service's already-precise failure
+   * detection (see {@link #fail}) reach {@link InferenceCapability#pendingReason()} — and therefore
+   * the runtime manifest's {@code ai.pendingReason} — instead of staying scoped to the immediate
+   * {@code ai_activate} RPC response. Nullable for graceful degradation and existing test
+   * compatibility, matching {@code workerFeatureCache}.
+   */
+  public RuntimeActivationService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      GpuCapabilitiesService gpuCapabilitiesService,
+      EnterprisePolicyService policyService,
+      WorkerFeatureCache workerFeatureCache,
+      InferenceCapability inferenceCapability) {
     this.onlineAi = Objects.requireNonNull(onlineAi, "onlineAi");
     this.settingsStore = Objects.requireNonNull(settingsStore, "settingsStore");
     this.gpuCapabilitiesService = gpuCapabilitiesService == null ? new GpuCapabilitiesService() : gpuCapabilitiesService;
     this.policyService = policyService; // may be null (best-effort)
     this.workerFeatureCache = workerFeatureCache; // may be null (graceful degradation)
+    this.inferenceCapability = inferenceCapability; // may be null (graceful degradation)
     this.aiHome = resolveAiHome();
     this.statusPath = aiHome.resolve("ai").resolve(STATUS_FILE);
     this.variantsRoot = resolveVariantsRoot();
@@ -834,6 +856,43 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.updatedAtEpochMs = System.currentTimeMillis();
       touch();
     }
+    reportToCapability(errorCode);
+  }
+
+  /**
+   * Tempdoc 656 Task 2: project this failure onto {@link InferenceCapability} so the runtime
+   * manifest's {@code ai.pendingReason} carries the same precise cause this class already computed,
+   * instead of the generic default reason. Deliberately does NOT force the capability OFFLINE when
+   * it is currently READY — {@code runActivate}/{@code runDeactivate} can be invoked while a
+   * *different*, already-working variant is online (e.g. an attempted variant switch), and a naive
+   * wire-through would incorrectly regress a working capability's reported state for an unrelated
+   * attempt's failure.
+   */
+  private void reportToCapability(String errorCode) {
+    if (inferenceCapability == null) {
+      return;
+    }
+    if (inferenceCapability.health() == CapabilityHealth.READY) {
+      return;
+    }
+    LifecycleReasonCode reason = mapToLifecycleReason(errorCode);
+    inferenceCapability.transition(CapabilityHealth.OFFLINE, reason.code());
+  }
+
+  /** Tempdoc 656 Task 2: maps this service's existing activation error codes onto the closed,
+   * cross-consumer {@link LifecycleReasonCode} taxonomy. Local to this one producer — the mapping
+   * is not part of the public activation-status wire contract, which keeps using {@code errorCode}
+   * unchanged. */
+  private static LifecycleReasonCode mapToLifecycleReason(String errorCode) {
+    return switch (errorCode) {
+      case "MODEL_PATH_REQUIRED" -> LifecycleReasonCode.INFERENCE_MODEL_NOT_CONFIGURED;
+      case "MODEL_NOT_FOUND" -> LifecycleReasonCode.INFERENCE_MODEL_NOT_FOUND;
+      case "RUNTIME_VARIANT_NOT_INSTALLED", "RUNTIME_BASELINE_NOT_FOUND" ->
+          LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED;
+      case "POLICY_ONLINE_AI_DISABLED" -> LifecycleReasonCode.INFERENCE_POLICY_ONLINE_AI_DISABLED;
+      case "POLICY_GPU_DISABLED" -> LifecycleReasonCode.INFERENCE_POLICY_GPU_DISABLED;
+      default -> LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED;
+    };
   }
 
   private void touch() {
