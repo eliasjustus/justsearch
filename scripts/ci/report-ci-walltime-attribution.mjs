@@ -34,6 +34,8 @@ function usage() {
     '',
     'Options:',
     '  --jobs-json <path>        Parsed `gh api .../runs/<id>/jobs` JSON (required)',
+    '  --unit-attribution-dir <path>  Dir of downloaded unit-test-attribution artifacts',
+    '                            (enables the per-unit-lane test-vs-overhead split)',
     '  --run-id <id>             Run id for the report header',
     '  --repository <owner/repo> Repository slug for the report header',
     '  --workflow <name>         Workflow name for the report header',
@@ -49,6 +51,7 @@ function usage() {
 function parseArgs(argv) {
   const out = {
     jobsJson: null,
+    unitAttributionDir: null,
     runId: null,
     repository: null,
     workflow: null,
@@ -62,6 +65,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--jobs-json' && argv[i + 1]) out.jobsJson = argv[++i];
+    else if (arg === '--unit-attribution-dir' && argv[i + 1]) out.unitAttributionDir = argv[++i];
     else if (arg === '--run-id' && argv[i + 1]) out.runId = argv[++i];
     else if (arg === '--repository' && argv[i + 1]) out.repository = argv[++i];
     else if (arg === '--workflow' && argv[i + 1]) out.workflow = argv[++i];
@@ -91,7 +95,11 @@ function classifyStep(step) {
   return { name: step.name || '<step>', seconds, fixed };
 }
 
-export function buildWalltimeReport({ run = {}, jobs = [], selfJob = null }) {
+// A unit-test lane job is named "Unit tests (<lane>)"; the capture group is the
+// lane key used by the unit-test-attribution artifacts (e.g. "app-ui").
+const UNIT_LANE_JOB = /^Unit tests \((.+)\)$/;
+
+export function buildWalltimeReport({ run = {}, jobs = [], selfJob = null, suiteTimes = {} }) {
   const jobReports = [];
   for (const job of Array.isArray(jobs) ? jobs : []) {
     if (selfJob && job.name === selfJob) continue;
@@ -101,7 +109,7 @@ export function buildWalltimeReport({ run = {}, jobs = [], selfJob = null }) {
     const steps = (Array.isArray(job.steps) ? job.steps : []).map(classifyStep);
     const fixedTaxSeconds = steps.filter((s) => s.fixed).reduce((a, s) => a + s.seconds, 0);
     const workSeconds = steps.filter((s) => !s.fixed).reduce((a, s) => a + s.seconds, 0);
-    jobReports.push({
+    const report = {
       name: job.name || '<job>',
       conclusion: job.conclusion || null,
       wallSeconds,
@@ -110,7 +118,24 @@ export function buildWalltimeReport({ run = {}, jobs = [], selfJob = null }) {
       startedAt: job.started_at || null,
       completedAt: job.completed_at || null,
       steps,
-    });
+    };
+    // For unit lanes, split the opaque "Unit tests" step (which `workSeconds`
+    // captures) into actual test CPU vs framework overhead by correlating the
+    // summed suite time from that lane's already-uploaded unit-test-attribution
+    // artifact. This is a DERIVED projection over two existing records, never a
+    // re-measurement (tempdoc 667 design). `testCpu` is summed suite time — CPU,
+    // not wall, when a module runs parallel forks — so overhead is a conservative
+    // floor and is clamped at 0 to stay non-negative under that overcount.
+    const laneMatch = UNIT_LANE_JOB.exec(report.name);
+    const suite = laneMatch ? suiteTimes[laneMatch[1]] : undefined;
+    if (Number.isFinite(suite)) {
+      report.components = {
+        testCpuSeconds: Math.round(suite),
+        frameworkOverheadSeconds: Math.max(0, Math.round(workSeconds - suite)),
+        fixedTaxSeconds,
+      };
+    }
+    jobReports.push(report);
   }
   jobReports.sort((a, b) => b.wallSeconds - a.wallSeconds || a.name.localeCompare(b.name));
 
@@ -172,12 +197,70 @@ export function renderMarkdown(report) {
     lines.push(`| ${job.name} | ${fmtSeconds(job.wallSeconds)} | ${fmtSeconds(job.fixedTaxSeconds)} | ${fmtSeconds(job.workSeconds)} | ${job.conclusion || 'unknown'} |`);
   }
   lines.push('');
+
+  const decomposed = report.jobs.filter((job) => job.components);
+  if (decomposed.length > 0) {
+    lines.push(
+      '#### Unit-lane cost breakdown',
+      '',
+      'Where a unit lane\'s wall-clock actually goes: how much is real test work vs framework overhead (Gradle configuration + JVM startup + fork serialization + inter-module gaps). Derived by correlating each lane\'s summed suite time with its test-step wall-clock — no re-measurement.',
+      '',
+      '| Lane | Wall clock | Fixed tax | Framework overhead | Test CPU | Overhead % |',
+      '|---|---:|---:|---:|---:|---:|',
+    );
+    for (const job of decomposed) {
+      const c = job.components;
+      const denom = c.frameworkOverheadSeconds + c.testCpuSeconds;
+      const pct = denom > 0 ? Math.round((100 * c.frameworkOverheadSeconds) / denom) : 0;
+      lines.push(`| ${job.name} | ${fmtSeconds(job.wallSeconds)} | ${fmtSeconds(c.fixedTaxSeconds)} | ${fmtSeconds(c.frameworkOverheadSeconds)} | ${fmtSeconds(c.testCpuSeconds)} | ${pct}% |`);
+    }
+    lines.push(
+      '',
+      '> Test CPU is summed suite time — when a module runs parallel forks it is CPU, not wall-clock, so the reported framework overhead is a conservative floor.',
+      '',
+    );
+  }
   return `${lines.join('\n')}\n`;
 }
 
 function writeText(filePath, text) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, text, 'utf8');
+}
+
+// Read every `unit-test-attribution.json` under `dir` (the downloaded
+// unit-test-attribution-* artifacts, each in its own subdir) and build a
+// { lane: summedSuiteSeconds } map from each report's `lane` + `totals.timeSeconds`.
+// Fail-soft: a missing dir or unreadable/foreign file contributes nothing, so the
+// lane simply gets no cost breakdown rather than failing the advisory job.
+function readSuiteTimes(dir) {
+  const out = {};
+  if (!dir || !fs.existsSync(dir)) return out;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const abs = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(abs);
+      else if (entry.isFile() && entry.name === 'unit-test-attribution.json') {
+        try {
+          const data = JSON.parse(fs.readFileSync(abs, 'utf8'));
+          if (data && typeof data.lane === 'string' && Number.isFinite(data.totals?.timeSeconds)) {
+            out[data.lane] = data.totals.timeSeconds;
+          }
+        } catch {
+          // Skip unreadable/foreign files.
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function main() {
@@ -199,6 +282,7 @@ function main() {
       },
       jobs,
       selfJob: opts.selfJob,
+      suiteTimes: readSuiteTimes(opts.unitAttributionDir && path.resolve(opts.unitAttributionDir)),
     });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     const md = renderMarkdown(report);

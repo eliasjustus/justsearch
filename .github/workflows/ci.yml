@@ -291,8 +291,19 @@ jobs:
           mkdir -p build/ci
           gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs" --paginate > build/ci/run-jobs.json
 
+      # Same-run cross-job download (needs no extra permission; the unit lanes are
+      # in `needs`). Lets the attribution split each unit lane's opaque test step
+      # into test CPU vs framework overhead. continue-on-error so a cancelled lane
+      # (no artifact) degrades to "no breakdown" instead of failing this advisory job.
+      - name: Download unit-test attributions (for the test-vs-overhead split)
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: unit-test-attribution-*
+          path: build/ci/unit-artifacts
+
       - name: Report wall-clock attribution
-        run: node scripts/ci/report-ci-walltime-attribution.mjs --jobs-json build/ci/run-jobs.json --run-id "${{ github.run_id }}" --repository "${{ github.repository }}" --workflow "${{ github.workflow }}" --self-job "CI wall-clock attribution" --out-json build/ci/ci-walltime-attribution.json --out-md build/ci/ci-walltime-attribution.md
+        run: node scripts/ci/report-ci-walltime-attribution.mjs --jobs-json build/ci/run-jobs.json --unit-attribution-dir build/ci/unit-artifacts --run-id "${{ github.run_id }}" --repository "${{ github.repository }}" --workflow "${{ github.workflow }}" --self-job "CI wall-clock attribution" --out-json build/ci/ci-walltime-attribution.json --out-md build/ci/ci-walltime-attribution.md
 
       - name: Report wall-clock advisory budget
         run: node scripts/ci/report-ci-walltime-budget.mjs --attribution build/ci/ci-walltime-attribution.json --out-json build/ci/ci-walltime-budget.json --out-md build/ci/ci-walltime-budget.md

@@ -83,6 +83,48 @@ function sampleJobs() {
   assert.match(renderMarkdown(report), /Critical path: none/);
 }
 
+// suiteTimes splits a unit lane into test CPU vs framework overhead; non-unit jobs
+// get no components. app-ui: 600s wall, 585s work step; suite CPU 165s => overhead 420s.
+{
+  const report = buildWalltimeReport({
+    run: { runAttempt: 1 },
+    jobs: sampleJobs(),
+    selfJob: 'CI wall-clock attribution',
+    suiteTimes: { 'app-ui': 165 },
+  });
+  const appui = report.jobs.find((j) => j.name === 'Unit tests (app-ui)');
+  assert.deepEqual(appui.components, {
+    testCpuSeconds: 165,
+    frameworkOverheadSeconds: 420, // workSeconds 585 - 165
+    fixedTaxSeconds: 15,
+  });
+  const license = report.jobs.find((j) => j.name === 'License and notices');
+  assert.equal(license.components, undefined, 'non-unit job has no components');
+  const md = renderMarkdown(report);
+  assert.match(md, /Unit-lane cost breakdown/);
+  assert.match(md, /conservative floor/);
+}
+
+// Overhead clamps at 0 when summed suite time exceeds the step wall-clock
+// (possible when parallel forks overcount CPU).
+{
+  const report = buildWalltimeReport({
+    run: {},
+    jobs: sampleJobs(),
+    selfJob: 'CI wall-clock attribution',
+    suiteTimes: { 'app-ui': 9999 },
+  });
+  const appui = report.jobs.find((j) => j.name === 'Unit tests (app-ui)');
+  assert.equal(appui.components.frameworkOverheadSeconds, 0, 'overhead never negative');
+}
+
+// No suiteTimes → no components, no breakdown section.
+{
+  const report = buildWalltimeReport({ run: {}, jobs: sampleJobs(), selfJob: 'CI wall-clock attribution' });
+  assert.ok(report.jobs.every((j) => j.components === undefined));
+  assert.doesNotMatch(renderMarkdown(report), /Unit-lane cost breakdown/);
+}
+
 // CLI path: reads --jobs-json {jobs:[...]}, writes JSON + MD.
 {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-ci-walltime-'));
@@ -91,9 +133,15 @@ function sampleJobs() {
     const outJson = path.join(root, 'out.json');
     const outMd = path.join(root, 'out.md');
     fs.writeFileSync(jobsPath, JSON.stringify({ jobs: sampleJobs() }), 'utf8');
+    // Downloaded-artifact layout: <dir>/<artifact-name>/build/ci/unit-test-attribution.json
+    const unitDir = path.join(root, 'unit-artifacts');
+    const attrPath = path.join(unitDir, 'unit-test-attribution-app-ui', 'build', 'ci', 'unit-test-attribution.json');
+    fs.mkdirSync(path.dirname(attrPath), { recursive: true });
+    fs.writeFileSync(attrPath, JSON.stringify({ lane: 'app-ui', totals: { timeSeconds: 165 } }), 'utf8');
     const res = spawnSync(process.execPath, [
       scriptPath,
       '--jobs-json', jobsPath,
+      '--unit-attribution-dir', unitDir,
       '--run-id', '123',
       '--repository', 'o/r',
       '--workflow', 'CI',
@@ -104,8 +152,11 @@ function sampleJobs() {
     ], { encoding: 'utf8' });
     assert.equal(res.status, 0, res.stderr);
     assert.equal(JSON.parse(res.stdout).criticalPath.job, 'Unit tests (app-ui)');
-    assert.equal(JSON.parse(fs.readFileSync(outJson, 'utf8')).totals.jobs, 2);
-    assert.match(fs.readFileSync(outMd, 'utf8'), /CI wall-clock attribution/);
+    const outObj = JSON.parse(fs.readFileSync(outJson, 'utf8'));
+    assert.equal(outObj.totals.jobs, 2);
+    const appui = outObj.jobs.find((j) => j.name === 'Unit tests (app-ui)');
+    assert.equal(appui.components.testCpuSeconds, 165, 'CLI wired the suite-time correlation');
+    assert.match(fs.readFileSync(outMd, 'utf8'), /Unit-lane cost breakdown/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
