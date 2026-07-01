@@ -264,41 +264,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # EXPERIMENT (tempdoc 668) — advisory Ubuntu duplicate of the critical-path
-  # app-ui unit lane, to measure the Linux-vs-Windows delta (the top remaining
-  # lever after the parallelism A/B was refuted). NOT a required check, never in
-  # requiredStatusChecks; continue-on-error so a Windows-assuming test that fails
-  # on Linux surfaces as data (which tests to audit) without blocking anything.
-  # The job's own wall-clock (jobs API) is the Linux number to compare against the
-  # ~600s Windows baseline. Remove after the migrate/keep decision is recorded.
-  ubuntu-experiment-app-ui:
-    name: EXPERIMENT unit tests app-ui (ubuntu)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 25
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: |
-            21
-            ${{ env.JAVA_VERSION }}
-          cache: gradle
-
-      - name: Unit tests (app-ui) on Linux
-        # --dependency-verification off: the repo's verification-metadata.xml only
-        # lists Windows native artifacts (e.g. protoc-*-windows), so Linux misses
-        # protoc-*-linux etc. That is solvable metadata, not test portability — bypass
-        # it here to get the real timing. --continue: run every module despite failures
-        # so we get the full-lane wall-clock AND the true list of tests that assume Windows.
-        run: |
-          chmod +x ./gradlew
-          ./gradlew :modules:app-agent:test :modules:app-agent-api:test :modules:app-api:test :modules:app-api-tck:test :modules:app-config:test :modules:app-launcher:test :modules:app-observability:test :modules:app-services:test :modules:app-util:test :modules:ui:test -PskipWebBuild=true --console=plain --dependency-verification off --continue
-
   # Advisory only — NOT a required check (see workflow-signal-policy.v1.json
   # requiredStatusChecks; do not add this job's name there). Runs after every
   # lane so it can read all sibling job/step timings and attribute the run's

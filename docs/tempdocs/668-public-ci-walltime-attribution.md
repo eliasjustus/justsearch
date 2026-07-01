@@ -1193,3 +1193,42 @@ parallelism now). The pattern is the lesson — CI-lever intuition is unreliable
 whole value is that it gives a clean before/after that kills a wrong hypothesis in one run. It just
 did. The remaining real lever (Linux) is a bigger, audit-gated change, not a one-line tweak — so the
 honest next step is that audit, not another blind value bump.
+
+### Experiment #2 — Windows→Linux is VALIDATED as a ~2.8× lever - 2026-07-01
+
+Ran the Windows-assumption audit as an experiment: an advisory (non-required, `continue-on-error`)
+Ubuntu duplicate of the full app-ui lane (`--dependency-verification off --continue` so it runs every
+module and surfaces the true Windows couplings). Measured:
+
+- **Linux app-ui lane = 204s vs Windows ~555–600s — a ~2.8× speedup.** On a Windows product nobody
+  expected the test lanes to be this much slower purely from the runner OS; they are. The critical
+  path (~10 min) could drop to ~3.5 min on Linux, and the other Windows lanes (Build, License) would
+  gain similarly.
+- **The Windows coupling is tiny and fully enumerated.** With `--continue`, the *only* module that
+  failed was `app-util` — specifically `AppInstanceLockTest` (`acquire_failsWhenAlreadyHeld`,
+  `acquire_recoversFromRecentlyDeadProcess`). Everything else passed on Linux. `AppInstanceLock` is a
+  genuinely Windows-specific single-instance lock (the test also hardcodes `cmd.exe`), so those tests
+  are legitimately Windows-only and belong under `@EnabledOnOs(WINDOWS)` (like `WindowsJobObjectTest`
+  already is — which self-skipped on Linux, no failure).
+- **The other blocker is mechanical:** `gradle/verification-metadata.xml` only lists the ~5 Windows
+  native artifacts (`protoc-*-windows`, `protoc-gen-grpc-java-*-windows`); Linux needs their twins
+  (`protoc-*-linux` …), generatable via `--write-verification-metadata` on a Linux runner.
+
+**So the top lever is real, large, and small-to-implement.** The migration is: (1) add the ~5 Linux
+native-artifact checksums to verification-metadata; (2) gate the handful of genuinely Windows-specific
+tests (`AppInstanceLock*`, `WindowsJobObject*`, `WindowsPowerStatus*`) with `@EnabledOnOs(WINDOWS)`;
+(3) flip the JVM lanes `windows-latest → ubuntu-latest` (`./gradlew.bat → ./gradlew`).
+
+**The one genuine decision (why this isn't a unilateral change):** JustSearch ships on Windows. Moving
+the required unit lanes to Linux means the `@EnabledOnOs(WINDOWS)` tests **stop running in CI** (they'd
+skip on Linux). Options: (A) accept it — the Windows-specific OS integration is still exercised when
+the installer builds/runs on Windows (`build-installer.yml` is `windows-latest`); or (B) keep a small
+Windows lane that runs *only* the `@EnabledOnOs(WINDOWS)` tests, moving everything else to Linux —
+preserving coverage at the cost of one small extra lane. (B) is the clean design; both are defensible.
+This changes the required-check topology and the proof environment of a Windows product, so it is a
+go/no-go + scope decision, not a knob — recorded here as the evidence-backed proposal.
+
+The throwaway experiment job has been removed now that the data is captured. **This is the first lever
+in the whole effort that actually moves minutes** — ~6.5 min off the critical path — and the
+instrument (the wall-clock attribution) is exactly what produced the clean before/after that proved
+it.
