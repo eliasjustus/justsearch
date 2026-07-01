@@ -295,6 +295,54 @@ final class MultiplexedSseWriterTest {
   }
 
   // ============================================================
+  // attachAll — mid-loop failure cleanup (tempdoc 662 post-implementation fix)
+  // ============================================================
+
+  @Test
+  @DisplayName(
+      "attachAll: a later channel's snapshotExtras throwing unsubscribes the EARLIER "
+          + "channel(s) already subscribed in this attempt, and propagates the exception")
+  void midLoopFailureUnsubscribesEarlierChannels() {
+    SseStreamChannel chA = new SseStreamChannel(STREAM_A);
+    SseStreamChannel chB = new SseStreamChannel(STREAM_B);
+    SseStreamChannel heartbeatChannel = new SseStreamChannel(HEARTBEAT_STREAM);
+    SseClient client = mockSseClient(null);
+    List<String> sent = captureSentFrames(client);
+    heartbeatScheduler = Executors.newSingleThreadScheduledExecutor();
+
+    RuntimeException boom = new RuntimeException("boom — simulates e.g. a gRPC-backed snapshot failure");
+    List<MultiplexedSseWriter.ChannelSource> sources =
+        List.of(
+            new MultiplexedSseWriter.ChannelSource(chA, () -> Map.of("v", "a")), // succeeds, subscribes
+            new MultiplexedSseWriter.ChannelSource(
+                chB,
+                () -> {
+                  throw boom;
+                }));
+
+    RuntimeException thrown =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                MultiplexedSseWriter.attachAll(
+                    client, sources, heartbeatChannel, Clock.systemUTC(), heartbeatScheduler, 15L));
+    assertEquals(boom, thrown, "the original exception propagates, not a wrapped/swallowed one");
+
+    // onClose was never reached (the exception propagated before it could be registered) — so
+    // without the fix, chA's subscription from the failed attempt would otherwise dangle.
+    verify(client, never()).onClose(any());
+
+    int beforeChAPublish = sent.size();
+    chA.publish(SseFrameKind.UPDATE, Map.of("a", "after-failed-attach"));
+    assertEquals(
+        beforeChAPublish,
+        sent.size(),
+        "chA's listener from the failed attachAll attempt must have been unsubscribed — "
+            + "a stray publish must not reach the (already-failed) client: "
+            + sent);
+  }
+
+  // ============================================================
   // parseTokenBundle
   // ============================================================
 

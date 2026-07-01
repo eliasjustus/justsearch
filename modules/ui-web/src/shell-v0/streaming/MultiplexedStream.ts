@@ -21,6 +21,26 @@
  * subscriber for a `streamId` creates the demux entry from `createConfig`; the last
  * unsubscribe removes it), so migrating an existing `new EnvelopeStream({...}).subscribe(l)`
  * call site to `multiplex.subscribe(streamId, () => ({...}), l)` is a small, local edit.
+ *
+ * Tempdoc 662 post-implementation fix (critical-analysis pass): the backend sends its
+ * one-time `connected`+`snapshot` burst for every channel at the moment the ONE physical
+ * connection opens — a moment `Shell.connectedCallback()` triggers eagerly, independent of
+ * consumer readiness. Two migrated consumers (`AdvisoryStore`, the intent bridge via
+ * `BackendStreamSource`) register their `subscribe()` call only after an unrelated async
+ * fetch resolves (the Resource Catalog, the surface-schema fetch respectively) — an
+ * unsynchronized race against the connection's own opening. Pre-662, this was impossible by
+ * construction (each consumer opened its OWN connection exactly when ready); consolidating
+ * onto one eagerly-opened connection broke that guarantee. The fix: `subscribe()` detects a
+ * genuinely NEW entry registered after the connection has already completed its first
+ * connect (`lastConnected === true`) and schedules a debounced reconnect of the shared
+ * transport, so the server's next connect burst is received with the late consumer already
+ * registered. This reuses the EXISTING resume protocol unchanged — the late entry has no
+ * resumeToken yet, so it is naturally excluded from the `?since=` bundle and the server
+ * already treats a bundle-absent channel as "first-time subscriber, send a fresh snapshot"
+ * (see `MultiplexedSseWriter.attachAll`); already-flowing entries resume normally via their
+ * existing tokens. Debounced (not immediate) because a single synchronous catalog-reconcile
+ * loop can register several channels back-to-back — without coalescing, each would trigger
+ * its own reconnect.
  */
 
 import { EnvelopeStream } from './EnvelopeStream.js';
@@ -58,7 +78,12 @@ interface StreamEntry<T> {
 export type MultiplexedStreamConfig = Pick<
   EnvelopeStreamConfig<null>,
   'url' | 'eventSourceFactory' | 'watchdogStaleMs' | 'reconnectBaseMs' | 'reconnectCapMs'
->;
+> & {
+  /** Debounce window (ms) for the late-subscribe reconnect (see class doc). Default 50ms.
+   * Test seam: set to 0 for an immediate (synchronous-after-microtask) reconnect, or a small
+   * value to exercise the debounce with real timers. */
+  reconnectDebounceMs?: number;
+};
 
 export class MultiplexedStream {
   private readonly inner: EnvelopeStream<null>;
@@ -67,8 +92,12 @@ export class MultiplexedStream {
    * the class-level note on why routeFrame must read this cache, not `inner.getSnapshot()`
    * directly (the inner stream flips `isConnected` AFTER invoking the reducer). */
   private lastConnected = false;
+  private readonly reconnectDebounceMs: number;
+  /** Pending debounced late-subscribe reconnect timer, or null when none is scheduled. */
+  private reconnectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: MultiplexedStreamConfig) {
+    this.reconnectDebounceMs = config.reconnectDebounceMs ?? 50;
     this.inner = new EnvelopeStream<null>({
       url: config.url,
       initialState: null,
@@ -100,8 +129,13 @@ export class MultiplexedStream {
     this.inner.start();
   }
 
-  /** Closes the shared physical connection. Idempotent. */
+  /** Closes the shared physical connection. Idempotent. Cancels any pending late-subscribe
+   * reconnect (an intentional stop() supersedes it — the caller no longer wants a connection). */
   stop(): void {
+    if (this.reconnectDebounceTimer !== null) {
+      clearTimeout(this.reconnectDebounceTimer);
+      this.reconnectDebounceTimer = null;
+    }
     this.inner.stop();
   }
 
@@ -130,6 +164,16 @@ export class MultiplexedStream {
         refs: 0,
       };
       this.entries.set(streamId, entry as StreamEntry<unknown>);
+      // Tempdoc 662 post-implementation fix: a genuinely NEW entry registered AFTER the
+      // connection has already completed its first connect missed the server's one-time
+      // connect+snapshot burst for this streamId (it fired before this entry existed). Schedule
+      // a debounced reconnect so the NEXT connect burst includes this streamId. A subscribe
+      // that happens BEFORE the connection has ever been open (`lastConnected` still `false`,
+      // the common/safe case) needs no reconnect — it will correctly receive the first burst
+      // once the connection eventually opens.
+      if (this.lastConnected) {
+        this.scheduleLateSubscribeReconnect();
+      }
     }
     entry.listeners.add(listener);
     entry.refs += 1;
@@ -199,6 +243,32 @@ export class MultiplexedStream {
         // EnvelopeStream.notify's contract).
       }
     }
+  }
+
+  /**
+   * Debounced reconnect of the shared physical connection, triggered when a new streamId
+   * registers after the connection has already delivered its first connect+snapshot burst
+   * (see class doc). Debounced (not immediate) so a burst of late registrations in the same
+   * tick/short window — e.g. `AdvisoryStore.reconcileFromCatalog()`'s synchronous loop over
+   * several discovered advisory Resources — coalesces into ONE reconnect instead of one per
+   * registration. Idempotent: re-arms the SAME timer on each additional late registration
+   * within the window, so the reconnect fires once, `reconnectDebounceMs` after the LAST
+   * late-subscribe in the burst.
+   */
+  private scheduleLateSubscribeReconnect(): void {
+    if (this.reconnectDebounceTimer !== null) {
+      clearTimeout(this.reconnectDebounceTimer);
+    }
+    this.reconnectDebounceTimer = setTimeout(() => {
+      this.reconnectDebounceTimer = null;
+      // stop()+start() (not a raw reconnect) so the resume bundle is rebuilt fresh from the
+      // CURRENT entries — including the newly-registered one(s), which have no resumeToken yet
+      // and are therefore naturally excluded from the bundle, so the server treats them as
+      // first-time subscribers and sends a fresh snapshot (MultiplexedSseWriter.attachAll).
+      // Already-flowing entries resume normally via their existing tokens.
+      this.inner.stop();
+      this.inner.start();
+    }, this.reconnectDebounceMs);
   }
 
   private broadcastConnectionChange(): void {

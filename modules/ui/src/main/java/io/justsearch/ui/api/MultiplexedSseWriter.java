@@ -81,22 +81,37 @@ public final class MultiplexedSseWriter {
     Map<String, String> tokensByStreamId =
         parseTokenBundle(client.ctx() == null ? null : client.ctx().queryParam("since"));
 
+    // Tempdoc 662 post-implementation fix (critical-analysis pass): if any channel's processing
+    // throws partway through (e.g. a snapshotExtras supplier — action-ledger's currentEvents(),
+    // indexing-jobs's gRPC-backed bridge.latestSnapshotPair() — failing), the earlier channels'
+    // subscriptions in THIS attempt must not be left dangling. client.onClose(...) below is the
+    // normal cleanup path, but it is only wired up AFTER this loop completes, so a mid-loop
+    // exception would previously skip it entirely, leaking the already-subscribed channels'
+    // listeners until SseStreamChannel.publish's self-healing removeIf evicts them on the next
+    // broadcast against the by-then-dead client. Explicit try/catch closes that gap.
     List<SseStreamChannel.Subscription> subscriptions = new ArrayList<>(sources.size());
-    for (ChannelSource source : sources) {
-      SseEnvelopeWriter writer = new SseEnvelopeWriter(client, source.channel(), clock);
-      writer.sendConnected();
+    try {
+      for (ChannelSource source : sources) {
+        SseEnvelopeWriter writer = new SseEnvelopeWriter(client, source.channel(), clock);
+        writer.sendConnected();
 
-      String token = tokensByStreamId.get(source.channel().streamId().value());
-      boolean replayed = token != null && writer.attemptResume(token);
-      if (!replayed) {
-        if (token != null) {
-          writer.sendReset("resume-window-miss");
+        String token = tokensByStreamId.get(source.channel().streamId().value());
+        boolean replayed = token != null && writer.attemptResume(token);
+        if (!replayed) {
+          if (token != null) {
+            writer.sendReset("resume-window-miss");
+          }
+          if (source.snapshotExtras() != null) {
+            writer.sendSnapshot(source.snapshotExtras().get());
+          }
         }
-        if (source.snapshotExtras() != null) {
-          writer.sendSnapshot(source.snapshotExtras().get());
-        }
+        subscriptions.add(writer.subscribe());
       }
-      subscriptions.add(writer.subscribe());
+    } catch (RuntimeException e) {
+      for (SseStreamChannel.Subscription subscription : subscriptions) {
+        subscription.unsubscribe();
+      }
+      throw e;
     }
 
     SseEnvelopeWriter heartbeatWriter = new SseEnvelopeWriter(client, heartbeatChannel, clock);

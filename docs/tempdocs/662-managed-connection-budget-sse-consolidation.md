@@ -864,3 +864,90 @@ the multiplexer's resume is per-channel-bundle (§D6) regardless of channel coun
   tradeoff; a future pass could teach the generic mechanism to also check the shell-events multiplexer.
 - A pre-existing, unrelated test failure (`HealthLitView.test.ts`'s 604-Move-B connection-badge-tone test)
   reproduces identically on unmodified `main` — not caused by this build.
+
+## Post-implementation critical-analysis pass (2026-07-01) — two confirmed bugs, both fixed
+
+A dedicated post-implementation review (two independent Explore agents + direct `javap` bytecode
+verification of one candidate concern) against the shipped Build above. Two real, substantive bugs found and
+fixed; one plausible-sounding concern investigated and ruled out. Recorded here per the dated-history
+convention — the Build section above still describes what originally shipped; this section is the correction.
+
+### Bug #1 (HIGH, FIXED) — a late-registering consumer could permanently miss its initial snapshot
+
+**Root cause.** `Shell.connectedCallback()` constructs the ONE shared `MultiplexedStream` and calls `.start()`
+near the top of the method — the physical `EventSource` opens immediately. The backend
+(`ShellEventsStreamController.handle()`) sends its one-time `connected`+`snapshot` burst for all 5 channels
+at the moment THAT connection opens, independent of which streamIds the frontend has registered listeners
+for yet. Two of the five migrated consumers register their `multiplex.subscribe(...)` call only AFTER an
+independent, unsynchronized async network fetch resolves:
+- **AdvisoryStore** — only on the *second* `reconcileFromCatalog()` call, triggered by `onCatalogChange`
+  after `bootResourceRegistry()`'s fetch to `/api/registry/resources` resolves (kicked off from
+  `modules/ui-web/src/i18n.ts:100`, entirely unordered relative to `Shell.connectedCallback()`).
+- **Intent (BackendStreamSource)** — only inside `fetchAndRegisterSurfaceSchemas(this.apiBase).then(...)`
+  (`Shell.ts`), gated behind a second, separate fetch.
+
+`MultiplexedStream.routeFrame()` silently drops a frame for any streamId with no registered entry (dev-mode
+`console.warn` only). Since heartbeats keep a healthy connection alive indefinitely, there was **no natural
+retry** — a late-registering consumer (in practice: the advisory rail badge/inbox, or the remote-intent
+router) could sit in its empty initial state for the entire session, until a live UPDATE happened to arrive
+naturally on that channel. This was a genuine regression versus the pre-662 architecture, where each
+consumer opened its **own** connection lazily, exactly when ready — consolidating onto one eagerly-opened
+shared connection broke that guarantee for any consumer whose readiness is gated behind I/O. The race is
+also *timing-dependent* and more likely to manifest under backend load — the exact condition this tempdoc
+exists to improve, making it more than a corner case.
+
+**Fix (frontend-only, no protocol/backend change).** `MultiplexedStream.subscribe()` now detects a genuinely
+NEW entry registered while the connection has already completed its first connect (`lastConnected ===
+true`) and schedules a **debounced** reconnect (`reconnectDebounceMs`, default 50ms) of the shared transport.
+This reuses the existing resume protocol unchanged: the late entry has no resume token yet, so it is
+naturally excluded from the `?since=` bundle, and the server already treats a bundle-absent channel as
+"first-time subscriber, send a fresh snapshot" (`MultiplexedSseWriter.attachAll`); already-flowing entries
+resume normally via their existing tokens. Debounced (not immediate) because a single synchronous
+catalog-reconcile loop registers several advisory channels back-to-back — without coalescing, each would
+trigger its own reconnect. A subscribe that happens *before* the connection has ever opened (the common/safe
+case — `startIndexingJobsBridge`, `AiActivityDigest`) is unaffected: `lastConnected` is still `false`, no
+reconnect is scheduled, and the first burst is received normally once the connection opens.
+
+Tests added to `MultiplexedStream.test.ts`: subscribe-before-connect needs no reconnect; subscribe-after-connect
+triggers exactly one debounced reconnect and the late entry receives a fresh snapshot; several late subscribes
+within the debounce window coalesce into one reconnect; an already-flowing entry's data survives the reconnect
+via its resume token (no loss/duplication); `stop()` cancels a pending debounced reconnect.
+
+### Bug #2 (MEDIUM, FIXED) — a mid-loop backend failure could leak earlier channel subscriptions
+
+`MultiplexedSseWriter.attachAll`'s per-channel loop added each subscription to a list incrementally, but
+`client.onClose(...)` (the cleanup registration) was only wired up **after** the loop completed. If any
+channel's processing threw partway through — e.g. `source.snapshotExtras().get()` for action-ledger's
+`currentEvents()` or indexing-jobs's gRPC-backed `bridge.latestSnapshotPair()` — the exception propagated
+before `onClose` was ever registered, so the **earlier**, already-subscribed channels in that connection
+attempt were never explicitly unsubscribed. They would self-heal only once `SseStreamChannel.publish()`'s
+`listeners.removeIf` evicted them on the next broadcast against the by-then-dead client — a transient
+listener leak + wasted writes, not permanent, but a real gap specific to the multiplexed design (the
+single-channel `SseEnvelopeWriter.attach()` has no analogous multi-subscription state to leak).
+
+**Fix.** The per-channel loop body is now wrapped in `try { ... } catch (RuntimeException e) { unsubscribe
+everything accumulated so far; throw e; }`, so a failure at any point leaves zero orphaned subscriptions.
+Test added to `MultiplexedSseWriterTest.java`: a channel whose `snapshotExtras` supplier throws after an
+earlier channel already succeeded — asserts the original exception propagates, `onClose` is never reached
+(confirming the gap the fix closes), and a subsequent publish to the earlier channel does not reach the
+(already-failed) client.
+
+### Investigated and ruled out — Javalin `SseClient` concurrent multi-channel write safety
+
+The review raised a plausible new risk: multiplexing means up to 5 channel-broadcast threads + 1 heartbeat
+thread can now call `sendEvent` concurrently on the *same* `SseClient`, where pre-662 only one channel ever
+wrote to a given client. Verified directly via `javap` bytecode inspection of `javalin-6.7.0.jar` (no sources
+jar was cached, so bytecode was the ground truth, not assumption): `SseClient.sendEvent` delegates to a
+single `Emitter` instance per client, and `Emitter.emit(...)` is **internally `synchronized`**
+(`monitorenter`/`monitorexit` wrapping the entire write body). Concurrent multi-channel writes are therefore
+safe — not a bug, no fix needed.
+
+### Scope re-verified clean (no fix needed)
+
+The same review independently re-confirmed, with citations: `MultiplexedStream.subscribe()`'s ref-counting
+correctly handles duplicate-listener double-subscribe/unsubscribe (independent `released` closures per call,
+not a shared flag); `stop()`/`start()` reuse self-heals via the existing resume-or-reset contract;
+`AdvisoryStore`'s catalog-removal path correctly skips `.stream?.stop()` for multiplexed entries and never
+touches the shared instance's lifecycle; `ActionLedgerClient`/`indexingJobsBridge` multiplexed-path
+teardowns return only the per-subscriber unsubscribe; and the `live-channels` register's `fallback`-class
+rows still match real, currently-present code (not stale).

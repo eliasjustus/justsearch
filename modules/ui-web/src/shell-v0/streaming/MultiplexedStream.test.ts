@@ -329,3 +329,124 @@ describe('MultiplexedStream', () => {
     expect(getLastOriginContactMs()).not.toBeNull();
   });
 });
+
+describe('MultiplexedStream — late-subscribe reconnect (tempdoc 662 post-implementation fix)', () => {
+  beforeEach(() => {
+    __resetOriginContactForTest();
+  });
+
+  function multiplexWithRecording(reconnectDebounceMs = 10) {
+    const sources: FakeEventSource[] = [];
+    const urls: string[] = [];
+    const mux = new MultiplexedStream({
+      url: 'http://test/api/shell-events/stream',
+      eventSourceFactory: (url) => {
+        const fake = new FakeEventSource(url);
+        sources.push(fake);
+        urls.push(url);
+        return fake as unknown as EventSource;
+      },
+      reconnectDebounceMs,
+    });
+    return { mux, sources, urls };
+  }
+
+  it('subscribe BEFORE the connection has ever opened needs no reconnect — receives the normal first burst', () => {
+    const { mux, sources } = multiplexWithRecording();
+    const seen: CounterState[] = [];
+    // Subscribe before start() — lastConnected is still false, the common/safe path.
+    mux.subscribe('system:test-a', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), (s) =>
+      seen.push(s.payload),
+    );
+    mux.start();
+    sources[0]!.emitOpen();
+    sources[0]!.emitFrame(updateFrame('system:test-a', 1, 'tok-a-1'));
+
+    expect(sources).toHaveLength(1); // no reconnect triggered
+    // A listener registered before the connection opens ALSO receives the pre-existing
+    // connection-state broadcast on open (unrelated to this fix — see broadcastConnectionChange);
+    // the load-bearing assertion here is that the real frame's data arrives correctly LAST.
+    expect(seen[seen.length - 1]!.count).toBe(1);
+  });
+
+  it('subscribe AFTER the connection has already opened triggers exactly one debounced reconnect, and the late entry receives a fresh snapshot', async () => {
+    const { mux, sources } = multiplexWithRecording(10);
+    mux.start();
+    sources[0]!.emitOpen(); // lastConnected flips true — the connection has "already connected"
+
+    const seen: CounterState[] = [];
+    // Late subscribe: registered AFTER the connection is already open.
+    mux.subscribe('system:test-late', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), (s) =>
+      seen.push(s.payload),
+    );
+
+    expect(sources).toHaveLength(1); // reconnect is debounced, not immediate
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(2); // exactly one reconnect fired
+
+    // The new connection's fresh burst now includes the late streamId (no resumeToken existed
+    // for it, so the server-side contract — mirrored here — is: snapshot as a normal UPDATE).
+    sources[1]!.emitOpen();
+    sources[1]!.emitFrame(updateFrame('system:test-late', 1, 'tok-late-1'));
+    // The reconnect cycle itself (stop -> false, start+open -> true) also notifies the
+    // already-registered late listener via the pre-existing connection-broadcast mechanism
+    // (unrelated to this fix); the load-bearing assertion is that the real frame's data
+    // arrives correctly LAST — i.e. the late entry genuinely received its snapshot.
+    expect(seen[seen.length - 1]!.count).toBe(1);
+  });
+
+  it('several late subscribes within the debounce window coalesce into exactly ONE reconnect', async () => {
+    const { mux, sources } = multiplexWithRecording(10);
+    mux.start();
+    sources[0]!.emitOpen();
+
+    // Simulates AdvisoryStore.reconcileFromCatalog()'s synchronous loop registering several
+    // channels back-to-back after the connection is already open.
+    mux.subscribe('system:test-late-a', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    mux.subscribe('system:test-late-b', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    mux.subscribe('system:test-late-c', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(2); // ONE reconnect, not three
+  });
+
+  it('an already-flowing entry survives the late-subscribe reconnect via its resume token (no data loss/duplication)', async () => {
+    const { mux, sources, urls } = multiplexWithRecording(10);
+    const seenA: CounterState[] = [];
+    mux.subscribe('system:test-a', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), (s) =>
+      seenA.push(s.payload),
+    );
+    mux.start();
+    sources[0]!.emitOpen();
+    sources[0]!.emitFrame(updateFrame('system:test-a', 1, 'tok-a-1'));
+    // A listener registered before the connection opens also receives the pre-existing
+    // connection-broadcast on open (unrelated to this fix); the real frame's data is last.
+    expect(seenA[seenA.length - 1]!.count).toBe(1);
+    const seenABeforeLateSubscribe = seenA.length;
+
+    // A late subscriber joins after A is already flowing.
+    mux.subscribe('system:test-late', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(2);
+
+    // The reconnect's ?since= bundle must carry A's token (resuming it), not drop it.
+    expect(urls[1]).toContain(encodeURIComponent('tok-a-1'));
+
+    // A's listener is notified of the reconnect's transient connection-state flip (the
+    // pre-existing connection-broadcast mechanism, unrelated to this fix) but its PAYLOAD must
+    // not be lost, reset, or duplicated by the reconnect itself — count stays 1, not 0 or 2.
+    expect(seenA.length).toBe(seenABeforeLateSubscribe + 1);
+    expect(seenA[seenA.length - 1]!.count).toBe(1);
+  });
+
+  it('stop() cancels a pending debounced reconnect (no stray reconnect after an intentional stop)', async () => {
+    const { mux, sources } = multiplexWithRecording(10);
+    mux.start();
+    sources[0]!.emitOpen();
+    mux.subscribe('system:test-late', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+
+    mux.stop(); // stop before the debounce window elapses
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(1); // no reconnect fired post-stop
+  });
+});
