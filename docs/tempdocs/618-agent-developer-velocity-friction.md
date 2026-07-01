@@ -1846,3 +1846,56 @@ wrong and is corrected in-doc: `bash-guard` is block-or-silent (no advisory chan
 pipe (`bash-guard.mjs:217`), so it can neither emit the hint nor see a piped command — hence a *separate*
 advisory hook.
 
+### Verification, review, and open threads (2026-07-01)
+
+**Verification tiers passed** (all local; no user-visible surface, so no browser/dev-stack tier applies): the
+`pipe-mask-hint.test.mjs` corpus (positive/negative + a right-reason guard); an emit probe (positive command →
+`additionalContext` JSON, negative → silent); `gen-agent-hooks-wiring.mjs --check` (settings in sync);
+`prose-tier-register` gate `pass` — verified *for the right reason* (the gate's baseline is `HEAD~1`, which
+lacks the new rule, and a bite-test confirmed the rule is genuinely evaluated, not grandfathered); the
+always-loaded budget check (the three grown files `--bump`ed with reasons); and `./gradlew.bat build -x test`
+(exit 0 — no Java touched). CI on PR #23: the **Build** lane (which carries the governance gate),
+**License and notices**, **Public claims**, and **Secret scan** all green on the implementation commit.
+
+**A review caught one real bug (fixed).** The first implementation's `PRESERVES_EXIT` wrongly treated
+`; echo $?` and `&& echo …` as exit-preservers and stayed *silent* on `./gradlew build | tail; echo $?` — the
+exact masked-exit shape §10a is about (`$?`/`&&` after a pipe read the pipe's last-stage exit, not the
+build's). Only `set -o pipefail` and `PIPESTATUS` genuinely recover a first-stage exit through a pipe. Fixed
+by narrowing the predicate to those two, with regression cases added. Lesson for a future editor: the corpus
+in `pipe-mask-hint.test.mjs` is the contract — extend it, don't loosen it.
+
+**Integration caveat (important for "is it actually live?").** The hook is wired through
+`.claude/settings.local.json`, which is **git-ignored** and materialized per-checkout from the manifest by
+`gen-agent-hooks-wiring.mjs`. So the tracked authority that propagates is `governance/agent-hooks.v1.json`; the
+hook only *fires* in a checkout whose `settings.local.json` has been (re)generated. A public checkout without
+that step keeps only the always-loaded §10a prose (the intended fallback). This is the established model for
+every advisory hook here, not new to this one.
+
+**Honest scope/alignment note (unresolved design judgment, flagged for a future owner).** By this tempdoc's
+*own* Part 3·E, §10-§15 (including §10a) "mostly belong to tempdoc **620**'s substrate, not 618." §10a's
+tempdoc-prescribed outcome (Part 2 / Part 4 bucket 1) was only "promote it to `agent-lessons.md` prose" — which
+was *already done* in the 2026-06-21 Phase 2 promotion. This hook is therefore an **enhancement beyond the
+tempdoc's ledger** (importing 620's delivery-tier idea), motivated by §10a *recurring despite* being prose —
+which is real evidence, and consistent with Part 3·E's complaint that prose "protects nobody." Two caveats a
+future agent should weigh, not silently inherit: (a) **homing** — the durable home for this delivery-tier work
+is arguably 620, and cross-filing it there (or moving the tier-register row's rationale) would resolve the
+Part 3·E tension; (b) **"keep it small"** — Part 3·D cautions that 618 is "a handful of small fixes, not new
+machinery," and a hook+row+changeset is heavier than the one prose line §10a's ledger asked for (justified
+here by the recurrence, but heavier).
+
+**Remaining 618 Part-4 thread NOT addressed by this work.** The `tempdoc-status-check` re-canonicalize-or-retire
+decision (Part 3·B — deferred ~5×) is still open and was outside this settlement's scope. The other Part-4
+items (§10a/§11d/§10b/§10c/§3 promotions; the §12 append-only observations path) were shipped before this
+takeover via the Phase 2 promotion and Seam C, so they are done.
+
+**Pre-existing issues discovered and logged (not fixed here — out of scope).** Recorded in this session's
+observations shard (`docs/observations.d/`, folded into `## Inbox` at merge): (1) `.claude/rules/branch-safety.md`
+is ~622 B over its always-loaded budget ceiling on `origin/main` (a prior PR grew it without a `--bump`);
+(2) `scripts/agent-analytics/test-pipeline.mjs:361` throws on empty `intervene` output for the large-file
+fixture — fails on `origin/main` too, i.e. environmental/pre-existing; (3) `branch-safety.md` states
+`.claude/settings.local.json` is "tracked" when it is git-ignored (doc drift).
+
+**Cross-branch note.** Tier-register **row 37** may collide with a row number another in-flight branch (664)
+also claims; the `prose-tier-register` gate only enforces in-file uniqueness, so the collision resolves at
+merge — renumber whichever lands second.
+
