@@ -18,11 +18,17 @@ This creates a worktree at `.claude/worktrees/<name>/` with a branch
 sets `worktree.baseRef: "head"`, so worktrees (and `isolation:"worktree"`
 subagents) carry your unpushed/just-merged commits instead of branching from a
 stale `origin` (tempdoc 618 §1). Config files (`.claude/settings.local.json`,
-`.mcp.json`) are tracked, so every worktree already has them.
+`.mcp.json`) are gitignored (maintainer-local — they carry a GitHub PAT / a
+permissive local security posture), **not** git-tracked. Whether a new
+worktree starts with them depends on whether your base checkout already had
+them at creation time — don't rely on it. `prepare-worktree.cjs` (next step
+below) seeds any missing one from its committed `.example` file (never
+overwriting an existing copy), so it's always safe to run. See
+`MAINTAINING.md` for details.
 
 **Make a worktree dev-ready** — from inside the worktree run:
 ```
-node scripts/dev/prepare-worktree.cjs          # npm ci + installDist
+node scripts/dev/prepare-worktree.cjs          # npm ci + installDist + seeds .mcp.json/settings.local.json
 node scripts/dev/prepare-worktree.cjs --no-dist # FE-only (skip the Java dists)
 ```
 
