@@ -1635,3 +1635,125 @@ exists.* The one concrete, low-risk, already-evidenced candidate a future design
 Frame C's tier-migration ledger — because it turns the recurring "promote the lesson" motion (which evidence
 #1 shows is weak) into a decision about *tier*, which is where the leverage actually is.
 
+---
+
+## Long-term design settlement (takeover, 2026-07-01)
+
+The theorization pass above enumerated candidate directions. This section settles which one is the *correct*
+long-term shape for the remaining problem in this tempdoc's ledger — the one the framing prompt asked for: a
+design matched to the problem, conforming to what already exists rather than paralleling it, general rather
+than implementation-level.
+
+### The problem, stated precisely
+
+Strip away the incidentals and the residual problem is narrow. `.claude/rules/agent-lessons.md` accumulates
+**cross-cutting platform constraints** — the "if you do X the harness does Y, so do Z instead" lessons. It
+currently holds two *anchored* rules (rows 27–28 in the tier-register: subagent-inheritance and
+parent-hooks-in-subagents) and roughly two dozen **un-anchored bullets** (the `## Claude Code platform
+constraints` list plus the `Verifying … claims` and `Named substrate-discipline` lists). Those bullets are
+real, load-bearing lessons — but they sit in the *always-loaded* layer while being *un-tiered*: the
+tier-register (which records how each rule is enforced/delivered) never triaged them, and tempdoc 620 Part V's
+prose-to-infrastructure sweep only classified the ~25 rules that *were* anchored.
+
+The proof that this is a genuine gap, not a bookkeeping nicety, is **§10a**: the pipe-masked-exit lesson is an
+always-loaded bullet, and it still **recurred this session** (a `./gradlew … | tail` reported the pipe's
+exit 0 while the build had failed — one step from fast-forwarding `main` on red). Maximum residence, minimum
+salience: the lesson was *present in context the whole time* and did not fire at the moment it was needed. That
+is the exact failure mode 616/620 already named — **delivery beats residence** — reproduced on a surface those
+tempdocs didn't sweep.
+
+### The settled design: conform to 620, don't fork it
+
+The correct long-term design is **not a new 618 mechanism**. It is: *route the few high-blast-radius,
+deterministic-trigger bullets in `agent-lessons.md` through tempdoc 620 Part V's existing
+enforcement-tier rubric* — the same Tier-1/2/3 classification, the same tier-register ledger, the same
+hook-hint delivery tier, the same 530 changeset discipline. Concretely:
+
+1. **Triage, don't migrate wholesale.** For each `agent-lessons.md` bullet, apply 620 Part V's test: does it
+   have a *deterministic trigger* (a tool call or command shape a hook can pattern-match) **and** a
+   *high blast radius* (silent wrong outcome, not mere annoyance)? Most bullets fail this — they are
+   judgment/orientation notes (evidence chains, "prefer resolved path for scoop shims") with no crisp trigger.
+   Those **stay prose**, correctly. Only the few that pass become tier candidates.
+
+2. **§10a is the one proven Tier-1 delivery-conversion.** It has a deterministic trigger (a Bash command whose
+   exit matters, piped into `tail`/`grep`/`head`) and a high blast radius (a red build read as green). It
+   belongs at the **hook-hint delivery tier** — a *non-blocking* advisory that fires at the moment the
+   masking command is issued (the same tier as `tempdoc-age-hint`/`compact-restore`, adherence ~85%), not a
+   blocking guard (a legitimate `… | tail` to *read* output must still be allowed). This is the same move 620
+   Part V made for `tempdocs-are-dated-history` → `tempdoc-age-hint`: take an always-loaded prose rule that
+   wasn't firing and *deliver it at relevance*.
+
+3. **Anchor whatever gets a tier.** Any bullet promoted to a tier gets a `<!-- rule:<slug> -->` anchor + a
+   tier-register row + a 530 changeset — so the `prose-tier-register` meta-loop gate keeps the ledger honest.
+   This is why the design *is* 620's: the register and its gate are 620/530's machinery, and the bullets
+   simply become new rows in the table that already exists.
+
+**What the design explicitly refuses:**
+
+- **No recurrence counter / "wait for a second instance."** `structural-defects-no-repeat` forbids it: §10a's
+  single recurrence — indeed its single documented instance — proves the class. The trigger for converting a
+  bullet is *"deterministic trigger + high blast radius,"* never *"it has happened N times."*
+- **No parallel lesson-ledger.** A second register beside the tier-register would be exactly the fork
+  (doc-as-projection / 553) this codebase's discipline exists to prevent. The tier-register is the one
+  authority for "how is this rule enforced/delivered"; un-tiered bullets are a *gap in that authority's
+  coverage*, closed by extending it, not by standing up a rival.
+- **No wholesale hookification.** 616 §7.2's data (0 block events across 8.6k tool calls) and 620 Part V.5's
+  finding (only ~3 of ~25 prose rules were clean high-value conversions) both say the leverage is small and in
+  *delivery*, not enforcement. The design honors that: triage yields *a few* hook-hints, most bullets stay
+  prose.
+
+This **refines the theorization pass's Frame C.** Frame C floated a "per-lesson enforcement-tier ledger" as
+the lead candidate. The settlement keeps Frame C's *insight* — the recurring motion is "promote the lesson,"
+and the right axis is *tier* — but corrects its *shape*: the ledger already exists (the tier-register), so the
+work is **coverage extension of an existing authority**, not a new ledger. Frame C over-weighted
+"tier-migration is the big lever"; 620/616's evidence caps the lever's size at a handful of delivery
+conversions.
+
+### The two out-of-scope problems, routed not solved
+
+Two items in the ledger are *not* this design and should not be absorbed into it:
+
+- **Session-identity / `tmp/agent-telemetry/` as the next Seam-C-class surface** (§evidence, Part 3·A). This is
+  a *shared-state provenance* problem in the Seam-C family, not a lesson-delivery problem. It has its own
+  natural home (the worktree/telemetry substrate work) and should be designed there.
+- **Where publish-mechanics friction lives** (evidence #3 — the `gh pr create/ready/merge` confirmation
+  question). Tempdoc 664/665 already owns this exact surface (a `permissionDecision:'ask'` on publish
+  actions in `bash-guard`). It is *already being designed elsewhere*; 618 should cite it, not re-open it.
+
+Keeping these out is itself an application of the design's own principle: conform to the authority that already
+owns the concern.
+
+### Principle and its reach (recognized, not built)
+
+The settlement is an **instance**, not a new principle. It instantiates, in order of directness:
+
+- **620's "delivery beats enforcement"** — a maximally-resident rule (§10a, always loaded) that still didn't
+  fire is the canonical case *for* the delivery tier.
+- **620/553's "doc-as-projection, not fork"** — the fix extends the one tier-register authority instead of
+  minting a parallel lesson-ledger.
+- **530's ratchet/meta-loop** — every promoted bullet flows through the `prose-tier-register` gate + changeset
+  grammar that already governs tier changes.
+
+The one *general shape* worth naming for reuse — stated so a future agent can spot it elsewhere, not so we
+build structure for it now:
+
+> **Residence is not delivery.** A lesson placed in an always-loaded surface has maximal *residence* and can
+> still have minimal *salience* — it is present but does not fire at the moment of relevance. A lesson with a
+> **deterministic trigger** and a **high blast radius** is mis-filed as always-loaded prose; its correct home
+> is a moment-of-relevance delivery hook (lower residence, higher salience). "Always-loaded" is a cost
+> (context budget) masquerading as a guarantee.
+
+**Candidate scope of this shape:** the ~two dozen un-tiered bullets in `agent-lessons.md` are the population to
+scan; §10a is the one confirmed member. **Existing violation it names:** those bullets escape *both* the
+tier-register's ledger *and* 620 Part V's triage — a coverage seam between two authorities that each assumed
+the other covered the always-loaded prose rules. Recording that seam is the deliverable here; **closing it
+(anchoring + tiering the qualifying bullets, wiring the §10a hook-hint) is a scoped implementation a future
+pass executes** under 620/530's existing machinery — not new structure, and not this theorization pass's job.
+
+### Title
+
+No change. This tempdoc's spine is the **worktree↔environment correspondence** seams (A/B shipped, C
+designed); the lesson-delivery settlement is a *satellite* that resolves into 620's domain, and the title
+already scopes the doc to its substrate-seam core. Filing the settlement here as history is correct; renaming
+the doc around it would over-claim the satellite as the subject.
+
