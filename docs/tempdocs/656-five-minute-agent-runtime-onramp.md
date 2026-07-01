@@ -1,7 +1,7 @@
 ---
-title: "Dev inference should be GPU-only with a shared, acquire-once runtime: remove the silent CPU llama-server fallback (a cross-worktree DOS that contradicts the settled GPU-primary direction) and give the GPU runtime the download-once/share-across-worktrees property models already have. (AI-readiness diagnosability substrate already shipped as Tasks 0-5.)"
+title: "Five-minute agent/runtime onramp: the runtime foundation is shipped (GPU-only shared dev runtime + truthful AI-readiness diagnosis); the remaining onramp is designed as an assembly problem — a tiered, proven first-success path (a doctor composing existing read-paths + a demo corpus + a runnable smoke), not new capability, with tier/MCP/product-identity framing handed to 657/655/654."
 type: tempdocs
-status: "IMPLEMENTED + live/browser-verified 2026-07-01 (ninth pass, see §Implementation). Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
+status: "FOUNDATION IMPLEMENTED; REMAINING ONRAMP DESIGNED (not built). Two things are done + live/browser-verified: the AI-readiness diagnosability substrate (Tasks 0-5) and the GPU-only shared dev runtime (Move 1 + Move 2, ninth pass). §Onramp design (tenth pass, 2026-07-01) then returns to the tempdoc's ORIGINAL purpose (the five-minute onramp) and settles its long-term shape: it is an ASSEMBLY problem — the ingredients (ingest/search endpoints, MCP connect surface, the preflight endpoint, the runtime manifest, a tiny corpus candidate) already exist scattered; the remaining core is composing them into a tiered, evidence-producing first-success path (O1 tier ladder — Tier 0 zero-model search proven; O2 doctor extending AiPreflightService as a projection of manifest+status; O3 demo corpus; O4 a runnable proof; O5 minimal honest discoverability), plus fixing the deferred manifest-reason polish inside the doctor. NOT yet built. Explicitly NOT the whole 'five-minute onramp': the identity/MCP-matrix/tier-naming framing is coupled to the unstarted 654/655/657 and is handed to them. Detail on the implemented foundation follows. --- Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -1483,4 +1483,161 @@ Re-verified: extended + existing dev-runner tests green; live smoke — the wrap
 cuda12 is already present, resolves the shared main-checkout cuda12 (`-ngl 99`), and a real query
 answers on GPU. Other review items were ruled out (clean rename; nothing depends on `ai_activate
 {default}`; a harmless `mainRepoRoot` shadow in the MCP readiness message). No security/privacy issues.
+
+## §Onramp design — the remaining core (tenth pass, 2026-07-01)
+
+Returns to the tempdoc's *original* Purpose (the five-minute onramp) now that the foundation is
+shipped. This pass designs the remaining core; nothing is implemented. Kept general (shape, seams,
+first-success definitions), not implementation-level.
+
+### The reframe: what remains is an *assembly* problem, not new capability
+
+The runtime is now deterministic (GPU-only, shared, fail-closed) and diagnosable (reason codes +
+`/api/ai/models/status` preflight). A fresh codebase-wide investigation (verified against `main`)
+confirms the onramp's ingredients **already exist, scattered**: the ingest + search endpoints
+(`POST /api/knowledge/{ingest,search}`), a documented MCP connect surface with 5 tools
+(`docs/reference/mcp-production-server.md`), the preflight endpoint, the runtime manifest, and even a
+tiny contamination-free corpus candidate (`scripts/jseval/util-smoke/corpus/`). What is **absent** is
+any *assembly* of them: no onboarding demo corpus, no composed "doctor," and no scripted "index →
+query → verifiable result" path for a developer/agent running from source. **The correct long-term
+design is therefore composition + a runnable proof of first-success — not new subsystems.** This is the
+central judgement: the scope is "compose what exists, prove it works, make it discoverable," and the
+design deliberately does not add capability the problem does not require.
+
+### O1 — a tiered first-success ladder (conforms to 657's modes)
+
+The onramp must not be all-or-nothing (index nothing useful until a ~9 GB download). It is a ladder of
+**complete, self-sufficient first-successes**, each producing verifiable value:
+- **Tier 0 — zero model, instant:** index the demo corpus → keyword/BM25 query → a real ranked result
+  list. **Live-proven** (the confidence pass: `effectiveMode: HYBRID`, real hits, with the LLM
+  offline). This is the answer to 657's open question *"can a no-model mode provide enough value for
+  developer evaluation?"* — **yes**.
+- **Tier 1 — ONNX (~3.5 GB):** + semantic/hybrid retrieval + reranking. First-success = a
+  semantically-relevant result (a hit keyword search misses).
+- **Tier 2 — GPU + GGUF:** + a cited RAG answer. First-success = a grounded, cited answer (**proven
+  this session** in the real browser — a Document Q&A with a source citation, GPU-served).
+
+Each tier is a *complete* success, not a degraded fraction of the full product. **Ownership seam:**
+656 owns *"what is the first success at each tier, and how do you know you reached it"* (activation
+economics — the Purpose's wedge); **657** owns *which models/packaging define each mode* (Full Desktop
+/ Headless Runtime / MCP Lite) — the ladder's tier *names/weights* conform to 657 when it lands; 656
+does not design packaging.
+
+### O2 — the doctor is the ladder's compass (extend `AiPreflightService`, don't add a prober)
+
+One discoverable thing that answers, at any moment: *what tier am I at, what's missing to reach the
+next, and what is the single next remedy.* This is the Purpose's "doctor diagnostics / expected status
+output / failure explanations," assembled. **Extend the existing spine, don't build a new prober:**
+`AiPreflightService` (Task 4) is already the declared-vs-present reconciler; the doctor composes it
+with the two live authorities — `/api/status` readiness + `/api/runtime/manifest` reason codes — into
+one report. It is a **projection** of those authorities (conforms to tempdoc 501's
+canonical-authority-and-projection: "how does a consumer find runtime fact F? → it is a field on the
+manifest" — the doctor renders, it does not fork a second source of truth; the same principle Tasks
+0-5 and Move 2 already conform to). One logic, two audience surfaces:
+- **Agent:** the MCP readiness/status surface (the dev-MCP readiness check was already re-pointed this
+  pass; the production `justsearch_status` tool is the natural home).
+- **Human dev:** a thin CLI entry — fix + fold `scripts/verify-prerequisites.mjs` (correct its
+  citation-scorer path defect; make it live-probe, not just source-tree check) or a small `doctor`
+  wrapper over the endpoints.
+
+The doctor's precision **absorbs the deferred manifest-reason polish**: the "why AI isn't ready" reason
+must be *specific* on every path (the mode-transition/`switchToOnlineMode` path still surfaces a
+generic `"Inference offline"` on the manifest — Tasks 0-5 wired only the activation path), so the
+doctor's remedy is exact rather than "it's offline, somehow."
+
+### O3 — a demo corpus (tiny, license-clean, bundled)
+
+A small, permissively-licensed, fabricated/public-domain document set so the first index+query needs
+**no user data**. Repurpose `scripts/jseval/util-smoke/corpus/` (already contamination-free fabricated
+facts) into an onboarding-scoped corpus with a one-command ingest. **Public-repo constraint:** the
+content must be license-clean (fabricated or public-domain) — the license/notices CI lane and the
+public blast radius apply.
+
+### O4 — evidence is the deliverable (a runnable proof, not prose)
+
+The onramp ships a **runnable smoke** that indexes the demo corpus and *asserts* each reachable tier's
+first-success (Tier 0 always; Tier 1/2 when their models are present). "The onramp works" becomes a
+re-runnable proof, not a doc claim — directly satisfying the Boundary's explicit ask ("design the
+actual runnable path and the evidence that proves it works") and mirroring the project's
+verify-your-work discipline and every confidence pass in this tempdoc. This is the element that keeps
+the onramp from silently rotting (the way `verify-prerequisites.mjs`'s citation-scorer check rotted
+undetected).
+
+### O5 — minimal, honest discoverability
+
+Link the doctor + the first-query path from **CONTRIBUTING** (the front door): the investigation found
+`verify-prerequisites.mjs` is wired nowhere and unreferenced from README/CONTRIBUTING, and that
+README/CONTRIBUTING actively mislead ("build/run needs no model download" is true for *build*,
+misleading for *run* — a dev following it literally gets a Head with no models and no named remedy).
+Correct that wording and add a minimal pointer. **Not a marketing README rewrite** (Boundary), and
+**tier-honest** (Tier 0 = a keyword result with zero download; a *cited answer* needs the GPU model —
+do not imply a universal "five-minute cited answer"; no compliance/certification framing; the
+public-claims lane checks this).
+
+### Seams — designed as interfaces, handed to their (currently unstarted) owners
+
+All four adjacencies are open skeletons; 656 designs the *identity-invariant, unblocked* core above and
+hands the rest off rather than designing other tempdocs' work:
+- **657 (install modes):** the tier taxonomy + packaging + first-run-weight framing.
+- **655 (MCP conformance):** the supported-client matrix for the "attach your agent + get your first
+  cited answer" guide. The *connect surface exists* (`mcp-production-server.md`), so 656 can compose a
+  first-query narrative over it; the client matrix is 655's.
+- **654 (runtime contract / product center):** the *stable object* the onramp introduces ("what are you
+  onboarding *to*" — desktop app vs runtime vs MCP backend). The onramp's headline framing is 654's;
+  the mechanics (index→query→result) are 656's and identity-invariant.
+- **658 (retrieval inspectability):** the "why *this* result/citation" explainer — a clean split from
+  the doctor: **doctor = is the engine *up* (environment/runtime readiness, a precondition); 658 = why
+  this query behaved this way (retrieval-behavior, after the engine is up).**
+
+**Honest coupling note:** the *full* onramp UX is coupled to 654/655/657 (all unstarted). So the
+buildable-now core is the identity-invariant spine (doctor composition, demo corpus, tiered runnable
+proof, the API/CLI first-query path, the discoverability fix); the identity / MCP-matrix / tier-naming
+framing is genuinely blocked on those tempdocs and is handed to them, not designed here.
+
+### Remaining non-onramp follow-on
+- **ORT-CUDA (GPU embedding) sharing** — orthogonal to the onramp's first-success (Tier 0 needs no
+  embedding; Tier 1 works on CPU ONNX, which is tolerable — register F-002/FW-002). It would let Tier 1
+  GPU embedding share the cuda12 ORT DLLs via the existing `JUSTSEARCH_ONNXRUNTIME_NATIVE_PATH`, the
+  ONNX analogue of Move 2's LLM sharing. Noted; not required by the onramp.
+
+## §Reach — principle recognition (recognizing ≠ building)
+
+### Principle (new): *onramp-as-composition* — assembly, not capability; proven, not claimed.
+
+*A system that accretes powerful subsystems without an assembled, discoverable, evidence-producing
+"first success" path leaves newcomers unable to reach value. The remedy is composition of existing
+capabilities plus a runnable proof of first-success — not new capability.* This whole remaining design
+is that principle: every ingredient existed; the gap was assembly + proof + discoverability.
+
+- **Where else it applies (candidate scope, not proposed work):**
+  - **660 (plugin SDK community onramp)** — the *same shape one layer out*: the plugin substrate exists
+    but no assembled external-contributor path; 660 even gates itself on runtime+MCP contracts
+    stabilizing (i.e., on *this* onramp being solved first). The strongest reuse candidate.
+  - **655 (MCP onramp)** and the general **contributor path** (CONTRIBUTING) — same "capabilities exist,
+    assembled path doesn't."
+- **Existing violation:** the current scattered state itself — four disjoint doctor surfaces that don't
+  reference each other, `verify-prerequisites.mjs` unwired + carrying a stale defect, no demo corpus,
+  README/CONTRIBUTING that mislead about first-run. That *is* the violation the design corrects.
+- **Deliberately NOT built now:** a generalized "onramp framework." The present problem requires one
+  onramp (656's), composed from existing parts. Building a reusable onramp abstraction over 655/660
+  before those tempdocs are even designed would be premature. The principle is recorded so 660
+  recognizes the shared shape quickly.
+
+### Conforms to (do not re-invent)
+- **501 `canonical-authority-and-projection`** — the doctor is a *projection* of the manifest + registry
+  + status, not a new source of truth. Same principle Tasks 0-5 (reason codes) and Move 2 (shared
+  runtime resolution) already conform to; the doctor is a third instance in this tempdoc's own lineage.
+- **657 / 381 tiered modes** — "each capability tier is a complete success, not a degraded fraction"
+  already partly exists as 381's GPU-full / GPU-lite / CPU download profiles; the ladder conforms to
+  that rather than inventing a parallel tiering.
+- **The project's verify-your-work / benchmark-evidence discipline** — O4's runnable proof is the same
+  shape as the benchmark release gating its published nDCG numbers from `release.v1.json`: a claim
+  ships with a re-runnable proof, not prose.
+
+### Public-repo caution
+This design's discoverability element (O5) touches README/CONTRIBUTING — public surface under the
+capability-descriptor-truthfulness lane (650). Keep every onramp promise true and tier-honest, avoid
+"five-minute cited answer" as a universal claim (the GPU tier has a real download), and keep the demo
+corpus license-clean. No claim in this design section is itself a public-facing assertion yet — it is
+design history; the public wording is authored only when O5 is implemented.
 
