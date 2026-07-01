@@ -31,17 +31,19 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
     // Bumped 2 -> 3 on 2026-04-19 after E-J-N4 measurement (tempdoc 390): test wall
     // 96s -> 75.9s = -20.1%, non-overlapping IQRs. Thermally safe (Gradle build measured
     // 86 C max vs 100 C TjMax, CPU Package Power p95 148W of 190W PL2).
-    // The CI value of 1 is a conservative default, NOT a measured memory constraint: the
-    // hosted runner is 16 GiB / 4 vCPU (tempdoc 668), so memory is not binding and the real
-    // ceiling on useful test parallelism is the 4 vCPUs. Whether CI can move to 2 is an
-    // optimization-band question requiring hosted validation, deferred (tempdoc 668), unlike
-    // the local value which is measurement-backed (tempdoc 390 above).
+    // CI value bumped 1 -> 2 on 2026-07-01 (tempdoc 668 CI improvement theory): the wall-clock
+    // attribution showed the critical-path unit lane runs 10 module test-tasks SERIALLY at
+    // testParallelism=1, using ~1/4 of the 4-vCPU runner. Memory is not the constraint (16 GiB;
+    // ~2 x 384 MB forks + a 1 GB daemon), so raising to 2 lets two modules' test tasks overlap.
+    // A/B measured on public CI (before/after via the ci-walltime attribution artifact). 2 (not
+    // 3+) leaves headroom on the 4 vCPUs for each module's own fork(s); revisit 3 if the A/B is
+    // clean. Local stays 3 (measurement-backed, tempdoc 390 above).
     // Override: -PtestParallelism=N
     val testParallelism = project.providers.gradleProperty("testParallelism")
         .map { it.toInt() }
         .orElse(
             project.providers.environmentVariable("CI")
-                .map { if (it.isNotBlank() && !it.equals("false", ignoreCase = true)) 1 else 3 }
+                .map { if (it.isNotBlank() && !it.equals("false", ignoreCase = true)) 2 else 3 }
                 .orElse(3)
         )
 
