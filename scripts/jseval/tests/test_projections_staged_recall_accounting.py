@@ -37,12 +37,15 @@ class TestProjectionContract:
     def test_fp_mapping_annotation(self, synthetic_run_dir):
         # Conform-vocab annotation (Seven Failure Points) — present on both shapes,
         # an annotation not a rename (the bucket keys stay authoritative).
+        # Tempdoc 643 correction (2026-07-01): FP2 "Missed the Top Ranked Documents" is defined
+        # verbatim as "didn't rank highly enough to be RETURNED" -- that's CASCADE_LEAK, not
+        # JUDGE_RANK_LOW (which has no canonical FP match and is deliberately omitted).
         synthetic_run_dir.with_per_query("hybrid", [_pq("q1", ["g"], 1.0)])
         synthetic_run_dir.with_qrels({"q1": {"g": 1}})
         out = produce(synthetic_run_dir.run_dir)  # insufficient-modes shape
         assert out["fp_mapping"]["LEG_MISS"].startswith("FP1")
-        assert out["fp_mapping"]["CASCADE_LEAK"].startswith("FP3")
-        assert out["fp_mapping"]["JUDGE_RANK_LOW"].startswith("FP2")
+        assert out["fp_mapping"]["CASCADE_LEAK"].startswith("FP2")
+        assert "JUDGE_RANK_LOW" not in out["fp_mapping"]  # no canonical FP match
         assert "OK_RANK1" not in out["fp_mapping"]  # success case has no failure point
 
     def test_insufficient_modes_no_leg(self, synthetic_run_dir):
@@ -118,6 +121,103 @@ class TestBucketClassification:
         assert abs(agg["final_ndcg"] - 0.375) < 1e-9
         assert abs(agg["judge_headroom_ceiling"] - 0.375) < 1e-9
         assert out["reconciliation"] == {"checked": 4, "mismatches": 0}
+        # Tempdoc 643: q_judge lands at final rank 3 -> rank_3_5 bucket.
+        assert agg["judge_rank_histogram"] == {
+            "rank_2": 0, "rank_3_5": 1, "rank_6_10": 0, "rank_11_plus": 0,
+        }
+
+
+class TestJudgeRankHistogram:
+    """Tempdoc 643: in-bucket rank distribution for JUDGE_RANK_LOW."""
+
+    def _build_at_rank(self, srd, rank: int):
+        rd = srd.run_dir
+        filler = [f"x{i}" for i in range(rank - 1)]
+        ranked_docs = filler + ["g"]
+        srd.with_per_query("vector", [_pq("q1", ["g"], 1.0)])
+        srd.with_per_query("hybrid", [_pq("q1", ranked_docs, 1.0)])
+        _write_trec(rd, "hybrid", {"q1": ranked_docs})
+        srd.with_qrels({"q1": {"g": 1}})
+        return produce(rd)
+
+    def test_rank_2_bucket(self, synthetic_run_dir):
+        out = self._build_at_rank(synthetic_run_dir, 2)
+        assert out["buckets"]["JUDGE_RANK_LOW"] == ["q1"]
+        h = out["aggregate"]["judge_rank_histogram"]
+        assert h == {"rank_2": 1, "rank_3_5": 0, "rank_6_10": 0, "rank_11_plus": 0}
+
+    def test_rank_3_5_bucket_boundaries(self, synthetic_run_dir):
+        for rank in (3, 5):
+            out = self._build_at_rank(synthetic_run_dir, rank)
+            assert out["aggregate"]["judge_rank_histogram"]["rank_3_5"] == 1, rank
+
+    def test_rank_6_10_bucket_boundaries(self, synthetic_run_dir):
+        for rank in (6, 10):
+            out = self._build_at_rank(synthetic_run_dir, rank)
+            assert out["aggregate"]["judge_rank_histogram"]["rank_6_10"] == 1, rank
+
+    def test_rank_11_plus_overflow(self, synthetic_run_dir):
+        out = self._build_at_rank(synthetic_run_dir, 11)
+        assert out["aggregate"]["judge_rank_histogram"]["rank_11_plus"] == 1
+
+    def test_ok_rank1_not_counted_in_histogram(self, synthetic_run_dir):
+        out = self._build_at_rank(synthetic_run_dir, 1)
+        assert out["buckets"]["OK_RANK1"] == ["q1"]
+        h = out["aggregate"]["judge_rank_histogram"]
+        assert sum(h.values()) == 0
+
+
+class TestJudgeLowCostWeight:
+    """Tempdoc 643 (E3): [0,1] cost-weighted severity over judge_rank_histogram."""
+
+    def _build_at_rank(self, srd, rank: int):
+        rd = srd.run_dir
+        filler = [f"x{i}" for i in range(rank - 1)]
+        ranked_docs = filler + ["g"]
+        srd.with_per_query("vector", [_pq("q1", ["g"], 1.0)])
+        srd.with_per_query("hybrid", [_pq("q1", ranked_docs, 1.0)])
+        _write_trec(rd, "hybrid", {"q1": ranked_docs})
+        srd.with_qrels({"q1": {"g": 1}})
+        return produce(rd)
+
+    def test_all_rank_2_is_near_free(self, synthetic_run_dir):
+        out = self._build_at_rank(synthetic_run_dir, 2)
+        assert abs(out["aggregate"]["judge_low_cost_weight"] - 0.1) < 1e-9
+
+    def test_all_rank_6_10_is_full_cost(self, synthetic_run_dir):
+        out = self._build_at_rank(synthetic_run_dir, 8)
+        assert abs(out["aggregate"]["judge_low_cost_weight"] - 1.0) < 1e-9
+
+    def test_mixed_buckets_weighted_average(self, synthetic_run_dir):
+        # 2 at rank_2 (0.1 each) + 1 at rank_3_5 (0.4) + 1 at rank_6_10 (1.0), over 4 total:
+        # (2*0.1 + 1*0.4 + 1*1.0) / 4 = 1.6 / 4 = 0.4 -- matches the module docstring's example.
+        rd = synthetic_run_dir.run_dir
+        synthetic_run_dir.with_per_query("vector", [
+            _pq("q1", ["g1"], 1.0), _pq("q2", ["g2"], 1.0),
+            _pq("q3", ["g3"], 1.0), _pq("q4", ["g4"], 1.0),
+        ])
+        synthetic_run_dir.with_per_query("hybrid", [
+            _pq("q1", ["x0", "g1"], 1.0), _pq("q2", ["x0", "g2"], 1.0),
+            _pq("q3", ["x0", "x1", "x2", "g3"], 1.0),
+            _pq("q4", ["x0", "x1", "x2", "x3", "x4", "x5", "g4"], 1.0),
+        ])
+        _write_trec(rd, "hybrid", {
+            "q1": ["x0", "g1"], "q2": ["x0", "g2"],
+            "q3": ["x0", "x1", "x2", "g3"], "q4": ["x0", "x1", "x2", "x3", "x4", "x5", "g4"],
+        })
+        synthetic_run_dir.with_qrels({
+            "q1": {"g1": 1}, "q2": {"g2": 1}, "q3": {"g3": 1}, "q4": {"g4": 1},
+        })
+        out = produce(rd)
+        assert out["aggregate"]["judge_rank_histogram"] == {
+            "rank_2": 2, "rank_3_5": 1, "rank_6_10": 1, "rank_11_plus": 0,
+        }
+        assert abs(out["aggregate"]["judge_low_cost_weight"] - 0.4) < 1e-9
+
+    def test_empty_histogram_is_none(self, synthetic_run_dir):
+        # No JUDGE_RANK_LOW queries at all (only OK_RANK1) -> nothing to weight.
+        out = self._build_at_rank(synthetic_run_dir, 1)
+        assert out["aggregate"]["judge_low_cost_weight"] is None
 
 
 class TestTrecRankAuthority:

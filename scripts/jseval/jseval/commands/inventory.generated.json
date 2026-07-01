@@ -20,6 +20,10 @@
     "group": "calibrate"
   },
   {
+    "name": "ce-replay",
+    "group": "gates"
+  },
+  {
     "name": "changeset-new",
     "group": "gates"
   },
@@ -94,6 +98,10 @@
   {
     "name": "ingest-bench",
     "group": "bench"
+  },
+  {
+    "name": "judge-arbitration-report",
+    "group": "gates"
   },
   {
     "name": "judge-ceiling",

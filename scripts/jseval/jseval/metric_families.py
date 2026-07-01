@@ -115,6 +115,20 @@ LEAK = MetricFamily(
     calibrate=False,
 )
 
+# Tempdoc 643 (E3, T6-a "dominant-count ≠ dominant-cost"): a [0,1] cost-weighted severity over
+# the JUDGE_RANK_LOW rank distribution — same projection source as LEAK, so it shares that
+# family's shape. Higher is worse (a bucket dominated by rank-6-10 mis-ranks vs near-free rank-2).
+JUDGE_LOW_COST_WEIGHT = MetricFamily(
+    name="judge-low-cost-weight",
+    source_class="projection",
+    source_path="staged_recall_accounting.json",
+    metric_keys=("judge_low_cost_weight",),
+    lower_is_better={"judge_low_cost_weight": True},
+    comparator="ceiling",
+    tolerance_abs=0.05,
+    calibrate=False,
+)
+
 # LLM-generation latency + throughput (tempdoc 640 L) — a `bench` source-class family read from
 # llm-bench.json, NOT a per-corpus run metric (it's a property of the configured LLM + hardware).
 # TTFT + e2e medians are gate-able (measured CV 3% / 9%); generous ratio bands absorb the noisier tail.
@@ -132,7 +146,7 @@ LLM_GEN = MetricFamily(
 )
 
 REGISTRY: tuple[MetricFamily, ...] = (
-    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, LLM_GEN,
+    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, JUDGE_LOW_COST_WEIGHT, LLM_GEN,
 )
 BY_NAME: dict[str, MetricFamily] = {f.name: f for f in REGISTRY}
 

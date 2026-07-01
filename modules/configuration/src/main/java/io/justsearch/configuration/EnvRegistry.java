@@ -665,6 +665,76 @@ public enum EnvRegistry {
         "JUSTSEARCH_RERANK_MAX_AVG_DOC_LENGTH_CHARS",
         "16000"),
 
+    /**
+     * Tempdoc 643: judge-stage refinement floor — blend the cross-encoder's reorder with the
+     * pre-rerank (fusion/LambdaMART) order instead of letting the CE replace it outright, so a
+     * low-confidence/wrong CE call cannot regress a hit past what the blend weight allows (D-004's
+     * arbitration shape applied to the judge stage). Default off; D-004 went default-off ->
+     * measured -> default-on, same template.
+     */
+    RERANK_JUDGE_BLEND_ENABLED(
+        "justsearch.rerank.judge_blend_enabled",
+        "JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED",
+        "false"),
+
+    /**
+     * Tempdoc 643: weight on the fusion-stage score in the judge blend, in [0,1]. 1.0 = ignore the
+     * CE (pure fusion order); 0.0 = today's CE-replaces-fusion behavior. Only consulted when
+     * {@link #RERANK_JUDGE_BLEND_ENABLED} is true.
+     */
+    RERANK_JUDGE_BLEND_ALPHA(
+        "justsearch.rerank.judge_blend_alpha",
+        "JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA",
+        "0.5"),
+
+    /**
+     * Tempdoc 643 (E1/E2): controls TWO independent effects, each with its own dependency:
+     *
+     * <ol>
+     *   <li>Compute the judge-blend alpha per query from a runtime confidence signal (CE margin +
+     *       leg-agreement — {@code KnowledgeSearchEngine.computeJudgeArbitrationAlpha}) instead of
+     *       reading the static {@link #RERANK_JUDGE_BLEND_ALPHA}. The CE-side instance of D-004's
+     *       {@code index.hybrid.leg_arbitration_enabled} shape. This effect requires {@link
+     *       #RERANK_JUDGE_BLEND_ENABLED}; when that is false, {@code judge_blend_alpha} is used
+     *       unchanged (byte-identical to the pre-arbitration behavior).
+     *   <li>Gate {@link #RERANK_JUDGE_ARBITRATION_SKIP_ENABLED} (perf-skip). This effect is
+     *       INDEPENDENT of {@link #RERANK_JUDGE_BLEND_ENABLED} — perf-skip decides whether to call
+     *       the cross-encoder at all, so it does not need the blend to be enabled to fire (critical-
+     *       analysis-pass finding: an earlier version of this javadoc stated a blanket "requires
+     *       judge_blend_enabled" that only actually held for effect 1).
+     * </ol>
+     *
+     * Default off; same default-off -> measured -> default-on template.
+     */
+    RERANK_JUDGE_ARBITRATION_ENABLED(
+        "justsearch.rerank.judge_arbitration_enabled",
+        "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ENABLED",
+        "false"),
+
+    /**
+     * Tempdoc 643 (E1/E2): alpha to use when the arbitration gate decides fusion is decisive and the
+     * CE is not confident (protect via fusion). Mirrors {@code index.hybrid.leg_arbitration_alpha_diverge}
+     * but in the opposite direction (D-004 raises alpha toward dense; this raises it toward fusion).
+     * Only consulted when {@link #RERANK_JUDGE_ARBITRATION_ENABLED} is true.
+     */
+    RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE(
+        "justsearch.rerank.judge_arbitration_alpha_diverge",
+        "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE",
+        "0.85"),
+
+    /**
+     * Tempdoc 643 (perf-skip): when the arbitration gate says fusion is decisive, skip the
+     * cross-encoder RPC entirely instead of just re-weighting its influence (the 643<->648 perf/quality
+     * unification). Kept as a SEPARATE flag from {@link #RERANK_JUDGE_ARBITRATION_ENABLED}: skipping the
+     * CE call (vs. re-weighting it) can lose a query the CE would have fixed — a sharper risk than
+     * re-weighting — so it needs its own acceptance evidence, not a free ride on the blend's. Requires
+     * {@link #RERANK_JUDGE_ARBITRATION_ENABLED}. Default off.
+     */
+    RERANK_JUDGE_ARBITRATION_SKIP_ENABLED(
+        "justsearch.rerank.judge_arbitration_skip_enabled",
+        "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_SKIP_ENABLED",
+        "false"),
+
     /** Enable chunk reranking (auto if model found). */
     RERANK_CHUNKS_ENABLED(
         "justsearch.rerank.chunks.enabled", "JUSTSEARCH_RERANK_CHUNKS_ENABLED"),

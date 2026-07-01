@@ -493,6 +493,48 @@ def cmd_recall_profile(ctx, data_dir, datasets, report_out):
     click.echo(json.dumps(profile, indent=2))
 
 
+@click.command("ce-replay")
+@click.option("--run-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Eval run dir (with leg + final per_query.json, qrels.json, projections/).")
+@click.option("--mode", default=None, help="Final mode to read judgeSignals from (default: hybrid/full).")
+@click.option("--report-out", type=click.Path(), default=None, help="Write the full report JSON here.")
+@click.pass_context
+def cmd_ce_replay(ctx, run_dir, mode, report_out):
+    """AI-free realizable-headroom probe (tempdoc 643) — replays the ACTUAL production judge.
+
+    Re-ranks a run's leg-union pool by the cross-encoder's own already-captured scores (no
+    live model, no LLM, no new eval run) and reports how much of the AI-free
+    judge_headroom_ceiling the judge that is actually shipped captures when given the full
+    pool. Distinct from judge-ceiling, which asks whether a DIFFERENT (LLM) judge would do
+    better — this asks whether the judge already in production would.
+    """
+    from .. import judge_ceiling as _jc
+
+    rd = Path(run_dir)
+    qrels = json.loads((rd / "qrels.json").read_text(encoding="utf-8")) if (rd / "qrels.json").is_file() else {}
+
+    proj_path = rd / "projections" / "staged_recall_accounting.json"
+    if proj_path.is_file():
+        proj = json.loads(proj_path.read_text(encoding="utf-8"))
+    else:
+        from ..projections import staged_recall_accounting as _sra
+        proj = _sra.produce(rd)
+    agg = proj.get("aggregate") or {}
+    ceiling = agg.get("judge_headroom_ceiling")
+    final_ndcg = agg.get("final_ndcg")
+
+    pool = _jc.assemble_pool(rd)
+    ce_scores_by_qid = _jc.load_ce_scores(rd, mode=mode)
+    report = _jc.ce_replay_report(pool, ce_scores_by_qid, qrels, final_ndcg=final_ndcg, ceiling=ceiling)
+    report["run_dir"] = str(rd)
+
+    if report_out:
+        Path(report_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_out).write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False),
+                                    encoding="utf-8")
+    click.echo(json.dumps(report, indent=2))
+
+
 @click.command("judge-ceiling")
 @click.option("--run-dir", required=True, type=click.Path(exists=True, resolve_path=True),
               help="Eval run dir (with leg + final per_query.json, qrels.json, projections/).")
@@ -566,6 +608,47 @@ def cmd_judge_ceiling(ctx, run_dir, corpus_dir, llm_url, engine_generator, repor
         Path(report_out).write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False),
                                     encoding="utf-8")
     click.echo(json.dumps(report, indent=2), err=True)
+
+
+@click.command("judge-arbitration-report")
+@click.option("--run-dir-a", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Eval run dir with {mode}_per_query.json (judgeSignals) — arbitration-on run.")
+@click.option("--run-dir-b", type=click.Path(exists=True, resolve_path=True), default=None,
+              help="Second run dir for regression_rate comparison (e.g. the arbitration-off run). Optional.")
+@click.option("--mode", default="hybrid", show_default=True, help="Retrieval mode to read.")
+@click.option("--base-alpha", type=float, default=0.5, show_default=True)
+@click.option("--fusion-protect-alpha", type=float, default=0.85, show_default=True)
+@click.option("--report-out", type=click.Path(), default=None, help="Write the full report JSON here.")
+@click.pass_context
+def cmd_judge_arbitration_report(ctx, run_dir_a, run_dir_b, mode, base_alpha, fusion_protect_alpha, report_out):
+    """Judge-arbitration decision instrument (tempdoc 643 E3).
+
+    Re-derives computeJudgeArbitrationAlpha's branch split and isFusionDecisiveForSkip's firing
+    rate from a run's already-archived judgeSignals — no new eval run needed. With --run-dir-b,
+    also reports how many queries' true (predictedDocIds) result order changed between the two
+    runs. Promotes the one-off scripts written for 643's §9-4/theorization passes into durable,
+    tested tooling.
+    """
+    from .. import judge_arbitration_report as _jar
+
+    rd_a = Path(run_dir_a)
+    records_a = json.loads((rd_a / f"{mode}_per_query.json").read_text(encoding="utf-8"))
+
+    report = {
+        "run_dir_a": str(rd_a),
+        "mode": mode,
+        "alpha_branch_breakdown": _jar.alpha_branch_breakdown(
+            records_a, base_alpha=base_alpha, fusion_protect_alpha=fusion_protect_alpha),
+        "perf_skip_firing_rate": _jar.perf_skip_firing_rate(records_a),
+    }
+    if run_dir_b:
+        report["regression_rate"] = _jar.regression_rate(rd_a, Path(run_dir_b), mode=mode)
+
+    if report_out:
+        Path(report_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(report_out).write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False),
+                                    encoding="utf-8")
+    click.echo(json.dumps(report, indent=2))
 
 
 @click.command("extraction-gate")
@@ -643,4 +726,4 @@ def cmd_extraction_gate(ctx, baseline_run, candidate_run, mode, guard_modes,
     sys.exit(report["exit_code"])
 
 
-COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_judge_ceiling, cmd_extraction_gate]
+COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]
