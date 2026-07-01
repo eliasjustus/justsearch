@@ -1812,3 +1812,91 @@ registry):
    (when tier ≥ 1, the query must not fall back to pure `TEXT` mode); Tier-2's cited answer is
    intentionally not asserted (LLM-flaky). Smoke re-run PASS (tier 2, HYBRID).
 
+## §Post-implementation research & ideas (thirteenth pass, 2026-07-01)
+
+Docs-only exploration ("what could we do with this?") — no code. Grounded the ideas against external
+onboarding/diagnostic practice (sources at the end). Nothing here is committed work; it is a recorded
+opportunity backlog. The app is public-alpha with **no real users yet**, so the urgency ordering below
+weighs *current* audiences (contributors, evaluating agents) over the not-yet-present desktop user.
+
+### The meta-finding: I built the plumbing; activation value is unlocked only where the audience is
+
+Everything shipped (doctor, demo corpus, smoke, CONTRIBUTING section) is **CLI + docs + dev-runner** —
+it serves only the *from-source developer*, and even for them it is gated behind "know the script path
+exists." The two audiences with the highest activation leverage are untouched:
+- the **desktop user's first-run/empty state** — external UX research calls the blank "no data yet"
+  screen *"one of the most common silent drop-off points in early activation"*; JustSearch's is
+  currently un-onboarded;
+- the **agent (MCP)** — the very "wedge" this tempdoc is named for; agents don't run CLIs.
+
+TTFV research quantifies the prize: a **sample-data sandbox** (exactly what the demo corpus is) is a
+top time-to-first-value lever (~40-60% reduction) *when it's one click*, and dev tools where the first
+success lands in <5-10 min convert 3-4× better. My demo corpus has the right shape but the wrong
+surface (reachable only via CONTRIBUTING + a manual `curl`). **The theme of every idea below: surface
+the plumbing where the audience already is.**
+
+### Practicality verdict on the shipped pieces (honest)
+- **doctor** — genuinely useful for "why isn't AI working," but `node scripts/dev/doctor.mjs` is not a
+  discoverable command (a tool nobody finds has ~zero activation value).
+- **demo corpus** — a textbook sample-data sandbox, but not one-click.
+- **smoke** — hands-on evidence (87% of devs prefer hands-on over docs), but not wired into CI/npm.
+- **manifest-reason polish** — real value, invisible until a failure, surfaced only via the doctor/manifest.
+- **net**: correct and complete for its settled scope; narrow in practical reach until surfaced.
+
+### Idea backlog (grouped; each with a practicality/urgency read)
+
+**A — Polish / simplify (cheap, serves the current from-source dev):**
+1. Fix the dangling `docs/how-to/onramp.md` reference in `examples/onramp-corpus/README.md` (create the
+   page or drop the link). Trivial; it's a broken pointer in shipped public content.
+2. Doctor UX borrowed from `flutter doctor`: a "rerun until all ✓ / clean bill of health" framing, a
+   `-v` verbose mode, and fix the cosmetic `present['cuda-runtime']` display (wrong `installRoot` base).
+3. **Make the doctor discoverable** — an `npm run doctor` script and/or a `dev-runner doctor` subcommand
+   (not a bare path). Highest cheap-win: discoverability *is* activation (TTFV).
+4. Reconcile the two overlapping "is my env OK" tools — `verify-prerequisites.mjs` (build-check) vs the
+   doctor (onramp-check): cross-link or fold, so contributors aren't confused by two answers.
+
+**B — Extend (medium; higher leverage):**
+5. Doctor `--fix` / guided remediation: offer to run the next-step command (confirm-gated — staging
+   cuda12 is a ~600 MB download). Turns diagnosis into a one-keystroke fix.
+6. Wire the **smoke into CI** as a fact-lane (ADR-0044): the runnable proof becomes a *continuous*
+   guarantee that the onramp still works, not a manual check.
+7. **Agent auto-discovery** — expose a `/.well-known/mcp/server-card.json` (SEP-1649: `serverInfo` /
+   `transport` / `capabilities`) on the loopback server so Claude/Cursor auto-detect JustSearch's MCP
+   instead of the manual `mcpServers` config block. A 2026 discovery standard; concrete and low-cost,
+   but **coupled to 655** (the MCP client matrix) and to the dynamic-port problem — record, coordinate.
+8. **Agent-facing doctor** — fold the tier/remedy answer into the existing `justsearch_status` MCP tool
+   (or a new one) so an attached agent can self-diagnose "why can't I get cited answers." Reuses the
+   doctor logic; the agent-side of O2.
+
+**C — New UX (higher effort; highest *user* leverage, lowest *current* urgency — no users yet):**
+9. **In-UI first-run / empty-state onboarding** (the flagship): replace the blank "no documents"
+   screen with a guided step — `[Load the demo corpus] · [Add a folder]` → first search → a result —
+   plus a tiered status line ("Search ready; add AI models for cited answers → [Install AI]"). This is
+   the LM-Studio guided-first-run + empty-state-as-onboarding + sample-data-sandbox patterns composed,
+   surfaced in the GUI. It reuses the demo corpus + the doctor's tier logic + Install-AI. **Coupled to
+   654** (product identity — "what are you onboarding *to*"), so it's a recognize-and-record item, not
+   build-now.
+10. **In-UI readiness/tier panel** — extend the existing "Open Health" banner into "you're at Tier N,
+    here's the one next step," reusing the now-specific manifest reason codes. The desktop-user analogue
+    of the CLI doctor.
+11. **One-click "Load demo corpus"** in the UI — the single highest-ROI atom of #9 (sample-data sandbox
+    = the top TTFV lever), extractable on its own.
+
+### Reach / discipline note
+Several of the best ideas (#7, #8, #9, #10) are **coupled to the unstarted 654/655** — consistent with
+this tempdoc's own reach discipline (recognize the shared shape, record the candidate, don't build the
+cross-tempdoc structure now). The *onramp-as-composition* principle (§Reach) predicts these: each is
+"the plumbing exists; compose+surface it for a new audience." The cheap, un-coupled, current-audience
+wins are **A1-A4 + B6** (docs/dev-tool polish + CI proof-lane); the rest wait on their owners.
+
+### Sources (external practice, 2026)
+- Doctor-command design (actionable output, rerun-until-✓, verbose): Flutter `flutter doctor` guides.
+- User first-run (guided, hardware-sized, drop-into-chat): LM Studio vs Ollama onboarding write-ups.
+- TTFV levers (sample-data sandbox ~40-60%, guided first task ~30-50%, <5-min first value → 3-4×
+  conversion, 87% prefer hands-on): SaaS/dev-tool time-to-value guides (rework.com, getmonetizely,
+  daily.dev).
+- Empty-state-as-onboarding ("silent drop-off point"; one clear action; Notion/Todoist checklists):
+  useronboard.com, eleken.co, setproduct.com.
+- MCP auto-discovery (`.well-known/mcp/server-card.json`, SEP-1649 fields): ekamoira.com 2026 guide;
+  MCP 2026 roadmap (getknit.dev, tedt.org).
+
