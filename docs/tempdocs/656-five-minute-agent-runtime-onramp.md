@@ -1,11 +1,12 @@
 ---
 title: "Five-minute agent/runtime onramp: make AI-readiness diagnosis truthful (shipped), then fix why agents end up without the model/runtime files in the first place (root-cause investigation, not yet fixed)"
 type: tempdocs
-status: "Diagnosability substrate (Tasks 0-5) shipped and live-verified 2026-07-01 — but this only makes failures easier to *see*, it does not fix why 2 agents ended up without models/llama-server in the first place. §Root-cause investigation (sixth pass, 2026-07-01) traces that separately: confirmed live that POST /api/ai/install/start (the existing headless, Tauri-independent model-download flow) hard-fails at a 'restore_runtime' precondition before it ever downloads anything, because RuntimeRestoreUtil.ensureRuntimePresent() looks for a 'bundled' llama-server source at a packaged-installer-only path that does not exist in a dev/monorepo checkout. The Gradle task that actually fetches llama-server.exe is confirmed standalone-invokable but wired into no dev-facing bootstrap. Candidate designs recorded, none chosen or implemented yet — this pass is investigation/theorization only, per instruction. Original diagnosability work (Tasks 0-5) remains as shipped; not reverted."
+status: "Diagnosability substrate (Tasks 0-5) shipped and live-verified 2026-07-01 — but this only makes failures easier to *see*, it does not fix why 2 agents ended up without models/llama-server in the first place. §Root-cause investigation (sixth pass) traced that separately: POST /api/ai/install/start (the existing headless, Tauri-independent model-download flow) hard-fails at a 'restore_runtime' precondition before downloading anything, because RuntimeRestoreUtil.ensureRuntimePresent() checks a packaged-installer-only path. Tempdoc 618 (active) already diagnosed the same root cause but only fixed the *activation* consumer, not this *install* consumer — cross-referenced in both directions. §Reframing pass (user directive): the goal is NOT 'make the install succeed' — per-worktree redownload of multi-GB models is not viable. Confirmed models already have a working share-once-via-main-checkout mechanism (JUSTSEARCH_MODELS_DIR); the runtime binary has no equivalent at all. Confirmed live: the main checkout itself has never built/staged the runtime binary either, so 'populate the main checkout once' is the actual first milestone — propagation to worktrees already works via 618's existing fallback. Candidate designs (A/B/C) revised to require preserving this sharing property. Nothing implemented yet — investigation/theorization only, per instruction."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
 related:
+  - 618-agent-developer-velocity-friction
   - 654-local-runtime-contract-and-product-center
   - 655-mcp-conformance-and-capability-policy
   - 657-install-modes-and-model-pack-decomposition
@@ -21,6 +22,8 @@ related:
   - scripts/dev/dev-runner.cjs
   - modules/app-api/src/main/java/io/justsearch/app/api/lifecycle/LifecycleReasonCode.java
   - modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java
+  - modules/app-services/src/main/java/io/justsearch/app/services/ai/install/RuntimeRestoreUtil.java
+  - modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java
 ---
 
 > NOTE: Noncanonical working tempdoc. Verify against canonical docs and code before
@@ -953,4 +956,112 @@ No code changed. No option chosen. No new tempdoc opened (this is squarely 656's
 Task-0-5 diagnosability work already shipped is left as-is, not reverted — it remains correct and
 useful regardless of which acquisition-gap option is eventually chosen; a future fix to the
 acquisition gap will make the now-truthful error messages fire less often, not become wrong.
+
+## §Prior art correction — tempdoc 618 already owns half of this (2026-07-01)
+
+The user asked directly whether a dedicated tempdoc already exists for this. Yes: **tempdoc 618**
+("agent-developer-velocity-friction," `status: active`, updated 2026-07-01 — the same day as this
+pass) already source-traced the identical root cause: `modules/ui/build.gradle.kts`'s `stage →
+native-bin` copy happens **only** inside `bundleSidecarResources` (the packaged-installer step),
+never for a plain dev checkout, so a fresh worktree's runtime directory starts empty. 618 recorded
+this as recurring across four independent sessions (549, 583, 610, and its own seed) — not a one-off.
+
+**But 618's fix only covers half the problem.** It patched the *activation* consumers —
+`RuntimeActivationService.resolveVariantsRoot()`'s dev-mode fallback and `dev-runner.cjs`'s
+file-probing/auto-copy (`ensureLlamaStagedInNativeBin()`) — so that *if* a runtime is already staged
+somewhere findable, activation succeeds. It never touched `AiInstallService`/`RuntimeRestoreUtil` —
+the *install/download* consumer — because its fix was a workaround that copies files directly,
+sidestepping that flow entirely. That's exactly the gap this pass (Finding 2) found: `POST
+/api/ai/install/start` hard-fails at `restore_runtime` via a code path 618 never inspected. This
+matters specifically because the two agents that opened this tempdoc had **nothing** staged at all —
+they needed the install/download path, not activation of an already-present runtime.
+
+**Cross-reference recorded in both directions**: this tempdoc's frontmatter now cites 618; a
+corresponding note has been added to 618 itself (see its own `§656 cross-reference` addition) so a
+reader of either doc finds the other, rather than 656 silently re-deriving what 618 already
+established and 618 silently missing where its own fix's scope ended.
+
+## §Reframing the actual goal — per-worktree redownload is not acceptable (2026-07-01, user directive)
+
+The user's explicit correction: **this tempdoc's goal is not "make `/api/ai/install/start` succeed."**
+For development work, redownloading multi-gigabyte models (and the runtime binary) once per worktree
+is not viable — JustSearch runs multiple parallel agent worktrees routinely (`branch-safety.md`: "up
+to 3-4 agent sessions run concurrently, each in its own git worktree"), and each is a full separate
+checkout. A fix that makes the install flow "work" by having each worktree independently download its
+own copy would solve the reported symptom while creating a much worse, silent cost (bandwidth, disk,
+time) multiplied by every worktree ever created. Any correct design must preserve or extend the
+existing **download-once, share-across-worktrees** property — not routinely re-trigger downloads.
+
+**Checked whether this property already exists, and for which artifacts:**
+
+- **Models: already correctly shared, confirmed by re-reading the code.** `EnvRegistry.MODELS_DIR`
+  (`modules/configuration/.../EnvRegistry.java:378`, wire name `JUSTSEARCH_MODELS_DIR`) is a real,
+  registered environment variable. `dev-runner.cjs` already sets it to the **main checkout's**
+  `models/` directory (not a copy — a direct path reference) whenever a worktree's dev-runner starts
+  (per `branch-safety.md`'s own documentation of this: "the dev-runner now resolves
+  `JUSTSEARCH_MODELS_DIR` from the main checkout automatically"). `AiInstallService`'s constructor
+  explicitly honors this same env var when resolving `modelsDir`, with its own comment stating the
+  reason: "so Install AI checks the operator-supplied dir for already-present models... When all
+  required models are present, InstallPlanner produces zero downloads." **This means: if the main
+  checkout has ever completed a real model install, every worktree already gets zero-download,
+  zero-copy access to it for free, today, with no fix needed.** The redownload-per-worktree risk for
+  *models* is already mitigated — conditional on the main checkout having models at all, which is
+  the actual remaining question (see below).
+- **The runtime binary: no equivalent mechanism exists at all.** Grepped `EnvRegistry.java`,
+  `RuntimeRestoreUtil.java`, and `RuntimeActivationService.java` for any `NATIVE_BIN`/native-bin-scoped
+  environment variable: **zero matches.** The only cross-worktree sharing for the runtime binary is
+  `dev-runner.cjs`'s own JS-side fallback (`ensureLlamaStagedInNativeBin()`, from 618): if the
+  worktree's own `modules/ui/build/llama-server/stage` is absent, it falls back to the **main
+  checkout's** `modules/ui/build/llama-server/stage` — avoiding a re-*download* (bandwidth), but
+  still performing a full local file *copy* into the worktree's own `modules/ui/native-bin/` (disk
+  duplication, smaller in absolute terms than models — the CPU llama-server prebuilt is on the order
+  of 100-300MB, not multi-GB — but the same class of avoidable waste, and this sharing exists only in
+  JS/dev-runner, invisible to the Java-side `AiInstallService`/`RuntimeRestoreUtil` REST flow, which
+  has no shared-location awareness whatsoever — it only ever checks one hardcoded,
+  packaged-installer-shaped path (Finding 2).
+
+**Revised framing for the acquisition-gap fix, superseding the unqualified Options A/B/C above:**
+whichever option is chosen must explicitly satisfy the same "populate once, share via existing
+main-checkout-first resolution" property models already have — not just stop hard-failing.
+Concretely, this reframes each option:
+
+- **Option A (wire the Gradle task into dev bootstrap)** is fine *only* if it's understood to run
+  once, ideally against the main checkout, relying on `dev-runner.cjs`'s existing
+  main-checkout-fallback copy (which already exists, per 618) to propagate to every other worktree —
+  not re-run per worktree as a matter of course. This should be stated explicitly wherever this
+  option is documented, since "add it to `prepare-worktree.cjs`" (the phrasing used earlier in this
+  pass) reads as "run per worktree" unless qualified.
+- **Option B (make `RuntimeRestoreUtil` dev-mode-aware)** needs a real design decision now visible
+  that wasn't visible before this reframe: should it merely check the existing
+  `modules/ui/native-bin/llama-server` / `modules/ui/build/llama-server/stage` locations (which, per
+  the finding above, are **worktree-local**, not shared) — or should it be extended to introduce a
+  proper shared-location convention analogous to `JUSTSEARCH_MODELS_DIR` (e.g. a new
+  `JUSTSEARCH_NATIVE_BIN_DIR`/`EnvRegistry` entry, honored by `RuntimeRestoreUtil`,
+  `RuntimeActivationService`, and `dev-runner.cjs` alike, all resolving to the main checkout by
+  default)? The former is a smaller, faster fix that inherits models' existing weaker (copy-based, not
+  zero-copy) sharing tier; the latter closes the gap properly, bringing the runtime binary up to the
+  same zero-copy, single-source-of-truth tier models already have, and would also let
+  `RuntimeRestoreUtil` and `RuntimeActivationService`/`dev-runner.cjs` finally agree through one
+  registered mechanism instead of three independently-hardcoded path conventions (Finding 5). Given
+  this pass's own external grounding (Tauri's `PathResolver` principle — one canonical resolver, not
+  per-call-site guessing), the latter is the more defensible long-term shape, but it is a strictly
+  bigger change than "check two more directories."
+- **Option C (registry entry for the runtime binary)** would need the *same* consideration — if
+  `AiInstallService` downloads llama-server.exe as just another registry package, it must resolve its
+  target directory through whatever the shared-location convention ends up being (existing
+  `modelsDir`-style resolution, or the new native-bin-equivalent above), not silently reintroduce a
+  worktree-local-only target and regress the property this section exists to protect.
+
+**Resolved (checked directly):** the main checkout (`F:\justsearch-public`, non-worktree) has 7 of 9
+model files already present, including the chat GGUF — models are partially populated there
+(probably by the same manual process that partially populated this worktree's copy). But its
+`modules/ui/native-bin/` does not exist and `modules/ui/build/llama-server/` does not exist either —
+**the main checkout has never built or staged the runtime binary, so there is currently nothing for
+any worktree's sharing fallback to find even if it worked correctly.** This confirms the runtime
+binary has no working acquisition path *anywhere* right now — not per-worktree, not even at the one
+shared location every mechanism (618's dev-runner fallback, and whichever acquisition-gap option gets
+chosen here) ultimately depends on. **"Populate the main checkout's runtime binary once" is therefore
+the actual first concrete milestone** — after that, 618's existing copy-fallback already propagates it
+to every worktree today with no further fix needed; only the *first* population (at the main
+checkout, once) requires one of Options A/B/C above.
 
