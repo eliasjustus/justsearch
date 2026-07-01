@@ -64,6 +64,30 @@ def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency
 
     meta_path = dataset_dir / "metadata.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+
+    # Descriptor-collision self-consistency check (tempdoc 664): no live backend needed — pure
+    # content analysis over corpus.jsonl + the already-loaded queries. Best-effort on a missing
+    # corpus.jsonl (older/non-committed corpora) rather than failing certification on an unrelated
+    # file-layout gap.
+    # tempdoc 664 (seventh-pass fix): corpus_build.build_golden() writes `corpus.jsonl`, never
+    # `docs.jsonl` -- this previously looked for a file that never exists in a real materialized
+    # dataset, so the collision check silently computed nothing in production (confirmed live via
+    # a CliRunner invocation against a real materialized corpus). The unit tests for
+    # descriptor_collision_report() passed because they call the function directly; no test
+    # exercised this file-loading line until now.
+    docs_path = dataset_dir / "corpus.jsonl"
+    collisions = None
+    if docs_path.is_file():
+        docs = [json.loads(line) for line in docs_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        collisions = cc.descriptor_collision_report(docs, queries)
+
+    # Regeneration-determinism check (tempdoc 664, seventh pass): reads the corpus's own recorded
+    # `generation_provenance` (top-level in metadata.json, passed through unchanged from the
+    # committed source by corpus_build.build_golden()) and actually regenerates it twice to verify
+    # "seeded -> reproducible" rather than trusting the claim. Gracefully skips (passed: None) when
+    # provenance is absent/incomplete/hand-authored — see regeneration_determinism_report's docstring.
+    determinism = cc.regeneration_determinism_report(meta.get("generation_provenance"))
+
     # The two co-equal gates (memory = certify, retrieval-difficulty = fidelity) BOTH write the
     # `fidelity` block; MERGE the sub-block so neither clobbers the other regardless of run order
     # (symmetric to corpus-fidelity's merge — without this, certify-after-fidelity wiped the
@@ -74,18 +98,35 @@ def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency
     # post-retrieval-run population — it must NOT clobber a real value already set by
     # corpus-fidelity when certify runs second. (Only memory_independence is certify's to own.)
     fid.update({k: v for k, v in (result.get("fidelity") or {}).items() if v is not None})
+    if collisions is not None:
+        fid["descriptor_collisions"] = collisions
+    fid["regeneration_determinism"] = determinism
     meta["fidelity"] = fid
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     cert = result["closed_book_certification"]
     if ctx.obj.get("json"):
-        click.echo(json.dumps(result, indent=2))
+        out = dict(result)
+        if collisions is not None:
+            out["descriptor_collisions"] = collisions
+        out["regeneration_determinism"] = determinism
+        click.echo(json.dumps(out, indent=2))
     else:
         verdict = "PASS" if cert["passed"] else "FAIL"
         click.echo(f"corpus-certify golden/{dataset}: closed-book acc={cert['closed_book_accuracy']:.3f} "
                    f"(<= {threshold}) -> {verdict}")
         click.echo(f"  memory_independence={result['fidelity']['memory_independence']} "
                    f"(retrieval_difficulty set post-retrieval-run)  written to {meta_path.name}")
+        if collisions is not None:
+            coll_verdict = "PASS" if collisions["passed"] else "FAIL"
+            click.echo(f"  descriptor_collisions: {collisions['n_groups']} groups / "
+                       f"{collisions['n_docs_involved']} docs ({collisions['n_gold_involved']} "
+                       f"gold-involved / qrel-corrupting) -> {coll_verdict}")
+        if determinism["passed"] is None:
+            click.echo(f"  regeneration_determinism: SKIP ({determinism['reason']})")
+        else:
+            det_verdict = "PASS" if determinism["passed"] else "FAIL"
+            click.echo(f"  regeneration_determinism: -> {det_verdict}")
 
 
 @click.command("corpus-fidelity")

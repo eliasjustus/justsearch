@@ -414,7 +414,20 @@ def project_release_to_perf_baselines(release: dict, *, bands: dict | None = Non
     value across one cohort, not a hand-pinned single run.
     """
     bands = dict(bands or _DEFAULT_BANDS)
-    src_tag = release.get("release_id") or (release.get("cohort") or {}).get("git_sha", "")[:10]
+    cohort = release.get("cohort") or {}
+    src_tag = release.get("release_id") or cohort.get("git_sha", "")[:10]
+    # tempdoc 664: perf metrics (latency/throughput) are hardware-sensitive, unlike relevance —
+    # refuse to project a floor from a release whose members are explicitly known to have run on
+    # different hardware (`compose()` now records this). A MISSING key (a release composed before
+    # this check existed) is treated as permissive, not refused, for backward compatibility with
+    # already-published releases; recomposing naturally picks up the check going forward.
+    if cohort.get("hardware_homogeneous") is False:
+        return {
+            "schema": "perf-ratchet-baseline.v1",
+            "projected_from_release": True,
+            "hardware_homogeneous": False,
+            "baselines": {},
+        }
     out: dict[str, dict] = {}
     for dataset, measured in (release.get("measured") or {}).items():
         if not isinstance(measured, dict):

@@ -68,7 +68,7 @@ Query variants of the same corpus get distinct slugs.
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
-| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json` |
+| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
 
 ---
 
@@ -408,7 +408,32 @@ tempdoc citations that use P0/P1/P2 names.
 
 Settled empirical facts. Each was an open question that got answered.
 
+### Corpus provenance note (2026-07-01, tempdoc 664 twelfth pass)
+
+`golden/needle-burial-v1`'s corpus content was **regenerated** on this date: the original generator had a
+non-determinism bug (per-process `hash()` randomization) and lacked a positional interleave the twelfth pass
+added. Regenerating with the same recorded parameters (280 docs, 20 gold chains, seed=636, hops=1,
+distractor_ratio=6, semantic=True) produces the same corpus *shape* but different exact entity names/text —
+exact byte-reproduction of the pre-fix corpus was confirmed impossible (generator drift), so this is new
+content, not a restored original.
+
+**Findings below measured against the pre-regeneration content are historical and not reproducible against
+the corpus as currently committed**: F-023, F-024, F-025, D-004's shared-index A/B evidence, and Q-011's
+evidence. This is a fact about reproducibility, not a retraction — those measurements genuinely happened and
+the cited numbers accurately record what was found *then*. **Already-shipped decisions based on these
+numbers are unaffected** (e.g. D-004's leg-arbitration shipping default-off, F-024's recall-complete-pool /
+leg-arbitration shipping default-on) — those decisions used real measurements at the time; the regeneration
+does not retroactively invalidate a decision already made and shipped.
+
+Current corpus signature (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`
+— the same verified-binding mechanism already shared by run manifests and release records):
+`1ade35791b1db58b9a7e1ff21246278d8e588e1705cbeda36d8529ceab6699ec`. Anyone re-deriving or re-verifying the
+findings below should check this signature against the corpus they're measuring against, rather than
+assuming it matches what's described.
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
+
+*(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
 
 - **Answer:** Graded the three tempdoc-636 buried-signal levers via `jseval --start-backend --llm`
   through the full `hybrid`+CE pipeline, on `golden/needle-burial-v1` (synthetic buried-fact target)
@@ -429,6 +454,9 @@ Settled empirical facts. Each was an open question that got answered.
   leg-arbitration's trigger to be pool-aware is the open follow-up (router Item-1).
 
 ### F-025: recall-survival is a measurable, regime-blind funnel — and it tracks the shipped fix
+
+*(needle-burial-v1 numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
 
 - **Answer:** The **Staged Recall Accounting** instrument (tempdoc 636 / D-005) decomposes every judged query
   into **leg-recall / cascade-leak / judge-rank** as a pure `jseval` projection over existing run artifacts
@@ -613,6 +641,8 @@ Settled empirical facts. Each was an open question that got answered.
 
 ### F-023: Whole-doc dense dilution is real and scales; lexical+CE legs suppress dense on paraphrase queries
 
+*(numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
+
 - **Answer:** On a purpose-built buried-signal corpus (`golden/needle-burial-v1` — long generic-filler docs, one buried distinctive head per chain, **zero-lexical-overlap paraphrase** queries, head-only qrels), the **whole-doc (`vector`) dense nDCG@10 collapses monotonically with distractor scale: 0.820 (280 docs) → 0.526 (1240) → 0.429 (2440)** — the maximally-diluted mean-of-means vector progressively loses the needle to near-identical filler twins. Separately, **`vector` ≫ `hybrid` on these paraphrase queries** (0.820 vs 0.318 at 280 docs; head@rank-1 12/20 vs 5/20, hybrid *misses* the needle on 9/20) — adding the lexical (BM25/SPLADE) + cross-encoder legs **actively demotes/drops the dense-found needle** on grep-defeating queries.
 - **Evidence:** tempdoc 636 §Phase-1 eval (2026-06-23). `jseval run --dataset golden/needle-burial-{s6,s30,s60} --modes vector,hybrid --start-backend --clean --embedding`; `vector` `comparable=True`.
 - **Conditions/caveats:** Synthetic extreme (100% zero-overlap paraphrase, 20 queries) — exaggerates the `vector≫hybrid` inversion vs real mixed queries. **jseval `hybrid` reported `chunkMergeApplied=null` on all queries** (the chunk-passage branch did not apply), which **contradicts the live interactive probe** (636 §Pre-impl pass: production hybrid fired `branch-fusion: executed` and ranked a needle decisively) — so jseval-`hybrid` is **not representative of the production default path** and its low numbers must not be read as "production hybrid collapses." See Q-011.
@@ -659,7 +689,8 @@ Design choices in the current production pipeline, with rationale.
 - **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
   the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
   "symmetric per-query leg arbitration".
-- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free):**
+- **Evidence (rigorous shared-index A/B — build once, OFF vs ON on the *same* index, noise-free; the
+  needle-burial-v1 figure predates the 2026-07-01 corpus regeneration — see Corpus provenance note above):**
   `golden/needle-burial-v1` (paraphrase) **0.241 → 0.712 (+195%)**; `scifact` (academic) **0.7599 → 0.7641**
   (neutral); **`mixed/enron-qa` (personal email) 0.7422 → 0.7268 (−2.1%, REAL regression)**;
   `mixed/courtlistener-200` (legal) **0.6054 → 0.5893 (−2.7%)**.
@@ -811,6 +842,9 @@ picking up items here over inventing new experiments.
 - **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
+
+*(needle-burial-v1 evidence below predates the 2026-07-01 corpus regeneration — see Corpus provenance note
+above)*
 
 - **Question:** Two sub-questions opened by F-023's buried-signal eval: **(a)** jseval `hybrid` shows `chunkMergeApplied=null` (chunk branch not applying) and collapses, but the live interactive probe showed production hybrid *does* fire the chunk branch and ranks a needle well — so **does the *production* default path actually degrade on buried-signal at scale, or does the chunk-passage path hold?** The eval must be made to **isolate/exercise the chunk-dense path** before this is answerable (and before tempdoc 636's chunk-embedding seam P1a/P2 can be gated). **(b)** On grep-defeating paraphrase queries, `vector ≫ hybrid` (the lexical+CE legs *suppress* dense): should the engine **route toward dense / down-weight lexical+CE when a query is lexically poor against the corpus** (an FW-001 / low-signal-gating-in-reverse lever)?
 - **Why it matters:** (a) gates whether tempdoc 636's embedding seam is even the right fix (the Phase-1 eval measured the whole-doc vector, not the chunk vector the seam improves). (b) is plausibly the **higher-impact** lever for buried/paraphrase retrieval — the largest gap in the 636 experiment (0.82 vs 0.32) was fusion/routing, not embedding context.

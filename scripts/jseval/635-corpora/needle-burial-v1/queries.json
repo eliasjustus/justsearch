@@ -1,182 +1,182 @@
 [
  {
   "query": "What is the value associated with the designer of the power station in the upper wetlands?",
-  "answer": "ochre quartzine 0002",
+  "answer": "crimson ferrolite 0002",
   "question_type": "1_hop",
   "evidence_ids": [
-   "harnash1",
-   "cavcrag2"
+   "limker1",
+   "tasholt2"
   ]
  },
  {
   "query": "What is the value associated with the designer of the stargazing facility in the ridge to the east?",
-  "answer": "russet lansk 0004",
+  "answer": "crimson grist 0004",
   "question_type": "1_hop",
   "evidence_ids": [
-   "cavmire3",
-   "skowick4"
+   "limlun3",
+   "vexdell4"
   ]
  },
  {
   "query": "What is the value associated with the designer of the grain-grinding works in the curve of the river?",
-  "answer": "pallid lansk 0006",
+  "answer": "verdant perrin 0006",
   "question_type": "1_hop",
   "evidence_ids": [
-   "nuthby5",
-   "limmond6"
+   "kancrag5",
+   "vordac6"
   ]
  },
  {
   "query": "What is the value associated with the designer of the records vault in the former justice building?",
-  "answer": "umber ferrolite 0008",
+  "answer": "azure vellum 0008",
   "question_type": "1_hop",
   "evidence_ids": [
-   "limdell7",
-   "drudell8"
+   "druker7",
+   "cavby8"
   ]
  },
  {
   "query": "What is the value associated with the designer of the metal-casting works in the quarter to the west?",
-  "answer": "russet lansk 0010",
+  "answer": "verdant skack 0010",
   "question_type": "1_hop",
   "evidence_ids": [
-   "pellthorn9",
-   "kanvale10"
+   "zelpost9",
+   "zelvale10"
   ]
  },
  {
   "query": "What is the value associated with the designer of the optical instrument in the Carpathian uplands?",
-  "answer": "russet perrin 0012",
+  "answer": "crimson skack 0012",
   "question_type": "1_hop",
   "evidence_ids": [
-   "kanric11",
-   "cavwick12"
+   "orrfen11",
+   "harnby12"
   ]
  },
  {
   "query": "What is the value associated with the designer of the streetcar line in the city on the slopes?",
-  "answer": "pallid brannik 0014",
+  "answer": "verdant quartzine 0014",
   "question_type": "1_hop",
   "evidence_ids": [
-   "falby13",
-   "kanric14"
+   "faldac13",
+   "tasmire14"
   ]
  },
  {
   "query": "What is the value associated with the designer of the water channel in the hills to the south?",
-  "answer": "umber brannik 0016",
+  "answer": "russet ferrolite 0016",
   "question_type": "1_hop",
   "evidence_ids": [
-   "olmstone15",
-   "nuthlun16"
+   "wendwick15",
+   "vorwick16"
   ]
  },
  {
   "query": "What is the value associated with the designer of the publishing works in the central marketplace?",
-  "answer": "crimson vellum 0018",
+  "answer": "ochre skack 0018",
   "question_type": "1_hop",
   "evidence_ids": [
-   "orrker17",
-   "orrpost18"
+   "drudell17",
+   "breldac18"
   ]
  },
  {
   "query": "What is the value associated with the designer of the coastal beacon in the stony promontory?",
-  "answer": "azure lansk 0020",
+  "answer": "umber brannik 0020",
   "question_type": "1_hop",
   "evidence_ids": [
-   "limmire19",
-   "wendven20"
+   "faldac19",
+   "brelker20"
   ]
  },
  {
   "query": "What is the value associated with the designer of the wine estate in the sunlit dale?",
-  "answer": "indigo ferrolite 0022",
+  "answer": "russet vellum 0022",
   "question_type": "1_hop",
   "evidence_ids": [
-   "mirmire21",
-   "rellmond22"
+   "harnash21",
+   "relldell22"
   ]
  },
  {
   "query": "What is the value associated with the designer of the thermal spa in the shoreline bluffs?",
-  "answer": "ochre grist 0024",
+  "answer": "pallid skack 0024",
   "question_type": "1_hop",
   "evidence_ids": [
-   "olmmire23",
-   "olmker24"
+   "faldac23",
+   "wendmond24"
   ]
  },
  {
   "query": "What is the value associated with the designer of the power station in the evergreen woodland?",
-  "answer": "ochre ferrolite 0026",
+  "answer": "pallid skack 0026",
   "question_type": "1_hop",
   "evidence_ids": [
-   "cavstone25",
-   "rellthorn26"
+   "quenthorn25",
+   "rellash26"
   ]
  },
  {
   "query": "What is the value associated with the designer of the stargazing facility in the saline plains?",
-  "answer": "verdant quartzine 0028",
+  "answer": "pallid lansk 0028",
   "question_type": "1_hop",
   "evidence_ids": [
-   "breldac27",
-   "olmpost28"
+   "limgrove27",
+   "wenddac28"
   ]
  },
  {
   "query": "What is the value associated with the designer of the grain-grinding works in the stone pit?",
-  "answer": "umber quartzine 0030",
+  "answer": "crimson grist 0030",
   "question_type": "1_hop",
   "evidence_ids": [
-   "falwick29",
-   "kanholt30"
+   "rellmond29",
+   "falven30"
   ]
  },
  {
   "query": "What is the value associated with the designer of the records vault in the port entrance?",
-  "answer": "crimson perrin 0032",
+  "answer": "pallid quartzine 0032",
   "question_type": "1_hop",
   "evidence_ids": [
-   "cavvale31",
-   "olmcrag32"
+   "limdac31",
+   "wendcrag32"
   ]
  },
  {
   "query": "What is the value associated with the designer of the metal-casting works in the arid hollow?",
-  "answer": "pallid ferrolite 0034",
+  "answer": "umber brannik 0034",
   "question_type": "1_hop",
   "evidence_ids": [
-   "pellby33",
-   "wendash34"
+   "faldac33",
+   "quenmire34"
   ]
  },
  {
   "query": "What is the value associated with the designer of the optical instrument in the iced-over tarn?",
-  "answer": "pallid perrin 0036",
+  "answer": "umber skack 0036",
   "question_type": "1_hop",
   "evidence_ids": [
-   "faldac35",
-   "orrmond36"
+   "skoholt35",
+   "harnmond36"
   ]
  },
  {
   "query": "What is the value associated with the designer of the streetcar line in the enclosed grounds?",
-  "answer": "ochre lansk 0038",
+  "answer": "azure quartzine 0038",
   "question_type": "1_hop",
   "evidence_ids": [
-   "quengrove37",
-   "tasker38"
+   "harnby37",
+   "quenpost38"
   ]
  },
  {
   "query": "What is the value associated with the designer of the water channel in the belfry spire?",
-  "answer": "ochre brannik 0040",
+  "answer": "indigo vellum 0040",
   "question_type": "1_hop",
   "evidence_ids": [
-   "skoric39",
-   "skoby40"
+   "harnven39",
+   "falpost40"
   ]
  }
 ]

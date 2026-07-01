@@ -15,7 +15,7 @@
       "src": "measured from staged_recall_accounting projection",
       "tolerance_abs": 0.05
     },
-    "scifact": {
+    "beir/scifact": {
       "leak_rate_max": 0.013333333333333334,
       "src": "measured from staged_recall_accounting projection",
       "tolerance_abs": 0.05

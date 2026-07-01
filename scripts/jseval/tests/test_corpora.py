@@ -216,6 +216,32 @@ def test_read_qrels_tsv_trec_format(tmp_path):
     assert qrels["q1"]["d2"] == 1
 
 
+def test_read_qrels_tsv_trec_format_with_header(tmp_path):
+    """A 4-column TREC file WITH a header must still take the TREC branch (regression for the
+    bug where `start == 0` silently misrouted a headered TREC file into the 3-column BEIR
+    branch, reading the constant `iter` column as the doc-id)."""
+    tsv = tmp_path / "qrels.tsv"
+    tsv.write_text(
+        "query-id\titer\tdoc-id\trelevance\n"
+        "q1\t0\td1\t2\n"
+        "q1\t0\td2\t1\n",
+        encoding="utf-8",
+    )
+    qrels = _read_qrels_tsv(tsv)
+    assert qrels["q1"]["d1"] == 2
+    assert qrels["q1"]["d2"] == 1
+
+
+def test_read_qrels_tsv_normalizes_doc_id_case(tmp_path):
+    """Doc-ids are lowercased at the mint site so a filesystem-resolved doc-id (also lowercased
+    by `retriever.py:_filename_to_doc_id`) matches regardless of on-disk casing."""
+    tsv = tmp_path / "qrels.tsv"
+    tsv.write_text("q1\tD1\t2\nq1\tMiXeDCaSe2\t1\n", encoding="utf-8")
+    qrels = _read_qrels_tsv(tsv)
+    assert qrels["q1"]["d1"] == 2
+    assert qrels["q1"]["mixedcase2"] == 1
+
+
 def test_read_queries_jsonl(tmp_path):
     f = tmp_path / "queries.jsonl"
     f.write_text(
