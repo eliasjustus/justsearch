@@ -1,7 +1,7 @@
 ---
-title: "Five-minute agent/runtime onramp: make the first successful developer path deterministic before adding more retrieval ambition"
+title: "Five-minute agent/runtime onramp: make the first successful developer path deterministic by finishing the AI capability's runtime-manifest/reason-code wiring, not by adding a new diagnostics subsystem"
 type: tempdocs
-status: "open — takeover investigation pass 2026-07-01 (see §Investigation). Triggered by a live incident: 2 agents independently reported missing models / missing llama-server after the go-public cutover. No design/implementation started yet; this pass is root-cause investigation only."
+status: "open — investigation + design theorization pass 2026-07-01 (see §Investigation, §Design theorization). Triggered by a live incident: 2 agents independently reported missing models / missing llama-server after the go-public cutover. Root cause traced to the Inference capability being the one capability that doesn't route its failure reasons through the existing LifecycleReasonCode/RuntimeManifest substrate. Design conclusion: extend that existing substrate (§D3/§D4), do not build a parallel doctor subsystem. No implementation started."
 created: 2026-06-28
 updated: 2026-07-01
 category: developer-experience / activation / mcp / diagnostics
@@ -10,12 +10,17 @@ related:
   - 655-mcp-conformance-and-capability-policy
   - 657-install-modes-and-model-pack-decomposition
   - 658-retrieval-inspectability-and-diagnostic-bundle
+  - 650-go-public-capability-descriptor-truthfulness
+  - 501-runtime-manifest-design
   - 634-go-public-cutover-transition
+  - docs/explanation/23-runtime-manifest.md
   - docs/reference/contributing/agent-guide.md
   - docs/reference/mcp-production-server.md
   - docs/reference/model-inventory.md
   - scripts/verify-prerequisites.mjs
   - scripts/dev/dev-runner.cjs
+  - modules/app-api/src/main/java/io/justsearch/app/api/lifecycle/LifecycleReasonCode.java
+  - modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java
 ---
 
 > NOTE: Noncanonical working tempdoc. Verify against canonical docs and code before
@@ -210,4 +215,198 @@ No fixes applied, no `justsearch doctor` designed, no README/CONTRIBUTING change
 instruction to investigate/analyze only. Findings A.1, A.3, and A.4 in particular read as small,
 independent, low-risk fixes a future pass could take on immediately regardless of how the larger
 onramp design resolves — flagged here rather than actioned.
+
+## §Design theorization (second pass, 2026-07-01)
+
+This section answers "what should the long-term design actually be," grounded in what the codebase
+already does for adjacent problems. No implementation performed. Design kept at the
+architecture/contract level, not file-by-file — concrete code shape (exact enum names, exact wiring
+call sites) is next-agent implementation work.
+
+### D1. Restating the problem this tempdoc actually has
+
+656 is not "JustSearch needs better onboarding docs" in general. The live incident and the confirmed
+findings above are all one specific shape: **a running or about-to-run instance has an AI-capability
+state that is not ready, and nothing in the system can say, precisely and in one authoritative place,
+why.** The "doctor," "expected status output," and "failure explanations" asks in the original Purpose
+are all requests for *that one capability* — truthful, specific readiness explanation — not a request
+to invent a new UX subsystem. Scope stays there; it does not need to grow into a general onboarding
+redesign, a demo-corpus product decision, or an MCP-client-matrix design (655 already owns that).
+
+### D2. Existing seam #1 — the runtime manifest is already the system's single-authority answer for this class of question
+
+`docs/explanation/23-runtime-manifest.md` (tempdoc 501) already establishes, in force, exactly the
+principle this problem needs: *"Future questions of the form 'how does a non-JVM consumer find
+runtime fact F?' have exactly one acceptable answer: F is a field on the runtime manifest."* This is
+not aspirational — it is mechanically enforced by `scripts/ci/check-runtime-manifest-closure.mjs`,
+which fails a PR that invents a tenth mechanism (new env var, new sibling file, new stdout line).
+
+The manifest already carries an `ai` block (`phase`, `required`, `pendingReason`, `readyAt`) and is
+already exposed on **five** transports simultaneously: HTTP (`GET /api/runtime/manifest`), SSE
+(`GET /api/runtime/manifest/stream`), filesystem (`<dataDir>/runtime/manifest.json`), a
+`.well-known` mirror, and an MCP tool (`justsearch_runtime_manifest`). Any design for "how does a
+developer or agent learn why AI isn't ready" that does not route through this surface would be
+exactly the "tenth mechanism" the closure rule exists to prevent — a parallel, driftable authority
+next to the one that already exists and is already wired everywhere an onramping consumer would look
+(including MCP, which 656's own Purpose calls out).
+
+**Conclusion: whatever "doctor" ends up being, it is a *renderer* of the runtime manifest, not a new
+probe.** This part of the design is not new structure — it's confirming the existing structure already
+covers the surface-area question and should not be duplicated.
+
+### D3. Existing seam #2 — a closed, stable reason-code taxonomy already exists for exactly this failure shape, for every other capability except this one
+
+`LifecycleReasonCode` (`modules/app-api/.../lifecycle/LifecycleReasonCode.java`) is the manifest's
+existing "why" vocabulary: a closed enum, explicitly documented as "low-cardinality, stable, and
+suitable for automation... must not include dynamic details like file paths, exception messages, or
+IDs." It already has the exact precedent this problem needs, for *other* capabilities:
+`VDU_MISSING_MMPROJ` (a required model file is absent), `ORT_CUDA_MISSING_DLLS` (a required native
+library is absent), `WORKER_NOT_CONFIGURED`, `INDEX_BLOCKED_LEGACY`, etc. — one code per
+distinguishable "not ready, and here is specifically why" state, per capability.
+
+For the Inference/AI capability — the one this tempdoc is about — the taxonomy is coarse to the point
+of being nearly useless for diagnosis: only `INFERENCE_STARTING` and `INFERENCE_OFFLINE` exist.
+Verified why: `InferenceCapability.pendingReason()` (`modules/app-services/.../lifecycle/
+InferenceCapability.java:39`) returns a **raw mutable string field** (`reason`, set via
+`transition(health, newReason)`), never validated against `LifecycleReasonCode.isKnown(...)`. This is
+a live, confirmed violation of the pattern every sibling capability follows.
+
+Meanwhile, the actually-useful, already-correctly-detected granular causes exist — just in the wrong
+place. `RuntimeActivationService.fail(...)` (`modules/app-services/.../ai/runtime/
+RuntimeActivationService.java`) already distinguishes exactly the cases this incident hit:
+`MODEL_PATH_REQUIRED` ("No chat model configured"), `MODEL_NOT_FOUND` ("Configured model does not
+exist"), `RUNTIME_BASELINE_NOT_FOUND` ("CPU baseline llama-server.exe not found" — the literal
+"missing llama-server" case), `RUNTIME_VARIANT_NOT_INSTALLED` ("Variant not installed: cuda12" — the
+literal case observations.md already logged from the dev-runner soft-clean bug). But these are ad hoc
+string literals scoped only to the immediate `ai_activate` RPC response — never passed into
+`InferenceCapability.transition(...)`, so they **never reach `ai.pendingReason` on the manifest, and
+therefore never reach any of its five transports.** A developer polling `/api/runtime/manifest` (or
+the MCP tool) mid-failure sees only "Inference not yet activated" or similar generic prose, while the
+system, one layer inward, already knows the precise cause.
+
+A second, smaller instance of the same gap: `StartupCode` (`modules/app-api/.../StartupCode.java`),
+the llama-server *process-launch* failure taxonomy, has a precedent for "a required artifact is
+missing" (`MISSING_DLL`) but no equivalent for "the llama-server executable itself was not found" —
+that case most likely collapses into the generic `PROCESS_EXITED` or `UNKNOWN` today, losing the
+causal signal at the point closest to the OS-level failure.
+
+**Conclusion: the long-term design is not a new subsystem. It is finishing a wiring job the rest of
+the system already did for every other capability** — extend `LifecycleReasonCode` with the missing
+inference-specific entries (following the `VDU_MISSING_MMPROJ`/`ORT_CUDA_MISSING_DLLS` precedent
+exactly), extend `StartupCode` with an executable-not-found entry (following the `MISSING_DLL`
+precedent), and route `RuntimeActivationService`'s already-correct detection through
+`InferenceCapability.transition(health, code)` using those codes instead of local strings. Once wired,
+the manifest — already multi-transport, already MCP-exposed — carries the true, specific reason
+everywhere, automatically, with no new transport or new doc needed.
+
+### D4. The one genuinely new piece — preflight (before any process exists to ask)
+
+The manifest cannot answer "will activation succeed if I try," because that question has no running
+instance to publish an answer from — this is the one real gap D2/D3 don't close. This is where
+`verify-prerequisites.mjs`-shaped logic legitimately belongs; the tool is the right *kind* of thing,
+just the wrong *shape* today (per finding A.3, it hand-maintains its own copy of "where should each
+model file be," which is exactly how it drifted — the citation-scorer path check has been wrong since
+2026-06-13, already known and undocumented-as-fixed).
+
+The design principle for preflight should mirror what already fixed the *other* half of that same
+script: the chat-model check (line 297-309) now reads the expected filename live from
+`model-registry.v2.json`'s `chat` package instead of hardcoding it, specifically "so this check never
+drifts when the packaged model changes" (comment cites tempdoc 579). Preflight, generally, should be a
+thin, read-only reconciliation between the two catalogs the system already maintains as SSOT —
+`model-registry.v2.json` (what should exist, and where, keyed by package id / `targetDir`) and
+`installed-packs.v1.json` + on-disk presence (what actually exists) — never a hand-authored parallel
+path list. This is not new structure to invent; it is applying the fix already proven correct for the
+chat-model check to the rest of the same file, and treating "read the registry, don't hardcode paths"
+as the standing rule for any future preflight/doctor code, not a one-off patch.
+
+### D5. What "doctor" / onramp UX becomes once D3+D4 exist (kept general — not implementation-level)
+
+With D3 (truthful, specific runtime reason codes) and D4 (registry-driven preflight) in place, a
+"doctor" is the union of exactly two read paths, both already-existing-shaped:
+
+- **Before a process runs**: preflight reconciliation (D4) — "given the registry, what's missing on
+  disk right now."
+- **While a process runs**: render the runtime manifest (D2), specifically `ai.phase` +
+  `ai.pendingReason` (now carrying a real `LifecycleReasonCode`, per D3) — "given the running
+  instance's own self-report, what's not ready and why."
+
+Whether this union is exposed as a CLI subcommand, a REST diagnostic endpoint, an MCP tool, or some
+combination is a next-agent implementation decision, not something to fix here — but whichever shape
+is chosen, it should be a thin presentation layer over these two existing/extended read paths, not a
+third independent prober. The same applies to "expected status output" and "failure explanations" in
+the original Purpose: both become renderings of `ai.phase`/`ai.pendingReason` values that are already
+true and already transported, not new content to author by hand (which is exactly how
+`model-inventory.md`'s stale presence table happened — see D6).
+
+The "no-model or small-model path" question is a separate, narrower design question this pass leaves
+open: whether a BM25-only (zero-model) search tier is already functionally viable today is an
+empirical question this pass did not run an experiment for (recommended as the next agent's first
+verification step, per the original investigation pass), and whichever tiers 657's mode decomposition
+settles on, doctor/preflight should describe *those same tiers* — not invent its own.
+
+### D6. The doc-drift finding (A.1) is an instance of an already-named, already-diagnosed class — not a new problem
+
+`docs/reference/model-inventory.md`'s stale "all models are tracked in git" claim (finding A.1) is not
+a one-off documentation slip. Tempdoc 650 already diagnosed the identical shape for a different
+surface (the public "what JustSearch is" narrative): *"the capability narrative has no declared
+source, so every public doc hand-authors it and they drift in one direction."* 650 names the general
+fix as **`canonical-authority-and-projection`** — establish one canonical source, make every other
+surface a projection of it, and guard the projection mechanically (as 633's stack-claim gate already
+does for a different narrative). Tempdoc 579 (`canonical-doc-drift-remediation`, cited by 650) is the
+earlier lineage of the same principle applied to code/doc drift generally.
+
+`model-inventory.md`'s presence table is exactly this: a hand-authored projection of git-tree state
+with no guard keeping it honest, and it silently went stale the moment tempdoc 634's public snapshot
+excluded the LFS blobs it describes. The long-term fix is therefore not "edit the doc" (a short-term
+fix, out of scope here) — it is recognizing the table needs to become either (a) generated from
+`model-registry.v2.json` + a live git/LFS presence check, the same SSOT preflight (D4) already needs to
+read, or (b) demoted to prose that does not assert per-file presence/status at all. Either resolves it
+as an instance of 650/579's already-adopted remediation shape, not a new one.
+
+### D7. Principle recognition and reach (recognizing ≠ building)
+
+**Named principle (reusing the existing name, not inventing a new one): `canonical-authority-and-projection`**
+(tempdoc 650). Restated for this domain: *every "is X present / is X ready / why isn't X ready"
+surface in JustSearch should be a projection of exactly one authoritative state machine, never a
+hand-authored parallel copy.* For *runtime* facts, that authority is Capability + LifecycleReasonCode
++ RuntimeManifest (D2/D3). For *installable-artifact identity* facts, that authority is
+`model-registry.v2.json` (D4/D6).
+
+This pass found the principle already named twice, independently, in different parts of the system —
+579 for code/doc drift, 650 for the public capability narrative — and now finds a **third, independent
+instance** in a third part of the system entirely (runtime lifecycle reason-code plumbing: D3) plus a
+recurrence of the original doc-drift instance (D6) and a script-level instance (`verify-prerequisites.mjs`'s
+citation-scorer path, A.3). Three independent lineages converging on the same shape across docs, scripts,
+and runtime-lifecycle code is reasonably strong evidence this is a real, recurring invariant of the
+system rather than a coincidence — worth naming plainly so a future agent recognizes the fourth instance
+faster.
+
+**Where else this principle plausibly applies (candidate scope, not proposed work):**
+- Any other `Capability` implementation's `pendingReason()` that returns a raw string rather than a
+  `LifecycleReasonCode`-validated one — `WorkerCapability.pendingReason()` was not audited in this pass
+  and should be checked for the same violation before assuming Inference is the only offender.
+- The other reason-code-shaped enums this pass noticed in passing but did not audit
+  (`OcrSkipReason`, `IngestionReasonCodes`, `ValidationReason` in adapters-lucene) — likely already
+  conform (they read as properly-closed enums from their names/locations), but this pass did not verify
+  them; noted as a candidate check, not a finding.
+- Any future canonical reference doc (like `model-inventory.md`) that asserts a fact about shipped/
+  present artifacts without a generating mechanism is a candidate for the same drift.
+
+**What this pass deliberately does not do:** build a generalized "projection-drift linter" gate, audit
+every `Capability` implementation, or retrofit `OcrSkipReason`/`IngestionReasonCodes`/`ValidationReason`.
+656's actual, present problem is fully addressed by D3+D4+D6 (the Inference capability's wiring, the
+registry-driven preflight, and the one stale doc) — generalizing further now would be structure the
+current problem does not require. The principle is recorded here so it's recognized quickly if a
+future tempdoc hits the fourth instance; building the generalized enforcement is that future tempdoc's
+call, not this one's.
+
+### D8. Public-repo caution
+
+This tempdoc is design history in a public repository and may be read externally once merged. Nothing
+in D1-D7 is a public-facing claim — it's internal reason-code/manifest wiring. Flagging explicitly so a
+future README/CONTRIBUTING update drawing on this design doesn't get ahead of the work: do not describe
+JustSearch as already telling developers "exactly why AI isn't ready" (or similar) until D3's wiring
+has actually shipped and been live-verified: an unshipped design conclusion stated as present-tense
+capability would be the same undercount-in-reverse class of falsehood 650 diagnosed on the public
+descriptor, just overclaiming instead of undercounting.
 
