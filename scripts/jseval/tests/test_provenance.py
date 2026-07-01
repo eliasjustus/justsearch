@@ -294,6 +294,43 @@ class TestStageTiming:
         agg = aggregate_run_evidence(evidences)
         assert agg["stage_timing_stats"] == {}
 
+    def test_unaccounted_remainder_closes_the_decomposition(self):
+        # tempdoc 647: took_ms encloses the stages, so the remainder is the CPT "unaccounted" node and
+        # the per-entry shares close to 1. Remainders: 180-(4+150)=26, 182-(6+154)=22 → mean 24.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 4, "cross_encoder_ms": 150}, "took_ms": 180},
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 6, "cross_encoder_ms": 154}, "took_ms": 182},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert "unaccounted_ms" in st
+        assert st["unaccounted_ms"]["mean"] == 24.0
+        assert st["unaccounted_ms"]["p50"] >= 0  # non-negative by construction
+        total_share = (st["retrieval_ms"]["share"] + st["cross_encoder_ms"]["share"]
+                       + st["unaccounted_ms"]["share"])
+        assert abs(total_share - 1.0) < 1e-3  # the parts close to the whole
+
+    def test_unaccounted_clamps_subms_rounding_negatives(self):
+        # Σ stages slightly exceeds took_ms (sub-ms rounding at tiny stages) → clamp to 0 and count it.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 5, "cross_encoder_ms": 176}, "took_ms": 180},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert st["unaccounted_ms"]["p50"] == 0
+        assert st["unaccounted_ms"]["clamped_negative_count"] == 1
+
+    def test_no_shares_or_remainder_without_took_ms(self):
+        # Backward compatibility: legacy inputs without took_ms get neither shares nor a remainder.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 5, "cross_encoder_ms": 40}},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert "unaccounted_ms" not in st
+        assert "share" not in st["retrieval_ms"]
+
 
 class TestUnifiedTraceFirst:
     """Tempdoc 549 Phase E4: extract_query_evidence reads SOLELY the unified SearchTrace."""

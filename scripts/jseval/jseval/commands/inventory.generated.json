@@ -132,6 +132,10 @@
     "group": "gates"
   },
   {
+    "name": "perf-report",
+    "group": "analysis"
+  },
+  {
     "name": "preflight",
     "group": "ops"
   },

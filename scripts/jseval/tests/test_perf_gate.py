@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from jseval.perf_gate import (
+    derive_resident_component_bytes,
     derive_resident_model_bytes,
     evaluate,
     project_release_to_perf_baselines,
     project_run_to_perf_baselines,
+    retrieval_p50_ms,
     run_dataset_ok,
 )
 
@@ -239,3 +241,73 @@ def test_run_dataset_ok_guards_cross_corpus():
     # (tempdoc 640 live-validation finding — the release-projection path keys on the canonical slug)
     assert run_dataset_ok({"dataset": "scifact"}, "beir/scifact") is True
     assert run_dataset_ok({"dataset": "mixed/enron-qa"}, "beir/scifact") is False
+
+
+# --- tempdoc 647: the retrieval stage is promoted + gated relatively ---------
+
+def test_retrieval_reader_prefers_aggregate_then_stage_timing():
+    canonical = {"per_mode": {"hybrid": {"aggregate_metrics": {"retrieval_p50_ms": 4.0}}}}
+    assert retrieval_p50_ms(canonical, "hybrid") == 4.0
+    legacy = {"per_mode": {"hybrid": {"stage_timing_stats": {"retrieval_ms": {"p50": 6}}}}}
+    assert retrieval_p50_ms(legacy, "hybrid") == 6  # fallback for runs predating the promotion
+
+
+def test_retrieval_stage_gates_relatively():
+    base = {"baselines": {"beir/scifact": {"mode": "hybrid",
+            "metrics": {"retrieval_p50_ms": 4.0}, "bands": {"retrieval_p50_ms": 1.5}}}}
+    within = {"per_mode": {"hybrid": {"aggregate_metrics": {"retrieval_p50_ms": 5.0}}}}  # 1.25 < 1.5
+    assert evaluate(base, within, "beir/scifact")["exit_code"] == 0
+    over = {"per_mode": {"hybrid": {"aggregate_metrics": {"retrieval_p50_ms": 7.0}}}}  # 1.75 > 1.5
+    rep = evaluate(base, over, "beir/scifact")
+    assert rep["exit_code"] == 1
+    assert next(c for c in rep["checks"] if c["name"] == "retrieval_p50_ms")["status"] == "fail"
+
+
+# --- tempdoc 647: per-component footprint allocation ------------------------
+
+def _models_layout(tmp_path, *, with_llm=True):
+    models = tmp_path / "models"
+    for d in ("onnx/gte-multilingual-base", "onnx/reranker", "onnx/ner", "splade/naver-splade-v3"):
+        (models / d).mkdir(parents=True)
+        (models / d / "model.onnx").write_bytes(b"x" * 1000)
+    if with_llm:
+        (models / "Qwen.gguf").write_bytes(b"y" * 5_000_000)
+    return models
+
+
+def _manifest(models, *, online=True):
+    mf = {"splade_model_path": str(models / "splade" / "naver-splade-v3"), "embed_gpu": False}
+    snap = {"activeModelId": "Qwen.gguf" if online else None}
+    return {"model_fingerprints": mf, "inference_status_snapshot": snap}
+
+
+def test_component_footprint_splits_and_sums_to_total(tmp_path):
+    mani = _manifest(_models_layout(tmp_path))
+    comps = derive_resident_component_bytes(mani)
+    assert set(comps) == {"embed_bytes", "splade_bytes", "reranker_bytes", "ner_bytes", "llm_bytes"}
+    assert comps["llm_bytes"] == 5_000_000
+    # the per-component split closes to the resident total (the footprint decomposition)
+    assert sum(comps.values()) == derive_resident_model_bytes(mani)
+
+
+def test_component_footprint_omits_llm_when_ai_offline(tmp_path):
+    comps = derive_resident_component_bytes(_manifest(_models_layout(tmp_path), online=False))
+    assert "llm_bytes" not in comps and "embed_bytes" in comps  # LLM not resident offline
+
+
+def test_component_footprint_is_best_effort_not_data_error():
+    base = {"baselines": {"beir/scifact": {"mode": "hybrid",
+            "metrics": {"ce_p50_ms": 170.0, "llm_bytes": 5_000_000},
+            "bands": {"ce_p50_ms": 1.25, "llm_bytes": 1.05}}}}
+    rep = evaluate(base, _summary("hybrid", ce_p50=175.0), "beir/scifact", manifest=None)
+    assert rep["exit_code"] == 0
+    assert next(c for c in rep["checks"] if c["name"] == "llm_bytes")["status"] == "skip"
+
+
+def test_component_footprint_gates_on_bloat(tmp_path):
+    mani = _manifest(_models_layout(tmp_path))  # derives llm_bytes = 5 MB
+    base = {"baselines": {"beir/scifact": {"mode": "hybrid",
+            "metrics": {"llm_bytes": 4_000_000}, "bands": {"llm_bytes": 1.05}}}}  # 5/4 = 1.25 > 1.05
+    rep = evaluate(base, {"per_mode": {"hybrid": {}}}, "beir/scifact", manifest=mani)
+    assert rep["exit_code"] == 1
+    assert next(c for c in rep["checks"] if c["name"] == "llm_bytes")["status"] == "fail"
