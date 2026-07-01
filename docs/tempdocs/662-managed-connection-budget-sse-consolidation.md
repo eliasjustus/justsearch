@@ -1472,4 +1472,28 @@ typecheck` clean; `:modules:ui:test --tests "*MultiplexedSseWriterTest*"` and th
 suite green. No live-browser re-verification needed — both are internal robustness fixes to
 already-live-verified mechanisms, not new user-visible behavior.
 
+## Bug fixes, round 4 (2026-07-01) — test-coverage gap found and closed; no production bug
+
+A fourth critical-review pass (adversarial subagent + independent verification of every claim against the
+actual code before accepting) re-examined round 3's two fixes specifically. Result: **both fixes' core logic
+verified correct, no new production bugs.** Explicitly checked and disproven: whether `resumeToken === null`
+could ever be a false signal (traced every assignment site in `MultiplexedStream.ts` — it is a monotonic
+ratchet, never reset once set, so the check is sound); whether the empty-`entries` case behaves correctly
+(it does — `.some()` on empty returns `false`, correctly skipping); whether `e.addSuppressed(...)` correctly
+accumulates multiple failures rather than only keeping the last one (it does — called once per failing
+iteration inside the loop, and `Throwable`'s suppressed list accumulates by design).
+
+**Real gap found (test-only, no production fix needed):** `MultiplexedSseWriterTest.java`'s
+`midLoopFailureCleanupSurvivesUnsubscribeThrowing` only ever produced a single-element cleanup list (the
+second channel failed at `snapshotExtras.get()` *before* ever calling `subscribe()`, so it was never added to
+`subscriptions`). The test's own `@DisplayName` claims it verifies cleanup "attempts every subscription, not
+just the ones before the failure" — a claim about *multiple* items that a one-item list can't actually prove.
+**Fix:** strengthened the test to use three channels (two successfully-subscribed channels whose
+`unsubscribe()` both throw distinct exceptions, plus the failing third), asserting both cleanup attempts
+happen and both failures are individually present in `getSuppressed()` — genuinely proving the loop doesn't
+stop early and that suppressed exceptions accumulate rather than overwrite.
+
+**Verification:** `:modules:ui:test --tests "*MultiplexedSseWriterTest*"` and the full `:modules:ui:test`
+suite green. No frontend or tempdoc-design changes this round — Java test-only.
+
 No further known unimplemented work remains on this tempdoc.

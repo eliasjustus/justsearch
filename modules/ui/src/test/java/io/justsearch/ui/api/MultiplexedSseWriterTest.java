@@ -27,6 +27,7 @@ import io.justsearch.app.observability.stream.StreamSequenceTracker;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -351,6 +352,10 @@ final class MultiplexedSseWriterTest {
           + "ORIGINAL exception still propagates (as a suppressed-exception carrier), and "
           + "cleanup still attempts every subscription, not just the ones before the failure")
   void midLoopFailureCleanupSurvivesUnsubscribeThrowing() {
+    // TWO already-subscribed channels (chA, chC) whose unsubscribe() BOTH throw, so this
+    // actually exercises "the loop doesn't stop at the first cleanup failure" and "multiple
+    // suppressed exceptions accumulate" — not just a single-element list, which the
+    // @DisplayName's claim requires but a one-channel setup wouldn't verify.
     SseStreamChannel chA = mock(SseStreamChannel.class);
     when(chA.streamId()).thenReturn(STREAM_A);
     when(chA.nextEnvelope(any(), any()))
@@ -362,13 +367,33 @@ final class MultiplexedSseWriterTest {
                 Instant.now(),
                 Map.of("kind", "connected"),
                 ResumeTokenCodec.encode(STREAM_A, 1L)));
-    RuntimeException unsubscribeFailure = new RuntimeException("chA unsubscribe boom");
+    RuntimeException unsubscribeFailureA = new RuntimeException("chA unsubscribe boom");
     AtomicBoolean chAUnsubscribeAttempted = new AtomicBoolean(false);
     when(chA.subscribe(any()))
         .thenReturn(
             () -> {
               chAUnsubscribeAttempted.set(true);
-              throw unsubscribeFailure;
+              throw unsubscribeFailureA;
+            });
+
+    SseStreamChannel chC = mock(SseStreamChannel.class);
+    when(chC.streamId()).thenReturn(STREAM_C);
+    when(chC.nextEnvelope(any(), any()))
+        .thenReturn(
+            new SseEnvelope(
+                STREAM_C,
+                SseFrameKind.LIFECYCLE,
+                1L,
+                Instant.now(),
+                Map.of("kind", "connected"),
+                ResumeTokenCodec.encode(STREAM_C, 1L)));
+    RuntimeException unsubscribeFailureC = new RuntimeException("chC unsubscribe boom");
+    AtomicBoolean chCUnsubscribeAttempted = new AtomicBoolean(false);
+    when(chC.subscribe(any()))
+        .thenReturn(
+            () -> {
+              chCUnsubscribeAttempted.set(true);
+              throw unsubscribeFailureC;
             });
 
     SseStreamChannel heartbeatChannel = new SseStreamChannel(HEARTBEAT_STREAM);
@@ -380,6 +405,7 @@ final class MultiplexedSseWriterTest {
     List<MultiplexedSseWriter.ChannelSource> sources =
         List.of(
             new MultiplexedSseWriter.ChannelSource(chA, () -> Map.of("v", "a")), // succeeds, subscribes
+            new MultiplexedSseWriter.ChannelSource(chC, () -> Map.of("v", "c")), // succeeds, subscribes
             new MultiplexedSseWriter.ChannelSource(
                 new SseStreamChannel(STREAM_B),
                 () -> {
@@ -396,13 +422,22 @@ final class MultiplexedSseWriterTest {
     assertEquals(
         snapshotFailure,
         thrown,
-        "the ORIGINAL failure must still be what's thrown, not the cleanup failure that "
+        "the ORIGINAL failure must still be what's thrown, not either cleanup failure that "
             + "happened while handling it");
     assertTrue(
         chAUnsubscribeAttempted.get(),
         "chA's unsubscribe must still be attempted even though it throws");
-    assertEquals(1, thrown.getSuppressed().length, "the cleanup failure must not be silently dropped");
-    assertEquals(unsubscribeFailure, thrown.getSuppressed()[0]);
+    assertTrue(
+        chCUnsubscribeAttempted.get(),
+        "chC's unsubscribe must ALSO be attempted — a failure on chA must not stop the loop "
+            + "before reaching chC");
+    assertEquals(
+        2,
+        thrown.getSuppressed().length,
+        "BOTH cleanup failures must be recorded, not just the last one: " + Arrays.toString(thrown.getSuppressed()));
+    List<Throwable> suppressed = List.of(thrown.getSuppressed());
+    assertTrue(suppressed.contains(unsubscribeFailureA), "chA's cleanup failure must be suppressed-attached");
+    assertTrue(suppressed.contains(unsubscribeFailureC), "chC's cleanup failure must be suppressed-attached");
   }
 
   // ============================================================
