@@ -2007,3 +2007,62 @@ cross-audience activation/readiness domain.
   capability catalog / Head projection are not built until the second renderer arrives (587's own
   phasing; the YAGNI rule).
 
+## §Confidence pass (fifteenth, 2026-07-01) — the remaining *implementable* work
+
+Confidence-building for the three warranted-now items (discoverable doctor / smoke-in-CI / dangling-ref
+fix). The big tier projection stays deferred by design. Read-only investigation + one live experiment.
+**No feature code changed.**
+
+### Resolved
+
+**#1 [was biggest] Smoke-in-CI is viable at Tier 0 — CONFIRMED, with a clear home.** Ran
+`test-onramp-first-success.mjs` with an **empty** `JUSTSEARCH_MODELS_DIR` (simulating a public CI
+runner: no models, no GPU). The stack started, indexed the demo corpus **with no embedding model**, and
+the query returned **1 result in TEXT mode (tier 0)** — the Tier-0 assertion passed and the conditional
+Tier-1 assertion correctly *skipped*. Wall-clock **18 s** (the earlier ~60 s was a one-off `installDist`
+rebuild, not the steady state). So the smoke does **not** need models/GPU and is fast enough for CI.
+Characterization of the home: `ci.yml` is fast **script-only fact-lanes** (no stack) — the smoke does
+not belong there; the only stack-starting job (`phase-3-observability-nightly.yml`) is a **self-hosted
+perf runner** and adding the smoke there would be Tier-2 + **redundant with jseval's** `--start-backend`
+run. **Honest recommendation: a dedicated public-hosted Tier-0 smoke lane** (or a `workflow_dispatch` +
+scheduled lane) — it proves the exact promise the onramp makes (zero-download first success) on the same
+public runners a user would use. Two known costs, neither a blocker: (a) the lane pays a **full
+dev-stack bootstrap** (Java `assemble` + `npm ci` + a Vite frontend spawn the smoke doesn't actually use
+— `dev-runner.cjs:1233` always spawns it; a future `--no-frontend` flag would trim it); (b) a new
+workflow needs an entry in `workflow-signal-policy.v1.json` or `check-workflow-triggers.mjs` fails.
+
+**#2 [low] Doctor discoverability home — CONFIRMED.** A root `package.json` with a `scripts` block
+exists (home for `npm run doctor`); dev-runner's dispatch (`cmd === 'start'|'status'|'stop'|'cleanup'`)
+extends cleanly to a `doctor` subcommand; and the CJS→ESM invocation is already a proven pattern (the
+smoke spawns `doctor.mjs` via `execFileSync`). No surprises.
+
+**#3 [trivial] Dangling-ref — DECIDED.** Drop the `docs/how-to/onramp.md` link from
+`examples/onramp-corpus/README.md`. A standalone how-to is O5/UI work (rides 654); the only defect is
+the broken link in shipped public content.
+
+**#4 [separate] Deferred design soundness — HIGH.** The tier-as-capability-projection design conforms
+to shipped patterns (587's probe→effective→policy, the CI-enforced code→wording register/gate,
+`availability.ts`'s "two tiers, one authority"), and the renderer homes (`justsearch_status`,
+`EmptyStateRegistry`, `WalkthroughRegistry`) were confirmed to exist. The only residual is that 654/655
+might frame the tier differently — which the *promotion trigger* (declare-then-render at the second
+consumer) absorbs by construction.
+
+### Confidence rating (remaining *implementable* work): **8 / 10**
+The biggest unknown (does the smoke survive a model-less CI-like env) resolved positively and fast; the
+discoverability home and the dangling-ref are trivial and confirmed. Held below 9 only by minor
+open *judgment* (not risk): which lane hosts the smoke and whether to add a `--no-frontend` flag to
+avoid the wasted Vite spawn. Nothing here is a genuine surprise-in-waiting.
+Deferred-design soundness (not built now): **~8/10** — sound, conforms, renderer homes exist.
+
+### Difficulty + recommended model/effort
+**Difficulty: LOW — the easiest remaining work in this tempdoc.** An `npm run doctor` script + a
+`dev-runner doctor` subcommand (a few lines, proven pattern), a CI workflow yaml + a
+`workflow-signal-policy` entry (small, mechanical, light care on triggers), and a one-line doc edit. No
+Java, no new logic, no browser validation (the smoke *is* the validation).
+
+**Recommended: Sonnet at low-medium effort** for the whole batch — well-scoped, mechanical, low-judgment.
+**Fable is acceptable** for the purely mechanical subset (the npm script, the dangling-ref edit, the
+dev-runner subcommand). **Not Opus** — the deep reasoning was the design pass, which is done and
+deliberately deferred; nothing remaining needs it. The one spot rewarding a little care is the CI lane
+(trigger policy + lane choice), comfortably within Sonnet.
+
