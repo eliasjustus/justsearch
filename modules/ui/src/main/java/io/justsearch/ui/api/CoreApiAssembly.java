@@ -60,6 +60,7 @@ final class CoreApiAssembly {
       TimeSeriesController timeSeriesController,
       AiRuntimeController aiRuntimeController,
       AiPackController aiPackController,
+      AiModelsController aiModelsController,
       HeadHttpInflightMetricCatalog inflightCatalog,
       HeadGpuMetricCatalog gpuCatalog,
       KnowledgeSearchController knowledgeSearchController) {}
@@ -142,7 +143,8 @@ final class CoreApiAssembly {
             enterprisePolicyService,
             b.settingsStore,
             b.offlineProcessingTrigger,
-            telemetry);
+            telemetry,
+            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     Supplier<String> diskPressureSupplier = null;
     if (telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt) {
       diskPressureSupplier = () -> lt.getHealthState().getDiskPressureLevel().name();
@@ -357,9 +359,16 @@ final class CoreApiAssembly {
                 b.settingsStore,
                 gpuCapabilitiesService,
                 enterprisePolicyService,
-                b.workerFeatureCache);
+                b.workerFeatureCache,
+                resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     AiRuntimeController aiRuntimeController =
         new AiRuntimeController(runtimeActivationHelper, enterprisePolicyService, telemetry);
+    // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk
+    // presence — reuses aiInstallHelper + runtimeActivationHelper, no new resolution logic.
+    AiModelsController aiModelsController =
+        new AiModelsController(
+            new io.justsearch.app.services.ai.preflight.AiPreflightService(
+                aiInstallHelper, runtimeActivationHelper));
     AiPackImportService aiPackImportHelper =
         b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
             ? b.HeadAssembly.serviceOut().aiPackImportHelper()
@@ -447,6 +456,7 @@ final class CoreApiAssembly {
         timeSeriesController,
         aiRuntimeController,
         aiPackController,
+        aiModelsController,
         inflightCatalog,
         gpuCatalog,
         knowledgeSearchController);
