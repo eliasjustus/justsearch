@@ -592,9 +592,8 @@ they are still true on current `main` was explicitly out of scope and not attemp
 ### Handoff — where this work lives, and one thing to know before relying on it
 
 Committed on branch `worktree-665-observations-lifecycle` (worktree `.claude/worktrees/665-observations-lifecycle`),
-commit `62a0248` plus a small follow-up commit folding one more observation found while closing out this
-tempdoc (see below). Open a PR from this branch if one does not already exist by the time this is read; check
-GitHub for its merge state before assuming any of this is on `main` yet.
+opened as [PR #28](https://github.com/eliasjustus/justsearch/pull/28). Check that PR's state before assuming any
+of this is on `main` yet — it had not been reviewed or merged as of this tempdoc's last edit.
 
 **One caveat that matters for anyone verifying `observation-shard-hint` after this merges**: hook wiring is
 generated, not automatic. `governance/agent-hooks.v1.json` is the tracked, committed authority, but
