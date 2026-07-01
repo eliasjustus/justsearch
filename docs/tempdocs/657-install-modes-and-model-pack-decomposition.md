@@ -1,9 +1,9 @@
 ---
 title: "Install modes and model-pack decomposition: separate Full Desktop, Headless Runtime, and MCP Lite so first-run weight is explicit and optional"
 type: tempdocs
-status: open
+status: open — re-scoped LAUNCH-BLOCKER 2026-07-01 (§Re-scope note)
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-01
 category: packaging / installer / model-distribution / developer-experience
 related:
   - 654-local-runtime-contract-and-product-center
@@ -57,3 +57,15 @@ model distribution, runtime config, and public docs.
 - Can a no-model or small-model mode still provide enough value for developer evaluation?
 - What installer/runtime metadata must expose the active mode so callers do not guess?
 
+
+---
+
+# Re-scope note (2026-07-01)
+
+Elevated to **launch-blocker** alongside 656: install-mode / model-pack decomposition is what makes
+the five-minute path physically possible.
+
+One decision this design must NOT make unilaterally: **which capability tier the lightest mode
+ships** (search-only vs. search + small model) — that choice shapes the public first-touch claim
+and is reserved for founder/strategy input. Design the decomposition so the tier boundary is a
+configuration choice, then surface the options with their trade-offs.
