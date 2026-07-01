@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 import io.javalin.http.Context;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
+import io.justsearch.app.api.mcp.McpContractVersions;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -57,7 +58,15 @@ class McpProtocolHandlerTest {
     assertEquals("2.0", response.get("jsonrpc"));
     @SuppressWarnings("unchecked")
     Map<String, Object> result = (Map<String, Object>) response.get("result");
-    assertEquals("2025-11-25", result.get("protocolVersion"));
+    // Tempdoc 654: both versions are single-sourced from McpContractVersions — assert against the
+    // constants (not literals) so the manifest's RuntimeContract and this response can't desync.
+    assertEquals(McpContractVersions.PROTOCOL_VERSION, result.get("protocolVersion"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> serverInfo = (Map<String, Object>) result.get("serverInfo");
+    assertEquals(
+        McpContractVersions.TOOL_SURFACE_VERSION,
+        serverInfo.get("version"),
+        "serverInfo.version is the MCP-native slot for the curated tool-surface version");
     @SuppressWarnings("unchecked")
     Map<String, Object> caps = (Map<String, Object>) result.get("capabilities");
     assertNotNull(caps.get("tools"));
