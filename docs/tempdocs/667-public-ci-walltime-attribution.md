@@ -1,7 +1,7 @@
 ---
 title: "Public CI wall-clock attribution and advisory latency budgets"
 type: tempdoc
-status: "active — design settled, not implemented"
+status: "implemented — PR #39, live-verified on CI run 28539588910"
 created: 2026-07-01
 updated: 2026-07-01
 related:
@@ -534,6 +534,70 @@ Sources: [Actions workflow-jobs REST API](https://docs.github.com/en/rest/action
 [OTel CI/CD metrics semconv](https://opentelemetry.io/docs/specs/semconv/cicd/cicd-metrics/),
 [OTel Contrib githubreceiver / GH-Actions OTel exporters](https://github.com/marketplace/actions/opentelemetry-for-github-workflows-jobs-and-steps).
 
+## Implementation closeout - 2026-07-01
+
+Implemented the settled wall-clock attribution band (PR #39) without adding any blocking gate,
+changing any parallelism value, or touching branch protection / required checks.
+
+What landed:
+
+- added `scripts/ci/report-ci-walltime-attribution.mjs` — a pure `buildWalltimeReport({ run, jobs })`
+  over the parsed GitHub Actions jobs JSON (consumed from a `--jobs-json` file, so the network/auth
+  fetch stays out of the pure logic, mirroring how the unit script consumes XML); reports per-job
+  wall-clock, per-step fixed-tax-vs-work split, the critical-path job, and a `run_attempt` rerun
+  caveat. Sibling of `report-unit-test-attribution.mjs`, sharing its output conventions (`KIND`, dual
+  JSON+MD, `GITHUB_STEP_SUMMARY` append);
+- added `scripts/ci/report-ci-walltime-budget.mjs` + `scripts/ci/ci-walltime-policy.v1.json` — a
+  warn-only per-job wall-clock budget (mirroring `report-unit-test-budget.mjs` /
+  `unit-test-shard-policy.v1.json`), advisory only, with the CI checks remaining the pass/fail
+  authority;
+- added `scripts/ci/report-ci-walltime-trend.mjs` + `.github/workflows/ci-walltime-trend.yml` — a
+  post-hoc median-over-N drift analyzer that opens a single de-duped issue only on sustained drift;
+- added fixture self-tests for all three scripts
+  (`scripts/ci/test-report-ci-walltime-{attribution,budget,trend}.mjs`);
+- edited `.github/workflows/ci.yml` — added `actions: read` and one advisory `needs`-gated
+  `ci-walltime` job (`CI wall-clock attribution`), deliberately NOT added to
+  `workflow-signal-policy.v1.json` `requiredStatusChecks`;
+- registered the trend workflow in `scripts/ci/workflow-signal-policy.v1.json`;
+- recorded rationale (comment-only, no value change) on `modules/app-services/build.gradle.kts`
+  (`maxParallelForks = 1`) and `build-logic/.../JvmBaseConventionsPlugin.kt` (CI `testParallelism`):
+  conservative defaults on a 16 GiB / 4 vCPU runner (memory non-binding; vCPU-bound), value changes
+  deferred to the optimization band pending hosted validation;
+- renamed this tempdoc from `667-public-ci-license-and-build-lane-attribution.md` to
+  `667-public-ci-walltime-attribution.md` to match the settled scope (the license split was dropped
+  after measurement showed it is never the critical path).
+
+Deliberate deviation from the Design settlement: the settlement described the trend analyzer as a
+"scheduled/dispatch" analyzer. It shipped **dispatch-only, not scheduled** — this conforms to
+ADR-0026's manual-only convention (the sibling `phase-3-observability-nightly.yml` is likewise
+`workflow_dispatch`-only, with its cron intentionally not enabled) and keeps the
+`check-workflow-triggers` guard green. A scheduled cadence can be added later by updating the
+workflow's `on:` block and the `expectedTriggers` for its entry in `workflow-signal-policy.v1.json`.
+
+The advisory ceilings are an initial visibility floor, not a performance promise (median × ~1.25 over
+a 15-run sample; revisit only after more clean hosted samples): app-ui 750, search-worker 660,
+platform-contracts 640, build 595, license 405, public-claims 120, secret-scan 90 (seconds).
+
+Live verification (CI run `28539588910`, green):
+
+- the `CI wall-clock attribution` job's 10 steps all succeeded, including the `gh api .../attempts/<n>/jobs`
+  fetch under the new `actions: read` grant, both report steps, and the artifact upload;
+- the downloaded `ci-walltime-attribution` artifact was correct: critical path `Unit tests (app-ui)`
+  at 12m 0s, per-job fixed-tax-vs-work split, and a warn-only budget with 0 warnings (every lane
+  under its ceiling);
+- observed in the GitHub Actions UI that the run is green and the report Markdown renders as tables
+  (the sibling unit-test summaries use the identical format);
+- local: `node --check` + the three new self-tests pass; existing regressions
+  (`test-report-unit-test-{attribution,budget}`, `test-verify-unit-test-shard-policy`,
+  `test-workflow-signal-health`, `test-check-ui-cycles`) pass; `check-workflow-triggers` and
+  `verify-unit-test-shard-policy` green; `./gradlew.bat build -x test` clean.
+
+Out of scope / follow-on (recorded, not done): the optimization band (raising
+`maxParallelForks`/`testParallelism`, cross-job build cache, `Build (no model blobs)` internal
+parallelism), to be *led* by this attribution and validated on hosted runners; a scheduled trend
+cadence; and whether the wall-clock layer warrants a note in `docs/explanation/09-testing-strategy.md`
+alongside the unit-test attribution.
+
 ## Confidence-building pass - 2026-07-01
 
 A pre-implementation investigation to reduce surprises. Read-only / measurement-only (repo reads,
@@ -646,3 +710,239 @@ design stands with the two wording corrections folded in.
 Sources: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [Double the power for open source](https://github.blog/news-insights/product-news/github-hosted-runners-double-the-power-for-open-source/),
 [Controlling permissions for GITHUB_TOKEN](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token).
+
+## Post-implementation ideation and practicality - 2026-07-01
+
+A forward-looking pass (research + judgment) on what the shipped attribution *enables* and what is
+actually worth doing. Documentation only — nothing here is built. Three web-research rounds informed
+it (build-observability UX, GitHub-native PR-feedback surfaces, and the Develocity build-time
+breakdown); the practicality filter is applied honestly for **this** repo's reality.
+
+### The framing that governs everything below
+
+What shipped is best understood as a **read-model over CI run data** — a standing, structured
+projection of "where each run's wall-clock went." Every idea below (delta-vs-baseline, a PR comment,
+a chart, a carbon line, an OTel span, a contributor "CI facts" page, the config-vs-test overhead
+split) is a **projection or surface over that same read-model**, not a new capability. The read-model
+is the durable asset; surfaces are cheap to add *later*, and each should wait for a real consumer.
+This is the repo's own **projection-not-fork** discipline (tempdoc 553 / the execution-surfaces
+register) applied to CI data, and it connects to this tempdoc's **Principle A** (the attribution rung
+of the attribute→budget band): the attribution exists; the downstream projections are the budget/
+trend/… rungs, added only as needed.
+
+**The practicality lens, stated bluntly.** JustSearch is a public alpha with **no real users yet** and
+a **tiny contributor base (largely the maintainer + coding agents)**. So the attribution's only
+current consumer is *whoever does CI-latency work* — the maintainer and agents. That single fact sorts
+the ideas: things that help the **solo/agent optimizer** have real near-term value; things that serve
+**human contributors** (PR comments, badges, dashboards, a facts page) are premature until such
+contributors exist. On-brand-but-vanity items (carbon, OTel) are identity-aligned yet serve no current
+consumer. The honest deliverable of this pass is therefore not a wishlist but a *ranked, filtered*
+record so a future agent does not build a contributor-DX platform for a repo with one contributor.
+
+### Tier 1 — worth doing (cheap, real value even for a solo/agent optimizer)
+
+- **Config-vs-test overhead decomposition (the standout).** The one insight this tempdoc promised but
+  the shipped artifact does not surface in a single glance (see the last conceptual review): for the
+  unit lanes, the "Unit tests" Gradle step lumps *configuration + JVM fork startup + actual test
+  execution* into one "work" number (~9m51s for app-ui), when only ~2m45s is real testing. The
+  industry-standard "where did the time go" view — Develocity's Build Scan splits build time into
+  **Configuration / Task-execution / Test-execution** — is exactly this decomposition. It is buildable
+  *without new inputs*: the `ci-walltime` job runs after the unit lanes and can read their already-
+  uploaded `unit-test-attribution-*` artifacts (summed suite time), then compute per unit lane
+  `step wall-clock − summed suite time = framework/JVM/config/fork overhead`. This (a) delivers the
+  tempdoc's headline insight as a one-glance fact, (b) directly feeds the optimization band — it says
+  *how many minutes are addressable overhead vs irreducible test work*, and (c) **quantifies the cost
+  of the documented config-cache blocker** (the diffplug/spotless Windows bug in this tempdoc's
+  follow-on): the "configuration" slice is precisely what Configuration Cache would eliminate, so the
+  overhead line turns "re-test the blocker someday" into "the blocker costs ~X min/run." This is the
+  most tempdoc-aligned, highest-leverage improvement, and it composes existing artifacts.
+- **Honesty polish on the attribution's own framing.** Once the overhead split exists, rename the
+  misleading "work" column (it currently reads as "the tests took 9m51s" when most of it is overhead).
+  Independently: the `report`/`upload` step names are miscounted as "fixed tax" (immaterial in seconds,
+  but wrong in kind), and the `runAttempt` derivation in `main()` is a redundant ternary. These are
+  small correctness/legibility fixes, not features.
+
+### Tier 2 — design-ready, defer until a consumer appears
+
+- **Per-PR delta-vs-`main`-baseline.** Turn each lane's raw number into "vs `main`'s recent median
+  (±X%)" — the CI-wall-clock analogue of the Lighthouse-CI "compare to baseline, dual absolute/relative
+  threshold" pattern (warn on the larger of +N s or +Y %, and only after ≥5 baseline runs, to avoid
+  false alarms on thin/noisy data). The trend script already computes `main`'s per-lane median, so this
+  composes existing pieces. It is the single most useful *developer-facing* projection — "does my PR
+  make CI slower?" — and it helps the agent optimizer too. Deferred only because its full value needs
+  either active contributors or a habit of watching it; the design is ready.
+- **A Mermaid visual in the job summary.** GitHub renders Mermaid natively in `$GITHUB_STEP_SUMMARY`
+  (pie / gantt / bar). A pie of per-lane wall-clock or a gantt of the critical path is a cheap nicety
+  over the current table. Low priority — the table already conveys it.
+
+### Tier 3 — record as on-brand / future, do NOT build now (no consumer yet)
+
+- **Sticky PR comment surfacing** (`marocchino/sticky-pull-request-comment` / `peter-evans/
+  create-or-update-comment`). Idiomatic and idempotent, but: needs `pull-requests: write` (a higher
+  grant than the current read-only), which is **not available on fork PRs** (so it silently fails for
+  external contributors — the very audience it would serve), adds a third-party action to a public repo
+  with a license-and-notices lane, and serves contributors who do not exist yet. Revisit if/when the
+  contributor base grows.
+- **Carbon / energy line** (`green-coding-solutions/eco-ci-energy-estimation`). Genuinely on-brand for a
+  local-first, efficiency-branded product, and the literature notes CI/CD often out-emits production
+  code. But it measures a *different axis* (energy, not latency), is a third-party action, and is vanity
+  for a no-users alpha. Record as identity-aligned, not now.
+- **OTel CI/CD export** via the repo's existing OTLP sink (tempdoc 622). The "conform to a standard"
+  path for the read-model — but the OTel `cicd.pipeline.*` convention is still **Development-status**
+  (unstable), so adopting it now is premature (already this tempdoc's research-pass verdict). Revisit
+  when it stabilizes; the read-model's stable internal `.v1.json` shape is correct in the meantime.
+- **Contributor "CI facts" page / PR-failure-triage digest** (652's deferred ideas). Same gate: serve
+  humans who are not here yet.
+
+### Honest verdict
+
+The shipped read-model is the right durable asset and it is correctly scoped. Of everything above, **one
+item earns its keep now** — the config-vs-test overhead decomposition (Tier 1) — because it serves the
+only current consumer (the solo/agent optimizer), closes the one conceptual gap against this tempdoc's
+own stated goal, and makes the deferred config-cache lever *measurable*. Everything else is a real but
+*premature* projection: correct to record, wrong to build for a repo with no users. The most speculative
+thing already shipped is the **trend analyzer** (drift-watching for a repo no one is watching) — cheap
+and dispatch-only, so harmless, but the first candidate to simplify away if the surface area ever needs
+trimming. The discipline this pass encodes: **grow surfaces to match consumers, not ambition.**
+
+Sources: [Supercharging GitHub Actions with Job Summaries](https://github.blog/news-insights/product-news/supercharging-github-actions-with-job-summaries/),
+[GitHub — creating diagrams (Mermaid)](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams),
+[marocchino/sticky-pull-request-comment](https://github.com/marocchino/sticky-pull-request-comment),
+[Lighthouse CI budgets & assertions](https://unlighthouse.dev/learn-lighthouse/lighthouse-ci/budgets),
+[green-coding-solutions/eco-ci-energy-estimation](https://github.com/green-coding-solutions/eco-ci-energy-estimation),
+[Environmental impact of CI/CD pipelines (arXiv 2510.26413)](https://arxiv.org/html/2510.26413v1),
+[Develocity — keeping builds fast (build-time breakdown)](https://docs.gradle.com/develocity/tutorials/performance-build-scans/),
+[Gradle build performance (configuration/execution phases)](https://docs.gradle.org/current/userguide/performance.html).
+
+## Design theorization — cost-component decomposition - 2026-07-01
+
+The ideation pass identified one remaining item that earns its keep: decomposing a unit lane's opaque
+"Unit tests" step into *framework/config/JVM overhead* vs *actual test execution* — the one insight
+this tempdoc promised (Finding C) but the shipped artifact does not surface in a single glance. This
+section theorizes the correct **long-term** shape for that, not a quick join. Design only — no code.
+
+### The problem, precisely
+
+The shipped wall-clock attribution decomposes a run to **per-step** granularity. For the unit lanes
+that is not fine enough: the dominant step (`Unit tests …`) is a single ~10-minute block that lumps
+Gradle configuration + JVM fork startup + fork serialization + actual test execution. The actual
+test-execution time is *already measured* — by a different instrument, the JUnit XML that
+`report-unit-test-attribution.mjs` sums into `totals.timeSeconds` and uploads as
+`unit-test-attribution-<lane>`. So the overhead is a **derived** quantity —
+`(the "Unit tests" step wall-clock) − (summed suite time)` — that today requires manually opening two
+artifacts and subtracting. The goal is to make that subtraction a standing, one-glance fact.
+
+### What already exists — conform to it, do not replace
+
+- **The engine's per-stage decomposition is the seam to mirror.** `provenance.py`'s
+  `_extract_stage_timing` reads per-stage `ms` off the canonical `SearchTrace`, aggregates to
+  `stage_timing_stats = {stage: {p50,mean,p95}}`, promotes the dominant stage to
+  `aggregate_metrics.ce_p50_ms` for the gate, and keeps the full decomposition "for drill-down"; budget
+  bands come from one registry. 640 frames it as "an instance of the canonical-record +
+  governed-projection seam … not a parallel performance pipeline"; 647 (a purpose-only stub) says to
+  "extend the stage_timing … into a standing per-stage decomposition + a declared per-stage allowance
+  table … allowances project from the same release … not a second hand-typed authority." **The
+  conforming shape: a derived projection producing per-component timing, computed from already-captured
+  records, never stored as a rival number.**
+- **The two CI sources already exist and are captured every run:** the Actions job/step wall-clock
+  (this tempdoc's `report-ci-walltime-attribution.mjs`, via the jobs API) and the per-lane summed suite
+  time (`report-unit-test-attribution.mjs`, uploaded as `unit-test-attribution-<lane>`). Nothing new
+  needs measuring.
+- **No representation register governs CI timing.** The execution-surfaces register (553) is
+  search-execution-only (`SearchTrace`/`ContextCitation`, scanning Java + `ui-web`); CI-timing scripts
+  are outside its scope, and there is no general representation register. So projection-vs-fork is
+  honor-system here — to be honored **by construction** (the overhead is derived on read, not persisted
+  as a second authority), not by joining a gate.
+
+### The correct long-term design
+
+Deepen the wall-clock attribution from **per-step** to **per-component**, for lanes whose finer source
+already exists:
+
+- For each unit lane, decompose its wall-clock into three named components: **fixed tax**
+  (checkout / setup / post — already isolated), **framework overhead** (config + JVM startup + fork
+  serialization = the "Unit tests" step wall-clock minus summed suite time), and **test execution**
+  (the summed suite time itself). The overhead is a **derived projection over the two existing captured
+  records** — the wall-clock read-model and the suite-time read-model — correlated, never re-measured.
+- **Structural note that shapes the mechanism:** unlike the engine, where one canonical `SearchTrace`
+  carries every stage, CI attribution spans **two independent measurement systems** — the CI platform's
+  clock (Actions API) and the build tool's own timing (JUnit XML). There is no single CI record to
+  project from; the decomposition is therefore fundamentally a **correlation** across the two. The
+  aggregation job (`ci-walltime`, which already runs last and `needs` every lane) is the natural place
+  to perform it, gaining one new step — a cross-job `download-artifact` of the per-lane
+  `unit-test-attribution-*` artifacts — which would be the repo's first use of that standard primitive
+  (today the job reads only the Actions API, which exposes step wall-clock but not in-artifact suite
+  time, so the download is genuinely required, not incidental).
+- **Match scope to available sources.** Build the decomposition for the **unit lanes now** — their
+  finer source (suite time) exists. **Declare, but do not build, the Build-lane decomposition**: its
+  finer source (Gradle `--profile` / a build scan) is *not yet captured*, so building it now would add
+  structure for a case the problem does not yet include. The License/Public-claims/Secret lanes are
+  already step-decomposed (no opaque composite step) and need nothing. This is the whole design — a
+  per-lane decomposition that drills into a lane's opaque step *only where a finer instrument already
+  measures its parts*.
+
+### What this design deliberately does NOT build
+
+- **No re-instrumentation.** Do not add a Gradle test-listener or custom timing to separate config from
+  execution inside the step — that would be a second measurement of something already measured. Correlate
+  the captured suite time instead. (This is the specific fork this design forecloses.)
+- **No Build-lane profiling yet** (source not captured) and **no per-component allowance budget yet**.
+  The shipped per-lane wall-clock budget stands; a finer "framework overhead ≤ X" allowance is 647's
+  "declared allowance" rung — recorded as the natural next step, deferred until a consumer needs it.
+- **No CI-timing representation register.** Search-only register + honor-system is sufficient; creating
+  a register for one derived projection would be the premature-abstraction 664 warns against.
+
+### Reach judgment
+
+**This conforms to existing seams; it is not a new one.**
+
+- It deepens **Principle A** already recorded in this tempdoc (the attribute→budget band): the overhead
+  view is simply a finer turn of the *attribution* rung, exactly as 647 deepens the engine's coarse
+  `ce_p50_ms` into a standing per-stage decomposition.
+- It is an instance of the **canonical-record + governed-projection seam** (553 / 623 / 640 / 664): a
+  derived projection over captured records, not a rival authority — honored by construction since no
+  register governs CI timing.
+- It applies **664's deferral discipline** verbatim: recognize the general shape, build only the
+  instance that has a real consumer (the unit-lane overhead, which the solo/agent optimizer needs to
+  act), and defer the generalization (the Build-lane instance, a component-allowance budget, any
+  cross-lane "component framework") until a second consumer exists to fork against.
+
+**A sharper recurring shape this surfaces, named but not built out:**
+
+- **Principle C — decompose by correlation, not re-instrumentation.** When a coarse measurement contains
+  a composite whose parts a *finer instrument already measures*, produce the finer breakdown by
+  correlating the two existing records — do not add a third measurement. This is projection-not-fork
+  applied across measurement systems: the engine's budget correlates the already-captured `stage_timing`
+  (it does not re-time stages); the CI overhead correlates the already-captured suite time (it must not
+  re-time inside Gradle); the future CI Build-lane breakdown should correlate a Gradle `--profile`
+  artifact (not re-time `assemble`). *Candidate scope:* any dual-granularity, dual-instrument attribution
+  — engine per-stage budgets (647), CI unit-lane overhead (this), CI Build-lane (future), and any place a
+  platform clock and a tool's own timing both observe the same work. *Known would-be violation:* a naive
+  overhead implementation that re-instruments the Gradle step instead of subtracting the captured
+  suite time — the design above forecloses exactly that. *Structural corollary worth recording:* the
+  engine's attribution is a **single-record projection** (one `SearchTrace`), whereas CI's is a
+  **two-system correlation** — the same "attribution as a standing instrument" goal, but the number of
+  underlying instruments is what dictates whether a plain projection suffices or a cross-source join is
+  required. Recording the principle is the deliverable here; the generalized structure is not built (no
+  second consumer yet — per 664).
+
+### Implementation closeout — cost decomposition
+
+Built exactly the unit-lane instance above (same PR #39 / branch). `report-ci-walltime-attribution.mjs`
+gained an optional `--unit-attribution-dir`; for each `Unit tests (<lane>)` job it attaches a derived
+`components: { testCpuSeconds, frameworkOverheadSeconds, fixedTaxSeconds }` — `frameworkOverhead =
+max(0, testStepWall − summedSuiteTime)` — rendered as a "Unit-lane cost breakdown" table with an
+overhead-% column and an honesty note (test CPU is summed suite time, so overhead is a conservative
+floor under parallel forks). The `ci-walltime` job gained one `continue-on-error`
+`download-artifact@v7` step (same-run sibling artifacts, no new permission). Additive optional field,
+`KIND` stays `.v1`; a derived projection, never a re-measurement (Principle C honored by construction).
+
+The Build-lane decomposition, a per-component allowance budget, and any cross-lane "component framework"
+remain **deliberately unbuilt** (no captured source / no second consumer — per 664).
+
+Validated offline against real run `28539588910` (the correlation is deterministic, so the numbers are
+the live numbers): app-ui **72%** framework overhead (7m6s framework vs 2m45s test CPU),
+platform-contracts **77%**, search-worker **64%** — making the tempdoc's headline insight ("most of a
+unit lane is overhead, not tests") a one-glance standing fact, and quantifying the ceiling the
+config-cache follow-on could reclaim. Local self-tests + regressions green; live-CI confirmation rides
+in the same PR run.
