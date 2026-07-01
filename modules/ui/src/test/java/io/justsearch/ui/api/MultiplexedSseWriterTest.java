@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import io.javalin.http.Context;
 import io.javalin.http.sse.SseClient;
+import io.justsearch.app.api.stream.SseEnvelope;
 import io.justsearch.app.api.stream.SseFrameKind;
 import io.justsearch.app.api.stream.StreamId;
 import io.justsearch.app.observability.stream.FrameHistoryRingBuffer;
@@ -24,12 +25,14 @@ import io.justsearch.app.observability.stream.ResumeTokenCodec;
 import io.justsearch.app.observability.stream.SseStreamChannel;
 import io.justsearch.app.observability.stream.StreamSequenceTracker;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -340,6 +343,66 @@ final class MultiplexedSseWriterTest {
         "chA's listener from the failed attachAll attempt must have been unsubscribed — "
             + "a stray publish must not reach the (already-failed) client: "
             + sent);
+  }
+
+  @Test
+  @DisplayName(
+      "attachAll: cleanup survives an earlier channel's unsubscribe() itself throwing — the "
+          + "ORIGINAL exception still propagates (as a suppressed-exception carrier), and "
+          + "cleanup still attempts every subscription, not just the ones before the failure")
+  void midLoopFailureCleanupSurvivesUnsubscribeThrowing() {
+    SseStreamChannel chA = mock(SseStreamChannel.class);
+    when(chA.streamId()).thenReturn(STREAM_A);
+    when(chA.nextEnvelope(any(), any()))
+        .thenReturn(
+            new SseEnvelope(
+                STREAM_A,
+                SseFrameKind.LIFECYCLE,
+                1L,
+                Instant.now(),
+                Map.of("kind", "connected"),
+                ResumeTokenCodec.encode(STREAM_A, 1L)));
+    RuntimeException unsubscribeFailure = new RuntimeException("chA unsubscribe boom");
+    AtomicBoolean chAUnsubscribeAttempted = new AtomicBoolean(false);
+    when(chA.subscribe(any()))
+        .thenReturn(
+            () -> {
+              chAUnsubscribeAttempted.set(true);
+              throw unsubscribeFailure;
+            });
+
+    SseStreamChannel heartbeatChannel = new SseStreamChannel(HEARTBEAT_STREAM);
+    SseClient client = mockSseClient(null);
+    captureSentFrames(client);
+    heartbeatScheduler = Executors.newSingleThreadScheduledExecutor();
+
+    RuntimeException snapshotFailure = new RuntimeException("boom — a later channel's snapshot fails");
+    List<MultiplexedSseWriter.ChannelSource> sources =
+        List.of(
+            new MultiplexedSseWriter.ChannelSource(chA, () -> Map.of("v", "a")), // succeeds, subscribes
+            new MultiplexedSseWriter.ChannelSource(
+                new SseStreamChannel(STREAM_B),
+                () -> {
+                  throw snapshotFailure;
+                }));
+
+    RuntimeException thrown =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                MultiplexedSseWriter.attachAll(
+                    client, sources, heartbeatChannel, Clock.systemUTC(), heartbeatScheduler, 15L));
+
+    assertEquals(
+        snapshotFailure,
+        thrown,
+        "the ORIGINAL failure must still be what's thrown, not the cleanup failure that "
+            + "happened while handling it");
+    assertTrue(
+        chAUnsubscribeAttempted.get(),
+        "chA's unsubscribe must still be attempted even though it throws");
+    assertEquals(1, thrown.getSuppressed().length, "the cleanup failure must not be silently dropped");
+    assertEquals(unsubscribeFailure, thrown.getSuppressed()[0]);
   }
 
   // ============================================================

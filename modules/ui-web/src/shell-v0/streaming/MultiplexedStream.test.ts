@@ -410,6 +410,46 @@ describe('MultiplexedStream — late-subscribe reconnect (tempdoc 662 post-imple
     expect(sources).toHaveLength(2); // ONE reconnect, not three
   });
 
+  it('a late subscriber that unsubscribes before the debounce window elapses does NOT trigger a stray reconnect', async () => {
+    const { mux, sources } = multiplexWithRecording(10);
+    mux.start();
+    sources[0]!.emitOpen();
+
+    // Registers late (schedules a debounced reconnect), then unsubscribes before the debounce
+    // fires — e.g. a fast component mount/unmount, or a catalog entry filtered back out. The
+    // reconnect that was scheduled for this streamId is no longer needed by anything.
+    const unsub = mux.subscribe(
+      'system:test-late-transient',
+      () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }),
+      () => {},
+    );
+    unsub();
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(1); // no reconnect — nothing left needs one
+  });
+
+  it('a late subscriber that unsubscribes still lets a DIFFERENT concurrently-late subscriber trigger the reconnect', async () => {
+    const { mux, sources } = multiplexWithRecording(10);
+    mux.start();
+    sources[0]!.emitOpen();
+
+    const unsub = mux.subscribe(
+      'system:test-late-transient',
+      () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }),
+      () => {},
+    );
+    mux.subscribe(
+      'system:test-late-persistent',
+      () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }),
+      () => {},
+    );
+    unsub(); // only the transient one unsubscribes; the persistent one still needs the burst
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sources).toHaveLength(2); // the reconnect still fires for the surviving subscriber
+  });
+
   it('an already-flowing entry survives the late-subscribe reconnect via its resume token (no data loss/duplication)', async () => {
     const { mux, sources, urls } = multiplexWithRecording(10);
     const seenA: CounterState[] = [];

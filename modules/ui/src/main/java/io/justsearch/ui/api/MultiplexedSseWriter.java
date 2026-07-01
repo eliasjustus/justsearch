@@ -108,8 +108,17 @@ public final class MultiplexedSseWriter {
         subscriptions.add(writer.subscribe());
       }
     } catch (RuntimeException e) {
+      // Tempdoc 662 post-implementation fix (critical-analysis pass): guard each unsubscribe
+      // individually so a cleanup failure can't mask the original exception or abort cleanup of
+      // the remaining subscriptions. Latent today (SseStreamChannel's Subscription is a plain
+      // listeners.remove(listener) that cannot practically throw) but this loop exists precisely
+      // to be robust against failure, so it must not itself have an unguarded failure mode.
       for (SseStreamChannel.Subscription subscription : subscriptions) {
-        subscription.unsubscribe();
+        try {
+          subscription.unsubscribe();
+        } catch (RuntimeException cleanupFailure) {
+          e.addSuppressed(cleanupFailure);
+        }
       }
       throw e;
     }

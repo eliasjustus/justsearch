@@ -1430,4 +1430,46 @@ implementation).
   measurement, not inference. Separately confirmed the System Health "Connections" row renders a correct,
   sane live value (`"1 open (peak 1)"`, matching the one active shell-events multiplexer connection).
 
-Both items closed. No further known unimplemented work remains on this tempdoc.
+Both items closed.
+
+## Bug fixes, round 3 (2026-07-01) — two more issues found by critical review, both fixed
+
+A critical review of everything implemented since the previous review (two independent adversarial
+subagents, both findings independently re-verified against the actual code before accepting) found two more
+real, substantive issues — both in code from this session's own fixes. No security/privacy issues found.
+
+**Bug #3 (Medium, FIXED) — the debounced late-subscribe reconnect could fire after it was no longer needed.**
+`MultiplexedStream.subscribe()`'s returned unsubscribe closure only removed the entry from `this.entries`; it
+never inspected or cancelled a pending `reconnectDebounceTimer`. If the streamId that triggered the debounce
+was unsubscribed again before the window elapsed (e.g. fast component mount/unmount, or a catalog entry
+filtered back out), the timer still fired and forced a full `stop()`/`start()` of the *shared* connection —
+disrupting every other currently-active multiplexed stream for a registration that no longer existed,
+undermining the debounce's own documented purpose. **Fix:** the timer callback now checks whether any current
+entry still has `resumeToken === null` (the existing signal for "never received a frame yet, needs the next
+connect burst") before reconnecting; if nothing needs it, the reconnect is skipped. Two tests added to
+`MultiplexedStream.test.ts`: a late-subscribe-then-immediate-unsubscribe produces no reconnect; a late
+subscriber that unsubscribes doesn't cancel a reconnect still owed to a *different*, concurrently-late,
+surviving subscriber.
+
+**Bug #4 (Medium-low, FIXED) — the mid-loop-failure cleanup loop had no exception guard of its own.**
+`MultiplexedSseWriter.attachAll`'s catch block unsubscribed already-subscribed channels in an unguarded loop;
+if any `unsubscribe()` call itself threw, the original exception would be discarded and any subscriptions
+after the failing one would never be cleaned up — reintroducing a subset of the exact leak the original fix
+(round 1, Bug #2 above) exists to close. Latent in practice today (`SseStreamChannel`'s `Subscription` is a
+plain `listeners.remove(listener)` that cannot realistically throw), but the loop exists specifically to be
+robust against failure, so it should not itself have an unguarded failure mode. **Fix:** each `unsubscribe()`
+call is now wrapped in its own try/catch; a cleanup failure is attached via `addSuppressed` rather than
+replacing the original exception, so the root cause still propagates and the cleanup failure is still visible
+in the stack trace. Test added to `MultiplexedSseWriterTest.java` (`midLoopFailureCleanupSurvivesUnsubscribeThrowing`,
+using a Mockito mock of `SseStreamChannel` — confirmed the project's Mockito 5.22 inline mock maker handles
+final classes cleanly, no `mockito-inline` artifact needed) asserting: the *original* exception is still what
+propagates, chA's unsubscribe is still attempted despite throwing, and the cleanup failure is recorded as a
+suppressed exception rather than silently dropped.
+
+**Verification:** `MultiplexedStream.test.ts` (18/18, +2 new), full `npm run test:unit:run` (3445/3445 excl.
+the one pre-existing unrelated `HealthLitView.test.ts` failure present on unmodified `main`), `npm run
+typecheck` clean; `:modules:ui:test --tests "*MultiplexedSseWriterTest*"` and the full `:modules:ui:test`
+suite green. No live-browser re-verification needed — both are internal robustness fixes to
+already-live-verified mechanisms, not new user-visible behavior.
+
+No further known unimplemented work remains on this tempdoc.

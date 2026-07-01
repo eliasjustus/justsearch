@@ -261,6 +261,17 @@ export class MultiplexedStream {
     }
     this.reconnectDebounceTimer = setTimeout(() => {
       this.reconnectDebounceTimer = null;
+      // Tempdoc 662 post-implementation fix (critical-analysis pass): the streamId that scheduled
+      // this reconnect may have been unsubscribed again before the debounce window elapsed (e.g. a
+      // component mount/unmount race, or a catalog entry that got filtered back out). Re-check
+      // whether ANY current entry still genuinely needs the next connect burst — the existing
+      // per-entry signal for that is `resumeToken === null` (never received a frame yet), the same
+      // condition the class doc already documents. If nothing needs it any more, skip the
+      // reconnect entirely rather than disrupting every other currently-flowing stream for no
+      // reason — reconnecting the shared connection here would undermine the debounce's own
+      // purpose (avoid a reconnect per registration) for a registration that no longer exists.
+      const stillNeeded = [...this.entries.values()].some((entry) => entry.resumeToken === null);
+      if (!stillNeeded) return;
       // stop()+start() (not a raw reconnect) so the resume bundle is rebuilt fresh from the
       // CURRENT entries — including the newly-registered one(s), which have no resumeToken yet
       // and are therefore naturally excluded from the bundle, so the server treats them as
