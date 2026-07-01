@@ -45,25 +45,25 @@ everywhere) — and they are **not directly apples-to-apples**. Read them honest
 
 <!-- generated:start — do not edit between markers; run: node scripts/docs/gen-public-benchmark.mjs -->
 
-*Default mode `hybrid`, commit `bef184e33`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
+*Default mode `hybrid`, commit `84b305b2b`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
 
 | Corpus | Ours (mode) | nDCG@10 | Ablation | Published baselines (cited) |
 |---|---|---|---|---|
-| beir/scifact | hybrid | **0.757** | — | — |
-| mixed/courtlistener-200 | hybrid | **0.608** | — | — |
+| beir/scifact | hybrid | **0.756** | — | — |
 | mixed/enron-qa | hybrid | **0.719** | — | — |
-| mixed/miracl-de-2k | hybrid | **0.728** | — | — |
-| mixed/miracl-fr-2k | hybrid | **0.707** | — | — |
+| mixed/legal-clerc-200 | hybrid | **0.516** | — | — |
+| mixed/miracl-de-2k | hybrid | **0.852** | — | — |
+| mixed/miracl-fr-2k | hybrid | **0.866** | — | — |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640; lower latency / higher throughput / lower footprint better):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 152 | 93.7 | 22.0 | 2.02 |
-| mixed/courtlistener-200 | 143 | 13.5 | 1.1 | 2.02 |
+| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
 | mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/miracl-de-2k | 136 | 160.9 | 41.4 | 2.02 |
-| mixed/miracl-fr-2k | 134 | 161.5 | 49.7 | 2.02 |
+| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
+| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
+| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
 
 <!-- generated:end -->
 
@@ -80,7 +80,7 @@ python -m jseval run --start-backend --dataset beir/scifact --modes hybrid
 python -m jseval relevance-gate --dataset beir/scifact
 ```
 
-Dataset slugs: `beir/scifact`, `mixed/enron-qa`, `mixed/courtlistener-200`, `mixed/miracl-de-2k`,
+Dataset slugs: `beir/scifact`, `mixed/enron-qa`, `mixed/legal-clerc-200`, `mixed/miracl-de-2k`,
 `mixed/miracl-fr-2k`. Corpora are fetched from their canonical sources (pointer + checksum), not
 redistributed here. A third party on equivalent hardware should land within the cohort's ±2σ envelope.
 

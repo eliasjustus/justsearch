@@ -41,6 +41,86 @@ def cmd_corpus_build(ctx, source, name, datasets_dir):
                    f"suite={meta['suite']} class={meta['contamination_class']}")
 
 
+def _write_recipe(name: str, recipe: dict) -> Path:
+    """Commit the small fetch recipe (tempdoc 666) — never the fetched corpus content itself —
+    mirroring `635-corpora/*/meta.json`'s `generation_provenance` discipline, one level up (a fetch
+    source, not a generation seed)."""
+    from .._paths import REPO_ROOT
+
+    recipe_dir = REPO_ROOT / "scripts" / "jseval" / "666-corpora" / name
+    recipe_dir.mkdir(parents=True, exist_ok=True)
+    recipe_path = recipe_dir / "recipe.json"
+    recipe_path.write_text(json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return recipe_path
+
+
+def _fetch_and_build_mixed(name: str, datasets_dir, fetch_fn) -> dict:
+    """Shared plumbing for the two `corpus-fetch-*` commands: fetch into an ephemeral temp source dir,
+    then materialize via the existing `corpus_build.build_golden` into `datasets/mixed/<name>/`
+    (gitignored — nothing this writes is ever committed; see `corpus_fetch.py`'s module docstring)."""
+    import tempfile
+
+    from .. import corpus_build as cb
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    dataset_dir = base / "mixed" / name
+    with tempfile.TemporaryDirectory() as td:
+        provenance = fetch_fn(td)
+        meta = cb.build_golden(td, dataset_dir)
+    _write_recipe(name, provenance)
+    return meta
+
+
+@click.command("corpus-fetch-miracl")
+@click.option("--name", required=True, help="Mixed dataset name, e.g. miracl-de-2k (-> datasets/mixed/<name>/).")
+@click.option("--lang", required=True, help="MIRACL language code, e.g. de, fr.")
+@click.option("--seed", required=True, type=int, help="Deterministic sampling seed (recorded in the recipe).")
+@click.option("--n-docs", required=True, type=int, help="Target total document count (qrelled + sampled distractors).")
+@click.option("--split", default="dev", show_default=True, help="ir_datasets MIRACL split.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.pass_context
+def cmd_corpus_fetch_miracl(ctx, name, lang, seed, n_docs, split, datasets_dir):
+    """Fetch + deterministically sample a MIRACL corpus into mixed/ (tempdoc 666).
+
+    Real, public, Apache-2.0-licensed data via the already-installed `ir_datasets` dependency — no new
+    dependency. Commits only a small recipe (source/seed/sizes) to `scripts/jseval/666-corpora/<name>/`;
+    the fetched corpus content itself is never committed (datasets/ is gitignored)."""
+    from .. import corpus_fetch as cf
+
+    meta = _fetch_and_build_mixed(
+        name, datasets_dir,
+        lambda td: cf.fetch_miracl_sample(td, lang=lang, seed=seed, n_docs=n_docs, split=split))
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(meta, indent=2))
+    else:
+        click.echo(f"Fetched mixed/{name}: {meta['corpus_size']} docs, {meta['query_count']} queries "
+                   f"from miracl/{lang}/{split} (seed={seed})")
+
+
+@click.command("corpus-fetch-clerc")
+@click.option("--name", required=True, help="Mixed dataset name (-> datasets/mixed/<name>/).")
+@click.option("--seed", required=True, type=int, help="Deterministic sampling seed (recorded in the recipe).")
+@click.option("--n-queries", required=True, type=int, help="Target sampled query count.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.pass_context
+def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, datasets_dir):
+    """Fetch + deterministically sample a CLERC-based legal corpus into mixed/ (tempdoc 666).
+
+    Public data (no access gate, unlike COLIEE) via a direct HTTP fetch — CLERC is not `ir_datasets`-
+    registered. See `corpus_fetch.py`'s module docstring for the licensing note this design already
+    accounts for: nothing fetched here is ever committed (datasets/ is gitignored), only a small recipe."""
+    from .. import corpus_fetch as cf
+
+    meta = _fetch_and_build_mixed(
+        name, datasets_dir, lambda td: cf.fetch_clerc_sample(td, seed=seed, n_queries=n_queries))
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(meta, indent=2))
+    else:
+        click.echo(f"Fetched mixed/{name}: {meta['corpus_size']} docs, {meta['query_count']} queries "
+                   f"from CLERC (seed={seed})")
+
+
 @click.command("corpus-certify")
 @click.option("--dataset", required=True, help="Golden dataset name, e.g. synth-multihop-v1.")
 @click.option("--datasets-dir", default=None, type=click.Path())
@@ -329,4 +409,5 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
 
 
-COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe]
+COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
+            cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc]
