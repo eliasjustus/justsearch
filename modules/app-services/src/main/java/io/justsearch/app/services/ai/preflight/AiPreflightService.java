@@ -75,14 +75,23 @@ public final class AiPreflightService {
                 && runtimeStatus.active().serverExecutablePath() != null
                 && !runtimeStatus.active().serverExecutablePath().isBlank());
 
-    boolean chatModelPresent =
+    // Tempdoc 656 (post-implementation review fix): canActivateDefault must mirror what
+    // RuntimeActivationService.runActivate() actually checks — the chat GGUF variant file plus the
+    // runtime executable — NOT full package completeness. The "chat" package's supportingFiles
+    // include mmproj-F16.gguf, which is a separate, VDU-only concern (LifecycleReasonCode
+    // .VDU_MISSING_MMPROJ / vdu.missing_mmproj already model it as its own capability); runActivate
+    // never references it. Gating on PackageStatus.complete() here would report "cannot activate"
+    // in a case where activation would actually succeed. presentVariantFiles() alone matches
+    // runActivate's real precondition; complete() remains available on PackageStatus for other
+    // consumers that legitimately want full-download-completeness, not activation-readiness.
+    boolean chatVariantPresent =
         packages.stream()
             .filter(p -> "chat".equals(p.id()))
             .findFirst()
-            .map(PackageStatus::complete)
+            .map(p -> !p.presentVariantFiles().isEmpty())
             .orElse(false);
 
-    boolean canActivateDefault = runtimeInstalled && chatModelPresent;
+    boolean canActivateDefault = runtimeInstalled && chatVariantPresent;
 
     return new AiPreflightResult(packages, runtimeInstalled, canActivateDefault);
   }
@@ -95,6 +104,14 @@ public final class AiPreflightService {
       List<String> presentVariantFiles,
       List<String> missingFiles) {}
 
+  /**
+   * Overall preflight result.
+   *
+   * @param canActivateDefault mirrors {@code RuntimeActivationService.runActivate()}'s actual
+   *     precondition (runtime executable + chat GGUF variant present) — deliberately not the same
+   *     as every package's {@code complete()}, since some supportingFiles (e.g. the chat package's
+   *     mmproj) are required for other capabilities (VDU) but not for base activation.
+   */
   public record AiPreflightResult(
       List<PackageStatus> packages, boolean runtimeInstalled, boolean canActivateDefault) {}
 }

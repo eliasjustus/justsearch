@@ -740,3 +740,40 @@ No new MCP tool, no CLI command, no product-mode decision, no fix to
 `verify-prerequisites.mjs`'s citation-scorer path or `dev-runner.cjs`'s soft-clean keep-set gap
 (both remain open, independently logged findings for a future pass).
 
+## §Post-implementation critical review (2026-07-01, fifth pass)
+
+Reviewed the shipped implementation against `RuntimeActivationService`'s actual behavior (re-read
+line by line, not re-trusted from memory) and against the CAUSE_ROWS wording added in Task 1. Found
+one substantive bug and one minor-but-real wording issue; both fixed in this pass. No
+security/privacy issues.
+
+**Bug (fixed): `canActivateDefault` false-negatived on a missing mmproj file.**
+`AiPreflightService.getPreflight()` computed `chatModelPresent` from the "chat" `PackageStatus`'s
+`complete()` flag, which requires every supportingFile present — including `mmproj-F16.gguf`. But
+`RuntimeActivationService.runActivate()` never checks for mmproj at all; it only validates the chat
+GGUF variant file and the runtime executable. mmproj is a separate, VDU-only concern (pre-existing
+`LifecycleReasonCode.VDU_MISSING_MMPROJ` / `vdu.missing_mmproj` already model it as such). This
+meant the endpoint could report "cannot activate" in a case where activation would actually
+succeed — directly wrong for the one thing the endpoint exists to predict. Confirmed live in this
+checkout (which genuinely lacks mmproj): `presentVariantFiles: ["Qwen_Qwen3.5-9B-Q4_K_M.gguf"]` (the
+GGUF *is* present) alongside `complete: false` (because mmproj isn't). **Fix**: `canActivateDefault`
+now checks `!presentVariantFiles().isEmpty()` for the chat package instead of `complete()`;
+`PackageStatus.complete` is unchanged (still legitimate full-download-completeness information for
+other consumers, just not the activation-readiness signal). Re-verified live: `canActivateDefault`
+in this checkout is still `false`, but now because `runtimeInstalled: false` (the real, current
+blocker) rather than being conflated with the unrelated mmproj gap.
+
+**Minor issue (fixed): wrong-direction wording on the activation/deactivation catch-all.**
+`LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED` is the shared catch-all for both activation
+failures (self-test/apply) and deactivation failures (rollback) in
+`RuntimeActivationService.mapToLifecycleReason`, but its `CAUSE_ROWS` wording said "The local AI
+runtime failed to **activate**" — wrong when the user was actually deactivating. Reworded to "The
+local AI runtime failed to switch modes" (direction-neutral) rather than adding a 7th reason code,
+keeping the fix proportionate to a wording-accuracy issue.
+
+**Re-verified after the fix**: `:modules:app-services:compileJava` clean (no warnings, including the
+javadoc summary-line warning the first pass of this fix introduced and this pass corrected),
+`:modules:app-services:test` green, `check-readiness-reason-codes.mjs` green, frontend typecheck
+green. Live re-checked `GET /api/ai/models/status` against this checkout's real (unchanged) state —
+structure and the decoupling behave as intended.
+

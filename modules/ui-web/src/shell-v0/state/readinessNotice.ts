@@ -131,8 +131,12 @@ const CAUSE_ROWS: ReadonlyArray<{
     severity: 'info',
   },
   {
+    // Tempdoc 656 (post-implementation review fix): this code is the shared catch-all for both
+    // activation failures (self-test/apply) AND deactivation failures (rollback) in
+    // RuntimeActivationService.mapToLifecycleReason — worded direction-neutrally so it isn't wrong
+    // when the user was actually deactivating.
     code: 'inference.activation_failed',
-    wording: 'The local AI runtime failed to activate',
+    wording: 'The local AI runtime failed to switch modes',
     remedy: { kind: 'operation', operationId: 'core.reload-inference' },
     severity: 'warn',
   },
