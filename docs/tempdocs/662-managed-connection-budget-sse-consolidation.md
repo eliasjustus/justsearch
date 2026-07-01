@@ -757,9 +757,12 @@ Candidate scope + where code already violates it (named, **not** fixed here):
 - **Always-on origin connections** — the 5 always-on streams. The bug this tempdoc fixes. *(In scope — the
   design above.)*
 - **Always-on poll timers** — `BrainSurface`'s four self-owned poll timers (`pollInstall`/`pollPack`/
-  `pollRuntime`/`pollDiagnostics`, `views/BrainSurface.ts:270-273`, per 663) run regardless of whether the
+  `pollRuntime`/`pollDiagnostics`, `views/BrainSurface.ts:270-273`) run regardless of whether the
   surface is visible — an always-on claim on the timer/connection budget for a surface that is usually closed.
-  Same violation class; **663's domain**, not fixed here.
+  Same violation class. **Citation correction (2026-07-01):** this originally cited "tempdoc 663" as the
+  owning doc — verified against the actual tempdoc 663 on disk (`663-ai-engine-verdict-single-authority.md`),
+  which is unrelated. No tempdoc currently owns this reclassification; it is named here as a recognized
+  instance of the principle, not assigned anywhere, per the Design's own "recognize, don't build" discipline.
 - **Any future "open it at boot to be safe" stream/timer/worker** — the default should be lazy/demand-driven,
   with always-on *earned* per channel and *declared* in the budget register.
 
@@ -1082,7 +1085,9 @@ Theorization section above.
    bespoke comma-joined `?since=<streamId:seq,...>` bundle with a single monotonic session-scoped event id
    would simplify the resume logic (no per-channel bundle parsing) and conform to a standard the project is
    independently adopting elsewhere — genuine simplification, not speculative structure, but a real backend
-   protocol change, not a small edit.
+   protocol change, not a small edit. **RETRACTED (2026-07-01, see Long-term design theorization below) —
+   deeper investigation found this trades a working, reuse-preserving design for standards-alignment alone;
+   the "tempdoc 655" citation also overstated what that doc actually commits to.**
 3. **Minor**: the late-subscribe debounced reconnect (this session's fix) could shorten its post-reconnect
    "regained trust" window by bumping heartbeat frequency briefly after a forced reconnect — a small UX
    polish (faster "connected" confirmation), low priority, not investigated further.
@@ -1107,7 +1112,9 @@ Theorization section above.
    uses ordinary `fetch`/`EventSource` inside the worker, not a custom `tauri://` scheme, so that specific
    WebView2 limitation likely doesn't apply — needs confirming, not assuming). No `SharedWorker`/
    `BroadcastChannel` usage exists anywhere in the codebase today — this would be genuinely new
-   infrastructure, sized similarly to the original multiplexer build, not a small extension.
+   infrastructure, sized similarly to the original multiplexer build, not a small extension. **RETRACTED
+   (2026-07-01, see Long-term design theorization below) — the problem this solves cannot occur on the
+   shipped desktop target at all; investigated and disproven, not just deprioritized.**
 2. **A second instance of the register+gate pattern is already named and waiting.** Design's own Reach
    section flags `BrainSurface`'s `pollInstall`/`pollPack`/`pollRuntime`/`pollDiagnostics` timers
    (`views/BrainSurface.ts:270-273`) as the same violation shape (an always-on claim on a scarce
@@ -1155,5 +1162,114 @@ worth a UX decision independent of this tempdoc); Electron/other desktop-shell p
 budget UX (the web search for this returned no established pattern — likely because this is a fairly
 uncommon problem to surface to end users, reinforcing that idea "New UX #2" above would be somewhat novel,
 not copying a known pattern); and any further MCP-transport-adjacent research beyond confirming the
-SSE-deprecation trend already noted (tempdoc 655 owns that certification work directly and is the better home
-for anything deeper here).
+SSE-deprecation trend already noted. **Citation correction (2026-07-01):** the claim that "tempdoc 655 owns
+that certification work directly" overstated what 655 actually commits to — read directly (main checkout,
+`docs/tempdocs/655-mcp-conformance-and-capability-policy.md`, status open): its scope is protocol capability
+negotiation, schema validation, and capability policy for the MCP tool surface, not a transport-layer
+SSE/Streamable-HTTP migration. There is no existing project commitment to adopt Last-Event-ID resumability
+anywhere; see the Long-term design theorization below for why that direction is retracted regardless.
+
+## Long-term design theorization, round 2 (2026-07-01) — re-examining the two "standout" Future Directions
+
+The Future Directions pass above surfaced two ideas as its most significant candidates: cross-tab connection
+sharing (Extend #1) and migrating the resume protocol to a single Last-Event-ID cursor (Polish #2). Both were
+proposed on the strength of finding a real, externally-validated pattern (a working library; an industry
+standard). Neither got the deeper test this tempdoc's own discipline requires: does the *local* problem this
+solves actually exist, and does the *existing* local design already handle it? Re-investigated properly here.
+Both are retracted — not deprioritized, disproven. This section also names the recurring bias this exposes.
+
+### A. Cross-tab connection sharing — retracted: the problem cannot occur in production
+
+**What was proposed.** A `SharedWorker` + `BroadcastChannel` layer so all open browser tabs of the app share
+one physical multiplexed connection, mirroring the tempdoc's own principle ("one owner per finite platform
+quota") one level up from streams-in-a-tab to tabs-in-a-browser.
+
+**What already exists (investigated this pass, not previously checked).** The shipped desktop shell
+(`modules/shell/src-tauri`) registers `tauri_plugin_single_instance` (`Cargo.toml:25`,
+`src-tauri/src/lib.rs:1358-1380`): a second launch of the app does not open a second window — it focuses the
+existing `main` window and exits the new process. There is no code path, deep-link handler, or menu action in
+this codebase that opens an additional `WebviewWindow` (`Grep` for window-creation call sites returned
+nothing beyond the one `main` window). Combined with there being no browser-hosted/standalone-web deployment
+mode anywhere in the docs (checked `docs/explanation/01-system-overview.md` and the dev-tooling references —
+the only browser-facing path is the Vite dev server, which is explicitly a *development* tool, not a shipped
+target) — **the shipped product structurally allows at most one window, hence at most one Shell instance,
+hence at most one multiplexer, permanently.** The multi-tab contention this session's earlier verification
+pass measured (a genuine, reproduced 8-second stall under 3 simultaneous tabs) can only be observed by running
+the raw Vite dev server directly in an ordinary browser and manually opening extra tabs — a workflow that
+exists (`scripts/dev/serve-worktree-fe.cjs`) but is explicitly a contributor/agent iteration tool, not
+something an end user of the shipped app can ever reach.
+
+**Judgment.** Building cross-tab sharing would be structure for a case the problem does not have — the
+single-instance plugin already IS the "one owner" enforcement, at a layer (the OS process) simpler and more
+complete than anything a JS-level coordinator could add, and it was already in place before this tempdoc
+existed. There is nothing to extend or improve here because there is no gap: the existing design (Tauri's
+own process model) already fully closes this. The dev-only friction (a contributor opening several raw Vite
+tabs) is real but is a *tooling* concern, not a product architecture concern, and is far too small to justify
+new production infrastructure sized like the original multiplexer build. No action item; if the dev-tooling
+friction becomes a recurring practical annoyance, the proportionate fix is a one-line note in
+`serve-worktree-fe.cjs`'s own docs ("avoid opening multiple tabs against the same dev backend"), not a new
+subsystem.
+
+### B. Resume-protocol modernization (Last-Event-ID) — retracted: the existing design already fits, and reuse would break
+
+**What was proposed.** Replace the multiplexer's per-channel `?since=<streamId:seq,...>` bundle with one
+monotonic session-scoped event id (the SSE-standard `Last-Event-ID` shape MCP's Streamable HTTP transport
+also uses), on the reasoning that this is "the direction the ecosystem/project is heading."
+
+**What already exists, traced precisely this pass.** The current resume model is not a standalone mechanism
+built only for the multiplexer — it is the **same** machinery the four still-live standalone endpoints use,
+deliberately reused, not forked (`SseEnvelopeWriter.attemptResume`/`ResumeTokenCodec`, unchanged since before
+662; `MultiplexedSseWriter.parseTokenBundle` only splits/decodes the existing per-channel token format, adding
+no new codec). A true single-cursor model requires two structural changes the bundle model avoids: (1) a
+*combined, cross-channel-ordered* history/ring buffer for the multiplexed connection (today each
+`SseStreamChannel` keeps its own independent `StreamSequenceTracker`/`FrameHistoryRingBuffer`,
+`SseStreamChannel.java:41-43`) and (2) the standalone endpoints would either need to migrate to the *same*
+global-id scheme too (a real behavior change to four working, unrelated, already-correct endpoints, for no
+benefit to their own single-channel use case) or the codebase would carry **two parallel resume mechanisms**
+side by side (global-id for the multiplexer, per-channel-seq for standalone) — strictly more code and more
+concepts than today, not less.
+
+**Judgment.** The composite-resume complexity that originally motivated looking toward a standard
+(Investigation §D's "hardest wrinkle") already dissolved for the *actual* shipped channel set, because Design
+§D1/Confidence-pass U1 found the multiplexed channels are event-only — the existing per-channel bundle is
+already the simple case, not a complex one needing rescue. Migrating to Last-Event-ID would trade a working,
+reuse-preserving design (one resume mechanism serving both the multiplexed and standalone paths) for
+standards-conformance as an end in itself, at the real cost of either forking the mechanism in two or taking
+on unnecessary risk to correct, unrelated standalone-endpoint code. Per this tempdoc's own instruction to
+prefer extending a usable existing design over replacing it: **the current bundle-of-per-channel-tokens model
+is the long-term design, not a placeholder for it.** No migration is warranted absent a concrete new
+requirement (e.g., a *future* channel whose demand genuinely doesn't fit the per-channel model) that doesn't
+exist today.
+
+### The recurring bias this exposes — name it plainly
+
+Both retracted ideas followed the identical shape: research surfaced a real, working *external* pattern (a
+library; an industry standard), and the discovery of that pattern created its own pressure to adopt it,
+ahead of and independent of confirming (a) whether the local problem it solves is even reachable here, and
+(b) whether the existing local design already handles the concern at equal or lower cost. Call this
+**"pattern availability is not evidence of local need"** — an external validation (it's a known library, it's
+what the standard does, it's what the industry moved to) answers "does this work," never "does *this system*
+need it." This is a sharper, more specific case of this tempdoc's own already-named "earn the expensive
+default" principle, aimed specifically at *exploratory/research* passes rather than day-to-day feature work:
+a research pass whose job is to generate candidates is structurally biased toward finding reasons to build,
+because "I looked and found nothing worth doing" is a less satisfying deliverable than a list of ideas — the
+discipline has to be applied *harder*, not less, right when a pass produces something that looks good.
+
+**Where this already bit**, concretely: this tempdoc's own Future Directions section, written one session
+ago by the same author, is the freshest instance — not a hypothetical. **Where else to watch for it**: any
+future research/theorization pass in this codebase (the `/skill` invocations that produce "here's what we
+could build" output) should carry an explicit "does the problem exist here, and does an existing mechanism
+already cover it" gate before a candidate is written up as a recommendation, not just a "here's a working
+pattern elsewhere" citation. Not building a formal gate for this now (a checklist item in a skill's prompt
+would suffice if it recurs) — recording the principle and where it already fired is the deliverable, per the
+same recognize-before-build discipline this tempdoc has applied throughout. If a second research pass in this
+codebase reproduces the same bias, that is the trigger to formalize it (e.g. as a step in whatever skill
+authors these passes), not before.
+
+### Title reconsidered, kept
+
+Checked whether "Managed connection budget — SSE stream consolidation" still fits after this round: yes.
+Every finding this round *narrows* scope back toward what was already built (confirms the single-instance
+architecture already closes the multi-tab question; confirms the current resume protocol is the long-term
+design) rather than discovering new scope the title should reflect. A title change would be warranted if the
+design had grown; it didn't — staying matched to the original, narrower problem is itself the finding.
