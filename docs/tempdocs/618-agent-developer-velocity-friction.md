@@ -1750,6 +1750,67 @@ the other covered the always-loaded prose rules. Recording that seam is the deli
 (anchoring + tiering the qualifying bullets, wiring the §10a hook-hint) is a scoped implementation a future
 pass executes** under 620/530's existing machinery — not new structure, and not this theorization pass's job.
 
+### External research pass (2026-07-01)
+
+Two claims in this settlement sit on globally fast-moving ground — the *principle* (a claim about LLM context
+behaviour) and the *mechanism* (a Claude Code harness fact). A bounded web pass on both, with the two
+load-bearing sources verified against their primaries, confirmed the design and sharpened it. Findings, and how
+each moves the design:
+
+1. **The principle is not novel — it is a local name for a named external principle.** Anthropic's own
+   *Effective context engineering for AI agents* frames the core rule as *"find the smallest set of high-signal
+   tokens that maximize the likelihood of some desired outcome,"* and names **just-in-time context** (keep
+   lightweight identifiers, load on demand) as the pattern, explicitly because always-loading everything is
+   *worse* — it cites **context rot** (accuracy falls as token count rises), a finite **attention budget**, and
+   the transformer's n² token-pair cost. Our *"residence is not delivery"* is therefore **the just-in-time
+   principle applied to rule delivery**, not a new coinage. The anti-fork discipline this repo applies to data
+   representations (§553 projection-vs-fork) applies to *concepts* too: cite the canonical framing, don't
+   parallel it. **Design change:** frame the principle as an instance of just-in-time context engineering, with
+   the external citation, rather than as a house term.
+
+2. **§10a now has a mechanistic cause, not just an anecdote.** The independent *context rot* line of work
+   (Chroma's "Context Rot: How Increasing Input Tokens Impacts LLM Performance"; the lost-in-the-middle /
+   position-bias literature) explains *why* an always-loaded rule can fail to fire: attention dilutes across a
+   growing window and mid-context constraints get buried — ">30% degradation" when the relevant token sits in
+   the middle. Adjacent 2026 preprints on *instruction adherence in coding-agent configuration files* report a
+   **within-session compliance attenuation** (adherence odds falling as a session lengthens) and find that
+   *structural* formatting of the always-loaded rule barely moves adherence — i.e. reformatting residence is
+   not the lever; delivery is. (These preprints are search-surfaced, not primary-verified; cited as
+   directional corroboration, not as measured fact.) **Design change:** §10a's recurrence is reframed from
+   "a lesson that happened to be ignored" to "the predicted failure of a max-residence / mid-context rule under
+   attention dilution" — which is exactly what the delivery tier exists to fix.
+
+3. **A new harness fact — verified against the primary doc — that the design must account for but that does
+   *not* supersede it.** Claude Code now documents an **`InstructionsLoaded`** hook event (fires when a
+   `CLAUDE.md` / `.claude/rules/*.md` file is loaded — matchers `session_start` / `nested_traversal` /
+   `path_glob_match` / `include` / `compact`). Crucially, per the primary docs it is **side-effects-only: it
+   cannot block and cannot inject context** (exit code ignored). So it is an *ingestion-side observability*
+   surface, **not** a delivery mechanism — it does not replace the moment-of-action hook-hint (which rides
+   `PostToolUse` / `PreToolUse` `additionalContext`, both confirmed current). Its real value to *this* design
+   is measurement: `InstructionsLoaded` lets you log *which* rules loaded and when (residence), which can be
+   cross-referenced against whether the rule actually fired (salience) — turning the "residence ≠ delivery"
+   gap from an assertion into something instrumentable. **Design change:** none to the settlement; added as a
+   noted, verified substrate the future implementation pass can use, and as a guard against the design silently
+   assuming a stale hook surface (`verify-don't-guess` / `tempdocs-are-dated-history`).
+
+4. **The broader "prose → executable constraint" program is externally active, which bounds our claim
+   correctly.** Work on deriving executable checks from agent instruction files (e.g. the "ContextCov" preprint
+   extracting checks from instruction files across public repos) is the *gate/lint*-tier direction — the same
+   move 620/530 already make. This corroborates that converting instruction prose to mechanism is a live,
+   validated direction; it also reinforces our scope discipline: the external programs are large and
+   general-purpose, whereas our settlement stays deliberately small (triage a few bullets, one confirmed
+   hook-hint) because 616/620's *local* evidence caps the lever — we adopt the direction, not a general
+   framework.
+
+**Attribution / licensing note (public-repo `license-and-notices` check):** this pass **copied no external
+code, text, or assets** into the repo or docs — findings are paraphrased and the sources are cited by URL /
+title inline above. Short attributed phrases from Anthropic's article (e.g. "smallest set of high-signal
+tokens") are quoted as citation, not vendored. No new dependency, snippet, or asset was introduced, so there
+is nothing for the notices pipeline to track. Primary sources verified:
+`anthropic.com/engineering/effective-context-engineering-for-ai-agents` and
+`code.claude.com/docs/en/hooks`; corroborating (search-surfaced, not primary-verified): Chroma "Context Rot"
+research, and 2026 arXiv preprints on coding-agent instruction adherence / executable-constraint extraction.
+
 ### Title
 
 No change. This tempdoc's spine is the **worktree↔environment correspondence** seams (A/B shipped, C
