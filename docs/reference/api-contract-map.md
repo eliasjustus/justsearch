@@ -781,6 +781,10 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 
 `GET /api/ai/runtime/status` returns ONNX feature status including a `modelActive: boolean` field per feature entry, derived from the actual ORT session state (not file discovery). This is the canonical source of truth for "is this model loaded and running". Both reranker (via `OrtCudaStatus`) and citation-scorer (via `CitationScorer.isAvailable()`) report runtime session state through this field. See [ADR-0023](../decisions/0023-api-responses-declare-runtime-context.md) for the general principle: endpoints whose behavior varies by runtime mode must declare that mode in the response.
 
+### Install plan preview (tempdoc 657)
+
+`GET /api/ai/install/plan-preview` returns a **side-effect-free** projection of the download plan grouped by capability tier, for the current hardware and install intent — the honest first-run weight breakdown shown before the user commits (realizes tempdoc 381 §F). Shape: `{ intent, downloadProfile, totalDownloadBytes, tiers: [{ tier, label, includedByIntent, totalBytes, downloadBytes }] }`. Computing it runs no downloads (reuses the pure `InstallPlanner`). The install/runtime **mode** itself is reported on the runtime manifest (`GET /api/runtime/manifest#mode`, with `intent` + coarse `realized`) per the tempdoc 501 closure rule.
+
 ## Error Response Sanitization
 
 All error responses pass through `ApiErrorHandler.sanitizeMessage()` which:

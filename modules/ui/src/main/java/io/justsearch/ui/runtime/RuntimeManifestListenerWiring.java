@@ -73,7 +73,8 @@ public final class RuntimeManifestListenerWiring {
       KnowledgeServerBootstrap knowledgeServer,
       String knowledgeServerStartError,
       Supplier<KnowledgeServerBootstrap> latestKnowledgeServer,
-      Supplier<Path> indexBasePathSupplier) {
+      Supplier<Path> indexBasePathSupplier,
+      String modeIntent) {
     final InferenceCapability infCap = bootstrap.capabilities().inference();
     final WorkerCapability workCap = bootstrap.capabilities().worker();
 
@@ -88,6 +89,7 @@ public final class RuntimeManifestListenerWiring {
                 infCap.pendingReason(),
                 curr == CapabilityHealth.READY,
                 ls.name());
+            publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
           } catch (Exception e) {
             log.warn("Runtime manifest publishAi (listener) failed (non-fatal)", e);
           }
@@ -135,6 +137,7 @@ public final class RuntimeManifestListenerWiring {
             } else {
               publisher.publishLifecycle(ls.name());
             }
+            publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
           } catch (Exception e) {
             log.warn("Runtime manifest publishWorker (listener) failed (non-fatal)", e);
           }
@@ -152,6 +155,34 @@ public final class RuntimeManifestListenerWiring {
     } catch (Exception e) {
       log.warn("Runtime manifest initial-AI publish failed (non-fatal)", e);
     }
+
+    // Initial mode publish (tempdoc 657) — the configured intent + the coarse realized capability.
+    try {
+      publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
+    } catch (Exception e) {
+      log.warn("Runtime manifest initial-mode publish failed (non-fatal)", e);
+    }
+  }
+
+  /**
+   * Coarse projection of the <em>realized</em> capability (tempdoc 657) from the worker + inference
+   * capabilities — so the manifest's advertised mode never outruns what is actually loaded:
+   *
+   * <ul>
+   *   <li>{@code full} — worker ready and inference ready;
+   *   <li>{@code retrieval-only} — worker ready, and inference either not required (the intended
+   *       shape for MCP Lite / a headless-no-LLM run) or the LLM is simply not up;
+   *   <li>{@code degraded} — worker not ready.
+   * </ul>
+   */
+  private static String realizedMode(WorkerCapability workCap, InferenceCapability infCap) {
+    if (workCap.health() != CapabilityHealth.READY) {
+      return "degraded";
+    }
+    if (infCap.health() == CapabilityHealth.READY) {
+      return "full";
+    }
+    return "retrieval-only";
   }
 
   private static Integer readGrpcPort(KnowledgeServerBootstrap ks) {

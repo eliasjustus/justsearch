@@ -1397,6 +1397,11 @@ val bundleSidecarResources by tasks.registering(Sync::class) {
     include("ui-headless.jar")
     include("lib/**")
   }
+  // Tempdoc 657 — the Headless Runtime launcher: runs the co-located ui-headless.jar as a local,
+  // loopback-only service (no desktop shell) in a chosen mode. See docs/how-to/headless-runtime.md.
+  from(rootProject.layout.projectDirectory.dir("packaging/headless")) {
+    include("justsearch-headless.cmd", "justsearch-headless.ps1")
+  }
   // Worker distribution lib/ directory — staged under lib/worker/ so Head's -cp lib/* does not pick it up.
   from(workerInstallDist.map { it.destinationDir.resolve("lib") }) {
     into("lib/worker")
@@ -2065,6 +2070,14 @@ tasks.register<JavaExec>("runHeadless") {
   val apiPortProvider = providers.environmentVariable("JUSTSEARCH_API_PORT").orElse("33221")
   jvmArgs("-Djustsearch.api.port=${apiPortProvider.get()}")
   jvmArgs("-Djustsearch.data.dir=${dataDirProvider.get()}")
+
+  // Tempdoc 657 — install/runtime mode passthrough for dev: `-Pmode=mcp-lite` (or `headless`)
+  // sets -Djustsearch.mode so the runtime manifest reports mode.intent and the planner would skip
+  // the LLM tier. Unset ⇒ full-desktop (unchanged).
+  val modeProp = project.findProperty("mode")?.toString()
+  if (!modeProp.isNullOrBlank()) {
+    jvmArgs("-Djustsearch.mode=$modeProp")
+  }
 
   // Logback config is shipped on the ui-headless.jar classpath via
   // src/main/resources/logback.xml; no -Dlogback.configurationFile needed.

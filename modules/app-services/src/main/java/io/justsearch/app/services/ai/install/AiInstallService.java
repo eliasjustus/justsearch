@@ -4,15 +4,18 @@ package io.justsearch.app.services.ai.install;
 import io.justsearch.app.api.AiInstallException;
 import io.justsearch.app.api.AiInstallStatus;
 import io.justsearch.app.api.ApiErrorCode;
+import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemPropertyUtils;
+import io.justsearch.configuration.model.CapabilityTier;
 import io.justsearch.configuration.model.DownloadProfile;
 import io.justsearch.configuration.model.ExecutionProvider;
 import io.justsearch.configuration.model.HardwareProfile;
 import io.justsearch.configuration.model.InstallContract;
 import io.justsearch.configuration.model.InstallContractIO;
+import io.justsearch.configuration.model.InstallIntent;
 import io.justsearch.configuration.model.InstallPlan;
 import io.justsearch.configuration.model.InstallPlanner;
 import io.justsearch.configuration.model.ModelPackage;
@@ -181,6 +184,53 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
   }
 
+  @Override
+  public InstallPlanPreview previewInstallPlan() {
+    InstallPlanPreview preview = new InstallPlanPreview();
+    ModelRegistry registry = getManifest();
+    HardwareProfile hardware = buildHardwareProfile();
+    DownloadProfile profile = hardware.downloadProfile();
+    InstallIntent intent = installIntent();
+    preview.intent = intent.id();
+    preview.downloadProfile = profile.name();
+
+    // Reuse the PURE planner (no side effects) — tempdoc 381 §F "show the plan before download".
+    InstallPlan plan = InstallPlanner.plan(registry, hardware, intent, modelsDir, homeDir);
+    preview.totalDownloadBytes = plan.totalBytes();
+
+    // Bytes still to download, per package id.
+    Map<String, Long> downloadByPkg = new HashMap<>();
+    for (var dl : plan.downloads()) {
+      downloadByPkg.merge(dl.packageId(), dl.sizeBytes(), Long::sum);
+    }
+
+    // One estimate per tier, in canonical order.
+    Map<CapabilityTier, InstallPlanPreview.TierEstimate> byTier = new LinkedHashMap<>();
+    for (CapabilityTier t : CapabilityTier.values()) {
+      var te = new InstallPlanPreview.TierEstimate();
+      te.tier = t.id();
+      te.label = t.label();
+      te.includedByIntent = intent.wants(t);
+      byTier.put(t, te);
+    }
+    for (ModelPackage pkg : registry.packages()) {
+      CapabilityTier t = pkg.tier();
+      if (t == null) {
+        continue;
+      }
+      var te = byTier.get(t);
+      ModelVariant variant = pkg.selectVariant(profile);
+      long footprint = variant != null ? variant.sizeBytes() : 0L;
+      for (var sf : pkg.supportingFiles()) {
+        footprint += sf.sizeBytes();
+      }
+      te.totalBytes += footprint;
+      te.downloadBytes += downloadByPkg.getOrDefault(pkg.id(), 0L);
+    }
+    preview.tiers.addAll(byTier.values());
+    return preview;
+  }
+
   /**
    * Tempdoc 562 — durable installed-state projection. On the first status read after boot, if no install
    * has run this session (state {@code idle}, {@code installedFully} false), recompute "is installed" from
@@ -209,7 +259,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     try {
       ModelRegistry registry = getManifest();
       HardwareProfile hardware = buildHardwareProfile();
-      InstallPlan plan = InstallPlanner.plan(registry, hardware, modelsDir, homeDir);
+      InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
       // A successful plan is a DEFINITIVE answer (installed or not) — consume the one-shot now.
       diskRecomputeDone = true;
       if (applyInstalledFromPlan(plan, registry)) {
@@ -346,7 +396,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         hardware.gpuDetected(), hardware.cudaFunctional(), hardware.vramBytes(), profile);
 
     // Compute download plan
-    InstallPlan plan = InstallPlanner.plan(registry, hardware, modelsDir, homeDir);
+    InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
     log.info(
         "Install plan: profile={}, downloads={}, skipped={}, alreadyInstalled={}, totalBytes={}",
         plan.profile(),
@@ -554,6 +604,19 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   }
 
   // ---------------------------------------------------------------------------
+  // Install intent
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolves the install/runtime intent (tempdoc 657) from {@code -Djustsearch.mode} /
+   * {@code JUSTSEARCH_MODE}, defaulting to Full Desktop when unset. Read the same way by the plan and
+   * the contract, so the recorded intent matches what was actually planned.
+   */
+  InstallIntent installIntent() {
+    return InstallIntent.fromConfig(io.justsearch.configuration.EnvRegistry.MODE.get().orElse(null));
+  }
+
+  // ---------------------------------------------------------------------------
   // Hardware profile
   // ---------------------------------------------------------------------------
 
@@ -643,7 +706,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     // contract self-describing.
     return new InstallContract(
         2, System.currentTimeMillis(), hardware, plan.profile(), models,
-        modelsDir != null ? modelsDir.toAbsolutePath().normalize() : null);
+        modelsDir != null ? modelsDir.toAbsolutePath().normalize() : null,
+        installIntent());
   }
 
   // ---------------------------------------------------------------------------
@@ -997,6 +1061,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = dl.packageId();
       ps.label = pkg != null ? pkg.label() : dl.packageId();
+      ps.tier = tierId(pkg);
       ps.state = "pending";
       ps.bytesTotal = plan.downloads().stream()
           .filter(d -> d.packageId().equals(dl.packageId()))
@@ -1010,6 +1075,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = id;
       ps.label = pkg != null ? pkg.label() : id;
+      ps.tier = tierId(pkg);
       ps.state = "installed";
       status.packages.add(ps);
     }
@@ -1019,10 +1085,16 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       ps.packageId = sk.packageId();
       ModelPackage pkg = registry.findPackage(sk.packageId());
       ps.label = pkg != null ? pkg.label() : sk.packageId();
+      ps.tier = tierId(pkg);
       ps.state = "skipped";
       ps.skipReason = sk.reason();
       status.packages.add(ps);
     }
+  }
+
+  /** The package's capability-tier id (tempdoc 657), or {@code null} if the package/tier is unknown. */
+  private static String tierId(ModelPackage pkg) {
+    return pkg != null && pkg.tier() != null ? pkg.tier().id() : null;
   }
 
   private void updatePackageState(String packageId, String state) {

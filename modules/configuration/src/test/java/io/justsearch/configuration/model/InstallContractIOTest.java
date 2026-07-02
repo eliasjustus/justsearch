@@ -124,6 +124,8 @@ class InstallContractIOTest {
             + " (no exception). Resolution falls through to alpha.18 env-var path.");
     assertEquals(2, loaded.schemaVersion());
     assertEquals(DownloadProfile.CPU, loaded.downloadProfile());
+    assertNull(loaded.installIntent(),
+        "pre-tempdoc-657 contract without installIntent field must deserialize with null");
   }
 
   /**
@@ -139,5 +141,30 @@ class InstallContractIOTest {
 
     assertNull(contract.modelsDir(),
         "the 5-arg backwards-compat constructor must default modelsDir to null");
+    assertNull(contract.installIntent(),
+        "the 5-arg backwards-compat constructor must default installIntent to null");
+  }
+
+  /**
+   * Tempdoc 657 — the 6-arg constructor (pre-installIntent) defaults installIntent to null, and the
+   * new field round-trips through disk when set.
+   */
+  @Test
+  void installIntent_defaultsNullOnSixArg_andRoundTripsWhenSet() throws Exception {
+    var sixArg = new InstallContract(
+        2, System.currentTimeMillis(),
+        HardwareProfile.cpuOnly(), DownloadProfile.CPU,
+        Map.of(), tempDir);
+    assertNull(sixArg.installIntent(),
+        "the 6-arg backwards-compat constructor must default installIntent to null");
+
+    var withIntent = new InstallContract(
+        2, System.currentTimeMillis(),
+        HardwareProfile.cpuOnly(), DownloadProfile.CPU,
+        Map.of(), tempDir, InstallIntent.MCP_LITE);
+    InstallContractIO.write(withIntent, tempDir);
+    InstallContract loaded = InstallContractIO.read(tempDir);
+    assertEquals(InstallIntent.MCP_LITE, loaded.installIntent(),
+        "installIntent must round-trip through disk");
   }
 }

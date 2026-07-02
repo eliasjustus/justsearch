@@ -39,6 +39,8 @@ import {
   type AiRuntimeStatus,
   type PackImportStatus,
 } from '../state/aiStateStore.js';
+// Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
+import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
 import { applyLocalIntent, type AiEngineVerdict, type AiStability } from '../state/aiVerdict.js';
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
@@ -206,6 +208,7 @@ export class BrainSurface extends JfElement {
     llm: { state: true },
     inference: { state: true },
     installStatus: { state: true },
+    planPreview: { state: true },
     runtimeStatus: { state: true },
     policy: { state: true },
     packStatus: { state: true },
@@ -238,6 +241,7 @@ export class BrainSurface extends JfElement {
   // not a second poll BrainSurface runs itself. Typed as the store's snapshots.
   declare inference: UnifiedAiState['inference'];
   declare installStatus: InstallStatus | null;
+  declare planPreview: InstallPlanPreview | null;
   declare runtimeStatus: AiRuntimeStatus | null;
   declare policy: EffectivePolicy | null;
   declare packStatus: PackImportStatus | null;
@@ -266,6 +270,7 @@ export class BrainSurface extends JfElement {
     this.llm = {};
     this.inference = null;
     this.installStatus = null;
+    this.planPreview = null;
     this.runtimeStatus = null;
     this.policy = null;
     this.packStatus = null;
@@ -575,15 +580,18 @@ export class BrainSurface extends JfElement {
       // are NOT fetched here; all five come from the shared aiStateStore subscription
       // (connectedCallback), which is always-on and self-healing. Only settings/policy — which have
       // no shared poller and are genuinely one-shot facts — are fetched on mount.
-      const [settings, policy] = await Promise.all([
+      const [settings, policy, preview] = await Promise.all([
         this.fetchJson<{ ui?: UiSettings; llm?: LlmSettings }>('/api/settings/v2'),
         this.fetchJson<EffectivePolicy>('/api/policy/effective'),
+        // Tempdoc 657 — honest per-tier download weight, computed side-effect-free by the planner.
+        this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview'),
       ]);
       if (settings) {
         this.settings = settings.ui ?? {};
         this.llm = settings.llm ?? {};
       }
       if (policy) this.policy = policy;
+      if (preview) this.planPreview = preview;
     } finally {
       this.refreshing = false;
     }
@@ -1583,6 +1591,39 @@ export class BrainSurface extends JfElement {
     );
   }
 
+  /**
+   * Tempdoc 657 — honest first-run weight, grouped by capability tier so the optional heavy LLM pack
+   * is visibly separate from the (already-bundled) retrieval stack. Sourced from the side-effect-free
+   * plan-preview; renders nothing until it loads. Tiers the active mode excludes are shown dimmed so
+   * the reason for their absence is legible rather than a silent gap.
+   */
+  private renderTierBreakdown(): TemplateResult | typeof nothing {
+    const tiers = this.planPreview?.tiers;
+    if (!tiers?.length) return nothing;
+    const intent = this.planPreview?.intent ?? 'this';
+    return html`
+      <div style="margin-bottom: 0.5rem">
+        ${tiers.map((t) => {
+          const total = t.totalBytes ?? 0;
+          const download = t.downloadBytes ?? 0;
+          const statusText = !t.includedByIntent
+            ? `not in ${intent} mode`
+            : download > 0
+              ? 'to download'
+              : 'installed';
+          return html`
+            <div class="data-row" style=${t.includedByIntent ? '' : 'opacity: 0.55'}>
+              <span>${t.label || t.tier || 'tier'}</span>
+              <span style="color: var(--text-secondary); font-family: monospace">
+                ${total ? formatBytes(total) : '—'} · ${statusText}
+              </span>
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
   private renderModels(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const active = features.filter((f) => f.modelActive).length;
@@ -1592,20 +1633,23 @@ export class BrainSurface extends JfElement {
       active > 0 ? `${active} loaded` : null,
       () => html`
         <div style="margin-top: 0.625rem; font-size: var(--font-size-sm)">
+          ${this.renderTierBreakdown()}
           ${this.installStatus?.packages?.length
             ? this.installStatus.packages.map(
                 (p) => html`
                   <div class="data-row">
-                    <span>${p.id ?? 'package'}</span>
+                    <span>${p.label || p.packageId || 'package'}</span>
                     <span style="color: var(--text-secondary); font-family: monospace"
                       >${p.bytesTotal ? formatBytes(p.bytesTotal) : '—'}</span
                     >
                   </div>
                 `,
               )
-            : html`<div style="color: var(--text-secondary); padding: 0.5rem 0">
-                No model packages yet — install AI to populate this list.
-              </div>`}
+            : this.planPreview
+              ? nothing
+              : html`<div style="color: var(--text-secondary); padding: 0.5rem 0">
+                  No model packages yet — install AI to populate this list.
+                </div>`}
           ${this.llm.modelPath
             ? html`
                 <div class="data-row">
