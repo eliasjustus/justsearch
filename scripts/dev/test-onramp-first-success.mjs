@@ -22,6 +22,9 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const devRunner = path.join(__dirname, 'dev-runner.cjs');
 const corpus = path.join(repoRoot, 'examples', 'onramp-corpus');
 const DEMO_QUERY = 'cinnamon heist'; // matches examples/onramp-corpus/cinnamon.md
+// Indexing-settle poll budget: 90s by default (a cold windows-latest CI runner is slower than a warm
+// local dev box); override with JUSTSEARCH_SETTLE_TIMEOUT_S for local runs.
+const SETTLE_TIMEOUT_S = Number(process.env.JUSTSEARCH_SETTLE_TIMEOUT_S) || 90;
 
 function log(m) { console.error(`[onramp-smoke] ${m}`); }
 async function getJson(base, route, opts) {
@@ -70,12 +73,18 @@ async function main() {
     });
     if (!(ing.accepted > 0)) throw new Error(`ingest accepted ${ing.accepted} docs (expected > 0)`);
 
-    // Wait for indexing to settle (pending 0 + IDLE).
-    for (let i = 0; i < 30; i++) {
+    // Wait for indexing to settle (pending 0 + IDLE). Fail LOUDLY on timeout instead of falling
+    // through silently — a silent fallthrough here previously surfaced as a misleading "query
+    // returned 0 results" failure later, hiding the real cause (indexing never settled).
+    let settled = false;
+    for (let i = 0; i < SETTLE_TIMEOUT_S; i++) {
       const s = await getJson(base, '/api/status');
       const c = s.worker?.core;
-      if (c && c.pendingJobs === 0 && c.indexState === 'IDLE' && c.indexedDocuments > 0) break;
+      if (c && c.pendingJobs === 0 && c.indexState === 'IDLE' && c.indexedDocuments > 0) { settled = true; break; }
       await sleep(1000);
+    }
+    if (!settled) {
+      throw new Error(`indexing did not settle within ${SETTLE_TIMEOUT_S}s — increase timeout or check ingest; NOT a search failure`);
     }
 
     log(`querying "${DEMO_QUERY}"…`);
