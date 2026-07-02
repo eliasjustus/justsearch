@@ -32,15 +32,21 @@ node scripts/dev/prepare-worktree.cjs          # npm ci + installDist + seeds .m
 node scripts/dev/prepare-worktree.cjs --no-dist # FE-only (skip the Java dists)
 ```
 
-**Shared models / runtime**: the dev-runner now resolves `JUSTSEARCH_MODELS_DIR`
-from the **main** checkout automatically and auto-stages a CPU llama-server
-baseline into an empty `native-bin` (tempdoc 618 §2/§3) — so models and
-`default`-variant `ai_activate` work from a worktree with no manual step. Only
-if you run a backend outside the dev-runner do you still need to export it:
+**Shared models / runtime**: the dev-runner resolves `JUSTSEARCH_MODELS_DIR`
+from the **main** checkout automatically. Dev inference is **GPU-only**: a
+worktree's own `cuda12` runtime wins if present, else the dev-runner resolves
+and (on first use) one-time-populates a **shared** `cuda12` GPU runtime at the
+main checkout from a Gradle-built stage (`resolveCuda12ServerExe` /
+`stageSharedCuda12` in `scripts/dev/dev-runner.cjs`), so every worktree can
+reference one copy instead of re-staging. There is deliberately **no CPU
+baseline** — if no `cuda12` runtime is resolvable anywhere, inference fails
+CLOSED (a truthful "unavailable") while search still works; a CPU fallback for
+a multi-GB model would silently DOS concurrent worktrees (tempdoc 656). Only
+if you run a backend outside the dev-runner do you still need to export
+`JUSTSEARCH_MODELS_DIR`:
 ```
 JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
 ```
-GPU `cuda12` stays "Install AI"'s domain; dev-staging leaves it untouched.
 
 **New terminal session** — launch Claude with the `--worktree` flag:
 ```bash

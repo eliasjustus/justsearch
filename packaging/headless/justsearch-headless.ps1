@@ -7,7 +7,9 @@
   shell, in the given install/runtime mode:
 
     headless   full local service (retrieval + LLM, no desktop UI)
-    mcp-lite   fast retrieval for agents (no LLM download / no LLM start)
+    mcp-lite   fast retrieval for agents; excludes the LLM + CUDA runtime from
+               the install plan (~2.1 GB vs ~10.7 GB) — does NOT currently gate
+               runtime activation of an LLM model already present on disk
 
   To reuse an existing install's data + models, set $env:JUSTSEARCH_DATA_DIR and
   $env:JUSTSEARCH_HOME before launching.

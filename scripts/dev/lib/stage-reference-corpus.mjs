@@ -72,11 +72,18 @@ export async function stageAndVerify({
   });
   if (!(ing.accepted > 0)) throw new Error(`ingest accepted ${ing.accepted} docs (expected > 0)`);
 
+  // Fail LOUDLY if indexing never settles — a silent fallthrough here previously surfaced as a
+  // misleading "query returned 0 results" failure later, hiding the real cause (settle timeout,
+  // not a search defect).
+  let settled = false;
   for (let i = 0; i < pollAttempts; i++) {
     const s = await getJson(base, '/api/status');
     const c = s.worker?.core;
-    if (c && c.pendingJobs === 0 && c.indexState === 'IDLE' && c.indexedDocuments > 0) break;
+    if (c && c.pendingJobs === 0 && c.indexState === 'IDLE' && c.indexedDocuments > 0) { settled = true; break; }
     await sleep(pollIntervalMs);
+  }
+  if (!settled) {
+    throw new Error(`${failLabel}: indexing did not settle within ${Math.round((pollAttempts * pollIntervalMs) / 1000)}s — increase the poll budget or check ingest; NOT a search failure`);
   }
 
   const r = await getJson(base, '/api/knowledge/search', {
