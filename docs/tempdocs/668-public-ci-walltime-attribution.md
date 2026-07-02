@@ -1,9 +1,9 @@
 ---
 title: "Public CI wall-clock attribution and advisory latency budgets"
 type: tempdoc
-status: "implemented — PR #39, live-verified on CI run 28539588910"
+status: "shipped — wall-clock attribution instrument + advisory budgets + on-demand `--run-id`/`--latest` entry (see 'Implementation closeout' at end). The Windows→Linux CI migration this instrument led also landed on this branch (~741s→~415s, ~44% wall-clock cut) though that optimization arguably belongs in its own tempdoc. Remaining work is hand-offs only: contributor/agent triage surface → 651; build-cache / windows-native-lane optimization → a 648-analogue. Not yet merged to main (no PR opened)."
 created: 2026-07-01
-updated: 2026-07-01
+updated: 2026-07-02
 related:
   - 651-public-ci-feedback-loop-efficiency   # declared this scope (cross-check timing, build-lane attribution, trend reporting) but left it unbuilt
   - 652-public-ci-unit-test-latency          # built unit-lane attribution + advisory unit budgets; deferred the whole-run map to 651
@@ -1597,3 +1597,16 @@ Opus-tier reasoning required).
 The two hand-offs stand as designed and are **not** 668's to build: the larger run-id → failure-triage
 surface → **651**; the optimization band (build-output cache, windows-native shrink) → the **648-analogue**.
 668 is now complete on *attribution logic + advisory guard + on-demand consumption*.
+
+**Known follow-ups / deferred checks (so they are not forgotten):**
+- **`scripts/ci/test-*.mjs` are not run by any CI workflow** (mine + the `report-unit-test-attribution`
+  sibling) — local-only regression protection; no CI gate. Pre-existing, repo-infra-wide. Logged to the
+  observations inbox. A `node --test` lane over `scripts/ci/test-*.mjs` would close it.
+- **Minor hygiene:** `report-ci-walltime-attribution.mjs` `downloadUnitArtifacts` leaves its `os.tmpdir()`
+  dir behind (OS-cleaned; opt-in path only) — a `finally { rmSync }` would tidy it. Non-substantive.
+- **Deferred optimization (648-analogue), evidence already recorded:** the on-demand tool now names the
+  pacer — currently `windows-native` (~419s, mostly compile of 5 modules). Levers: a Gradle build-output
+  cache via `setup-gradle` (needs a hosted A/B — 652 flagged this), and shrinking the windows-native lane.
+- **Not merged:** all work is on branch `worktree-ci-latency-667` (pushed); **no PR opened** by request.
+  The `main` frontmatter/title still names only the two attribution bands — if the migration stays folded
+  in here rather than moving to its own tempdoc, the title under-describes it (flagged, user's call).
