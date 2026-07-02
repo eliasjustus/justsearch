@@ -339,6 +339,9 @@ export class AuthorizationHost extends JfElement {
     return html`
       <h3>Authorize action</h3>
       <p>An action requires your approval: <code>${operationId}</code></p>
+      ${prompt.requestedBy
+        ? html`<p class="rationale" data-testid="authorization-requested-by">Requested by: ${prompt.requestedBy}</p>`
+        : ''}
       ${prompt.purpose
         ? html`<p class="rationale" data-testid="authorization-purpose">${prompt.purpose}</p>`
         : ''}

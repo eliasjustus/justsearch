@@ -8,91 +8,43 @@
  * search returning a hit) is the guaranteed floor and is asserted unconditionally; the reached tier
  * (per scripts/dev/doctor.mjs) is reported for context.
  *
+ * The ingest→poll→query→assert mechanics live in scripts/dev/lib/stage-reference-corpus.mjs
+ * (tempdoc 669), shared with scripts/dev/stage-demo-corpus.mjs so this smoke test and the demo-corpus
+ * staging script don't carry two drifting copies of the same logic.
+ *
  * Integration smoke (starts a real stack; needs installDist). Run on demand:
  *   node scripts/dev/test-onramp-first-success.mjs
  * Exits 0 on first-success, 1 on failure. Always tears the stack down.
  */
 'use strict';
-import { spawn, execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeLogger, startStack, stopStack, stageAndVerify, getTier } from './lib/stage-reference-corpus.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..', '..');
 const devRunner = path.join(__dirname, 'dev-runner.cjs');
+const doctorPath = path.join(__dirname, 'doctor.mjs');
 const corpus = path.join(repoRoot, 'examples', 'onramp-corpus');
 const DEMO_QUERY = 'cinnamon heist'; // matches examples/onramp-corpus/cinnamon.md
 
-function log(m) { console.error(`[onramp-smoke] ${m}`); }
-async function getJson(base, route, opts) {
-  const res = await fetch(base + route, { signal: AbortSignal.timeout(15000), ...opts });
-  if (!res.ok) throw new Error(`${route} → HTTP ${res.status}`);
-  return res.json();
-}
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Spawn `dev-runner start`, resolve with {apiBaseUrl} once the ok:true JSON line is seen. */
-function startStack() {
-  return new Promise((resolve, reject) => {
-    const child = spawn('node', [devRunner, 'start', '--clean', 'hard', '--json'],
-      { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
-    let buf = '';
-    const timer = setTimeout(() => { child.kill(); reject(new Error('stack start timed out')); }, 240000);
-    child.stdout.on('data', (d) => {
-      buf += d.toString();
-      const line = buf.split('\n').find((l) => l.includes('"apiPort"'));
-      if (line) {
-        try {
-          const r = JSON.parse(line.trim());
-          if (r.ok && r.apiPort) { clearTimeout(timer); resolve({ apiBaseUrl: r.apiBaseUrl || `http://127.0.0.1:${r.apiPort}`, child }); }
-        } catch { /* partial line */ }
-      }
-    });
-    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`dev-runner exited early (${code})`)); });
-  });
-}
-function stopStack() {
-  try { execFileSync('node', [devRunner, 'stop', '--active', '--json'], { cwd: repoRoot, stdio: 'ignore' }); }
-  catch { /* best-effort teardown */ }
-}
+const log = makeLogger('onramp-smoke');
 
 async function main() {
-  let started;
   try {
     log('starting dev stack (--clean hard)…');
-    started = await startStack();
+    const started = await startStack({ repoRoot, devRunner });
     const base = started.apiBaseUrl;
     log(`stack up at ${base}; ingesting demo corpus…`);
-
-    const ing = await getJson(base, '/api/knowledge/ingest', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: [corpus] }),
-    });
-    if (!(ing.accepted > 0)) throw new Error(`ingest accepted ${ing.accepted} docs (expected > 0)`);
-
-    // Wait for indexing to settle (pending 0 + IDLE).
-    for (let i = 0; i < 30; i++) {
-      const s = await getJson(base, '/api/status');
-      const c = s.worker?.core;
-      if (c && c.pendingJobs === 0 && c.indexState === 'IDLE' && c.indexedDocuments > 0) break;
-      await sleep(1000);
-    }
-
     log(`querying "${DEMO_QUERY}"…`);
-    const r = await getJson(base, '/api/knowledge/search', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: DEMO_QUERY, limit: 5 }),
-    });
-    const results = r.results || [];
-    const mode = r.searchTrace?.effectiveMode;
 
-    // Tier 0 (the guaranteed floor): a keyword query returns a real hit. Asserted unconditionally.
-    if (results.length < 1) throw new Error(`FIRST-SUCCESS FAILED: query returned 0 results (mode=${mode})`);
-    if (!mode) throw new Error('FIRST-SUCCESS FAILED: no searchTrace.effectiveMode');
+    const { results, mode } = await stageAndVerify({
+      base, corpusPath: corpus, query: DEMO_QUERY,
+      failLabel: 'FIRST-SUCCESS FAILED',
+    });
 
     // Ask the doctor which tier this environment is at (drives the conditional higher-tier check).
-    let tier = '(unknown)';
-    try { tier = JSON.parse(execFileSync('node', [path.join(__dirname, 'doctor.mjs'), '--json'], { cwd: repoRoot }).toString()).tier; } catch { /* best-effort */ }
+    const tier = getTier({ repoRoot, doctorPath });
 
     // Tier 1 (conditional): when the embedding model is present (tier ≥ 1), the semantic path must
     // actually engage — the query must NOT have fallen back to pure keyword (TEXT) mode. Deterministic.
@@ -107,7 +59,7 @@ async function main() {
     process.exitCode = 1;
   } finally {
     log('stopping dev stack…');
-    stopStack();
+    stopStack({ repoRoot, devRunner });
   }
 }
 

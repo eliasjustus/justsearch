@@ -152,6 +152,8 @@ import { dispatchEffectToChrome } from '../substrates/actions/index.js';
 import { startTask, completeTask } from '../substrates/tasks/index.js';
 // §32 #1 — project the backend indexing-jobs stream into the Task tray.
 import { startIndexingJobsBridge } from '../substrates/tasks/indexingJobsBridge.js';
+// Tempdoc 655 — surface a pending authorization created by an out-of-band caller (MCP).
+import { startPendingAuthorizationBridge } from '../operations/pendingAuthorizationBridge.js';
 import { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import { setSharedShellEventsMultiplex } from '../streaming/shellEventsMultiplexInstance.js';
 import { SHELL_EVENTS_STREAM_PATH } from '../streaming/shellEventStreamIds.js';
@@ -430,6 +432,8 @@ export class Shell extends JfElement {
   private evalContextScopeBumpUnsub: (() => void) | null = null;
   // §32 #1 — indexing-jobs → Task tray bridge teardown handle.
   private indexingJobsBridgeStop: (() => void) | null = null;
+  // Tempdoc 655 — pending-authorization (out-of-band gate, e.g. MCP) bridge teardown handle.
+  private pendingAuthorizationBridgeStop: (() => void) | null = null;
   private effectIngestStop: (() => void) | null = null;
   // Tempdoc 543 §20.7 A1/A2 — Effect dispatch listeners. applyEffect
   // (Action substrate, Slice 7) emits jf-open-pane / jf-close-pane /
@@ -709,6 +713,11 @@ export class Shell extends JfElement {
     // §32 #1 — project live backend indexing jobs into the ambient Task tray
     // (read-only; cancel/retry stay on the core.indexing-jobs Resource view).
     this.indexingJobsBridgeStop = startIndexingJobsBridge(this.apiBase, {
+      multiplex: this.shellEventsMultiplex ?? undefined,
+    });
+    // Tempdoc 655 — surface a pending authorization created by a caller other than a live
+    // frontend request (an MCP tool call) via the same `<jf-authorization-host>` ceremony.
+    this.pendingAuthorizationBridgeStop = startPendingAuthorizationBridge(this.apiBase, {
       multiplex: this.shellEventsMultiplex ?? undefined,
     });
     // Tempdoc 550 thesis I (process-spanning ONE log): bridge FE-local effects into the one
@@ -1590,6 +1599,9 @@ export class Shell extends JfElement {
     // §32 #1 — close the indexing-jobs SSE stream.
     this.indexingJobsBridgeStop?.();
     this.indexingJobsBridgeStop = null;
+    // Tempdoc 655 — close the pending-authorization bridge subscription.
+    this.pendingAuthorizationBridgeStop?.();
+    this.pendingAuthorizationBridgeStop = null;
     this.effectIngestStop?.();
     this.effectIngestStop = null;
     // Tempdoc 543 §20.7 A1/A2 — Effect dispatch listener teardowns.
