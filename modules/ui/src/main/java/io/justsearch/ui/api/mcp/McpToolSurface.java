@@ -695,7 +695,8 @@ public final class McpToolSurface {
       String pendingId =
           pendingAuthorizationStore.create(
               op.id().value(), argsJson, e.sourceTier(), op.policy().risk(), e.gateBehavior(),
-              e.getMessage(), requestedBy);
+              e.getMessage(), requestedBy,
+              io.justsearch.agent.api.registry.TransportTag.MCP);
       if (pendingAuthorizationChanges != null) {
         // Tempdoc 655 fix pass: routing info only — no argsSummary/rationale on the broadcast
         // (see PendingAuthorizationEvent's doc comment for why). A subscriber fetches the
@@ -712,7 +713,8 @@ public final class McpToolSurface {
                             pending.riskTier(),
                             pending.gateBehavior(),
                             pending.createdAt(),
-                            pending.expiresAt())));
+                            pending.expiresAt(),
+                            pending.transport())));
       }
       message =
           "Operation '"

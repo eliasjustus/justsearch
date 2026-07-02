@@ -813,3 +813,30 @@ detection logic, the gating condition, the call into `sendDesktopNotification` �
 was confirmed to reach that boundary correctly; only the final native OS call itself is untested,
 consistent with this session's own confidence-building pass identifying that exact gap in advance.
 
+## Critical-analysis fix: suppress the missed-approval advisory for non-MCP gates (2026-07-02)
+
+A post-implementation critical-analysis pass on the work above found one substantive bug:
+`PendingAuthorizationAdvisoryProjector` projected an advisory (toast + inbox badge, and — when
+unfocused — a desktop notification) for **every** `PendingAuthorizationEvent`, but that event is
+broadcast by both `McpToolSurface` (MCP) and `OperationsController` (the browser's own REST 428
+path) onto the same shared `PendingAuthorizationChangeRegistry`. `pendingAuthorizationBridge.ts`
+already documents and defends against this exact overlap for the *ceremony dialog* ("a gate that
+ALSO reached a live REST caller... always true for the browser's own 428s... would otherwise be
+presented twice" — hence its `handledIds` dedup); the new advisory path had no equivalent guard.
+Confirmed both by reading `CoreTrustEvaluator`'s lattice (TRUSTED+HIGH and MEDIUM+MEDIUM/HIGH cells
+still gate — this isn't an UNTRUSTED-only concern) and live: a direct `POST
+/api/operations/core.rebuild-index/invoke` call (a HIGH-risk op, gates even for a TRUSTED source)
+produced the ceremony dialog as expected but — before the fix — also produced a redundant
+"Approval requested" toast for an action nothing outside that HTTP request had asked for.
+
+**Fix:** threaded `TransportTag` (an existing enum already carrying an `MCP` value for exactly
+this) onto `PendingAuthorization` and `PendingAuthorizationEvent`. `McpToolSurface` passes
+`TransportTag.MCP`; `OperationsController` passes its already-resolved `provenance.transport()`.
+`PendingAuthorizationAdvisoryProjector.project()` now returns `Optional.empty()` unless
+`event.transport() == TransportTag.MCP` — MCP has no in-page synchronous responder, so it's the
+only transport that needs the passive discoverability signal; a browser gate's ceremony dialog is
+already the complete, sufficient signal for the user who just triggered it. Backend-only change;
+the frontend has no visibility into transport and needed none. Re-verified live: the MCP flow
+still produces the toast/badge/dialog exactly as before; the same `core.rebuild-index` REST call
+now produces only the dialog, no toast.
+

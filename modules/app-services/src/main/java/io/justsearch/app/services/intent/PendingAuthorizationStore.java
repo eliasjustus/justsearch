@@ -4,6 +4,7 @@ package io.justsearch.app.services.intent;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
+import io.justsearch.agent.api.registry.TransportTag;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -68,9 +69,10 @@ public final class PendingAuthorizationStore {
   }
 
   /**
-   * Tempdoc 655 — canonical overload: also records {@code requestedBy} (the calling MCP client's
-   * self-reported name, display-only — see {@link PendingAuthorization#requestedBy}). {@code
-   * null} for a browser-originated gate.
+   * Tempdoc 655 — records {@code requestedBy} (the calling MCP client's self-reported name,
+   * display-only — see {@link PendingAuthorization#requestedBy}); {@code null} for a
+   * browser-originated gate. Defaults {@code transport} to {@link TransportTag#SYSTEM_INTERNAL}
+   * ("no caller-supplied transport context") for callers that don't yet supply one.
    */
   public String create(
       String operationId,
@@ -80,6 +82,33 @@ public final class PendingAuthorizationStore {
       GateBehavior gateBehavior,
       String rationale,
       String requestedBy) {
+    return create(
+        operationId,
+        argsJson,
+        sourceTier,
+        riskTier,
+        gateBehavior,
+        rationale,
+        requestedBy,
+        TransportTag.SYSTEM_INTERNAL);
+  }
+
+  /**
+   * Tempdoc 655 critical-analysis fix — canonical overload: also records {@code transport} (which
+   * transport's gate produced this pending — see {@link PendingAuthorization#transport}), so a
+   * consumer like {@code PendingAuthorizationAdvisoryProjector} can distinguish a gate with no
+   * in-page synchronous responder (MCP) from one the caller's own request is already driving a
+   * ceremony dialog for (a browser 428).
+   */
+  public String create(
+      String operationId,
+      String argsJson,
+      SourceTier sourceTier,
+      RiskTier riskTier,
+      GateBehavior gateBehavior,
+      String rationale,
+      String requestedBy,
+      TransportTag transport) {
     Instant now = clock.instant();
     // Evict expired entries here — expiry is otherwise only checked lazily on peek/consume of
     // a specific id, so a pending that is gated-then-abandoned (never approved) would never be
@@ -106,7 +135,8 @@ public final class PendingAuthorizationStore {
             rationale,
             now,
             now.plus(ttl),
-            requestedBy));
+            requestedBy,
+            transport));
     return id;
   }
 

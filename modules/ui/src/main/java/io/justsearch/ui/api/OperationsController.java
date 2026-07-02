@@ -179,7 +179,7 @@ public final class OperationsController {
       // Slice 487 §4.4: the lattice produced a non-AUTO gate and no token was supplied.
       // Surface the gate behavior + the destination's ConfirmStrategy so the FE can
       // render trust-aware elicitation UX and re-invoke with the token.
-      writeConfirmationRequired(ctx, op, e, argumentsJson);
+      writeConfirmationRequired(ctx, op, e, argumentsJson, provenance.transport());
       return;
     } catch (io.justsearch.agent.api.registry.TrustGateDeniedException e) {
       writeError(
@@ -340,7 +340,8 @@ public final class OperationsController {
       Context ctx,
       Operation op,
       io.justsearch.agent.api.registry.ConfirmationRequiredException e,
-      String argumentsJson) {
+      String argumentsJson,
+      io.justsearch.agent.api.registry.TransportTag transport) {
     java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
     body.put("success", false);
     body.put("errorClass", io.justsearch.app.api.ApiErrorCode.CONFIRMATION_REQUIRED.name());
@@ -368,7 +369,9 @@ public final class OperationsController {
               e.sourceTier(),
               op.policy().risk(),
               e.gateBehavior(),
-              e.getMessage());
+              e.getMessage(),
+              null,
+              transport);
       body.put("pendingId", pendingId);
       // Tempdoc 655: also broadcast on the pending-authorization SSE stream, so the shell
       // (already open, potentially on a different view than whatever triggered this 428) has one
@@ -389,7 +392,8 @@ public final class OperationsController {
                             pending.riskTier(),
                             pending.gateBehavior(),
                             pending.createdAt(),
-                            pending.expiresAt())));
+                            pending.expiresAt(),
+                            pending.transport())));
       }
     }
     try {

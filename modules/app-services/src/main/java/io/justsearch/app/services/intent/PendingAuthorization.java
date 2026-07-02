@@ -4,6 +4,7 @@ package io.justsearch.app.services.intent;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
+import io.justsearch.agent.api.registry.TransportTag;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -44,6 +45,12 @@ import java.util.Objects;
  *     null} for a browser-originated gate or an MCP client that omitted {@code clientInfo}.
  *     Display-only (surfaced in the approval ceremony and the advisory inbox) — never a trust
  *     input; unlike {@code operationId}/{@code argsJson}, nothing security-relevant reads it.
+ * @param transport tempdoc 655 critical-analysis fix — which transport's gate produced this
+ *     pending ({@link TransportTag#MCP} vs. a browser transport). Distinguishes a gate with no
+ *     in-page synchronous responder (MCP) from one where the caller's own request is already
+ *     driving the ceremony dialog (a browser 428) — see {@code
+ *     PendingAuthorizationAdvisoryProjector}, which uses this to avoid a redundant advisory for
+ *     an action the user just triggered themselves.
  */
 public record PendingAuthorization(
     String id,
@@ -55,7 +62,8 @@ public record PendingAuthorization(
     String rationale,
     Instant createdAt,
     Instant expiresAt,
-    String requestedBy) {
+    String requestedBy,
+    TransportTag transport) {
 
   public PendingAuthorization {
     Objects.requireNonNull(id, "id");
@@ -66,6 +74,7 @@ public record PendingAuthorization(
     Objects.requireNonNull(gateBehavior, "gateBehavior");
     Objects.requireNonNull(createdAt, "createdAt");
     Objects.requireNonNull(expiresAt, "expiresAt");
+    Objects.requireNonNull(transport, "transport");
     rationale = rationale == null ? "" : rationale;
     requestedBy = requestedBy == null || requestedBy.isBlank() ? null : requestedBy;
   }

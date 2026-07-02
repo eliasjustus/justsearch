@@ -2,15 +2,16 @@
 package io.justsearch.app.observability.advisory;
 
 import io.justsearch.agent.api.registry.EmissionPolicy;
+import io.justsearch.agent.api.registry.TransportTag;
 import io.justsearch.app.observability.operations.PendingAuthorizationEvent;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * Projector for the "a pending MCP/UI approval is waiting" advisory class — tempdoc 655's
- * long-term design pass. Consumes {@link PendingAuthorizationEvent} via {@code subscribeTyped}
- * and projects every gate-firing into the uniform {@link AdvisoryRecord} shape, mirroring {@link
+ * Projector for the "a pending MCP approval is waiting" advisory class — tempdoc 655's long-term
+ * design pass. Consumes {@link PendingAuthorizationEvent} via {@code subscribeTyped} and projects
+ * a gate-firing into the uniform {@link AdvisoryRecord} shape, mirroring {@link
  * HealthRecoveryProjector}'s bootstrap-subscription wiring shape (not {@code
  * OperationCompletionProjector}'s inline-callback shape), since the natural domain registry —
  * {@link io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry} — already
@@ -23,10 +24,19 @@ import java.util.Optional;
  * user is looking right now," this advisory class handles "make sure it's discoverable even if
  * they weren't."
  *
- * <p>Every gate-firing produces an advisory (no filtering, unlike {@link
- * HealthRecoveryProjector}'s severity/recovery checks) — a human approval request is always
- * noteworthy. No dedupe window: {@link #dedupKey} is the {@code pendingId} itself, which is
- * already unique per gate-firing (UUID-based), so there is nothing to collapse.
+ * <p><b>Filters on {@link PendingAuthorizationEvent#transport()} — MCP only</b> (tempdoc 655
+ * critical-analysis fix). Both {@code McpToolSurface} and {@code OperationsController}'s browser
+ * 428 path broadcast into the same shared registry this projector subscribes to — but a browser
+ * gate already has the ceremony dialog synchronously driven by the caller's own in-flight request
+ * (the exact overlap {@code pendingAuthorizationBridge.ts}'s own {@code handledIds} dedup already
+ * defends against for the dialog). Projecting an advisory for a browser gate would show a
+ * redundant "Approval requested" toast for an action the user just triggered themselves,
+ * contradicting this class's own purpose (discoverability for a gate the user might have missed —
+ * inapplicable to a self-triggered click). MCP has no in-page synchronous responder, so it's the
+ * only transport that needs this signal.
+ *
+ * <p>No dedupe window: {@link #dedupKey} is the {@code pendingId} itself, which is already unique
+ * per gate-firing (UUID-based), so there is nothing to collapse.
  *
  * <p>Deliberately does NOT carry {@code requestedBy} in {@code classExtras} — {@link
  * PendingAuthorizationEvent} itself withholds decision/identity content by design (its own doc
@@ -52,6 +62,9 @@ public final class PendingAuthorizationAdvisoryProjector
 
   @Override
   public Optional<AdvisoryProjection> project(PendingAuthorizationEvent event) {
+    if (event.transport() != TransportTag.MCP) {
+      return Optional.empty();
+    }
     Map<String, Object> extras = new LinkedHashMap<>();
     extras.put("pendingId", event.pendingId());
     extras.put("operationId", event.operationId());

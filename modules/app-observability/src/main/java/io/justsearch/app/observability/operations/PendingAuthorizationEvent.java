@@ -4,6 +4,7 @@ package io.justsearch.app.observability.operations;
 import io.justsearch.agent.api.registry.GateBehavior;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
+import io.justsearch.agent.api.registry.TransportTag;
 import java.time.Instant;
 
 /**
@@ -20,6 +21,14 @@ import java.time.Instant;
  * local subscriber receives). This event is routing/identifying information only — enough for a
  * subscriber to know "something needs approval" and fetch the decision content itself, by id, via
  * {@code GET /api/authorizations/pending/{id}} (point-to-point, mirrors the 428's own shape).
+ *
+ * <p><b>{@code transport} is a routing fact, not decision or identity content</b> — unlike
+ * {@code requestedBy} (a display-only field on {@link
+ * io.justsearch.app.services.intent.PendingAuthorization}, deliberately kept off this broadcast
+ * event), it's safe here and is exactly what a subscriber like
+ * {@code PendingAuthorizationAdvisoryProjector} needs to distinguish a gate with no in-page
+ * synchronous responder (MCP) from a browser 428 the caller's own request is already driving a
+ * ceremony dialog for.
  */
 public record PendingAuthorizationEvent(
     String pendingId,
@@ -28,4 +37,5 @@ public record PendingAuthorizationEvent(
     RiskTier riskTier,
     GateBehavior gateBehavior,
     Instant createdAt,
-    Instant expiresAt) {}
+    Instant expiresAt,
+    TransportTag transport) {}
