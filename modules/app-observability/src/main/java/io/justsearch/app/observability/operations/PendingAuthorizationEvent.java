@@ -12,18 +12,20 @@ import java.time.Instant;
  * (concretely: an MCP tool call) notify the always-on frontend shell that a human approval is now
  * waiting, without the frontend having to have made the original request.
  *
- * <p>Fields mirror {@code OperationsController.writeConfirmationRequired}'s 428 response body so
- * the same approval-ceremony UI can render either origin identically. {@code argsSummary} is the
- * same privacy-bounded, truncated summary that body already computes (tempdoc 550 F3) — never the
- * raw arguments.
+ * <p><b>Deliberately does NOT carry {@code argsSummary} or {@code rationale}</b> (tempdoc 655
+ * fix pass). Those are decision content — what the human is being asked to approve — and the
+ * existing privacy posture (tempdoc 444b: never dump argument-derived content into a broadcast;
+ * tempdoc 550 F3's {@code argsSummary} is a NAMED, deliberate exception scoped to the
+ * point-to-point 428 response to the one human deciding that one action, not to a channel every
+ * local subscriber receives). This event is routing/identifying information only — enough for a
+ * subscriber to know "something needs approval" and fetch the decision content itself, by id, via
+ * {@code GET /api/authorizations/pending/{id}} (point-to-point, mirrors the 428's own shape).
  */
 public record PendingAuthorizationEvent(
     String pendingId,
     String operationId,
-    String argsSummary,
     SourceTier sourceTier,
     RiskTier riskTier,
     GateBehavior gateBehavior,
-    String rationale,
     Instant createdAt,
     Instant expiresAt) {}

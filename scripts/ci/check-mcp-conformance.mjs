@@ -83,12 +83,14 @@ export const EXCLUDED_FIXTURE_SCENARIOS = [
   'prompts-get-with-image',
 ];
 
-function runConformanceSuite(url, scenarios) {
+function runConformanceSuite(url) {
+  // Tempdoc 655 fix pass: verified live (2026-07-02) that `--scenario` only keeps the LAST value
+  // passed — repeating the flag to select a subset silently runs just one scenario, not the
+  // intersection. There is no documented multi-scenario select; the reliable approach is running
+  // the full active suite (no `--scenario` filter) and filtering the parsed results ourselves to
+  // just PASSING_SCENARIOS, ignoring the rest (they're expected to fail — see this file's header).
   return new Promise((resolve, reject) => {
     const args = ['--yes', '@modelcontextprotocol/conformance', 'server', '--url', url];
-    for (const s of scenarios) {
-      args.push('--scenario', s);
-    }
     const child = spawn('npx', args, { shell: true });
     let stdout = '';
     let stderr = '';
@@ -126,13 +128,26 @@ async function main() {
     console.error('(the JustSearch dev stack must already be running — this script does not start it)');
     process.exit(2);
   }
+  // The url is spawned via `shell: true` (needed for npx.cmd resolution on Windows) — a strict
+  // allowlist pattern here rules out shell metacharacters reaching that shell, independent of
+  // Node's own DEP0190 warning about the general risk of unescaped args with shell:true.
+  if (!/^https?:\/\/[a-zA-Z0-9.-]+:\d+\/[\w/-]*$/.test(values.url)) {
+    console.error(`Refusing to run: --url does not look like a plain http(s) loopback URL: ${values.url}`);
+    process.exit(2);
+  }
 
-  console.log(`Running ${PASSING_SCENARIOS.length} protocol-conformance scenarios against ${values.url}`);
+  console.log(`Running the full active conformance suite against ${values.url}`);
   console.log(
-    `(${EXCLUDED_FIXTURE_SCENARIOS.length} scenarios intentionally excluded — they require suite-only fixture tools/prompts/resources; see this script's header)`,
+    `(only the ${PASSING_SCENARIOS.length} protocol-level scenarios below are asserted on; ` +
+      `${EXCLUDED_FIXTURE_SCENARIOS.length} others are expected to fail — they require ` +
+      `suite-only fixture tools/prompts/resources; see this script's header)`,
   );
 
-  const { code, stdout, stderr } = await runConformanceSuite(values.url, PASSING_SCENARIOS);
+  // Verified live (2026-07-02): the tool's own process exit code is 1 whenever ANY scenario in
+  // the run fails — including the 19 expected fixture-requiring ones — so it cannot be used as
+  // the pass/fail signal here. Only the parsed per-scenario results, filtered to
+  // PASSING_SCENARIOS, decide this script's outcome.
+  const { stdout, stderr } = await runConformanceSuite(values.url);
   const results = parseSummary(stdout);
 
   const regressions = [];
@@ -143,13 +158,13 @@ async function main() {
     }
   }
 
-  if (regressions.length > 0 || code !== 0) {
+  if (regressions.length > 0 || results.size === 0) {
     console.error('\nMCP conformance regression(s) detected:');
     for (const s of regressions) {
       console.error(`  - ${s}: ${results.has(s) ? JSON.stringify(results.get(s)) : 'no result parsed'}`);
     }
     if (results.size === 0) {
-      console.error('\n(No scenario results were parsed — the suite may have failed to run at all.)');
+      console.error('\n(No scenario results were parsed at all — the suite may have failed to run.)');
       console.error('--- stdout ---\n' + stdout);
       console.error('--- stderr ---\n' + stderr);
     }

@@ -352,4 +352,26 @@ class McpProtocolHandlerTest {
     String text = (String) content.get(0).get("text");
     assertTrue(text.contains("Invalid arguments"), "must be the boundary-validation error: " + text);
   }
+
+  @Test
+  void toolsCall_malformedNestedFilter_rejectedAtBoundaryBeforeDispatch() throws Exception {
+    // Tempdoc 655 fix pass: `filters` was previously an opaque "object" in the schema, so a
+    // malformed NESTED field (path_prefix as a number instead of a string) fell through the
+    // boundary validation and reached McpToolSurface#parseFilters's unchecked cast. Declaring
+    // filters' nested shape closes that gap — this must now be a clean boundary-validation error,
+    // not an unrelated failure surfaced from deeper in the call.
+    String raw =
+        callTool(
+            handler, 13, "justsearch_search", "{\"query\":\"x\",\"filters\":{\"path_prefix\":123}}");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(raw, Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    assertTrue((Boolean) result.get("isError"));
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+    String text = (String) content.get(0).get("text");
+    assertTrue(text.contains("Invalid arguments"), "must be the boundary-validation error: " + text);
+  }
 }

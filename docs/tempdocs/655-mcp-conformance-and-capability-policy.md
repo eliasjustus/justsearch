@@ -503,3 +503,42 @@ stack running this worktree's build (`distFrom`) and a real browser open on the 
    design predicted.
 No console errors were observed at any point in the flow.
 
+## Post-implementation critical-analysis pass and fix (2026-07-02)
+
+A critical review against this tempdoc's own stated design, run immediately after the above was
+committed (nothing pushed in between), found two privacy/security-relevant regressions and three
+other real gaps. Recorded here because the miss is worth keeping as history, not scrubbed.
+
+**The finding.** `PendingAuthorizationEvent`'s original shape carried `argsSummary` and
+`rationale` — the SAME privacy-bounded summary `ArgsSummary` computes for the point-to-point 428
+response — onto the new multiplexed SSE broadcast, which every locally-connected subscriber
+receives. This directly violated `ArgsSummary`'s own documented scope (tempdoc 444b: never put
+argument-derived content in a broadcast; tempdoc 550 F3's summary is a *named, deliberate
+exception* scoped to the one point-to-point response to the one human deciding that one action —
+not to a multicast channel). The existing action-ledger stream already respects that boundary by
+omitting args; this tempdoc's own new broadcast didn't. Compounding it: `execute: true` (added in
+the same pass) lets a bare `pendingId` complete a mutation without the caller separately knowing
+the original args — bounded by the loopback/single-user threat model and 128-bit-UUID
+unguessability, but a real narrowing that's worse when the id travels with its content attached.
+
+**The fix.** `PendingAuthorizationEvent` now carries routing info only (`pendingId`,
+`operationId`, `sourceTier`, `riskTier`, `gateBehavior`, `createdAt`, `expiresAt`) — no decision
+content. A new point-to-point `GET /api/authorizations/pending/{id}` endpoint
+(non-mutating — `PendingAuthorizationStore.peek`, not `consume`) serves the summary/rationale to
+a caller that already holds the id, mirroring the 428's own scoping. The frontend bridge now
+fetches this by id before presenting the ceremony (`OperationClient.peekPending`), skipping
+presentation if the id no longer resolves (already expired/consumed). Re-verified live in the
+browser afterward: the dialog renders identically, sourced from the new fetch instead of the
+broadcast (confirmed via network-request inspection), and the full approve → server-execute →
+action-ledger-increment flow still works end to end.
+
+Also fixed in the same pass: added `AuthorizationControllerTest.java` (zero automated coverage
+previously existed for `execute: true`, the most security-sensitive new code in this tempdoc —
+verified only by manual browser clicks until now); declared `filters`' nested schema shape
+(`path_prefix`, `meta_source`, etc.) so a malformed nested field is now caught by the boundary
+validator instead of reaching an unchecked cast in `McpToolSurface#parseFilters`; and actually ran
+`check-mcp-conformance.mjs` live for the first time — found the CLI's `--scenario` flag only keeps
+the last value when repeated (not documented, discovered by testing), so the script was rewritten
+to run the full active suite and filter results to the 11 asserted scenarios itself, since the
+tool's own process exit code is 1 whenever ANY scenario fails (including the 19 expected ones).
+

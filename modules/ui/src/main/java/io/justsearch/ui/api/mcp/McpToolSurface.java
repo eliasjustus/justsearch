@@ -217,16 +217,37 @@ public final class McpToolSurface {
   // validator (validateDirectDispatchArgs) provably validate against the SAME object for the 4
   // tools with no backing Operation — not two independently-authored literals that can drift. ---
 
+  // Tempdoc 655 fix pass: the nested shape of `filters`, declared (not left as an opaque
+  // "object") so a malformed nested field (e.g. path_prefix sent as a number) is caught by the
+  // boundary validator instead of reaching McpToolSurface#parseFilters's unchecked casts.
+  private static final Map<String, Object> FILTERS_SCHEMA = buildFiltersSchema();
+
+  private static Map<String, Object> buildFiltersSchema() {
+    var s =
+        schema(
+            Map.of(
+                "path_prefix", prop("string", "Restrict results to paths under this prefix"),
+                "meta_source", propStringArray("Filter by source"),
+                "meta_author", propStringArray("Filter by author"),
+                "meta_category", propStringArray("Filter by category"),
+                "entity_persons", propStringArray("Filter by person entity"),
+                "entity_organizations", propStringArray("Filter by organization entity"),
+                "entity_locations", propStringArray("Filter by location entity")),
+            List.of());
+    // Keep the natural-language guidance the old opaque "object" prop carried (ADR-0015:
+    // descriptions are load-bearing for small-model tool use) alongside the now-declared shape.
+    s.put(
+        "description",
+        "Hard filters: {meta_source: [...], entity_persons: [...], path_prefix: \"...\", ...}");
+    return s;
+  }
+
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
           Map.of(
               "query", prop("string", "The question to answer"),
               "top_k", prop("integer", "Number of passages to retrieve (default 5, max 20)"),
-              "filters",
-                  prop(
-                      "object",
-                      "Hard filters: {meta_source: [...], entity_persons: [...],"
-                          + " path_prefix: \"...\", ...}")),
+              "filters", FILTERS_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> SEARCH_SCHEMA =
@@ -235,11 +256,7 @@ public final class McpToolSurface {
               "query", prop("string", "Search text"),
               "limit", prop("integer", "Max results (default 10, max 50)"),
               "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
-              "filters",
-                  prop(
-                      "object",
-                      "Hard filters: {meta_source: [...], entity_persons: [...],"
-                          + " path_prefix: \"...\", ...}")),
+              "filters", FILTERS_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> STATUS_SCHEMA = schema(Map.of(), List.of());
@@ -660,6 +677,9 @@ public final class McpToolSurface {
               op.id().value(), argsJson, e.sourceTier(), op.policy().risk(), e.gateBehavior(),
               e.getMessage());
       if (pendingAuthorizationChanges != null) {
+        // Tempdoc 655 fix pass: routing info only — no argsSummary/rationale on the broadcast
+        // (see PendingAuthorizationEvent's doc comment for why). A subscriber fetches the
+        // decision content itself, by id, via GET /api/authorizations/pending/{id}.
         pendingAuthorizationStore
             .peek(pendingId)
             .ifPresent(
@@ -668,11 +688,9 @@ public final class McpToolSurface {
                         new io.justsearch.app.observability.operations.PendingAuthorizationEvent(
                             pending.id(),
                             pending.operationId(),
-                            io.justsearch.ui.api.ArgsSummary.summarize(pending.argsJson()),
                             pending.sourceTier(),
                             pending.riskTier(),
                             pending.gateBehavior(),
-                            pending.rationale(),
                             pending.createdAt(),
                             pending.expiresAt())));
       }
@@ -990,7 +1008,12 @@ public final class McpToolSurface {
     if (raw == null || raw.isEmpty()) return null;
     return new KnowledgeSearchRequest.Filters(
         null, null, null, null,
-        (String) raw.get("path_prefix"), null, null,
+        // Tempdoc 655 fix pass: defensive instanceof check (matches toStringList's existing safe
+        // pattern below) as belt-and-suspenders — the boundary schema validator should already
+        // reject a non-string path_prefix before this is reached, but this handler shouldn't
+        // trust that unconditionally.
+        raw.get("path_prefix") instanceof String pathPrefix ? pathPrefix : null,
+        null, null,
         toStringList(raw, "entity_persons"),
         toStringList(raw, "entity_organizations"),
         toStringList(raw, "entity_locations"),
@@ -1033,6 +1056,12 @@ public final class McpToolSurface {
 
   private static Map<String, Object> prop(String type, String description) {
     return Map.of("type", type, "description", description);
+  }
+
+  /** Tempdoc 655 fix pass: a declared array-of-string property (mirrors `paths` on ingest). */
+  private static Map<String, Object> propStringArray(String description) {
+    return Map.of(
+        "type", "array", "items", Map.of("type", "string"), "description", description);
   }
 
   private static Map<String, Object> resource(String uri, String name, String description) {

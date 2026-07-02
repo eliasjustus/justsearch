@@ -397,6 +397,10 @@ final class ResourceApiModule implements ApiModule {
 
     // Tempdoc 550 Slice A1 (Authorize face): mint a consent capsule on user approval.
     app.post("/api/authorizations/approve", authorizationController::handleApprove);
+    // Tempdoc 655 fix pass: point-to-point fetch of a pending's decision content by id — the
+    // SSE broadcast deliberately omits it (privacy boundary); this is where a subscriber fetches
+    // it before presenting the approval ceremony.
+    app.get("/api/authorizations/pending/{id}", authorizationController::handlePeekPending);
     // Tempdoc 560 §28 (4d) — durable-grant management surface (list / grant / revoke).
     app.get("/api/authorizations/grants", authorizationController::handleListGrants);
     app.post("/api/authorizations/grants", authorizationController::handleGrant);

@@ -38,6 +38,18 @@ import tools.jackson.databind.json.JsonMapper;
  * real FE acting on a human click. Hardening it against a prompt-injected agent calling
  * it to self-approve (e.g. a same-tab nonce / origin check / human-interaction proof) is
  * an open design point flagged for review, not resolved in this additive slice.
+ *
+ * <p><b>Tempdoc 655 addendum to the above:</b> {@code execute: true} (see {@link #handleApprove})
+ * narrows this further — previously, completing a mutation from a bare {@code pendingId} still
+ * required the caller to separately know/supply the byte-identical original args (a second,
+ * independent piece of knowledge); with {@code execute: true} a {@code pendingId} alone is
+ * sufficient, since the server dispatches with its OWN stored args. Accepted as bounded residual
+ * risk for the same reason the note above already accepts this endpoint's trust model:
+ * {@code pendingId}s are unguessable (128-bit UUID) and, as of the same fix pass, are no longer
+ * broadcast with any decision content attached ({@link
+ * io.justsearch.app.observability.operations.PendingAuthorizationEvent} carries routing info
+ * only — {@link #handlePeekPending} is the point-to-point fetch for the rest). Not resolved
+ * beyond that; the same hardening options named above would close this too, if ever done.
  */
 public final class AuthorizationController {
 
@@ -173,6 +185,52 @@ public final class AuthorizationController {
     } catch (Exception e) {
       log.error("Failed to mint consent capsule", e);
       ctx.status(400).contentType("application/json").result("{\"error\":\"bad request\"}");
+    }
+  }
+
+  /**
+   * Handles {@code GET /api/authorizations/pending/{id}} — tempdoc 655 fix pass.
+   *
+   * <p>Point-to-point fetch of a pending's decision content (operation id, args summary, risk,
+   * gate behavior, rationale) by id, for a caller that learned the id exists via the
+   * pending-authorization SSE broadcast (which deliberately carries none of this — see {@link
+   * io.justsearch.app.observability.operations.PendingAuthorizationEvent}) rather than a live
+   * 428 response body (which already carries it inline). Mirrors the SAME privacy scoping the
+   * 428 path already has — content is exposed only to a caller that already holds the specific
+   * id, one at a time — just reachable out-of-band instead of embedded in a response the caller
+   * happened to be waiting on.
+   *
+   * <p>Non-mutating: uses {@link io.justsearch.app.services.intent.PendingAuthorizationStore#peek}
+   * (not {@code consume}) — looking up a pending's content does not approve it.
+   */
+  public void handlePeekPending(Context ctx) {
+    if (pendingStore == null) {
+      ctx.status(404).contentType("application/json").result("{\"error\":\"pending authorization not found\"}");
+      return;
+    }
+    String id = ctx.pathParam("id");
+    var pending = pendingStore.peek(id);
+    if (pending.isEmpty()) {
+      // Unknown, expired, or already consumed — 404, matching handleApprove's fail-closed shape
+      // for an id that no longer resolves to anything (410 there is "was valid, now isn't"; 404
+      // here also covers "never existed" for a GET, so 404 rather than 410 is the better fit).
+      ctx.status(404).contentType("application/json").result("{\"error\":\"pending authorization not found or expired\"}");
+      return;
+    }
+    var p = pending.get();
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("pendingId", p.id());
+    payload.put("operationId", p.operationId());
+    payload.put("argsSummary", ArgsSummary.summarize(p.argsJson()));
+    payload.put("sourceTier", p.sourceTier().name());
+    payload.put("riskTier", p.riskTier().name());
+    payload.put("gateBehavior", p.gateBehavior().name());
+    payload.put("rationale", p.rationale());
+    try {
+      ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(payload));
+    } catch (Exception e) {
+      log.error("Failed to serialize pending authorization {}", id, e);
+      ctx.status(500).contentType("application/json").result("{\"error\":\"serialization error\"}");
     }
   }
 

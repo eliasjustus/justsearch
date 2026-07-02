@@ -39,6 +39,17 @@ export interface OperationInvocationSuccess {
   structuredData?: Record<string, unknown>;
 }
 
+/** Tempdoc 655 fix pass — decision content for a pending authorization, fetched by id. */
+export interface PendingAuthorizationDetail {
+  pendingId: string;
+  operationId: string;
+  argsSummary: string;
+  sourceTier: string;
+  riskTier: string;
+  gateBehavior: string;
+  rationale: string;
+}
+
 /** Constructor configuration. */
 export interface OperationClientConfig {
   /** Absolute API base (e.g., 'http://127.0.0.1:33221'). No trailing slash. */
@@ -368,6 +379,42 @@ export class OperationClient {
       );
     }
     return parsed.capsule;
+  }
+
+  /**
+   * Tempdoc 655 fix pass — fetch a pending's decision content (operation id, args summary, risk,
+   * gate behavior, rationale) by id. The pending-authorization SSE broadcast deliberately omits
+   * this content (privacy boundary — see `PendingAuthorizationEvent`'s doc comment); a subscriber
+   * that only knows the id fetches the rest here before presenting the approval ceremony. Returns
+   * `null` if the id no longer resolves (already expired/consumed by the time this is called) —
+   * the caller should skip presenting rather than show a broken prompt.
+   */
+  async peekPending(pendingId: string): Promise<PendingAuthorizationDetail | null> {
+    if (!pendingId) {
+      throw new OperationError('pendingId required', 'BAD_REQUEST');
+    }
+    const url = `${this.apiBase}/api/authorizations/pending/${encodeURIComponent(pendingId)}`;
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, { method: 'GET' });
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new OperationError(
+        `Network error fetching pending ${pendingId}: ${detail}`,
+        'NETWORK_ERROR',
+      );
+    }
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new OperationError(
+        `Failed to fetch pending ${pendingId} (HTTP ${res.status})`,
+        'FETCH_FAILED',
+        res.status,
+      );
+    }
+    return (await res.json()) as PendingAuthorizationDetail;
   }
 
   /**

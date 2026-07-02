@@ -373,7 +373,9 @@ public final class OperationsController {
       // Tempdoc 655: also broadcast on the pending-authorization SSE stream, so the shell
       // (already open, potentially on a different view than whatever triggered this 428) has one
       // uniform live signal regardless of transport — matching the announcement McpToolSurface
-      // makes for its own gate firings.
+      // makes for its own gate firings. Routing info only (no argsSummary/rationale) — see
+      // PendingAuthorizationEvent's doc comment for why; a subscriber fetches decision content
+      // itself, by id, via GET /api/authorizations/pending/{id}.
       if (pendingAuthorizationChanges != null) {
         pendingStore
             .peek(pendingId)
@@ -383,11 +385,9 @@ public final class OperationsController {
                         new io.justsearch.app.observability.operations.PendingAuthorizationEvent(
                             pending.id(),
                             pending.operationId(),
-                            ArgsSummary.summarize(pending.argsJson()),
                             pending.sourceTier(),
                             pending.riskTier(),
                             pending.gateBehavior(),
-                            pending.rationale(),
                             pending.createdAt(),
                             pending.expiresAt())));
       }

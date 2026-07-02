@@ -17,13 +17,21 @@
  *
  * On each announcement, this reuses the EXISTING ceremony (`authorizationBroker.requestAuthorization`
  * — the same `<jf-authorization-host>` dialog a live REST 428 already uses) rather than a new
- * presentation surface. The one genuinely new step: because the frontend never held this
- * pending's original arguments (it wasn't the caller), approval can't complete by the browser
- * re-`invoke`-ing with a capsule the way `OperationClient.invokeWithConsent` does for its own
- * gated calls. Instead it calls `OperationClient.approveAndExecutePending`, which asks the
- * backend to complete the dispatch itself, server-side, using the pending's own stored args —
- * the design tempdoc 655 settled on specifically so the MCP tool call never has to block or be
- * retried by the calling agent.
+ * presentation surface. Two genuinely new steps, both tempdoc 655 fix-pass additions:
+ *
+ * 1. The broadcast itself deliberately carries NO decision content (no args summary, no
+ *    rationale) — only routing info (id, operation id, tiers). Putting that content on a channel
+ *    every local subscriber receives would violate the existing privacy posture that scopes it
+ *    to the point-to-point 428 response (tempdoc 444b / 550 F3 — see `PendingAuthorizationEvent`'s
+ *    doc comment). So this bridge fetches the content itself, by id, via
+ *    `OperationClient.peekPending` — the two-step shape mirrors what the REST 428 path gets in
+ *    one response, just split into "learn it exists" (broadcast) then "learn what it is" (fetch).
+ * 2. Because the frontend never held this pending's original arguments (it wasn't the caller),
+ *    approval can't complete by the browser re-`invoke`-ing with a capsule the way
+ *    `OperationClient.invokeWithConsent` does for its own gated calls. Instead it calls
+ *    `OperationClient.approveAndExecutePending`, which asks the backend to complete the dispatch
+ *    itself, server-side, using the pending's own stored args — the design tempdoc 655 settled on
+ *    specifically so the MCP tool call never has to block or be retried by the calling agent.
  */
 
 import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
@@ -32,15 +40,13 @@ import { SHELL_EVENT_STREAM_IDS } from '../streaming/shellEventStreamIds.js';
 import { requestAuthorization, type AuthorizationPrompt } from './authorizationBroker.js';
 import { getOperationClient } from './OperationClient.js';
 
-/** Wire shape of `PendingAuthorizationEvent` (`app-observability/.../operations/`). */
+/** Wire shape of the SLIMMED `PendingAuthorizationEvent` — routing info only, no decision content. */
 interface PendingAuthorizationPayload {
   readonly pendingId?: string;
   readonly operationId?: string;
-  readonly argsSummary?: string;
   readonly sourceTier?: string;
   readonly riskTier?: string;
   readonly gateBehavior?: string;
-  readonly rationale?: string;
 }
 
 /** Bounded so a long-running session's dedup set can't grow unbounded. */
@@ -109,13 +115,31 @@ async function presentAndExecute(
   apiBase: string,
   payload: PendingAuthorizationPayload,
 ): Promise<void> {
+  const pendingId = payload.pendingId as string;
+  const client = getOperationClient(apiBase);
+
+  // Tempdoc 655 fix pass: the broadcast carries no decision content — fetch it by id before
+  // presenting. If it 404s, the pending already expired or was consumed elsewhere between the
+  // broadcast and this fetch; skip presenting rather than show a broken/empty prompt.
+  let detail;
+  try {
+    detail = await client.peekPending(pendingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('Tempdoc 655: failed to fetch pending authorization detail', err);
+    return;
+  }
+  if (!detail) {
+    return;
+  }
+
   const prompt: AuthorizationPrompt = {
-    pendingId: payload.pendingId as string,
-    operationId: payload.operationId as string,
-    gateBehavior: payload.gateBehavior ?? 'TYPED_CONFIRM',
-    ...(payload.riskTier ? { riskTier: payload.riskTier } : {}),
-    ...(payload.argsSummary ? { argsSummary: payload.argsSummary } : {}),
-    ...(payload.rationale ? { purpose: payload.rationale } : {}),
+    pendingId,
+    operationId: detail.operationId,
+    gateBehavior: payload.gateBehavior ?? detail.gateBehavior ?? 'TYPED_CONFIRM',
+    ...(detail.riskTier ? { riskTier: detail.riskTier } : {}),
+    ...(detail.argsSummary ? { argsSummary: detail.argsSummary } : {}),
+    ...(detail.rationale ? { purpose: detail.rationale } : {}),
   };
   const decision = await requestAuthorization(prompt);
   if (!decision.approved) {
@@ -125,10 +149,7 @@ async function presentAndExecute(
     return;
   }
   try {
-    await getOperationClient(apiBase).approveAndExecutePending(
-      payload.pendingId as string,
-      decision.allowAlways,
-    );
+    await client.approveAndExecutePending(pendingId, decision.allowAlways);
   } catch (err) {
     // Best-effort: the approval ceremony already resolved (the human said yes), so there's no
     // live caller awaiting this promise to report a failure to, unlike the REST-triggered path
