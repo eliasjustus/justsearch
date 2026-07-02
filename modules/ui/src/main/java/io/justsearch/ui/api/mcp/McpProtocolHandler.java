@@ -132,9 +132,17 @@ public final class McpProtocolHandler {
 
     return Map.of(
         "protocolVersion", MCP_PROTOCOL_VERSION,
+        // Tempdoc 655 fix: tools.listChanged/resources.listChanged were previously declared
+        // `true` with no code path that ever emits the corresponding notifications/*/list_changed
+        // message — an over-declared capability. Both the 6-tool list (McpToolSurface#listTools)
+        // and the advisory-resource list (AdvisoryResourceCatalog#DEFINITIONS) are fixed at
+        // compile time with no runtime-mutable path, so `false` is the honest declaration, not a
+        // deferred notification mechanism. resources.subscribe stays true — that capability (live
+        // updates within an already-known resource's own stream) is real and unrelated to whether
+        // the resource LIST can change.
         "capabilities", Map.of(
-            "tools", Map.of("listChanged", true),
-            "resources", Map.of("subscribe", true, "listChanged", true),
+            "tools", Map.of("listChanged", false),
+            "resources", Map.of("subscribe", true, "listChanged", false),
             "prompts", Map.of("listChanged", false)),
         "serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION));
   }

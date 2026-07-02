@@ -840,3 +840,48 @@ the frontend has no visibility into transport and needed none. Re-verified live:
 still produces the toast/badge/dialog exactly as before; the same `core.rebuild-index` REST call
 now produces only the dialog, no toast.
 
+## Two remaining first-questions closed (2026-07-02)
+
+A follow-up confidence-building pass on the state of the whole tempdoc found two of the original
+"first questions" still genuinely open, plus one small inaccuracy in shipped documentation. Both
+are now closed; a third (client fixture coverage) remains an open product decision, deliberately
+not resolved here — see below.
+
+**The `listChanged` over-declaration (named by this tempdoc's own investigation pass, never
+fixed) is now fixed.** Confirmed both candidate fixes before picking one: the 6-tool list
+(`McpToolSurface#listTools`) and the 3-class advisory-resource list
+(`AdvisoryResourceCatalog#DEFINITIONS`) are both fixed at compile time with no runtime-mutable path
+today — `resources/subscribe` is a different capability (live updates within one already-known
+resource's stream) and doesn't imply the resource *list* itself can change. The honest fix is
+declaring `listChanged: false` for both `tools` and `resources` in `handleInitialize`
+(`McpProtocolHandler.java`), not building a `notifications/*/list_changed` emission mechanism for a
+capability that doesn't exist. Locked in with an explicit assertion in
+`McpProtocolHandlerTest`. Also corrected a small inaccuracy discovered while investigating this:
+`check-mcp-conformance.mjs`'s own header comment claimed this exact bug was an example of what its
+11 locked-in scenarios would catch — checking all 30 upstream scenario names (both
+`PASSING_SCENARIOS` and `EXCLUDED_FIXTURE_SCENARIOS`) confirmed none of them exercise
+list-changed-notification behavior at all. The comment now says so honestly instead of overclaiming
+coverage the adopted suite doesn't have.
+
+**"Token possession and trust-lattice gating are orthogonal" (theorization pass, "worth a
+deliberate call either way") is now explicitly decided: intentional defense-in-depth, not a gap.**
+The mechanism is `GET /api/mcp/token` plus session-token enforcement on `POST`/`DELETE /mcp`
+(`LocalApiServer.java:559-562`, already documented in `docs/reference/security/threat-model.md`'s
+"Session token on mutations" row) — a single startup-generated secret delivered only via the Tauri
+bridge, proving a caller is a legitimate local process. That is authentication (is this caller
+allowed to reach the API at all); the trust lattice's per-action consent is authorization (is this
+specific action approved). These are legitimately different axes by design, the same shape as any
+standard authn/authz separation — not an artifact of the two mechanisms having been built
+independently without reconciliation, as the open question worried. Recorded explicitly in
+`threat-model.md` itself (a new note directly under its mitigations table) so a future reader
+doesn't read the existing token documentation as implying the token alone authorizes mutations.
+
+**Client fixture coverage (Q2) remains deliberately unresolved.** Investigation confirmed no
+record/replay or cassette-style test infrastructure exists anywhere in this repo to extend —
+building this would be new test infrastructure from scratch, not a small addition to something
+existing. More importantly, this tempdoc never committed to building it; the theorization pass
+explicitly named it as an open cost/benefit question (which clients, how fixtures stay
+representative as proprietary clients drift, whether the ongoing maintenance is worth it) rather
+than a promised deliverable. That question is a product decision, not something further codebase
+investigation can resolve — it stays open on purpose.
+

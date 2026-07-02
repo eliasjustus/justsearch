@@ -82,6 +82,16 @@ class McpProtocolHandlerTest {
     assertNotNull(caps.get("tools"));
     assertNotNull(caps.get("resources"));
     assertNotNull(caps.get("prompts"));
+    // Tempdoc 655 fix: neither the tool list nor the resource list can change at runtime (both
+    // are fixed at compile time) — locks in the corrected, honest capability declaration so a
+    // future accidental revert to the over-declared `true` is caught.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> toolsCap = (Map<String, Object>) caps.get("tools");
+    assertEquals(Boolean.FALSE, toolsCap.get("listChanged"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> resourcesCap = (Map<String, Object>) caps.get("resources");
+    assertEquals(Boolean.FALSE, resourcesCap.get("listChanged"));
+    assertEquals(Boolean.TRUE, resourcesCap.get("subscribe"));
   }
 
   @Test

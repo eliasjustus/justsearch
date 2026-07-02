@@ -16,8 +16,16 @@
  * 19 failures, every one of which was the suite expecting a fixture tool/prompt/resource that
  * doesn't exist and shouldn't. Building a parallel fixture-tool surface just to satisfy the
  * suite's full run is out of scope here — see tempdoc 655's "Phase 3" for the reasoning. This
- * check locks in the 11 that measure real behavior, so a future protocol-handling regression
- * (e.g. the over-declared `listChanged` capability tempdoc 655 investigated) is caught.
+ * check locks in the 11 that measure real behavior, so a future protocol-handling regression on
+ * one of THOSE scenarios (session lifecycle, resource subscribe/unsubscribe, DNS-rebinding
+ * protection, etc.) is caught.
+ *
+ * Honest limit, confirmed by reading all 30 scenario names (both PASSING_SCENARIOS and
+ * EXCLUDED_FIXTURE_SCENARIOS below): none of them exercise `notifications/*_list_changed`
+ * behavior. The over-declared `tools.listChanged`/`resources.listChanged` capability tempdoc 655
+ * investigated (fixed separately, in `McpProtocolHandler#handleInitialize`) was NOT — and would
+ * not have been — caught by this gate; an earlier version of this comment claimed otherwise. This
+ * gate's coverage is real but scoped to what its 11 locked-in scenarios actually assert on.
  *
  * Prerequisites:
  *   - JustSearch dev stack running (the runner does NOT manage lifecycle) — start it first
