@@ -86,9 +86,14 @@ def cmd_ui_check(ctx, ui_url, output_dir, cooldown_ms, timeout_ms, no_demo):
 @click.option("--trace", is_flag=True, default=False,
               help="TRACE mode (615 §11): also write <step>.trace.json — the {pre,post} measurement "
                    "delta across the step's interaction trajectory (what the flow changed).")
+@click.option("--record", is_flag=True, default=False,
+              help="Tempdoc 669: also record a video (Playwright's native webm) spanning the whole "
+                   "chain replay leading to this step — e.g. `ui-shot citation-highlight --record` "
+                   "captures search -> inspector -> cited-answer in one clip. No-op for isolated "
+                   "steps. Written under <output-dir>/videos/.")
 @click.pass_context
 def cmd_ui_shot(ctx, step_name, list_steps, affected_path, ui_url, output_dir,
-                cooldown_ms, timeout_ms, no_demo, no_measure, fixtures, trace):
+                cooldown_ms, timeout_ms, no_demo, no_measure, fixtures, trace, record):
     """Single-step UI screenshot for agent feedback loop."""
     from .. import ui_shot
 
@@ -119,7 +124,7 @@ def cmd_ui_shot(ctx, step_name, list_steps, affected_path, ui_url, output_dir,
         step_name,
         ui_url=ui_url, output_dir=output_dir,
         demo=not no_demo, cooldown_ms=cooldown_ms, timeout_ms=timeout_ms,
-        measure=not no_measure, fixtures=fixtures, trace=trace,
+        measure=not no_measure, fixtures=fixtures, trace=trace, record=record,
     )
     if ctx.obj.get("json"):
         click.echo(json.dumps(result, indent=2, default=str))

@@ -478,6 +478,7 @@ async def _run_single_shot(
     measure: bool = True,
     fixtures: bool = False,
     trace: bool = False,
+    record: bool = False,
 ) -> ui_check.ShotResult:
     """Capture a single named step screenshot."""
     from playwright.async_api import async_playwright
@@ -497,6 +498,10 @@ async def _run_single_shot(
 
     async with async_playwright() as p:
         if step.isolated:
+            # Tempdoc 669 — `--record` is scoped to shared-chain steps only (the intended
+            # use case, capturing a full search→cited-answer sequence, is never isolated);
+            # `record` is silently a no-op here rather than threaded through, matching
+            # `ShotResult.video_path` staying unset when no video was captured.
             return await ui_check._run_isolated_step(
                 step, ui_url, output_dir,
                 demo=demo, cooldown_ms=cooldown_ms,
@@ -509,7 +514,16 @@ async def _run_single_shot(
 
             browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
             try:
-                ctx = await browser.new_context(viewport={"width": 1280, "height": 720})
+                # Tempdoc 669 — `--record` spans the WHOLE chain replay in one video, since
+                # this is one continuous context/page for the entire chain (confirmed: the
+                # context is created once here and closed once below, after every chain step
+                # has run against it). Playwright's own webm encoder; no post-processing here.
+                video_dir = output_dir / "videos" if record else None
+                ctx_kwargs = {"viewport": {"width": 1280, "height": 720}}
+                if video_dir:
+                    video_dir.mkdir(parents=True, exist_ok=True)
+                    ctx_kwargs["record_video_dir"] = str(video_dir)
+                ctx = await browser.new_context(**ctx_kwargs)
                 if fixtures:
                     await ui_check.ui_fixtures.install_fixtures(ctx)
                 await ctx.add_init_script(
@@ -537,11 +551,15 @@ async def _run_single_shot(
                     console_sink=console_sink, measure=measure,
                     trace_target=step_name if trace else None,
                 )
+                video = page.video
                 await ctx.close()
+                video_path = str(await video.path()) if video else None
 
                 # Return only the requested step's result
                 for r in results:
                     if r.name == step_name:
+                        if video_path:
+                            r.video_path = video_path
                         return r
                 return ui_check.ShotResult(
                     name=step_name, ok=False,
@@ -566,6 +584,7 @@ def execute_ui_shot(
     measure: bool = True,
     fixtures: bool = False,
     trace: bool = False,
+    record: bool = False,
 ) -> dict[str, Any]:
     """Capture a single step. Returns dict with name, ok, path, elapsed_ms, measure."""
     try:
@@ -578,7 +597,7 @@ def execute_ui_shot(
         _run_single_shot(
             step_name, ui_url, out,
             demo=demo, cooldown_ms=cooldown_ms, timeout_ms=timeout_ms, measure=measure,
-            fixtures=fixtures, trace=trace,
+            fixtures=fixtures, trace=trace, record=record,
         )
     )
     return {
@@ -590,6 +609,8 @@ def execute_ui_shot(
         # tempdoc 615 §6.2 — the measurement companion: facts a correctness judgment can target
         # without opening the PNG (the screenshot demotes to a gestalt attachment).
         **({"measure": result.measure_summary} if result.measure_summary else {}),
+        # Tempdoc 669 — the recorded video spanning this step's chain replay, when --record was set.
+        **({"video_path": result.video_path} if result.video_path else {}),
     }
 
 
@@ -682,13 +703,15 @@ def format_console_list(steps: list[dict]) -> str:
 def format_console_shot(result: dict) -> str:
     if not result["ok"]:
         return f"FAIL: {result['name']} -- {result.get('error', 'unknown')}"
+    # Tempdoc 669 — appended to every branch below when --record captured a video.
+    video_line = f"\n  video: {result['video_path']}" if result.get("video_path") else ""
     # tempdoc 615 §6.2 — surface the measurement facts on stdout so a correctness judgment can be made
     # from data, not by opening the PNG (the screenshot is now a gestalt attachment).
     m = result.get("measure")
     if not m:
-        return result["path"]
+        return result["path"] + video_line
     if "error" in m:
-        return f"{result['path']}\n  measure: (failed: {m['error']})"
+        return f"{result['path']}\n  measure: (failed: {m['error']}){video_line}"
     overflow = ",".join(m["overflow"]) if m.get("overflow") else "none"
     flags = (" · flags: " + ",".join(m["flags"])) if m.get("flags") else ""
     # console split: real (app) defects vs env/dev noise (no-backend 502s, HMR) — §12 #1
@@ -711,6 +734,7 @@ def format_console_shot(result: dict) -> str:
         f"  a11y {m.get('a11y_landmarks', 0)} landmarks · geometry {m.get('geometry_elements', 0)} els "
         f"· {axe} "
         f"· console {console} · overflow {overflow}{flags}"
+        f"{video_line}"
     )
 
 

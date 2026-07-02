@@ -316,8 +316,15 @@ describe('HealthLitView render', () => {
     fake.emitOpen();
     await el.updateComplete;
     // The SSE channel drops and stays down past the debounce window; the /api/status poll still
-    // reports the backend reachable (the default in a fresh store). The badge must NOT read as a hard
-    // outage — a wedged enrichment channel is not "backend down".
+    // reports the backend reachable. This test asserts that condition directly rather than relying
+    // on aiStateStore's real global singleton, which is unstarted in a unit test (startAiStateStore
+    // is only ever called from the presentation-demo debug route, not this component) — an unstarted
+    // store's `connection.reachable` is `false` by design (computeReachability in aiStateStore.ts),
+    // not `true`, so asserting "the default in a fresh store" was never actually testing what it
+    // said; setting the property directly tests the badge's OWN tone-derivation logic (the thing
+    // this test is actually about) without depending on that separate subsystem's startup state.
+    el.backendReachable = true;
+    await el.updateComplete;
     fake.dispatchEvent(new Event('error'));
     await new Promise((r) => setTimeout(r, 850)); // > DISCONNECT_DEBOUNCE_MS (750)
     await el.updateComplete;
