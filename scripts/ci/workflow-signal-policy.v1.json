@@ -20,6 +20,7 @@
         "Unit tests (app-ui)",
         "Unit tests (search-worker)",
         "Unit tests (platform-contracts)",
+        "Windows-native tests",
         "Secret scan"
       ]
     },
