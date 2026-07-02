@@ -542,3 +542,95 @@ the last value when repeated (not documented, discovered by testing), so the scr
 to run the full active suite and filter results to the 11 asserted scenarios itself, since the
 tool's own process exit code is 1 whenever ANY scenario fails (including the 19 expected ones).
 
+## Post-implementation practicality review and future directions (2026-07-02)
+
+A research pass done after the design shipped and was fixed up, asking a different question than
+the earlier passes: not "is this correct," but "is this actually pleasant and useful for a real
+person, and what's the smallest next step worth taking." Grounded in re-reading the shipped code
+with fresh eyes, plus targeted research into how comparable products handle the same problem
+(agent tool-approval UX) and what's technically available in this stack already. Nothing here is
+committed to — the user asked for a menu of ideas, not a decision.
+
+### What's already good — worth confirming, not fixing
+
+**The friction model matches established practice, and one thing that looked like an oversight on
+first read turned out to be deliberate.** `core.ingest-files` itself declares `ConfirmStrategy.Inline`
+(one-click) as its normal confirmation style — but every live test this session showed a **typed**
+confirmation ("type `core.ingest-files` to confirm"). That's not a bug: the trust lattice computes
+`GateBehavior` from `(SourceTier, RiskTier)`, and for an `UNTRUSTED` source (which MCP callers
+correctly are) at `MEDIUM` risk, the lattice's `TYPED_CONFIRM` supersedes the operation's own
+milder preference — deliberate amplification for a never-vetted external caller, not a UX
+miscalibration. And once a user grants "allow always," friction drops to zero for that operation
+going forward. That arc — high friction for an unknown caller's first request, zero friction after
+one explicit trust decision — is close to what current UX research on destructive/consequential
+actions recommends: "friction is better than regret, but undo is better than both," and typed
+confirmation specifically reserved for cases warranting real deliberation, not routine actions.
+JustSearch's three-tier model (AUTO / INLINE / TYPED, plus the durable-grant escape hatch) also
+lines up with the increasingly common "Suggest → Co-pilot → Autopilot" framing used elsewhere for
+agentic tool permissions — the design wasn't invented in a vacuum; it happens to already match
+where the field has converged. Also confirmed while re-reading: the approval ceremony already has
+FIFO queue handling for multiple concurrent pendings, so a burst of MCP calls doesn't produce
+overlapping or lost dialogs. Recording this as confirmed-good so a future pass doesn't "fix" what
+isn't broken.
+
+### A concrete, low-effort idea: an already-built capability that's currently unused
+
+**`sendDesktopNotification(title, body)`** (`modules/ui-web/src/utils/notify.ts`) already exists,
+already wired to Tauri's native OS notification plugin with permission handling, already no-ops
+gracefully outside the desktop shell — and has **zero callers anywhere in the codebase** (present
+since the initial public release, never wired to anything). This directly addresses a real gap:
+today, if a user has JustSearch minimized or isn't looking at the window when an MCP tool call
+gets gated, they have no way to know a pending approval exists until they happen to check — and it
+expires in 5 minutes. Wiring this existing utility into `pendingAuthorizationBridge.ts` (fire an
+OS toast when a pending arrives, before or alongside the in-app dialog) would close that gap with
+a small, self-contained change — the hard part (the plugin integration, the permission dance) is
+already done and already tested elsewhere in the app; this would just be its first real caller.
+
+### A concrete, low-effort idea: MCP client identity is already available, and discarded
+
+Every MCP client sends a self-reported `clientInfo: {name, version}` as part of the spec's own
+`initialize` handshake — `McpProtocolHandler` receives this today and never stores or surfaces it
+anywhere. Two independent, small wins follow from simply keeping it:
+
+1. **Show it in the approval dialog.** Today the dialog says "an action requires your approval" —
+   a user watching JustSearch has no way to tell from the dialog itself that the request came from
+   MCP at all, let alone from which client. Surfacing `clientInfo.name` ("Claude Code wants to
+   ingest...") is pure transparency — no trust-model change, just better information at the moment
+   a human is asked to decide something.
+2. **Longer-term: scope durable grants per-client-name, not per-whole-MCP-bucket.** Today "allow
+   always" for an operation trusts *every* MCP caller forever, because `SourceTier.UNTRUSTED` has
+   no finer identity concept. If a user has two different MCP clients connected (say, Claude Code
+   for coding work and some other agent for something else), granting "always allow" because they
+   trust one silently extends that trust to the other too. Splitting the grant key by client name
+   would close that. **Caveat, stated plainly:** `clientInfo` is self-reported by the client, same
+   as any handshake-declared identity — it's a meaningful UX/audit label and a coarse signal, not
+   a hard security boundary on its own (a malicious client could claim to be "Claude Code"). Worth
+   doing for the transparency and blast-radius reduction it buys, not as a security fix by itself.
+
+### Ideas worth having on record, not worth committing to yet
+
+- **MCP elicitation as a progressive enhancement.** Host support keeps improving since this
+  tempdoc's earlier research pass (Claude Code and VS Code + GitHub Copilot both support it now;
+  Claude Desktop's status is still unclear/likely absent). The "don't depend on it, layer it on
+  top of the local-app answering surface" call from earlier in this tempdoc still holds — but the
+  tradeoff keeps shifting in elicitation's favor. Worth another look in a few months, not now.
+- **A visible "pending approvals" indicator in the app chrome** (a badge on wherever the existing
+  activity surface lives — the same place that already shows the "N operations" toast observed
+  live this session) so a dismissed or missed dialog is still findable before its 5-minute TTL
+  runs out. Complements the desktop-notification idea above rather than replacing it — the
+  notification is the "someone is asking," the badge is "you can still find it."
+- **Everything the original design section already named as future scope** (the plugin-marketplace
+  generalization, a networked/non-loopback MCP transport needing a different answering surface) —
+  still correctly out of scope for now; nothing in this pass changes that call.
+
+### Overall practicality read
+
+The core mechanism holds up under a second look aimed specifically at "would a real person like
+using this" rather than "is it correct." Nothing found here is a flaw in the shipped design — the
+friction model, the queueing, the durable-grant escape hatch are all already sound. The genuine
+gaps are both about *awareness*: a user who isn't looking at the app has no signal that something
+needs them, and a user who is looking has no way to tell what's asking. Both have small, concrete
+fixes using capabilities the codebase already has sitting unused, which is a better find than
+"needs a new subsystem" — consistent with this tempdoc's own recurring theme (extend what exists
+before building something new).
+
