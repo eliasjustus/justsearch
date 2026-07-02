@@ -761,6 +761,71 @@ def test_render_scan_image_deterministic_for_same_seed_varies_by_seed():
     assert a1 != b, "a different seed must vary the salt-and-pepper noise placement"
 
 
+def test_render_scan_image_accepts_real_corpus_scale_input():
+    """Sanity-bound calibration check (post-624-follow-up): the largest committed scan
+    doc today (`635-corpora/synth-scan-v1`, doc_words=520) renders to ~3,888 chars of
+    title+text at the only width/font_size any caller in this codebase ever passes
+    (900px/13pt). A same-scale input must still render successfully -- the new bounds
+    must have real headroom, not just theoretical headroom."""
+    pytest.importorskip("PIL")
+    import io
+
+    from PIL import Image
+
+    from jseval import corpus_generate as cg
+
+    word = "reactor northern marshland engineer Quenby fabricated province delegate "
+    text = (word * 80).strip()  # ~3,900 chars, matching the real worst-case doc
+    assert len(text) > 3800
+
+    png_bytes = cg.render_scan_image(text, seed=1)
+    img = Image.open(io.BytesIO(png_bytes))
+    img.load()
+    assert img.format == "PNG"
+
+
+def test_render_scan_image_rejects_oversized_text():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    oversized = "word " * (cg.MAX_SCAN_TEXT_CHARS // 4)
+    assert len(oversized) > cg.MAX_SCAN_TEXT_CHARS
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image(oversized, seed=1)
+
+
+def test_render_scan_image_rejects_oversized_width():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image("some short text", width=cg.MAX_SCAN_WIDTH_PX + 1, seed=1)
+
+
+def test_render_scan_image_rejects_oversized_font_size():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image("some short text", font_size=cg.MAX_SCAN_FONT_SIZE + 1, seed=1)
+
+
+def test_render_scan_image_rejects_excessive_wrapped_height():
+    """Defense in depth: individually-in-bounds width + text length can still combine
+    (e.g. a narrow width forcing near one-word-per-line wrapping of a long text) to a
+    wrapped page height beyond the ceiling. The height check must catch this
+    combination even though no single parameter alone tripped its own bound."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    narrow_width = 40  # near the wrap-width floor -- forces many short lines
+    long_text = "reactor province delegate marshland fabricated " * 400
+    assert len(long_text) < cg.MAX_SCAN_TEXT_CHARS
+    assert narrow_width < cg.MAX_SCAN_WIDTH_PX
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image(long_text, width=narrow_width, seed=1)
+
+
 def test_generate_scan_axis_source_is_plain_text_like_every_other_axis(tmp_path):
     """A `type_axis="scan"` corpus's committed *source* (`docs.jsonl`) must be identical in
     shape to a plain prose source -- no image bytes anywhere -- so it stays small and

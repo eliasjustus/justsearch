@@ -253,39 +253,65 @@ def _materialize_into(dataset_name: str, resolved_dir: Path) -> None:
         ds = ir_datasets.load(BEIR_DATASETS[dataset_name])
         mat_mod.materialize(ds.docs_iter(), resolved_dir, skip_existing=True)
     elif dataset_name.startswith("golden/") or dataset_name.startswith("mixed/"):
+        # Route through the SAME axis-aware per-doc decision `corpus_build.build_golden`
+        # uses (`corpus_generate.materialize_doc_entry`) — not a second, independent
+        # `type_axis == "scan"` check. This is the fix for the bug where this path read
+        # plain `corpus.jsonl` and called `mat_mod.materialize()` directly, silently
+        # skipping scan-page rendering: a `golden/`-prefixed `axis="scan"` dataset
+        # materialized here got `.txt` ground-truth substitutes instead of the degraded
+        # `.png` scans it was supposed to test (tempdoc 624 follow-up).
+        from . import corpus_generate
         corpus_jsonl = _find_corpus_jsonl(dataset_name)
-        mat_mod.materialize(_iter_corpus_jsonl(corpus_jsonl), resolved_dir, skip_existing=True)
+        type_axis = _read_type_axis(dataset_name)
+        docs = (
+            corpus_generate.materialize_doc_entry(d, type_axis)
+            for d in _iter_corpus_jsonl(corpus_jsonl)
+        )
+        mat_mod.materialize(docs, resolved_dir, skip_existing=True)
     else:
         raise ValueError(f"Cannot materialize unknown dataset: {dataset_name!r}")
+
+
+_MATERIALIZED_EXTS = ("*.txt", "*.png")  # kept in sync with materialize.py's two output kinds
+
+
+def _count_materialized(resolved_dir: Path) -> int:
+    """Count materialized doc files: ``.txt`` (plain) + ``.png`` (``axis="scan"``,
+    tempdoc 624 follow-up). A single-extension count silently undercounts a scan
+    dataset (which materializes almost entirely to ``.png``), corrupting the
+    ``corpus_doc_count`` floor `ingest_and_wait` uses to decide indexing completion.
+    """
+    if not resolved_dir.is_dir():
+        return 0
+    return sum(len(list(resolved_dir.glob(pat))) for pat in _MATERIALIZED_EXTS)
 
 
 def _ensure_materialized(
     dataset_name: str, resolved_dir: Path, corpus_dir: Path | None
 ) -> int:
-    """Ensure ``resolved_dir`` holds the CURRENT corpus; return its ``.txt`` doc count.
+    """Ensure ``resolved_dir`` holds the CURRENT corpus; return its materialized doc count.
 
     Reuses the cache only when it is a verified projection of the source (sidecar signature
-    matches); otherwise clears the stale ``.txt`` files + sidecar and re-materializes. The
-    sentinel + sidecar are not ``.txt`` so they never inflate the count.
+    matches); otherwise clears the stale materialized files + sidecar and re-materializes.
     """
-    txt_count = len(list(resolved_dir.glob("*.txt"))) if resolved_dir.is_dir() else 0
+    doc_count = _count_materialized(resolved_dir)
 
     if corpus_dir is not None:
         # Explicit --corpus-dir: use as-is, never materialize into it.
-        if txt_count == 0:
+        if doc_count == 0:
             raise FileNotFoundError(
-                f"--corpus-dir {resolved_dir} has no .txt files. "
+                f"--corpus-dir {resolved_dir} has no .txt/.png files. "
                 f"Materialize first with: jseval materialize "
                 f"--dataset {dataset_name} --output-dir {resolved_dir}"
             )
-        log.info("Using explicit corpus dir: %s (%d files)", resolved_dir, txt_count)
-        return txt_count
+        log.info("Using explicit corpus dir: %s (%d files)", resolved_dir, doc_count)
+        return doc_count
 
     src_sig = _source_signature(dataset_name)
     sidecar = resolved_dir / _SIDECAR
     cached_sig = sidecar.read_text(encoding="utf-8").strip() if sidecar.is_file() else None
 
-    fresh = txt_count == 0
+    fresh = doc_count == 0
     stale = src_sig is not None and cached_sig != src_sig  # changed source, or never recorded
     if fresh or stale:
         if stale and not fresh:
@@ -293,8 +319,9 @@ def _ensure_materialized(
                 "Corpus %s changed (cache sig %s != source %s) — re-materializing %s",
                 dataset_name, (cached_sig or "none")[:12], (src_sig or "")[:12], resolved_dir,
             )
-            for p in resolved_dir.glob("*.txt"):
-                p.unlink()
+            for pat in _MATERIALIZED_EXTS:
+                for p in resolved_dir.glob(pat):
+                    p.unlink()
             sidecar.unlink(missing_ok=True)
         else:
             log.info("Materializing corpus for %s to %s", dataset_name, resolved_dir)
@@ -303,9 +330,9 @@ def _ensure_materialized(
             (resolved_dir / _SIDECAR).write_text(src_sig, encoding="utf-8")
     else:
         log.info("Corpus already materialized at %s (%d files; identity verified)",
-                 resolved_dir, txt_count)
+                 resolved_dir, doc_count)
 
-    return len(list(resolved_dir.glob("*.txt")))
+    return _count_materialized(resolved_dir)
 
 
 def _find_corpus_jsonl(dataset_name: str) -> Path:
@@ -315,6 +342,27 @@ def _find_corpus_jsonl(dataset_name: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"corpus.jsonl not found at {path}")
     return path
+
+
+def _read_type_axis(dataset_name: str) -> str | None:
+    """`type_axis` of a golden/mixed dataset, from the `metadata.json`
+    `corpus_build.build_golden()` writes alongside `corpus.jsonl` (same `src_meta.type_axis`
+    field the build step itself reads — this is a read of that same recorded value, not a
+    second guess at it).
+
+    Returns None when `metadata.json` is absent/unreadable — e.g. a `corpus.jsonl` seeded
+    directly without going through `build_golden()` (as jseval's own unit-test fixtures do).
+    `materialize_doc_entry(doc, None)` degrades to the pre-existing plain-text behavior in
+    that case, so untouched call sites are unaffected.
+    """
+    from .corpora import _default_base_dir
+    meta_path = _default_base_dir() / dataset_name / "metadata.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8")).get("type_axis")
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def _iter_corpus_jsonl(path: Path):

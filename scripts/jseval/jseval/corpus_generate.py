@@ -23,6 +23,7 @@ to keep generation deterministic and gate-certifiable).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -364,6 +365,26 @@ _SCAN_DEFAULTS = {
 }
 
 
+# Sanity ceilings for `render_scan_image` (tempdoc 624 confidence-pass follow-up):
+# unbounded width/font_size/text-length let `height` grow without limit before the
+# PIL `Image` is allocated -- a latent resource-exhaustion risk if this function is
+# ever reused with less-trusted input. Calibrated against the largest real caller
+# (`635-corpora/synth-scan-v1`, doc_words=520): worst committed doc is 3,888 chars
+# of title+text, rendered at the only width/font_size ever passed in this codebase
+# (900px / 13pt) to a pre-rotation page height of 580px. Each ceiling below carries
+# ~10x headroom over that real maximum -- generous enough that no existing caller
+# will ever come close, while still bounding worst-case memory allocation.
+MAX_SCAN_TEXT_CHARS = 40_000
+MAX_SCAN_WIDTH_PX = 9_000
+MAX_SCAN_FONT_SIZE = 130
+MAX_SCAN_HEIGHT_PX = 6_000
+
+
+class ScanRenderLimitExceeded(ValueError):
+    """Raised by ``render_scan_image`` when an input would allocate an unreasonably
+    large PIL Image (oversized text, width, font size, or the resulting page height)."""
+
+
 def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=70,
                        blur_radius=1.3, rotation_deg=6.5, noise_ratio=0.08, seed=0) -> bytes:
     """Render ``text`` as a synthetic degraded scanned-page PNG (returns PNG bytes).
@@ -372,6 +393,10 @@ def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=7
     blur, and salt-and-pepper noise -- the degradation band confirmed live against
     Claude Code's own `Read` tool (see ``_SCAN_DEFAULTS``). Deterministic for a
     given ``seed`` (noise placement is the only randomized step).
+
+    Raises ``ScanRenderLimitExceeded`` if ``text``, ``width``, ``font_size``, or the
+    resulting wrapped page height would exceed the sanity ceilings above -- rather
+    than silently truncating or allocating an unbounded image.
     """
     try:
         from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -379,6 +404,21 @@ def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=7
         raise ImportError(
             "Pillow is required for the 'scan' corpus axis. "
             "Install with: pip install jseval[scan]"
+        )
+
+    if len(text) > MAX_SCAN_TEXT_CHARS:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: text is {len(text)} chars, exceeds the "
+            f"{MAX_SCAN_TEXT_CHARS}-char sanity ceiling"
+        )
+    if width > MAX_SCAN_WIDTH_PX:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: width={width}px exceeds the {MAX_SCAN_WIDTH_PX}px sanity ceiling"
+        )
+    if font_size > MAX_SCAN_FONT_SIZE:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: font_size={font_size} exceeds the "
+            f"{MAX_SCAN_FONT_SIZE}pt sanity ceiling"
         )
 
     rng = random.Random(seed)
@@ -405,6 +445,11 @@ def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=7
         lines = [""]
 
     height = margin * 2 + line_height * len(lines)
+    if height > MAX_SCAN_HEIGHT_PX:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: wrapped page height={height}px ({len(lines)} lines) "
+            f"exceeds the {MAX_SCAN_HEIGHT_PX}px sanity ceiling"
+        )
     page = Image.new("L", (width, height), color=bg_gray)
     draw = ImageDraw.Draw(page)
     y = margin
@@ -449,6 +494,29 @@ def render_scan_page(doc_id: str, title: str, text: str, *, degrade: dict | None
     if degrade:
         params.update(degrade)
     return render_scan_image(page_text, seed=seed, **params)
+
+
+def materialize_doc_entry(doc: dict, type_axis: str | None) -> dict:
+    """Build one document's `materialize.materialize()` input entry, applying the
+    axis-aware scan-rendering decision exactly once (tempdoc 624 follow-up).
+
+    `doc` is a plain BEIR-shape dict (`_id`/`title`/`text`) — a `docs.jsonl` source
+    line or a golden/mixed `corpus.jsonl` line. When `type_axis == "scan"`, attaches a
+    base64-encoded degraded-scan PNG (via `render_scan_page`) as `image_b64`, so
+    `materialize.materialize()` writes a `.png` artifact instead of a `.txt`.
+
+    This is the ONE place the `type_axis == "scan"` check + `render_scan_page` call are
+    made. Both `corpus_build.build_golden` (materializing `datasets/golden/<name>/
+    corpus-dir/`) and `ingest._materialize_into` (materializing an eval run's ingest
+    directory from `corpus.jsonl`) call this helper instead of each re-implementing the
+    check — a second independent copy is exactly how the axis got dropped silently on
+    one of the two paths the first time.
+    """
+    entry = {"_id": doc["_id"], "title": doc.get("title", ""), "text": doc["text"]}
+    if type_axis == "scan":
+        png_bytes = render_scan_page(doc["_id"], doc.get("title", ""), doc["text"])
+        entry["image_b64"] = base64.b64encode(png_bytes).decode("ascii")
+    return entry
 
 
 def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
