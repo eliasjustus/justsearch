@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 import logging
 
@@ -431,18 +432,47 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                            f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']})")
 
 
+def _echo_local_serial_progress(event: str, detail: dict) -> None:
+    """The CLI-layer half of `LocalSerialRater`'s progress hook (tempdoc 674
+    remaining-work slice) -- `utility_judge.py` imports no `click` (the
+    established `commands/*.py`-thin-wrapper boundary, tempdoc 645), so
+    translating its `on_progress` events into visible CLI text is this file's
+    job, not the rater's."""
+    if event == "swap_start":
+        click.echo(f"  [swap] loading {detail.get('model_path')}...")
+    elif event == "swap_complete":
+        click.echo(f"  [swap] ready ({detail.get('elapsed_sec')}s)")
+    elif event == "item_labeled":
+        click.echo(f"  [grade] {detail.get('index')}/{detail.get('total')}")
+    elif event == "restore_start":
+        click.echo(f"  [restore] reverting to {detail.get('model_path')}...")
+    elif event == "restore_complete":
+        click.echo("  [restore] done")
+    elif event == "restore_skipped":
+        click.echo(f"  [restore] skipped ({detail.get('reason')})")
+
+
 @click.command("utility-judge-cross-family")
 @click.argument("log_dir", type=click.Path(exists=True))
 @click.option("--graders-config", required=True, type=click.Path(exists=True),
               help="JSON file: a list of grader configs, each an object with "
-                   '"name", "endpoint_url", "model", and optionally "headers" '
-                   '(auth), "price_per_call_usd" (default 0.0), "timeout_sec", '
-                   '"system_prompt", "max_tokens", "temperature". Must define >= 2 '
-                   "configs from DIFFERENT provider families than BOTH the "
-                   "agent-under-test (Claude Haiku) and the local judge (Qwen) — "
-                   "e.g. a GPT-class and a Gemini-class grader (tempdoc 624 §M.9 "
-                   "\"U-Founder-4 revised\"). No real endpoint/model is ever "
-                   "hardcoded — this file is entirely caller-supplied.")
+                   '"name" and "kind" ("endpoint" [default] or "local-serial", '
+                   'tempdoc 674). "endpoint" configs also need "endpoint_url", '
+                   '"model", and optionally "headers" (auth), "price_per_call_usd" '
+                   '(default 0.0), "timeout_sec", "system_prompt", "max_tokens", '
+                   '"temperature". "local-serial" configs instead need "model_path" '
+                   "(a local GGUF) and optionally \"backend_base_url\" (default the "
+                   "eval backend, http://127.0.0.1:33221), \"timeout_sec\", and "
+                   "\"keep_loaded_between_raters\" (default false — restore the original "
+                   "model after this grader's turn; set true to skip that restore as a "
+                   "speed tradeoff, e.g. for all but the last local grader in a panel) "
+                   "— these swap the locally-served chat model in place (GPU-serial, "
+                   "$0 cost) rather than calling a remote endpoint. Must define >= 2 "
+                   "configs from DIFFERENT provider families than BOTH the agent-under-test "
+                   "(Claude Haiku) and the local judge (Qwen) — e.g. a GPT-class and "
+                   "a Gemini-class grader, or two local GGUFs of different lineages "
+                   "(tempdoc 624 §M.9 \"U-Founder-4 revised\"). No real endpoint/"
+                   "model is ever hardcoded — this file is entirely caller-supplied.")
 @click.option("--calibration-n", default=40, show_default=True, type=int,
               help="Calibration sample size (same stratified sampler as --calibrate).")
 @click.option("--calibration-seed", default=0, show_default=True, type=int,
@@ -488,8 +518,37 @@ def cmd_utility_judge_cross_family(ctx, log_dir, graders_config, calibration_n,
         raise click.ClickException(
             "--graders-config must be a JSON list of >= 2 grader config objects.")
     price_table = {c["name"]: c.get("price_per_call_usd", 0.0) for c in raw_configs}
-    graders = [eg.GraderConfig(**{k: v for k, v in c.items() if k != "price_per_call_usd"})
-               for c in raw_configs]
+
+    graders = []
+    local_grader_paths = []  # [(name, model_path), ...] -- feeds the local-serial preflight report
+    for c in raw_configs:
+        kind = c.get("kind", "endpoint")
+        if kind == "local-serial":
+            if "model_path" not in c:
+                raise click.ClickException(
+                    f"--graders-config: grader {c.get('name')!r} has kind='local-serial' but is "
+                    "missing required field 'model_path'.")
+            if c.get("price_per_call_usd", 0.0) != 0.0:
+                raise click.ClickException(
+                    f"--graders-config: grader {c.get('name')!r} has kind='local-serial' (a $0, "
+                    f"GPU-serial local swap) but a nonzero price_per_call_usd="
+                    f"{c['price_per_call_usd']!r} — a local grader can never actually incur this "
+                    "cost; fix the config (omit the field or set it to 0) rather than report a "
+                    "misleading estimate.")
+            local_grader_paths.append((c["name"], c["model_path"]))
+            graders.append(uj.LocalSerialRater(
+                name=c["name"], model_path=c["model_path"],
+                backend_base_url=c.get("backend_base_url", "http://127.0.0.1:33221"),
+                timeout_sec=c.get("timeout_sec", 60.0),
+                keep_loaded_between_raters=c.get("keep_loaded_between_raters", False),
+                on_progress=_echo_local_serial_progress))
+        elif kind == "endpoint":
+            fields = {k: v for k, v in c.items() if k not in ("price_per_call_usd", "kind")}
+            graders.append(eg.GraderConfig(**fields))
+        else:
+            raise click.ClickException(
+                f"--graders-config: unknown kind {kind!r} for grader {c.get('name')!r} "
+                "(must be 'endpoint' or 'local-serial').")
 
     estimate = eg.estimate_cross_family_cost(calibration_n, graders, price_table)
     click.echo(
@@ -498,6 +557,19 @@ def cmd_utility_judge_cross_family(ctx, log_dir, graders_config, calibration_n,
         f"graders={estimate['n_graders']}, dual_order={estimate['dual_order']})")
     for name, cost in estimate["per_grader"].items():
         click.echo(f"  {name}: ${cost:.4f}")
+
+    if local_grader_paths:
+        preflight = uj.estimate_local_serial_preflight(local_grader_paths)
+        click.echo(
+            f"local-serial preflight: {preflight['n_local_graders']} local grader(s), "
+            f"~{preflight['estimated_swap_count']} swaps, "
+            f"~{preflight['estimated_time_sec']}s estimated ({preflight['note']})")
+        for entry in preflight["per_grader"]:
+            size_gb = round(entry["size_bytes"] / (1024 ** 3), 1) if entry["size_bytes"] else "?"
+            click.echo(
+                f"  {entry['name']}: {entry['architecture'] or 'unknown'} "
+                f"{entry['size_label'] or 'unknown size'} ({size_gb} GB on disk), "
+                f"vram_fit={entry['vram_fit']}")
 
     if not yes:
         click.echo(
@@ -518,6 +590,57 @@ def cmd_utility_judge_cross_family(ctx, log_dir, graders_config, calibration_n,
         f"judge-vs-rater kappa={jvr['value']} degenerate_pe={jvr['degenerate_pe']}; "
         f"rater-vs-rater kappa={rvr['value']} degenerate_pe={rvr['degenerate_pe']}")
     click.echo(f"Written overlay to {path}")
+
+
+@click.command("utility-judge-local-swap-smoketest")
+@click.option("--model-path", required=True, type=click.Path(exists=True),
+              help="Local GGUF to swap the dev-stack's served chat model to, grade one hardcoded "
+                   "synthetic question/reference/candidate triple with, then restore the original "
+                   "model. Exercises exactly LocalSerialRater's swap/assert/label/restore cycle "
+                   "(tempdoc 674) with no judge-overlay.json and no calibration sample needed -- a "
+                   "standalone mechanism check, not a calibration run. Requires the dev-stack running "
+                   "with an active AI runtime variant (see `ai_activate`).")
+@click.option("--backend-base-url", default="http://127.0.0.1:33221", show_default=True,
+              help="The JustSearch Head API's own base URL (same default used elsewhere in this file).")
+@click.option("--timeout-sec", default=60.0, show_default=True, type=float,
+              help="Per-HTTP-call timeout for the grading request.")
+@click.pass_context
+def cmd_utility_judge_local_swap_smoketest(ctx, model_path, backend_base_url, timeout_sec):
+    """Standalone swap-mechanism smoke test for a local-serial grader (tempdoc 674).
+
+    Proves the model-swap mechanism (settings + activate + served-model assertion +
+    restore) actually works against a real running dev-stack without needing a full
+    calibration run staged first -- the gap this tempdoc's own live-validation step
+    used to be blocked on. Exit code is nonzero on any failure, including a failed
+    or unconfirmed swap.
+    """
+    from .. import utility_judge as uj
+
+    rater = uj.LocalSerialRater(
+        name="smoketest", model_path=model_path, backend_base_url=backend_base_url,
+        timeout_sec=timeout_sec, on_progress=_echo_local_serial_progress)
+    texts = {
+        "smoketest-item": {
+            "question": "What color is the sky on a clear day?",
+            "reference": "blue",
+            "candidate": "The sky is blue.",
+        },
+    }
+    started_at = time.monotonic()
+    try:
+        result = rater.label_sample(texts)
+    except Exception as e:
+        elapsed = time.monotonic() - started_at
+        raise click.ClickException(
+            f"swap smoke test FAILED after {elapsed:.1f}s ({type(e).__name__}): {e}")
+    elapsed = time.monotonic() - started_at
+    verdict = result.get("smoketest-item")
+    if verdict is None:
+        click.echo(f"SMOKETEST INCONCLUSIVE in {elapsed:.1f}s -- the model's dual-order calls "
+                   "disagreed on the synthetic item (mechanism worked; verdict abstained).")
+    else:
+        click.echo(f"SMOKETEST PASSED in {elapsed:.1f}s -- swap, grade, and restore all succeeded "
+                   f"(verdict={verdict}, expected True for this synthetic item).")
 
 
 @click.command("utility-compose-cross-corpus")
@@ -635,4 +758,5 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
 
 
 COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
-           cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_compose_cross_corpus]
+           cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_judge_local_swap_smoketest,
+           cmd_utility_compose_cross_corpus]

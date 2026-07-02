@@ -32,8 +32,12 @@ mistaken for a real calibration figure.
 from __future__ import annotations
 
 import json
+import logging
 import random
+import time
+import warnings
 from pathlib import Path
+from typing import Callable
 
 import httpx
 import numpy as np
@@ -41,6 +45,8 @@ import numpy as np
 from jseval.agent_manifest import judge_identity
 from jseval.agent_retrieval_eval import _score_answer
 from jseval.manifest import _sha256_canonical
+
+log = logging.getLogger(__name__)
 
 _JUDGE_SYSTEM = (
     "You grade a question-answering system. Decide whether the CANDIDATE answer is "
@@ -432,38 +438,345 @@ def _rater_substitute_containment(question: str, reference: str, candidate: str)
     return anchor in cand
 
 
-def run_calibration_dry_run(log_dir: str, overlay: dict, *, n: int = 40, seed: int = 0) -> dict:
-    """Mechanism-proving dry run of the human-calibration pipeline (§M.4/§T.3).
+# --- The column-level rater seam (tempdoc 674) -------------------------------
+#
+# A RATER is a column-producer: given the sampled calibration items (a
+# ``{key: {"question","reference","candidate"}}`` dict), it returns a WHOLE
+# label column ``{key: bool | None}`` in one call, owning HOW it produces that
+# column. `None` means that rater abstains on that item.
+#
+# This is the seam that dissolves the interleave-vs-serial tension a per-item
+# loop would hit: because a rater's `label_sample` call is its entire turn, a
+# GPU-serial rater can load its model, label the whole sample, and unload as
+# its natural unit of work -- no execution-topology flag is needed for
+# correctness (tempdoc 674 §Design reach: "a source-agnostic aggregator needs
+# a source seam at the granularity the scarcest shared resource dictates").
+# `_HeuristicRater` and `_EndpointRater` below are thin adapters over logic
+# that already existed (the dry-run heuristics, `external_grader`'s client);
+# `LocalSerialRater` is the one genuinely new rater kind this seam unlocks.
 
-    Draws a stratified sample from `overlay["scores"]`, fetches the sampled
-    items' text, scores each with TWO INDEPENDENT AGENT-SUBSTITUTE heuristic
-    raters (deterministic, non-LLM, mutually distinct — see
-    `_rater_substitute_token_overlap` / `_rater_substitute_containment`), and
-    computes both agreement statistics via `rater_agreement_report`.
 
-    **This proves the sampling + agreement machinery is wired correctly
-    end-to-end. It does NOT produce a usable calibration number** — genuine
-    human raters are not available in this fully-autonomous pipeline. The
-    returned ``rater_kind`` field says so explicitly; treat any kappa here as a
-    mechanism check, never as a validated judge-accuracy figure.
+class _HeuristicRater:
+    """Column-producer wrapping a deterministic, non-LLM heuristic label function
+    (the dry-run's agent-substitute mechanism proof). Never abstains."""
+
+    def __init__(self, name: str, fn):
+        self.name = name
+        self._fn = fn
+
+    def label_sample(self, texts: dict) -> dict:
+        return {k: self._fn(t["question"], t["reference"], t["candidate"]) for k, t in texts.items()}
+
+
+class _EndpointRater:
+    """Column-producer wrapping a live, concurrently-addressable HTTP grader
+    (`external_grader.GraderConfig`) — today's cross-family panel path,
+    unchanged in behavior, just re-expressed as a column-producer."""
+
+    def __init__(self, config, budget=None):
+        self.name = config.name
+        self._config = config
+        self._budget = budget
+
+    def label_sample(self, texts: dict) -> dict:
+        from . import external_grader as eg
+
+        return {
+            k: eg.call_grader_dual_order(self._config, t["question"], t["reference"], t["candidate"],
+                                          budget=self._budget)
+            for k, t in texts.items()
+        }
+
+
+# Callback type for LocalSerialRater progress notification: (event_name, detail_dict) -> None.
+# Adapted from `readiness.py`'s `_SnapshotCallback` shape (an optional typed callback backed
+# by a stdlib `logging` default), NOT copied verbatim -- Probe C (tempdoc 674 §Pre-implementation
+# confidence probes, remaining work) found `readiness.py`'s poll-count throttle (log every 15 of a
+# 2s-interval multi-minute poll loop) doesn't transfer to grading a handful of items after one
+# swap; this callback fires once per event (swap/restore boundaries + each labeled item) rather
+# than being throttled, since the iteration count here is orders of magnitude smaller.
+_ProgressCallback = Callable[[str, dict], None]
+
+
+class LocalSerialRater:
+    """Column-producer that serially swaps the locally-served chat model
+    (tempdoc 674 §Long-term design) to grade a whole calibration column, then
+    restores the original model — the local, $0, single-GPU-tenant grader kind
+    the column seam exists to unlock.
+
+    Drives the SAME two loopback Head-API routes an operator already uses to
+    change the served model by hand — no new Java, no parallel swap authority
+    (an eval-owned throwaway server was explicitly rejected as the primary path
+    for exactly this reason, tempdoc 674 §Long-term design "Explicitly
+    rejected"): ``POST /api/settings/v2`` to point ``llm.modelPath`` at
+    `model_path`, then ``POST /api/ai/runtime/activate`` (reusing whichever
+    variant is already active) to reload llama-server with it.
+
+    One `label_sample` call is this rater's WHOLE turn: save the currently
+    configured model path, swap in `model_path`, assert `/v1/models` now
+    reports the intended model (a failed or no-op swap would otherwise
+    silently grade two columns with the SAME model under a different name —
+    the exact trap tempdoc 674 names in §Theorization-D), label every sampled
+    item, then restore the original model path in a `finally` — so a crash
+    mid-run leaves the dev-stack pointed at the ORIGINAL model, not a grader.
+
+    Progress is reported via stdlib `logging` (INFO on swap/restore boundaries,
+    DEBUG per labeled item) plus an optional `on_progress` callback for a caller
+    that wants structured per-event data — this module imports no `click` and
+    never will (the established `commands/*.py`-thin-wrapper / logic-module
+    boundary, tempdoc 645); any CLI-visible text is `commands/utility.py`'s job,
+    wiring `on_progress` to `click.echo`.
+
+    `keep_loaded_between_raters`, if `True`, skips the restore-to-original step
+    in `label_sample`'s `finally` — leaving this rater's model loaded for
+    whatever runs next, rather than paying a second swap to return to the
+    original model. Default `False` (today's safe behavior: every rater leaves
+    the dev-stack on a known-good model even if the process crashes immediately
+    after). This is a caller-opt-in speed/safety tradeoff (tempdoc 674's
+    critical-analysis pass found the default costs ~2x the swaps the original
+    design's own cost narrative assumed) — the LAST rater in a panel that opts
+    into this is still responsible for restoring the original model itself; this
+    class does not know whether it is last.
     """
+
+    _POLL_INTERVAL_SEC = 2.0
+    _ACTIVATE_TIMEOUT_SEC = 180.0
+
+    def __init__(self, name: str, model_path: str, *,
+                 backend_base_url: str = "http://127.0.0.1:33221", timeout_sec: float = 60.0,
+                 keep_loaded_between_raters: bool = False,
+                 on_progress: _ProgressCallback | None = None):
+        self.name = name
+        self._model_path = model_path
+        self._base = backend_base_url.rstrip("/")
+        self._timeout = timeout_sec
+        self._keep_loaded = keep_loaded_between_raters
+        self._on_progress = on_progress
+
+    def _emit(self, event: str, **detail) -> None:
+        log.info("LocalSerialRater[%s]: %s %s", self.name, event, detail)
+        if self._on_progress is not None:
+            self._on_progress(event, detail)
+
+    def _get_settings(self) -> dict:
+        r = httpx.get(f"{self._base}/api/settings/v2", timeout=10.0)
+        r.raise_for_status()
+        return r.json()
+
+    def _set_model_path(self, path) -> None:
+        r = httpx.post(f"{self._base}/api/settings/v2", json={"llm": {"modelPath": path}}, timeout=10.0)
+        r.raise_for_status()
+
+    def _current_variant_id(self) -> str:
+        status = httpx.get(f"{self._base}/api/ai/runtime/status", timeout=10.0).json()
+        variant_id = (status.get("active") or {}).get("activeVariantId")
+        if not variant_id:
+            raise RuntimeError(
+                "LocalSerialRater: no active runtime variant to reactivate with -- activate a "
+                "variant (e.g. via ai_activate) before swapping models.")
+        return variant_id
+
+    def _activate_and_wait(self, variant_id: str) -> None:
+        r = httpx.post(f"{self._base}/api/ai/runtime/activate", json={"variantId": variant_id},
+                        timeout=10.0)
+        r.raise_for_status()
+        deadline = time.monotonic() + self._ACTIVATE_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            status = httpx.get(f"{self._base}/api/ai/runtime/status", timeout=10.0).json()
+            state = (status.get("activation") or {}).get("state")
+            if state == "completed":
+                return
+            if state == "failed":
+                message = (status.get("activation") or {}).get("message")
+                raise RuntimeError(f"LocalSerialRater: activation of {variant_id!r} failed: {message}")
+            time.sleep(self._POLL_INTERVAL_SEC)
+        raise TimeoutError(
+            f"LocalSerialRater: activation of {variant_id!r} did not complete within "
+            f"{self._ACTIVATE_TIMEOUT_SEC}s")
+
+    def _assert_serving(self, expected_path: str) -> None:
+        # Defensive dual-shape parse -- mirrors `_probe_judge_model` (neither this
+        # codebase nor llama-server's own `/v1/models` shape is pinned anywhere).
+        served = _probe_judge_model(self._base)
+        expected_name = Path(expected_path).name
+        if served is None or expected_name not in served:
+            raise RuntimeError(
+                f"LocalSerialRater: served-model assertion failed after swap -- expected a model "
+                f"matching {expected_name!r}, /v1/models reports {served!r}. Refusing to grade with "
+                f"an unconfirmed model.")
+
+    def label_sample(self, texts: dict) -> dict:
+        from . import external_grader as eg
+
+        variant_id = self._current_variant_id()
+        original_path = (self._get_settings().get("llm") or {}).get("modelPath")
+        try:
+            self._emit("swap_start", model_path=self._model_path)
+            swap_started_at = time.monotonic()
+            self._set_model_path(self._model_path)
+            self._activate_and_wait(variant_id)
+            self._assert_serving(self._model_path)
+            self._emit("swap_complete", model_path=self._model_path,
+                       elapsed_sec=round(time.monotonic() - swap_started_at, 1))
+
+            config = eg.GraderConfig(name=self.name, endpoint_url=f"{self._base}/v1/chat/completions",
+                                      model=self.name, timeout_sec=self._timeout)
+            column: dict = {}
+            n_items = len(texts)
+            for i, (k, t) in enumerate(texts.items(), start=1):
+                column[k] = eg.call_grader_dual_order(config, t["question"], t["reference"],
+                                                        t["candidate"])
+                log.debug("LocalSerialRater[%s]: labeled item %d/%d", self.name, i, n_items)
+                if self._on_progress is not None:
+                    self._on_progress("item_labeled", {"index": i, "total": n_items, "key": k})
+            return column
+        finally:
+            if self._keep_loaded:
+                self._emit("restore_skipped", reason="keep_loaded_between_raters=True")
+            else:
+                self._emit("restore_start", model_path=original_path)
+                try:
+                    self._set_model_path(original_path)
+                    self._activate_and_wait(variant_id)
+                    self._emit("restore_complete", model_path=original_path)
+                except Exception as restore_exc:
+                    warnings.warn(
+                        f"LocalSerialRater: failed to restore original model {original_path!r} after "
+                        f"swap: {restore_exc}. The dev-stack may still be pointed at "
+                        f"{self._model_path!r} -- restore manually via POST /api/settings/v2.",
+                        RuntimeWarning, stacklevel=2)
+
+
+# Empirically measured full stop->reload->self-test->restore cycle for one swap on the
+# reference dev machine (RTX 4070, Qwen3.5-9B-Q4_K_M) -- tempdoc 674 §Pre-implementation
+# confidence probes (remaining work), Probe E: two consecutive real swaps, ~21s each.
+# A rough per-hardware/per-model estimate, never a guarantee -- printed as a decision aid,
+# same discipline as `external_grader.estimate_cross_family_cost`'s own dollar figure.
+_MEASURED_SWAP_SECONDS = 21.0
+
+# Rule-of-thumb VRAM overhead for KV cache + CUDA runtime on top of a quantized GGUF's
+# on-disk size, from published local-inference guidance (tempdoc 674 §Post-implementation
+# polish, "External research pass"). A conservative estimate, not a hard limit.
+_VRAM_OVERHEAD_FRACTION = 0.20
+
+
+def estimate_local_serial_preflight(local_graders: list[tuple[str, str]], *,
+                                     swaps_per_rater: int = 2,
+                                     seconds_per_swap: float = _MEASURED_SWAP_SECONDS) -> dict:
+    """Pure, standalone pre-flight report for a panel's `LocalSerialRater` graders
+    (tempdoc 674 remaining-work slice) -- the local-serial-specific sibling of
+    `external_grader.estimate_cross_family_cost`, which stays dollar-cost-only and
+    applies uniformly to every grader kind. This one covers the axes dollars don't:
+    file size, best-effort architecture/capability signal, VRAM fit, and swap-time.
+
+    `local_graders` is `[(name, model_path), ...]` -- the same raw config a caller
+    already has before constructing `LocalSerialRater` instances, so this function
+    needs no rater objects. Meant to be printed and confirmed BEFORE any real swap
+    is made, mirroring `estimate_cross_family_cost`'s own "print before you commit"
+    discipline -- both should appear in the same dry-run block.
+
+    Never raises on a missing/unparseable GGUF field or an unavailable GPU probe --
+    every signal here is advisory (`general.size_label` is spec-optional; VRAM
+    detection can fail on a non-NVIDIA machine) and must fail open, not block a
+    caller whose model this function simply can't fully characterize.
+
+    `swaps_per_rater` defaults to 2 (swap-in + restore, `LocalSerialRater`'s
+    default `keep_loaded_between_raters=False` behavior); pass 1 if the caller
+    knows it will keep models loaded between raters instead.
+    """
+    from . import gguf_probe
+    from .env_fingerprint import probe_gpu_vram
+
+    gpu = probe_gpu_vram()
+    vram_total_bytes = (gpu.get("mem_total_mb") or 0) * 1024 * 1024 if gpu.get("available") else None
+
+    per_grader = []
+    for name, model_path in local_graders:
+        entry = {"name": name, "model_path": model_path, "size_bytes": None,
+                  "architecture": None, "size_label": None, "vram_fit": "unknown"}
+        try:
+            info = gguf_probe.probe_gguf(model_path)
+        except Exception as e:
+            entry["error"] = str(e)
+        else:
+            entry["size_bytes"] = info.size_bytes
+            entry["architecture"] = info.architecture
+            entry["size_label"] = info.size_label
+            if vram_total_bytes is not None:
+                needed = info.size_bytes * (1 + _VRAM_OVERHEAD_FRACTION)
+                entry["vram_fit"] = "likely_fits" if needed <= vram_total_bytes else "likely_too_large"
+                entry["estimated_vram_bytes"] = round(needed)
+        per_grader.append(entry)
+
+    total_swaps = len(local_graders) * swaps_per_rater
+    return {
+        "n_local_graders": len(local_graders),
+        "gpu_available": bool(gpu.get("available")),
+        "vram_total_bytes": vram_total_bytes,
+        "per_grader": per_grader,
+        "estimated_swap_count": total_swaps,
+        "estimated_time_sec": round(total_swaps * seconds_per_swap),
+        "note": "advisory only -- size_label may be absent, VRAM/time figures are rough estimates, "
+                "not guarantees (tempdoc 674).",
+    }
+
+
+def run_calibration(log_dir: str, overlay: dict, raters: list, *, n: int = 40, seed: int = 0,
+                     rater_kind: str) -> dict:
+    """Unified calibration orchestrator (tempdoc 674) — the column-level rater
+    seam's collection loop. `run_calibration_dry_run` and
+    `run_cross_family_calibration` are thin wrappers over this function,
+    preserved for their existing public signatures/tests; this is where new
+    rater kinds (see `LocalSerialRater`) actually plug in.
+
+    Draws a stratified sample from `overlay["scores"]` (`sample_for_calibration`,
+    oversampling the EM-disagreement stratum) and fetches its text
+    (`collect_calibration_texts`), then collects each rater's WHOLE label
+    column in turn (sequential, not interleaved-by-item — see the column-seam
+    note above `_HeuristicRater`) before computing agreement via the untouched
+    `rater_agreement_report`.
+
+    `raters` must be >= 2 column-producers (`rater_agreement_report`'s 2-rater
+    floor — 3+ raises `NotImplementedError` there). If any rater abstains
+    (`None`) on an item, the WHOLE item is dropped for every rater (not just
+    that rater's vote) — counted in the returned `n_abstained`, never silently
+    imputed. `rater_kind` is stamped unconditionally, never gated on any caller
+    input, so the emitted number can never be mistaken for a different kind of
+    calibration than it is.
+    """
+    if len(raters) < 2:
+        raise ValueError("run_calibration needs >= 2 independent raters "
+                          "(rater_agreement_report's 2-rater floor)")
+
     scores = overlay.get("scores", {})
     sample_keys = sample_for_calibration(scores, n=n, seed=seed)
     texts = collect_calibration_texts(log_dir, sample_keys) if sample_keys else {}
+    available_texts = {k: texts[k] for k in sample_keys if k in texts}
 
-    rater_a_labels, rater_b_labels, judge_labels, used_keys = [], [], [], []
+    columns = [r.label_sample(available_texts) for r in raters]  # one rater's whole turn at a time
+
+    rater_labels: list[list[bool]] = [[] for _ in raters]
+    judge_labels, used_keys = [], []
+    n_abstained = 0
     for k in sample_keys:
-        t = texts.get(k)
-        if t is None:
+        if k not in available_texts:
             continue  # sample key not found in the logs (shouldn't happen) -- skip defensively
-        rater_a_labels.append(
-            _rater_substitute_token_overlap(t["question"], t["reference"], t["candidate"]))
-        rater_b_labels.append(
-            _rater_substitute_containment(t["question"], t["reference"], t["candidate"]))
+        verdicts = [col.get(k) for col in columns]
+        if any(v is None for v in verdicts):
+            n_abstained += 1  # >=1 rater abstained on this item -- drop it, don't guess
+            continue
+        for i, v in enumerate(verdicts):
+            rater_labels[i].append(v)
         judge_labels.append(bool(scores[k]["final"]))
         used_keys.append(k)
 
-    base = {"rater_kind": "agent-substitute, NOT human", "n": len(used_keys), "sample_qids": used_keys}
+    base = {
+        "rater_kind": rater_kind,
+        "n": len(used_keys),
+        "sample_qids": used_keys,
+        "n_abstained": n_abstained,
+        "raters": [r.name for r in raters],
+    }
     if len(used_keys) < 2:
         return {
             **base,
@@ -471,16 +784,42 @@ def run_calibration_dry_run(log_dir: str, overlay: dict, *, n: int = 40, seed: i
                                           "degenerate_pe": None},
             "rater_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
                                           "degenerate_pe": None},
-            "note": "sample has fewer than 2 items -- no agreement statistic computed",
+            "note": "sample has fewer than 2 usable items -- no agreement statistic computed",
         }
 
-    report = rater_agreement_report(judge_labels, [rater_a_labels, rater_b_labels], seed=seed)
+    report = rater_agreement_report(judge_labels, rater_labels, seed=seed)
     return {
         **base,
         "n_dropped_ties": report["n_dropped_ties"],
         "judge_vs_rater_agreement": report["judge_vs_rater_agreement"],
         "rater_vs_rater_agreement": report["rater_vs_rater_agreement"],
     }
+
+
+def run_calibration_dry_run(log_dir: str, overlay: dict, *, n: int = 40, seed: int = 0) -> dict:
+    """Mechanism-proving dry run of the human-calibration pipeline (§M.4/§T.3).
+
+    Scores the sampled items with TWO INDEPENDENT AGENT-SUBSTITUTE heuristic
+    raters (deterministic, non-LLM, mutually distinct — see
+    `_rater_substitute_token_overlap` / `_rater_substitute_containment`), via
+    `run_calibration`. Heuristic raters never abstain, so `n_abstained`/`raters`
+    are stripped to preserve this function's original return shape.
+
+    **This proves the sampling + agreement machinery is wired correctly
+    end-to-end. It does NOT produce a usable calibration number** — genuine
+    human raters are not available in this fully-autonomous pipeline. The
+    returned ``rater_kind`` field says so explicitly; treat any kappa here as a
+    mechanism check, never as a validated judge-accuracy figure.
+    """
+    raters = [
+        _HeuristicRater("agent-substitute-token-overlap", _rater_substitute_token_overlap),
+        _HeuristicRater("agent-substitute-containment", _rater_substitute_containment),
+    ]
+    result = run_calibration(log_dir, overlay, raters, n=n, seed=seed,
+                              rater_kind="agent-substitute, NOT human")
+    result.pop("n_abstained", None)
+    result.pop("raters", None)
+    return result
 
 
 def attach_human_calibration(overlay: dict, log_dir: str, *, n: int = 40, seed: int = 0) -> dict:
@@ -502,39 +841,27 @@ def run_cross_family_calibration(log_dir: str, overlay: dict, *, graders, n: int
     """Cross-family LLM grader panel calibration — the founder-decided REPLACEMENT
     for bulk human labeling (tempdoc 624 §M.9 "U-Founder-4 revised").
 
-    Mirrors `run_calibration_dry_run`'s exact shape and return structure —
-    stratified sample from `overlay["scores"]` (same `sample_for_calibration`,
-    oversampling the EM-disagreement stratum), same `rater_agreement_report`
-    kappa+CI machinery — but wires the sampled items into REAL external-provider
-    HTTP calls (`jseval.external_grader.call_grader_dual_order`, one per grader,
-    each a dual-order pair) instead of `run_calibration_dry_run`'s two heuristic
-    agent-substitute raters.
+    `graders` must be a list of >= 2 column-producers (`_EndpointRater` /
+    `LocalSerialRater` instances, or raw `external_grader.GraderConfig` values
+    for backward compatibility — see below) from DIFFERENT provider families
+    than BOTH the agent-under-test and the local judge — that cross-family
+    property is a caller responsibility (this function has no way to
+    mechanically verify provider identity), matching the founder decision's own
+    accepted honesty limit: cross-family reduces but does NOT eliminate
+    grader-correlation.
 
-    `graders` must be a list of >= 2 `external_grader.GraderConfig` values (the
-    `rater_agreement_report` 2-rater floor — 3+ raises `NotImplementedError` there,
-    same as `run_calibration_dry_run`'s underlying machinery) from DIFFERENT
-    provider families than BOTH the agent-under-test and the local judge — that
-    cross-family property is a caller responsibility (this function has no way to
-    mechanically verify provider identity from a `GraderConfig`), matching the
-    founder decision's own accepted honesty limit: cross-family reduces but does
-    NOT eliminate grader-correlation.
+    `max_calls`, if given, is a hard cap on total external HTTP calls any
+    `_EndpointRater` in `graders` may make (see `external_grader.GraderCallBudget`)
+    — raises `external_grader.GraderCallBudgetExceeded` before the call that
+    would exceed it is ever made. Pass the value already confirmed via
+    `external_grader.estimate_cross_family_cost`. (Ignored by `LocalSerialRater`
+    graders, which make $0 local calls.)
 
-    If a grader's dual-order calls disagree on an item, that grader abstains
-    (`None`) on that item; since every rater needs a label for every used item to
-    compute agreement, the WHOLE item is dropped (not just that grader's vote) —
-    counted in the returned `n_abstained`, never silently imputed.
-
-    `max_calls`, if given, is a hard cap on total external HTTP calls this run may
-    make (see `external_grader.GraderCallBudget`) — raises
-    `external_grader.GraderCallBudgetExceeded` before the call that would exceed it
-    is ever made, protecting against an unbounded loop silently ballooning cost.
-    Pass the value already confirmed via `external_grader.estimate_cross_family_cost`.
-
-    Unconditionally stamps `rater_kind: "cross-family-llm, NOT human"` — the exact
-    same unbypassable-labeling discipline `run_calibration_dry_run` already
-    established for its own `"agent-substitute, NOT human"` stamp: this value is
-    NEVER gated on any caller input, so the emitted number can never be mistaken
-    for real human-calibration.
+    Thin wrapper over `run_calibration` (tempdoc 674): raw `GraderConfig` values
+    are auto-wrapped in `_EndpointRater` for backward compatibility with
+    existing callers; `LocalSerialRater` instances pass through unchanged. The
+    `"graders"` key name (rather than `run_calibration`'s generic `"raters"`) is
+    preserved for this function's existing callers/tests.
     """
     from . import external_grader as eg
 
@@ -543,55 +870,15 @@ def run_cross_family_calibration(log_dir: str, overlay: dict, *, graders, n: int
             "run_cross_family_calibration needs >= 2 graders "
             "(rater_agreement_report's 2-rater floor)")
 
-    scores = overlay.get("scores", {})
-    sample_keys = sample_for_calibration(scores, n=n, seed=seed)
-    texts = collect_calibration_texts(log_dir, sample_keys) if sample_keys else {}
-
     budget = eg.GraderCallBudget(max_calls) if max_calls is not None else None
-
-    rater_labels: list[list[bool]] = [[] for _ in graders]
-    judge_labels, used_keys = [], []
-    n_abstained = 0
-    for k in sample_keys:
-        t = texts.get(k)
-        if t is None:
-            continue  # sample key not found in the logs (shouldn't happen) -- skip defensively
-        verdicts = [
-            eg.call_grader_dual_order(g, t["question"], t["reference"], t["candidate"], budget=budget)
-            for g in graders
-        ]
-        if any(v is None for v in verdicts):
-            n_abstained += 1  # >=1 grader's own dual-order disagreed -- drop the item, don't guess
-            continue
-        for i, v in enumerate(verdicts):
-            rater_labels[i].append(v)
-        judge_labels.append(bool(scores[k]["final"]))
-        used_keys.append(k)
-
-    base = {
-        "rater_kind": "cross-family-llm, NOT human",
-        "n": len(used_keys),
-        "sample_qids": used_keys,
-        "n_abstained": n_abstained,
-        "graders": [g.name for g in graders],
-    }
-    if len(used_keys) < 2:
-        return {
-            **base,
-            "judge_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
-                                          "degenerate_pe": None},
-            "rater_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
-                                          "degenerate_pe": None},
-            "note": "sample has fewer than 2 usable items -- no agreement statistic computed",
-        }
-
-    report = rater_agreement_report(judge_labels, rater_labels, seed=seed)
-    return {
-        **base,
-        "n_dropped_ties": report["n_dropped_ties"],
-        "judge_vs_rater_agreement": report["judge_vs_rater_agreement"],
-        "rater_vs_rater_agreement": report["rater_vs_rater_agreement"],
-    }
+    raters = [
+        g if hasattr(g, "label_sample") else _EndpointRater(g, budget)
+        for g in graders
+    ]
+    result = run_calibration(log_dir, overlay, raters, n=n, seed=seed,
+                              rater_kind="cross-family-llm, NOT human")
+    result["graders"] = result.pop("raters")
+    return result
 
 
 def write_overlay(log_dir: str, overlay: dict) -> str:

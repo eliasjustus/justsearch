@@ -859,3 +859,542 @@ class TestUtilityJudgeCrossFamilyCli:
         ])
         assert result.exit_code != 0
         assert ">= 2 grader config" in result.output
+
+    # --- kind field: local-serial (tempdoc 674) -------------------------------
+
+    def _mixed_graders_config_file(self, tmp_path, *, local_price=None):
+        cfg = [
+            {"name": "gpt-class", "endpoint_url": "http://gpt.invalid/v1/chat",
+             "model": "gpt-family-model", "price_per_call_usd": 0.01},
+            {"name": "llama-class", "kind": "local-serial",
+             "model_path": "models/Llama-3.1-8B-Instruct-Q4_K_M.gguf"},
+        ]
+        if local_price is not None:
+            cfg[1]["price_per_call_usd"] = local_price
+        p = tmp_path / "graders.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        return p
+
+    def test_local_serial_kind_produces_a_zero_cost_dry_run(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval import external_grader as eg
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        graders_config = self._mixed_graders_config_file(tmp_path)
+
+        def _boom(*a, **k):
+            raise AssertionError("no --yes given -- must never call the network")
+        monkeypatch.setattr(eg.httpx, "post", _boom)
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(graders_config), "--calibration-n", "6",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "cost estimate" in result.output
+        assert "llama-class: $0.0000" in result.output  # local grader never costs money
+        assert "NO network call was made" in result.output
+
+    def test_local_serial_with_nonzero_price_is_rejected(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        graders_config = self._mixed_graders_config_file(tmp_path, local_price=0.05)
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(graders_config),
+        ])
+        assert result.exit_code != 0
+        assert "llama-class" in result.output
+        assert "nonzero price_per_call_usd" in result.output
+
+    def test_local_serial_missing_model_path_is_rejected(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        bad_config = tmp_path / "bad_graders.json"
+        bad_config.write_text(json.dumps([
+            {"name": "gpt-class", "endpoint_url": "http://gpt.invalid/v1/chat", "model": "m1"},
+            {"name": "llama-class", "kind": "local-serial"},  # missing model_path
+        ]), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(bad_config),
+        ])
+        assert result.exit_code != 0
+        assert "llama-class" in result.output
+        assert "model_path" in result.output
+
+    def test_unknown_kind_is_rejected(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        bad_config = tmp_path / "bad_graders.json"
+        bad_config.write_text(json.dumps([
+            {"name": "gpt-class", "endpoint_url": "http://gpt.invalid/v1/chat", "model": "m1"},
+            {"name": "mystery-class", "kind": "carrier-pigeon", "model_path": "x"},
+        ]), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(bad_config),
+        ])
+        assert result.exit_code != 0
+        assert "unknown kind" in result.output
+        assert "carrier-pigeon" in result.output
+
+
+# --- The column-level rater seam (tempdoc 674) --------------------------------
+
+
+class _StubRater:
+    """A minimal column-producer for testing `run_calibration`'s collection loop
+    in isolation, independent of `_HeuristicRater`/`_EndpointRater`/`LocalSerialRater`."""
+
+    def __init__(self, name: str, columns: dict):
+        self.name = name
+        self._columns = columns  # {key: bool | None}
+        self.calls = []
+
+    def label_sample(self, texts: dict) -> dict:
+        self.calls.append(sorted(texts.keys()))
+        return dict(self._columns)
+
+
+class TestRunCalibrationSeam:
+    def test_needs_at_least_two_raters(self, tmp_path):
+        overlay = {"scores": {"C|0|q0": {"em": True, "judge": None, "final": True}}}
+        with pytest.raises(ValueError, match=">= 2 independent raters"):
+            uj.run_calibration(tmp_path.as_posix(), overlay, [_StubRater("solo", {})],
+                                n=1, rater_kind="test-kind")
+        with pytest.raises(ValueError, match=">= 2 independent raters"):
+            uj.run_calibration(tmp_path.as_posix(), overlay, [], n=1, rater_kind="test-kind")
+
+    def test_rater_kind_is_stamped_unconditionally(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        keys = uj.sample_for_calibration(overlay["scores"], n=6, seed=0)
+        columns = {k: True for k in keys}
+        raters = [_StubRater("r1", columns), _StubRater("r2", columns)]
+        result = uj.run_calibration(log, overlay, raters, n=6, seed=0, rater_kind="a-custom-kind")
+        assert result["rater_kind"] == "a-custom-kind"
+        assert result["raters"] == ["r1", "r2"]
+
+    def test_any_rater_abstaining_on_an_item_drops_the_whole_item(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        keys = uj.sample_for_calibration(overlay["scores"], n=6, seed=0)
+        assert len(keys) >= 2
+        abstained_key, rest = keys[0], keys[1:]
+        col_a = {k: True for k in keys}
+        col_b = {**{k: True for k in rest}, abstained_key: None}  # rater B abstains on ONE key
+        raters = [_StubRater("r1", col_a), _StubRater("r2", col_b)]
+        result = uj.run_calibration(log, overlay, raters, n=6, seed=0, rater_kind="test-kind")
+        assert abstained_key not in result["sample_qids"]
+        assert result["n_abstained"] == 1
+        assert result["n"] == len(rest)
+
+    def test_each_rater_produces_its_whole_column_before_the_next_starts(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        keys = uj.sample_for_calibration(overlay["scores"], n=6, seed=0)
+        columns = {k: True for k in keys}
+        r1, r2 = _StubRater("r1", columns), _StubRater("r2", columns)
+        uj.run_calibration(log, overlay, [r1, r2], n=6, seed=0, rater_kind="test-kind")
+        # each rater is called exactly once, with the FULL sample -- a column
+        # producer's whole contribution happens in one turn, not interleaved
+        # per item across raters (the seam that lets a GPU-serial rater own its
+        # own load/label/unload turn -- tempdoc 674 §Long-term design).
+        assert len(r1.calls) == 1
+        assert len(r2.calls) == 1
+        assert r1.calls[0] == r2.calls[0]
+
+
+class TestCalibrationDryRunWrapperShapePreserved:
+    def test_dry_run_result_has_no_abstain_or_raters_keys(self, tmp_path, monkeypatch):
+        """`run_calibration_dry_run` is a thin wrapper over `run_calibration`, but
+        its heuristic raters never abstain -- strip the generic `n_abstained`/
+        `raters` keys so this function's original return shape is preserved
+        exactly (tempdoc 674)."""
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        result = uj.run_calibration_dry_run(log, overlay, n=6, seed=0)
+        assert "n_abstained" not in result
+        assert "raters" not in result
+        assert "graders" not in result
+
+
+# --- LocalSerialRater (tempdoc 674) -------------------------------------------
+
+
+class _FakeResp:
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+class _FakeHeadApi:
+    """Minimal in-memory model of the Head-API surface `LocalSerialRater` drives
+    (settings persistence + activation reload + the OpenAI-compat proxy).
+    Mirrors the real routes' behavior closely enough to exercise the swap /
+    assert-served / restore sequence without a live backend: settings are a
+    partial merge (only `llm.modelPath` is tracked here), activating reloads
+    whatever `llm.modelPath` currently holds into "served", and `/v1/models`
+    reports whatever is currently "served" (or a stale value, if
+    `fail_models_probe` is set, to simulate a failed/no-op swap)."""
+
+    INITIAL_MODEL = "Qwen_Qwen3.5-9B-Q4_K_M.gguf"
+
+    def __init__(self):
+        self.settings = {"llm": {"modelPath": self.INITIAL_MODEL}}
+        self.served_model_path = self.INITIAL_MODEL
+        self.activate_calls = []
+        self.fail_models_probe = False
+        self.calls = []
+
+    def get(self, url, timeout=None):
+        self.calls.append(("GET", url))
+        if url.endswith("/api/settings/v2"):
+            return _FakeResp(self.settings)
+        if url.endswith("/api/ai/runtime/status"):
+            return _FakeResp({"active": {"activeVariantId": "cuda12"},
+                               "activation": {"state": "completed", "message": ""}})
+        if url.endswith("/v1/models"):
+            reported = "STALE-model.gguf" if self.fail_models_probe else self.served_model_path
+            return _FakeResp({"data": [{"id": Path(reported).name}]})
+        raise AssertionError(f"unexpected GET {url}")
+
+    def post(self, url, json=None, timeout=None, headers=None):
+        self.calls.append(("POST", url))
+        if url.endswith("/api/settings/v2"):
+            llm = (json or {}).get("llm") or {}
+            if "modelPath" in llm:
+                self.settings["llm"]["modelPath"] = llm["modelPath"]
+            return _FakeResp(self.settings)
+        if url.endswith("/api/ai/runtime/activate"):
+            self.activate_calls.append(json.get("variantId"))
+            self.served_model_path = self.settings["llm"]["modelPath"]
+            return _FakeResp({"activation": {"state": "running"}})
+        if url.endswith("/v1/chat/completions"):
+            user = json["messages"][1]["content"]
+            content = "YES" if "RESCUE" in user else "NO"
+            return _FakeResp({"choices": [{"message": {"content": content}}]})
+        raise AssertionError(f"unexpected POST {url}")
+
+
+class TestLocalSerialRater:
+    _MODEL_PATH = "models/Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+
+    def _patch(self, monkeypatch, api):
+        # A single assignment per method suffices -- `uj.httpx` and
+        # `external_grader`'s `eg.httpx` are the same shared module object.
+        monkeypatch.setattr(uj.httpx, "get", api.get)
+        monkeypatch.setattr(uj.httpx, "post", api.post)
+
+    def test_swaps_labels_and_restores(self, monkeypatch):
+        api = _FakeHeadApi()
+        self._patch(monkeypatch, api)
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH)
+        texts = {"k1": {"question": "Q", "reference": "r", "candidate": "yellow RESCUE fruit"},
+                 "k2": {"question": "Q", "reference": "r", "candidate": "totally wrong"}}
+        column = rater.label_sample(texts)
+        assert column == {"k1": True, "k2": False}
+        assert api.settings["llm"]["modelPath"] == _FakeHeadApi.INITIAL_MODEL  # restored
+        assert len(api.activate_calls) == 2  # one to swap in, one to restore
+
+    def test_restores_on_labeling_exception(self, monkeypatch):
+        # NOTE: `uj.httpx` and `external_grader`'s `eg.httpx` are the SAME shared
+        # module object (both modules did `import httpx`) -- monkeypatching
+        # `.get`/`.post` must be done ONCE per method with a single combined
+        # router, not once "for uj" and once "for eg", or the second
+        # `monkeypatch.setattr` silently clobbers the first (last-wins on the
+        # shared attribute) instead of layering.
+        api = _FakeHeadApi()
+
+        def _post(url, json=None, headers=None, timeout=None):
+            if url.endswith("/v1/chat/completions"):
+                raise RuntimeError("simulated grading failure")
+            return api.post(url, json=json, timeout=timeout, headers=headers)
+
+        monkeypatch.setattr(uj.httpx, "get", api.get)
+        monkeypatch.setattr(uj.httpx, "post", _post)
+
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH)
+        with pytest.raises(RuntimeError, match="simulated grading failure"):
+            rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "x"}})
+        assert api.settings["llm"]["modelPath"] == _FakeHeadApi.INITIAL_MODEL  # restored anyway
+
+    def test_restore_failure_warns_instead_of_masking_the_original_error(self, monkeypatch):
+        api = _FakeHeadApi()
+        call_count = {"settings_posts": 0}
+
+        def _post(url, json=None, timeout=None, headers=None):
+            if url.endswith("/api/settings/v2"):
+                call_count["settings_posts"] += 1
+                if call_count["settings_posts"] == 2:  # the RESTORE settings call
+                    raise RuntimeError("simulated network failure")
+            return api.post(url, json=json, timeout=timeout, headers=headers)
+
+        monkeypatch.setattr(uj.httpx, "get", api.get)
+        monkeypatch.setattr(uj.httpx, "post", _post)
+
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH)
+        with pytest.warns(RuntimeWarning, match="failed to restore"):
+            column = rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "x"}})
+        assert column == {"k1": False}  # labeling itself succeeded; only restore failed
+
+    def test_served_model_assertion_fails_loud_on_a_silently_failed_swap(self, monkeypatch):
+        api = _FakeHeadApi()
+        api.fail_models_probe = True
+        self._patch(monkeypatch, api)
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH)
+        with pytest.raises(RuntimeError, match="served-model assertion failed"):
+            rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "x"}})
+        # restore was still attempted even though the swap never got confirmed
+        assert api.settings["llm"]["modelPath"] == _FakeHeadApi.INITIAL_MODEL
+
+    def test_no_active_variant_raises_before_any_settings_mutation(self, monkeypatch):
+        api = _FakeHeadApi()
+
+        def _uj_get(url, timeout=None):
+            if url.endswith("/api/ai/runtime/status"):
+                return _FakeResp({"active": {}, "activation": {"state": "idle"}})
+            return api.get(url, timeout=timeout)
+
+        monkeypatch.setattr(uj.httpx, "get", _uj_get)
+        monkeypatch.setattr(uj.httpx, "post", api.post)
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH)
+        with pytest.raises(RuntimeError, match="no active runtime variant"):
+            rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "x"}})
+        assert api.calls == []  # failed before touching settings at all
+
+    def test_keep_loaded_between_raters_skips_the_restore(self, monkeypatch):
+        api = _FakeHeadApi()
+        self._patch(monkeypatch, api)
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH,
+                                     keep_loaded_between_raters=True)
+        rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "yellow RESCUE fruit"}})
+        # model stays swapped-in -- NOT restored to the original
+        assert api.settings["llm"]["modelPath"] == self._MODEL_PATH
+        assert len(api.activate_calls) == 1  # only the swap-in, no restore activate call
+
+    def test_on_progress_callback_fires_in_order_with_expected_events(self, monkeypatch):
+        api = _FakeHeadApi()
+        self._patch(monkeypatch, api)
+        events = []
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH,
+                                     on_progress=lambda event, detail: events.append(event))
+        rater.label_sample({
+            "k1": {"question": "Q", "reference": "r", "candidate": "yellow RESCUE fruit"},
+            "k2": {"question": "Q", "reference": "r", "candidate": "totally wrong"},
+        })
+        assert events == ["swap_start", "swap_complete", "item_labeled", "item_labeled",
+                           "restore_start", "restore_complete"]
+
+    def test_on_progress_reports_restore_skipped_when_keeping_loaded(self, monkeypatch):
+        api = _FakeHeadApi()
+        self._patch(monkeypatch, api)
+        events = []
+        rater = uj.LocalSerialRater("llama-grader", self._MODEL_PATH,
+                                     keep_loaded_between_raters=True,
+                                     on_progress=lambda event, detail: events.append(event))
+        rater.label_sample({"k1": {"question": "Q", "reference": "r", "candidate": "x"}})
+        assert events == ["swap_start", "swap_complete", "item_labeled", "restore_skipped"]
+
+
+class TestEstimateLocalSerialPreflight:
+    def test_reports_architecture_size_label_and_vram_fit_for_a_real_gguf(self, monkeypatch):
+        from jseval._paths import shared_models_dir
+
+        models_dir = shared_models_dir()
+        path = models_dir / "Qwen_Qwen3.5-9B-Q4_K_M.gguf" if models_dir else None
+        if path is None or not path.is_file():
+            pytest.skip("Qwen_Qwen3.5-9B-Q4_K_M.gguf not found under shared_models_dir()")
+
+        monkeypatch.setattr("jseval.env_fingerprint.probe_gpu_vram",
+                             lambda: {"available": True, "mem_total_mb": 12282, "mem_used_mb": 1000})
+        report = uj.estimate_local_serial_preflight([("llama-class", path.as_posix())])
+        assert report["n_local_graders"] == 1
+        entry = report["per_grader"][0]
+        assert entry["architecture"] == "qwen35"
+        assert entry["size_label"] == "9B"
+        assert entry["vram_fit"] in ("likely_fits", "likely_too_large")
+        assert report["estimated_swap_count"] == 2  # default swaps_per_rater=2, one grader
+        assert report["estimated_time_sec"] > 0
+
+    def test_missing_or_unparseable_gguf_fails_open_not_loud(self, tmp_path, monkeypatch):
+        bogus = tmp_path / "not-a-model.gguf"
+        bogus.write_bytes(b"not a real gguf file")
+        monkeypatch.setattr("jseval.env_fingerprint.probe_gpu_vram",
+                             lambda: {"available": False})
+        report = uj.estimate_local_serial_preflight([("bad-grader", bogus.as_posix())])
+        entry = report["per_grader"][0]
+        assert "error" in entry
+        assert entry["architecture"] is None
+        assert entry["vram_fit"] == "unknown"
+        assert report["gpu_available"] is False
+        assert report["vram_total_bytes"] is None
+
+    def test_swap_count_scales_with_grader_count_and_swaps_per_rater(self, tmp_path, monkeypatch):
+        f1 = tmp_path / "a.gguf"
+        f1.write_bytes(b"x" * 100)
+        f2 = tmp_path / "b.gguf"
+        f2.write_bytes(b"y" * 100)
+        monkeypatch.setattr("jseval.env_fingerprint.probe_gpu_vram", lambda: {"available": False})
+        report = uj.estimate_local_serial_preflight(
+            [("g1", f1.as_posix()), ("g2", f2.as_posix())], swaps_per_rater=1)
+        assert report["estimated_swap_count"] == 2  # 2 graders * 1 swap each
+        assert report["n_local_graders"] == 2
+
+
+class TestRunCrossFamilyCalibrationWithLocalSerialRater:
+    def test_local_serial_rater_composes_with_an_endpoint_grader(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from jseval import external_grader as eg
+
+        log = _calibration_dry_run_logs(tmp_path)
+        # Scoped to just the overlay build: `_probe_judge_model` is also called
+        # by `LocalSerialRater._assert_serving` below, and a module-wide stub
+        # would shadow the fake Head API's own `/v1/models` response there.
+        with monkeypatch.context() as m:
+            m.setattr(uj.httpx, "post", _fake_judge_post)
+            m.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+            overlay = uj.judge_logs(log, judge_url="http://x")
+
+        api = _FakeHeadApi()
+
+        def _post(url, json=None, headers=None, timeout=None):
+            # Settings/activate go through the fake Head-API state machine;
+            # everything else (both graders' chat-completion calls, including
+            # the "gpt-class" fake endpoint) goes through the same RESCUE-based
+            # agree-fake the rest of this suite already uses. A single combined
+            # router, since `uj.httpx`/`eg.httpx` are the same shared module.
+            if url.endswith("/api/settings/v2") or url.endswith("/api/ai/runtime/activate"):
+                return api.post(url, json=json, timeout=timeout, headers=headers)
+            return _fake_grader_post_agree(url, json=json, headers=headers, timeout=timeout)
+
+        monkeypatch.setattr(uj.httpx, "get", api.get)
+        monkeypatch.setattr(uj.httpx, "post", _post)
+
+        graders = [
+            eg.GraderConfig(name="gpt-class", endpoint_url="http://gpt.invalid/v1/chat", model="m1"),
+            uj.LocalSerialRater("llama-class", "models/Llama-3.1-8B-Instruct-Q4_K_M.gguf"),
+        ]
+        result = uj.run_cross_family_calibration(log, overlay, graders=graders, n=6, seed=0)
+        assert result["rater_kind"] == "cross-family-llm, NOT human"
+        assert result["graders"] == ["gpt-class", "llama-class"]
+        # the local grader's swap was performed and fully restored afterward
+        assert api.settings["llm"]["modelPath"] == _FakeHeadApi.INITIAL_MODEL
+
+
+# --- local-serial preflight report in the CLI dry-run block (tempdoc 674) -----
+
+
+class TestLocalSerialPreflightInCli:
+    def test_dry_run_prints_the_local_serial_preflight_report(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval import external_grader as eg
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = TestUtilityJudgeCrossFamilyCli()._overlay_log_dir(tmp_path, monkeypatch)
+        graders_config = TestUtilityJudgeCrossFamilyCli()._mixed_graders_config_file(tmp_path)
+
+        def _boom(*a, **k):
+            raise AssertionError("no --yes given -- must never call the network")
+        monkeypatch.setattr(eg.httpx, "post", _boom)
+        monkeypatch.setattr("jseval.env_fingerprint.probe_gpu_vram",
+                             lambda: {"available": True, "mem_total_mb": 12282, "mem_used_mb": 1000})
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(graders_config), "--calibration-n", "6",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "local-serial preflight" in result.output
+        assert "llama-class" in result.output
+        assert "vram_fit=" in result.output
+
+
+# --- swap smoke-test CLI command (tempdoc 674) --------------------------------
+
+
+class TestUtilityJudgeLocalSwapSmoketestCli:
+    def test_passing_swap_reports_success(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_local_swap_smoketest
+
+        api = _FakeHeadApi()
+
+        def _post(url, json=None, headers=None, timeout=None):
+            if url.endswith("/v1/chat/completions"):
+                return _FakeResp({"choices": [{"message": {"content": "YES"}}]})
+            return api.post(url, json=json, timeout=timeout, headers=headers)
+
+        monkeypatch.setattr(uj.httpx, "get", api.get)
+        monkeypatch.setattr(uj.httpx, "post", _post)
+
+        model_path = tmp_path / "some-model.gguf"
+        model_path.write_bytes(b"fake gguf bytes")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_local_swap_smoketest, ["--model-path", str(model_path)])
+        assert result.exit_code == 0, result.output
+        assert "SMOKETEST PASSED" in result.output
+        assert "verdict=True" in result.output
+        # the swap actually happened and was restored -- not a no-op
+        assert api.settings["llm"]["modelPath"] == _FakeHeadApi.INITIAL_MODEL
+        assert len(api.activate_calls) == 2
+
+    def test_failed_swap_reports_nonzero_exit_and_clear_message(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_local_swap_smoketest
+
+        def _uj_get(url, timeout=None):
+            if url.endswith("/api/ai/runtime/status"):
+                return _FakeResp({"active": {}, "activation": {"state": "idle"}})
+            raise AssertionError(f"unexpected GET {url}")
+
+        monkeypatch.setattr(uj.httpx, "get", _uj_get)
+
+        model_path = tmp_path / "some-model.gguf"
+        model_path.write_bytes(b"fake gguf bytes")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_local_swap_smoketest, ["--model-path", str(model_path)])
+        assert result.exit_code != 0
+        assert "swap smoke test FAILED" in result.output
+        assert "no active runtime variant" in result.output
