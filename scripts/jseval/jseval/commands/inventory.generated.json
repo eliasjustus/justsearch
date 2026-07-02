@@ -260,6 +260,10 @@
     "group": "utility"
   },
   {
+    "name": "utility-compose-cross-corpus",
+    "group": "utility"
+  },
+  {
     "name": "utility-judge",
     "group": "utility"
   },

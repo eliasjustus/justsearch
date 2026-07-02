@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from jseval.agent_retrieval_eval import (
     AgentResult,
+    _build_agent_cmd,
     build_disallowed_tools,
     find_disallowed_tool_calls,
 )
@@ -104,3 +105,83 @@ def test_find_disallowed_tool_calls_flags_skill_routing_around_web_block():
 def test_agent_result_disallowed_tool_calls_defaults_empty():
     result = AgentResult(query="q", answer="a", question_type="t", condition="A", model="haiku")
     assert result.disallowed_tool_calls == []
+
+
+# --- _build_agent_cmd: the actual subprocess-argv wiring (tempdoc 624 confidence
+# pass follow-up). build_disallowed_tools/find_disallowed_tool_calls are correct
+# in isolation, but nothing previously exercised the code path that joins their
+# output into the real `claude -p ... --disallowedTools ...` argv that
+# _run_single_query hands to subprocess.run. These tests fail if that wiring
+# breaks (wrong join, wrong variable, wrong flag) even if the helpers themselves
+# are untouched and still pass their own tests. ---
+
+def _disallowed_tools_arg(cmd: list[str]) -> str:
+    idx = cmd.index("--disallowedTools")
+    return cmd[idx + 1]
+
+
+def test_build_agent_cmd_condition_a_disallowed_tools_matches_helper():
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "A",
+        None, "/tmp/empty_mcp.json", 0.50,
+    )
+    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("A"))
+
+
+def test_build_agent_cmd_condition_b_disallowed_tools_matches_helper():
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "B",
+        "/mcp.json", "/tmp/empty_mcp.json", 0.50,
+    )
+    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("B"))
+
+
+def test_build_agent_cmd_condition_c_disallowed_tools_matches_helper():
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "C",
+        "/mcp.json", "/tmp/empty_mcp.json", 0.50,
+    )
+    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("C"))
+
+
+def test_build_agent_cmd_condition_a_uses_empty_mcp_strict_config():
+    """Condition A must pass the empty MCP config so no MCP tools are wired in
+    at all (the file-tools-only baseline)."""
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "A",
+        "/should-be-ignored-mcp.json", "/tmp/empty_mcp.json", 0.50,
+    )
+    assert "--strict-mcp-config" in cmd
+    mcp_idx = cmd.index("--mcp-config")
+    assert cmd[mcp_idx + 1] == "/tmp/empty_mcp.json"
+
+
+def test_build_agent_cmd_condition_b_uses_real_mcp_config():
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "B",
+        "/mcp.json", "/tmp/empty_mcp.json", 0.50,
+    )
+    assert "--strict-mcp-config" in cmd
+    mcp_idx = cmd.index("--mcp-config")
+    assert cmd[mcp_idx + 1] == "/mcp.json"
+
+
+def test_build_agent_cmd_condition_b_without_mcp_config_omits_mcp_flags():
+    cmd = _build_agent_cmd(
+        "claude", "prompt", "haiku", "/corpus", "B",
+        None, "/tmp/empty_mcp.json", 0.50,
+    )
+    assert "--strict-mcp-config" not in cmd
+    assert "--mcp-config" not in cmd
+
+
+def test_build_agent_cmd_carries_model_prompt_and_budget():
+    cmd = _build_agent_cmd(
+        "claude", "what is X?", "opus", "/corpus", "B",
+        "/mcp.json", "/tmp/empty_mcp.json", 1.25,
+    )
+    assert cmd[0] == "claude"
+    assert "-p" in cmd
+    assert cmd[cmd.index("-p") + 1] == "what is X?"
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert cmd[cmd.index("--max-budget-usd") + 1] == "1.25"

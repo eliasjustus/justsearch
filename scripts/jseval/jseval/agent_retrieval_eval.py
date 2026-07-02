@@ -927,6 +927,41 @@ def find_disallowed_tool_calls(tool_calls: list[dict], disallowed: list[str]) ->
     return [tc for tc in tool_calls if tc.get("tool") in disallowed_set]
 
 
+def _build_agent_cmd(
+    claude_bin: str,
+    prompt: str,
+    model: str,
+    corpus_dir: str,
+    condition: str,
+    mcp_config_path: str | None,
+    empty_mcp_path: str,
+    max_budget_per_query: float,
+) -> list[str]:
+    """Build the `claude -p` argv for one eval query (mirrors agent_utility_inspect's
+    `_build_argv`). Split out of `_run_single_query`'s closure so the actual
+    subprocess-facing wiring — not just `build_disallowed_tools` in isolation — is
+    directly unit-testable (tempdoc 624 confidence pass).
+    """
+    cmd = [
+        claude_bin, "-p", prompt,
+        "--model", model,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--max-budget-usd", str(max_budget_per_query),
+        "--permission-mode", "bypassPermissions",
+        "--add-dir", corpus_dir,
+    ]
+
+    if condition == "A":
+        cmd.extend(["--strict-mcp-config", "--mcp-config", str(empty_mcp_path)])
+    elif condition in ("B", "C"):
+        if mcp_config_path:
+            cmd.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
+
+    cmd.extend(["--disallowedTools", ",".join(build_disallowed_tools(condition))])
+    return cmd
+
+
 def run_agent_eval(
     queries: list[dict],
     corpus_dir: str,
@@ -973,30 +1008,16 @@ def run_agent_eval(
             f"Question: {q['query']}"
         )
 
-        cmd = [
-            claude_bin, "-p", prompt,
-            "--model", model,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--max-budget-usd", str(max_budget_per_query),
-            "--permission-mode", "bypassPermissions",
-            "--add-dir", corpus_dir,
-        ]
+        empty_mcp = Path(query_cwd) / "_empty_mcp.json"
+        if condition == "A":
+            empty_mcp.write_text('{"mcpServers":{}}', encoding="utf-8")
 
         disallowed_tools = build_disallowed_tools(condition)
 
-        if condition == "A":
-            empty_mcp = Path(query_cwd) / "_empty_mcp.json"
-            empty_mcp.write_text('{"mcpServers":{}}', encoding="utf-8")
-            cmd.extend(["--strict-mcp-config", "--mcp-config", str(empty_mcp)])
-        elif condition == "B":
-            if mcp_config_path:
-                cmd.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
-        elif condition == "C":
-            if mcp_config_path:
-                cmd.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
-
-        cmd.extend(["--disallowedTools", ",".join(disallowed_tools)])
+        cmd = _build_agent_cmd(
+            claude_bin, prompt, model, corpus_dir, condition,
+            mcp_config_path, str(empty_mcp), max_budget_per_query,
+        )
 
         result = AgentResult(
             query=q["query"], answer=q["answer"],

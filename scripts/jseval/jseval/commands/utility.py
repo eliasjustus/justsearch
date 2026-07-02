@@ -297,15 +297,26 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
               default="public-pre-cutoff", show_default=True)
 @click.option("--confidence-tier", type=click.Choice(["A", "B", "C"]), default="C", show_default=True)
 @click.option("--output-dir", default=None, type=click.Path(), help="Re-compose the JUDGED record here.")
+@click.option("--calibrate", is_flag=True,
+              help="Also run the human-calibration DRY RUN (tempdoc 624 §M.4/§T.3) and attach it "
+                   "to the overlay as `human_calibration`. Uses two deterministic AGENT-SUBSTITUTE "
+                   "raters, NOT real human raters — proves the sampling + Cohen's-kappa machinery "
+                   "end-to-end, not a validated judge-accuracy figure.")
+@click.option("--calibration-n", default=40, show_default=True, type=int,
+              help="Calibration sample size (only with --calibrate).")
+@click.option("--calibration-seed", default=0, show_default=True, type=int,
+              help="Calibration sample RNG seed (only with --calibrate).")
 @click.pass_context
 def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
-                      contamination_class, confidence_tier, output_dir):
+                      contamination_class, confidence_tier, output_dir,
+                      calibrate, calibration_n, calibration_seed):
     """Hybrid EM->LLM-judge re-score over EvalLogs, post-hoc (tempdoc 624 C-6/E-5).
 
     EM auto-passes; the EM-misses are judged by the local model (different family
     than the agent), dual-order, abstaining on disagreement. Writes a judge-overlay
-    + (optionally) re-composes the JUDGED `utility-comparison.v1`. Requires the
-    `agent` extra + a running judge model (`ai_activate`)."""
+    + (optionally) re-composes the JUDGED `utility-comparison.v1`, and (with
+    --calibrate) attaches the human-calibration dry run. Requires the `agent`
+    extra + a running judge model (`ai_activate`)."""
     import datetime as _dt
 
     from .. import agent_utility_run as aur
@@ -314,6 +325,8 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
     from .. import utility_judge as uj
 
     overlay = uj.judge_logs(log_dir, judge_url=judge_url, judge_model=judge_model)
+    if calibrate:
+        uj.attach_human_calibration(overlay, log_dir, n=calibration_n, seed=calibration_seed)
     path = uj.write_overlay(log_dir, overlay)
     st = overlay["stats"]
     click.echo(f"judge: EM-pass={st['em_auto_pass']} judged-misses={st['judged_misses']} "
@@ -321,6 +334,12 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                f"agreement={st['agreement_rate']} kind={overlay['judge_identity']['kind']}")
     if st["degraded_to_em"]:
         click.echo("WARNING: judge endpoint unreachable — overlay is EM-only (no LLM verdicts).")
+    if calibrate:
+        hc = overlay["human_calibration"]
+        jvr, rvr = hc["judge_vs_rater_agreement"], hc["rater_vs_rater_agreement"]
+        click.echo(f"calibration (rater_kind={hc['rater_kind']!r}, n={hc['n']}): "
+                   f"judge-vs-rater kappa={jvr['value']} degenerate_pe={jvr['degenerate_pe']}; "
+                   f"rater-vs-rater kappa={rvr['value']} degenerate_pe={rvr['degenerate_pe']}")
     click.echo(f"Written overlay to {path}")
 
     if output_dir:
@@ -347,4 +366,95 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
         click.echo(f"Written JUDGED record to {out}")
 
 
-COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status, cmd_utility_judge]
+@click.command("utility-compose-cross-corpus")
+@click.option("--log-dir", "log_dirs", multiple=True, required=True, type=click.Path(exists=True),
+              help="Repeatable. One completed `jseval utility-run --log-dir` Inspect log dir per "
+                   "corpus (e.g. one per language/battlefield-dimension). Need 2+.")
+@click.option("--search-config-key", default=None,
+              help="623 config_cohort_key of the live search backend (the with-tool arms' identity).")
+@click.option("--contamination-class",
+              type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
+              default="public-pre-cutoff", show_default=True)
+@click.option("--confidence-tier", type=click.Choice(["A", "B", "C"]), default="C", show_default=True)
+@click.option("--output-dir", type=click.Path(), default=None)
+@click.pass_context
+def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamination_class,
+                                     confidence_tier, output_dir):
+    """Pool multiple corpora's Inspect logs into ONE cross-corpus stratified record (tempdoc 624).
+
+    `utility-compose`/`utility-run` always produce one SEPARATE top-level record per
+    corpus (dataset slug) — so a real cross-corpus split (e.g. English/German/scan)
+    can only ever be read off as three individually-pooled records, never as one
+    stratified breakdown. This command reuses the exact same EvalLog -> summary
+    projection (`eval_logs_to_summaries`) as `utility-run`, one call per --log-dir,
+    then pools every corpus's summaries into `compose_utility_cross_corpus`, which
+    stratifies the pooled McNemar+bootstrap-CI comparison by corpus — reusing
+    `_arm_comparison`'s existing `stratify_by` machinery, not a new statistics path.
+    """
+    import datetime as _dt
+
+    from .. import agent_utility_run as aur
+    from .. import utility_comparison as uc
+    from .. import utility_governance as ug
+
+    all_summaries: list = []
+    per_dir = []
+    for ld in log_dirs:
+        all_summaries.extend(aur.eval_logs_to_summaries(ld, search_config_cohort_key=search_config_key))
+        arms = ug.compute_loss_accounting(ld)
+        verdict, gmetrics = ug.paired_comparability(arms)
+        per_dir.append((ld, verdict, gmetrics, arms))
+
+    # A cross-corpus record cannot be more trustworthy than its least-comparable
+    # input: comparable only if EVERY pooled corpus's run was itself comparable.
+    def _label(ld):
+        return Path(ld).name
+
+    governance = {
+        "comparable": all(v.comparable for _, v, _, _ in per_dir),
+        "reasons": [f"{_label(ld)}: {r}" for ld, v, _, _ in per_dir for r in v.reasons],
+        "metrics": {_label(ld): gm for ld, _, gm, _ in per_dir},
+        "per_arm_loss": {
+            f"{_label(ld)}:{c}": {"n_attempted": l.n_attempted, "n_completed": l.n_completed,
+                                  "n_excluded": l.n_excluded, "exclusion_rate": round(l.exclusion_rate, 4)}
+            for ld, _, _, arms in per_dir for c, l in arms.items()
+        },
+    }
+
+    record = uc.compose_utility_cross_corpus(
+        all_summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
+        confidence_tier=confidence_tier, governance=governance,
+    )
+
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(record, indent=2, default=str))
+    else:
+        click.echo(f"corpora={record['corpora']}")
+        for m, cell in record["measured"].items():
+            acc, tok = cell["accuracy"], cell["tokens_unique"]
+            click.echo(
+                f"[pooled/{m}] acc {acc['baseline']}->{acc['with_tool']} "
+                f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']}); n={cell['n_paired_observations']}; "
+                f"unique-tokens median {tok['baseline']['median']}->{tok['with_tool']['median']} "
+                f"(d_mean={tok['delta_mean']:+})")
+            for slabel, strat in (cell.get("stratified") or {}).get("by_stratum", {}).items():
+                sacc = strat["accuracy"]
+                click.echo(
+                    f"    stratum[{slabel}] acc {sacc['baseline']}->{sacc['with_tool']} "
+                    f"(d={sacc['delta']:+}, McNemar p={sacc['mcnemar_p']}, n={strat['n_paired_observations']})")
+        click.echo(f"COMPARABLE={governance['comparable']}" + ("" if governance["comparable"]
+                   else " — reasons: " + "; ".join(governance["reasons"])))
+        click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
+                   f"contamination={record['coverage']['contamination_class']}")
+
+    if output_dir:
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "utility-comparison-cross-corpus.v1.json").write_text(
+            json.dumps(record, indent=2, default=str), encoding="utf-8")
+        click.echo(f"Written record to {out}")
+
+
+COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
+           cmd_utility_judge, cmd_utility_compose_cross_corpus]

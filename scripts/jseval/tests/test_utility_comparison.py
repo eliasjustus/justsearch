@@ -563,3 +563,138 @@ def test_judge_degrades_to_em_when_endpoint_down(tmp_path, monkeypatch):
     assert overlay["stats"]["degraded_to_em"] is True
     assert overlay["judge_identity"]["kind"] == "substring-em"  # honest: no LLM ran
     assert overlay["scores"]["C|0|q2"]["final"] is False        # falls back to EM
+
+
+# --- Cross-corpus composition (tempdoc 624 §Cross-corpus) --------------------
+#
+# compose_utility groups cell_summaries by (corpus, agent_model) BEFORE ever
+# calling _arm_comparison, so distinct dataset slugs (e.g. English/German/scan)
+# always land in SEPARATE top-level records — the pooled cross-corpus view
+# _arm_comparison's stratify_by already supports is unreachable through it.
+# compose_utility_cross_corpus pools 3 synthetic corpora that DELIBERATELY
+# reuse the SAME seed (0) and the SAME qids (q0..q3) — the two collisions a
+# naive pool would hit — and proves the per-stratum breakdown is hand-
+# computable and independent of the (offsetting-to-zero) pooled number.
+
+def _xcorpus_summary(dataset, condition, per_query, *, search_key=None):
+    return _summary(condition, per_query, search_key=search_key, seed=0,
+                     corpus={"dataset": dataset, "signature": "v1"})
+
+
+def _xcorpus_pq(correct_a, correct_c, cost_a=0.10, cost_c=0.05, tok_a=1000, tok_c=500):
+    a, c = {}, {}
+    for i in range(4):
+        q = f"q{i}"
+        a[q] = {"correct": correct_a[i], "cost_usd": cost_a, "unique_tokens": tok_a, "num_turns": 5}
+        c[q] = {"correct": correct_c[i], "cost_usd": cost_c, "unique_tokens": tok_c, "num_turns": 5}
+    return a, c
+
+
+def _xcorpus_fixture():
+    """3 corpora, SAME seed (0) + SAME qids (q0-q3) on purpose (collision probe).
+
+    - en: tool HELPS (+0.5), cheaper + fewer tokens with tool.
+    - de: tool HURTS (-0.5), no cost/token difference.
+    - scan: NO effect (0.0), no cost/token difference.
+
+    Pooled across all 3 (12 paired observations): the en (+0.5) and de (-0.5)
+    deltas offset exactly, scan contributes no discordant pairs -> pooled
+    delta = 0.0, mcnemar_p = 1.0 (the "hides a real per-corpus signal" case).
+    """
+    en_a, en_c = _xcorpus_pq([False, True, False, True], [True, True, True, True],
+                             cost_a=0.10, cost_c=0.05, tok_a=1000, tok_c=500)
+    de_a, de_c = _xcorpus_pq([True, True, True, True], [True, False, True, False],
+                             cost_a=0.20, cost_c=0.20, tok_a=2000, tok_c=2000)
+    scan_a, scan_c = _xcorpus_pq([True, True, True, True], [True, True, True, True],
+                                 cost_a=0.15, cost_c=0.15, tok_a=1500, tok_c=1500)
+    return [
+        _xcorpus_summary("golden/battlefield-en-v1", "A", en_a),
+        _xcorpus_summary("golden/battlefield-en-v1", "C", en_c, search_key="s"),
+        _xcorpus_summary("golden/battlefield-de-v1", "A", de_a),
+        _xcorpus_summary("golden/battlefield-de-v1", "C", de_c, search_key="s"),
+        _xcorpus_summary("golden/synth-scan-v1", "A", scan_a),
+        _xcorpus_summary("golden/synth-scan-v1", "C", scan_c, search_key="s"),
+    ]
+
+
+def test_cross_corpus_pooled_offsets_but_strata_reveal_signal():
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t", contamination_class="private-synthetic")
+
+    assert rec["schema"] == "utility-comparison-cross-corpus.v1"
+    assert rec["corpora"] == [
+        "golden/battlefield-de-v1:v1", "golden/battlefield-en-v1:v1", "golden/synth-scan-v1:v1",
+    ]
+    assert set(rec["measured"]) == {"haiku"}
+    cell = rec["measured"]["haiku"]
+
+    # Pooled: en (+0.5) and de (-0.5) offset exactly; scan contributes 0 -> hides the signal.
+    assert cell["n_paired_observations"] == 12
+    assert cell["accuracy"]["delta"] == 0.0
+    assert cell["accuracy"]["mcnemar_p"] == 1.0
+
+    strata = cell["stratified"]["by_stratum"]
+    en_label = "golden/battlefield-en-v1:v1"
+    de_label = "golden/battlefield-de-v1:v1"
+    scan_label = "golden/synth-scan-v1:v1"
+    assert set(strata) == {en_label, de_label, scan_label}
+
+    en, de, scan = strata[en_label], strata[de_label], strata[scan_label]
+
+    # Each stratum's McNemar is independently computed on ITS OWN n=4 (never
+    # inherited from the pooled p=1.0 above — §M.8 item 7).
+    assert en["n_paired_observations"] == 4
+    assert de["n_paired_observations"] == 4
+    assert scan["n_paired_observations"] == 4
+    assert en["accuracy"]["delta"] == 0.5
+    assert de["accuracy"]["delta"] == -0.5
+    assert scan["accuracy"]["delta"] == 0.0
+    assert en["accuracy"]["mcnemar_p"] == 0.5
+    assert de["accuracy"]["mcnemar_p"] == 0.5
+    assert scan["accuracy"]["mcnemar_p"] == 1.0
+    assert en["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
+
+    # Cost/token blocks are independently computed per stratum too (en is
+    # cheaper+fewer-tokens with the tool; de/scan have no cost/token delta —
+    # the pooled block would average these together and hide en's signal).
+    assert en["cost_usd"]["delta_mean"] < 0
+    assert en["tokens_unique"]["delta_mean"] < 0
+    assert de["cost_usd"]["delta_mean"] == 0.0
+    assert scan["cost_usd"]["delta_mean"] == 0.0
+
+
+def test_cross_corpus_no_seed_or_qid_collision():
+    """The 3 fixture corpora deliberately reuse seed=0 and qids q0-q3 — proving
+    pooling does NOT silently drop 2/3 of the data (the naive
+    ``a_by_seed[seed][0]`` bug) or misattribute one corpus's q0 to another's
+    stratum (the naive flat qid->label bug)."""
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t")
+    cell = rec["measured"]["haiku"]
+    # 3 corpora x 4 queries x 1 (shared) seed = 12 -- not 4 (would be the
+    # index-0-only bug) and not fewer due to qid overwrite.
+    assert cell["n_paired_observations"] == 12
+    assert rec["seed_count"] == 1                      # one REAL seed (0), reported honestly
+
+
+def test_cross_corpus_requires_two_or_more_corpora():
+    single = [s for s in _xcorpus_fixture() if s["corpus"]["dataset"] == "golden/battlefield-en-v1"]
+    with pytest.raises(utility_comparison.UtilityComposeError, match="2\\+ distinct corpora"):
+        utility_comparison.compose_utility_cross_corpus(single, composed_at="t")
+
+
+def test_cross_corpus_refuses_mixed_harness_cohort():
+    fixture = _xcorpus_fixture()
+    fixture[2] = _summary("A", fixture[2]["per_query"], seed=0,
+                          corpus=fixture[2]["corpus"], cli_version="9.9.9")  # different harness
+    with pytest.raises(utility_comparison.UtilityComposeError, match="agent_cohort_key differs"):
+        utility_comparison.compose_utility_cross_corpus(fixture, composed_at="t")
+
+
+def test_cross_corpus_governance_derives_tier_from_least_comparable_input():
+    gov = {"comparable": False, "reasons": ["logs-de: asymmetric_exclusion"], "metrics": {},
+           "per_arm_loss": {}}
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t", confidence_tier="A", governance=gov)
+    assert rec["comparability"]["comparable"] is False
+    assert rec["confidence_tier"] == "C"                # DERIVED, overrides the passed "A"

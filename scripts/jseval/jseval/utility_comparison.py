@@ -33,6 +33,7 @@ from jseval.agent_manifest import agent_cohort_key
 from jseval.release import canonical_dataset_slug
 
 SCHEMA = "utility-comparison.v1"
+SCHEMA_CROSS_CORPUS = "utility-comparison-cross-corpus.v1"
 SCHEMA_VERSION = 1
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
@@ -457,6 +458,18 @@ def _arm_comparison(
     return result
 
 
+def _corpus_label(corpus: dict) -> str:
+    """The corpus-identity label a summary is stratified/namespaced by.
+
+    Shared by the incidental within-cell stratify path
+    (:func:`_default_corpus_stratify` — a slug whose summaries carry more
+    than one corpus SIGNATURE) and the deliberate cross-corpus composer
+    (:func:`compose_utility_cross_corpus` — summaries pooled across dataset
+    SLUGs): one derivation, two call sites, so a query's stratum label is
+    never computed two different ways."""
+    return f"{corpus.get('dataset')}:{corpus.get('signature')}"
+
+
 def _default_corpus_stratify(cell_summaries: list[dict]) -> dict[str, str] | None:
     """Default ``qid -> corpus`` stratum mapping (tempdoc 624 §T.4).
 
@@ -471,13 +484,49 @@ def _default_corpus_stratify(cell_summaries: list[dict]) -> dict[str, str] | Non
     output stays byte-identical to the pre-stratification behavior."""
     qid_to_label: dict[str, str] = {}
     for s in cell_summaries:
-        corpus = s.get("corpus") or {}
-        label = f"{corpus.get('dataset')}:{corpus.get('signature')}"
+        label = _corpus_label(s.get("corpus") or {})
         for qid in (s.get("per_query") or {}):
             qid_to_label[qid] = label
     if len({*qid_to_label.values()}) < 2:
         return None
     return qid_to_label
+
+
+def _namespace_for_cross_corpus(summaries: list[dict]) -> list[dict]:
+    """Rewrite ``per_query`` keys + ``manifest.seed`` so summaries pooled from
+    MULTIPLE dataset slugs can be pushed through the existing single-cell path
+    (:func:`_compose_cell` / :func:`_arm_comparison`) without collision
+    (tempdoc 624 §Cross-corpus).
+
+    Two real-world collisions would otherwise corrupt a pooled comparison:
+
+    - **Seed collision.** Every corpus's eval run independently numbers its
+      seeds ``0..N``, so pooling summaries as-is would put e.g. the English
+      run's seed 0 and the German run's seed 0 into the SAME
+      ``_index_by_seed`` bucket — ``_pair_observations`` keeps only the first
+      summary per bucket, silently discarding the rest.
+    - **Qid collision.** Every corpus's dataset independently numbers its
+      queries ``q0, q1, ...``, so a flat ``stratify_by: qid -> label`` map
+      (as :func:`_default_corpus_stratify` builds it) could only assign ONE
+      label to "q0" — corrupting every other corpus's "q0" stratum.
+
+    Namespacing both by the corpus label (:func:`_corpus_label`) makes each
+    (corpus, seed) bucket and each (corpus, qid) key globally unique, so
+    :func:`_compose_cell` composes the pooled cell exactly as it would any
+    other multi-summary cell, and :func:`_default_corpus_stratify` — called
+    downstream, UNCHANGED — recovers precisely this corpus split as the
+    per-stratum breakdown. No pairing/statistics code is touched; this only
+    reshapes the input.
+    """
+    out = []
+    for s in summaries:
+        label = _corpus_label(s.get("corpus") or {})
+        pq = s.get("per_query") or {}
+        ns = dict(s)
+        ns["manifest"] = {**s["manifest"], "seed": f"{label}::{s['manifest'].get('seed')}"}
+        ns["per_query"] = {f"{label}::{qid}": v for qid, v in pq.items()}
+        out.append(ns)
+    return out
 
 
 def _compose_cell(cell_summaries: list[dict]) -> dict | None:
@@ -513,3 +562,136 @@ def _compose_cell(cell_summaries: list[dict]) -> dict | None:
             "scenario; lead with token-efficiency, not this accuracy (tempdoc 624 §C-4). Run "
             "condition B for the realistic 'addition' number.")
     return cell
+
+
+def compose_utility_cross_corpus(
+    run_summaries: list[dict],
+    *,
+    composed_at: str,
+    external_baselines: dict | None = None,
+    coverage: dict | None = None,
+    confidence_tier: str = "C",
+    contamination_class: str = "unknown",
+    governance: dict | None = None,
+) -> dict:
+    """Cross-corpus stratified sibling of :func:`compose_utility` (tempdoc 624
+    §Cross-corpus).
+
+    ``compose_utility`` groups ``cell_summaries`` by ``(corpus, agent_model)``
+    BEFORE ever calling :func:`_arm_comparison` — so every dataset slug always
+    ends up in its own, separately-composed top-level record, and the
+    per-stratum McNemar+bootstrap-CI breakdown ``_arm_comparison`` already
+    supports via ``stratify_by`` never gets a chance to stratify by the axis a
+    caller may actually care about (e.g. an English/German/scan
+    battlefield-dimension split) — ``_default_corpus_stratify`` only fires for
+    the INCIDENTAL case of one slug spanning multiple corpus signatures within
+    a single composition call, never for genuinely distinct dataset slugs.
+
+    This function pools ``cell_summaries`` from MULTIPLE dataset slugs (same
+    ``agent_model``) into ONE :func:`_compose_cell` / :func:`_arm_comparison`
+    call, reusing :func:`_default_corpus_stratify`'s existing corpus-identity
+    derivation (via :func:`_namespace_for_cross_corpus`, which only makes
+    seeds/qids collision-free — it does not reimplement pairing, McNemar, or
+    bootstrap-CI). The result is ONE record per ``agent_model`` whose
+    top-level ``accuracy``/``tokens_unique``/etc. is the POOLED cross-corpus
+    number, and whose ``stratified.by_stratum`` gives each corpus its own,
+    independently-significance-tested breakdown (§M.8 item 7) — the fallback
+    for exactly the situation where every per-corpus pooled record is
+    individually non-significant but a cross-corpus view could still reveal
+    whether any one corpus carries a real signal.
+    """
+    if not run_summaries:
+        raise UtilityComposeError("no run summaries provided")
+
+    # 1. One harness cohort across the whole record (identical check to compose_utility).
+    keys = set()
+    for s in run_summaries:
+        m = s.get("manifest")
+        if not isinstance(m, dict):
+            raise UtilityComposeError(
+                f"summary for {s.get('corpus')!r} has no embedded manifest",
+            )
+        keys.add(m.get("agent_cohort_key") or agent_cohort_key(m))
+    if len(keys) != 1:
+        raise UtilityComposeError(
+            "runs are not one harness cohort (agent_cohort_key differs): "
+            f"{sorted(k[:12] for k in keys)}",
+        )
+    cohort_key = keys.pop()
+
+    # 2. With-tool arms must share one search-config (identical check).
+    search_keys = {
+        s["manifest"].get("search_config_cohort_key")
+        for s in run_summaries
+        if s.get("condition") in _WITH_TOOL
+    }
+    search_keys.discard(None)
+    if len(search_keys) > 1:
+        raise UtilityComposeError(
+            "with-tool arms span multiple search configs: "
+            f"{sorted(k[:12] for k in search_keys)}",
+        )
+    search_config = next(iter(search_keys), None)
+
+    corpora = sorted({_corpus_label(s.get("corpus") or {}) for s in run_summaries})
+    if len(corpora) < 2:
+        raise UtilityComposeError(
+            f"cross-corpus composition needs 2+ distinct corpora, got: {corpora}",
+        )
+
+    ref = run_summaries[0]["manifest"]
+    cohort = {
+        "agent_cohort_key": cohort_key,
+        "git_sha": ref.get("git_sha"),
+        "cli_version": ref.get("cli_version"),
+        "mcp_tool_surface_hash": ref.get("mcp_tool_surface_hash"),
+        "judge": ref.get("judge"),
+        "prompt_template_hash": ref.get("prompt_template_hash"),
+        "decoding": ref.get("decoding"),
+        "eval_limits": ref.get("eval_limits"),
+        "search_config_cohort_key": search_config,
+        "hardware": ref.get("hardware"),
+    }
+
+    # 3. Pool by agent_model only (NOT by corpus) — every model's cell spans
+    #    all corpora, namespaced so _compose_cell's shared machinery can pool
+    #    them and _default_corpus_stratify can split them back apart.
+    seeds_seen: set = set()
+    measured: dict = {}
+    for model in sorted({s.get("agent_model") for s in run_summaries}):
+        model_summaries = [s for s in run_summaries if s.get("agent_model") == model]
+        for s in model_summaries:
+            seeds_seen.add(s["manifest"].get("seed"))
+        cell = _compose_cell(_namespace_for_cross_corpus(model_summaries))
+        if cell is not None:
+            measured[model] = cell
+
+    comparability = None
+    derived_tier = confidence_tier
+    if governance is not None:
+        comparability = {
+            "comparable": governance.get("comparable"),
+            "reasons": governance.get("reasons", []),
+            "metrics": governance.get("metrics", {}),
+            "per_arm_loss": governance.get("per_arm_loss", {}),
+        }
+        derived_tier = "C" if not governance.get("comparable") else confidence_tier
+
+    return {
+        "schema": SCHEMA_CROSS_CORPUS,
+        "schema_version": SCHEMA_VERSION,
+        "composed_at": composed_at,
+        "cohort": cohort,
+        "conditions": {
+            "baseline": "A (file tools only)",
+            "with_tool": "C (JustSearch only)",
+            "addition": "B (file tools + JustSearch)",
+        },
+        "corpora": corpora,
+        "measured": measured,
+        "seed_count": len([x for x in seeds_seen if x is not None]),
+        "confidence_tier": derived_tier,
+        "comparability": comparability,
+        "coverage": coverage or _default_coverage(contamination_class),
+        "external_baselines": external_baselines or {},
+    }
