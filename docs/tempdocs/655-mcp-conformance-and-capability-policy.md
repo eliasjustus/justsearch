@@ -1,7 +1,7 @@
 ---
 title: "MCP conformance and capability policy: define the conformance bar and mutating-tool policy for JustSearch's production MCP endpoint"
 type: tempdocs
-status: open
+status: open — core capability-policy + conformance work shipped and live-verified (see "Current state" at the end); only client fixture coverage remains, deliberately deferred as a product decision
 created: 2026-06-28
 updated: 2026-07-02
 category: mcp / agent-safety / contract-testing / capability-policy
@@ -810,8 +810,8 @@ Not independently live-verifiable in this environment: the actual OS-level deskt
 popup, since the dev-stack browser flow runs in a plain Chrome tab, not the packaged Tauri webview
 (`isTauriRuntime()` is false there by construction). Everything up to that boundary — the focus-
 detection logic, the gating condition, the call into `sendDesktopNotification` — is unit-tested and
-was confirmed to reach that boundary correctly; only the final native OS call itself is untested,
-consistent with this session's own confidence-building pass identifying that exact gap in advance.
+was confirmed to reach that boundary correctly; only the final native OS call itself is untested —
+this gap was identified and accepted before implementation began, not discovered as a surprise.
 
 ## Critical-analysis fix: suppress the missed-approval advisory for non-MCP gates (2026-07-02)
 
@@ -856,7 +856,14 @@ resource's stream) and doesn't imply the resource *list* itself can change. The 
 declaring `listChanged: false` for both `tools` and `resources` in `handleInitialize`
 (`McpProtocolHandler.java`), not building a `notifications/*/list_changed` emission mechanism for a
 capability that doesn't exist. Locked in with an explicit assertion in
-`McpProtocolHandlerTest`. Also corrected a small inaccuracy discovered while investigating this:
+`McpProtocolHandlerTest`. **This is only true as of today, not permanently**: tempdoc 660 (plugin
+SDK community onramp, still an open design question as of this writing — "How should
+plugin-contributed actions relate to MCP and operation policy?") could eventually let a plugin
+contribute a runtime-registered tool or resource, which would make one or both lists genuinely
+dynamic. If that ships, `listChanged` needs to flip back to `true` *and* the corresponding
+`notifications/*/list_changed` emission needs to be built for real — worth checking this tempdoc
+whenever 660's design lands, rather than rediscovering the same investigation. Also corrected a
+small inaccuracy discovered while investigating this:
 `check-mcp-conformance.mjs`'s own header comment claimed this exact bug was an example of what its
 11 locked-in scenarios would catch — checking all 30 upstream scenario names (both
 `PASSING_SCENARIOS` and `EXCLUDED_FIXTURE_SCENARIOS`) confirmed none of them exercise
@@ -884,4 +891,61 @@ explicitly named it as an open cost/benefit question (which clients, how fixture
 representative as proprietary clients drift, whether the ongoing maintenance is worth it) rather
 than a promised deliverable. That question is a product decision, not something further codebase
 investigation can resolve — it stays open on purpose.
+
+## Current state (as of 2026-07-02) — read this first if picking this tempdoc back up
+
+This tempdoc has accumulated many dated passes above; this section is the up-to-date summary so a
+future reader doesn't have to reconstruct it by reading the whole history top to bottom.
+
+**Shipped and live-verified, against a real running server and a real browser, not just unit
+tests:**
+- MCP's mutating tool (`justsearch_ingest`) is wired into JustSearch's existing, transport-agnostic
+  consent mechanism (pending-authorization records, single-use capsules, durable "allow always"
+  grants) instead of the old dead-end `_confirmationToken` hint. All 6 MCP tools validate their
+  arguments against a real JSON Schema at the boundary before dispatch.
+- The upstream `@modelcontextprotocol/conformance` suite is adopted (not forked) as a manual/
+  dev-stack-driven regression gate (`scripts/ci/check-mcp-conformance.mjs`), locking in the 11 of
+  30 scenarios that measure real protocol behavior against JustSearch's curated tool surface.
+- A pending MCP approval surfaces two independent ways: the same hardened approval dialog the
+  browser UI already uses (triggered live even though the frontend never made the original
+  request), and — for MCP calls specifically — a passive "Approval requested" toast/inbox badge
+  plus an OS-level desktop notification when the window isn't focused, so a user who stepped away
+  still finds out. The calling MCP client's self-reported name is shown in the dialog, display-only
+  (it is never used for any trust or grant decision).
+- Two real regressions were found by post-implementation critical review (not by the original
+  design) and fixed: a privacy leak where argument content briefly reached a broadcast channel it
+  shouldn't have, and a redundant notification firing for ordinary browser-triggered approvals (not
+  just MCP ones). Both fixes are described in their own sections above with the reasoning.
+- The `tools.listChanged`/`resources.listChanged` over-declaration this tempdoc's own first
+  investigation pass found (a capability advertised but never actually honored) is fixed.
+- The relationship between the MCP session token (`GET /api/mcp/token`, enforced on `POST`/`DELETE
+  /mcp`) and the trust-lattice consent gate — previously an open question — is now explicitly
+  documented as intentional, correct defense-in-depth (`docs/reference/security/threat-model.md`),
+  not a gap.
+
+**Deliberately not built, and why:**
+- Client-specific fixture/replay test coverage (Claude Desktop, Claude Code, Cursor) — a real,
+  named, ongoing maintenance cost with no committed decision that the benefit clears it. This is a
+  product call, not a technical blocker; pick it up only after that call is made.
+- MCP elicitation (the spec's own mid-call user-input primitive) as anything beyond a future
+  possibility — host support is still uneven across MCP clients, so the local approval dialog stays
+  the primary mechanism, with elicitation as a potential later enhancement layered on top.
+- A generalized "answering surface" abstraction over the consent mechanism — only two caller
+  surfaces (browser UI, MCP) exist today; the extraction point is a genuine third surface (a
+  networked MCP transport, or the plugin marketplace in tempdoc 660), not before.
+
+**Known limitation, not yet hit:** the `listChanged: false` fix above assumes both the MCP tool
+list and the resource list are permanently static. That's true today. If tempdoc 660 (plugin SDK)
+ever lets a plugin register a tool or resource at runtime, this decision needs revisiting — the
+capability declaration would need to flip to `true` and an actual `notifications/*/list_changed`
+emission path would need to be built, which does not exist today in any form.
+
+**Unverified in this environment, disclosed rather than silently skipped:** the actual OS-level
+desktop notification popup. The dev-stack browser flow used for all live verification in this
+tempdoc runs the frontend in a plain browser tab, not the packaged Tauri desktop application, so
+the native notification API is never actually exercised end to end — only up to the point of
+calling it. Verifying the real popup requires running the built desktop app itself.
+
+**If continuing this work:** the only genuinely open original question is client fixture coverage.
+Everything else this tempdoc set out to do has a recorded, verified conclusion above.
 
