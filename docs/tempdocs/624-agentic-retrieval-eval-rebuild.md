@@ -1,7 +1,7 @@
 ---
 title: "Agentic-utility eval rebuild: the agent-utility number as a cohort-identified, condition-paired comparison record — a projection over agent-eval runs cohort-identical on every axis except `condition`, conforming to the canonical-record + governed-projection seam (553/623/622); the comparison arm already exists (346) but lacks run identity, seeds, judge, and projection discipline, which is why '92% / 62%' is an identity-less fork"
 type: tempdocs
-status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. Separately (2026-07-02, via a parallel strategy-session branch, merged into this tempdoc after the fact): §M.9 founder decisions were RESOLVED (see §Founder decisions 2026-07-02 and §U-Founder-4 revised, inserted below, immediately after this As-built #5 point) -- U-Founder-1 corpus sequencing, U-Founder-3 model tier, and U-Founder-5 timeline are settled; U-Founder-2 (budget) stays gated on a combined estimate; U-Founder-4 (judge calibration) is revised to accept a cross-family LLM grader panel in place of human raters (§M.8 item 3 amended accordingly), not yet run. **These decisions were made before the leak discovery and corrected numbers below existed** -- re-confirm with whoever made that call before treating them as settled against the current, more rigorous record. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared. 2026-07-02 (same day, eighth/ninth pass): remaining-work planning found and closed two more gaps -- the §M.7a item 3 failure analysis (As-built #7) surfaced a real, previously-unknown answer-key leak (queries.json readable by file-tool conditions via --add-dir traversal, and separately ingested into the MCP search index for the scan corpus via accretive, never-auto-narrowed watched-roots); both root causes are now fixed in code (isolated per-run corpus staging; a pre-run watched-roots scope assertion) plus a detection backstop, and a leak-free reanalysis of the already-collected data found the pooled cross-corpus effect moves from non-significant (p=0.185) to borderline-significant and NEGATIVE (delta -0.094, p=0.055) once leaked cells are excluded -- condition B trends toward measurably harmful, not null. A new tempdoc (671) was opened for a separate, out-of-scope production Tika bug found earlier. §M.8's bar remains uncleared; §M.9's founder decisions and a real human-calibration labeler remain open, not resolved by this pass.
+status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. Separately (2026-07-02, via a parallel strategy-session branch, merged into this tempdoc after the fact): §M.9 founder decisions were RESOLVED (see §Founder decisions 2026-07-02 and §U-Founder-4 revised, inserted below, immediately after this As-built #5 point) -- U-Founder-1 corpus sequencing, U-Founder-3 model tier, and U-Founder-5 timeline are settled; U-Founder-2 (budget) stays gated on a combined estimate; U-Founder-4 (judge calibration) is revised to accept a cross-family LLM grader panel in place of human raters (§M.8 item 3 amended accordingly), not yet run. **These decisions were made before the leak discovery and corrected numbers below existed** -- re-confirm with whoever made that call before treating them as settled against the current, more rigorous record. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared. 2026-07-02 (same day, eighth/ninth pass): remaining-work planning found and closed two more gaps -- the §M.7a item 3 failure analysis (As-built #7) surfaced a real, previously-unknown answer-key leak (queries.json readable by file-tool conditions via --add-dir traversal, and separately ingested into the MCP search index for the scan corpus via accretive, never-auto-narrowed watched-roots); both root causes are now fixed in code (isolated per-run corpus staging; a pre-run watched-roots scope assertion) plus a detection backstop, and a leak-free reanalysis of the already-collected data found the pooled cross-corpus effect moves from non-significant (p=0.185) to borderline-significant and NEGATIVE (delta -0.094, p=0.055) once leaked cells are excluded -- condition B trends toward measurably harmful, not null. A new tempdoc (671) was opened for a separate, out-of-scope production Tika bug found earlier. §M.8's bar remains uncleared; §M.9's founder decisions and a real human-calibration labeler remain open, not resolved by this pass. 2026-07-02 (same day, tenth pass): tempdoc 672 opened for the VDU Head-bootstrap wiring gap -- a register check found no existing tempdoc owns bootstrap-wiring completeness (607 owns extraction routing, not this; 671 explicitly declined the scope in its own status line; 519 is stale and a different specific subject). The cross-family grader panel design (§M.8 item 3) was also refined to prefer a second locally-hosted model over external paid APIs, removing the standing credential blocker as a hard dependency. No remaining design gaps in 624 itself -- everything left is either an explicit spend decision (the ~$163 re-run, the grader panel) or 672's own prerequisite fix for the scan corpus specifically. 2026-07-02 (same day, twelfth pass): the three parallel agents on 672/673/674 returned -- 672's diagnosis is CONFIRMED and its design SETTLED and de-risked (ready for a go/no-go, not a design question anymore); 673 and 674 both found that this pass's own opening framing was WRONG on 'what the hard part is' -- 673 found the accuracy-delta metric is noise-dominated even at full n and recommends NOT porting the 4-gate pattern by default; 674 found the real cost is Python orchestration (batch-by-grader), not Java app-inference lifecycle work, plus real correlated-weakness/output-drift/same-model-grading risks. See the new status section below for the consolidated decisions now needed.
 created: 2026-06-21
 updated: 2026-07-02
 author: agent analysis (research-channel design theorization), filed by agent — STUB
@@ -17,6 +17,10 @@ related:
   - 655-mcp-conformance-and-capability-policy         # the owner of any tool-surface lever this eval's failure analysis motivates (§M.7a)
   - 636-retrieval-buried-signal-long-documents        # origin of the jseval/projections/ registry pattern (stratified_metrics, staged_recall_accounting) §T.4 conforms to
   - 639-candidate-set-integrity-ann-recall-and-result-dedup  # adjacent unbuilt stub sharing §T.1's near-duplicate-detection mechanism (different consumer — production candidates, not corpus generation)
+  - 671-tika-ocr-skip-routing-misclassification     # origin of the scan-corpus VDU-wiring discovery; its own status line explicitly declines the wiring-gap scope, spun into 672
+  - 672-vdu-offline-coordinator-bootstrap-wiring     # the spun-out prerequisite fix for the scan corpus's vdu_status:PENDING blocker; hard-gates re-attempting synth-scan-v1 in this tempdoc
+  - 673-agent-utility-standing-regression-ratchet   # the missing routine/cheap counterpart to this tempdoc's one-time publication-grade run -- catches a future agent-utility regression the way relevance/perf/leak/llm-gen already do for their own axes
+  - 674-cross-family-grader-local-model-infrastructure  # prices and designs the real engineering cost of the local-model path for §M.8 item 3, previously recorded as a free footnote in this tempdoc
 ---
 
 > NOTE: Noncanonical working tempdoc. Originated as a **STUB** capturing an idea identified in
@@ -3486,3 +3490,156 @@ implied ("hundreds-to-low-thousands... larger than 624/635's ~$50-150 small-corp
 engineering lift that estimate worried about is now genuinely done, and because scan's own blocker turned out
 to be a different kind of problem than money solves.
 
+---
+
+# Tempdoc 672 opened (2026-07-02, tenth pass) — the VDU wiring gap gets a proper home
+
+The scan corpus's blocker (`vdu_status: PENDING` on 360/361 docs, traced above to a Head-bootstrap wiring
+gap rather than extraction routing) was, until this pass, tracked only as an out-of-scope remaining-work
+item inside tempdoc 671's own text — no document actually owned fixing it. A register check before opening
+anything new (**explore-before-implementing**, applied to tempdoc ownership rather than code) confirmed
+that: tempdoc 607 ("Document extraction routing authority") governs *which extraction path a document
+takes*, not *whether the VDU service is wired at Head startup at all* — grepped for
+`offlineProcessingTrigger` / `OfflineCoordinatorBuilder` / bootstrap, zero hits. Tempdoc 671 explicitly
+declines the scope in its own status line. Tempdoc 519 (Head composition graph) is stale (2026-05-18, over
+150 newer tempdocs since) and about a different specific subject (mega-class decomposition, not wiring
+completeness).
+
+**[`672-vdu-offline-coordinator-bootstrap-wiring.md`](672-vdu-offline-coordinator-bootstrap-wiring.md) is
+now open** to carry this forward. It inherits 671's own root-cause narrowing (`OfflineCoordinatorBuilder.
+java:35-38`, `ServicePhase.java:149-167`) rather than re-deriving it, and names the directly-applicable
+precedent already sitting in the postmortem register (`docs/reference/contributing/agent-postmortems.md`
+§10, `standalone-capability-stays-stuck`, tempdoc 521 merge T2.5) — a lazily-constructed capability
+whose readiness needs a late-bind bridge (`addListener`), the same shape as `HeadAssembly.
+connectKnowledgeServer`'s pre-519 bug. **672 is a hard prerequisite for re-attempting the scan corpus in
+this tempdoc**: until it lands, no amount of spend on `synth-scan-v1` re-runs produces a different result
+than the 0.0000 already measured, because the corpus's actual text never reaches the index either way.
+
+**Also refined this pass**: §M.8 item 3's cross-family grader panel doesn't necessarily need external
+paid APIs. `external_grader.py`'s client is endpoint-agnostic (URL + model name + headers as config) — it
+can point at a *second locally-hosted model of a different lineage than the local Qwen judge* (e.g. a
+Llama-class or Mistral-class GGUF already loadable via the existing `llama-server` infrastructure) exactly
+as readily as a paid frontier API, satisfying the founder decision's actual stated reasoning ("different
+training lineages fail less identically") at zero cost and with no new credential dependency. The one real
+constraint: this machine's GPU (12GB) likely can't hold two ~8-9B local models simultaneously alongside the
+rest of the stack, so the panel would need sequential load/unload between graders rather than concurrent
+calls — a real design choice for whoever implements this, not decided here. This removes the standing
+credential blocker as a hard dependency for running the panel; it does not change the panel's own cost
+figure ($0.16-$0.20), which is provider-independent.
+
+**For the next agent picking up either document**: 624's own remaining path has no open design questions
+left — everything remaining is either (a) the ~$163/4.5hr English+German re-run, gated on explicit spend
+authorization, not a design task; (b) the cross-family grader panel, buildable today against local models
+with no external dependency; or (c) 672's wiring fix, a prerequisite for the scan corpus specifically and
+independent of (a)/(b). None of these block each other except (c) gating scan's own inclusion in any future
+combined run.
+
+---
+
+# Tempdocs 673 and 674 opened (2026-07-02, eleventh pass) — the plan was missing durability and had an unpriced footnote
+
+Two gaps surfaced from a direct question against the tenth-pass plan, not from anything this tempdoc had
+already flagged:
+
+**1. The plan only ever covered a one-time run.** Every other quality axis this codebase measures
+(relevance, performance, recall-leak, LLM-generation-latency) has a standing ratchet — a pinned baseline, a
+cheap re-runnable `jseval *-gate` command, a hook nudge at the moment relevant code changes. Agent-utility
+had none of that; the ~$163 re-run was being treated as the finish line rather than a one-time credibility
+investment that goes stale the moment MCP/agent-loop/retrieval-config code changes again.
+[`673-agent-utility-standing-regression-ratchet.md`](673-agent-utility-standing-regression-ratchet.md) is
+now open for the missing routine counterpart — explicitly a different judge-cost regime than §M.8's bar
+(cheap, already-trusted judge, small n, nudge-triggered) and explicitly not a substitute for the
+publication-grade run itself.
+
+**2. The local-model grader path had an unpriced engineering cost.** The tenth pass's refinement (point the
+cross-family panel at a second local model instead of a paid API) is real and correct, but "$0 dollar cost"
+was quietly standing in for "no cost" — no local dual-model-swap infrastructure exists yet, and that work
+touches `modules/app-inference`'s real lifecycle contracts, not a config flag.
+[`674-cross-family-grader-local-model-infrastructure.md`](674-cross-family-grader-local-model-infrastructure.md)
+is now open to design and price that work properly, including verifying the assumed VRAM constraint against
+real current usage rather than asserting it.
+
+**Register check before opening either**: grepped for an existing "utility-gate" owner (zero hits) and for
+existing local-model-swap infrastructure (nothing purpose-built) — both gaps are genuinely unclaimed, not
+duplicates of anything already planned.
+
+---
+
+# 672/673/674 report back (2026-07-02, twelfth pass) — investigation done, two real reversals, decisions needed before any implementation
+
+Three agents ran the investigation-and-design-theorization pass each tempdoc asked for. None have started
+implementation. Two of them found that this tempdoc's own opening framing was wrong about where the real
+work is — worth stating plainly rather than glossing over, since both reversals are genuine, not nitpicks.
+
+## 672 (VDU wiring) — the one that's actually ready to build
+
+Diagnosis is confirmed, and the specific cause is *not* what 671's own inbox note guessed: the null
+dependency is `knowledgeClient` (the Worker/Knowledge client, value-captured null at Head construction and
+never re-bound for VDU specifically), not `inferenceManager` as the inbox hypothesized. The long-term design
+is settled: thread the Worker client into the VDU build path as a live supplier — the same
+`() -> this.knowledgeClient` idiom every other worker-dependent service already uses — instead of the direct
+value it was handed. This is confirmed to fix both independent trigger-consumer paths (REST and the
+operation registry) at their one shared source, is reconnect-safe by construction, adds no new late-binding
+holder, and a pre-implementation de-risking pass found the composition-root guardrails don't block it and
+the touched-test baseline is green. **This is no longer a design question — it's a go/no-go on implementing
+an already-settled, already-de-risked design.**
+
+## 673 (utility-gate) — my own framing reversed; do not build the accuracy ratchet by default
+
+I opened this tempdoc assuming "apply the proven 4-gate pattern to a new axis" was the shape, with sizing as
+the only open question. The investigation found that's wrong in a load-bearing way: reading the real 2026-
+07-02 calibrated data, the accuracy-delta this gate would naturally ratchet is **noise-dominated even at the
+full publication n** — per-seed stdev (0.05–0.10) is the same magnitude as the effect itself (−0.08 to
+−0.09). A ratchet only works when run-to-run noise is much smaller than the regression it needs to catch;
+here it isn't, at any affordable sample size. The agent also found the one thing a cheap variant *could*
+reliably catch (catastrophic tool breakage) is already covered for $0 by `mcp_tool_surface_hash`, existing
+contract tests, relevance/leak gates, and the existing `util-smoke` micro-run — so a paid accuracy ratchet
+would mostly duplicate cheaper existing coverage. **Recommendation from the investigation: don't port the
+accuracy-ratchet shape by default — lead with a $0 structural/behavioral-proxy tripwire, and keep any paid
+accuracy measurement as the deliberate periodic run it already is, not a routine gate.** Also surfaced: 673
+has a real sequencing dependency on 624 itself that its own non-goals glossed over — you cannot ratchet a
+baseline that hasn't been credibly established yet, and 624's own bar is still open.
+
+## 674 (local grader infrastructure) — my own framing reversed too; the cost moved from Java to Python, plus new risks
+
+I scoped this as `modules/app-inference` lifecycle work. The investigation found the model-swap primitive
+**already exists** (`OnlineAiServiceImpl.applyRuntimeOverrides(...)` does a full stop→reconfigure→start on
+the same port) and the single-tenant-GPU protocol already serializes access cleanly — so there's little new
+Java lifecycle work here. **The actual missing piece is on the Python side**: `run_cross_family_calibration`
+interleaves grader calls per item, which is incompatible with a serial single-GPU swap (up to ~160 reloads
+for a real run instead of ~2) — it needs restructuring to grade in batches per grader instead. The
+investigation also surfaced two real risks I hadn't considered: **correlated weakness** (two small local
+models may share more training overlap than two frontier models, so high agreement between them could be
+spuriously reassuring rather than a real calibration signal — this threatens the *meaning* of the number,
+not just its cost), and **silent same-model grading** (the local proxy doesn't route by model field, so a
+failed or forgotten swap would silently grade twice with the same model, producing meaningless
+near-perfect agreement unless the served-model identity is explicitly asserted before each batch).
+
+## Consolidated decisions now needed (yours, not mine to make unilaterally)
+
+**672 — one decision, low-stakes:** approve implementing the settled design (live-supplier threading), or
+hold for another reason? Nothing else is blocking it.
+
+**673 — four decisions, all load-bearing for what gets built, if anything:**
+1. Instrument: gate the noisy paired accuracy-delta as originally framed, or a lower-variance proxy
+   (tool-call success rate / turns / cost / absolute with-tool floor)?
+2. Given a cheap variant can only reliably catch catastrophic breakage already covered elsewhere — is a paid
+   `utility-gate` worth building at all, versus just the $0 structural tripwire?
+3. Cadence: manual/periodic, or hook-nudged on a narrow surface-hash-affecting trigger (not the existing
+   hooks' every-edit nudge, since every invocation here costs real money)?
+4. Sizing — only answerable once #1 is decided.
+
+**674 — five decisions, all load-bearing for the design:**
+1. Ownership: drive the existing app-inference swap primitive, spawn an eval-owned throwaway server
+   (bypassing the Head proxy entirely), or sidestep swapping via CPU concurrency?
+2. Panel composition: the ≥2-rater floor means a fully-local panel needs **two** different non-Qwen model
+   families, not one as originally scoped — or accept a hybrid (one local, one external whenever credentials
+   exist)?
+3. Is the batch-by-grader restructure a narrow eval-only branch, or a general serial/concurrent panel
+   property?
+4. Where does the served-model-identity assertion live, and how does it fail loud?
+5. Which specific non-Qwen GGUF(s), at what quantization, meeting a stated minimum grader capability?
+
+None of these are technical judgment calls I should settle on my own — they're the same class of founder-
+level trade-off this tempdoc has consistently routed to you throughout (§M.9), and two of them (673's #2,
+674's #1) are genuinely "should we build this at all, in this shape" questions, not just sizing.
