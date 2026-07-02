@@ -641,6 +641,24 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
     pass ephemeral `tempfile.TemporaryDirectory()`-backed paths and let its own context manager
     clean up.
 
+    A SECOND cross-process non-determinism source (found empirically: the three "deterministic
+    across processes" tests pass when the pytest invocation's cwd happens to be `scripts/jseval/`,
+    but fail reliably -- ``docs.jsonl``/``queries.json`` mismatched -- when invoked from the repo
+    root, the realistic invocation form). Root cause: `sys.executable -c <script>` gives the child
+    `sys.path[0] = ''` (its own cwd), searched *before* site-packages. Without an explicit `cwd`,
+    the child inherits the PARENT's cwd. If that cwd doesn't directly contain a `jseval/`
+    subdirectory (true for any cwd other than `scripts/jseval/` itself), import resolution falls
+    through to whatever `jseval` happens to be `pip install -e`'d globally -- which, on a dev
+    machine with a separate long-lived checkout on `PATH`/site-packages (`pip show jseval` ->
+    `Editable project location: ...`), can be a *different, stale physical checkout* containing the
+    pre-tempdoc-664 `hash(axis)` bug. Both spawned subprocesses then run that stale buggy code
+    (not the current worktree's, already-fixed `corpus_generate.py`), and since `hash()` is
+    per-process-randomized, they diverge -- reproducing the exact pre-664 symptom despite this
+    file's own fix. Pinning `cwd` to this file's OWN package directory (`Path(__file__).parent`'s
+    parent -- the dir that directly contains `jseval/`) makes the child's `sys.path[0]` shadow any
+    ambient site-packages install, guaranteeing the subprocess imports the SAME code this function
+    itself is running from, regardless of the caller's cwd.
+
     :returns: ``{"ok": True, "mismatched_files": [...]}`` or ``{"ok": False, "error": "..."}`` if a
       regeneration subprocess itself failed (not a mismatch — a hard error, e.g. bad parameters).
     """
@@ -652,11 +670,15 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
     )
     args = [axis, lang, str(seed), str(hops), str(distractor_ratio),
             str(bool(semantic)), str(n_chains), str(doc_words)]
+    # The directory that directly contains `jseval/` (this file is
+    # `<pkg_root>/jseval/corpus_generate.py`) -- passed as the subprocess's `cwd` so its
+    # `sys.path[0] = ''` resolves to THIS package, not an ambient site-packages install.
+    pkg_root = Path(__file__).resolve().parent.parent
 
     for out in (Path(out1), Path(out2)):
         result = subprocess.run(
             [sys.executable, "-c", "import sys; " + script, str(out), *args],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, cwd=pkg_root,
         )
         if result.returncode != 0:
             return {"ok": False, "error": f"regeneration subprocess failed: {result.stderr[-500:]}"}
