@@ -16,12 +16,19 @@ not installed.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("inspect_ai")
 
+import inspect_ai  # noqa: E402
+
 from jseval.agent_retrieval_eval import build_disallowed_tools  # noqa: E402
 from jseval.agent_utility_inspect import _build_argv  # noqa: E402
+from jseval import agent_utility_inspect as aui  # noqa: E402
 
 
 def _disallowed_tools_arg(cmd: list[str]) -> str:
@@ -105,3 +112,51 @@ def test_build_argv_carries_model_prompt_and_budget():
     assert cmd[cmd.index("-p") + 1] == "what is X?"
     assert cmd[cmd.index("--model") + 1] == "opus"
     assert cmd[cmd.index("--max-budget-usd") + 1] == "1.25"
+
+
+# --- run_utility_eval: the corpus-dir isolation fix must apply to the Inspect
+# executor too, not just the bespoke `agent_retrieval_eval.run_agent_eval` path
+# (one shared `stage_corpus_dir` helper, not two independent forks of the same
+# `--add-dir` leak). ---
+
+def test_run_utility_eval_builds_tasks_with_staged_not_original_corpus_dir(tmp_path, monkeypatch):
+    """Mocks `agent_utility_task` (the Inspect `@task` factory) and `eval_set`
+    (the actual multi-hour agent runner) so this stays a fast unit test, while
+    still exercising run_utility_eval's real staging + cleanup wiring."""
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+    (dataset_dir / "queries.json").write_text(
+        json.dumps([{"query": "q", "answer": "the secret answer"}]), encoding="utf-8")
+
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+
+    captured = {}
+
+    def fake_agent_utility_task(*, corpus_dir, **kwargs):
+        captured["used_corpus_dir"] = corpus_dir
+        # capture the staged dir's parent listing NOW -- before run_utility_eval's
+        # cleanup (which fires once the mocked eval_set below returns) removes it.
+        captured["staged_parent_listing"] = sorted(os.listdir(Path(corpus_dir).parent))
+        return object()  # eval_set is mocked too, so any placeholder Task works
+
+    monkeypatch.setattr(aui, "agent_utility_task", fake_agent_utility_task)
+    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+
+    original_corpus_dir = str(corpus_dir)
+    aui.run_utility_eval(
+        queries_path=str(queries_for_eval), corpus_dir=original_corpus_dir, mcp_config=None,
+        conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+    )
+
+    assert "used_corpus_dir" in captured, "agent_utility_task should have been invoked"
+    used_corpus_dir = captured["used_corpus_dir"]
+    assert used_corpus_dir != original_corpus_dir
+    assert Path(used_corpus_dir).name == "corpus-dir"
+    assert captured["staged_parent_listing"] == ["corpus-dir"]  # no queries.json sibling
+
+    # the staging directory is a temp artifact -- must be cleaned up after the run
+    assert not Path(used_corpus_dir).parent.exists()

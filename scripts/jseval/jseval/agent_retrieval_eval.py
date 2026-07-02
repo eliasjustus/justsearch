@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -25,6 +27,32 @@ import httpx
 log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
+
+
+def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-") -> str:
+    """Copy `corpus_dir`'s contents into a fresh, answer-key-free temp directory.
+
+    `--add-dir corpus_dir` hands the Claude Code CLI's Read/Glob tools a directory
+    that is NOT sandboxed against `../` relative-path traversal: with `corpus_dir`
+    scoped to `datasets/golden/<name>/corpus-dir/`, an agent can `Read
+    ../queries.json` — the sibling gold answer key materialized by
+    `corpus_build.build_golden` — and the CLI does not block it. This is a real,
+    live-verified leak (tempdoc 624 §M.7a "As-built #7": real eval cells where the
+    agent read the answer key directly).
+
+    Staging a copy into its own isolated temp root instead of passing the
+    persistent `corpus-dir/` makes `queries.json` structurally absent from
+    anywhere reachable by traversal from the staged path — a construction-time
+    guarantee, not a permission workaround. Shared by both eval runners
+    (`agent_retrieval_eval.run_agent_eval`, `agent_utility_inspect.run_utility_eval`)
+    so the fix lives in one place, not two forks of the same `--add-dir` wiring.
+
+    Callers own cleanup: `shutil.rmtree(Path(staged_dir).parent, ignore_errors=True)`.
+    """
+    staging_root = tempfile.mkdtemp(prefix=prefix)
+    staged_dir = str(Path(staging_root) / "corpus-dir")
+    shutil.copytree(corpus_dir, staged_dir)
+    return staged_dir
 
 
 @dataclass
@@ -117,6 +145,12 @@ class AgentResult:
     # confidence pass): entries from tool_calls whose tool name was supposed to be
     # blocked for this condition but was invoked anyway. Empty = the flag held.
     disallowed_tool_calls: list = field(default_factory=list)
+    # Answer-key leak backstop (tempdoc 624 §As-built #7): entries from tool_calls
+    # whose path argument names the eval's own gold-answer file (queries.json).
+    # A non-empty list means this cell's "correct" bit may reflect reading the
+    # answer key rather than genuine retrieval, regardless of how clean the
+    # accuracy/cost numbers otherwise look. Empty = no leak signal seen.
+    leak_suspect_tool_calls: list = field(default_factory=list)
 
 
 def load_queries(queries_path: Path) -> list[dict]:
@@ -927,6 +961,43 @@ def find_disallowed_tool_calls(tool_calls: list[dict], disallowed: list[str]) ->
     return [tc for tc in tool_calls if tc.get("tool") in disallowed_set]
 
 
+# The eval's own gold-answer key filename (tempdoc 624 §As-built #7): a real
+# leak was found where an agent under a file-tool condition (A/B) read/globbed
+# this file directly instead of the corpus, producing a leaked-but-correct
+# answer indistinguishable from a genuine one by every existing check.
+_LEAK_SUSPECT_NEEDLE = "queries.json"
+_LEAK_SUSPECT_TOOLS = {"Read", "Glob"}
+
+
+def find_leak_suspect_tool_calls(
+    tool_calls: list[dict], needle: str = _LEAK_SUSPECT_NEEDLE,
+) -> list[dict]:
+    """Scan parsed tool_calls for a Read/Glob call whose path argument names the
+    eval's gold-answer key (tempdoc 624 §As-built #7 defense-in-depth backstop).
+
+    This is a detection BACKSTOP, not a prevention mechanism — the corpus-directory
+    isolation fix (elsewhere in this effort) is what should keep queries.json out of
+    an agent's reachable filesystem in the first place. This scan exists in case that
+    fix regresses or a future condition reintroduces the same class of exposure: it
+    flags the cell as suspect using the SAME tool_calls capture
+    ``find_disallowed_tool_calls`` already reads, not a new capture mechanism.
+
+    Substring match (case-insensitive) over every string-valued ``input`` argument,
+    since the path-bearing key differs by tool (``Read``: ``file_path``; ``Glob``:
+    ``pattern``) and separators may vary by OS.
+    """
+    needle_lower = needle.lower()
+    flagged = []
+    for tc in tool_calls:
+        if tc.get("tool") not in _LEAK_SUSPECT_TOOLS:
+            continue
+        values = tc.get("input") or {}
+        haystack = " ".join(str(v) for v in values.values()).lower()
+        if needle_lower in haystack:
+            flagged.append(tc)
+    return flagged
+
+
 def _build_agent_cmd(
     claude_bin: str,
     prompt: str,
@@ -989,7 +1060,6 @@ def run_agent_eval(
     if max_queries:
         filtered = filtered[:max_queries]
 
-    import shutil
     claude_bin = shutil.which("claude")
     if not claude_bin:
         return {"error": "claude CLI not found in PATH"}
@@ -997,9 +1067,14 @@ def run_agent_eval(
     log.info("Running agent eval: %d queries, model=%s, condition=%s, parallel=%d",
              len(filtered), model, condition, parallel)
 
+    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run
+    # (reused across every query/condition in this call) — see stage_corpus_dir's
+    # docstring for why `--add-dir corpus_dir` cannot pass the persistent, gold-
+    # answer-key-sibling `corpus-dir/` directly.
+    corpus_dir = stage_corpus_dir(corpus_dir)
+
     def _run_single_query(i: int, q: dict) -> AgentResult:
         """Run a single eval query — self-contained, safe for concurrent execution."""
-        import tempfile
         query_cwd = tempfile.mkdtemp(prefix=f"jseval-agent-{i}-") if isolated else corpus_dir
 
         prompt = (
@@ -1079,6 +1154,7 @@ def run_agent_eval(
 
             result.tool_calls = tool_calls
             result.disallowed_tool_calls = find_disallowed_tool_calls(tool_calls, disallowed_tools)
+            result.leak_suspect_tool_calls = find_leak_suspect_tool_calls(tool_calls)
 
             if data is None:
                 result.error = stderr[:500] if stderr else f"exit code {proc.returncode}"
@@ -1122,27 +1198,30 @@ def run_agent_eval(
         return result
 
     # Execute queries: sequential (parallel=1) or concurrent (parallel>1)
-    if parallel <= 1:
-        results = [_run_single_query(i, q) for i, q in enumerate(filtered)]
-    else:
-        import concurrent.futures
-        results = [None] * len(filtered)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as executor:
-            future_to_idx = {
-                executor.submit(_run_single_query, i, q): i
-                for i, q in enumerate(filtered)
-            }
-            for future in concurrent.futures.as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    results[idx] = AgentResult(
-                        query=filtered[idx]["query"],
-                        answer=filtered[idx]["answer"],
-                        question_type=filtered[idx]["question_type"],
-                        condition=condition, model=model, error=str(e),
-                    )
+    try:
+        if parallel <= 1:
+            results = [_run_single_query(i, q) for i, q in enumerate(filtered)]
+        else:
+            import concurrent.futures
+            results = [None] * len(filtered)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as executor:
+                future_to_idx = {
+                    executor.submit(_run_single_query, i, q): i
+                    for i, q in enumerate(filtered)
+                }
+                for future in concurrent.futures.as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        results[idx] = future.result()
+                    except Exception as e:
+                        results[idx] = AgentResult(
+                            query=filtered[idx]["query"],
+                            answer=filtered[idx]["answer"],
+                            question_type=filtered[idx]["question_type"],
+                            condition=condition, model=model, error=str(e),
+                        )
+    finally:
+        shutil.rmtree(Path(corpus_dir).parent, ignore_errors=True)
 
     return _aggregate_agent(results, condition, model)
 

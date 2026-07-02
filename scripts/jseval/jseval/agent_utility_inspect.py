@@ -36,7 +36,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
-from jseval.agent_retrieval_eval import _score_answer, build_disallowed_tools
+from jseval.agent_retrieval_eval import _score_answer, build_disallowed_tools, stage_corpus_dir
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -183,9 +183,16 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     # The prompt template is identical across conditions → its hash is a cohort
     # field (so A and C share an agent_cohort_key, but a prompt change segregates).
     prompt_template_hash = _sha256_canonical(_PROMPT)
+    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run
+    # (reused across every condition/seed/sample this call touches — the matrix is
+    # resumable across process restarts, but corpus_dir isn't part of eval_set_id
+    # identity below, so a fresh staged path per invocation is safe). See
+    # stage_corpus_dir's docstring for why `--add-dir corpus_dir` cannot pass the
+    # persistent, gold-answer-key-sibling `corpus-dir/` directly.
+    staged_corpus_dir = stage_corpus_dir(corpus_dir)
     tasks = [
         agent_utility_task(
-            condition=c, queries_path=queries_path, corpus_dir=corpus_dir,
+            condition=c, queries_path=queries_path, corpus_dir=staged_corpus_dir,
             mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
             max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
             cli_version=cli_version,
@@ -203,8 +210,11 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
         "queries": queries_path, "prompt": prompt_template_hash,
     })[:22]
-    # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths
-    # during eval_set's log cleanup; JSON logs are text + portable.
-    eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
-             max_samples=concurrency, log_format="json", eval_set_id=eval_set_id)
+    try:
+        # log_format="json": the .eval (zip) recorder breaks on Windows fsspec
+        # paths during eval_set's log cleanup; JSON logs are text + portable.
+        eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
+                 max_samples=concurrency, log_format="json", eval_set_id=eval_set_id)
+    finally:
+        shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)
     return log_dir

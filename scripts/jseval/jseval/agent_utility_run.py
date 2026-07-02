@@ -40,6 +40,12 @@ def _per_query_from_result(run_result: dict) -> dict:
             "cost_usd": r.get("cost_usd"),
             "unique_tokens": r.get("cache_creation_tokens"),  # unique-content (D-1/R7)
             "num_turns": r.get("num_turns"),
+            # Answer-key leak backstop (tempdoc 624 §As-built #7): carries
+            # agent_retrieval_eval.find_leak_suspect_tool_calls's verdict through to
+            # the composer, which excludes a flagged (seed, qid) observation from
+            # the paired statistics and surfaces it in `leak_suspect_cells` instead
+            # of silently accepting or silently dropping it.
+            "leak_suspect": bool(r.get("leak_suspect_tool_calls")),
         }
     return pq
 
@@ -150,6 +156,14 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
             ov = overlay_scores.get(f"{condition}|{seed}|{qid}")
             if ov is not None:  # hybrid judge verdict supersedes EM
                 correct = bool(ov.get("final"))
+            # No "leak_suspect" key here (tempdoc 624 §As-built #7 backstop follow-up
+            # gap): agent_utility_inspect.claude_agent_solver runs claude with
+            # `--output-format json` (not `stream-json`), so it never parses individual
+            # tool_use blocks the way agent_retrieval_eval.run_agent_eval does — there is
+            # no tool_calls list in state.metadata to scan. The composer treats a missing
+            # key as "not flagged" (`.get("leak_suspect")` -> falsy), which is silent
+            # ABSENCE of a signal, not a verified-clean verdict, for runs executed through
+            # this Inspect-AI path.
             by_seed.setdefault(seed, {})[qid] = {
                 "correct": correct,
                 "cost_usd": (s.metadata or {}).get("cost_usd"),

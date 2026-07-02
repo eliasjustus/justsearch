@@ -195,6 +195,96 @@ def test_seed_aggregation_envelope():
     assert cell["n_paired_observations"] == 12  # 3 seeds x 4 queries
 
 
+# --- Answer-key leak detection backstop (tempdoc 624 §As-built #7) ----------
+#
+# A real leak was found where an agent under a file-tool condition read the
+# eval's own gold-answer file (queries.json) directly, producing a
+# leaked-but-correct answer indistinguishable from a genuine one by any
+# existing check. These tests prove the composer-level backstop: a flagged
+# (seed, qid) observation is EXCLUDED from the paired statistics (never enters
+# McNemar/bootstrap-CI) and surfaced separately in `leak_suspect_cells`, not
+# silently dropped from the record and not silently counted as a win.
+
+def test_leak_suspect_query_excluded_from_paired_stats_and_surfaced():
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    # q1 is leak-suspect on the with-tool arm — its favorable "correct=True"
+    # must not count toward the with-tool accuracy or the paired n.
+    c_pq["q1"] = {**c_pq["q1"], "leak_suspect": True}
+    summaries = [
+        _summary("A", a_pq, search_key=None),
+        _summary("C", c_pq, search_key="search-XYZ"),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["n_paired_observations"] == 3  # q1 excluded, 3 of 4 remain
+    assert cell["leak_suspect_cells"] == [
+        {"seed": 0, "qid": "q1", "baseline_leak_suspect": False, "with_tool_leak_suspect": True},
+    ]
+
+
+def test_no_leak_suspect_signal_no_false_positive():
+    """A clean run (no `leak_suspect` key on any per_query entry, the shape
+    every pre-existing summary already has) reports an empty
+    `leak_suspect_cells` and keeps every observation paired — the backstop
+    must not fire on ordinary, unflagged data."""
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["leak_suspect_cells"] == []
+    assert cell["n_paired_observations"] == 4
+
+
+def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
+    """Full pipeline: agent_retrieval_eval.find_leak_suspect_tool_calls's verdict
+    on a raw AgentResult-shaped record (as `_aggregate_agent` emits it) survives
+    agent_utility_run._per_query_from_result's reshape and lands as an
+    excluded+flagged observation in the composed cell."""
+    from jseval import agent_utility_run as aur
+
+    def _raw_results(corrects, leaked_qids=()):
+        out = []
+        for i, correct in enumerate(corrects):
+            qid = f"q{i}"
+            out.append({
+                "query": qid, "correct": correct, "cost_usd": 0.10,
+                "cache_creation_tokens": 4000, "num_turns": 5,
+                "leak_suspect_tool_calls": (
+                    [{"tool": "Read", "input": {"file_path": "/eval/queries.json"}}]
+                    if qid in leaked_qids else []
+                ),
+            })
+        return {"results": out}
+
+    corpus = {"dataset": "mixed/multihop-rag", "signature": "sig-mh"}
+    manifest_a = agent_manifest.build_agent_manifest(
+        corpus=corpus, agent_model="haiku", agent_model_version=None,
+        cli_version="2.1.183", mcp_tool_surface=None,
+        judge=agent_manifest.judge_identity(kind="substring-em"),
+        prompt_template="t", condition="A", seed=0, search_config_cohort_key=None)
+    manifest_c = agent_manifest.build_agent_manifest(
+        corpus=corpus, agent_model="haiku", agent_model_version=None,
+        cli_version="2.1.183", mcp_tool_surface=None,
+        judge=agent_manifest.judge_identity(kind="substring-em"),
+        prompt_template="t", condition="C", seed=0, search_config_cohort_key="search-1")
+
+    summary_a = {
+        "manifest": manifest_a, "condition": "A", "agent_model": "haiku", "corpus": corpus,
+        "per_query": aur._per_query_from_result(_raw_results([True, True])),
+    }
+    summary_c = {
+        "manifest": manifest_c, "condition": "C", "agent_model": "haiku", "corpus": corpus,
+        "per_query": aur._per_query_from_result(
+            _raw_results([True, True], leaked_qids={"q0"})),
+    }
+
+    rec = utility_comparison.compose_utility([summary_a, summary_c], composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["n_paired_observations"] == 1
+    assert cell["leak_suspect_cells"][0]["qid"] == "q0"
+    assert cell["leak_suspect_cells"][0]["with_tool_leak_suspect"] is True
+
+
 # --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
 
 def test_stratified_breakdown_reveals_offsetting_substrata_signal():
@@ -352,6 +442,64 @@ def test_inspect_path_roundtrip(tmp_path):
     assert cell["tokens_unique"]["delta_mean"] < 0       # C uses fewer tokens
     # A and C paired despite differing search-config (R2: excluded from pairing key)
     assert cell["n_paired_observations"] == 8            # 4 queries x 2 seeds
+
+
+def test_inspect_path_has_no_leak_suspect_detection_today(tmp_path):
+    """Documents a follow-up gap, not a bug: the Inspect-AI opt-in path's solver
+    runs claude with `--output-format json` (agent_utility_inspect.claude_agent_solver),
+    so it never parses individual tool_use blocks the way
+    agent_retrieval_eval.run_agent_eval's `--output-format stream-json` does —
+    there is no tool_calls list, and no MCP-retrieval-provenance signal either,
+    for eval_logs_to_summaries to scan. Even a sample whose solver metadata
+    happens to mention queries.json (simulating a leaked MCP response) is NOT
+    flagged, because no such capture mechanism exists on this path today
+    (tempdoc 624 §As-built #7 step 2). This test pins that absence explicitly
+    so a future capture-mechanism addition changes this assertion on purpose,
+    instead of the gap silently persisting unnoticed.
+    """
+    pytest.importorskip("inspect_ai")
+    from inspect_ai import Task, eval_set, task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+
+    from jseval import agent_utility_run as aur
+    from jseval.agent_utility_inspect import substring_scorer
+
+    @solver
+    def mock_solver_with_suspicious_response():
+        async def solve(state, generate):
+            md = state.metadata or {}
+            state.output.completion = md.get("echo", "")
+            # Simulates an MCP tool response that happened to mention the
+            # leaked file. Inspect's solver metadata has no field any
+            # existing scan reads for this — so it cannot be detected today.
+            state.metadata.update({
+                "cost_usd": 0.05, "unique_tokens": 1000, "num_turns": 2,
+                "mcp_response_preview": "...see queries.json for the answer...",
+            })
+            return state
+        return solve
+
+    cohort = {"model": "haiku", "cli_version": "2.1.183", "mcp_tool_surface_hash": "h",
+              "judge_kind": "substring-em", "prompt_template_hash": "p"}
+
+    @task
+    def mock_task(condition="A"):
+        samples = [Sample(id="q0", input="Q0", target="ANS0", metadata={"echo": "ANS0"})]
+        return Task(dataset=samples, solver=mock_solver_with_suspicious_response(),
+                    scorer=substring_scorer(),
+                    metadata={"condition": condition, "model": "haiku",
+                              "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
+                              "cohort": cohort})
+
+    log_dir = (tmp_path / "logs").as_posix()
+    eval_set([mock_task(condition="A"), mock_task(condition="C")],
+             log_dir=log_dir, epochs=1, model="mockllm/model", log_format="json")
+
+    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["leak_suspect_cells"] == []  # no detection mechanism exists on this path
 
 
 # --- Run-governance: loss-accounting + paired comparability (tempdoc 624) ------

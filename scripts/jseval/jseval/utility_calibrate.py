@@ -25,12 +25,100 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import httpx
 
-def check_readiness(base_url: str, *, require_dense: bool = True, timeout_sec: float = 15.0):
-    """Reuse `readiness.check_search_ready` — the index must be dense+sparse ready."""
+from jseval.types import ReadinessResult
+
+
+def _normalize_root_path(path: str) -> str:
+    """Normalize a filesystem path for watched-root scope comparison.
+
+    Watched-root paths (from the Worker/Head) and the eval's own `corpus_dir` can differ
+    in separator style, trailing separator, or case (Windows paths are case-insensitive) while
+    still denoting the same directory. Resolve to an absolute path and case-fold so
+    `C:\\foo\\bar`, `c:/foo/bar/`, and `C:\\Foo\\Bar\\` all compare equal.
+    """
+    return str(Path(path).resolve()).rstrip("\\/").lower()
+
+
+def check_watched_roots_scoped(
+    base_url: str, corpus_dir: str, *, timeout_sec: float = 15.0
+) -> ReadinessResult:
+    """Fail loudly if any currently-watched root is broader than the corpus's own `corpus_dir`.
+
+    Watched roots are accretive and persistent (`RootLifecycleOps.addWatchedRoot`,
+    `WatchedRootsState` — modules/app-services/.../worker/): once added, a root stays watched
+    until explicitly removed via `DELETE /api/indexing/roots`; nothing auto-narrows or collapses
+    overlapping roots. The Worker's file-tree walk only scans strictly downward from each watched
+    root, so a *broader* root (e.g. a corpus's parent directory, added once and never removed)
+    keeps indexing everything beneath it — including sibling gold-answer-key files — for the rest
+    of that dataDir's life, invisibly. This was the confirmed root cause of a real answer-key leak
+    into eval results (tempdoc 624 As-built #7, `golden/synth-scan-v1`).
+
+    Queries `GET /api/indexing/roots` (`IndexingController.handleListRoots`,
+    `{"roots": [{"collection", "path", "fileCount", "lastIndexed"?}, ...]}`) and compares each
+    watched root's path against `corpus_dir`. Does NOT attempt to remove any stray root —
+    fail-and-report only, so an operator can inspect and remove it deliberately.
+    """
+    expected = _normalize_root_path(corpus_dir)
+    try:
+        with httpx.Client(base_url=base_url, timeout=timeout_sec) as client:
+            resp = client.get("/api/indexing/roots")
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as e:
+        return ReadinessResult(
+            passed=False,
+            failure_reasons=[f"watched_roots_endpoint_unreachable: {type(e).__name__}: {e}"],
+        )
+
+    roots = payload.get("roots", [])
+    stray = []
+    seen_stray = set()
+    for r in roots:
+        raw_path = r.get("path")
+        if not raw_path:
+            continue
+        if _normalize_root_path(raw_path) != expected and raw_path not in seen_stray:
+            stray.append(raw_path)
+            seen_stray.add(raw_path)
+
+    if stray:
+        stray_list = "\n".join(f"  - {p}" for p in stray)
+        message = (
+            f"Watched-roots scope check FAILED: {len(stray)} watched root(s) do not match the "
+            f"corpus's own corpus-dir ({corpus_dir!r}). Watched roots are accretive and never "
+            f"auto-narrowed (RootLifecycleOps.addWatchedRoot) — a broader/stale root keeps indexing "
+            f"everything beneath it, including sibling gold-answer-key files, for the rest of this "
+            f"dataDir's life. Remove the stray root(s) below via `DELETE /api/indexing/roots` before "
+            f"running the eval, then re-run readiness:\n{stray_list}"
+        )
+        return ReadinessResult(
+            passed=False,
+            failure_reasons=["stray_watched_root", message],
+            snapshot={"roots": roots},
+        )
+
+    return ReadinessResult(passed=True, snapshot={"roots": roots})
+
+
+def check_readiness(
+    base_url: str, corpus_dir: str, *, require_dense: bool = True, timeout_sec: float = 15.0
+) -> ReadinessResult:
+    """Reuse `readiness.check_search_ready` (dense+sparse) AND verify watched-roots scope.
+
+    A dense+sparse-ready index that is scoped to a stray/broader watched root is not actually
+    ready for a clean eval run — it can silently serve leaked content (tempdoc 624 As-built #7).
+    """
     from jseval.readiness import check_search_ready
-    return check_search_ready(
+    search_rd = check_search_ready(
         base_url, dense_enabled=require_dense, splade_enabled=True, timeout_sec=timeout_sec)
+    roots_rd = check_watched_roots_scoped(base_url, corpus_dir, timeout_sec=timeout_sec)
+    return ReadinessResult(
+        passed=search_rd.passed and roots_rd.passed,
+        failure_reasons=[*search_rd.failure_reasons, *roots_rd.failure_reasons],
+        snapshot={**search_rd.snapshot, **roots_rd.snapshot},
+    )
 
 
 def pin_config_cohort_key(base_url: str) -> tuple[str | None, dict]:
@@ -114,7 +202,7 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
     from jseval import agent_utility_inspect as aui
     from jseval import agent_utility_run as aur
 
-    rd = check_readiness(base_url, require_dense=require_dense)
+    rd = check_readiness(base_url, corpus_dir, require_dense=require_dense)
     cck, commit_meta = pin_config_cohort_key(base_url)
 
     # Pilot at the TARGET concurrency (a few queries, both arms) → contended p95 → timeout.

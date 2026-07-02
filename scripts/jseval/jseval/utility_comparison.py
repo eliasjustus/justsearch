@@ -280,15 +280,26 @@ def _index_by_seed(arm: list[dict]) -> dict:
     return by_seed
 
 
-def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> dict:
+def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dict, list[dict]]:
     """Build the paired (seed, qid) observation set ONCE — the exact pairing
     logic ``_arm_comparison`` used to inline, now factored so both the pooled
     comparison and any per-stratum breakdown (tempdoc 624 §T.4) share it. A
     stratified view can therefore never disagree with the pooled view about
     which observations are even paired.
 
-    :returns: ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
+    Also separates out any (seed, qid) observation where EITHER arm's per-query
+    record carries ``leak_suspect`` (tempdoc 624 §As-built #7 defense-in-depth
+    backstop — an agent tool-call scan flagged a Read/Glob path naming the eval's
+    own gold-answer file). A leak-suspect observation's "correct" bit cannot be
+    trusted, so it is EXCLUDED from the returned pairs — it never reaches
+    McNemar/bootstrap-CI — and reported back separately, so it is neither
+    silently dropped from the record nor silently counted as a genuine win.
+
+    :returns: ``(pairs, leak_suspect_cells)`` where ``pairs`` is
+        ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
         "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":}}``
+        and ``leak_suspect_cells`` is ``[{"seed":, "qid":,
+        "baseline_leak_suspect":, "with_tool_leak_suspect":}, ...]``.
     """
     a_by_seed = _index_by_seed(baseline)
     c_by_seed = _index_by_seed(with_tool)
@@ -296,11 +307,21 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> dict:
         set(a_by_seed) & set(c_by_seed), key=lambda x: (x is None, x),
     )
     pairs: dict[str, dict] = {}
+    leak_suspect_cells: list[dict] = []
     for seed in shared_seeds:
         a_pq = a_by_seed[seed][0].get("per_query", {})
         c_pq = c_by_seed[seed][0].get("per_query", {})
         for q in sorted(set(a_pq) & set(c_pq)):
             ca, cc = a_pq[q], c_pq[q]
+            a_leak, c_leak = bool(ca.get("leak_suspect")), bool(cc.get("leak_suspect"))
+            if a_leak or c_leak:
+                leak_suspect_cells.append({
+                    "seed": seed,
+                    "qid": q,
+                    "baseline_leak_suspect": a_leak,
+                    "with_tool_leak_suspect": c_leak,
+                })
+                continue
             pairs[f"{seed}:{q}"] = {
                 "seed": seed,
                 "qid": q,
@@ -313,7 +334,7 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> dict:
                 "a_turns": ca.get("num_turns"),
                 "c_turns": cc.get("num_turns"),
             }
-    return pairs
+    return pairs, leak_suspect_cells
 
 
 def _stats_from_pairs(pairs: dict) -> dict | None:
@@ -430,14 +451,22 @@ def _arm_comparison(
     pooled result (§M.8 item 7). The pooled top-level fields are never changed
     by this parameter, and when ``stratify_by`` is ``None`` (the default) no
     ``"stratified"`` key is added at all — byte-identical to the
-    pre-stratification behavior."""
+    pre-stratification behavior.
+
+    ``leak_suspect_cells`` (tempdoc 624 §As-built #7) is always present when a
+    result is returned — the additive per-arm honesty field: the (seed, qid)
+    observations ``_pair_observations`` excluded because a leak-suspect signal
+    fired on one side of the pair. Empty when nothing was flagged, consistent
+    with the existing exclusion convention (an arm/cell with zero surviving
+    observations returns ``None``, the same as any other all-excluded case)."""
     if not baseline or not with_tool:
         return None  # need both arms to form a comparison
 
-    pairs = _pair_observations(baseline, with_tool)
+    pairs, leak_suspect_cells = _pair_observations(baseline, with_tool)
     result = _stats_from_pairs(pairs)
     if result is None:
         return None
+    result["leak_suspect_cells"] = leak_suspect_cells
 
     if stratify_by:
         labels = sorted({

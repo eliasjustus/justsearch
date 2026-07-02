@@ -68,7 +68,20 @@
             },
             "cost_usd": { "type": "object" },
             "turns": { "type": "object" },
-            "n_paired_observations": { "type": "integer" }
+            "n_paired_observations": { "type": "integer" },
+            "leak_suspect_cells": {
+              "type": "array",
+              "description": "Answer-key leak detection backstop (tempdoc 624 §As-built #7). Each entry is a (seed, qid) observation EXCLUDED from this arm's paired statistics because a tool-call scan flagged a Read/Glob path naming the eval's own gold-answer file (queries.json) on one side of the pair. Empty when nothing was flagged. Only covers the bespoke stream-json harness path (agent_retrieval_eval.run_agent_eval) today -- the Inspect-AI opt-in path does not capture tool_calls, so a run executed there reports an empty list regardless of whether a leak occurred.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "seed": {},
+                  "qid": { "type": "string" },
+                  "baseline_leak_suspect": { "type": "boolean" },
+                  "with_tool_leak_suspect": { "type": "boolean" }
+                }
+              }
+            }
           }
         }
       }
