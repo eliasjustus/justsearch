@@ -10,13 +10,18 @@
  * complementary layer (job wall-clock is ~2x summed-suite time; the gap is JVM
  * cold start + Gradle configuration + fork serialization). Tempdoc 668.
  *
- * Input is the parsed JSON from
- *   gh api /repos/{owner}/{repo}/actions/runs/{run_id}/jobs --paginate
- * supplied via --jobs-json <file> so the network/auth fetch stays out of the
- * pure logic (mirrors how the unit script consumes XML produced by a prior step).
+ * Two consumption modes over the same pure `buildWalltimeReport` (tempdoc 668,
+ * "consumption follows demand"):
+ *  - CI path: a prior step fetches `gh api .../runs/<id>/jobs --paginate` and passes
+ *    it via --jobs-json <file> (network/auth stays out of the pure logic).
+ *  - On-demand path: an agent/dev runs `--run-id <id>` or `--latest`; the tool
+ *    fetches the run itself via gh, so investigating "why is CI slow?" runs the
+ *    instrument instead of re-deriving `gh api …/jobs | jq` by hand.
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -30,14 +35,18 @@ const FIXED_TAX_STEP = /^(Set up job|Checkout|Setup |Install |Post |Complete job
 
 function usage() {
   return [
-    'Usage: node scripts/ci/report-ci-walltime-attribution.mjs --jobs-json <file> [options]',
+    'Usage: node scripts/ci/report-ci-walltime-attribution.mjs (--jobs-json <file> | --run-id <id> | --latest) [options]',
+    '',
+    'Input (one required):',
+    '  --jobs-json <path>        Pre-fetched `gh api .../runs/<id>/jobs` JSON (the CI path)',
+    '  --run-id <id>             Fetch that run\'s jobs via gh and attribute it (on-demand)',
+    '  --latest                  Fetch the most recent CI run on the current branch',
     '',
     'Options:',
-    '  --jobs-json <path>        Parsed `gh api .../runs/<id>/jobs` JSON (required)',
-    '  --unit-attribution-dir <path>  Dir of downloaded unit-test-attribution artifacts',
-    '                            (enables the per-unit-lane test-vs-overhead split)',
-    '  --run-id <id>             Run id for the report header',
-    '  --repository <owner/repo> Repository slug for the report header',
+    '  --download-artifacts      With --run-id/--latest, also download the unit-test-attribution',
+    '                            artifacts to enable the per-unit-lane test-vs-overhead split',
+    '  --unit-attribution-dir <path>  Dir of already-downloaded unit-test-attribution artifacts',
+    '  --repository <owner/repo> Repository slug for the report header (else gh-resolved)',
     '  --workflow <name>         Workflow name for the report header',
     '  --self-job <name>         Job name to exclude (the attribution job itself)',
     '  --out-json <path>         Write JSON report',
@@ -53,6 +62,8 @@ function parseArgs(argv) {
     jobsJson: null,
     unitAttributionDir: null,
     runId: null,
+    latest: false,
+    downloadArtifacts: false,
     repository: null,
     workflow: null,
     selfJob: null,
@@ -67,6 +78,8 @@ function parseArgs(argv) {
     if (arg === '--jobs-json' && argv[i + 1]) out.jobsJson = argv[++i];
     else if (arg === '--unit-attribution-dir' && argv[i + 1]) out.unitAttributionDir = argv[++i];
     else if (arg === '--run-id' && argv[i + 1]) out.runId = argv[++i];
+    else if (arg === '--latest') out.latest = true;
+    else if (arg === '--download-artifacts') out.downloadArtifacts = true;
     else if (arg === '--repository' && argv[i + 1]) out.repository = argv[++i];
     else if (arg === '--workflow' && argv[i + 1]) out.workflow = argv[++i];
     else if (arg === '--self-job' && argv[i + 1]) out.selfJob = argv[++i];
@@ -77,7 +90,12 @@ function parseArgs(argv) {
     else if (arg === '--help' || arg === '-h') out.help = true;
     else throw new Error(`Unknown or incomplete argument: ${arg}`);
   }
-  if (!out.help && !out.jobsJson) throw new Error('--jobs-json is required');
+  // Input is either a pre-fetched --jobs-json (the CI path) or an on-demand run
+  // reference (--run-id / --latest) the tool fetches itself via gh (the local /
+  // agent investigation path).
+  if (!out.help && !out.jobsJson && !out.runId && !out.latest) {
+    throw new Error('one of --jobs-json, --run-id <id>, or --latest is required');
+  }
   return out;
 }
 
@@ -174,6 +192,10 @@ function fmtSeconds(n) {
 }
 
 export function renderMarkdown(report) {
+  // The pacer's full split (for the directional "next lever" line below).
+  const critJob = report.criticalPath
+    ? report.jobs.find((j) => j.name === report.criticalPath.job)
+    : null;
   const lines = [
     '### CI wall-clock attribution',
     '',
@@ -187,6 +209,10 @@ export function renderMarkdown(report) {
     report.criticalPath
       ? `Critical path: **${report.criticalPath.job}** at ${fmtSeconds(report.criticalPath.wallSeconds)} (jobs run in parallel, so this bounds the run).`
       : 'Critical path: none (no completed jobs).',
+    '',
+    critJob
+      ? `Next lever: to shrink the run, shrink **${critJob.name}** — ${fmtSeconds(critJob.workSeconds)} addressable work vs ${fmtSeconds(critJob.fixedTaxSeconds)} fixed runner tax.`
+      : '',
     '',
     `Totals: ${report.totals.jobs} jobs, fixed runner tax ${fmtSeconds(report.totals.fixedTaxSeconds)}, work ${fmtSeconds(report.totals.workSeconds)} (summed across jobs).`,
     '',
@@ -263,6 +289,109 @@ function readSuiteTimes(dir) {
   return out;
 }
 
+// Split concatenated top-level JSON documents. `gh api --paginate` emits one
+// document per page (`{total_count, jobs:[...]}`), so a multi-page result is
+// several objects back-to-back; a single page is one document. Brace/bracket
+// depth aware and string aware so a `}{` inside a string value is not a boundary.
+function splitJsonDocuments(text) {
+  const docs = [];
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (c === '}' || c === ']') {
+      depth -= 1;
+      if (depth === 0) docs.push(text.slice(start, i + 1));
+    }
+  }
+  return docs;
+}
+
+// Merge `gh api .../jobs --paginate` output into a single { jobs: [...] }. Pure +
+// exported so the paging logic is unit-tested while the gh shell-out stays thin,
+// untested I/O (mirrors workflow-signal-health.mjs).
+export function mergePaginatedJobs(text) {
+  const jobs = [];
+  for (const doc of splitJsonDocuments(String(text || ''))) {
+    let parsed;
+    try {
+      parsed = JSON.parse(doc);
+    } catch {
+      continue; // skip an unparseable fragment rather than fail the whole report
+    }
+    if (Array.isArray(parsed)) jobs.push(...parsed);
+    else if (Array.isArray(parsed.jobs)) jobs.push(...parsed.jobs);
+  }
+  return { jobs };
+}
+
+// ---- On-demand fetch (thin gh/git shell-outs; untested I/O) ----
+// gh resolves {owner}/{repo} from the current checkout, so no repo arg is needed.
+function gh(args) {
+  return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+}
+
+function currentBranch() {
+  try {
+    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+// Resolve the most recent CI run id on the current branch (for --latest).
+function resolveLatestRunId() {
+  const branch = currentBranch();
+  const args = ['run', 'list', '--workflow', 'ci.yml', '--limit', '1', '--json', 'databaseId'];
+  if (branch) args.push('--branch', branch);
+  const rows = JSON.parse(gh(args));
+  const id = Array.isArray(rows) && rows[0] ? rows[0].databaseId : null;
+  if (!id) throw new Error(`No CI run found${branch ? ` on branch ${branch}` : ''}`);
+  return String(id);
+}
+
+// Fetch a run's jobs (all pages) plus best-effort header facts.
+function fetchRun(runId) {
+  const { jobs } = mergePaginatedJobs(gh(['api', `repos/{owner}/{repo}/actions/runs/${runId}/jobs`, '--paginate']));
+  let meta = {};
+  try {
+    const run = JSON.parse(gh(['api', `repos/{owner}/{repo}/actions/runs/${runId}`]));
+    meta = {
+      repository: run.repository?.full_name ?? null,
+      workflow: run.name ?? null,
+      runAttempt: run.run_attempt ?? null,
+    };
+  } catch {
+    // Header facts are best-effort; the attribution stands without them.
+  }
+  return { jobs, meta };
+}
+
+// Best-effort download of the unit-test-attribution artifacts (for the deeper
+// per-unit-lane split). Returns a temp dir for readSuiteTimes, or null on any
+// failure (artifacts expired / none / gh error) so the report degrades to job-level.
+function downloadUnitArtifacts(runId) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-walltime-artifacts-'));
+  try {
+    gh(['run', 'download', String(runId), '--pattern', 'unit-test-attribution-*', '--dir', dir]);
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
 function main() {
   try {
     const opts = parseArgs(process.argv.slice(2));
@@ -270,19 +399,35 @@ function main() {
       console.log(usage());
       return;
     }
-    const parsed = JSON.parse(fs.readFileSync(path.resolve(opts.jobsJson), 'utf8'));
-    const jobs = Array.isArray(parsed) ? parsed : parsed.jobs || [];
-    const runAttempt = opts.runId ? (jobs.find((j) => j.run_attempt)?.run_attempt ?? null) : jobs[0]?.run_attempt ?? null;
+
+    let jobs;
+    let runId = opts.runId;
+    let repository = opts.repository;
+    let workflow = opts.workflow;
+    let runAttempt = null;
+    let unitDir = opts.unitAttributionDir;
+
+    if (opts.jobsJson) {
+      // CI path: attribute a pre-fetched jobs JSON.
+      const parsed = JSON.parse(fs.readFileSync(path.resolve(opts.jobsJson), 'utf8'));
+      jobs = Array.isArray(parsed) ? parsed : parsed.jobs || [];
+      runAttempt = runId ? (jobs.find((j) => j.run_attempt)?.run_attempt ?? null) : jobs[0]?.run_attempt ?? null;
+    } else {
+      // On-demand path: fetch the run ourselves (--run-id / --latest).
+      if (opts.latest && !runId) runId = resolveLatestRunId();
+      const { jobs: fetched, meta } = fetchRun(runId);
+      jobs = fetched;
+      repository = repository ?? meta.repository;
+      workflow = workflow ?? meta.workflow;
+      runAttempt = meta.runAttempt ?? jobs[0]?.run_attempt ?? null;
+      if (opts.downloadArtifacts && !unitDir) unitDir = downloadUnitArtifacts(runId);
+    }
+
     const report = buildWalltimeReport({
-      run: {
-        runId: opts.runId,
-        runAttempt,
-        repository: opts.repository,
-        workflow: opts.workflow,
-      },
+      run: { runId, runAttempt, repository, workflow },
       jobs,
       selfJob: opts.selfJob,
-      suiteTimes: readSuiteTimes(opts.unitAttributionDir && path.resolve(opts.unitAttributionDir)),
+      suiteTimes: readSuiteTimes(unitDir && path.resolve(unitDir)),
     });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     const md = renderMarkdown(report);

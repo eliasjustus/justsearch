@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildWalltimeReport, renderMarkdown } from './report-ci-walltime-attribution.mjs';
+import { buildWalltimeReport, mergePaginatedJobs, renderMarkdown } from './report-ci-walltime-attribution.mjs';
 
 const scriptPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'report-ci-walltime-attribution.mjs');
 
@@ -48,6 +48,30 @@ function sampleJobs() {
   ];
 }
 
+// mergePaginatedJobs: single object, bare array, concatenated --paginate pages,
+// a }{ inside a string value (not a false boundary), and empty input.
+{
+  assert.deepEqual(
+    mergePaginatedJobs('{"total_count":2,"jobs":[{"name":"a"},{"name":"b"}]}').jobs.map((j) => j.name),
+    ['a', 'b'],
+    'single {jobs} object',
+  );
+  assert.deepEqual(mergePaginatedJobs('[{"name":"x"}]').jobs.map((j) => j.name), ['x'], 'bare array');
+  const twoPages =
+    '{"total_count":3,"jobs":[{"name":"p1a"},{"name":"p1b"}]}\n{"total_count":3,"jobs":[{"name":"p2"}]}';
+  assert.deepEqual(
+    mergePaginatedJobs(twoPages).jobs.map((j) => j.name),
+    ['p1a', 'p1b', 'p2'],
+    'two concatenated pages merge',
+  );
+  assert.deepEqual(
+    mergePaginatedJobs('{"total_count":1,"jobs":[{"name":"weird }{ name"}]}').jobs.map((j) => j.name),
+    ['weird }{ name'],
+    '}{ inside a string is not a document boundary',
+  );
+  assert.deepEqual(mergePaginatedJobs('').jobs, [], 'empty input yields no jobs');
+}
+
 // buildWalltimeReport: critical path, fixed-tax split, in-progress exclusion.
 {
   const report = buildWalltimeReport({
@@ -66,6 +90,11 @@ function sampleJobs() {
   assert.equal(appui.workSeconds, 585);
   assert.equal(report.rerunCaveat, false);
   assert.match(renderMarkdown(report), /Critical path: \*\*Unit tests \(app-ui\)\*\*/);
+  assert.match(
+    renderMarkdown(report),
+    /Next lever: to shrink the run, shrink \*\*Unit tests \(app-ui\)\*\* — 9m 45s addressable work vs 15s fixed runner tax\./,
+    'directional next-lever line names the pacer with its work vs tax',
+  );
 }
 
 // Rerun caveat surfaces when run_attempt > 1.
