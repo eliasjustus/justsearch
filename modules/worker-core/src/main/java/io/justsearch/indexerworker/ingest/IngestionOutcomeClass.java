@@ -5,6 +5,9 @@ package io.justsearch.indexerworker.ingest;
 public enum IngestionOutcomeClass {
   SUCCESS_FULL,
   SUCCESS_PARTIAL,
+  // Tempdoc 671, Long-term design part 2: mirrors ExtractionStatus.SUCCESS_EMPTY at the
+  // ingestion-boundary altitude — the pipeline completed cleanly but produced no usable content.
+  SUCCESS_EMPTY,
   SKIPPED_POLICY,
   DEFERRED_POLICY,
   STALE_SOURCE,

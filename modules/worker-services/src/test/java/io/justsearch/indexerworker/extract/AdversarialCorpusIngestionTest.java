@@ -73,11 +73,14 @@ final class AdversarialCorpusIngestionTest {
   }
 
   @Test
-  @DisplayName("zero-byte file admits and produces SUCCESS_FULL outcome on commit drain")
+  @DisplayName("zero-byte file admits and produces SUCCESS_EMPTY outcome on commit drain")
   void zeroByteFileReachesSuccessOnDrain() throws Exception {
+    // Tempdoc 671, Long-term design part 2: this used to assert SUCCESS_FULL — the exact
+    // conflation bug this tempdoc's second fix corrects. A zero-byte file produces no content;
+    // the correct outcome distinguishes that from "extracted everything."
     Path file = Files.createFile(tempDir.resolve("empty.txt"));
     invokeExtractAndDrain(file);
-    assertEquals(IngestionOutcomeClass.SUCCESS_FULL, queue.lastOutcome.outcomeClass());
+    assertEquals(IngestionOutcomeClass.SUCCESS_EMPTY, queue.lastOutcome.outcomeClass());
   }
 
   @Test
@@ -140,13 +143,17 @@ final class AdversarialCorpusIngestionTest {
     assertEquals(null, extracted);
     assertNotNull(queue.lastOutcome, "Malformed ZIP must produce a typed outcome");
     IngestionOutcomeClass cls = queue.lastOutcome.outcomeClass();
+    // Tempdoc 671, Long-term design part 2: the Tika-tolerated branch used to accept
+    // SUCCESS_FULL "with empty content" — the exact conflation bug this tempdoc's second fix
+    // corrects. It now correctly reads SUCCESS_EMPTY.
     assertTrue(
         cls == IngestionOutcomeClass.PARSER_FAILED
             || cls == IngestionOutcomeClass.BUDGET_EXCEEDED
-            || cls == IngestionOutcomeClass.SUCCESS_FULL,
+            || cls == IngestionOutcomeClass.SUCCESS_EMPTY,
         "Malformed ZIP should map to PARSER_FAILED, BUDGET_EXCEEDED, or — if Tika tolerates "
-            + "the truncation as 'no entries' — SUCCESS_FULL with empty content. Got: " + cls);
-    if (cls == IngestionOutcomeClass.SUCCESS_FULL) {
+            + "the truncation as 'no entries' — SUCCESS_EMPTY (empty content, honestly labeled). Got: "
+            + cls);
+    if (cls == IngestionOutcomeClass.SUCCESS_EMPTY) {
       // Tika tolerated the truncation; the resulting document must be empty (no fake placeholder).
       // Pre-existing degenerate ternary fixed: both branches returned 0, so the assertion
       // always passed. Now reads the actual `sourceSizeBytes()` (or 0 when entry/value null,

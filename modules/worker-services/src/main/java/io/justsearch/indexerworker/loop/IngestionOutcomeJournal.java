@@ -37,9 +37,11 @@ import org.slf4j.LoggerFactory;
  * <p>Not thread-safe — the indexing loop is single-threaded and so is the journal.
  *
  * <p>P5 boundary: a concrete class with named methods. No strategy interface, no plug-in
- * outcome registry. The four canonical outcome factories
- * ({@link #fullSuccess()}, {@link #partialSuccess()}, {@link #skipped(String)},
- * {@link #outcome}) are the closed set; new outcome kinds extend the set explicitly.
+ * outcome registry. The canonical outcome factories
+ * ({@link #fullSuccess()}, {@link #partialSuccess()}, {@link #emptySuccess()},
+ * {@link #skipped(String)}, {@link #outcome}) are the closed set; new outcome kinds extend the
+ * set explicitly — {@link #emptySuccess()} is one such extension (tempdoc 671, Long-term design
+ * part 2).
  */
 public final class IngestionOutcomeJournal {
 
@@ -101,17 +103,20 @@ public final class IngestionOutcomeJournal {
     try {
       List<JobQueue.IngestionLedgerTransition> fullSuccess = new ArrayList<>();
       List<JobQueue.IngestionLedgerTransition> partialSuccess = new ArrayList<>();
+      List<JobQueue.IngestionLedgerTransition> emptySuccess = new ArrayList<>();
       for (JobQueue.IngestionLedgerTransition transition : pendingMarkDone) {
-        if (isPartialSuccessTransition(transition)) {
-          partialSuccess.add(transition);
-        } else {
-          fullSuccess.add(transition);
+        switch (classifyTransition(transition)) {
+          case PARTIAL -> partialSuccess.add(transition);
+          case EMPTY -> emptySuccess.add(transition);
+          case FULL -> fullSuccess.add(transition);
         }
       }
       drainGroup(fullSuccess, fullSuccess());
       drainGroup(partialSuccess, partialSuccess());
+      drainGroup(emptySuccess, emptySuccess());
       pendingMarkDone.removeAll(fullSuccess);
       pendingMarkDone.removeAll(partialSuccess);
+      pendingMarkDone.removeAll(emptySuccess);
     } finally {
       markDoneSpan.end();
     }
@@ -151,11 +156,12 @@ public final class IngestionOutcomeJournal {
     }
   }
 
-  private static boolean isPartialSuccessTransition(
+  private static IngestionSuccessClassifier.Bucket classifyTransition(
       JobQueue.IngestionLedgerTransition transition) {
-    return transition != null
-        && transition.entry() != null
-        && "SUCCESS_PARTIAL".equals(transition.entry().artifactStatus());
+    String artifactStatus = transition == null || transition.entry() == null
+        ? null
+        : transition.entry().artifactStatus();
+    return IngestionSuccessClassifier.classify(artifactStatus);
   }
 
   // ---- outcome construction ----
@@ -195,6 +201,15 @@ public final class IngestionOutcomeJournal {
         IngestionReasonCodes.SUCCESS_PARTIAL,
         IngestionRetryPolicy.NONE,
         "Indexed successfully (extracted text was truncated to fit the policy cap)");
+  }
+
+  /** Tempdoc 671, Long-term design part 2 — extends the closed factory set (line 39-42 above). */
+  public IngestionOutcome emptySuccess() {
+    return outcome(
+        IngestionOutcomeClass.SUCCESS_EMPTY,
+        IngestionReasonCodes.SUCCESS_EMPTY,
+        IngestionRetryPolicy.NONE,
+        "Indexed successfully (the parser produced no usable content)");
   }
 
   // ---- record outcomes safely ----

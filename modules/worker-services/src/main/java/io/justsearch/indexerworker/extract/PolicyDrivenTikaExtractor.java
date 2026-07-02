@@ -303,8 +303,9 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
                     false,
                     ocrEvidence.facts(ocr.truncated())));
       }
-      ocrEvidence.skip(OcrSkipReason.TEXTUAL);
-      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.TEXTUAL));
+      OcrSkipReason noImprovementReason = OcrOutcomeClassifier.classifyNoImprovement(baselineQuality);
+      ocrEvidence.skip(noImprovementReason);
+      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(noImprovementReason));
       log.debug(
           "OCR did not improve extraction for {} (ocrQuality={}, baselineQuality={})",
           file.getFileName(),
@@ -442,13 +443,13 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
       }
       long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
       ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
+      double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content(), baselineSummary.pageCount());
       if (!appended.isEmpty()) {
         String merged = baselineText + appended;
         ExtractionResult mergedResult =
             new ExtractionResult(
                 merged, baseline.title(), baseline.mimeType(), baseline.author(), baseline.frontmatterMetadata());
         double mergedQuality = TextQualityAnalyzer.computeQualityScore(merged, baselineSummary.pageCount());
-        double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content(), baselineSummary.pageCount());
         if (mergedQuality >= baselineQuality) {
           ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
           StructuredDocumentSummary mergedSummary =
@@ -475,8 +476,9 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
                       ocrEvidence.facts(truncated)));
         }
       }
-      ocrEvidence.skip(OcrSkipReason.TEXTUAL);
-      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.TEXTUAL));
+      OcrSkipReason noImprovementReason = OcrOutcomeClassifier.classifyNoImprovement(baselineQuality);
+      ocrEvidence.skip(noImprovementReason);
+      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(noImprovementReason));
     } catch (IOException e) {
       ocrEvidence.skip(OcrSkipReason.UNKNOWN);
       ocrMetricCatalog.failedTotal.increment(
@@ -573,8 +575,12 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
                       ocrEvidence.facts(truncated)));
         }
       }
-      ocrEvidence.skip(OcrSkipReason.TEXTUAL);
-      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.TEXTUAL));
+      // No internal skip()/increment() here (tempdoc 671): this method is only ever reached
+      // nested inside tryOcr's own blank-content branch, whose tail is the single, already-
+      // executing, correctly-informed terminal classifier for this path — an internal call here
+      // would double-increment ocr.skipped_total and, since OcrEvidenceBuilder.skip() is
+      // first-write-wins, could disagree with the caller's classification (the two local
+      // baselineQuality computations use different computeQualityScore overloads).
     } catch (IOException e) {
       ocrEvidence.skip(OcrSkipReason.UNKNOWN);
       ocrMetricCatalog.failedTotal.increment(
