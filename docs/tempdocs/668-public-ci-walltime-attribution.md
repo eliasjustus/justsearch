@@ -1520,3 +1520,28 @@ reopens this one scoped completion. The title still names the two bands 668 owns
   - *Do not build a general "dual-mode instrument" framework.* One instrument needs the on-demand entry;
     recording the principle + its two-item scope is the deliverable, per the deliberate recognise-vs-build
     split (the same discipline 668 applied to Principles A/B/D).
+
+### Research refinement — the fetch is a commodity; own only the decomposition - 2026-07-02
+
+A targeted pass on the one fast-moving external thread that actually touches this design —
+**agent-consumable CI telemetry** — sharpens (and *shrinks*) the "self-fetch entry" above. Fetching raw
+Actions run/job data on demand is now a **commodity, standardising on MCP**: GitHub's *official* MCP
+server exposes workflow-run inspection, log fetching, and "CI/CD intelligence" to any MCP-speaking agent,
+alongside the plain `gh` CLI. So the design must **not** build a parallel fetch subsystem — the
+instrument already accepts pre-fetched `--jobs-json`, and an agent with `gh` or the GitHub MCP server can
+supply it. The unique, non-commodity value is the **decomposition** `buildWalltimeReport` computes
+(fixed-tax vs work, critical path, test-CPU vs framework overhead, "next lever") — a projection no
+generic log-fetcher provides. **Refined conclusion:** the on-demand completion is *a thin run-id
+convenience at most*; the real design stance is **"own the decomposition, compose with the standard fetch
+(`gh` / GitHub MCP), reinvent neither."** This *sharpens* Principle E — the consume surface for CI data is
+itself standardising (MCP), so an in-repo instrument conforms by being a **composable decomposition over
+standard-fetched data**, not a bespoke pipeline. (OTel CI/CD semantic conventions remain **Development
+status** as of 2026-07; the earlier "watch OTel, conform to the internal sibling now" note — Finding 3 —
+stands unchanged. No external code/text/assets were copied; design research only, so the
+license-and-notices lane is not implicated.)
+
+Sources (research pass, external — not vendored): [GitHub's official MCP server (CI/CD & workflow
+intelligence)](https://github.com/github/github-mcp-server),
+[a practical guide to the GitHub MCP server](https://github.blog/ai-and-ml/generative-ai/a-practical-guide-on-how-to-use-the-github-mcp-server/),
+[OpenTelemetry CI/CD semantic conventions (Development status)](https://opentelemetry.io/docs/specs/semconv/resource/cicd/),
+[otel-cicd-action (semconv-compliant exporter)](https://github.com/corentinmusard/otel-cicd-action).
