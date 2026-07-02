@@ -370,6 +370,61 @@ export class OperationClient {
     return parsed.capsule;
   }
 
+  /**
+   * Tempdoc 655 — approve a pending AND ask the server to complete its dispatch immediately,
+   * using the pending's own stored args. For approvals whose origin (an MCP tool call) never
+   * gave the browser the full arguments to replay itself via {@link invoke} — unlike
+   * {@link approveByPendingId}, which only mints a capsule for a caller that already holds the
+   * args and will re-invoke on its own. Same endpoint (`POST /api/authorizations/approve`), one
+   * additional `execute: true` flag; the capsule never leaves the server in this path.
+   */
+  async approveAndExecutePending(
+    pendingId: string,
+    allowAlways = false,
+  ): Promise<{ executed: boolean; executeSuccess?: boolean; executeMessage?: string }> {
+    if (!pendingId) {
+      throw new OperationError('pendingId required', 'BAD_REQUEST');
+    }
+    const url = `${this.apiBase}/api/authorizations/approve`;
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pendingId, allowAlways, execute: true }),
+      });
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new OperationError(
+        `Network error approving pending ${pendingId}: ${detail}`,
+        'NETWORK_ERROR',
+      );
+    }
+    let parsed: { executed?: boolean; executeSuccess?: boolean; executeMessage?: string };
+    try {
+      parsed = (await res.json()) as typeof parsed;
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new OperationError(
+        `Invalid JSON from approve for pending ${pendingId} (HTTP ${res.status}): ${detail}`,
+        'SERIALIZATION_ERROR',
+        res.status,
+      );
+    }
+    if (!res.ok) {
+      throw new OperationError(
+        `Failed to approve pending ${pendingId} (HTTP ${res.status})`,
+        'CAPSULE_MINT_FAILED',
+        res.status,
+      );
+    }
+    return {
+      executed: parsed.executed === true,
+      executeSuccess: parsed.executeSuccess,
+      executeMessage: parsed.executeMessage,
+    };
+  }
+
   async undo(
     operationId: string,
     executionId: string,

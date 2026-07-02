@@ -15,6 +15,9 @@
  *      (`modules/app-observability/.../ledger/ActionLedgerChangeRegistry.java`)
  *  - `INDEXING_JOBS`      ↔ `IndexingJobsChangeRegistry.STREAM_ID`
  *      (`modules/app-observability/.../indexing/IndexingJobsChangeRegistry.java`)
+ *  - `PENDING_AUTHORIZATIONS` ↔ `PendingAuthorizationChangeRegistry.STREAM_ID` (tempdoc 655 — the
+ *      6th channel, added when ShellEventsStreamController grew a 6th ChannelSource)
+ *      (`modules/app-observability/.../operations/PendingAuthorizationChangeRegistry.java`)
  */
 export const SHELL_EVENT_STREAM_IDS = {
   INTENT: 'system:intent-envelopes',
@@ -22,6 +25,7 @@ export const SHELL_EVENT_STREAM_IDS = {
   ADVISORY_HEALTH_RECOVERABLE: 'surface:advisory-health-recoverable',
   ACTION_LEDGER: 'surface:action-ledger',
   INDEXING_JOBS: 'surface:indexing-jobs',
+  PENDING_AUTHORIZATIONS: 'system:pending-authorizations',
 } as const;
 
 /** Path of the multiplexed endpoint these streamIds are demuxed from. */

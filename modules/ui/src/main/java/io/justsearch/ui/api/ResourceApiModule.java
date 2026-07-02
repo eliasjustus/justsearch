@@ -210,7 +210,15 @@ final class ResourceApiModule implements ApiModule {
             headAssembly.substrate().conversation().consentCapsuleService(),
             pendingAuthorizationStore,
             // Tempdoc 550 thesis IV: "allow always" records a durable grant the gate later honors.
-            headAssembly.substrate().conversation().durableGrantStore());
+            headAssembly.substrate().conversation().durableGrantStore(),
+            // Tempdoc 655: lets an approval with no client-side args to replay (an MCP-originated
+            // pending) ask the server to complete the dispatch itself, using the SAME catalogs +
+            // dispatcher OperationsController and McpToolSurface already use.
+            headAssembly.substrate().operations().executor(),
+            List.of(
+                headAssembly.substrate().operations().operations(),
+                headAssembly.substrate().operations().agentTools()),
+            java.time.Clock.systemUTC());
     // Slice 494: per-class advisory SSE controllers.
     this.operationCompletedAdvisoryStreamController =
         new AdvisoryStreamController(

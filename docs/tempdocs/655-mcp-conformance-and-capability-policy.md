@@ -445,3 +445,61 @@ discussion](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/
 None of this changes the design above. It narrows two assumptions from "reasoned guess" to
 "checked," and turns up nothing that argues for a different direction.
 
+## Implementation status (2026-07-02)
+
+Implemented, following the design above almost exactly, with one refinement discovered during
+implementation (recorded above in "Design decision made during investigation" — approval executes
+server-side rather than via a stashed-capsule replay):
+
+- **Backend**: `PendingAuthorizationStore`/`ConsentCapsuleAuthority`/`DurableGrantStore` are now
+  shared between the REST gate path and `McpToolSurface` via the substrate (previously the pending
+  store was constructed locally in `ResourceApiModule` and invisible to MCP). A gated
+  `justsearch_ingest` call now creates a real pending record and returns a truthful,
+  non-blocking message instead of the dead `_confirmationToken` retry hint. All 6 MCP tools
+  validate arguments against their declared schema at the boundary before dispatch (via a new
+  schema-string overload on `OperationInputSchemaValidator`). The `justsearch_browse` schema
+  drift (`list_files`) is fixed.
+- **Approval completion**: `AuthorizationController`'s approve endpoint gained an opt-in
+  `execute: true` flag — when the approving caller has no client-side copy of the original
+  arguments to replay (the MCP case), the server completes the dispatch itself immediately,
+  using the pending record's own stored args. The existing browser-originated flow (which does
+  hold its own args) is unchanged.
+- **Live announcement**: a new `PendingAuthorizationChangeRegistry` (event-only SSE stream,
+  mirroring `IntentEnvelopeChangeRegistry`) broadcasts every pending-record creation, from either
+  transport, as a 6th channel on the existing multiplexed shell-events stream.
+- **Frontend**: a new `pendingAuthorizationBridge.ts` module subscribes that stream and reuses
+  the existing `<jf-authorization-host>` ceremony (via `authorizationBroker.requestAuthorization`)
+  — no new modal adopter, no new presentation primitive; only a second trigger origin for one
+  that already existed (recorded in `docs/explanation/27-frontend-presentation-kernel.md`).
+- **Conformance**: `scripts/ci/check-mcp-conformance.mjs` locks in the 11 protocol-level scenarios
+  confirmed to pass against the real server (of the upstream suite's 30), with the 19
+  fixture-requiring scenarios explicitly recorded as excluded and why — no parallel fixture-tool
+  surface was built, per the tempdoc's own scope discipline. Manual/dev-stack-driven, not wired
+  into public CI (ADR-0044).
+- **Docs**: `docs/reference/mcp-production-server.md`'s tool count and Trust Model section now
+  match shipped behavior.
+
+**Verification status**: backend changes compile and pass unit tests (`McpProtocolHandlerTest`
+extended with gated-ingest, durable-grant, and boundary-validation cases); frontend changes pass
+unit tests (`pendingAuthorizationBridge.test.ts`, new) and the existing `ui-web` suite (one
+pre-existing, unrelated flaky test excluded — confirmed via isolation with the changes stashed
+away, logged to observations). `./gradlew.bat test` is green repo-wide except one pre-existing,
+already-documented, environment-specific failure (`VduEligibilityPdfFixturesTest`, local
+Tesseract/OCR gap, unrelated module).
+
+**Live dev-stack end-to-end browser validation — run and confirmed (2026-07-02).** With the dev
+stack running this worktree's build (`distFrom`) and a real browser open on the chat surface:
+1. A real `POST /mcp` `tools/call` for `justsearch_ingest` (no prior grant) returned the truthful,
+   non-blocking message immediately — no `_confirmationToken` mentioned.
+2. The `<jf-authorization-host>` dialog appeared live in the already-open browser (no page action
+   taken), with the correct operation id, gate, risk tier, source tier, and args summary — proving
+   the MCP → pending record → SSE broadcast → frontend bridge → existing ceremony path end to end.
+3. Approving (typed confirm) closed the dialog and the action ledger's "N operations" toast
+   incremented — confirming the server executed the operation itself using the pending record's
+   own stored args, with no round trip of arguments through the browser.
+4. Checking "Always allow this action" on a subsequent gated call, then issuing a further MCP
+   `justsearch_ingest` call, completed with **zero prompt** — confirming the pre-existing
+   durable-grant mechanism already covers MCP callers with no MCP-specific code, exactly as the
+   design predicted.
+No console errors were observed at any point in the flow.
+
