@@ -1545,3 +1545,34 @@ intelligence)](https://github.com/github/github-mcp-server),
 [a practical guide to the GitHub MCP server](https://github.blog/ai-and-ml/generative-ai/a-practical-guide-on-how-to-use-the-github-mcp-server/),
 [OpenTelemetry CI/CD semantic conventions (Development status)](https://opentelemetry.io/docs/specs/semconv/resource/cicd/),
 [otel-cicd-action (semconv-compliant exporter)](https://github.com/corentinmusard/otel-cicd-action).
+
+### Confidence-building pass — probes before implementing the on-demand entry - 2026-07-02
+
+Read-only probes + one experiment (ran the *existing* script against a real post-migration run), no code
+changed. Result: the remaining work is **small and low-risk; the one thing that could have grown scope
+did not.**
+
+- **Instrument still correct on post-migration data (the top risk — retired).** Ran
+  `report-ci-walltime-attribution.mjs` against run 28560174200 (all-Linux lanes + `windows-native`).
+  Critical path correctly = `Windows-native tests` (7m26s); `FIXED_TAX_STEP` classifies the *new* step
+  names right, verified step-by-step (Set up job / Checkout / Setup Java / Post / Upload = tax; the
+  `shell: bash` "Unit tests…" run step = work). No stale-classification fix needed.
+- **On-demand entry is two-tier (minor scope clarification, not a surprise).** Job-level attribution
+  (critical path, tax-vs-work) needs only the jobs JSON — a trivial reuse of the CI job's
+  `gh api …/runs/<id>/…/jobs --paginate` call (pagination merge is theoretical here: ~9 jobs, one page).
+  The deeper *unit-lane* test-CPU-vs-overhead split additionally needs the uploaded unit-test-attribution
+  artifacts (`gh run download` → `--unit-attribution-dir`). Minimal thin entry = job-level; full split = +artifact download.
+- **"Next lever" line is thin but shallow.** It can name the pacer + its work from existing fields; it
+  **cannot** say *why* (compile-vs-test) for a non-unit lane like `windows-native` — there is no component
+  split for non-unit jobs. So the directional line stays a one-liner; deeper "why" is correctly deferred.
+- **Composition / discoverability confirmed.** `buildWalltimeReport` is `export`ed (composable for the
+  651 hand-off); the test harness exists to extend with a fixture; and the discoverability home already
+  exists — the `/ci-triage` skill — which does **not** yet reference this tool (a small doc pointer is
+  the real "make it reached-for" step, matching the original gap: discovery, not capability).
+
+**Residual (soft) risk:** adoption — even a correct on-demand tool only pays off if it is reached for
+(Principle D's shadow); the `/ci-triage` pointer is the mitigation. **Confidence in the remaining
+implementation: ~8/10** — settled design, patterns to copy, top risk empirically retired; the −2 is the
+two-tier artifact fiddliness + adoption. **Difficulty: low; recommend Sonnet at medium effort** (mechanical
+reuse of an existing pure function + an existing `gh` fetch + a skill-doc pointer + a fixture test; no
+Opus-tier reasoning required).
