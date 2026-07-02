@@ -70,26 +70,47 @@ public final class OperationsController {
    */
   private final io.justsearch.app.services.intent.PendingAuthorizationStore pendingStore;
 
+  /**
+   * Tempdoc 655 — nullable. When present, a pending record created by this controller is also
+   * broadcast on the pending-authorization SSE stream, so the same live signal reaches the shell
+   * regardless of whether the gate fired here or on the MCP path ({@code McpToolSurface}). Null in
+   * legacy/test wiring → the 428 still carries {@code pendingId}, just without the live broadcast.
+   */
+  private final io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+      pendingAuthorizationChanges;
+
   public OperationsController(List<OperationCatalog> catalogs, OperationDispatcher dispatcher) {
-    this(catalogs, dispatcher, Clock.systemUTC(), null);
+    this(catalogs, dispatcher, Clock.systemUTC(), null, null);
   }
 
   /** Test-friendly constructor allowing clock injection for {@link InvocationProvenance}. */
   public OperationsController(
       List<OperationCatalog> catalogs, OperationDispatcher dispatcher, Clock clock) {
-    this(catalogs, dispatcher, clock, null);
+    this(catalogs, dispatcher, clock, null, null);
   }
 
-  /** Canonical constructor (tempdoc 550 C3): wires the pending-authorization registry. */
+  /** Tempdoc 550 C3 constructor: wires the pending-authorization store, no SSE broadcast. */
   public OperationsController(
       List<OperationCatalog> catalogs,
       OperationDispatcher dispatcher,
       Clock clock,
       io.justsearch.app.services.intent.PendingAuthorizationStore pendingStore) {
+    this(catalogs, dispatcher, clock, pendingStore, null);
+  }
+
+  /** Canonical constructor (tempdoc 655): also wires the pending-authorization SSE broadcast. */
+  public OperationsController(
+      List<OperationCatalog> catalogs,
+      OperationDispatcher dispatcher,
+      Clock clock,
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingStore,
+      io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+          pendingAuthorizationChanges) {
     this.catalogs = List.copyOf(Objects.requireNonNull(catalogs, "catalogs"));
     this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
     this.clock = Objects.requireNonNull(clock, "clock");
     this.pendingStore = pendingStore;
+    this.pendingAuthorizationChanges = pendingAuthorizationChanges;
   }
 
   /** Handles {@code POST /api/operations/{id}/invoke}. */
@@ -158,7 +179,7 @@ public final class OperationsController {
       // Slice 487 §4.4: the lattice produced a non-AUTO gate and no token was supplied.
       // Surface the gate behavior + the destination's ConfirmStrategy so the FE can
       // render trust-aware elicitation UX and re-invoke with the token.
-      writeConfirmationRequired(ctx, op, e, argumentsJson);
+      writeConfirmationRequired(ctx, op, e, argumentsJson, provenance.transport());
       return;
     } catch (io.justsearch.agent.api.registry.TrustGateDeniedException e) {
       writeError(
@@ -319,7 +340,8 @@ public final class OperationsController {
       Context ctx,
       Operation op,
       io.justsearch.agent.api.registry.ConfirmationRequiredException e,
-      String argumentsJson) {
+      String argumentsJson,
+      io.justsearch.agent.api.registry.TransportTag transport) {
     java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
     body.put("success", false);
     body.put("errorClass", io.justsearch.app.api.ApiErrorCode.CONFIRMATION_REQUIRED.name());
@@ -334,7 +356,7 @@ public final class OperationsController {
     // instead of just the operation id.
     body.put("riskTier", op.policy().risk().name());
     body.put("undoSupported", op.policy().undoSupported());
-    body.put("argsSummary", summarizeArgs(argumentsJson));
+    body.put("argsSummary", ArgsSummary.summarize(argumentsJson));
     // Tempdoc 550 C3: register a pending authorization and hand the FE its id. The FE
     // approves by this id (POST /api/authorizations/approve {pendingId}); the capsule is
     // then minted against the STORED (operationId, argsJson), so the approve gesture cannot
@@ -347,8 +369,32 @@ public final class OperationsController {
               e.sourceTier(),
               op.policy().risk(),
               e.gateBehavior(),
-              e.getMessage());
+              e.getMessage(),
+              null,
+              transport);
       body.put("pendingId", pendingId);
+      // Tempdoc 655: also broadcast on the pending-authorization SSE stream, so the shell
+      // (already open, potentially on a different view than whatever triggered this 428) has one
+      // uniform live signal regardless of transport — matching the announcement McpToolSurface
+      // makes for its own gate firings. Routing info only (no argsSummary/rationale) — see
+      // PendingAuthorizationEvent's doc comment for why; a subscriber fetches decision content
+      // itself, by id, via GET /api/authorizations/pending/{id}.
+      if (pendingAuthorizationChanges != null) {
+        pendingStore
+            .peek(pendingId)
+            .ifPresent(
+                pending ->
+                    pendingAuthorizationChanges.broadcast(
+                        new io.justsearch.app.observability.operations.PendingAuthorizationEvent(
+                            pending.id(),
+                            pending.operationId(),
+                            pending.sourceTier(),
+                            pending.riskTier(),
+                            pending.gateBehavior(),
+                            pending.createdAt(),
+                            pending.expiresAt(),
+                            pending.transport())));
+      }
     }
     try {
       byte[] payload = MAPPER.writeValueAsBytes(body);
@@ -359,30 +405,6 @@ public final class OperationsController {
           .contentType("application/json")
           .result("{\"success\":false,\"errorClass\":\"CONFIRMATION_REQUIRED\"}");
     }
-  }
-
-  /**
-   * A short summary of the invocation args for the approval ceremony — the raw JSON, truncated.
-   * Empty/{@code "{}"} args yield {@code ""} (nothing to show).
-   *
-   * <p><b>Privacy boundary (tempdoc 550 F3, deliberate).</b> This rides on the 428 — a
-   * <i>transient</i> consent surface shown to the human who is deciding the action right now, who
-   * has a legitimate need to see WHAT they are approving (e.g. which path is being removed).
-   * It is NOT logging: the action ledger / {@link io.justsearch.app.observability.operations.OperationHistoryEntry}
-   * still omit args, and nothing here is persisted. The 444b "never dump raw arguments without
-   * consulting the audit policy" posture governs <i>logging/persistence</i> — which this respects —
-   * not the live consent prompt. Bounded to 200 chars to cap exposure.
-   */
-  private static String summarizeArgs(String argumentsJson) {
-    if (argumentsJson == null) {
-      return "";
-    }
-    String trimmed = argumentsJson.trim();
-    if (trimmed.isEmpty() || "{}".equals(trimmed)) {
-      return "";
-    }
-    int max = 200;
-    return trimmed.length() <= max ? trimmed : trimmed.substring(0, max) + "…";
   }
 
   /** Lowercase variant name for the wire payload — pattern-match over the sealed permits. */

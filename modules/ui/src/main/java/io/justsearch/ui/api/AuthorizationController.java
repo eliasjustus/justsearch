@@ -38,6 +38,18 @@ import tools.jackson.databind.json.JsonMapper;
  * real FE acting on a human click. Hardening it against a prompt-injected agent calling
  * it to self-approve (e.g. a same-tab nonce / origin check / human-interaction proof) is
  * an open design point flagged for review, not resolved in this additive slice.
+ *
+ * <p><b>Tempdoc 655 addendum to the above:</b> {@code execute: true} (see {@link #handleApprove})
+ * narrows this further — previously, completing a mutation from a bare {@code pendingId} still
+ * required the caller to separately know/supply the byte-identical original args (a second,
+ * independent piece of knowledge); with {@code execute: true} a {@code pendingId} alone is
+ * sufficient, since the server dispatches with its OWN stored args. Accepted as bounded residual
+ * risk for the same reason the note above already accepts this endpoint's trust model:
+ * {@code pendingId}s are unguessable (128-bit UUID) and, as of the same fix pass, are no longer
+ * broadcast with any decision content attached ({@link
+ * io.justsearch.app.observability.operations.PendingAuthorizationEvent} carries routing info
+ * only — {@link #handlePeekPending} is the point-to-point fetch for the rest). Not resolved
+ * beyond that; the same hardening options named above would close this too, if ever done.
  */
 public final class AuthorizationController {
 
@@ -63,6 +75,18 @@ public final class AuthorizationController {
    */
   private final io.justsearch.app.services.intent.DurableGrantStore durableGrantStore;
 
+  /**
+   * Tempdoc 655 — nullable. Lets {@code execute: true} on an approval complete the operation
+   * server-side, immediately, using the pending record's OWN stored args — for approvals whose
+   * origin (an MCP tool call) never gave the browser the full arguments to replay itself. Null
+   * in legacy/test wiring, or when {@code execute} is omitted/false: unchanged behavior (mint
+   * the capsule, return it, let the caller re-invoke).
+   */
+  private final io.justsearch.agent.api.registry.OperationDispatcher dispatcher;
+
+  private final List<io.justsearch.agent.api.registry.OperationCatalog> catalogs;
+  private final java.time.Clock clock;
+
   public AuthorizationController(ConsentCapsuleAuthority capsuleService) {
     this(capsuleService, null, null);
   }
@@ -73,14 +97,28 @@ public final class AuthorizationController {
     this(capsuleService, pendingStore, null);
   }
 
-  /** Canonical constructor (tempdoc 550 C3 + thesis IV): pending registry + durable grant store. */
+  /** Tempdoc 550 C3 + thesis IV constructor: pending registry + durable grant store, no server-side execute. */
   public AuthorizationController(
       ConsentCapsuleAuthority capsuleService,
       io.justsearch.app.services.intent.PendingAuthorizationStore pendingStore,
       io.justsearch.app.services.intent.DurableGrantStore durableGrantStore) {
+    this(capsuleService, pendingStore, durableGrantStore, null, List.of(), java.time.Clock.systemUTC());
+  }
+
+  /** Canonical constructor (tempdoc 655): also wires server-side {@code execute: true} completion. */
+  public AuthorizationController(
+      ConsentCapsuleAuthority capsuleService,
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingStore,
+      io.justsearch.app.services.intent.DurableGrantStore durableGrantStore,
+      io.justsearch.agent.api.registry.OperationDispatcher dispatcher,
+      List<io.justsearch.agent.api.registry.OperationCatalog> catalogs,
+      java.time.Clock clock) {
     this.capsuleService = Objects.requireNonNull(capsuleService, "capsuleService");
     this.pendingStore = pendingStore;
     this.durableGrantStore = durableGrantStore;
+    this.dispatcher = dispatcher;
+    this.catalogs = catalogs == null ? List.of() : List.copyOf(catalogs);
+    this.clock = clock == null ? java.time.Clock.systemUTC() : clock;
   }
 
   /**
@@ -133,10 +171,125 @@ public final class AuthorizationController {
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("capsule", capsule);
       payload.put("allowAlways", allowAlways);
+      // Tempdoc 655: an approval whose origin has no client-side copy of the args to replay
+      // (concretely: an MCP-originated pending — the browser was never the caller) asks the
+      // server to complete the dispatch itself, right now, using the SAME argsJson the capsule
+      // is bound to. Everything else about the gate is unchanged — this re-dispatch goes
+      // through enforceTrustLattice exactly like any other, and only proceeds because the
+      // capsule just minted from a real approval gesture satisfies it.
+      boolean execute = body.has("execute") && body.get("execute").asBoolean(false);
+      if (execute) {
+        executeApprovedPending(payload, pending.get(), capsule);
+      }
       ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(payload));
     } catch (Exception e) {
       log.error("Failed to mint consent capsule", e);
       ctx.status(400).contentType("application/json").result("{\"error\":\"bad request\"}");
+    }
+  }
+
+  /**
+   * Handles {@code GET /api/authorizations/pending/{id}} — tempdoc 655 fix pass.
+   *
+   * <p>Point-to-point fetch of a pending's decision content (operation id, args summary, risk,
+   * gate behavior, rationale) by id, for a caller that learned the id exists via the
+   * pending-authorization SSE broadcast (which deliberately carries none of this — see {@link
+   * io.justsearch.app.observability.operations.PendingAuthorizationEvent}) rather than a live
+   * 428 response body (which already carries it inline). Mirrors the SAME privacy scoping the
+   * 428 path already has — content is exposed only to a caller that already holds the specific
+   * id, one at a time — just reachable out-of-band instead of embedded in a response the caller
+   * happened to be waiting on.
+   *
+   * <p>Non-mutating: uses {@link io.justsearch.app.services.intent.PendingAuthorizationStore#peek}
+   * (not {@code consume}) — looking up a pending's content does not approve it.
+   */
+  public void handlePeekPending(Context ctx) {
+    if (pendingStore == null) {
+      ctx.status(404).contentType("application/json").result("{\"error\":\"pending authorization not found\"}");
+      return;
+    }
+    String id = ctx.pathParam("id");
+    var pending = pendingStore.peek(id);
+    if (pending.isEmpty()) {
+      // Unknown, expired, or already consumed — 404, matching handleApprove's fail-closed shape
+      // for an id that no longer resolves to anything (410 there is "was valid, now isn't"; 404
+      // here also covers "never existed" for a GET, so 404 rather than 410 is the better fit).
+      ctx.status(404).contentType("application/json").result("{\"error\":\"pending authorization not found or expired\"}");
+      return;
+    }
+    var p = pending.get();
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("pendingId", p.id());
+    payload.put("operationId", p.operationId());
+    payload.put("argsSummary", ArgsSummary.summarize(p.argsJson()));
+    payload.put("sourceTier", p.sourceTier().name());
+    payload.put("riskTier", p.riskTier().name());
+    payload.put("gateBehavior", p.gateBehavior().name());
+    payload.put("rationale", p.rationale());
+    // Tempdoc 655: display-only — omitted (not present as a key) when absent, so the FE's
+    // optional-field pattern (undefined ⇒ don't render the line) works without a null-vs-missing
+    // distinction on the wire.
+    if (p.requestedBy() != null) {
+      payload.put("requestedBy", p.requestedBy());
+    }
+    try {
+      ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(payload));
+    } catch (Exception e) {
+      log.error("Failed to serialize pending authorization {}", id, e);
+      ctx.status(500).contentType("application/json").result("{\"error\":\"serialization error\"}");
+    }
+  }
+
+  /**
+   * Tempdoc 655: complete the just-approved pending's dispatch server-side and record the
+   * outcome onto {@code payload}. Best-effort — a failure here doesn't undo the approval or
+   * the minted capsule; it's surfaced as {@code executed: false} with an explanatory message so
+   * the caller (the SSE-triggered approval flow) can tell the user, rather than silently
+   * discarding the capsule and leaving the action unexplained-incomplete.
+   */
+  private void executeApprovedPending(
+      Map<String, Object> payload,
+      io.justsearch.app.services.intent.PendingAuthorization pending,
+      String capsule) {
+    if (dispatcher == null) {
+      payload.put("executed", false);
+      payload.put("executeMessage", "Server-side execution is not available in this deployment.");
+      return;
+    }
+    io.justsearch.agent.api.registry.Operation op = null;
+    for (var catalog : catalogs) {
+      var hit = catalog.findByWireName(pending.operationId());
+      if (hit.isPresent()) {
+        op = hit.get();
+        break;
+      }
+    }
+    if (op == null) {
+      payload.put("executed", false);
+      payload.put("executeMessage", "Operation not available: " + pending.operationId());
+      return;
+    }
+    try {
+      // Tempdoc 655: reuse the ORIGIN provenance shape (MCP), not the browser's own — the
+      // re-dispatch must still pass through the same UNTRUSTED-tier gate the original call did;
+      // the capsule (proof of a real approval gesture) is what satisfies it, not a transport
+      // upgrade. Matches the FE's own invokeWithConsent, which re-invokes with the SAME
+      // request shape it originally used, capsule added.
+      io.justsearch.agent.api.registry.InvocationProvenance provenance =
+          io.justsearch.agent.api.registry.InvocationProvenance.mcp(
+              clock.instant(), java.util.Optional.empty());
+      io.justsearch.agent.api.registry.OperationResult result =
+          dispatcher.dispatch(op, pending.argsJson(), provenance, java.util.Optional.of(capsule));
+      payload.put("executed", true);
+      payload.put("executeSuccess", result.success());
+      payload.put("executeMessage", result.message());
+    } catch (Exception e) {
+      log.warn("Tempdoc 655: server-side execution of approved pending {} failed", pending.id(), e);
+      payload.put("executed", false);
+      payload.put(
+          "executeMessage",
+          "Approved, but execution failed: "
+              + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
     }
   }
 

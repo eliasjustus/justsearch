@@ -81,6 +81,14 @@ internet*; it does **not** by itself mean *isolated from other local software*.
 Together: mutations and the MCP retrieval backend (`POST /mcp`) are token-protected; token-exempt GET
 reads are protected by the Host-allowlist; remote access is barred by the loopback bind.
 
+**This token is deliberately independent of the trust lattice's per-action consent gate (tempdoc
+655) — a different axis, not a substitute.** The session token answers "is this caller allowed to
+reach the API at all" (authentication); the trust lattice's `GateBehavior`
+(`AUTO`/`INLINE_CONFIRM`/`TYPED_CONFIRM`/`DENY`, consumed via a pending-authorization + capsule/
+durable-grant ceremony) answers "is this specific action approved" (authorization) — holding the
+token satisfies neither `INLINE_CONFIRM` nor `TYPED_CONFIRM` on its own, and vice versa. Two
+independent layers an attacker (or a misbehaving MCP client) must clear, by design.
+
 ### Repudiation
 Single-user local app; no multi-tenant identity. Out of scope — there is no shared server to repudiate to.
 

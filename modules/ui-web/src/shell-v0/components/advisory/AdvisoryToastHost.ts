@@ -28,6 +28,8 @@ import { presentationForSeverity } from '../../state/messageClasses.js';
 import '../SystemNotice.js';
 import type { OperationClient } from '../../operations/OperationClient.js';
 import '../DispatchSource.js';
+import { isWindowFocused } from '../../../utils/windowFocus.js';
+import { sendDesktopNotification } from '../../../utils/notify.js';
 
 const TOAST_DURATION_MS = 5000;
 
@@ -268,7 +270,23 @@ export class AdvisoryToastHost extends JfElement {
       if (this.seenKeys.has(r.key) || r.acknowledged) continue;
       this.seenKeys.add(r.key);
       this.pushToast(r);
+      // Tempdoc 655 long-term design pass — the OS-notification escalation lives HERE, at the one
+      // render-layer place a genuinely new stream record is already distinguished from reconnect
+      // replay, not inside any individual feature. Gated on REQUIRES_ACK (reserved for exactly
+      // this "don't let the user miss it" shape) so any future REQUIRES_ACK-classed advisory gets
+      // the same treatment for free, without per-feature wiring.
+      if (r.sourceRenderHint === 'REQUIRES_ACK') {
+        void this.maybeNotifyDesktop(r);
+      }
     }
+  }
+
+  private async maybeNotifyDesktop(record: AdvisoryRecord): Promise<void> {
+    if (await isWindowFocused()) return;
+    const chrome = advisoryClassChrome(record.event.classId);
+    const operationId = record.event.classExtras?.operationId;
+    const body = typeof operationId === 'string' ? operationId : undefined;
+    await sendDesktopNotification(chrome.label, body);
   }
 
   private pushToast(record: AdvisoryRecord): void {

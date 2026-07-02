@@ -184,8 +184,15 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
     return new Operation(
         BROWSE_FOLDERS,
         Presentation.forId(BROWSE_FOLDERS),
+        // Tempdoc 655: list_files added so this declared schema matches the MCP-visible schema
+        // for justsearch_browse (McpToolSurface) — the two were independently authored and had
+        // drifted (list_files was accepted by MCP callers but never declared here). The
+        // underlying BrowseOperationHandler does not yet read list_files (auto-detect only,
+        // logged separately as a pre-existing gap) — declaring it here keeps the two schemas in
+        // sync without changing today's runtime behavior.
         Interface.of(
-            "{\"type\":\"object\",\"properties\":{\"parent_path\":{\"type\":\"string\"}}}",
+            "{\"type\":\"object\",\"properties\":{\"parent_path\":{\"type\":\"string\"},"
+                + "\"list_files\":{\"type\":\"boolean\"}}}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
             RiskTier.LOW,

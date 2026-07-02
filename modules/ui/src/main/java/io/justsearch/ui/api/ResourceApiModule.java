@@ -58,6 +58,7 @@ final class ResourceApiModule implements ApiModule {
   private final HardStopController hardStopController;
   private final AdvisoryStreamController operationCompletedAdvisoryStreamController;
   private final AdvisoryStreamController healthRecoverableAdvisoryStreamController;
+  private final AdvisoryStreamController authorizationPendingAdvisoryStreamController;
   // Tempdoc 662: cross-channel multiplexer over the 5 always-on streams above.
   private final ShellEventsStreamController shellEventsStreamController;
   private final ConditionRecoveryIndexController conditionRecoveryIndexController;
@@ -196,19 +197,29 @@ final class ResourceApiModule implements ApiModule {
     this.navigationHistoryController =
         new NavigationHistoryController(
             headAssembly.substrate().conversation().navigationHistoryStore());
-    // Tempdoc 550 C3: shared pending-authorization registry — the backend records a
+    // Tempdoc 550 C3 / 655: shared pending-authorization registry — the backend records a
     // gated dispatch here and the FE approves by its id, so a capsule can only be minted
     // against an op the backend actually gated (WA-5). Shared between the invoke
-    // controller (creates pendings on 428) and the approve controller (consumes them).
+    // controller (creates pendings on 428), the approve controller (consumes them), AND
+    // (tempdoc 655) the MCP tool surface — sourced from the substrate now, not constructed
+    // locally, so the MCP path reaches the exact same store rather than one it can't see.
     io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore =
-        new io.justsearch.app.services.intent.PendingAuthorizationStore();
+        headAssembly.substrate().conversation().pendingAuthorizationStore();
     // Tempdoc 550 Slice A1 (Authorize face) + C3: consent-capsule mint / approve endpoint.
     this.authorizationController =
         new AuthorizationController(
             headAssembly.substrate().conversation().consentCapsuleService(),
             pendingAuthorizationStore,
             // Tempdoc 550 thesis IV: "allow always" records a durable grant the gate later honors.
-            headAssembly.substrate().conversation().durableGrantStore());
+            headAssembly.substrate().conversation().durableGrantStore(),
+            // Tempdoc 655: lets an approval with no client-side args to replay (an MCP-originated
+            // pending) ask the server to complete the dispatch itself, using the SAME catalogs +
+            // dispatcher OperationsController and McpToolSurface already use.
+            headAssembly.substrate().operations().executor(),
+            List.of(
+                headAssembly.substrate().operations().operations(),
+                headAssembly.substrate().operations().agentTools()),
+            java.time.Clock.systemUTC());
     // Slice 494: per-class advisory SSE controllers.
     this.operationCompletedAdvisoryStreamController =
         new AdvisoryStreamController(
@@ -222,6 +233,16 @@ final class ResourceApiModule implements ApiModule {
             io.justsearch.app.observability.advisory.HealthRecoveryProjector.CLASS_ID,
             headAssembly.substrate().advisory().logs().get(
                 io.justsearch.app.observability.advisory.HealthRecoveryProjector.CLASS_ID),
+            headAssembly.substrate().advisory().changes(),
+            telemetry);
+    // Tempdoc 655 long-term design pass: the third advisory class (a pending approval waiting).
+    this.authorizationPendingAdvisoryStreamController =
+        new AdvisoryStreamController(
+            io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
+                .CLASS_ID,
+            headAssembly.substrate().advisory().logs().get(
+                io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
+                    .CLASS_ID),
             headAssembly.substrate().advisory().changes(),
             telemetry);
     // Slice 447-impl-D: derived inverse Resource — Operation → Conditions referencing it.
@@ -266,7 +287,8 @@ final class ResourceApiModule implements ApiModule {
                 headAssembly.substrate().operations().agentTools()),
             headAssembly.substrate().operations().executor(),
             java.time.Clock.systemUTC(),
-            pendingAuthorizationStore);
+            pendingAuthorizationStore,
+            headAssembly.substrate().conversation().pendingAuthorizationChanges());
     // Tempdoc 550 Slice F2 + thesis III (Preview face): evaluate availability per op, and read
     // the trust gate from the ONE shared IntentGateEvaluator the dispatcher enforces with — so
     // the prediction (incl. the live Global Hard Stop) cannot drift from enforcement (F1 gone).
@@ -315,8 +337,10 @@ final class ResourceApiModule implements ApiModule {
             headAssembly.substrate().intent().changes(),
             operationCompletedAdvisoryStreamController,
             healthRecoverableAdvisoryStreamController,
+            authorizationPendingAdvisoryStreamController,
             actionLedgerController,
-            indexingJobsStreamController);
+            indexingJobsStreamController,
+            headAssembly.substrate().conversation().pendingAuthorizationChanges());
   }
 
   /** Binds every cohort route. All controllers are non-null; only runtimeApiRoutes can be null. */
@@ -385,6 +409,10 @@ final class ResourceApiModule implements ApiModule {
 
     // Tempdoc 550 Slice A1 (Authorize face): mint a consent capsule on user approval.
     app.post("/api/authorizations/approve", authorizationController::handleApprove);
+    // Tempdoc 655 fix pass: point-to-point fetch of a pending's decision content by id — the
+    // SSE broadcast deliberately omits it (privacy boundary); this is where a subscriber fetches
+    // it before presenting the approval ceremony.
+    app.get("/api/authorizations/pending/{id}", authorizationController::handlePeekPending);
     // Tempdoc 560 §28 (4d) — durable-grant management surface (list / grant / revoke).
     app.get("/api/authorizations/grants", authorizationController::handleListGrants);
     app.post("/api/authorizations/grants", authorizationController::handleGrant);
@@ -427,11 +455,14 @@ final class ResourceApiModule implements ApiModule {
     app.sse(
         "/api/advisory/health-recoverable/stream",
         healthRecoverableAdvisoryStreamController::handle);
+    app.sse(
+        "/api/advisory/authorization-pending/stream",
+        authorizationPendingAdvisoryStreamController::handle);
 
-    // Tempdoc 662: cross-channel multiplexer aggregating the 5 always-on streams above (intent,
-    // the two advisory classes, action-ledger, indexing-jobs) onto ONE physical connection. The
-    // 5 individual routes above stay live (existing direct consumers, e.g. tooling, are
-    // unaffected); the FE shell migrates onto this one instead of opening all 5.
+    // Tempdoc 662: cross-channel multiplexer aggregating the 6 always-on streams above (intent,
+    // the three advisory classes, action-ledger, indexing-jobs) onto ONE physical connection. The
+    // individual routes above stay live (existing direct consumers, e.g. tooling, are
+    // unaffected); the FE shell migrates onto this one instead of opening all of them.
     app.sse("/api/shell-events/stream", shellEventsStreamController::handle);
 
     // Slice 3a.1.4 Phase 5 + 3a.1.4b cohort: TIMESERIES Resource REST + SSE routes.
@@ -487,6 +518,9 @@ final class ResourceApiModule implements ApiModule {
         "Advisory operation-completed stream", operationCompletedAdvisoryStreamController::shutdown);
     shutdownQuietly(
         "Advisory health-recoverable stream", healthRecoverableAdvisoryStreamController::shutdown);
+    shutdownQuietly(
+        "Advisory authorization-pending stream",
+        authorizationPendingAdvisoryStreamController::shutdown);
     shutdownQuietly("ShellEventsStreamController", shellEventsStreamController::shutdown);
     shutdownQuietly("JobQueueDepthMetricController", jobQueueDepthMetricController::shutdown);
     shutdownQuietly(
