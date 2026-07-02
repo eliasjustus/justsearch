@@ -279,66 +279,86 @@ def _index_by_seed(arm: list[dict]) -> dict:
     return by_seed
 
 
-def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
-    """One paired baseline(A)-vs-with-tool-arm comparison: McNemar accuracy +
-    bootstrap-CI cost/token/turn deltas, over the seeds + queries both completed."""
-    if not baseline or not with_tool:
-        return None  # need both arms to form a comparison
+def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> dict:
+    """Build the paired (seed, qid) observation set ONCE — the exact pairing
+    logic ``_arm_comparison`` used to inline, now factored so both the pooled
+    comparison and any per-stratum breakdown (tempdoc 624 §T.4) share it. A
+    stratified view can therefore never disagree with the pooled view about
+    which observations are even paired.
 
-    a_correct: dict[str, bool] = {}
-    c_correct: dict[str, bool] = {}
-    a_cost: list = []
-    c_cost: list = []
-    a_tok: list = []
-    c_tok: list = []
-    a_turns: list = []
-    c_turns: list = []
-    pqm_a: dict = {}
-    pqm_c: dict = {}
-    per_seed_acc_a: list[float] = []
-    per_seed_acc_c: list[float] = []
-
+    :returns: ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
+        "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":}}``
+    """
     a_by_seed = _index_by_seed(baseline)
     c_by_seed = _index_by_seed(with_tool)
     shared_seeds = sorted(
         set(a_by_seed) & set(c_by_seed), key=lambda x: (x is None, x),
     )
+    pairs: dict[str, dict] = {}
     for seed in shared_seeds:
         a_pq = a_by_seed[seed][0].get("per_query", {})
         c_pq = c_by_seed[seed][0].get("per_query", {})
-        common = sorted(set(a_pq) & set(c_pq))
-        if not common:
-            continue
-        per_seed_acc_a.append(
-            sum(1 for q in common if a_pq[q].get("correct")) / len(common))
-        per_seed_acc_c.append(
-            sum(1 for q in common if c_pq[q].get("correct")) / len(common))
-        for q in common:
-            obs = f"{seed}:{q}"
-            a_correct[obs] = bool(a_pq[q].get("correct"))
-            c_correct[obs] = bool(c_pq[q].get("correct"))
+        for q in sorted(set(a_pq) & set(c_pq)):
             ca, cc = a_pq[q], c_pq[q]
-            a_cost.append(ca.get("cost_usd"))
-            c_cost.append(cc.get("cost_usd"))
-            a_tok.append(ca.get("unique_tokens"))
-            c_tok.append(cc.get("unique_tokens"))
-            a_turns.append(ca.get("num_turns"))
-            c_turns.append(cc.get("num_turns"))
-            pqm_a[obs] = {
-                "cost_usd": float(ca.get("cost_usd") or 0.0),
-                "unique_tokens": float(ca.get("unique_tokens") or 0),
-                "num_turns": float(ca.get("num_turns") or 0),
+            pairs[f"{seed}:{q}"] = {
+                "seed": seed,
+                "qid": q,
+                "a_correct": bool(ca.get("correct")),
+                "c_correct": bool(cc.get("correct")),
+                "a_cost": ca.get("cost_usd"),
+                "c_cost": cc.get("cost_usd"),
+                "a_tok": ca.get("unique_tokens"),
+                "c_tok": cc.get("unique_tokens"),
+                "a_turns": ca.get("num_turns"),
+                "c_turns": cc.get("num_turns"),
             }
-            pqm_c[obs] = {
-                "cost_usd": float(cc.get("cost_usd") or 0.0),
-                "unique_tokens": float(cc.get("unique_tokens") or 0),
-                "num_turns": float(cc.get("num_turns") or 0),
-            }
+    return pairs
 
-    if not a_correct:
+
+def _stats_from_pairs(pairs: dict) -> dict | None:
+    """The full per-comparison stat block — McNemar accuracy + bootstrap-CI
+    cost/token/turn deltas + seed envelope — computed independently over
+    whichever paired-observation set is handed in: the pooled set, or one
+    stratum's subset (tempdoc 624 §T.4). Each call is a fully self-contained
+    significance test/CI on ITS OWN n; a per-stratum caller never borrows the
+    pooled result (§M.8 item 7)."""
+    if not pairs:
         return None
 
-    # accuracy (binary) -> McNemar over the pooled (seed, qid) discordant pairs.
+    a_correct = {obs: p["a_correct"] for obs, p in pairs.items()}
+    c_correct = {obs: p["c_correct"] for obs, p in pairs.items()}
+
+    by_seed: dict = {}
+    for p in pairs.values():
+        by_seed.setdefault(p["seed"], []).append(p)
+    seed_order = sorted(by_seed, key=lambda x: (x is None, x))
+    per_seed_acc_a = [
+        sum(1 for p in by_seed[seed] if p["a_correct"]) / len(by_seed[seed])
+        for seed in seed_order
+    ]
+    per_seed_acc_c = [
+        sum(1 for p in by_seed[seed] if p["c_correct"]) / len(by_seed[seed])
+        for seed in seed_order
+    ]
+
+    pqm_a = {
+        obs: {
+            "cost_usd": float(p["a_cost"] or 0.0),
+            "unique_tokens": float(p["a_tok"] or 0),
+            "num_turns": float(p["a_turns"] or 0),
+        }
+        for obs, p in pairs.items()
+    }
+    pqm_c = {
+        obs: {
+            "cost_usd": float(p["c_cost"] or 0.0),
+            "unique_tokens": float(p["c_tok"] or 0),
+            "num_turns": float(p["c_turns"] or 0),
+        }
+        for obs, p in pairs.items()
+    }
+
+    # accuracy (binary) -> McNemar over the (seed, qid) discordant pairs.
     mc = compare_runs.mcnemar(a_correct, c_correct)
 
     # continuous metrics -> paired delta + bootstrap CI + Cohen's d_z.
@@ -349,6 +369,13 @@ def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
         pseudo_qrels,
         metrics=["cost_usd", "unique_tokens", "num_turns"],
     )
+
+    a_cost = [p["a_cost"] for p in pairs.values()]
+    c_cost = [p["c_cost"] for p in pairs.values()]
+    a_tok = [p["a_tok"] for p in pairs.values()]
+    c_tok = [p["c_tok"] for p in pairs.values()]
+    a_turns = [p["a_turns"] for p in pairs.values()]
+    c_turns = [p["c_turns"] for p in pairs.values()]
 
     return {
         "accuracy": {
@@ -385,6 +412,74 @@ def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
     }
 
 
+def _arm_comparison(
+    baseline: list[dict],
+    with_tool: list[dict],
+    *,
+    stratify_by: dict[str, str] | None = None,
+) -> dict | None:
+    """One paired baseline(A)-vs-with-tool-arm comparison: McNemar accuracy +
+    bootstrap-CI cost/token/turn deltas, over the seeds + queries both completed.
+
+    ``stratify_by`` (optional ``qid -> stratum label``, tempdoc 624 §T.4) adds
+    an additive ``"stratified": {"by_stratum": {label: {...same shape as this
+    dict...}}}`` key: the identical McNemar+bootstrap computation, independently
+    re-run per stratum over ONLY that stratum's paired observations — each
+    stratum's ``mcnemar_p``/``ci_95`` is its own, never inherited from the
+    pooled result (§M.8 item 7). The pooled top-level fields are never changed
+    by this parameter, and when ``stratify_by`` is ``None`` (the default) no
+    ``"stratified"`` key is added at all — byte-identical to the
+    pre-stratification behavior."""
+    if not baseline or not with_tool:
+        return None  # need both arms to form a comparison
+
+    pairs = _pair_observations(baseline, with_tool)
+    result = _stats_from_pairs(pairs)
+    if result is None:
+        return None
+
+    if stratify_by:
+        labels = sorted({
+            stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by
+        })
+        by_stratum: dict = {}
+        for label in labels:
+            sub_pairs = {
+                obs: p for obs, p in pairs.items()
+                if stratify_by.get(p["qid"]) == label
+            }
+            sub_stats = _stats_from_pairs(sub_pairs)
+            if sub_stats is not None:
+                by_stratum[label] = sub_stats
+        if by_stratum:
+            result["stratified"] = {"by_stratum": by_stratum}
+
+    return result
+
+
+def _default_corpus_stratify(cell_summaries: list[dict]) -> dict[str, str] | None:
+    """Default ``qid -> corpus`` stratum mapping (tempdoc 624 §T.4).
+
+    ``compose_utility`` already groups a cell by canonical dataset SLUG, so
+    every summary in ``cell_summaries`` shares one slug — but distinct
+    summaries can still carry a different corpus SIGNATURE (e.g. the corpus
+    was refreshed between eval runs), which is the finer sub-population this
+    stratifies on automatically, with no caller-supplied mapping required.
+    Each query's label is derived from whichever summary's ``per_query`` dict
+    it appears in. Returns ``None`` (no stratification) when every query
+    resolves to the same corpus identity, so a single-corpus cell's composed
+    output stays byte-identical to the pre-stratification behavior."""
+    qid_to_label: dict[str, str] = {}
+    for s in cell_summaries:
+        corpus = s.get("corpus") or {}
+        label = f"{corpus.get('dataset')}:{corpus.get('signature')}"
+        for qid in (s.get("per_query") or {}):
+            qid_to_label[qid] = label
+    if len({*qid_to_label.values()}) < 2:
+        return None
+    return qid_to_label
+
+
 def _compose_cell(cell_summaries: list[dict]) -> dict | None:
     """Compose one (corpus, model) cell. The top-level headlines baseline A vs the
     REALISTIC arm — **addition B** (agent that already has file tools *and* gets
@@ -399,14 +494,17 @@ def _compose_cell(cell_summaries: list[dict]) -> dict | None:
     if not baseline or not (substitution or addition):
         return None
     primary = addition or substitution  # prefer B (realistic); never headline C (C-4)
-    cell = _arm_comparison(baseline, primary)
+    # Auto-derived qid -> corpus-signature stratum map (§T.4); None (no field
+    # added) unless this cell actually spans more than one corpus signature.
+    stratify_by = _default_corpus_stratify(cell_summaries)
+    cell = _arm_comparison(baseline, primary, stratify_by=stratify_by)
     if cell is None:
         return None
     arms: dict = {}
     if substitution:
-        arms["substitution_c"] = _arm_comparison(baseline, substitution)
+        arms["substitution_c"] = _arm_comparison(baseline, substitution, stratify_by=stratify_by)
     if addition:
-        arms["addition_b"] = _arm_comparison(baseline, addition)
+        arms["addition_b"] = _arm_comparison(baseline, addition, stratify_by=stratify_by)
     cell["arms"] = arms
     cell["primary_arm"] = "addition_b" if addition else "substitution_c"
     if cell["primary_arm"] == "substitution_c":

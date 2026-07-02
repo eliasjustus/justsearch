@@ -606,6 +606,100 @@ def test_generate_is_deterministic_across_processes(tmp_path):
     assert gold_positions != list(range(10)), "gold docs are still one unbroken leading block -- not interleaved"
 
 
+# ---------------------------------------------------------------------------
+# tempdoc 624 T.1 — construction-time descriptor-collision exclusion + the third
+# combinatorial (qualifier) axis. 664 built DETECTION (descriptor_collision_report,
+# tested above); these tests exercise the real generator fix that makes a
+# gold-involved collision structurally impossible, not merely caught after the fact.
+# ---------------------------------------------------------------------------
+
+def test_generate_excludes_gold_reserved_descriptors_from_distractors(tmp_path):
+    """Regression test for the original 664-measured bug: `_sem_for`'s distractor branch
+    used to draw an INDEPENDENT uniform (type, place) pair from the SAME pool gold chains
+    used, with no exclusion of gold-reserved combinations -- so a distractor could
+    reproduce a gold chain's exact descriptor, corrupting that query's own qrel (664
+    measured 7/20 gold-involved collisions in the committed needle-burial-v1 corpus).
+
+    Generates a REAL corpus via `corpus_generate.generate()` at realistic semantic-mode
+    scale -- n_chains=26 (`generate()`'s own semantic-mode place-pool cap) and
+    distractor_ratio=30 (the ratio 624's confidence pass measured 94% distractor
+    descriptor duplication at) -- and runs the real, unmodified
+    `corpus_certify.descriptor_collision_report` against it. This is the regression test
+    that would have caught the original bug: with the pre-fix uniform draw, a run at this
+    scale reliably produced gold-involved collisions; with the gold-reserved exclusion,
+    zero is now a structural guarantee, not a matter of luck.
+    """
+    from jseval import corpus_generate as cg
+
+    stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+    docs = [json.loads(line) for line in
+            (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
+
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+
+    assert stats["gold_chains"] == 26, "sem-mode place-pool cap did not engage as expected"
+    assert report["n_gold_involved"] == 0, (
+        f"gold-involved descriptor collision at realistic scale (the exact defect tempdoc "
+        f"664 measured): {report['groups']}"
+    )
+    assert report["passed"] is True
+
+
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_generate_excludes_gold_reserved_descriptors_from_distractors_multi_seed(lang, tmp_path):
+    """Same construction-time guarantee as above, swept across seeds and both language
+    pools (English + German) -- confirms the fix is structural (a property of the
+    exclusion logic itself), not an artifact of one lucky seed."""
+    from jseval import corpus_generate as cg
+
+    for seed in range(10):
+        out = tmp_path / f"g{seed}"
+        cg.generate(out, axis="prose", lang=lang, n_chains=26, hops=2,
+                    distractor_ratio=15, doc_words=60, seed=seed, semantic=True)
+        docs = [json.loads(line) for line in
+                (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+        queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+        report = corpus_certify.descriptor_collision_report(docs, queries)
+        assert report["n_gold_involved"] == 0, f"lang={lang} seed={seed}: {report['groups']}"
+
+
+def test_generate_third_axis_keeps_distractor_duplication_low_at_scale(tmp_path):
+    """Regression test for tempdoc 624 T.1 item 2 (the combinatorial third axis): the
+    fixed 2-axis (type, place) pool is only 12 x 26 = 312 combinations, and 624's
+    confidence-pass simulation found that even DISTRACTOR-ONLY (non-qrel-corrupting, but
+    wasted-diversity) descriptor duplication reached 94% at n_chains=26,
+    distractor_ratio=30 -- the scale needed to reach ~800 total docs.
+
+    Asserts the real generator's distractor-only duplication rate at that SAME scale is
+    now far below the measured pre-fix 94% figure -- a generous margin (25%), not a tight
+    pin, since exact duplication is seed-dependent; the point is "meaningfully improved
+    by an order of magnitude", not "reduced to some exact number".
+    """
+    from jseval import corpus_generate as cg
+
+    stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+    docs = [json.loads(line) for line in
+            (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+
+    # hops=2 -> 3 docs per chain (2 link docs + 1 attribute doc), one descriptor-carrying
+    # head doc per chain; distractor_ratio=30 against 78 gold docs is an exact multiple of
+    # 3 (2340), so no partial trailing chain to account for.
+    n_distractor_chains = stats["distractor_docs"] // 3
+    duplication_rate = report["n_docs_involved"] / n_distractor_chains
+
+    assert report["n_gold_involved"] == 0  # the construction-time guarantee still holds
+    assert duplication_rate < 0.25, (
+        f"distractor-descriptor duplication rate {duplication_rate:.2%} is not meaningfully "
+        f"improved over the pre-fix ~94% baseline measured at this same scale "
+        f"(tempdoc 624 confidence pass, item 3)"
+    )
+
+
 @pytest.mark.parametrize("axis,lang", [("code", "en"), ("tabular", "en"), ("prose", "de")])
 def test_semantic_mode_defeats_grep_on_all_axes(tmp_path, axis, lang):
     """The grep-defeat invariant (tempdoc 635 hard-non-prose members): with semantic=True the

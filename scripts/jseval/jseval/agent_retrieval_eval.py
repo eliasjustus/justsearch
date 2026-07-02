@@ -113,6 +113,10 @@ class AgentResult:
     error: str = ""
     reflection: str = ""
     tool_calls: list = field(default_factory=list)  # [{tool, params_summary, response_summary}]
+    # Empirical check of the CLI's own --disallowedTools enforcement (tempdoc 624
+    # confidence pass): entries from tool_calls whose tool name was supposed to be
+    # blocked for this condition but was invoked anyway. Empty = the flag held.
+    disallowed_tool_calls: list = field(default_factory=list)
 
 
 def load_queries(queries_path: Path) -> list[dict]:
@@ -882,6 +886,46 @@ def format_tier2_console(result: dict) -> str:
 # Phase 2: Agent comparison (requires Claude Code CLI)
 # ============================================================
 
+# Disallowed in every condition — no condition should let the agent silently
+# answer via a live web lookup (the opposite failure mode from the "does the
+# model already know this" contamination this eval controls for), and a
+# blocked WebSearch was observed being routed around by spawning a subagent
+# (Agent/Task) that pursued the same blocked capability indirectly (tempdoc
+# 624 confidence pass, live probe). Skill is also disallowed: a locally
+# installed "deep-research" skill was observed reaching the same live-web
+# outcome by internally orchestrating its own multi-agent workflow, invisible
+# to the Agent/Task block.
+_ALWAYS_DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Agent", "Task", "Skill"]
+
+# Additionally disallowed for condition C ("JustSearch-only"): its own premise
+# is no native file access, but Bash was left open as a shell-based file-read
+# backdoor around the original Read/Grep/Glob-only list.
+_CONDITION_C_EXTRA_DISALLOWED_TOOLS = ["Read", "Grep", "Glob", "Bash"]
+
+
+def build_disallowed_tools(condition: str) -> list[str]:
+    """Build the --disallowedTools list for a given eval condition.
+
+    Every condition (A, B, C) disallows WebFetch/WebSearch/Agent/Task.
+    Condition C additionally disallows Read/Grep/Glob/Bash.
+    """
+    if condition == "C":
+        return _CONDITION_C_EXTRA_DISALLOWED_TOOLS + _ALWAYS_DISALLOWED_TOOLS
+    return list(_ALWAYS_DISALLOWED_TOOLS)
+
+
+def find_disallowed_tool_calls(tool_calls: list[dict], disallowed: list[str]) -> list[dict]:
+    """Scan parsed tool_calls for any that used a tool disallowed for this condition.
+
+    This is an empirical check, not a trust-the-config assumption: the CLI's
+    --disallowedTools flag is *supposed* to block these tools, but condition C's
+    original Read/Grep/Glob-only list silently left Bash open as a file-read
+    backdoor — so this surfaces any such gap as data in the result record
+    rather than letting clean-looking numbers hide it.
+    """
+    disallowed_set = set(disallowed)
+    return [tc for tc in tool_calls if tc.get("tool") in disallowed_set]
+
 
 def run_agent_eval(
     queries: list[dict],
@@ -939,6 +983,8 @@ def run_agent_eval(
             "--add-dir", corpus_dir,
         ]
 
+        disallowed_tools = build_disallowed_tools(condition)
+
         if condition == "A":
             empty_mcp = Path(query_cwd) / "_empty_mcp.json"
             empty_mcp.write_text('{"mcpServers":{}}', encoding="utf-8")
@@ -949,7 +995,8 @@ def run_agent_eval(
         elif condition == "C":
             if mcp_config_path:
                 cmd.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
-            cmd.extend(["--disallowedTools", "Read,Grep,Glob"])
+
+        cmd.extend(["--disallowedTools", ",".join(disallowed_tools)])
 
         result = AgentResult(
             query=q["query"], answer=q["answer"],
@@ -1010,6 +1057,7 @@ def run_agent_eval(
                     session_id = event.get("session_id", "")
 
             result.tool_calls = tool_calls
+            result.disallowed_tool_calls = find_disallowed_tool_calls(tool_calls, disallowed_tools)
 
             if data is None:
                 result.error = stderr[:500] if stderr else f"exit code {proc.returncode}"

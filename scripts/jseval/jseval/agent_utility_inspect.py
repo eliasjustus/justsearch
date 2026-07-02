@@ -36,7 +36,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
-from jseval.agent_retrieval_eval import _score_answer
+from jseval.agent_retrieval_eval import _score_answer, build_disallowed_tools
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -63,8 +63,7 @@ def _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, em
     elif condition in _WITH_TOOL:
         if mcp_config:
             cmd += ["--strict-mcp-config", "--mcp-config", mcp_config]
-        if condition == "C":
-            cmd += ["--disallowedTools", "Read,Grep,Glob"]
+    cmd += ["--disallowedTools", ",".join(build_disallowed_tools(condition))]
     return cmd
 
 

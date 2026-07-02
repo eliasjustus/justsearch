@@ -195,6 +195,103 @@ def test_seed_aggregation_envelope():
     assert cell["n_paired_observations"] == 12  # 3 seeds x 4 queries
 
 
+# --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
+
+def test_stratified_breakdown_reveals_offsetting_substrata_signal():
+    """Two corpus-signature strata within one cell (a corpus refresh between
+    seeds, so seed 0's queries and seed 1's queries carry different corpus
+    ``signature`` tags) with OPPOSITE accuracy deltas that cancel out in the
+    pooled number — the exact 'a pooled delta can hide a real signal' case
+    §T.4 motivates. The default ``qid -> corpus`` stratify map is derived
+    automatically (no caller-supplied mapping)."""
+    # Seed 0 / corpus signature "sig-old": the tool helps a lot (+0.5).
+    a0 = {
+        "q0": {"correct": False, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q1": {"correct": True, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q2": {"correct": False, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q3": {"correct": True, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+    }
+    c0 = {
+        "q0": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q1": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q2": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q3": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+    }
+    # Seed 1 / corpus signature "sig-new": the tool HURTS (-0.5), no cost delta.
+    a1 = {
+        "r0": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r1": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r2": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r3": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+    }
+    c1 = {
+        "r0": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r1": {"correct": False, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r2": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r3": {"correct": False, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+    }
+    sig_old = {"dataset": "mixed/multihop-rag", "signature": "sig-old"}
+    sig_new = {"dataset": "mixed/multihop-rag", "signature": "sig-new"}
+
+    summaries = [
+        _summary("A", a0, seed=0, corpus=sig_old),
+        _summary("C", c0, seed=0, corpus=sig_old, search_key="s"),
+        _summary("A", a1, seed=1, corpus=sig_new),
+        _summary("C", c1, seed=1, corpus=sig_new, search_key="s"),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+
+    # Pooled: the two strata offset exactly -> looks like NO effect at all.
+    assert cell["accuracy"]["delta"] == 0.0
+    assert cell["accuracy"]["mcnemar_p"] == 1.0
+    assert cell["n_paired_observations"] == 8
+
+    strata = cell["stratified"]["by_stratum"]
+    old_label = "mixed/multihop-rag:sig-old"
+    new_label = "mixed/multihop-rag:sig-new"
+    assert set(strata) == {old_label, new_label}
+
+    old, new = strata[old_label], strata[new_label]
+
+    # Each stratum independently reveals the real, OPPOSITE-sign signal the
+    # pooled delta hides — same shape (accuracy/tokens_unique/cost_usd/turns/
+    # n_paired_observations) as the pooled block.
+    assert old["accuracy"]["delta"] == 0.5
+    assert new["accuracy"]["delta"] == -0.5
+    assert old["n_paired_observations"] == 4
+    assert new["n_paired_observations"] == 4
+
+    # §M.8 item 7: each stratum's significance test is its OWN, computed on its
+    # own n — NOT inherited/borrowed from the pooled result (pooled p=1.0 above;
+    # both strata resolve to a different, independently-derived p-value).
+    assert old["accuracy"]["mcnemar_p"] == 0.5
+    assert new["accuracy"]["mcnemar_p"] == 0.5
+    assert old["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
+
+    # Cost/token blocks are independently computed per stratum too (sig-old is
+    # cheaper+fewer-tokens with the tool; sig-new has no cost/token difference
+    # at all — the pooled cost/token deltas would average these together):
+    assert old["cost_usd"]["delta_mean"] < 0
+    assert new["cost_usd"]["delta_mean"] == 0.0
+    assert old["tokens_unique"]["delta_mean"] < 0
+    assert new["tokens_unique"]["delta_mean"] == 0.0
+
+
+def test_no_stratify_field_when_cell_is_single_corpus():
+    """Regression guard: when every summary in a cell shares ONE corpus
+    identity (the common case — no corpus refresh mid-cell), no ``stratified``
+    field is added anywhere on the composed cell. Byte-identical to the
+    pre-stratification composed-cell shape (tempdoc 624 §T.4: additive-only,
+    never a behavior change for existing callers)."""
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert "stratified" not in cell
+    assert "stratified" not in cell["arms"]["substitution_c"]
+
+
 # --- Inspect-AI execution path (tempdoc 624 execution design) ----------------
 
 def test_inspect_path_roundtrip(tmp_path):

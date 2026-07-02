@@ -83,6 +83,39 @@ _SEM_PLACE = [
     ("fishing wharf", "angling quay"), ("orchard slope", "fruit-grove hillside"),
 ]
 
+# Third combinatorial descriptor axis (tempdoc 624 T.1): a numbered/ordinal qualifier,
+# synonym-paired like type/place — the doc surface uses the cardinal ("unit seven"), the
+# query synonym uses the ordinal ("the seventh installation"), zero token overlap per pair.
+# This exists purely to widen the achievable non-colliding descriptor space (12 types x 26
+# places = 312 combos was measured to already produce 43-94% distractor-descriptor
+# duplication at realistic corpus scale/distractor_ratio) — it is NOT needed for gold-chain
+# uniqueness, which the place axis alone already guarantees (generate()'s semantic-mode cap
+# limits n_chains <= len(sem_places)).
+_SEM_QUAL = [
+    ("unit one", "the first installation"), ("unit two", "the second installation"),
+    ("unit three", "the third installation"), ("unit four", "the fourth installation"),
+    ("unit five", "the fifth installation"), ("unit six", "the sixth installation"),
+    ("unit seven", "the seventh installation"), ("unit eight", "the eighth installation"),
+    ("unit nine", "the ninth installation"), ("unit ten", "the tenth installation"),
+    ("unit eleven", "the eleventh installation"), ("unit twelve", "the twelfth installation"),
+    ("unit thirteen", "the thirteenth installation"), ("unit fourteen", "the fourteenth installation"),
+    ("unit fifteen", "the fifteenth installation"), ("unit sixteen", "the sixteenth installation"),
+    ("unit seventeen", "the seventeenth installation"), ("unit eighteen", "the eighteenth installation"),
+    ("unit nineteen", "the nineteenth installation"), ("unit twenty", "the twentieth installation"),
+]
+_SEM_QUAL_DE = [
+    ("Einheit eins", "die erste Anlage"), ("Einheit zwei", "die zweite Anlage"),
+    ("Einheit drei", "die dritte Anlage"), ("Einheit vier", "die vierte Anlage"),
+    ("Einheit fünf", "die fünfte Anlage"), ("Einheit sechs", "die sechste Anlage"),
+    ("Einheit sieben", "die siebte Anlage"), ("Einheit acht", "die achte Anlage"),
+    ("Einheit neun", "die neunte Anlage"), ("Einheit zehn", "die zehnte Anlage"),
+    ("Einheit elf", "die elfte Anlage"), ("Einheit zwölf", "die zwölfte Anlage"),
+    ("Einheit dreizehn", "die dreizehnte Anlage"), ("Einheit vierzehn", "die vierzehnte Anlage"),
+    ("Einheit fünfzehn", "die fünfzehnte Anlage"), ("Einheit sechzehn", "die sechzehnte Anlage"),
+    ("Einheit siebzehn", "die siebzehnte Anlage"), ("Einheit achtzehn", "die achtzehnte Anlage"),
+    ("Einheit neunzehn", "die neunzehnte Anlage"), ("Einheit zwanzig", "die zwanzigste Anlage"),
+]
+
 # German synonym pools — the Invariant-#6 (ADR-0043) showcase: the doc descriptor and the
 # query synonym share NO surface tokens, so grep/pure-BM25 fail, and the multilingual dense
 # model must bridge German↔German semantically. Catalog phrasing ("Standort: <type>, <place>.")
@@ -112,18 +145,48 @@ _SEM_PLACE_DE = [
 ]
 
 
-def _sem_for(idx, rng, *, gold, lang="en"):
-    """Build a (doc_noun, query_noun, doc_place, query_place) tuple. Gold chains get a UNIQUE
-    place by index (disambiguable); distractors get a random type+place (hard negatives).
-    ``lang`` selects the English or German synonym pools."""
+def _gold_descriptor_reservations(n_chains, lang="en"):
+    """The (type_idx, place_idx, qual_idx) index-triples the gold chains in a `generate()` call
+    will occupy — mirrors `_sem_for`'s gold branch exactly. Used to EXCLUDE those combinations
+    from the distractor draw (tempdoc 624 T.1), so a distractor can never reproduce a gold
+    descriptor by construction rather than merely being caught after the fact by
+    `corpus_certify.descriptor_collision_report`."""
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
+    return {(g % len(types), g % len(places), g % len(quals)) for g in range(n_chains)}
+
+
+def _sem_for(idx, rng, *, gold, lang="en", exclude=None):
+    """Build a (doc_noun, query_noun, doc_place, query_place, doc_qual, query_qual) tuple.
+
+    Gold chains get a deterministic (type, place, qualifier) triple cycled by index. Place
+    alone already guarantees uniqueness across gold chains within one `generate()` call
+    (`generate()`'s semantic-mode cap limits `n_chains <= len(sem_places)`) — the qualifier
+    axis exists to widen the combinatorial descriptor space, not to carry uniqueness itself.
+
+    Distractors draw UNIFORMLY AT RANDOM from the full type x place x qualifier space,
+    EXCLUDING any index-triple already reserved by a gold chain this call (``exclude`` — see
+    `_gold_descriptor_reservations`) via rejection sampling: ``exclude`` holds at most
+    `n_chains` (<=26) entries against a pool of `len(types) * len(places) * len(quals)`
+    (thousands of combinations with the qualifier axis), so this terminates in a handful of
+    draws even in the worst case. ``lang`` selects the English or German synonym pools.
+    """
+    types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
+    places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
     if gold:
-        t = types[idx % len(types)]
-        p = places[idx % len(places)]
+        ti, pi, qi = idx % len(types), idx % len(places), idx % len(quals)
     else:
-        t, p = rng.choice(types), rng.choice(places)
-    return (t[0], t[1], p[0], p[1])
+        reserved = exclude or set()
+        while True:
+            ti = rng.randrange(len(types))
+            pi = rng.randrange(len(places))
+            qi = rng.randrange(len(quals))
+            if (ti, pi, qi) not in reserved:
+                break
+    t, p, q = types[ti], places[pi], quals[qi]
+    return (t[0], t[1], p[0], p[1], q[0], q[1])
 
 
 def _name(rng: random.Random, uid: int) -> str:
@@ -177,18 +240,19 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
         rel = rels[i % len(rels)]
         if lang == "de":
             if sem and i == 0:
-                # head doc: German descriptor (sem[0]/sem[2]); the query references it by
-                # German SYNONYMS (sem[1]/sem[3]) → grep fails, multilingual dense bridges.
-                body = (f"Standort: {sem[0]}, {sem[2]}. "
+                # head doc: German descriptor (sem[0]/sem[2]/sem[4]); the query references it
+                # by German SYNONYMS (sem[1]/sem[3]/sem[5]) → grep fails, multilingual dense bridges.
+                body = (f"Standort: {sem[0]}, {sem[2]}, {sem[4]}. "
                         f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. ")
-                title = f"Standort {sem[0]}, {sem[2]}"
+                title = f"Standort {sem[0]}, {sem[2]}, {sem[4]}"
             else:
                 body = f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. "
                 title = f"Über {ents[i]}"
         elif sem and i == 0:
-            # head doc: surface descriptor (doc_noun/doc_place) + name + link
-            body = f"The {sem[0]} in the {sem[2]}, designated {ents[i]}, {rel[1]} {ents[i+1]}. "
-            title = f"The {sem[0]} in the {sem[2]}"
+            # head doc: surface descriptor (doc_noun/doc_place/doc_qual) + name + link
+            body = (f"The {sem[0]} in the {sem[2]}, {sem[4]}, designated {ents[i]}, "
+                    f"{rel[1]} {ents[i+1]}. ")
+            title = f"The {sem[0]} in the {sem[2]}, {sem[4]}"
         else:
             body = f"The {ents[i]} {rel[1]} {ents[i+1]}. "
             title = f"The {ents[i]}"
@@ -198,8 +262,8 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
         docs.append((last.lower(), f"Über {last}",
                      _pad(f"{last} ist mit dem Wert {attr} verbunden. ", target_words)))
         if sem:
-            # reference the head by its German synonym descriptor (sem[1]/sem[3]), NOT its name
-            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}, "
+            # reference the head by its German synonym descriptor (sem[1]/sem[3]/sem[5]), NOT its name
+            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}, {sem[5]}, "
                  f"mit welchem Wert ist die letzte Entität verbunden?")
         else:
             q = (f"Folgt man den Verknüpfungen ausgehend von {ents[0]}, "
@@ -207,7 +271,7 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
     else:
         docs.append((last.lower(), f"The {last}", _pad(f"{last} is associated with {attr}. ", target_words)))
         # head reference: SYNONYM descriptor (semantic) or the verbatim name (lexical)
-        head_ref = f"the {sem[1]} in the {sem[3]}" if sem else ents[0]
+        head_ref = f"the {sem[1]} in the {sem[3]}, {sem[5]}" if sem else ents[0]
         phrase = head_ref
         for i in range(len(ents) - 1):
             phrase = f"{rels[i % len(rels)][2]} {phrase}"
@@ -220,17 +284,18 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     """Render a chain as code files: fn e0 calls e1 calls ... returns attr. Multi-hop = call trace.
 
     If ``sem`` is set, the head function carries its purpose as a descriptor comment
-    (sem[0]/sem[2]) and the QUERY references it via SYNONYMS (sem[1]/sem[3]) without naming
-    the function — so grep/pure-BM25 fail at the entry and dense must bridge semantically.
+    (sem[0]/sem[2]/sem[4]) and the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5])
+    without naming the function — so grep/pure-BM25 fail at the entry and dense must bridge
+    semantically.
     """
     docs = []
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head doc: descriptor in the TITLE + a module docstring (the high-signal fields
-            # dense embeds), mirroring the prose member — sem[0]/sem[2] (doc side) so the query's
-            # sem[1]/sem[3] synonyms stay zero-overlap (grep-defeating).
-            title = f"the {sem[0]} in the {sem[2]}"
-            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}."""\n'
+            # dense embeds), mirroring the prose member — sem[0]/sem[2]/sem[4] (doc side) so the
+            # query's sem[1]/sem[3]/sem[5] synonyms stay zero-overlap (grep-defeating).
+            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
+            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}, {sem[4]}."""\n'
                     f"def {ents[i].lower()}():\n    return {ents[i+1].lower()}()\n\n"
                     + "# " + _FILLER.replace(". ", ".\n# "))
         else:
@@ -243,7 +308,7 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     docs.append((last.lower(), f"{last.lower()}.py", _pad(body, target_words)))
     if sem:
         q = (f"What value is ultimately returned by the routine for the "
-             f"{sem[1]} in the {sem[3]}?")
+             f"{sem[1]} in the {sem[3]}, {sem[5]}?")
     else:
         q = f"What value does the function {ents[0].lower()}() ultimately return when called?"
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
@@ -252,17 +317,18 @@ def _render_code(ents, attr, target_words, idx, sem=None):
 def _render_tabular(ents, attr, target_words, idx, sem=None):
     """Render a chain as table rows requiring a join across docs.
 
-    If ``sem`` is set, the head table carries a descriptor caption (sem[0]/sem[2]) and the
-    QUERY references it via SYNONYMS (sem[1]/sem[3]) without naming the head entity — so
-    grep/pure-BM25 fail and dense must bridge semantically.
+    If ``sem`` is set, the head table carries a descriptor caption (sem[0]/sem[2]/sem[4]) and
+    the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5]) without naming the head entity
+    — so grep/pure-BM25 fail and dense must bridge semantically.
     """
     docs = []
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head table: descriptor in the TITLE + a leading caption (high-signal), mirroring
-            # the prose member — doc-side sem[0]/sem[2] keeps the query's sem[1]/sem[3] zero-overlap.
-            title = f"the {sem[0]} in the {sem[2]}"
-            caption = f"Table for the {sem[0]} in the {sem[2]}.\n"
+            # the prose member — doc-side sem[0]/sem[2]/sem[4] keeps the query's
+            # sem[1]/sem[3]/sem[5] zero-overlap.
+            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
+            caption = f"Table for the {sem[0]} in the {sem[2]}, {sem[4]}.\n"
         else:
             title = f"table_{ents[i].lower()}"
             caption = ""
@@ -272,7 +338,7 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     body = (f"| entity | attribute |\n|---|---|\n| {last} | {attr} |\n\n" + _FILLER)
     docs.append((last.lower(), f"table_{last.lower()}", _pad(body, target_words)))
     if sem:
-        q = (f"In the records for the {sem[1]} in the {sem[3]}, following the links, "
+        q = (f"In the records for the {sem[1]} in the {sem[3]}, {sem[5]}, following the links, "
              f"what attribute is recorded for the final entity?")
     else:
         q = f"Following the links starting from {ents[0]}, what attribute is recorded for the final entity?"
@@ -309,6 +375,10 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     sem_places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     if sem_active:
         n_chains = min(n_chains, len(sem_places))  # one unique descriptor place per gold
+    # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
+    # will occupy, so the distractor draw can EXCLUDE them — a gold/distractor descriptor
+    # collision becomes structurally impossible rather than merely detected after the fact.
+    gold_reserved = _gold_descriptor_reservations(n_chains, lang) if sem_active else None
 
     def render(e, a, sem):
         if axis == "prose":
@@ -328,12 +398,14 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         queries.append(q)
 
     # distractors: parallel fabricated chains (globally-unique entities), rendered the
-    # same way, NOT referenced by any query → hard negatives.
+    # same way, NOT referenced by any query → hard negatives. `exclude=gold_reserved` (tempdoc
+    # 624 T.1) keeps a distractor's descriptor draw disjoint from every gold chain's, so a
+    # distractor can never be textually indistinguishable from the query's actual answer head.
     n_distract = int(len(all_docs) * distractor_ratio)
     made = 0
     while made < n_distract:
         ents, attr = _chain(rng, hops, counter)
-        sem = _sem_for(0, rng, gold=False, lang=lang) if sem_active else None
+        sem = _sem_for(0, rng, gold=False, lang=lang, exclude=gold_reserved) if sem_active else None
         docs, _q = render(ents, attr, sem)
         for did, title, text in docs:
             if made >= n_distract:
