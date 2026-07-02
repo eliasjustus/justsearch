@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Batch processor for VDU files during offline time.
@@ -28,9 +29,15 @@ public class VduBatchProcessor {
 
     private final VduProcessor vduProcessor;
     private final GpuCapabilitiesService gpuCapabilitiesService;
-    private final RemoteKnowledgeClient knowledgeClient;
+    // Tempdoc 672: live supplier, not a captured value — see OfflineCoordinator's field javadoc.
+    private final Supplier<RemoteKnowledgeClient> knowledgeClientSupplier;
     private final VduMetricCatalog catalog;
     private final VduCapabilityState vduCapabilityState;
+    // Tempdoc 672 follow-up: cooperative-checkpoint interrupt signal, checked between documents
+    // in the batch loop — mirrors EmbeddingBackfillOps.checkInterrupt()'s shape on the Worker
+    // side. Composed by the caller (ServicePhase) from activity/energy/LLM-exclusivity signals;
+    // this class only needs "should I stop now", not the individual signal sources.
+    private final java.util.function.BooleanSupplier shouldInterruptBatch;
 
     // Circuit breaker to prevent hammering dead LLM (5 failures, 1 minute recovery)
     private final EngineCircuitBreaker circuitBreaker = new EngineCircuitBreaker(5, Duration.ofMinutes(1));
@@ -40,8 +47,8 @@ public class VduBatchProcessor {
      */
     public VduBatchProcessor(VduProcessor vduProcessor,
                              GpuCapabilitiesService gpuCapabilitiesService,
-                             RemoteKnowledgeClient knowledgeClient) {
-        this(vduProcessor, gpuCapabilitiesService, knowledgeClient, VduMetricCatalog.noop(),
+                             Supplier<RemoteKnowledgeClient> knowledgeClientSupplier) {
+        this(vduProcessor, gpuCapabilitiesService, knowledgeClientSupplier, VduMetricCatalog.noop(),
             new VduCapabilityState());
     }
 
@@ -56,27 +63,46 @@ public class VduBatchProcessor {
      *
      * @param vduProcessor processor for individual VDU files
      * @param gpuCapabilitiesService NVML-first capability snapshot service
-     * @param knowledgeClient gRPC client for Worker communication
+     * @param knowledgeClientSupplier live supplier of the gRPC client for Worker communication
      * @param catalog VDU metric catalog
      */
     public VduBatchProcessor(VduProcessor vduProcessor,
                              GpuCapabilitiesService gpuCapabilitiesService,
-                             RemoteKnowledgeClient knowledgeClient,
+                             Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
                              VduMetricCatalog catalog) {
-        this(vduProcessor, gpuCapabilitiesService, knowledgeClient, catalog, new VduCapabilityState());
+        this(vduProcessor, gpuCapabilitiesService, knowledgeClientSupplier, catalog, new VduCapabilityState());
     }
 
     public VduBatchProcessor(VduProcessor vduProcessor,
                              GpuCapabilitiesService gpuCapabilitiesService,
-                             RemoteKnowledgeClient knowledgeClient,
+                             Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
                              VduMetricCatalog catalog,
                              VduCapabilityState vduCapabilityState) {
+        this(vduProcessor, gpuCapabilitiesService, knowledgeClientSupplier, catalog,
+            vduCapabilityState, () -> false);
+    }
+
+    /**
+     * Full constructor. Tempdoc 672 follow-up: {@code shouldInterruptBatch} is checked between
+     * documents in {@link #processPendingFiles()} so an in-progress batch stops early if the user
+     * becomes active mid-run, leaving remaining documents PENDING for the next idle window.
+     *
+     * @param shouldInterruptBatch cooperative-checkpoint interrupt signal; {@code () -> false}
+     *     (never interrupt) for callers that don't wire idle/energy arbitration
+     */
+    public VduBatchProcessor(VduProcessor vduProcessor,
+                             GpuCapabilitiesService gpuCapabilitiesService,
+                             Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
+                             VduMetricCatalog catalog,
+                             VduCapabilityState vduCapabilityState,
+                             java.util.function.BooleanSupplier shouldInterruptBatch) {
         this.vduProcessor = vduProcessor;
         this.gpuCapabilitiesService = gpuCapabilitiesService;
-        this.knowledgeClient = knowledgeClient;
+        this.knowledgeClientSupplier = knowledgeClientSupplier;
         this.catalog = catalog != null ? catalog : VduMetricCatalog.noop();
         this.vduCapabilityState =
             vduCapabilityState != null ? vduCapabilityState : new VduCapabilityState();
+        this.shouldInterruptBatch = shouldInterruptBatch != null ? shouldInterruptBatch : () -> false;
     }
 
     // Counter recording helpers
@@ -100,6 +126,11 @@ public class VduBatchProcessor {
     }
 
     public int processPendingFiles() {
+        RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
+        if (knowledgeClient == null) {
+            LOG.info("VDU batch processing skipped: Worker not connected yet");
+            return 0;
+        }
         int pendingCount = knowledgeClient.countPendingVdu();
         if (pendingCount == 0) {
             LOG.info("No pending VDU files");
@@ -136,10 +167,36 @@ public class VduBatchProcessor {
 
         LOG.info("Processing {} pending VDU files", pendingDocIds.size());
 
+        // Tempdoc 672 follow-up: VDU mode is entered/exited once for the whole batch, not once
+        // per document — each transition is a full llama-server restart (~10-12s). A failure to
+        // enter also now fails the whole batch immediately instead of repeating the same failed
+        // restart for every remaining document.
+        try {
+            vduProcessor.enterVduMode();
+        } catch (VduProcessor.VduException e) {
+            LOG.error("Failed to enter VDU mode for batch; skipping {} pending files",
+                pendingDocIds.size(), e);
+            vduCapabilityState.block(VduCapabilityState.REASON_AI_OFFLINE);
+            return 0;
+        }
+        vduCapabilityState.clear(VduCapabilityState.REASON_AI_OFFLINE);
+
         int processed = 0;
         int failed = 0;
 
+        try {
         for (String docId : pendingDocIds) {
+            // Tempdoc 672 follow-up: cooperative-checkpoint interrupt — mirrors
+            // EmbeddingBackfillOps.checkInterrupt() on the Worker side. Checked between
+            // documents so the user regaining activity (or the OS requesting reduced energy use)
+            // stops the batch early instead of grinding through the rest of the queue.
+            if (shouldInterruptBatch.getAsBoolean()) {
+                int remaining = pendingDocIds.size() - processed - failed;
+                LOG.info("VDU batch interrupted (user active or energy-reduced), leaving {} docs PENDING",
+                    remaining);
+                break;
+            }
+
             // Circuit breaker check - fast-fail if LLM is repeatedly failing
             if (!circuitBreaker.isClosed()) {
                 int remaining = pendingDocIds.size() - processed - failed;
@@ -167,7 +224,7 @@ public class VduBatchProcessor {
 
                 if (!Files.exists(filePath)) {
                     LOG.warn("VDU file no longer exists: {}", docId);
-                    markVduFailed(docId, "File no longer exists");
+                    markVduFailed(knowledgeClient, docId, "File no longer exists");
                     recordFailed();
                     failed++;
                     continue;
@@ -223,23 +280,26 @@ public class VduBatchProcessor {
             } catch (VduProcessor.VduException e) {
                 LOG.error("VDU processing failed for: {}", docId, e);
                 circuitBreaker.recordFailure(e);  // Track LLM failures
-                markVduFailed(docId, e.getMessage());
+                markVduFailed(knowledgeClient, docId, e.getMessage());
                 recordFailed();
                 failed++;
             } catch (Exception e) {
                 LOG.error("Unexpected error processing: {}", docId, e);
                 circuitBreaker.recordFailure(e);  // Track LLM failures
-                markVduFailed(docId, "Unexpected error: " + e.getMessage());
+                markVduFailed(knowledgeClient, docId, "Unexpected error: " + e.getMessage());
                 recordFailed();
                 failed++;
             }
+        }
+        } finally {
+            vduProcessor.exitVduMode();
         }
 
         LOG.info("VDU batch complete: {} processed, {} failed", processed, failed);
         return processed;
     }
 
-    private void markVduFailed(String docId, String reason) {
+    private void markVduFailed(RemoteKnowledgeClient knowledgeClient, String docId, String reason) {
         try {
             knowledgeClient.updateVduResult(
                 docId,

@@ -219,7 +219,7 @@ final class StatusLifecycleHandlerTest {
     WorkerOperationalView view =
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
-            new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 2L, 0L, null));
+            new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 2L, 0L, null, false));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
 
     assertEquals("DEGRADED", env.components().get("visualTextExtraction").state());
@@ -234,7 +234,7 @@ final class StatusLifecycleHandlerTest {
     WorkerOperationalView view =
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
-            new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 0L, 0L, null));
+            new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 0L, 0L, null, false));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
 
     assertEquals("READY", env.components().get("visualTextExtraction").state());
@@ -248,7 +248,7 @@ final class StatusLifecycleHandlerTest {
     WorkerOperationalView view =
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
-            new VisualExtractionView(true, true, "tesseract", null, 2L, 0L, "vdu.circuit_open"));
+            new VisualExtractionView(true, true, "tesseract", null, 2L, 0L, "vdu.circuit_open", false));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
 
     assertEquals("DEGRADED", env.components().get("visualTextExtraction").state());
@@ -263,7 +263,7 @@ final class StatusLifecycleHandlerTest {
     WorkerOperationalView view =
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
-            new VisualExtractionView(true, true, "tesseract", null, 0L, 4L, "vdu.missing_mmproj"));
+            new VisualExtractionView(true, true, "tesseract", null, 0L, 4L, "vdu.missing_mmproj", false));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
 
     assertEquals("READY", env.components().get("visualTextExtraction").state());

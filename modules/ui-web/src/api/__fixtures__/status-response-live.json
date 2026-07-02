@@ -224,7 +224,8 @@
       "ocrEnabled" : false,
       "ocrEngineAvailable" : false,
       "visualTextNeededCount" : 0,
-      "visualEnrichmentNeededCount" : 0
+      "visualEnrichmentNeededCount" : 0,
+      "vduProcessing" : false
     }
   },
   "indexAvailable" : true,

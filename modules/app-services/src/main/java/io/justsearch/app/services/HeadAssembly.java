@@ -391,7 +391,9 @@ public final class HeadAssembly implements AutoCloseable {
                             managerFinal,
                             this.capabilities.inference(),
                             settingsStoreFinal,
-                            this.lateBindings)))
+                            this.lateBindings,
+                            () -> this.knowledgeClient,
+                            this::currentKnowledgeServer)))
             .orThrow();
     long t_service_1 = System.currentTimeMillis();
     this.serviceOut = serviceOut;

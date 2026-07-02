@@ -33,6 +33,8 @@ public class StubInferenceLifecycleManager
   private boolean failIndexingTransition = false;
   private int onlineSwitchCount = 0;
   private int indexingSwitchCount = 0;
+  private int enterVduModeCount = 0;
+  private int exitVduModeCount = 0;
   private boolean visionCapable = false;
 
   // ========== Test-control accessors (custom; not on any role interface) ==========
@@ -88,12 +90,15 @@ public class StubInferenceLifecycleManager
 
   @Override
   public void enterVduMode() throws ModeTransitionException {
-    // Test stub: no real server work; just record by leaving mode unchanged.
+    // Test stub: no real server work; just record the call for batch-scoping assertions
+    // (tempdoc 672 follow-up — enter/exit must be called once per batch, not once per document).
+    enterVduModeCount++;
   }
 
   @Override
   public void exitVduMode() throws ModeTransitionException {
     // Test stub: no real server work.
+    exitVduModeCount++;
   }
 
   @Override
@@ -148,6 +153,14 @@ public class StubInferenceLifecycleManager
     return indexingSwitchCount;
   }
 
+  public int getEnterVduModeCount() {
+    return enterVduModeCount;
+  }
+
+  public int getExitVduModeCount() {
+    return exitVduModeCount;
+  }
+
   public void reset() {
     currentMode = Mode.OFFLINE;
     failOnlineTransition = false;
@@ -155,5 +168,7 @@ public class StubInferenceLifecycleManager
     visionCapable = false;
     onlineSwitchCount = 0;
     indexingSwitchCount = 0;
+    enterVduModeCount = 0;
+    exitVduModeCount = 0;
   }
 }

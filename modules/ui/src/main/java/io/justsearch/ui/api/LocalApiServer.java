@@ -305,6 +305,13 @@ public class LocalApiServer {
     } catch (RuntimeException e) {
       log.warn("GpuSaturationSampler.start failed: {}", e.getMessage());
     }
+    // Tempdoc 672 follow-up: start the VDU offline-processing idle/energy auto-trigger sampler,
+    // same lifecycle shape as the GPU saturation sampler above.
+    try {
+      core.vduOfflineTriggerSampler().start();
+    } catch (RuntimeException e) {
+      log.warn("VduOfflineTriggerSampler.start failed: {}", e.getMessage());
+    }
   }
 
   /**
@@ -833,6 +840,12 @@ public class LocalApiServer {
       core.gpuSaturationSampler().stop();
     } catch (RuntimeException e) {
       log.warn("GpuSaturationSampler.stop failed: {}", e.getMessage());
+    }
+    // Tempdoc 672 follow-up: stop the VDU offline-processing auto-trigger sampler thread.
+    try {
+      core.vduOfflineTriggerSampler().stop();
+    } catch (RuntimeException e) {
+      log.warn("VduOfflineTriggerSampler.stop failed: {}", e.getMessage());
     }
     // Tempdoc 583 Stage 3 / §D.2a: stop every ApiModule cohort's background work symmetrically.
     for (ApiModule module : this.apiModules) {

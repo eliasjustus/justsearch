@@ -80,7 +80,7 @@ class OfflineCoordinatorTest {
             VduCapabilityState state = new VduCapabilityState();
             state.block(VduCapabilityState.REASON_AI_OFFLINE);
             OfflineCoordinator realCoordinator =
-                new OfflineCoordinator(inference, batchProcessor, client, state);
+                new OfflineCoordinator(inference, batchProcessor, () -> client, state);
 
             realCoordinator.startOfflineProcessing();
 

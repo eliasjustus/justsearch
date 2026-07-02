@@ -143,6 +143,80 @@ class HeadAssemblyTest {
     }
   }
 
+  /**
+   * Tempdoc 672 regression: the VDU offline coordinator was value-capturing the Worker client at
+   * bootstrap (always null — Head is built with {@code knowledgeServer=null}, the Worker connects
+   * asynchronously), so {@code OfflineCoordinatorBuilder.build} bailed on its {@code client ==
+   * null} guard and the offline-processing trigger stayed null for the process lifetime.
+   *
+   * <p>Drives the real bootstrap → connect ordering (not a direct {@code OfflineCoordinator}
+   * construction, which bypasses the bug entirely — see {@code unreachable-seed-green}). Asserts
+   * (a) the coordinator now builds at bootstrap despite the null client, and (b) after {@code
+   * connectKnowledgeServer}, {@code startOfflineProcessing} resolves the live client and drives
+   * real Worker calls — proving the supplier, not a frozen null, reaches the coordinator.
+   */
+  @Test
+  void offlineCoordinatorBuildsAtBootstrapAndResolvesClientAfterConnect() throws Exception {
+    Telemetry telemetry = new NoopTelemetry();
+    String prevPort = System.getProperty("justsearch.infra.health.port");
+    try {
+      System.setProperty("justsearch.infra.health.port", "0");
+      var cap = new io.justsearch.app.services.lifecycle.WorkerCapability();
+      try (HeadAssembly bootstrap =
+          new HeadAssembly(
+              telemetry,
+              new ConfigManagerBootstrap(),
+              null,
+              new io.justsearch.app.services.settings.UiSettingsStore(
+                  io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY),
+              cap)) {
+
+        // Core regression: the coordinator must be non-null at bootstrap, before any Worker
+        // connects — it must not have value-captured the (null) client.
+        var coordinatorAtBootstrap = bootstrap.headInfraRegistry().offlineCoordinator();
+        assertNotNull(
+            coordinatorAtBootstrap,
+            "OfflineCoordinator must build at bootstrap despite the Worker not being connected yet"
+                + " (client is threaded as a live supplier, not a captured value)");
+
+        var ks =
+            org.mockito.Mockito.mock(
+                io.justsearch.app.services.worker.KnowledgeServerBootstrap.class);
+        var client =
+            org.mockito.Mockito.mock(io.justsearch.app.services.worker.RemoteKnowledgeClient.class);
+        org.mockito.Mockito.when(client.recoverVduProcessing()).thenReturn(0);
+        org.mockito.Mockito.when(client.countPendingVdu()).thenReturn(0);
+        org.mockito.Mockito.when(client.countPendingEmbeddings()).thenReturn(0);
+        cap.transition(io.justsearch.app.api.lifecycle.CapabilityHealth.READY, null);
+        org.mockito.Mockito.when(ks.workerCapability()).thenReturn(cap);
+        org.mockito.Mockito.when(ks.isReady()).thenReturn(true);
+        org.mockito.Mockito.when(ks.client()).thenReturn(client);
+
+        bootstrap.connectKnowledgeServer(ks);
+
+        // Same coordinator instance both API entry points read (HeadInfraRegistry / ServicePhase
+        // Output both derive from HeadAssembly.this.offlineCoordinator).
+        var coordinatorAfterConnect = bootstrap.headInfraRegistry().offlineCoordinator();
+        assertTrue(
+            coordinatorAtBootstrap == coordinatorAfterConnect,
+            "connectKnowledgeServer must not replace the coordinator instance (no rebuild needed;"
+                + " the live supplier resolves the client itself)");
+
+        // Drive synchronously (no virtual-thread indirection) — proves the supplier resolved the
+        // POST-connect client, not a value frozen at bootstrap.
+        coordinatorAfterConnect.startOfflineProcessing();
+        org.mockito.Mockito.verify(client).recoverVduProcessing();
+        org.mockito.Mockito.verify(client).countPendingVdu();
+      }
+    } finally {
+      if (prevPort == null) {
+        System.clearProperty("justsearch.infra.health.port");
+      } else {
+        System.setProperty("justsearch.infra.health.port", prevPort);
+      }
+    }
+  }
+
   @Test
   void fileBackedCapabilitiesHandlerServesPayload() throws Exception {
     Path payload = tempDir.resolve("caps.json");

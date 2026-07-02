@@ -2497,6 +2497,32 @@ corrected the root cause and re-measured for real:
   side. Until the Tika-routing bug is fixed, this battlefield member should be treated as **not usable for
   any claim**, not even a directional one.
 
+## Addendum (2026-07-02): tempdoc 672's bootstrap-wiring blocker is fixed and live-verified
+
+Tempdoc 672 (spun out from this document's own §T.2 finding above) diagnosed and fixed the actual root
+cause: the VDU offline coordinator captured the Worker/Knowledge client *by value* at Head bootstrap, when
+the client is structurally null at that point (the Worker connects asynchronously). `POST
+/api/offline/process` therefore returned 503 forever, and VDU never ran on any launch — a distinct,
+deeper-layer bug from 671's OCR-routing misclassification (already fixed).
+
+**Fixed and live-verified** against this worktree's own `datasets/golden/synth-scan-v1/corpus-dir` on the
+running dev stack: `POST /api/offline/process` now returns success; VDU actually runs (llama-server switches
+online, processes real pending files); and previously-empty documents from this corpus now carry real
+VDU-extracted body text and are returned by search with that content visible (verified live via the browser
+UI for `pellker298.png` and `pellker44.png` — their search results now show real extracted content instead
+of a zero-content filename-only match). The `visualDocumentUnderstanding` readiness component, previously
+never wired, now reports `READY`.
+
+**Not done, and explicitly out of 672's scope**: a full corpus re-run (all ~438 previously-pending VDU
+files) and a re-measured nDCG@10 for `synth-scan-v1` through the fixed path. 672's own non-goals name this
+as "624's own spend decision" — the live-verification above ran a partial batch (a few completions,
+confirmed real) and was stopped deliberately rather than occupying the shared dev stack for the ~90 minutes
+a full-corpus VDU pass would take. §M.8's bar for the scan corpus therefore remains **open**, but the nature
+of the blocker has changed: previously *structurally* blocked (the mechanism could not run at all);
+now *unblocked mechanically*, pending only the willful decision to spend on a full re-run. Re-running
+`jseval corpus-fidelity` / the full paid eval for `synth-scan-v1` is the next concrete step whenever that
+spend is authorized.
+
 ## The second finding, closed: real cross-corpus stratification now exists and was run for real
 
 An independent reviewer found that §T.4's per-stratum machinery (correct, hand-verified) was never reachable

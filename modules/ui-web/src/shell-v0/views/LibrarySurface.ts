@@ -785,6 +785,15 @@ export class LibrarySurface extends JfElement {
                is user-tier; core.reindex's wire audience=USER passes
                the gate. -->
           <jf-operation context="button" operation-id="core.reindex" api-base=${this.apiBase} @op-success=${() => this.refresh()}></jf-operation>
+          <!-- Tempdoc 672 follow-up: manual "Process Now" trigger for VDU/embedding offline
+               processing, same catalog-driven pattern as core.reindex above — the operation
+               already exists (core.trigger-offline-processing, LOW risk, no confirmation) and
+               was previously wired to nothing in the UI. -->
+          <jf-operation
+            context="button"
+            operation-id="core.trigger-offline-processing"
+            api-base=${this.apiBase}
+          ></jf-operation>
           <jf-button
             variant="primary"
             label="Add Folder"
