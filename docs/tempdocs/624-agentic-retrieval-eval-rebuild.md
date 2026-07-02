@@ -3290,3 +3290,75 @@ demonstrates paying off when applied at the right time rather than speculatively
 plainly, with its candidate scope and the one place it already silently applies, is deliberately separated
 from building it — so the insight is captured without becoming premature abstraction.
 
+---
+
+# Confidence pass #6 (2026-07-02, fourteenth pass) — converting Design theorization #2's assumptions into verified facts
+
+> Read-only investigation only, mirroring this tempdoc's own established "Confidence pass" discipline (used
+> five times already in this lineage — it has found a real, design-changing surprise every time it was run).
+> No schema changes, no code moved, no new CLI flags, no tests written, no `RESEARCH.md` touched. Every claim
+> below is checked against the actual current code, not re-asserted from Design theorization #2's own text.
+
+## What was verified — confidence raised
+
+- **Design 1's "purely additive" claim holds precisely.** `utility-comparison.v1.schema.json` sets
+  `"additionalProperties": true` at the top level and has no strict (`false`) `additionalProperties` anywhere
+  in the file — a new `revision` field would not be rejected by any schema validator. Stronger than assumed:
+  `compose_utility`/`compose_utility_cross_corpus` (`utility_comparison.py:144,596`) both return a **plain
+  dict** built entirely from local variables — attaching `record["revision"] = {...}` at the call site
+  requires **zero changes to either function's signature or internals**. This is lower implementation risk
+  than Design theorization #2 assumed.
+- **Design 2's "conform to the existing pattern" claim is exact, not superficial.** `gen-public-benchmark.mjs`
+  already iterates `Object.keys(release.measured)` (lines ~80, 102) to aggregate a **multi-entry, per-corpus**
+  source into one public doc — precisely the shape a future agent-utility projector would need for per-corpus
+  + pooled records. The precedent doesn't just resemble the need, it already solves the identical aggregation
+  problem. `RESEARCH.md` re-confirmed still absent from `main` and this branch — the "not buildable yet"
+  premise still holds.
+
+## What was corrected — real, small scope refinements, not blockers
+
+- **Design 1's `supersedes` field must reference a file path, not an in-record identity.** No existing field
+  (`agent_cohort_key`, `pairing_key`) is actually unique across revisions of the *same* underlying run —
+  `agent_cohort_key` is deliberately invariant across the original and every corrected version (same model,
+  same corpus, same MCP surface; only the post-hoc exclusion/scoring differs), so it cannot itself distinguish
+  "this composed record" from "that other composition of the identical cohort." Design theorization #2's own
+  text already hedged between "path or record identity" — this pass resolves the hedge: path is the only
+  currently-viable choice, not a gap.
+- **Design 3's "same pattern" claim is only half-true.** `_write_bench_output` (`commands/_common.py:51-58`)
+  is a bare, generic "write dict as JSON, echo confirmation" helper — it covers only the **write** step, not
+  the **print per-cell summary** step Design 3's text described as part of the same duplicated block.
+  Confirmed directly: `cmd_utility_compose_cross_corpus`'s print loop has genuinely extra logic
+  (`commands/utility.py`, a nested `stratified.by_stratum` loop) the other two `cmd_utility_*` commands don't
+  have — forcing one shared "compose-and-print" helper across all three would require either a lossy
+  generalization or a per-command customization hook, not a clean drop-in. **Refined design**: reuse
+  `_write_bench_output` directly for the write step (zero new code, immediate); leave each command's print-
+  summary logic bespoke rather than forcing a shared abstraction that doesn't actually fit — this is a
+  smaller, more honest scope than the original design implied, and avoids exactly the forced-generalization
+  risk this tempdoc's own discipline warns against elsewhere.
+- **Design 3's leak-detection helpers have zero existing test coverage.** `scan_leaked_cells`/
+  `apply_leak_flags` are referenced nowhere in `scripts/jseval/tests/` or the `jseval/` package proper today
+  (grepped, zero hits) — they exist only in the uncommitted throwaway script. Promoting them is therefore
+  "move the code **and** write its first tests," not merely "move the code" — a real, small scope increase,
+  honestly disclosed rather than assumed away.
+
+## Confidence rating — remaining work: **8/10**
+
+All three designs survive this pass with their core direction intact; nothing found here overturns a design
+the way earlier confidence passes in this lineage overturned T.2's original premise or found the M.1
+tool-bypass gap. Two points held back, both structural rather than risk-related: Design 2 is genuinely
+unimplementable until `RESEARCH.md` exists on a reachable branch (a real external blocker, not a design
+weakness), and Design 3's newly-confirmed need for first-time test coverage is real, if small, unplanned work.
+
+## Implementation difficulty and recommended tier
+
+**Low-to-moderate, and well-suited to the same tier this whole effort has used throughout.** Design 1 is a
+small, additive, call-site-only change with a schema confirmed permissive and zero function-signature impact —
+genuinely simple. Design 3 (refined scope: reuse `_write_bench_output` directly, promote+test the leak helpers,
+leave per-command printing alone) is equally small and mechanical. Neither surfaced any deep architectural
+risk, hidden coupling, or ambiguous design choice requiring senior judgment beyond what this pass already
+resolved. **Recommend Sonnet-5 at medium effort** for both, consistent with every other fix this session
+(L1-L3, Fix 1-7, the reanalysis tasks) — no case for escalating to opus-tier reasoning or fable-tier
+orchestration overhead for work this well-scoped and low-risk. Design 2 needs no tier recommendation yet
+(blocked); when its blocker clears, the same tier applies — the precedent scripts it would extend are small,
+single-purpose Node projectors, not complex systems.
+
