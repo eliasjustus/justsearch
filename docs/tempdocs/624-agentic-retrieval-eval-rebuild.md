@@ -1,7 +1,7 @@
 ---
 title: "Agentic-utility eval rebuild: the agent-utility number as a cohort-identified, condition-paired comparison record — a projection over agent-eval runs cohort-identical on every axis except `condition`, conforming to the canonical-record + governed-projection seam (553/623/622); the comparison arm already exists (346) but lacks run identity, seeds, judge, and projection discipline, which is why '92% / 62%' is an identity-less fork"
 type: tempdocs
-status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open.
+status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. 2026-07-02: §M.9 founder decisions RESOLVED (§Founder decisions 2026-07-02) — implementation actionable; the run spend remains gated on the U-Founder-2 combined estimate.
 created: 2026-06-21
 updated: 2026-07-02
 author: agent analysis (research-channel design theorization), filed by agent — STUB
@@ -2244,4 +2244,176 @@ untested design confidence, because item 1 found a real, load-bearing premise wa
 - **Two items (judge-model availability, ingest-extraction) remain unverified for a reason outside this
   pass's control** (no dev-stack tooling this session), not because they were skipped as low-priority —
   named explicitly so an implementer does not assume they were checked.
+
+---
+
+# As-built #5 (2026-07-02) — every remaining design item implemented; a real calibrated run executed; the
+credibility bar (§M.8) is NOT yet cleared, honestly, and here is exactly why
+
+> Implemented via orchestrated Sonnet-5 subagents (worktree `624-agent-utility-hardening`) against the
+> methodology plan (§M) and design theorization (§T.1-T.4) above. Every code item shipped and is committed;
+> a real, live, haiku-tier calibrated eval run executed to completion across all three battlefield corpora.
+> **The record does not clear §M.8's bar** — this section states plainly why, not to soften it.
+
+## What shipped (all committed, all tests green)
+
+1. **§M.1 baseline-fairness fixes** — every condition now disallows `WebFetch,WebSearch,Agent,Task,Skill`
+   (condition C additionally `Read,Grep,Glob,Bash`), asserted live from the `tool_calls` trace in the classic
+   `agent_retrieval_eval.py` runner. A live probe during implementation found the disallow list needed two
+   rounds — the first (`WebFetch,WebSearch,Agent,Task`) was itself routed around via a locally-installed
+   `Skill` invoking `Bash`/`PowerShell` internally; adding `Skill` closed it, re-verified live (zero tool
+   calls, an honest decline, on a prompt designed to tempt every one of these paths).
+2. **§T.1 descriptor-collision fix** — `corpus_generate.py`'s distractor draw now excludes gold-reserved
+   descriptors by construction; a third combinatorial descriptor axis (6,240 combinations, up from 312)
+   makes this hold at real scale — measured: 0 gold-involved collisions across 20 seeds, distractor-only
+   duplication down from ~94% to ~12% at realistic scale.
+3. **§T.2 degraded-scan corpus axis** — `golden/synth-scan-v1` (360 docs), rendering at materialize-time (not
+   embedded in the committed source, keeping it the same size as any text-axis sibling). Live-verified both
+   directions: a plain scan is read via Claude's own multimodal `Read` (the original premise was wrong, caught
+   by this session's own confidence pass); the shipped degradation band genuinely defeats casual `Read` while
+   the production Tika/VLM path extracts it cleanly (nDCG@10=0.97 on direct retrieval).
+4. **§T.3 judge human-calibration tooling** — dual-rater Cohen's-kappa + bootstrap-CI calibration in
+   `utility_judge.py`, proven end-to-end via an explicit `rater_kind: "agent-substitute, NOT human"` dry run.
+   **Real human calibration was not run** (no human rater available in this autonomous session) — this remains
+   the one genuinely-deferred item, honestly labeled as such in its own output, not silently skipped.
+5. **§T.4 stratified capability-coverage** — `utility_comparison.py` can compute per-stratum McNemar+CI
+   breakdowns additively; not exercised in the real run below because each corpus was run as its own
+   separate calibrate→run→compose cycle (a natural per-corpus stratification by construction), so the
+   finer within-corpus stratification machinery exists and is tested but had no occasion to fire here.
+6. **Two real battlefield corpora at scale**: `golden/battlefield-en-v1` (390 docs, nDCG@10=0.4143, "hard",
+   in-band) and `golden/battlefield-de-v1` (390 docs, nDCG@10=0.5924, "moderate", in-band) — both certified
+   clean (0.000 closed-book, 0 gold-involved collisions). Both required tuning `doc_words` (not
+   `distractor_ratio`, which had almost no effect) to land in the realistic difficulty band — English needed
+   2500, German only 1300, a real, honest per-language difference now recorded in each corpus's own
+   provenance rather than assumed identical.
+
+## The real run (3 corpora × haiku × 3 seeds — scaled down from the design's 5-seed target)
+
+Calibrated via `jseval utility-calibrate` (readiness gate, target-concurrency timeout pilot, pinned cohort
+key) then run via `jseval utility-run --calibration`, per this tempdoc's own twice-learned lesson. Seed count
+was reduced from the design's 5 to **3** — an authorized cost/time trade-off (calibration projected ~$77 /
+137 min per corpus at 5 seeds; 3 seeds was the design's own stated floor, §M.5) — stated here plainly, not
+buried. Composed records are committed at `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}/
+utility-comparison.v1.json` (calibration files alongside them); raw Inspect logs (~6MB, mostly re-derivable
+diagnostic detail) were not committed.
+
+| Corpus | B (addition, realistic) accuracy Δ | McNemar p | B tokens Δ (CI95) | C (substitution) accuracy Δ | McNemar p |
+|---|---|---|---|---|---|
+| battlefield-en-v1 | −0.065 (0.792→0.727) | 0.424 (n.s.) | −339 [−4852, 4045] (n.s.) | **−0.595** (0.797→0.203) | **0.000** |
+| battlefield-de-v1 | −0.091 (0.818→0.727) | 0.210 (n.s.) | −49 [−3035, 3060] (n.s.) | **−0.565** (0.812→0.246) | **0.000** |
+| synth-scan-v1 | +0.048 (0.667→0.714) | 1.000 (n.s.) | +3357 [−2796, 9265] (n.s.) | **−0.382** (0.706→0.324) | 0.011 |
+
+**Two honest, striking, consistent findings — interrogated, not just reported (per this project's own
+`interrogate-results` discipline):**
+
+1. **Condition B (the realistic headline arm) shows no significant effect in any direction, on any corpus.**
+   This is the exact same shape of null `RESEARCH.md` (tempdoc 667) already states publicly from toy-scale
+   data — now backed by a real, harder, larger-scale run rather than a 5-20-query pilot. U0's own question
+   ("does the honest number help the wedge?") is answered, at this n, with an honest **not yet demonstrated**
+   — not a fabricated positive, not a suppressed negative.
+2. **Condition C (substitution) is now measured as significantly *harmful* on every corpus — a real reversal
+   from this tempdoc's own prior toy-scale evidence**, which found C *favorable* (+0.20 acc in a 5-query
+   pilot; +11.8pp in the original 346 GPU run). The most likely cause, checked against what changed: this
+   session's own §M.1 fix now genuinely blocks `Bash` for condition C (the prior floor runs all had the
+   documented Bash leak — condition C could `cat` its way around "no native file tools"). With that leak
+   closed, C is for the first time measuring what it always claimed to: an agent with *only* MCP retrieval and
+   *no* file tools at all, on real difficulty — and that configuration performs badly. This is exactly the
+   kind of finding a hardening pass exists to surface, and it strengthens (not just repeats) this tempdoc's
+   own §C-4 finding that C was never the honest headline — it is now measurably a worse one than previously
+   known, not just an unrealistic one.
+
+## Why this does NOT clear §M.8's bar (stated precisely, per corpus)
+
+`comparability.comparable = False` on **all three** records:
+- **English**: `asymmetric_exclusion: excluded_jaccard=0.33 < 0.5` — arms A/C excluded different single
+  queries (per-arm exclusion rates were low, 1.3%/3.8%/0%, but the *specific* excluded queries didn't
+  overlap). Likely seed-count-driven noise at low absolute exclusion counts, not a structural bias — more
+  likely to resolve with more seeds than with a redesign.
+- **German**: `asymmetric_exclusion: excluded_jaccard=0.0 < 0.5` — same shape, zero overlap in the (very few)
+  excluded queries.
+- **synth-scan-v1**: a real, structural problem, not noise — `arm_A: error_rate=0.367 > 0.15`,
+  `arm_B: error_rate=0.600 > 0.15`, `low_paired_retention: 0.525 < 0.7`. Interrogated: the calibrated timeout
+  (330s) was sized from a pilot that likely did not capture how long a `Read`-capable agent (conditions A/B)
+  spends struggling with a **degraded** scan image before giving up — condition C, which never attempts to
+  read the raw image (MCP-only), did not show this pathology. This is a genuine, specific, fixable
+  miscalibration (a longer timeout for image-heavy corpora specifically, or a turn-budget cap on repeated
+  `Read` attempts against the same file) — not evidence the renderer or the corpus is broken.
+
+**Per boundary (a) in this tempdoc's own credibility bar: the record stays internal.** No number from this
+run should be quoted in `RESEARCH.md`, a grant application, or any public-facing doc — it is real,
+informative, honestly governed data that correctly failed its own comparability gate, exactly as the
+run-governance machinery (this tempdoc's own As-built #3) was built to do.
+
+## Concrete next steps (not done here — a future session's starting point, not a founder decision)
+
+1. Re-run English/German at the full 5-seed target (or even 4) — the asymmetric-exclusion noise at n=3 seeds
+   is the kind of thing more seeds plausibly washes out; re-check `comparable` before assuming a redesign is
+   needed.
+2. Recalibrate `synth-scan-v1` specifically with either a longer per-cell timeout or a turn-budget cap on
+   repeated `Read` attempts against an unreadable image, then re-run just that corpus.
+3. Real human labeling for §T.3's calibration tooling (the one item this session could not do at all,
+   honestly, not from lack of trying).
+4. Once all three show `comparable=True`, re-run §M.8's full checklist (all 7 items) before any claim text is
+   drafted — this As-built does not shortcut that.
+
+**Known residual gap, flagged plainly:** the `disallowed_tool_calls` empirical assertion (§M.1 item, point 1
+above) exists only in the classic `agent_retrieval_eval.py` runner's `tool_calls` stream-parsing — the
+Inspect-AI-based `agent_utility_inspect.py` runner used for this real calibrated run has no equivalent
+per-cell empirical check (it uses `--output-format json`, not `stream-json`, so there is no per-tool-call
+stream to scan). The `--disallowedTools` **config** was correctly passed to every real cell (confirmed from
+`agent_cohort_key`'s inputs), but whether it was **empirically respected** under real load was not verified
+the way the classic runner's live smoke test verified it. A future pass should either add the same scan to
+`agent_utility_inspect.py`'s Inspect-log parsing, or treat this as an accepted gap between the two runner
+paths.
+
+---
+
+# Founder decisions (2026-07-02) — §M.9 resolutions
+
+Recorded on founder direction (delegated via the strategy session); these resolve §M.9 and unblock
+§M.10's sequence. The run spend stays gated on the U-Founder-2 estimate.
+
+- **U-Founder-1 (corpus sequencing): option (b).** Build the real-scale English member + the German
+  sibling first; the OCR-only member is an explicitly-named follow-up (its load-bearing premise — a
+  degradation band that defeats agent vision-reading yet survives the extraction pipeline — is
+  unverified, and does not belong on the critical path). The claim text must state the omission
+  plainly, per §M.2/§U0. This is sequencing, not scope reduction: U0 is not fully answered until the
+  OCR member exists.
+- **U-Founder-2 (budget): not yet signed.** Step 0 of the implementing session is the combined
+  estimate (engineering lift §T.1-T.4 + the calibrated run at the real chosen scale); the founder
+  signs off against that number before any certified-n spend.
+- **U-Founder-3 (model tier): haiku-only for v1**, per the binding jseval cost policy. A higher-tier
+  sweep is a post-publication follow-up, not v1.
+- **U-Founder-4 (judge calibration): the founder labels the ~30-50 sample; one additional independent
+  human rater to be recruited** (if genuinely infeasible, single-rater with the limitation stated in
+  the write-up). No minimum-kappa hard gate — report the value with its CI, per this plan's default.
+  The implementing session should prepare a frictionless labeling sheet (question, gold answer, agent
+  answer, correct?-column) so the founder's time cost stays ~1 hour.
+- **U-Founder-5 (timeline): no external deadline governs this sequence.** The launch spike gates on
+  this number being ready — not the reverse.
+- **Leaner-floor question (§Critical-analysis pass): option (b) IS the leaner floor.** No other §M.8
+  item is relaxed — each remaining item maps to a red-team attack that would otherwise land.
+
+## U-Founder-4 revised (2026-07-02, same day) — cross-family grader panel replaces bulk human labeling
+
+The founder declines the ~1h human-labeling session; the calibration design is revised under the
+same honesty constraints rather than silently kept-but-unstaffed:
+
+- **Replace** the ≥2-human-rater sample with a **cross-family LLM grader panel**: the stratified
+  30-50 sample (still oversampling EM-disagreement cases) is independently graded by frontier models
+  from **different providers/families than both** the agent-under-test (Claude Haiku) and the judge
+  (local Qwen) — e.g. a GPT-class and/or Gemini-class grader. Report cross-family agreement (kappa
+  with CI, per §M.4's existing reporting shape). Rationale honestly stated: this reduces — but does
+  **not** eliminate — grader-correlation, since different training lineages fail less identically
+  than same-family models; it is weaker than human calibration on exactly the hard/ambiguous cases.
+- **The write-up must say exactly that**: "judge calibrated against a cross-family model panel, not
+  human raters." Red-team attack #4 (§M.7) is thereby *partially* answered, accepted because the
+  judge only affects the **accuracy** metric, which §M.5 already reports directionally — the headline
+  token-efficiency claim is judge-independent (mechanical token counts).
+- **§M.8 item 3 is amended accordingly**: the computed-and-reported calibration statistic is the
+  cross-family panel agreement (with CI), not a human kappa.
+- **Optional, never blocking:** a ~15-minute founder spot-check of only the items where the graders
+  disagree with each other (typically a handful) converts the limitation into genuine human-anchored
+  calibration; it stays available if the accuracy result ever becomes headline-worthy, and nothing
+  in §M.10 waits on it.
 

@@ -179,5 +179,11 @@ public record SubstrateGraph(
       // Tempdoc 550 thesis III: the ONE intent-gate evaluator shared by enforcement + Preview.
       io.justsearch.app.services.intent.IntentGateEvaluator intentGateEvaluator,
       // Tempdoc 550 thesis IV: durable allow-always grants (issued by the approve endpoint).
-      io.justsearch.app.services.intent.DurableGrantStore durableGrantStore) {}
+      io.justsearch.app.services.intent.DurableGrantStore durableGrantStore,
+      // Tempdoc 655: shared between REST and MCP gate paths so either can create/consume a
+      // pending authorization for the other's approve endpoint to satisfy.
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore,
+      // Tempdoc 655: live announcement of new pending records for the always-on shell.
+      io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+          pendingAuthorizationChanges) {}
 }

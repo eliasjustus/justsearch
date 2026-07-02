@@ -108,6 +108,8 @@ class ShotResult:
     # tempdoc 615 §6.2 — the structured-measurement companion (facts, not pixels).
     measure_path: str | None = None
     measure_summary: dict[str, Any] | None = None
+    # Tempdoc 669 — set when `--record` captured a video spanning this step's chain replay.
+    video_path: str | None = None
 
 
 @dataclass

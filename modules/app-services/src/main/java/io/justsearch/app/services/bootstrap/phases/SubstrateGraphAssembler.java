@@ -139,6 +139,8 @@ public final class SubstrateGraphAssembler {
             operationOut.actionLedgerChangeRegistry(),
             operationOut.globalHardStop(),
             operationOut.intentGateEvaluator(),
-            operationOut.durableGrantStore()));
+            operationOut.durableGrantStore(),
+            operationOut.pendingAuthorizationStore(),
+            operationOut.pendingAuthorizationChangeRegistry()));
   }
 }

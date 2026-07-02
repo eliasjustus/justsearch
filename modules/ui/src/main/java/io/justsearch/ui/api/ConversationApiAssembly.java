@@ -376,7 +376,12 @@ final class ConversationApiAssembly {
           knowledgeSearchControllerSupplier,
           () -> b.HeadAssembly,
           java.time.Clock.systemUTC(),
-          () -> manifestPubForMcp);
+          () -> manifestPubForMcp,
+          // Tempdoc 655: the SAME pending-authorization store/broadcast the REST gate path uses
+          // (ResourceApiModule), so an MCP-originated gate firing is visible to the same approve
+          // endpoint and the same live shell signal — not a second, parallel mechanism.
+          b.HeadAssembly.substrate().conversation().pendingAuthorizationStore(),
+          b.HeadAssembly.substrate().conversation().pendingAuthorizationChanges());
       mcpProtocolHandler =
           new io.justsearch.ui.api.mcp.McpProtocolHandler(
               mcpSurface,

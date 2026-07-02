@@ -62,15 +62,20 @@ same JVM as the Head process. No Node.js required.
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts.
 
-## Available Tools (5, position-bias ordered)
+## Available Tools (6, position-bias ordered)
 
 | # | Tool | Backend | Purpose |
 |---|------|---------|---------|
 | 1 | `justsearch_answer` | `DocumentService.retrieveContext()` | RAG retrieval — assembled passages with source attribution. Primary QA tool. Position-biased first. |
 | 2 | `justsearch_search` | `KnowledgeHttpApiAdapter.search()` | Exploratory search with facets, filters. For discovery and browsing. |
 | 3 | `justsearch_browse` | `core.browse-folders` Operation | Folder structure exploration. |
-| 4 | `justsearch_ingest` | `core.ingest-files` Operation | File indexing. |
+| 4 | `justsearch_ingest` | `core.ingest-files` Operation | File indexing. The only mutating tool — see Trust Model below. |
 | 5 | `justsearch_status` | `KnowledgeHttpApiAdapter.status()` | Index health + enrichment coverage. |
+| 6 | `justsearch_runtime_manifest` | `RuntimeManifestPublisher` | Redacted runtime manifest (identity, lifecycle, AI runtime state) for identity-aware caching. |
+
+All 6 tools validate their arguments against a declared JSON Schema at the MCP boundary before
+dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
+failure.
 
 ## Tool Selection
 
@@ -135,9 +140,27 @@ for subscription support.
 ## Trust Model
 
 MCP clients are registered as `SourceTier.UNTRUSTED` in the intent
-substrate. The trust lattice gates destructive operations behind
-`TYPED_CONFIRM`. Confirmation round-trip via `_confirmationToken`
-argument.
+substrate. The trust lattice gates `justsearch_ingest` (the one
+mutating tool) behind `TYPED_CONFIRM`.
+
+**Confirmation is resolved in the JustSearch app, not by the calling agent
+(tempdoc 655).** When a gate fires, the tool call returns immediately —
+it never blocks — with a message explaining that approval is now showing
+in the JustSearch app; the agent does not need to retry the call. The
+approval is the SAME `PendingAuthorizationStore` / capsule mechanism the
+browser UI's own gated actions use (tempdoc 550), reached via a live SSE
+announcement so the app can react even though it never made the
+originating request. Once a human approves in the app, the server
+completes the dispatch itself using the pending record's own stored
+arguments — the browser never needs (and never receives) the full
+argument payload for an MCP-originated request.
+
+If the user grants "allow always" for `core.ingest-files` at the
+`UNTRUSTED` source tier (via the approval dialog, or directly through
+`POST /api/authorizations/grants`), future `justsearch_ingest` calls
+succeed immediately with no prompt — the pre-existing durable-grant
+mechanism already covers MCP callers, since `SourceTier` is
+transport-agnostic.
 
 ## Legacy: Old TypeScript MCP Server
 

@@ -147,12 +147,16 @@ public final class DocumentTypeDetector {
     if (docId == null || docId.isBlank()) {
       return "unknown";
     }
-    try {
-      return Path.of(docId).getFileName().toString();
-    } catch (Exception e) {
-      // Fallback for non-path IDs
-      int lastSlash = Math.max(docId.lastIndexOf('/'), docId.lastIndexOf('\\'));
-      return lastSlash >= 0 ? docId.substring(lastSlash + 1) : docId;
+    // OS-independent extraction: docIds carry file paths that may use Windows (\) or POSIX (/)
+    // separators regardless of the host OS running the detector. Path.of() is OS-dependent —
+    // on Linux it treats "C:\\a\\b.pdf" as a single segment — so split on both separators
+    // directly (tempdoc 668). Strip trailing separators first so ".../user/" yields "user".
+    String s = docId;
+    while (s.length() > 1 && (s.charAt(s.length() - 1) == '/' || s.charAt(s.length() - 1) == '\\')) {
+      s = s.substring(0, s.length() - 1);
     }
+    int lastSep = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    String name = lastSep >= 0 ? s.substring(lastSep + 1) : s;
+    return name.isEmpty() ? "unknown" : name;
   }
 }
