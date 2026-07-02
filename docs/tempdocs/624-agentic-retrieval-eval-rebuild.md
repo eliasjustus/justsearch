@@ -2864,3 +2864,44 @@ Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility
 existing `arms.substitution_c` block, read not rewritten by this pass) and
 `out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json` (same). No new files were written for
 this pass — `_leak_free_exclusion_report.json`'s existing per-cell detail already covers condition C.
+
+---
+
+# The judge-scoring gap (2026-07-02, eleventh pass) — every number on record is EM/substring-only
+
+> A targeted investigation (prompted by "what other work remains") checked whether §M.4's hybrid judge
+> pipeline (EM auto-pass → local LLM judge on the misses, a different model family than the haiku agent under
+> test) was actually applied to the real run. It was not — a real, previously undocumented gap, distinct
+> from the already-disclosed absence of *human calibration* of the judge (As-built #5 item 4/"Concrete next
+> steps" item 3, which is about validating the judge, not about whether the judge ran at all).
+
+## The finding
+
+Every committed composed record from the real run — `out-{en,de,scan}/utility-comparison.v1.json` and their
+leak-free siblings — carries `cohort.judge.kind: "substring-em"`, not `"hybrid-em-llm"`. Root cause:
+`agent_utility_inspect.py`'s `run_utility_eval` (the function `jseval utility-run` actually calls, per
+As-built #5's own stated execution path) hardcodes `judge_kind="substring-em"` and its task `scorer` is
+`substring_scorer()` — a pure exact-substring/abstention-phrase matcher, the same one this tempdoc's own §C-6
+already named as "below the 2026 bar." `utility_judge.py`'s hybrid pipeline is never called anywhere in that
+file. No `judge-overlay.json`-shaped artifact exists anywhere under `tmp/624-run/` or
+`scripts/jseval/624-run-2026-07-02/`, and the run logs confirm `substring_scorer` accuracy summaries only, no
+judge/llama-server invocation.
+
+**This means every accuracy delta and McNemar p-value currently on record — including the leak-corrected
+pooled figure (Δ−0.094, p=0.055) and the condition-C figures — is an EM/substring-only measurement**, not the
+hybrid measurement §M.4 specified as the credible baseline. As-built #4's earlier "EM-vs-judge agreement
+0.90" figure was measured against a *different*, earlier floor-log set (the MultiHop-RAG floor), not this
+run — it does not establish that this run's EM-only scoring is reliable on these three battlefield corpora.
+As-built #5's own M.4-adjacent text ("already built and reused verbatim") reads as though the hybrid pipeline
+was applied to this run; it was not, and no prior section states this plainly. Recorded here so it is.
+
+## What this does NOT mean
+
+This is not evidence the reported numbers are *wrong* — EM/substring scoring is a real, if blunt, correctness
+signal, and this tempdoc's own C-6 finding already named its limitation as a *precision* concern (missing
+correct-but-differently-phrased answers, or passing superficially-matching wrong ones), not a directional
+bias in either arm specifically. But it is a real, unstated gap against this tempdoc's own credibility bar
+(§M.8 item 3 requires the human-calibration kappa be computed "whatever the value" — which presupposes the
+judge was run at all) and should be closed or explicitly disclosed before any external claim, not left
+implicit.
+
