@@ -1562,5 +1562,24 @@
         "self_reproduced": false
       }
     ]
+  },
+  "revision": {
+    "supersedes": "../out-cross-corpus/utility-comparison-cross-corpus.v1.json",
+    "reason": "leak_correction",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "cohort.search_config_cohort_key",
+      "composed_at",
+      "coverage.contamination_class",
+      "measured.haiku.accuracy",
+      "measured.haiku.arms",
+      "measured.haiku.cost_usd",
+      "measured.haiku.leak_suspect_cells",
+      "measured.haiku.n_paired_observations",
+      "measured.haiku.stratified",
+      "measured.haiku.tokens_unique",
+      "measured.haiku.turns"
+    ]
   }
 }

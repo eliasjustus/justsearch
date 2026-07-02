@@ -846,3 +846,42 @@ def test_cross_corpus_governance_derives_tier_from_least_comparable_input():
         _xcorpus_fixture(), composed_at="t", confidence_tier="A", governance=gov)
     assert rec["comparability"]["comparable"] is False
     assert rec["confidence_tier"] == "C"                # DERIVED, overrides the passed "A"
+
+
+# --- revision (tempdoc 624 Design 1) ----------------------------------------
+
+def test_build_revision_constructs_valid_object():
+    rev = utility_comparison.build_revision(
+        supersedes="../out-en/utility-comparison.v1.json",
+        reason="leak_correction",
+        changed_fields=["measured.golden/battlefield-en-v1.haiku.accuracy"],
+    )
+    assert rev == {
+        "supersedes": "../out-en/utility-comparison.v1.json",
+        "reason": "leak_correction",
+        "changed_fields": ["measured.golden/battlefield-en-v1.haiku.accuracy"],
+    }
+
+
+def test_build_revision_accepts_every_closed_set_reason():
+    for reason in utility_comparison.REVISION_REASONS:
+        rev = utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json", reason=reason, changed_fields=[])
+        assert rev["reason"] == reason
+
+
+def test_build_revision_rejects_reason_outside_closed_set():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="not in closed set"):
+        utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json",
+            reason="oops_not_a_real_reason",
+            changed_fields=[],
+        )
+
+
+def test_build_revision_changed_fields_is_a_copy_not_the_caller_list():
+    src = ["cohort.judge"]
+    rev = utility_comparison.build_revision(
+        supersedes="../out/utility-comparison.v1.json", reason="judge_rescore", changed_fields=src)
+    src.append("mutated_after_the_call")
+    assert rev["changed_fields"] == ["cohort.judge"]

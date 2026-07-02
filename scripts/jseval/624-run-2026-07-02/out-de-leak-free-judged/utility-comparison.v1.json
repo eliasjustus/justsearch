@@ -434,5 +434,15 @@
         "self_reproduced": false
       }
     ]
+  },
+  "revision": {
+    "supersedes": "../out-de-leak-free/utility-comparison.v1.json",
+    "reason": "judge_rescore",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "cohort.judge.kind",
+      "composed_at"
+    ]
   }
 }

@@ -46,6 +46,35 @@ class UtilityComposeError(ValueError):
     """Raised when a candidate run-set cannot form one coherent comparison."""
 
 
+# Closed set of revision reasons (tempdoc 624 Design 1). A record's `revision`
+# field is present only when it corrects a prior composition of the SAME
+# identity-bearing inputs -- never for an unrelated new measurement.
+REVISION_REASONS = frozenset({"leak_correction", "judge_rescore", "reseed", "other"})
+
+
+def build_revision(supersedes: str, reason: str, changed_fields: list[str]) -> dict:
+    """Build the `revision` object attached to a corrected ``utility-comparison.v1``
+    (or cross-corpus) record (tempdoc 624 Design 1 / Confidence pass #6).
+
+    ``supersedes`` MUST be a relative path to the prior record's JSON file --
+    no field in the record itself (``agent_cohort_key``, a pairing key) is
+    unique across revisions of the same underlying run, since those are
+    deliberately invariant across the original and every corrected version.
+
+    This is metadata construction, not a diffing engine: ``changed_fields`` is
+    caller-specified, not auto-derived.
+    """
+    if reason not in REVISION_REASONS:
+        raise UtilityComposeError(
+            f"revision reason {reason!r} not in closed set: {sorted(REVISION_REASONS)}",
+        )
+    return {
+        "supersedes": supersedes,
+        "reason": reason,
+        "changed_fields": list(changed_fields),
+    }
+
+
 # Cited external prior art (tempdoc 624 §D-4 / §D.5) — CONSTANTS, never a
 # projection of our runs. They position the artifact as a contribution, not a
 # boast; pinned by source + version, self_reproduced=False.

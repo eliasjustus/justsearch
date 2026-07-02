@@ -1562,5 +1562,15 @@
         "self_reproduced": false
       }
     ]
+  },
+  "revision": {
+    "supersedes": "../out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json",
+    "reason": "judge_rescore",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "cohort.judge.kind",
+      "composed_at"
+    ]
   }
 }

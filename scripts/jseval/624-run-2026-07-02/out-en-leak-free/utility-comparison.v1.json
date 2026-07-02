@@ -392,5 +392,21 @@
         "self_reproduced": false
       }
     ]
+  },
+  "revision": {
+    "supersedes": "../out-en/utility-comparison.v1.json",
+    "reason": "leak_correction",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "composed_at",
+      "measured.golden/battlefield-en-v1.haiku.accuracy",
+      "measured.golden/battlefield-en-v1.haiku.arms",
+      "measured.golden/battlefield-en-v1.haiku.cost_usd",
+      "measured.golden/battlefield-en-v1.haiku.leak_suspect_cells",
+      "measured.golden/battlefield-en-v1.haiku.n_paired_observations",
+      "measured.golden/battlefield-en-v1.haiku.tokens_unique",
+      "measured.golden/battlefield-en-v1.haiku.turns"
+    ]
   }
 }

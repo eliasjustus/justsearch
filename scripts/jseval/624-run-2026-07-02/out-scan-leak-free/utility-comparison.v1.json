@@ -688,5 +688,21 @@
         "self_reproduced": false
       }
     ]
+  },
+  "revision": {
+    "supersedes": "../out-scan/utility-comparison.v1.json",
+    "reason": "leak_correction",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "composed_at",
+      "measured.golden/synth-scan-v1.haiku.accuracy",
+      "measured.golden/synth-scan-v1.haiku.arms",
+      "measured.golden/synth-scan-v1.haiku.cost_usd",
+      "measured.golden/synth-scan-v1.haiku.leak_suspect_cells",
+      "measured.golden/synth-scan-v1.haiku.n_paired_observations",
+      "measured.golden/synth-scan-v1.haiku.tokens_unique",
+      "measured.golden/synth-scan-v1.haiku.turns"
+    ]
   }
 }
