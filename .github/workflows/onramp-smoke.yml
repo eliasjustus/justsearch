@@ -53,6 +53,11 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\empty-models" | Out-Null
 
+      # Fast, model-less anti-regression: dev inference resolution must NEVER fall back to a CPU
+      # baseline (tempdoc 656 Move 1/2). No stack, no models needed — runs before the heavier smoke.
+      - name: Dev-runner runtime resolution regression test
+        run: npm run test:dev-runner
+
       - name: Onramp doctor (diagnostic — reports the tier)
         continue-on-error: true
         env:

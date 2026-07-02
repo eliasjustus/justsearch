@@ -19,6 +19,7 @@
 'use strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,26 @@ function cuda12Resolvable() {
 }
 
 /**
+ * Cheap NVIDIA GPU presence probe: `nvidia-smi --query-gpu=...`. Returns `true` on a successful,
+ * non-empty query, `null` ("unknown") on ANY failure (missing binary, no permissions, timeout, non-NVIDIA
+ * GPU) — nvidia-smi's absence does not prove a GPU is absent, so failure must not be reported as `false`.
+ * This is a presence check, not the full VRAM-sizing probe `gpu-bridge` does at activation time; it only
+ * answers "was an NVIDIA GPU positively confirmed", to stop the doctor from claiming Tier 2 on artifacts
+ * alone (CONTRIBUTING.md: Tier 2 needs an NVIDIA GPU, 8 GB+ VRAM).
+ */
+function gpuPresenceCheck() {
+  try {
+    const out = execFileSync('nvidia-smi', ['--query-gpu=memory.total', '--format=csv,noheader'], {
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim();
+    return out.length > 0 ? true : null;
+  } catch {
+    return null; // absent / errored / timed out — unknown, NOT "no GPU"
+  }
+}
+
+/**
  * Is a package's PRIMARY artifact present on disk? Tier detection keys on the primary artifact (a
  * variant file), NOT full package completeness — mirrors the canActivateDefault fix: e.g. the chat
  * package's `mmproj` supporting file is vision-only and must not gate "can this env answer" (text
@@ -84,11 +105,12 @@ function detectOffline() {
   const present = {};
   for (const pkg of reg.packages || []) present[pkg.id] = packagePresent(pkg, modelsDir, aiHome);
   const runtime = cuda12Resolvable();
-  return { present, runtime, modelsDir };
+  const gpuVerified = gpuPresenceCheck();
+  return { present, runtime, gpuVerified, modelsDir };
 }
 
 /** Map presence → a tier + what each higher tier needs + the single next remedy. */
-function deriveTier({ present, runtime }) {
+function deriveTier({ present, runtime, gpuVerified }) {
   const embedding = !!present.embedding;
   const chat = !!present.chat;
   const missing = [];
@@ -98,9 +120,9 @@ function deriveTier({ present, runtime }) {
   let tier = 0; // Tier 0 (keyword search) needs no models — always reachable.
   if (embedding) tier = 1; else missing.push('embedding model (semantic/hybrid search)');
   if (embedding && chat && runtime) tier = 2;
-  if (!chat) missing.push('chat GGUF model (cited AI answers)');
+  // missing/nextRemedy both walk the ladder in the same order: embedding → runtime → chat.
   if (!runtime) missing.push('GPU llama-server runtime (cited AI answers)');
-  // nextRemedy names the FIRST unmet rung, in ladder order (embedding → runtime → chat).
+  if (!chat) missing.push('chat GGUF model (cited AI answers)');
   let nextRemedy;
   if (!embedding) {
     nextRemedy = 'Reach Tier 1 (semantic search): install the ONNX embedding model (Install AI, or place it under the models dir).';
@@ -108,6 +130,8 @@ function deriveTier({ present, runtime }) {
     nextRemedy = 'Reach Tier 2 (cited answers): provision the GPU runtime once — `./gradlew :modules:ui:stageLlamaCudaVariant` at the main checkout (then the dev-runner shares it to every worktree).';
   } else if (!chat) {
     nextRemedy = 'Reach Tier 2 (cited answers): install the chat GGUF model (Install AI).';
+  } else if (tier === 2 && gpuVerified !== true) {
+    nextRemedy = 'Tier 2 artifacts are present but an NVIDIA GPU was not positively verified — cited answers require an NVIDIA GPU with 8 GB+ VRAM.';
   } else {
     nextRemedy = null; // Tier 2 — nothing missing for the onramp.
   }
@@ -137,11 +161,20 @@ async function getJson(base, route) {
 async function main() {
   const offline = detectOffline();
   const derived = deriveTier(offline);
+  const tierNames = ['keyword search', 'semantic/hybrid search', 'cited AI answers'];
+  // Tier 2 is keyed on artifact presence only (packagePresent/cuda12Resolvable check disk, not
+  // hardware) — label it honestly when an NVIDIA GPU wasn't positively confirmed, so "Tier 2" doesn't
+  // read as a guarantee that activation will actually succeed (CONTRIBUTING.md: Tier 2 needs an
+  // NVIDIA GPU, 8 GB+ VRAM).
+  const tierName = derived.tier === 2 && offline.gpuVerified !== true
+    ? 'cited AI answers (artifacts present; GPU not verified — requires an NVIDIA GPU, 8 GB+ VRAM)'
+    : tierNames[derived.tier];
   const report = {
     tier: derived.tier,
-    tierName: ['keyword search', 'semantic/hybrid search', 'cited AI answers'][derived.tier],
+    tierName,
     modelsPresent: offline.present,
     gpuRuntimeResolvable: offline.runtime,
+    gpuVerified: offline.gpuVerified,
     missingForHigherTiers: derived.missing,
     nextRemedy: derived.nextRemedy,
     live: null,
@@ -156,10 +189,18 @@ async function main() {
     ]);
     if (status) {
       const worker = status.components?.worker;
-      workerBroken = worker && worker.state && worker.state !== 'LIFECYCLE_STATE_READY';
+      // LifecycleSnapshotV1's six real states (LifecycleState proto; UNSPECIFIED/UNRECOGNIZED are
+      // rejected sentinels, never actually sent — see LifecycleSnapshotV1.requireRealState). STARTING
+      // is a normal transient state during stack boot, not an environment defect — exclude it from
+      // "broken" so a doctor run during startup doesn't exit 2 for a stack that just hasn't finished
+      // coming up yet. Only DEGRADED/ERROR/STOPPING/STOPPED (i.e. anything but READY or STARTING)
+      // count as "actually broken".
+      const workerStarting = worker?.state === 'LIFECYCLE_STATE_STARTING';
+      workerBroken = worker && worker.state && worker.state !== 'LIFECYCLE_STATE_READY' && !workerStarting;
       report.live = {
         apiBaseUrl: stack.apiBaseUrl,
         worker: worker?.state,
+        workerStarting,
         indexedDocuments: status.worker?.core?.indexedDocuments,
         aiReady: status.aiReady,
         embeddingReady: status.embeddingReady,
@@ -174,10 +215,12 @@ async function main() {
     console.log(`\nJustSearch onramp doctor\n${'='.repeat(24)}`);
     console.log(`Tier reached: ${report.tier} — ${report.tierName}` + (report.tier === 0 ? '  (works with zero models downloaded)' : ''));
     console.log(`Models on disk: ${Object.entries(offline.present).filter(([, v]) => v).map(([k]) => k).join(', ') || '(none)'}`);
-    console.log(`GPU runtime resolvable: ${offline.runtime ? 'yes' : 'no'}`);
+    console.log(`GPU runtime resolvable: ${offline.runtime ? 'yes' : 'no'}` +
+      (offline.runtime ? ` (GPU verified: ${offline.gpuVerified === true ? 'yes' : 'not verified'})` : ''));
     if (report.live) {
       console.log(`\nLive stack (${report.live.apiBaseUrl}): worker=${report.live.worker}, indexed=${report.live.indexedDocuments}, aiReady=${report.live.aiReady}` +
         (report.live.aiReason ? `, ai=${report.live.aiReason}` : ''));
+      if (report.live.workerStarting) console.log(`(stack is starting — worker not yet READY; this is informational, not an error)`);
     } else {
       console.log(`\nNo running stack detected (offline check only). Start one: node scripts/dev/dev-runner.cjs start`);
     }
