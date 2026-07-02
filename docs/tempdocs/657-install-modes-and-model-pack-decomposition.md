@@ -1,7 +1,7 @@
 ---
 title: "Install modes and model-pack decomposition: add an install-intent axis orthogonal to hardware, with runtime mode as a realized-capability projection (Full Desktop / Headless Runtime / MCP Lite as presets)"
 type: tempdocs
-status: "in-progress — LAUNCH-BLOCKER (re-scoped 2026-07-01, §Re-scope note); substrate implemented & live-verified 2026-07-02 (feat(657)); founder tier-boundary decision, 654/655-owned items, and the §Implementation status follow-ups remain"
+status: "in-progress — LAUNCH-BLOCKER (re-scoped 2026-07-01, §Re-scope note); substrate implemented & live-verified 2026-07-02 (feat(657)); founder tier-boundary decision, 654/655-owned items, and the §Implementation status follow-ups remain; Lightest-tier capability DECIDED 2026-07-02 (§Tier decision) — dense rung in; bundle-vs-download remains open"
 created: 2026-06-28
 updated: 2026-07-02
 category: packaging / installer / model-distribution / developer-experience
@@ -543,3 +543,15 @@ configuration choice, then surface the options with their trade-offs.
 > **D7** and **Open decisions #2** (BM25 zero-download rung vs. adding a ~118 MB small multilingual
 > dense rung). The design makes no unilateral tier-boundary call — it stays a `retrieval-core`
 > variant selection left to the founder.
+
+---
+
+# Tier decision (2026-07-02, founder-resolved)
+
+Of this tempdoc's §Open decisions, #2 is resolved: **the lightest install tier (MCP Lite) ships the
+~118 MB low-download dense-retrieval rung, not BM25-only.** Rationale: the five-minute first
+impression is the product's wedge — a keyword-only MCP Lite demos the wrong product, and ~118 MB is
+cheap against that cost. #1 (bundle-vs-download of the ~3.5 GB ONNX set) and #3 (Headless LLM-tier
+default) remain open — #1 has founder-only edges (external model hosting; the NVIDIA-redistribution
+legal review flagged in the go-public readiness work). Implementation of the dense rung should ride
+with whichever session next touches the model registry, honoring the reserved #1 boundary.
