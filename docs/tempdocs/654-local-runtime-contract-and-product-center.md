@@ -1,7 +1,7 @@
 ---
 title: "Local runtime contract and product center: JustSearch's public center is the local agent runtime (desktop = reference client); v1 runtime-contract design — a manifest-native, under-promised stable core (health/status subset + MCP endpoint/tools + runtime manifest) with a coarse contract version, a Docker-style compatibility matrix, and a SemVer-scoped stability policy, projected over already-versioned surfaces rather than a new governed substrate"
 type: tempdocs
-status: "IMPLEMENTED 2026-07-02 (§Implementation) — v1 Runtime Contract shipped: a manifest `runtimeContract` descriptor projecting single-sourced constituent versions, `serverInfo.version` made the real SemVer tool-surface version, `/mcp` advertised in reachability, canonical docs (explanation 28 + reference), and tests. Product-center RESOLVED 2026-07-01; design §D0–D11; de-risking §U1–U6. Conformance depth → 655, onramp → 656, install modes → 657, trust evidence → 659."
+status: "IMPLEMENTED 2026-07-02 (§Implementation) — v1 Runtime Contract shipped: a manifest `runtimeContract` descriptor projecting single-sourced constituent versions, `serverInfo.version` made the real SemVer tool-surface version, `/mcp` advertised in reachability, canonical docs (explanation 28 + reference), and tests. Product-center RESOLVED 2026-07-01; design §D0–D11; de-risking §U1–U6. Conformance depth → 655, onramp → 656, install modes → 657, trust evidence → 659. D11 defaults RATIFIED 2026-07-02 (§Ratification note)."
 created: 2026-06-28
 updated: 2026-07-02
 category: product-architecture / runtime-contract / public-positioning
@@ -579,4 +579,14 @@ For the next agent — nothing here blocks the shipped v1; these are deferred or
    was current-stable as of 2026-07-02.
 6. **Coordination with 650** — only one alignment line was changed in `01-system-overview.md`; 650 owns
    the broader public "what JustSearch is" narrative and may carry a fuller runtime-first reframe.
+
+---
+
+# Ratification note (2026-07-02)
+
+The founder ratifies the D11 defaults as shipped: Runtime Contract **0.1.0**, MCP tool-surface
+**0.1.0**, deprecation window **≥90 days**, and the explanation/reference doc split. Rationale: they
+implement the under-promise boundary the Direction note fixed; 0.x stays honest until "we will not
+break this" is literally true. Bumping remains the documented one-place edit; a bump adds a changelog
+row (§Follow-ups 2/2b).
 
