@@ -13,7 +13,7 @@
       "platformRiskNotes": [
         "Includes Windows-sensitive app-util and app-launcher behavior.",
         "Includes runtime manifest, logging, headless eval, and app-instance locking surfaces.",
-        "Do not move this lane off Windows without an advisory duplicate run first."
+        "Migrated to ubuntu-latest (tempdoc 668, advisory runs done). Genuinely Windows-specific tests (@Tag windows) run on the windows-native-tests lane."
       ],
       "gradleTasks": [
         ":modules:app-agent:test",
@@ -44,7 +44,7 @@
       "platformRiskNotes": [
         "Includes Tika/PDF fixture-adjacent behavior, Lucene filesystem behavior, index locking, and worker model discovery.",
         "Contains path and worker-runtime assumptions that need targeted proof before a platform move.",
-        "Do not treat this lane as platform-neutral without an advisory duplicate run first."
+        "Migrated to ubuntu-latest (tempdoc 668). Cross-platform issues fixed (isCloudPlaceholder attr read, path-separator handling, blank-prefix guard, IndexRootLock spawn); timing-sensitive DrainAndClose method runs @Tag windows on the windows-native-tests lane."
       ],
       "gradleTasks": [
         ":modules:adapters-lucene:test",
@@ -73,8 +73,8 @@
       "platformClass": "mixed/needs targeted experiment",
       "platformRiskNotes": [
         "Includes GPU bridge, ORT/common, app-inference, system-test substrate, and native/runtime assumptions.",
-        "This is the highest-risk shard for a direct protected Ubuntu migration.",
-        "Use advisory platform experiments before changing the required proof environment."
+        "Migrated to ubuntu-latest (tempdoc 668). GPU/ORT tests self-skip via @EnabledOnOs; the timing-sensitive LlamaServerOps crash-telemetry method runs @Tag windows on the windows-native-tests lane.",
+        "Advisory --continue Linux runs were used to enumerate and fix the portability tail before flipping."
       ],
       "gradleTasks": [
         ":modules:ai-backend:test",

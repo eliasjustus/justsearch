@@ -1338,3 +1338,33 @@ scattered. **Risk:** the four "investigate" items (D, E, F, G) could surface dee
 dominant pattern (one attribute-read bug + path-separator handling) is routine cross-platform work. This
 supersedes CORRECTION-set's "not realistically achievable" — it is achievable; it is a real day of
 cross-platform hardening for a real ~33%, which is the call the user made ("finish the full migration").
+
+### DONE — full migration shipped and measured: ~741s → 436s (~41%) - 2026-07-02
+
+All JVM lanes now run on ubuntu-latest; every required check green (run 28559135803). The 8 root causes
+resolved exactly as planned — 6 cross-platform FIXES + 2 method-level `@windows` tags:
+
+- **A** `SyncDirectoryOps.isCloudPlaceholder` — catch `IllegalArgumentException` (cleared ~30 tests).
+- **B** `DocumentTypeDetector.extractFilename` / **G** `WritePathOps` — OS-independent filename split.
+- **C** `IndexRootLockTest` — cross-platform throwaway-process spawn.
+- **D** `PathNormalizer.normalizePathPrefix` — keep a blank prefix blank (latent correctness bug: a
+  blank prefix became a match-everything `/` on Linux, defeating `deleteByPathPrefix`'s guard).
+- **F** `app-launcher` + `ui` `startScripts` — our own `doLast` used the string overload of
+  `Regex.replace`, so the `$APP_HOME` replacement parsed as an illegal group reference on Linux; the
+  lambda overload treats it literally.
+- **E** `LlamaServerOpsCrashTelemetryTest.bugF` + `DrainAndCloseTest.drainAndCloseWaitsForInFlightWriter`
+  — `@Tag("windows")` at the **method** level (async-recovery race / 10ms lock-timing; genuinely
+  timing-sensitive worker-runtime behavior, not cleanly deterministic without a production hook). Other
+  methods in those classes stay on Linux.
+
+**Measured per-lane (run 28559135803), before → after:** search-worker 713→**361s**, Build 534→**325s**,
+platform-contracts 561→**414s**, app-ui ~598→**413s**, License ~320→282s; new **windows-native = 419s**
+(the new critical path). **Run total ~741s → 436s — a ~41% cut (~5 min), better than the ~33% estimate.**
+
+The windows-native lane (compiles 5 modules for the genuinely-Windows tests) came in at 419s —
+*comparable* to the Linux lanes, not the runaway bottleneck the "prefer FIX over TAG" discipline was
+meant to avoid. That discipline paid off: only 2 timing-sensitive methods are tagged, so the lane stays
+lean. Coverage preserved — those Windows tests still gate merges via the `Windows-native tests` required
+check. **Verdict:** the ~10–12 min → ~7.3 min win is real, shipped, and green. Follow-up (optional): the
+windows-native lane could be shrunk further, and E/DrainAndClose made deterministic via a production
+pause-hook, if it ever matters.
