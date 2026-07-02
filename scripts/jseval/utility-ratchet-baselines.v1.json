@@ -1,0 +1,14 @@
+{
+  "baselines": {
+    "golden/util-smoke": {
+      "agent_model": "haiku",
+      "c_floor_min": 1.0,
+      "cli_version": "2.1.183 (Claude Code)",
+      "src": "measured condition-C accuracy from a utility-comparison.v1 record",
+      "tolerance_abs": 0.15
+    }
+  },
+  "derived_from_runs": true,
+  "schema": "utility-ratchet-baseline.v1",
+  "tolerance_default_abs": 0.15
+}
