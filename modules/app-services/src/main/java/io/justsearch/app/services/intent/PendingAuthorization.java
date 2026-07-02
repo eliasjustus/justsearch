@@ -39,6 +39,11 @@ import java.util.Objects;
  * @param rationale human-readable why-gated seed (e.g. the dispatcher's message).
  * @param createdAt when the gate fired.
  * @param expiresAt when this pending becomes unusable (stale approvals are refused).
+ * @param requestedBy tempdoc 655 — the calling MCP client's self-reported name (from its
+ *     {@code initialize} handshake's {@code clientInfo}), when the gate fired via MCP; {@code
+ *     null} for a browser-originated gate or an MCP client that omitted {@code clientInfo}.
+ *     Display-only (surfaced in the approval ceremony and the advisory inbox) — never a trust
+ *     input; unlike {@code operationId}/{@code argsJson}, nothing security-relevant reads it.
  */
 public record PendingAuthorization(
     String id,
@@ -49,7 +54,8 @@ public record PendingAuthorization(
     GateBehavior gateBehavior,
     String rationale,
     Instant createdAt,
-    Instant expiresAt) {
+    Instant expiresAt,
+    String requestedBy) {
 
   public PendingAuthorization {
     Objects.requireNonNull(id, "id");
@@ -61,6 +67,7 @@ public record PendingAuthorization(
     Objects.requireNonNull(createdAt, "createdAt");
     Objects.requireNonNull(expiresAt, "expiresAt");
     rationale = rationale == null ? "" : rationale;
+    requestedBy = requestedBy == null || requestedBy.isBlank() ? null : requestedBy;
   }
 
   /** True when {@code now} is at or past {@link #expiresAt}. */

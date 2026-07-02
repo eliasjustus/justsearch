@@ -71,7 +71,7 @@ public final class McpProtocolHandler {
       }
 
       Object result = switch (method) {
-        case "initialize" -> handleInitialize(ctx);
+        case "initialize" -> handleInitialize(ctx, params);
         case "initialized" -> {
           yield null;
         }
@@ -107,10 +107,27 @@ public final class McpProtocolHandler {
     ctx.status(204);
   }
 
-  private Map<String, Object> handleInitialize(Context ctx) {
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> handleInitialize(Context ctx, Object paramsObj) {
     cleanStaleSessions();
     String sessionId = UUID.randomUUID().toString();
-    sessions.put(sessionId, new McpSession(clock.instant()));
+    // Tempdoc 655: capture the caller's self-reported clientInfo.name (part of the MCP spec's own
+    // initialize request) for DISPLAY ONLY — surfaced later in the approval ceremony so a human
+    // can see which agent is asking. Never used for any trust decision (ADR-0030: a handshake-
+    // declared identity is a hint, not enforced policy — same line the ADR already draws for MCP
+    // tool annotations).
+    String clientName = null;
+    try {
+      var params = MAPPER.convertValue(paramsObj, Map.class);
+      Object clientInfo = params != null ? params.get("clientInfo") : null;
+      if (clientInfo instanceof Map<?, ?> ci && ci.get("name") instanceof String name
+          && !name.isBlank()) {
+        clientName = name;
+      }
+    } catch (Exception e) {
+      log.debug("Failed to parse clientInfo from initialize params: {}", e.getMessage());
+    }
+    sessions.put(sessionId, new McpSession(clock.instant(), clientName));
     ctx.header("Mcp-Session-Id", sessionId);
 
     return Map.of(
@@ -131,7 +148,10 @@ public final class McpProtocolHandler {
         (Map<String, Object>) params.getOrDefault("arguments", Map.of());
     if (toolName == null) return McpToolSurface.errorContent("Tool name is required");
     touchSession(sessionId);
-    return surface.callTool(toolName, arguments, sessionId);
+    String requestedBy = sessionId != null && sessions.get(sessionId) != null
+        ? sessions.get(sessionId).clientName
+        : null;
+    return surface.callTool(toolName, arguments, sessionId, requestedBy);
   }
 
   private Map<String, Object> handleResourcesRead(Object paramsObj) {
@@ -222,9 +242,13 @@ public final class McpProtocolHandler {
   private static final class McpSession {
     volatile Instant lastActivity;
     final java.util.Set<String> subscriptions = ConcurrentHashMap.newKeySet();
+    // Tempdoc 655: the client's self-reported name from `initialize`'s `clientInfo` — display
+    // only, never a trust input. Nullable — absent for clients that omit clientInfo.
+    final String clientName;
 
-    McpSession(Instant createdAt) {
+    McpSession(Instant createdAt, String clientName) {
       this.lastActivity = createdAt;
+      this.clientName = clientName;
     }
   }
 }

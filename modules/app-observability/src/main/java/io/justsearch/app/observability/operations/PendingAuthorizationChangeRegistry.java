@@ -52,6 +52,21 @@ public final class PendingAuthorizationChangeRegistry {
   }
 
   /**
+   * Tempdoc 655 — typed-listener convenience (mirrors {@code HealthEventChangeRegistry
+   * #subscribeTyped}). Lets a bootstrap-time consumer (the new {@code authorization.pending}
+   * Advisory projector) subscribe without hand-unwrapping the generic envelope.
+   */
+  public SseStreamChannel.Subscription subscribeTyped(Consumer<PendingAuthorizationEvent> listener) {
+    Objects.requireNonNull(listener, "listener");
+    return channel.subscribe(
+        env -> {
+          if (env.payload() instanceof PendingAuthorizationEvent event) {
+            listener.accept(event);
+          }
+        });
+  }
+
+  /**
    * Broadcasts a newly-created pending authorization. Assigns the next monotonic seq, appends the
    * frame to the ring buffer (for replay on FE reconnect), and delivers to every active listener.
    */

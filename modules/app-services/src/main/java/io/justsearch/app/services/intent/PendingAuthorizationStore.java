@@ -64,6 +64,22 @@ public final class PendingAuthorizationStore {
       RiskTier riskTier,
       GateBehavior gateBehavior,
       String rationale) {
+    return create(operationId, argsJson, sourceTier, riskTier, gateBehavior, rationale, null);
+  }
+
+  /**
+   * Tempdoc 655 — canonical overload: also records {@code requestedBy} (the calling MCP client's
+   * self-reported name, display-only — see {@link PendingAuthorization#requestedBy}). {@code
+   * null} for a browser-originated gate.
+   */
+  public String create(
+      String operationId,
+      String argsJson,
+      SourceTier sourceTier,
+      RiskTier riskTier,
+      GateBehavior gateBehavior,
+      String rationale,
+      String requestedBy) {
     Instant now = clock.instant();
     // Evict expired entries here — expiry is otherwise only checked lazily on peek/consume of
     // a specific id, so a pending that is gated-then-abandoned (never approved) would never be
@@ -89,7 +105,8 @@ public final class PendingAuthorizationStore {
             gateBehavior,
             rationale,
             now,
-            now.plus(ttl)));
+            now.plus(ttl),
+            requestedBy));
     return id;
   }
 

@@ -26,6 +26,12 @@ const CHROME_MAP: Record<string, AdvisoryClassChromeEntry> = {
     icon: '🔧',
     toneClass: 'tone-health',
   },
+  // Tempdoc 655 long-term design pass — a pending MCP/UI approval waiting for a decision.
+  'authorization.pending': {
+    label: 'Approval requested',
+    icon: '🔐',
+    toneClass: 'tone-authorization',
+  },
 };
 
 const DEFAULT_CHROME: AdvisoryClassChromeEntry = {

@@ -47,6 +47,14 @@ public final class AdvisoryResourceCatalog implements ResourceCatalog {
   public static final String HEALTH_RECOVERABLE_SCHEMA_URL =
       "https://ssot.justsearch/v1/schemas/advisory-record.v1.json";
 
+  // Tempdoc 655 long-term design pass — the third advisory class.
+  public static final ResourceRef AUTHORIZATION_PENDING_ID =
+      new ResourceRef("core.advisory-authorization-pending");
+  public static final String AUTHORIZATION_PENDING_ENDPOINT =
+      "/api/advisory/authorization-pending/stream";
+  public static final String AUTHORIZATION_PENDING_SCHEMA_URL =
+      "https://ssot.justsearch/v1/schemas/advisory-record.v1.json";
+
   public static final Duration RESUME_WINDOW = Duration.ofMinutes(5);
   public static final int BUFFER_CAPACITY = 200;
 
@@ -63,7 +71,15 @@ public final class AdvisoryResourceCatalog implements ResourceCatalog {
               HEALTH_RECOVERABLE_ENDPOINT,
               HEALTH_RECOVERABLE_SCHEMA_URL,
               "advisory-health-recoverable",
-              EmissionPolicy.persisted().withDedupeWindow(Duration.ofMinutes(5))));
+              EmissionPolicy.persisted().withDedupeWindow(Duration.ofMinutes(5))),
+          advisoryResource(
+              AUTHORIZATION_PENDING_ID,
+              AUTHORIZATION_PENDING_ENDPOINT,
+              AUTHORIZATION_PENDING_SCHEMA_URL,
+              "advisory-authorization-pending",
+              // Matches PendingAuthorizationAdvisoryProjector.emissionPolicy() — the Resource-layer
+              // declaration and the projector's own must agree (both say REQUIRES_ACK).
+              EmissionPolicy.requiresAck()));
 
   private static Resource advisoryResource(
       ResourceRef id,

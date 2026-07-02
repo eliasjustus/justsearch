@@ -226,6 +226,12 @@ public final class AuthorizationController {
     payload.put("riskTier", p.riskTier().name());
     payload.put("gateBehavior", p.gateBehavior().name());
     payload.put("rationale", p.rationale());
+    // Tempdoc 655: display-only — omitted (not present as a key) when absent, so the FE's
+    // optional-field pattern (undefined ⇒ don't render the line) works without a null-vs-missing
+    // distinction on the wire.
+    if (p.requestedBy() != null) {
+      payload.put("requestedBy", p.requestedBy());
+    }
     try {
       ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(payload));
     } catch (Exception e) {

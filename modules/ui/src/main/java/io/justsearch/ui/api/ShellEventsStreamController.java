@@ -14,13 +14,14 @@ import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * SSE endpoint at {@code GET /api/shell-events/stream} — tempdoc 662's cross-channel
- * multiplexer. Aggregates the 5 streams that were previously 5 independent always-on
+ * multiplexer. Aggregates the 6 streams that were previously independent always-on
  * EventSources (which exhausted the browser's ~6-per-host connection pool, starving the cheap
  * {@code /api/status}/{@code /api/inference/status} polls under load — tempdoc 649) onto ONE
- * physical connection via {@link MultiplexedSseWriter}: intent, the two advisory classes
- * (operation-completed, health-recoverable), action-ledger, and indexing-jobs.
+ * physical connection via {@link MultiplexedSseWriter}: intent, the three advisory classes
+ * (operation-completed, health-recoverable, authorization-pending — tempdoc 655's long-term
+ * design pass added the third), action-ledger, and indexing-jobs.
  *
- * <p>This controller only ASSEMBLES the 6 {@link MultiplexedSseWriter.ChannelSource}s — it does
+ * <p>This controller only ASSEMBLES the 7 {@link MultiplexedSseWriter.ChannelSource}s — it does
  * NOT re-derive any controller's channel-lookup or snapshot-extraction logic. Each source is
  * obtained via the package-visible {@code channel()}/{@code snapshotExtras()} accessors added
  * to the existing single-channel controllers (tempdoc 662 — extend, don't fork): {@link
@@ -45,6 +46,7 @@ public final class ShellEventsStreamController {
   private final IntentEnvelopeChangeRegistry intentChanges;
   private final AdvisoryStreamController operationCompletedAdvisory;
   private final AdvisoryStreamController healthRecoverableAdvisory;
+  private final AdvisoryStreamController authorizationPendingAdvisory;
   private final ActionLedgerController actionLedger;
   private final IndexingJobsStreamController indexingJobs;
   private final PendingAuthorizationChangeRegistry pendingAuthorizationChanges;
@@ -56,6 +58,7 @@ public final class ShellEventsStreamController {
       IntentEnvelopeChangeRegistry intentChanges,
       AdvisoryStreamController operationCompletedAdvisory,
       AdvisoryStreamController healthRecoverableAdvisory,
+      AdvisoryStreamController authorizationPendingAdvisory,
       ActionLedgerController actionLedger,
       IndexingJobsStreamController indexingJobs,
       PendingAuthorizationChangeRegistry pendingAuthorizationChanges) {
@@ -63,6 +66,7 @@ public final class ShellEventsStreamController {
         intentChanges,
         operationCompletedAdvisory,
         healthRecoverableAdvisory,
+        authorizationPendingAdvisory,
         actionLedger,
         indexingJobs,
         pendingAuthorizationChanges,
@@ -73,6 +77,7 @@ public final class ShellEventsStreamController {
       IntentEnvelopeChangeRegistry intentChanges,
       AdvisoryStreamController operationCompletedAdvisory,
       AdvisoryStreamController healthRecoverableAdvisory,
+      AdvisoryStreamController authorizationPendingAdvisory,
       ActionLedgerController actionLedger,
       IndexingJobsStreamController indexingJobs,
       PendingAuthorizationChangeRegistry pendingAuthorizationChanges,
@@ -82,6 +87,8 @@ public final class ShellEventsStreamController {
         Objects.requireNonNull(operationCompletedAdvisory, "operationCompletedAdvisory");
     this.healthRecoverableAdvisory =
         Objects.requireNonNull(healthRecoverableAdvisory, "healthRecoverableAdvisory");
+    this.authorizationPendingAdvisory =
+        Objects.requireNonNull(authorizationPendingAdvisory, "authorizationPendingAdvisory");
     this.actionLedger = Objects.requireNonNull(actionLedger, "actionLedger");
     this.indexingJobs = Objects.requireNonNull(indexingJobs, "indexingJobs");
     this.pendingAuthorizationChanges =
@@ -105,6 +112,8 @@ public final class ShellEventsStreamController {
                 operationCompletedAdvisory.channel(), operationCompletedAdvisory::snapshotExtras),
             new MultiplexedSseWriter.ChannelSource(
                 healthRecoverableAdvisory.channel(), healthRecoverableAdvisory::snapshotExtras),
+            new MultiplexedSseWriter.ChannelSource(
+                authorizationPendingAdvisory.channel(), authorizationPendingAdvisory::snapshotExtras),
             new MultiplexedSseWriter.ChannelSource(actionLedger.channel(), actionLedger::snapshotExtras),
             new MultiplexedSseWriter.ChannelSource(indexingJobs.channel(), indexingJobs::snapshotExtras),
             new MultiplexedSseWriter.ChannelSource(pendingAuthorizationChanges.channel(), null));

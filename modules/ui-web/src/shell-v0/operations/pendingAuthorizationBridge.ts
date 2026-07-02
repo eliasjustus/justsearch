@@ -140,6 +140,7 @@ async function presentAndExecute(
     ...(detail.riskTier ? { riskTier: detail.riskTier } : {}),
     ...(detail.argsSummary ? { argsSummary: detail.argsSummary } : {}),
     ...(detail.rationale ? { purpose: detail.rationale } : {}),
+    ...(detail.requestedBy ? { requestedBy: detail.requestedBy } : {}),
   };
   const decision = await requestAuthorization(prompt);
   if (!decision.approved) {

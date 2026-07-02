@@ -747,3 +747,69 @@ ever receives. No new structure is needed to enforce this — the existing line 
 the discipline is simply to keep recognizing new instances of the same shape rather than
 re-litigating the question each time.
 
+## Implementation of the long-term design (2026-07-02)
+
+Both ideas from the design pass above are now implemented and live-verified end to end.
+
+**MCP client identity (display-only).** `McpProtocolHandler.handleInitialize` now parses
+`params.clientInfo.name` (previously not parsed at all) and stores it on `McpSession`.
+`McpToolSurface.callTool`/`callOperation`/`handleConfirmationRequired` gained an additive
+`requestedBy` parameter threading it to `PendingAuthorizationStore.create(...)`.
+`PendingAuthorization` gained a `requestedBy` record component (null for a browser-originated
+gate). `GET /api/authorizations/pending/{id}` now includes `requestedBy` when present (omitted,
+not null, when absent). `AuthorizationPrompt`/`PendingAuthorizationDetail` gained a matching
+optional field; `AuthorizationHost`'s dialog renders "Requested by: `<name>`" when present.
+`requestedBy` deliberately never reaches `DurableGrantStore` or any other trust-relevant code —
+confirmed by the implementation, not just designed that way.
+
+**Missed-approval notification.** A new backend Advisory class, `authorization.pending`
+(`PendingAuthorizationAdvisoryProjector`), uses `EmissionPolicy.requiresAck()` — the
+previously-unused REQUIRES_ACK render hint, now with its first real caller. It's wired as a
+bootstrap-time `subscribeTyped` listener on `PendingAuthorizationChangeRegistry` (mirroring
+`HealthRecoveryProjector`'s wiring shape, not `OperationCompletionProjector`'s inline-callback
+shape), so both the MCP and browser gate paths get advisory coverage from one subscription with
+no edits to either call site. `PendingAuthorizationEvent` deliberately stays privacy-scoped
+(routing info only, per tempdoc 444b) — `classExtras` carries `pendingId`/`operationId`/
+`riskTier`/`gateBehavior`, never `requestedBy`. This became the 7th channel on the
+`/api/shell-events/stream` multiplexer (a new `AdvisoryStreamController` + `ChannelSource`,
+mirroring the two existing advisory classes' construction).
+
+On the frontend, a new `windowFocus.ts` utility (sibling to `tauriRuntime.ts`/`notify.ts`)
+resolves focus correctly per environment: Tauri's native `getCurrentWindow().isFocused()` inside
+the desktop shell (confirmed correct via the Tauri-version-pinned API, since `document.hidden` is
+confirmed unreliable there), `document.hasFocus()` in plain browser dev mode. The desktop-
+notification trigger lives in `AdvisoryToastHost.onSnapshot`'s existing new-record loop — the one
+place a genuinely new live record is already distinguished from reconnect replay — gated on
+`sourceRenderHint === 'REQUIRES_ACK'` and an unfocused window. This is the one new conditional at
+the correct existing integration point, not a new dispatch mechanism; any future REQUIRES_ACK
+class gets the same treatment for free.
+
+**A real bug found and fixed during live verification, worth recording as a lesson.** The
+implementation initially passed every unit test (backend and frontend) but failed live: the
+approval dialog didn't show "Requested by" and the new toast never appeared. Two independent
+causes, both instructive:
+
+1. The dev stack was started via `distFrom` without first running `./gradlew.bat
+   :modules:ui:installDist` — the exact stale-jar pitfall already named in this repo's CLAUDE.md
+   pitfall table. Unit tests exercise the compiled classes directly and can't catch "the running
+   process is loading an old jar." Rebuilding the dist and restarting fixed the `requestedBy` gap.
+2. The new advisory class was registered in `AdvisoryClassRegistry` (backend dispatch) and given
+   its own SSE stream controller — but `AdvisoryResourceCatalog`'s `DEFINITIONS` list, which is
+   what the frontend's `AdvisoryStore` uses to *discover* advisory Resources at all, is a separate,
+   hand-maintained static list that doesn't derive from `AdvisoryClassRegistry`. A third class
+   needs an entry in **both** places; the plan and every unit test exercised the projector/registry
+   path directly and never caught the missing catalog entry, because nothing in that path depends
+   on Resource discovery. Live-verification (a genuine browser hitting a genuine backend) is what
+   surfaced it — a `[MultiplexedStream] frame for unregistered streamId` console warning gone once
+   `AdvisoryResourceCatalog` got its third `advisoryResource(...)` entry. Fixed in
+   `AdvisoryResourceCatalog.java`; both gaps are closed and re-verified live end to end (gated MCP
+   call → live "Approval requested" toast with an unread badge → dialog shows "Requested by: Claude
+   Code" → clicking the toast acknowledges it and clears the badge).
+
+Not independently live-verifiable in this environment: the actual OS-level desktop-notification
+popup, since the dev-stack browser flow runs in a plain Chrome tab, not the packaged Tauri webview
+(`isTauriRuntime()` is false there by construction). Everything up to that boundary — the focus-
+detection logic, the gating condition, the call into `sendDesktopNotification` — is unit-tested and
+was confirmed to reach that boundary correctly; only the final native OS call itself is untested,
+consistent with this session's own confidence-building pass identifying that exact gap in advance.
+

@@ -48,6 +48,8 @@ export interface PendingAuthorizationDetail {
   riskTier: string;
   gateBehavior: string;
   rationale: string;
+  /** Tempdoc 655 — the calling MCP client's self-reported name, when present. Display-only. */
+  requestedBy?: string;
 }
 
 /** Constructor configuration. */

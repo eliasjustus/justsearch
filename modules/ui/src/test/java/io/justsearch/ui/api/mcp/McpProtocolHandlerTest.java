@@ -302,6 +302,115 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  void initialize_capturesClientInfo_surfacesAsRequestedByOnGatedPending() throws Exception {
+    OperationDispatcher gatedDispatcher = mock(OperationDispatcher.class);
+    when(gatedDispatcher.dispatch(any(), any(), any()))
+        .thenThrow(
+            new ConfirmationRequiredException(
+                AgentToolsOperationCatalog.INGEST_FILES,
+                GateBehavior.TYPED_CONFIRM,
+                ConfirmStrategy.typedForId(AgentToolsOperationCatalog.INGEST_FILES),
+                SourceTier.UNTRUSTED));
+    PendingAuthorizationStore pendingStore =
+        new PendingAuthorizationStore(FIXED_CLOCK, java.time.Duration.ofMinutes(5));
+    PendingAuthorizationChangeRegistry pendingChanges = new PendingAuthorizationChangeRegistry();
+    var surface =
+        new McpToolSurface(
+            List.of(new AgentToolsOperationCatalog()),
+            gatedDispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK,
+            () -> null,
+            pendingStore,
+            pendingChanges);
+    var gatedHandler = new McpProtocolHandler(surface, List.of(), FIXED_CLOCK);
+
+    // initialize with clientInfo — capture the minted session id off the response header setter.
+    Context initCtx = mock(Context.class);
+    when(initCtx.header("Mcp-Session-Id")).thenReturn(null);
+    when(initCtx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+                + "{\"clientInfo\":{\"name\":\"Claude Code\",\"version\":\"1.0\"}}}");
+    ArgumentCaptor<String> sessionIdCaptor = ArgumentCaptor.forClass(String.class);
+    when(initCtx.header(org.mockito.ArgumentMatchers.eq("Mcp-Session-Id"), sessionIdCaptor.capture()))
+        .thenReturn(initCtx);
+    when(initCtx.result(anyString())).thenReturn(initCtx);
+    when(initCtx.contentType(anyString())).thenReturn(initCtx);
+    gatedHandler.handlePost(initCtx);
+    String sessionId = sessionIdCaptor.getValue();
+    assertNotNull(sessionId, "initialize must mint and return a session id");
+
+    // tools/call reusing that session — the gate fires, creating a pending record.
+    java.util.concurrent.atomic.AtomicReference<String> pendingId =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    pendingChanges.subscribeTyped(event -> pendingId.set(event.pendingId()));
+    Context callCtx = mock(Context.class);
+    when(callCtx.header("Mcp-Session-Id")).thenReturn(sessionId);
+    when(callCtx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":"
+                + "\"justsearch_ingest\",\"arguments\":{\"paths\":[\"C:/tmp/notes\"]}}}");
+    when(callCtx.result(anyString())).thenReturn(callCtx);
+    when(callCtx.contentType(anyString())).thenReturn(callCtx);
+    gatedHandler.handlePost(callCtx);
+
+    assertEquals(1, pendingStore.size());
+    assertNotNull(pendingId.get(), "the advisory subscription must have observed the broadcast");
+    var pending = pendingStore.peek(pendingId.get());
+    assertTrue(pending.isPresent());
+    assertEquals(
+        "Claude Code",
+        pending.get().requestedBy(),
+        "the MCP client's self-reported clientInfo.name must flow through to the pending record");
+  }
+
+  @Test
+  void toolsCall_noClientInfo_pendingRequestedByIsNull() throws Exception {
+    // A client that omits clientInfo (or never calls initialize with a session at all) must not
+    // fabricate a requester name — requestedBy stays null, not "" or "unknown".
+    OperationDispatcher gatedDispatcher = mock(OperationDispatcher.class);
+    when(gatedDispatcher.dispatch(any(), any(), any()))
+        .thenThrow(
+            new ConfirmationRequiredException(
+                AgentToolsOperationCatalog.INGEST_FILES,
+                GateBehavior.TYPED_CONFIRM,
+                ConfirmStrategy.typedForId(AgentToolsOperationCatalog.INGEST_FILES),
+                SourceTier.UNTRUSTED));
+    PendingAuthorizationStore pendingStore =
+        new PendingAuthorizationStore(FIXED_CLOCK, java.time.Duration.ofMinutes(5));
+    PendingAuthorizationChangeRegistry pendingChanges = new PendingAuthorizationChangeRegistry();
+    var surface =
+        new McpToolSurface(
+            List.of(new AgentToolsOperationCatalog()),
+            gatedDispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK,
+            () -> null,
+            pendingStore,
+            pendingChanges);
+    var gatedHandler = new McpProtocolHandler(surface, List.of(), FIXED_CLOCK);
+
+    // No prior initialize for this session id — matches this file's existing callTool() helper,
+    // which always uses a bare "s1" session id never registered via initialize.
+    java.util.concurrent.atomic.AtomicReference<String> pendingId =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    pendingChanges.subscribeTyped(event -> pendingId.set(event.pendingId()));
+    callTool(gatedHandler, 20, "justsearch_ingest", "{\"paths\":[\"C:/tmp/notes\"]}");
+
+    assertEquals(1, pendingStore.size());
+    assertNotNull(pendingId.get());
+    var pending = pendingStore.peek(pendingId.get());
+    assertTrue(pending.isPresent());
+    assertNull(
+        pending.get().requestedBy(),
+        "requestedBy must stay null (not a fabricated placeholder) when the session has no"
+            + " captured clientInfo");
+  }
+
+  @Test
   void toolsCall_dispatchSucceeds_createsNoPendingRecord() throws Exception {
     // Simulates the already-working durable-grant path: the trust lattice was satisfied
     // (by an existing allow-always grant) before McpToolSurface ever sees a gate exception, so

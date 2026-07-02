@@ -269,6 +269,19 @@ public final class McpToolSurface {
 
   @SuppressWarnings("unchecked")
   public Map<String, Object> callTool(String name, Map<String, Object> arguments, String sessionId) {
+    return callTool(name, arguments, sessionId, null);
+  }
+
+  /**
+   * Tempdoc 655: {@code requestedBy} is the calling MCP client's self-reported name (captured
+   * from the {@code initialize} handshake's {@code clientInfo}, resolved by {@link
+   * McpProtocolHandler} from its session map) — display-only, threaded through to a pending
+   * authorization if this call ends up gated, so the approval ceremony can show who's asking.
+   * Never used for any trust decision.
+   */
+  @SuppressWarnings("unchecked")
+  public Map<String, Object> callTool(
+      String name, Map<String, Object> arguments, String sessionId, String requestedBy) {
     // Tempdoc 655: validate every tool's arguments against its declared schema at the MCP
     // boundary, before dispatch — independent of which backend path (direct in-process call vs.
     // Operation dispatch) ultimately serves the tool. Previously only browse/ingest (the two
@@ -292,8 +305,10 @@ public final class McpToolSurface {
     return switch (name) {
       case "justsearch_answer" -> callAnswer(arguments);
       case "justsearch_search" -> callSearch(arguments);
-      case "justsearch_browse" -> callOperation("core.browse-folders", arguments, sessionId);
-      case "justsearch_ingest" -> callOperation("core.ingest-files", arguments, sessionId);
+      case "justsearch_browse" ->
+          callOperation("core.browse-folders", arguments, sessionId, requestedBy);
+      case "justsearch_ingest" ->
+          callOperation("core.ingest-files", arguments, sessionId, requestedBy);
       case "justsearch_status" -> callStatus();
       case "justsearch_runtime_manifest" -> callRuntimeManifest();
       default -> unknownToolWithSuggestions(name);
@@ -602,6 +617,11 @@ public final class McpToolSurface {
 
   private Map<String, Object> callOperation(
       String opIdValue, Map<String, Object> arguments, String sessionId) {
+    return callOperation(opIdValue, arguments, sessionId, null);
+  }
+
+  private Map<String, Object> callOperation(
+      String opIdValue, Map<String, Object> arguments, String sessionId, String requestedBy) {
     try {
       Operation op = resolveOperation(opIdValue);
       if (op == null) return errorContent("Operation not available: " + opIdValue);
@@ -625,7 +645,7 @@ public final class McpToolSurface {
       try {
         opResult = dispatcher.dispatch(op, argsJson, provenance);
       } catch (ConfirmationRequiredException e) {
-        return handleConfirmationRequired(op, argsJson, e);
+        return handleConfirmationRequired(op, argsJson, e, requestedBy);
       }
       if (opResult.success()) {
         var content = new ArrayList<Map<String, Object>>();
@@ -659,7 +679,7 @@ public final class McpToolSurface {
    * human approval, sidestepping MCP hosts' inconsistent/short tool-call timeouts entirely.
    */
   private Map<String, Object> handleConfirmationRequired(
-      Operation op, String argsJson, ConfirmationRequiredException e) {
+      Operation op, String argsJson, ConfirmationRequiredException e, String requestedBy) {
     String message;
     if (pendingAuthorizationStore == null) {
       // Legacy/test wiring with no store — fail closed, but say so plainly rather than
@@ -675,7 +695,7 @@ public final class McpToolSurface {
       String pendingId =
           pendingAuthorizationStore.create(
               op.id().value(), argsJson, e.sourceTier(), op.policy().risk(), e.gateBehavior(),
-              e.getMessage());
+              e.getMessage(), requestedBy);
       if (pendingAuthorizationChanges != null) {
         // Tempdoc 655 fix pass: routing info only — no argsSummary/rationale on the broadcast
         // (see PendingAuthorizationEvent's doc comment for why). A subscriber fetches the

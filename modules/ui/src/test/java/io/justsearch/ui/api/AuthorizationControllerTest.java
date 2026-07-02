@@ -194,11 +194,37 @@ class AuthorizationControllerTest {
     assertEquals("MEDIUM", body.get("riskTier"));
     assertEquals("TYPED_CONFIRM", body.get("gateBehavior"));
 
+    // requestedBy omitted entirely (not present as a key) when the pending has no MCP client.
+    assertFalse(body.containsKey("requestedBy"));
+
     // Non-mutating: the SAME id can still be approved afterward (peek didn't consume it).
     Context approveCtx = mockContextWithBody("{\"pendingId\":\"" + pendingId + "\"}");
     controller.handleApprove(approveCtx);
     Map<String, Object> approveBody = capturedJson(approveCtx);
     assertNotNull(approveBody.get("capsule"));
+  }
+
+  @Test
+  void peekPending_withRequestedBy_includesItInResponse() throws Exception {
+    var controller = new AuthorizationController(capsuleService, pendingStore, null);
+    String pendingId =
+        pendingStore.create(
+            "core.ingest-files",
+            "{\"paths\":[\"C:/tmp\"]}",
+            SourceTier.UNTRUSTED,
+            RiskTier.MEDIUM,
+            GateBehavior.TYPED_CONFIRM,
+            "Confirmation required",
+            "Claude Code");
+
+    Context ctx = mock(Context.class);
+    when(ctx.pathParam("id")).thenReturn(pendingId);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+    when(ctx.status(anyInt())).thenReturn(ctx);
+    controller.handlePeekPending(ctx);
+
+    Map<String, Object> body = capturedJson(ctx);
+    assertEquals("Claude Code", body.get("requestedBy"));
   }
 
   @Test

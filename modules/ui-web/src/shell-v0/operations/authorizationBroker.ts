@@ -41,6 +41,13 @@ export interface AuthorizationPrompt {
   /** Human rationale / message: why this needs approval. */
   readonly purpose?: string;
   /**
+   * Tempdoc 655 — the calling MCP client's self-reported name (from its `initialize` handshake's
+   * `clientInfo`), when this gate fired via MCP. Display-only, transparency-only — absent for a
+   * browser-originated gate or an MCP client that omitted `clientInfo`; never used for any trust
+   * decision.
+   */
+  readonly requestedBy?: string;
+  /**
    * Tempdoc 605 — the id of the run that issued this gated call (the agent run's sessionId). The
    * ceremony "dies with its run" (577 Move 1 / 550 Thesis II): when that run reaches a terminal,
    * {@link cancelAuthorizationsForRun} fail-closed-denies its still-open ceremonies so the NEXT

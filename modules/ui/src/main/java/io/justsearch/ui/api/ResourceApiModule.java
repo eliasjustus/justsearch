@@ -58,6 +58,7 @@ final class ResourceApiModule implements ApiModule {
   private final HardStopController hardStopController;
   private final AdvisoryStreamController operationCompletedAdvisoryStreamController;
   private final AdvisoryStreamController healthRecoverableAdvisoryStreamController;
+  private final AdvisoryStreamController authorizationPendingAdvisoryStreamController;
   // Tempdoc 662: cross-channel multiplexer over the 5 always-on streams above.
   private final ShellEventsStreamController shellEventsStreamController;
   private final ConditionRecoveryIndexController conditionRecoveryIndexController;
@@ -234,6 +235,16 @@ final class ResourceApiModule implements ApiModule {
                 io.justsearch.app.observability.advisory.HealthRecoveryProjector.CLASS_ID),
             headAssembly.substrate().advisory().changes(),
             telemetry);
+    // Tempdoc 655 long-term design pass: the third advisory class (a pending approval waiting).
+    this.authorizationPendingAdvisoryStreamController =
+        new AdvisoryStreamController(
+            io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
+                .CLASS_ID,
+            headAssembly.substrate().advisory().logs().get(
+                io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
+                    .CLASS_ID),
+            headAssembly.substrate().advisory().changes(),
+            telemetry);
     // Slice 447-impl-D: derived inverse Resource — Operation → Conditions referencing it.
     this.conditionRecoveryIndexController =
         new ConditionRecoveryIndexController(
@@ -326,6 +337,7 @@ final class ResourceApiModule implements ApiModule {
             headAssembly.substrate().intent().changes(),
             operationCompletedAdvisoryStreamController,
             healthRecoverableAdvisoryStreamController,
+            authorizationPendingAdvisoryStreamController,
             actionLedgerController,
             indexingJobsStreamController,
             headAssembly.substrate().conversation().pendingAuthorizationChanges());
@@ -443,11 +455,14 @@ final class ResourceApiModule implements ApiModule {
     app.sse(
         "/api/advisory/health-recoverable/stream",
         healthRecoverableAdvisoryStreamController::handle);
+    app.sse(
+        "/api/advisory/authorization-pending/stream",
+        authorizationPendingAdvisoryStreamController::handle);
 
-    // Tempdoc 662: cross-channel multiplexer aggregating the 5 always-on streams above (intent,
-    // the two advisory classes, action-ledger, indexing-jobs) onto ONE physical connection. The
-    // 5 individual routes above stay live (existing direct consumers, e.g. tooling, are
-    // unaffected); the FE shell migrates onto this one instead of opening all 5.
+    // Tempdoc 662: cross-channel multiplexer aggregating the 6 always-on streams above (intent,
+    // the three advisory classes, action-ledger, indexing-jobs) onto ONE physical connection. The
+    // individual routes above stay live (existing direct consumers, e.g. tooling, are
+    // unaffected); the FE shell migrates onto this one instead of opening all of them.
     app.sse("/api/shell-events/stream", shellEventsStreamController::handle);
 
     // Slice 3a.1.4 Phase 5 + 3a.1.4b cohort: TIMESERIES Resource REST + SSE routes.
@@ -503,6 +518,9 @@ final class ResourceApiModule implements ApiModule {
         "Advisory operation-completed stream", operationCompletedAdvisoryStreamController::shutdown);
     shutdownQuietly(
         "Advisory health-recoverable stream", healthRecoverableAdvisoryStreamController::shutdown);
+    shutdownQuietly(
+        "Advisory authorization-pending stream",
+        authorizationPendingAdvisoryStreamController::shutdown);
     shutdownQuietly("ShellEventsStreamController", shellEventsStreamController::shutdown);
     shutdownQuietly("JobQueueDepthMetricController", jobQueueDepthMetricController::shutdown);
     shutdownQuietly(

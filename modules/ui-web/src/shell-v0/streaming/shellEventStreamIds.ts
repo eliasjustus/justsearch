@@ -11,18 +11,21 @@
  *  - `ADVISORY_OPERATION_COMPLETED` ↔ `AdvisoryChangeRegistry.streamIdFor(OperationCompletionProjector.CLASS_ID)`
  *  - `ADVISORY_HEALTH_RECOVERABLE`  ↔ `AdvisoryChangeRegistry.streamIdFor(HealthRecoveryProjector.CLASS_ID)`
  *      (`modules/app-observability/.../advisory/AdvisoryChangeRegistry.java` — `"surface:advisory-" + classId`)
+ *  - `ADVISORY_AUTHORIZATION_PENDING` ↔ `AdvisoryChangeRegistry.streamIdFor(PendingAuthorizationAdvisoryProjector.CLASS_ID)`
+ *      (tempdoc 655 long-term design pass — the 7th channel; classId `authorization.pending` → `surface:advisory-authorization-pending`)
  *  - `ACTION_LEDGER`      ↔ `ActionLedgerChangeRegistry.STREAM_ID`
  *      (`modules/app-observability/.../ledger/ActionLedgerChangeRegistry.java`)
  *  - `INDEXING_JOBS`      ↔ `IndexingJobsChangeRegistry.STREAM_ID`
  *      (`modules/app-observability/.../indexing/IndexingJobsChangeRegistry.java`)
- *  - `PENDING_AUTHORIZATIONS` ↔ `PendingAuthorizationChangeRegistry.STREAM_ID` (tempdoc 655 — the
- *      6th channel, added when ShellEventsStreamController grew a 6th ChannelSource)
+ *  - `PENDING_AUTHORIZATIONS` ↔ `PendingAuthorizationChangeRegistry.STREAM_ID` (tempdoc 655 — added
+ *      when ShellEventsStreamController grew a 6th ChannelSource)
  *      (`modules/app-observability/.../operations/PendingAuthorizationChangeRegistry.java`)
  */
 export const SHELL_EVENT_STREAM_IDS = {
   INTENT: 'system:intent-envelopes',
   ADVISORY_OPERATION_COMPLETED: 'surface:advisory-operation-completed',
   ADVISORY_HEALTH_RECOVERABLE: 'surface:advisory-health-recoverable',
+  ADVISORY_AUTHORIZATION_PENDING: 'surface:advisory-authorization-pending',
   ACTION_LEDGER: 'surface:action-ledger',
   INDEXING_JOBS: 'surface:indexing-jobs',
   PENDING_AUTHORIZATIONS: 'system:pending-authorizations',
@@ -49,6 +52,8 @@ export function advisoryEndpointToShellEventStreamId(endpoint: string): string |
       return SHELL_EVENT_STREAM_IDS.ADVISORY_OPERATION_COMPLETED;
     case '/api/advisory/health-recoverable/stream':
       return SHELL_EVENT_STREAM_IDS.ADVISORY_HEALTH_RECOVERABLE;
+    case '/api/advisory/authorization-pending/stream':
+      return SHELL_EVENT_STREAM_IDS.ADVISORY_AUTHORIZATION_PENDING;
     default:
       return null;
   }
