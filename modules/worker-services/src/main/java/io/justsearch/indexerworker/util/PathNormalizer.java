@@ -34,7 +34,13 @@ public final class PathNormalizer {
      */
     public static String normalizePathPrefix(String path) {
         String normalized = normalizePath(path);
-        if (normalized != null && !normalized.endsWith(File.separator)) {
+        // A blank/empty prefix must stay blank so callers reject it (deleteByPathPrefix refuses a
+        // match-everything delete). Appending File.separator would turn "" into a bare "/" (Linux)
+        // — non-blank — silently defeating that guard on Linux (tempdoc 668).
+        if (normalized == null || normalized.isBlank()) {
+            return normalized;
+        }
+        if (!normalized.endsWith(File.separator)) {
             normalized = normalized + File.separator;
         }
         return normalized;

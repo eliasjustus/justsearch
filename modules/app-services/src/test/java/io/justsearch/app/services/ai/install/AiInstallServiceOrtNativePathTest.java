@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -27,6 +28,9 @@ import org.junit.jupiter.api.io.TempDir;
  * violation ("Audit-driven fixes need a runnable test, not just a passing audit") that round-5
  * sandbox validation surfaced.
  */
+// Windows-specific: asserts the Windows ORT native-library path layout/format.
+// Runs on the windows-native lane (tempdoc 668 option B).
+@Tag("windows")
 final class AiInstallServiceOrtNativePathTest {
 
   private static final String SYSPROP_KEY = "justsearch.onnxruntime.native_path";

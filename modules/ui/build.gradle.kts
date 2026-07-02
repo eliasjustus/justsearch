@@ -1807,7 +1807,9 @@ tasks.withType<CreateStartScripts>().configureEach {
       windowsScript.writeText(collapsed)
     } else {
       val unixText = unixScript.readText()
-      val collapsed = unixText.replace(Regex("(?m)^CLASSPATH=.*$"), "CLASSPATH=\"\$APP_HOME/lib/*\"")
+      // Lambda form: the string-replacement overload treats '$' as a group reference, so
+      // "$APP_HOME" -> "$A" throws "Illegal group reference" when building on Linux (tempdoc 668).
+      val collapsed = Regex("(?m)^CLASSPATH=.*$").replace(unixText) { "CLASSPATH=\"\$APP_HOME/lib/*\"" }
       unixScript.writeText(collapsed)
     }
   }
