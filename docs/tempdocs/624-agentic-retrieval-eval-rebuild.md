@@ -3127,3 +3127,166 @@ This is a findings-and-ideas record for the founder to prioritize from, matching
 ("the goal is nothing specific, all improvements are viable, there is no rush") — none of the above is
 authorized for implementation by this pass alone.
 
+---
+
+# Design theorization #2 (2026-07-02, thirteenth pass) — the correct long-term design for the twelfth pass's own findings
+
+> The twelfth pass (above) produced a findings-and-ideas list, deliberately not a design. This pass takes the
+> three items with real structural weight — the output-directory sprawl a revision record creates, the
+> RESEARCH.md staleness risk, and the ad hoc reanalysis-script/CLI duplication — and asks this tempdoc's own
+> standing question: what is the correct long-term design, does existing machinery already cover it, and
+> where does the answer conform to (rather than fork) a seam this codebase already has. Investigated via a
+> direct read of `docs/tempdocs/553-canonical-search-execution-record.md`,
+> `625-asserted-measurement-provenance.md`, `646-event-sourced-tempdoc-current-state.md`,
+> `659-public-release-trust-evidence.md`, `653-public-main-history-hygiene.md`, and
+> `645-jseval-cli-monolith-split.md` in full, plus `corpus_identity.py`/`release.py`/`commands/_common.py`
+> directly. **General design only — no code changes, no implementation. Nothing below is a shipped
+> capability or a compliance/certification claim; this repo is public and this section is written to be read
+> that way.**
+
+## Design 1 — corrected-record provenance for `utility-comparison.v1` (closes the sibling-directory sprawl)
+
+**The problem, precisely.** Three times this session, a corpus's already-composed `utility-comparison.v1`
+record needed to become a **materially different, corrected version of itself** — not a new measurement, the
+same identity-bearing inputs re-derived under a newly-discovered exclusion or scoring rule (the queries.json
+leak fix, the condition-C re-check, the judge-rescoring pass). Each time, the only available shape was a new
+sibling output directory (`out-en/` → `out-en-leak-free/` → `out-en-leak-free-judged/`) with no field on the
+record itself saying what it superseded or why. This is the practicality pass's own "won't scale" finding,
+traced to its structural root: **the record has no way to express amendment, only fresh generation.**
+
+**What already exists, investigated directly (do not rebuild what's already there).** `553`'s canonical-record
++ governed-projection seam is *synchronic only* — one execution's facts, viewed many pure-function ways at
+one point in time; revision of the record itself was never in that seam's frame, in scope or out. `625`
+(`status: proposed`, a deliberate stub) already names almost exactly this tempdoc's own worst historical
+failure mode — "every externally-asserted measurement must trace to a cohort-identified reproducible run; a
+hand-maintained number is a fork that drifts" — and explicitly cites 624's own retracted 92%/62% claim as
+its motivating case. But 625's principle stops at **single-run traceability** (does this number trace to a
+run at all); it never addresses **amendment** (what happens when that traced run's own computation is later
+found to need correcting). `646` (also a stub) is explicitly scoped to a *tempdoc's own prose* getting
+unwieldy across dated passes — not to a *data record's* evolution; it does not generalize. And directly in
+code: `corpus_identity.corpus_signature()` is a flat content hash with no `previous_signature`/`supersedes`
+field anywhere, and `release.py` carries only a `RELEASE_SCHEMA_VERSION` constant (a *schema* version, not a
+*record-instance* version) — confirming the codebase's identity model has no revision primitive at all
+today, for any canonical record, not just this one.
+
+**The design.** Add a minimal, additive `revision` object to `utility-comparison.v1`'s own schema:
+`{supersedes: <path or record identity of the prior record>, reason: <short, closed set — e.g.
+"leak_correction" | "judge_rescore" | "reseed">, changed_fields: [...]}`, present only on a record that
+*is* a revision (absent on an original composition — purely additive, no breaking change to the existing
+schema). One directory per corpus persists; a later revision pass updates the SAME record's `revision` chain
+rather than spawning a new sibling directory. This directly resolves the practicality pass's own "won't scale"
+finding with the smallest structure that closes it — not a general "amendable record" framework across every
+canonical record in the codebase, only the one place (`utility-comparison.v1`) with a real, already-repeated
+(three times) need.
+
+**Scope discipline, stated explicitly.** Do NOT extend this to `release.v1.json` or any other canonical record
+in this pass — no release has yet needed a real, in-place correction the way this record has three times;
+building the generalized "amendable canonical record" primitive now, before a second real consumer exists,
+would repeat the exact premature-abstraction mistake this tempdoc's own T.3 design explicitly declined to
+make for the human-calibration-set pattern. This is recorded as a candidate generalization in the Reach
+section below, not built beyond `utility-comparison.v1`.
+
+## Design 2 — a purpose-built public-claim projector for the agent-utility finding (addresses the RESEARCH.md staleness risk)
+
+**The problem, precisely.** The twelfth pass found a live risk: a separate, unmerged worktree/branch
+(confirmed directly via `git log --all` + `git branch --all --contains` — the tempdoc 667/668 work and its
+`RESEARCH.md` draft live only on `worktree-salvage-667`, not on `main` and not reachable from this branch) is
+independently drafting a public claim that cites this tempdoc's own *now-superseded* number. Nothing in this
+codebase currently checks whether a public doc's claim still matches the internal record it's drawn from.
+
+**What already exists, investigated directly.** `659` (public-release-trust-evidence) is a pure stub scoped to
+*security/supply-chain* trust evidence (checksums, signing, SBOMs) — it explicitly defers "public claim
+discipline" to a different tempdoc, not itself. `653` (public-main-history-hygiene) is scoped to commit/PR
+*granularity*, not claim *content*. But there IS an established, **already-instantiated multiple times**
+principle for exactly this shape of problem: `canonical-authority-and-projection` (the `principle:` field
+shared by tempdocs 623/632/633/635/622/650) — "a public claim is a projection of a declared fact, never a
+hand-copied fork" — realized every time not as one general checker, but as a **purpose-built projector
+script per claim class**, each diffing one public doc against one declared source of truth, gated in
+`docs-lint.yml`: `check-frontend-stack-claims.mjs` (stack claims vs. ADR-0032), `check-model-freshness.mjs`
+(model names vs. `model-registry.v2.json`), `gen-public-benchmark.mjs` (projects `release.v1.json` into the
+methodology doc's own marker region), `register-headline-sync.mjs`. Tempdoc 625 itself explicitly declines to
+generalize this into one reusable mechanism ("do not build the generalized enforcement from this instance") —
+confirmed the *established, repeated* practice here is many small, purpose-built projectors, not one universal
+checker. A general "public claim vs internal record" checker would be the fork this codebase's own pattern
+has already, repeatedly, declined to build.
+
+**The design.** When `RESEARCH.md` (or any future public doc citing this tempdoc's finding) actually exists on
+`main`, add one more purpose-built projector in the same shape as `check-model-freshness.mjs`/
+`gen-public-benchmark.mjs`: source the *current* authoritative finding from the committed
+`utility-comparison.v1`/cross-corpus JSON records (never from tempdoc prose — tempdocs are dated history per
+this project's own standing rule, not a source of current truth), diff against the claim text, and fail
+`docs-lint.yml` on drift — flagging both staleness (a number that changed) and overclaiming (a
+`comparability.comparable=false` record being cited without that caveat). This conforms to an established,
+repeatedly-proven seam; it is not a new kind of check.
+
+**Scope discipline, stated explicitly.** This is **not buildable right now** — its target file doesn't exist
+on any branch this worktree can reach, and building a checker against a nonexistent target would itself be
+structure ahead of its own consumer. Recorded here as the design to build at (or before) the point `RESEARCH.md`
+merges to `main`, not implemented in this pass. The live risk itself (a stale draft on an unmerged branch) is a
+coordination question for the founder, not something this pass or its design can resolve unilaterally.
+
+## Design 3 — consolidate the reanalysis logic and duplicated compose/write/print pattern into the already-shipped CLI structure
+
+**The problem, precisely.** Three throwaway analysis scripts sit outside the `jseval` package
+(`_leak_free_recompose.py`, `_leak_free_judged_recompose.py`, `_run_judge_with_backend.py`), and
+`commands/utility.py`'s `cmd_utility_compose`/`cmd_utility_judge`/`cmd_utility_compose_cross_corpus` each
+independently repeat a "compose → write JSON → print per-cell summary" block.
+
+**What already exists, investigated directly.** Tempdoc 645 (jseval-cli-monolith-split) is not a stub —
+**it is fully implemented and already merged to `main`** (commit `2c5b7fe`, PR #13), confirmed live in this
+worktree: `cli.py` is 38 lines; `commands/` holds one module per command group; `commands/_common.py` already
+hosts exactly this shape of shared helper (`_write_bench_output`, `assert_run_capabilities`).
+
+**The design.** Extend `commands/_common.py` with a `_compose_and_write(...)`-shaped helper (matching
+`_write_bench_output`'s existing pattern) that the three `cmd_utility_*` commands call instead of repeating
+the block inline. Promote the leak-detection functions (`scan_leaked_cells`/`apply_leak_flags`, currently only
+in the throwaway `_leak_free_recompose.py`) into the package proper — `agent_utility_run.py` (where the
+paired-observation/summary logic they operate on already lives), not into `_common.py` (which is scoped to
+CLI-command *shape* helpers, not eval-domain logic — the two are different concerns and `_common.py`'s
+existing contents already establish that boundary). No new abstraction is invented; this is extending
+already-merged, already-proven structure into code that was written under time pressure outside it.
+
+**Scope discipline, stated explicitly.** Do not build the `utility-reanalyze` monolithic command the twelfth
+pass's own codebase-practicality agent already considered and declined (the three scripts share less real
+structure than they appear to — judge-rescoring already has its own first-class command,
+`utility-judge --calibrate`; only the leak-detection piece is genuinely reusable). That verdict stands; this
+design narrows to exactly the two moves above.
+
+## Reach
+
+**Design 2 and Design 3 conform cleanly to already-established seams — no new principle to name.** Design 2
+is a straightforward new instance of `canonical-authority-and-projection`, already proven five times over in
+this exact shape; Design 3 is a straightforward extension of tempdoc 645's already-merged CLI structure. Both
+are correctly-scoped conformance, not reach-worthy discoveries.
+
+**Design 1 does reveal something worth naming plainly: this codebase's canonical-record model has no concept
+of amendment, anywhere, and this is the first place that gap became load-bearing rather than theoretical.**
+Stated as a candidate principle: *a canonical record that can be recomputed from the same identity-bearing
+inputs under corrected logic needs a `supersedes`/revision-reason field distinguishing "this is a materially
+different derivation of the same underlying facts" from "this is an unrelated new measurement" — construction-
+time identity alone (a content hash, a cohort key) answers "is this the same input," never "is this a
+correction of that other record."* This is a genuine extension of tempdoc 625's own still-unbuilt principle
+(single-run *traceability*) into a dimension 625 never covered (*amendability*) — 625 already named 624 as
+its own motivating case for the traceability half; this pass names the amendment half as 625's natural,
+still-unclaimed second half, not a competing idea.
+
+**Where else this would apply.** Any canonical record in this codebase's own canonical-record + governed-
+projection lineage that could plausibly need retroactive correction after being computed — concretely,
+`release.v1.json` (tempdoc 623) shares the identical structural gap: `release.py` carries only a schema-version
+constant, no instance-revision field, confirmed directly. **This is a real, present gap in already-shipped
+code, not a hypothetical** — if a release's own metric computation were ever found to need correction after
+publication (the retrieval-quality-side analogue of what happened to this tempdoc's own agent-utility numbers
+three times), there is today no way to express that correction as anything other than an unrelated new
+release. Whether that has actually happened yet for 623's release object is not established by this pass and
+is not asserted here.
+
+**Why this is recorded and not built beyond `utility-comparison.v1`.** Per this tempdoc's own repeatedly-
+applied discipline (T.3's rule-of-three, restated in Design 1 above): a real, load-bearing need has appeared
+exactly once, for exactly one record. Building a generalized "amendable canonical record" primitive now,
+before `release.v1.json` or any other record has a real, concrete second instance of this need, would be
+structure ahead of its actual consumer — the same over-eager move this tempdoc's own §T.3 explicitly declined
+to make for the human-calibration-set pattern, and the same discipline 645's own successful, merged CLI split
+demonstrates paying off when applied at the right time rather than speculatively. Recording the principle here,
+plainly, with its candidate scope and the one place it already silently applies, is deliberately separated
+from building it — so the insight is captured without becoming premature abstraction.
+
