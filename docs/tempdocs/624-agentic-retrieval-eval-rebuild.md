@@ -1,7 +1,7 @@
 ---
 title: "Agentic-utility eval rebuild: the agent-utility number as a cohort-identified, condition-paired comparison record — a projection over agent-eval runs cohort-identical on every axis except `condition`, conforming to the canonical-record + governed-projection seam (553/623/622); the comparison arm already exists (346) but lacks run identity, seeds, judge, and projection discipline, which is why '92% / 62%' is an identity-less fork"
 type: tempdocs
-status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared.
+status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared. 2026-07-02 (same day, eighth/ninth pass): remaining-work planning found and closed two more gaps -- the §M.7a item 3 failure analysis (As-built #7) surfaced a real, previously-unknown answer-key leak (queries.json readable by file-tool conditions via --add-dir traversal, and separately ingested into the MCP search index for the scan corpus via accretive, never-auto-narrowed watched-roots); both root causes are now fixed in code (isolated per-run corpus staging; a pre-run watched-roots scope assertion) plus a detection backstop, and a leak-free reanalysis of the already-collected data found the pooled cross-corpus effect moves from non-significant (p=0.185) to borderline-significant and NEGATIVE (delta -0.094, p=0.055) once leaked cells are excluded -- condition B trends toward measurably harmful, not null. A new tempdoc (671) was opened for a separate, out-of-scope production Tika bug found earlier. §M.8's bar remains uncleared; §M.9's founder decisions and a real human-calibration labeler remain open, not resolved by this pass.
 created: 2026-06-21
 updated: 2026-07-02
 author: agent analysis (research-channel design theorization), filed by agent — STUB
@@ -2321,6 +2321,15 @@ diagnostic detail) were not committed.
 | battlefield-de-v1 | −0.091 (0.818→0.727) | 0.210 (n.s.) | −49 [−3035, 3060] (n.s.) | **−0.565** (0.812→0.246) | **0.000** |
 | synth-scan-v1 | +0.048 (0.667→0.714) | 1.000 (n.s.) | +3357 [−2796, 9265] (n.s.) | **−0.382** (0.706→0.324) | 0.011 |
 
+> **⚠ Superseded by leak-free reanalysis (2026-07-02, ninth pass) — read before citing any number above.**
+> The table above includes cells where the agent read or retrieved the gold answer key (`queries.json`)
+> directly — a real leak, root-caused and fixed in code (see the "queries.json answer-key leak" fix commit),
+> but the numbers above were never recomputed against it. **The leak-free pooled cross-corpus figure moves
+> from Δ−0.063 (p=0.185, not significant) to Δ−0.094 (p=0.055, borderline) — condition B trends toward
+> measurably* harmful*, not null, once cheating is excluded.** See the very end of this tempdoc (search
+> "leak-free reanalysis") for the full corrected numbers and methodology before treating anything in this
+> table as current.
+
 **Two honest, striking, consistent findings — interrogated, not just reported (per this project's own
 `interrogate-results` discipline):**
 
@@ -2394,6 +2403,8 @@ paths.
 > section corrects As-built #5's factual errors and — the most important part — **retracts its central OCR
 > claim**, replacing it with what a fixed, re-verified pipeline actually measured. The credibility bar
 > (§M.8) still does not clear; this section makes the shortfall more precise, not less.
+>
+> **A later pass (the leak-free reanalysis, search "leak-free reanalysis" at the end of this tempdoc) further supersedes the accuracy/McNemar numbers in this section's own text below (unchanged from As-built #5) — they include leak-contaminated cells. Read that section before citing any number here.**
 
 ## The critical finding: As-built #5's OCR-extraction claim was never actually tested, and the real number is 0.0000, not 0.97
 
@@ -2687,4 +2698,81 @@ capability recommendation is proposed here.** The concrete, testable observation
 gaps in both directions, one wrong-chunk-trust instance, the leak in Finding 1) are handed off as raw material
 for whoever picks up 655's conformance frame next, not implemented as a one-off reaction to this pass's
 findings — exactly the caution §M.7a item 3 itself named in advance.
+
+---
+
+# Leak-free reanalysis (2026-07-02, ninth pass) — the queries.json leak, quantified and excluded
+
+> Follow-up to As-built #7's failure analysis (§M.7a item 3), which first found the leak qualitatively while
+> characterizing discordant queries. This pass exhaustively re-scans every cell in the already-completed real
+> run (zero additional API spend — the same raw Inspect logs, re-read) for the leak signature, excludes every
+> confirmed cell, and recomputes the paired statistics on the leak-free subset. The two structural root causes
+> behind the leak (an `--add-dir` traversal gap for file-tool conditions; accretive, never-auto-narrowed
+> watched-roots for the MCP-only condition) are separately fixed in code (search this tempdoc's git history —
+> commit "close the queries.json answer-key leak") so future runs through the classic runner don't reproduce
+> this. **This section is about the already-collected data specifically** — the fix's own new detection
+> mechanism (`find_leak_suspect_tool_calls`) turned out to have no data to act on for these particular logs,
+> because the Inspect-AI executor used for the real run never captured `tool_calls` at all (only cost/tokens/
+> turns) — a real, separate gap, noted here rather than glossed over. This reanalysis therefore used a
+> text-based leak signature (case-insensitive `queries\.jsonl?` over each cell's raw completion text) instead
+> — the same needle the code fix's `_LEAK_SUSPECT_NEEDLE` constant uses, just applied to response text rather
+> than tool-call arguments, since that's the only signal actually available in these logs.
+
+## Method and validation
+
+Every (corpus, condition, seed, qid) cell across all three corpora was scanned, not just the discordant pairs
+As-built #7's qualitative pass looked at. The scan's per-condition totals reproduced As-built #7's own
+previously-published counts **exactly** (English 1+2+0=3, German 2+4+0=6, scan 20+14+6=40 for A/B/C
+respectively) — a strong independent cross-check, since the two passes used different methods (As-built #7:
+manual reading during a discordant-pair characterization; this pass: an exhaustive automated regex scan) and
+still agreed to the cell. Four flagged cells' raw completion text were spot-checked directly and quote an
+affirmative claim of having used the answer key (e.g. *"Based on the queries.json file..."*); one unflagged
+cell was spot-checked and confirmed genuine multi-hop reasoning with zero mention of the answer key. All 49
+flagged excerpts were checked for negation language ("could not find queries.json," an attempted-but-failed
+read) — zero hits, so no ambiguous judgment calls were needed; every flagged cell is an affirmative,
+unambiguous leak.
+
+**Exclusions**: English 3 cells (`A|seed0|q24`, `B|seed0|q0`, `B|seed1|q8`), German 6 cells (`A|seed0|q0`,
+`A|seed0|q16`, `B|seed0|q1`, `B|seed0|q10`, `B|seed2|q20`, `B|seed2|q22`), scan 40 cells (20/14/6 across
+A/B/C — full per-qid list in `scripts/jseval/624-run-2026-07-02/_leak_free_exclusion_report.json`, committed
+alongside the leak-free records below).
+
+## The corrected numbers (A→B, the headline "addition, realistic" comparison)
+
+| Corpus | Original acc (leak-including) | Leak-free acc | Original McNemar p / n | Leak-free McNemar p / n |
+|---|---|---|---|---|
+| English | 0.7922→0.7273 (Δ−0.0649) | 0.7973→0.7162 (Δ−0.0811) | 0.4244 / 77 | 0.3075 / 74 |
+| German | 0.8182→0.7273 (Δ−0.0909) | 0.8169→0.7324 (Δ−0.0845) | 0.2100 / 77 | 0.2632 / 71 |
+| Scan | 0.6667→0.7143 (Δ+0.0476) | 0.5→0.0 (Δ−0.5) | 1.000 / 21 | 0.5 / 4 |
+| **Cross-corpus pooled** | **0.7886→0.7257 (Δ−0.0629)** | **0.7987→0.7047 (Δ−0.094)** | **0.1853 / 175** | **0.0553 / 149** |
+
+Independently verified against the committed JSON directly (not just the composing agent's own summary):
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json`'s pooled cell reads `baseline: 0.7987,
+with_tool: 0.7047, delta: -0.094, mcnemar_p: 0.05527, n_with_tool_fixes: 16, n_with_tool_breaks: 30` — matches
+exactly.
+
+**This is a materially different, more concerning finding than As-built #5/#6's original "no significant
+effect anywhere" conclusion.** Once cells where the agent cheated by reading the answer key are excluded, the
+pooled cross-corpus accuracy delta moves from a small, clearly non-significant −0.063 (p=0.185) to a larger,
+borderline-significant **−0.094 (p=0.055)** — condition B (file tools + JustSearch MCP) trends toward
+measurably *harmful* relative to file tools alone, not neutral. p=0.055 is not below the conventional 0.05
+threshold — this is not being reported as "significant," and per this tempdoc's own §M.7 discipline it is not
+being rounded up to one — but it is close enough, and moved far enough from the original figure, that "B has
+no effect" is no longer an honest summary of this record. Per-corpus, English and German individually move
+in the same (more-negative) direction but stay non-significant at their own (now-smaller) n; scan's leak-free
+n collapses to 4 (from an already-thin, non-comparable 21), which sharpens rather than changes As-built #7's
+own conclusion that the scan corpus carries no usable signal at all.
+
+**Comparability verdicts are unchanged** — `paired_comparability` is computed from raw completion/error
+rates, not from these leak flags, so English/German's asymmetric-exclusion issue and scan's high-error-rate
+issue persist exactly as characterized in As-built #5/#6/#7. §M.8's bar remains uncleared. The corrected
+numbers here are a more honest *interim* read of what this run actually shows, not a claim that the record
+now clears the bar — it does not, and a genuinely clean re-run (the fixed harness, ideally at the design's
+5-seed target) remains the only way to get a number that both closes the leak and clears comparability at
+once. That re-run is a real spend decision, not authorized by this pass.
+
+Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility-comparison.v1.json`,
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json`, and
+`_leak_free_exclusion_report.json` (full per-cell exclusion detail + excerpts, for anyone auditing this
+pass's own exclusion decisions rather than trusting them on faith).
 
