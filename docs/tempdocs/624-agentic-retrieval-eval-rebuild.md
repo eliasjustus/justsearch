@@ -3021,3 +3021,109 @@ already-disclosed **human-calibration** gap (As-built #5 item 4 / "Concrete next
 `--calibrate` dry-run's agent-substitute raters, which are explicitly not a validated figure) and was
 out of scope for this pass. The scan corpus's high leak-exclusion rate (40 of ~180 samples) and small
 resulting paired n (4) were already flagged in the prior leak-free pass and are unchanged by this one.
+
+---
+
+# Practicality and future-work research pass (2026-07-02, twelfth pass) — now that the design is implemented, what next?
+
+> A deliberately open-ended pass, no fixed goal: given §T.1-T.4 and every review/fix round above are now
+> shipped, what could this effort's own machinery be *used for* beyond clearing its own credibility bar —
+> polish, simplification, extension, new UX, and practicality for a future developer or agent picking this
+> up cold? Four parallel research agents (codebase practicality audit, external 2026 landscape research,
+> product/UX ideation, documentation/discoverability audit), autonomous, documentation-only — no code
+> changed by this pass. Findings below, most time-sensitive first.
+
+## Most urgent finding: a sibling worktree's public RESEARCH.md draft is already stale relative to this tempdoc's own latest numbers
+
+`RESEARCH.md` does not exist on `main` yet — it is being actively drafted right now in sibling worktrees
+(`claude-science-benchmark-release` / `salvage-667`, tempdoc 667), independent of this effort. That draft
+already does the right thing in spirit — names the retracted "92%/62%" number, states the realistic-arm
+result honestly, frames U0 as an open research question rather than a flattered result — **but its cited
+number is now wrong**: it states "+0.00 accuracy / ~8% token savings" (this tempdoc's *original*, pre-leak-fix
+As-built #5 finding), not the corrected, leak-free, judge-confirmed finding this tempdoc now carries
+(**Δ−0.094, p=0.055 — borderline-significant and *negative*, not a clean null**), and it does not mention that
+`comparability.comparable=False` on every corpus (i.e. this tempdoc's own credibility bar, §M.8, is still not
+cleared at all). **If that draft ships before syncing with this tempdoc's current state, it would repeat the
+exact "an informal number outran its own methodology" failure mode that caused the original 92%/62% claim to
+be retracted in the first place** — the one thing this whole multi-week effort exists to prevent. This is not
+something this pass acts on unilaterally (a different worktree, another session's active work, out of this
+tempdoc's own scope per this project's own worktree-isolation discipline) — it is flagged here, prominently,
+for the founder to decide whether/how to sync the two efforts before anything publishes.
+
+## Codebase practicality: three concrete, appropriately-scoped findings
+
+1. **A reproducible bug, independent of everything else**: `python -m jseval --help` crashes with
+   `UnicodeEncodeError` on a default Windows console (`cp1252`) — a non-ASCII character in a docstring breaks
+   the most basic possible entry point for a new user. Cheap, unambiguous fix.
+2. **The "rule-of-three" question, applied honestly, says no to a big abstraction and yes to a small one.**
+   Three throwaway reanalysis scripts were written this session, but on inspection they aren't really three
+   independent instances of one pattern — `_leak_free_judged_recompose.py` already imports and reuses
+   `_leak_free_recompose.py`'s own leak-detection functions rather than reinventing them, and the
+   judge-rescoring piece already has a first-class CLI command (`utility-judge`). Building a monolithic
+   `utility-reanalyze` command would bundle unrelated concerns — the actual gap is narrower: promote
+   `scan_leaked_cells`/`apply_leak_flags` out of the throwaway script into the package proper, and add an
+   `--exclude-leaked` flag to `utility-compose`/`utility-judge`/`utility-compose-cross-corpus` (confirmed:
+   zero `leak` references exist in `commands/utility.py` today). Relocating already-proven code, not new
+   abstraction — this tempdoc's own repeatedly-applied discipline (three real *concurrent* instances is the
+   trigger, not three superficially-similar scripts) holds here too.
+3. **No canonical how-to exists for the full pipeline.** A real, working, multi-command sequence (generate →
+   certify → fidelity-check → calibrate → run → judge → compose → leak-check) exists only as narrative prose
+   scattered across this tempdoc's 3000+ lines — confirmed zero hits for `utility-run`/`utility-compose`/
+   `utility-judge` anywhere in `docs/how-to/`, `docs/reference/`, or the `/jseval` skill (which mentions this
+   tempdoc exactly once, for a cost-policy note, not a command reference). A fresh session six months from now
+   would have to already know to grep `docs/tempdocs/` by number to discover this capability exists at all —
+   exactly the failure mode this project's own `tempdocs-are-dated-history` rule anticipates. Recommended:
+   extract a `## Agent Utility Eval` section into the existing `docs/reference/jseval-pipeline-reference.md`
+   (transcription of already-working commands, not new design) and a corresponding subsection in
+   `.claude/skills/jseval/SKILL.md`. Also flagged: the `624-run-2026-07-02/` output-directory convention
+   (already 9 sibling directories for 3 corpora × 2 analysis passes) won't scale — a future pass should prefer
+   additive provenance fields on one record per corpus (`leak_excluded`, `judge_overlay_path`) over a new
+   sibling directory per analysis variant.
+
+## External research: real precedent for this project's own self-correction pattern
+
+- **Epoch AI's FrontierMath v2** (mid-2026) is the closest direct precedent to this tempdoc's own As-built
+  #5→#6→#7 correction trail: an audit found errors in a large fraction of the original benchmark, they shipped
+  a corrected version and published exactly what changed and why — rankings held, scores shifted — and it was
+  well-received, not disqualifying. Evidence that a credible "we found a bug, here's v2" narrative works, at
+  least in research-benchmark contexts (no direct precedent was found for a *product*, as opposed to a pure
+  benchmark-research org, publishing this pattern — flagged honestly as an open question, not assumed).
+- **UC Berkeley RDI's "Trustworthy Benchmarks" checklist** names a concrete practice this project already
+  independently reinvented: run a trivial/null submission through your own scorer first — if it passes, the
+  harness is broken. That is structurally the same check that would have caught the `queries.json` leak
+  earlier had it existed as a standing practice, not just a one-time investigation.
+- **Schema alignment is available cheaply, not urgently**: Hugging Face's `eval-results` convention and a 2026
+  arXiv proposal for a unifying agentic-eval schema are both small, modular, and something `utility-comparison
+  .v1` could partially adopt (a few field-name aliases) without a redesign, buying future comparability — not
+  a priority, but a low-cost option to keep in mind if/when this record is ever exposed externally.
+- An academic survey found only ~30% of published model cards disclose *any* limitations — supporting evidence
+  (not just intuition) that this project's actual track record of catching and disclosing its own mistakes is
+  genuinely unusual, if it's ever surfaced publicly.
+
+## Product/UX: the highest-leverage move is fixing a divergence, not building something new
+
+Beyond the RESEARCH.md-sync finding above (the actual highest-leverage item), two further ideas were judged
+concretely buildable and appropriately timed *now*, independent of how this tempdoc's own credibility bar
+resolves:
+- **A retrieval-leg attribution chip** extending the UI's already-shipped `SearchSurface.ts` degradation-banner
+  plumbing (`effectiveMode`/`notice-causes`, tempdoc 577/595/596) — small, in-product, doesn't touch the
+  contested agent-utility finding at all.
+- **Validating the context-sufficiency classifier** (a separate, smaller, already-named-but-unbuilt item from
+  the search-quality register, Q-007) — cheap (~20-30 labeled pairs), tractable at the project's own haiku-tier
+  cost policy, and gives a future public research doc a second, *actually finished* result to point to
+  alongside the harder agent-utility question.
+
+Two ideas were judged *premature*, not wrong: a "living/nightly re-run" of this eval (a real, working `.github/
+workflows/phase-3-observability-nightly.yml` cron precedent already exists to build on) would bake an
+unresolved, `comparable=False` number into a scheduled artifact before the methodology itself is trusted —
+automate this only after §M.8 clears. A paired-comparison/judge-powered live in-product explainability feature
+was judged a genuine stretch (wrong latency/cost shape — batch, LLM-scored, offline — for a live per-query UI
+element) rather than a natural extension, and is not recommended.
+
+## What this pass did NOT do
+
+No code was changed, no doc was extracted, no `RESEARCH.md` was touched (a different worktree's active work).
+This is a findings-and-ideas record for the founder to prioritize from, matching the assignment's own framing
+("the goal is nothing specific, all improvements are viable, there is no rush") — none of the above is
+authorized for implementation by this pass alone.
+
