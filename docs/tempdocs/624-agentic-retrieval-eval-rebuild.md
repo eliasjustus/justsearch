@@ -3362,3 +3362,15 @@ orchestration overhead for work this well-scoped and low-risk. Design 2 needs no
 (blocked); when its blocker clears, the same tier applies — the precedent scripts it would extend are small,
 single-purpose Node projectors, not complex systems.
 
+---
+
+## Designs 1 and 3 implemented and committed (2026-07-02, same day, fifteenth pass)
+
+Both designs the confidence pass above cleared as ready shipped, via orchestrated Sonnet-5 agents, each independently pytest-verified by the orchestrator before commit (not just trusted from the implementing agent's own report):
+
+- **Design 1** (corrected-record provenance): the `revision` field, `build_revision()` helper, and retrofit of all 8 already-committed corrected records with accurate, diffed (not guessed) provenance. 1312 passed / 2 pre-existing unrelated failures.
+- **Design 3** (refined): leak-detection promoted into `agent_utility_run.py` with 14 first-ever tests (break-then-revert verified), `--exclude-leaked` added to the three utility-* compose/judge commands, the write step consolidated onto `_write_bench_output`, the print step deliberately left bespoke per the confidence pass's own finding. 1326 passed / 2 pre-existing unrelated failures.
+
+**Design 2 remains correctly unimplemented** — its target (`RESEARCH.md`) still does not exist on `main` or this branch, re-confirmed before dispatch. Not attempted, per its own explicit scope discipline.
+
+**Still open, none of it agent-actionable**: §M.9's founder decisions, §M.8 items 3-5 (real human judge calibration, seed/n targets, `comparable=True`), and the live cross-worktree `RESEARCH.md` staleness risk (still on `worktree-salvage-667`, unmerged, unsynced with this tempdoc's corrected numbers as of this pass) — all surfaced for the founder, none acted on unilaterally.
