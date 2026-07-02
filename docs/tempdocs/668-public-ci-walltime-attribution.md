@@ -1368,3 +1368,80 @@ lean. Coverage preserved — those Windows tests still gate merges via the `Wind
 check. **Verdict:** the ~10–12 min → ~7.3 min win is real, shipped, and green. Follow-up (optional): the
 windows-native lane could be shrunk further, and E/DrainAndClose made deterministic via a production
 pause-hook, if it ever matters.
+
+## Post-implementation research pass — what the shipped work enables - 2026-07-02
+
+A research/ideation pass (code re-read + internet prior-art) over the two shipped artifacts — the
+wall-clock **attribution instrument** and the **Linux migration + `@Tag(windows)` mechanism**. No code
+changed; ideas recorded, tiered by value for a no-users solo/agent repo (conforming to the earlier
+Tier-1/2/3 framing). Honest frame first: **users get ~nothing directly** (CI is dev infra); the real
+consumers are the solo dev and — mostly — **investigating agents**. Two internet findings corrected
+assumptions: (a) GH Actions cache is written at job *end*, so parallel lanes **cannot** share a cache
+in one run — a build cache helps **run-over-run**, not cross-lane; (b) the `@Tag`+OS-conditional-exclude
+mechanism matches 2025 best practice (combine `@Tag` for CI-filtering with `@EnabledOnOs` for OS logic).
+
+### Prior-art positioning (so we don't reinvent)
+
+CI-observability is a crowded space now: GitHub's **native "Actions Performance Metrics"** (public
+preview — aggregate bottleneck UI), **Depot Job Details**, **DataDog CI Visibility**, and an emerging
+**OpenTelemetry-for-Actions** convention. Our instrument is *complementary, not redundant*: it is
+**in-repo, per-run, machine-readable JSON, git-history-capable, and free** — the aggregate human
+dashboards are the opposite trade. The distinctive niche to keep: **agent-consumable + versioned in the
+repo**, not a hosted dashboard.
+
+### Tier 1 — real value, cheap (worth doing)
+
+- **Make the instrument agent/dev-invocable (`--run-id` fetch mode).** The sharpest finding, validated by
+  this very session: building the migration, the agent hand-rolled `gh api …/jobs | jq` ~20 times and
+  **never used the instrument it had built** — because the script only runs *in CI* (needs pre-fetched
+  `--jobs-json`). A `--run-id <id>` mode that fetches via `gh api` internally (or a thin
+  `jseval ci-attribution <run-id>` wrapper) turns it into the tool the *next* latency investigation
+  actually reaches for. This is the practicality gap: the instrument serves the CI step-summary
+  use-case, not the live-investigation one that is 90% of its real demand.
+- **Turn attribution into a pointer, not just a table.** It already computes critical path + fixed-tax vs
+  work; one added line can *name* the largest-addressable lane and its compile-vs-test mix (post-migration
+  it correctly fingers `windows-native` as the new pacer). Make the report say "here's the next lever,"
+  not only "here's where time went."
+
+### Tier 2 — design-ready, defer until appetite/consumer appears
+
+- **Gradle build-*output* cache via `gradle/actions/setup-gradle` (the biggest latency lever left).** CI
+  today caches only *dependencies* (setup-java's `cache: gradle`), not compiled outputs; every lane
+  recompiles overlapping modules cold. A build-output cache — **more effective now that all lanes are
+  homogeneous Linux** (the migration unlocked this) — would cut that redundant compile run-over-run and
+  directly relieve the windows-native pacer (mostly compile). Caveats: works run-over-run, *not*
+  cross-lane-in-run (verified); build-output caching carries invalidation/correctness risk; **needs a
+  hosted A/B before adoption** (652 already flagged `setup-gradle` as "needs a hosted A/B"). This is the
+  concrete "648-band" optimization the migration set up.
+- **Auto-persist attribution history for drift.** The trend analyzer is dispatch-only and un-live-testable
+  until merged; have the `ci-walltime` job append each run's headline numbers to a committed rolling JSON
+  (or Actions cache) so "is wall-clock drifting up?" answers itself. Defer until someone actually watches
+  the trend.
+
+### Tier 3 — record as on-brand / future, do NOT build now
+
+- **OTel conformance for CI attribution** — the emerging standard; the repo already runs an OTLP sink for
+  Claude Code telemetry (622). Someday CI attribution could emit OTel spans and unify CI + agent
+  telemetry. No consumer now; Finding 3 above already said "watch OTel."
+- **PR-comment surface** for the attribution (sticky, updating) — more visible than the buried step
+  summary, but there are no human PR reviewers yet. Record.
+- **Watch GitHub's native Actions Performance Metrics** — if it matures, it may obviate the *trend* half
+  (keep the machine-readable per-run half regardless).
+
+### Polish / simplify (minor)
+
+- Add `@EnabledOnOs(OS.WINDOWS)` to the purely-`@Tag(windows)` classes (AppInstanceLock, BrowseTool, …) —
+  best practice combines both; self-documents and defends if the plugin's OS-conditional exclude ever
+  changes.
+- The windows-native lane compiles 5 modules for ~9 tests; a lighter compile (or consolidating the
+  genuinely-Windows tests) could shrink the new pacer.
+
+### Second-order intelligence (not a code idea, worth recording)
+
+**The migration proved the product core is ~cross-platform.** After a handful of small fixes, the
+worker's file-scanning, path handling, indexing, and gRPC all run on Linux; the *only* genuinely-Windows
+bits are enumerable — single-instance lock, job objects, power status, ORT native-lib path, and the
+OneDrive cloud-placeholder DOS attribute. For a Windows-first product that might someday add Linux/Mac,
+that is real, specific intelligence: the cross-platform gap is small and named. The migration also
+*fixed latent bugs that existed on Windows too* (e.g. `PathNormalizer` blank-prefix → match-everything),
+so it was correctness work, not just CI plumbing.
