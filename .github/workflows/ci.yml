@@ -130,7 +130,9 @@ jobs:
 
   build:
     name: Build (no model blobs)
-    runs-on: windows-latest
+    # Migrated to Linux (tempdoc 668) — assemble is compile + web-bundle, no tests,
+    # so no Windows-test portability tail; protoc already fixed for Linux.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -155,7 +157,10 @@ jobs:
             modules/ui-web/package-lock.json
 
       - name: Assemble without model blobs
-        run: ./gradlew.bat assemble -PskipWebBuild=false
+        shell: bash
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          ./gradlew assemble -PskipWebBuild=false --console=plain --continue
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
@@ -185,9 +190,9 @@ jobs:
               :modules:app-util:test
               :modules:ui:test
           - lane: search-worker
-            os: windows-latest
+            os: ubuntu-latest
             artifact: unit-test-attribution-search-worker
-            runner_label: windows-latest/search-worker
+            runner_label: ubuntu-latest/search-worker
             gradle_tasks: >-
               :modules:adapters-lucene:test
               :modules:configuration:test
@@ -199,9 +204,9 @@ jobs:
               :modules:worker-core:test
               :modules:worker-services:test
           - lane: platform-contracts
-            os: windows-latest
+            os: ubuntu-latest
             artifact: unit-test-attribution-platform-contracts
-            runner_label: windows-latest/platform-contracts
+            runner_label: ubuntu-latest/platform-contracts
             gradle_tasks: >-
               :modules:ai-backend:test
               :modules:api-contract-projection-java:test
@@ -237,7 +242,7 @@ jobs:
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
-          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain --continue
 
       - name: Report unit-test attribution
         if: always()
