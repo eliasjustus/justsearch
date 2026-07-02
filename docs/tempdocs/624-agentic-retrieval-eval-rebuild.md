@@ -2776,3 +2776,91 @@ Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility
 `_leak_free_exclusion_report.json` (full per-cell exclusion detail + excerpts, for anyone auditing this
 pass's own exclusion decisions rather than trusting them on faith).
 
+## Leak-free reanalysis, condition C (2026-07-02, tenth pass) — does "harmful everywhere" survive?
+
+> Follow-up to the ninth pass above, which only recomputed the A-vs-B ("addition, realistic") comparison.
+> As-built #5/#6 also measured condition C (JustSearch-only, no file tools — the "substitution" arm) as
+> **significantly harmful on every corpus** (large negative accuracy deltas, McNemar p≈0.000–0.011), and
+> that finding was never checked against the leak. Condition C is directly implicated: As-built #7's own
+> leak counts show condition C leaked 6 cells on the scan corpus specifically — since C has no file tools,
+> any leak it shows can only come from the search index itself having ingested the answer key (the
+> accretive-watched-roots root cause, not the `--add-dir` one). English and German show 0 leaked C-cells,
+> but their leaked A-cells (1 for English, 2 for German — the same `A|seed0|q24` and `A|seed0|q0`,
+> `A|seed0|q16` cells the ninth pass already listed) still corrupt the A-vs-C comparison's baseline arm.
+>
+> **No recomputation was needed for this pass.** `compose_utility` computes every arm (`addition_b` and
+> `substitution_c`) in one call, and the ninth pass already fed it leak-flagged summaries built from the
+> exact same exclusion scan. The already-committed
+> `out-{en,de,scan}-leak-free/utility-comparison.v1.json` and
+> `out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json` therefore already contain a correct,
+> leak-free `arms.substitution_c` block — this pass is a read of already-computed data, not a new
+> computation. Confirmed two ways: (1) each file's embedded `arms.substitution_c.leak_suspect_cells` list
+> matches `_leak_free_exclusion_report.json`'s per-corpus, per-condition exclusion counts (English 1 A-cell,
+> German 2 A-cells, scan 20 A-cells + 6 C-cells feeding into the A-vs-C pairing) exactly — the same
+> committed exclusion list the ninth pass used, reused rather than re-derived; (2) two cited McNemar p-values
+> below were independently reproduced from scratch with `scipy.stats.binomtest` directly on each cell's
+> `n_with_tool_fixes`/`n_with_tool_breaks` discordant-pair counts (not by trusting either script's own
+> printed summary): scan leak-free (`binomtest(3, 7, 0.5)`) → `1.0`, exact match; scan original
+> (`binomtest(5, 23, 0.5)`) → `0.010622024536132808`, matching the committed `0.010622` to the reported
+> precision.
+
+### The corrected numbers (A→C, the "substitution" comparison)
+
+| Corpus | Original acc (leak-including) | Leak-free acc | Original McNemar p / n | Leak-free McNemar p / n |
+|---|---|---|---|---|
+| English | 0.7973→0.2027 (Δ−0.5946) | 0.7945→0.2055 (Δ−0.589) | 0.0 / 74 | 0.0 / 73 |
+| German | 0.8116→0.2464 (Δ−0.5652) | 0.806→0.2537 (Δ−0.5522) | 0.0 / 69 | 0.0 / 67 |
+| Scan | 0.7059→0.3235 (Δ−0.3824) | 0.3333→0.25 (Δ−0.0833) | 0.010622 / 34 | 1.0 / 12 |
+| **Cross-corpus pooled** | **0.7853→0.2429 (Δ−0.5424)** | **0.7632→0.2303 (Δ−0.5329)** | **0.0 / 177** | **0.0 / 152** |
+
+Independently verified against the committed JSON directly: `out-scan-leak-free/utility-comparison.v1.json`'s
+`arms.substitution_c.accuracy` reads `baseline: 0.3333, with_tool: 0.25, delta: -0.0833, mcnemar_p: 1.0,
+n_with_tool_fixes: 3, n_with_tool_breaks: 4` (n_paired_observations 12) — matches exactly; the pooled
+cross-corpus file's `arms.substitution_c.accuracy` reads `baseline: 0.7632, with_tool: 0.2303, delta:
+-0.5329, mcnemar_p: 0.0, n_with_tool_fixes: 9, n_with_tool_breaks: 90` (n 152) — matches exactly.
+
+### Assessment: the finding splits by corpus, it does not survive uniformly
+
+**English and German: the "significantly harmful" finding survives essentially unchanged.** Condition C
+leaked 0 cells directly in either corpus (the leak mechanism needing file tools, which C never has), so the
+only leak-driven exclusion is through the shared A baseline: English loses exactly the one already-known
+`A|seed0|q24` cell (n 74→73), German loses its two already-known `A|seed0|q0` / `A|seed0|q16` cells (n
+69→67). Both deltas stay large and negative (English −0.5946→−0.589, German −0.5652→−0.5522) and both
+McNemar p-values stay at the floor (`0.0`, chi2-continuity, on 47/39 discordant pairs respectively). Nothing
+about "condition C is significantly harmful" changes for these two corpora — this is a real, leak-independent
+effect at this sample size.
+
+**Scan: the finding does NOT survive.** Condition C leaked 6 cells directly on scan (the MCP-index leak
+mechanism — the only one of the three corpora where this happens, since scan is the corpus whose watched
+roots accreted the answer key into the index itself), on top of 20 leaked A-baseline cells shared across
+every pairing that uses A. Combined, the A-vs-C pairing loses 22 of its original 34 cells (65%) — collapsing
+to 12 paired observations with only 7 discordant pairs (3 fixes vs 4 breaks). The result flips from
+marginally significant (p=0.010622, Δ−0.3824) to fully indeterminate (p=1.0, Δ−0.0833, an exact binomial
+coin-flip at n=7). This is not "a smaller but still real effect" — the leak-free scan sample is too thin to
+distinguish any real effect from noise at all.
+
+This scan result should not be read as "condition C is fine on scan, actually" either. As already
+characterized elsewhere in this tempdoc (see "Tika OCR-skip" in the misclassification follow-up, tracked
+separately in tempdoc 671 and not touched by this pass), the scan corpus has a known, separate
+OCR-extraction bug that affects what content condition C's search index actually contains. With the leaked
+cells excluded, what's left of scan's C-arm sample is a tiny, unpowered remainder that cannot separate three
+possible explanations for scan's original apparent harm — (a) a genuine model-capability effect, (b) the
+now-excluded answer-key leak, or (c) the Tika bug causing the index to serve degraded/empty extracted text
+regardless of leak status — and the leak-free numbers alone cannot adjudicate between them. Scan's C-arm
+result, leak-free or not, should not be cited as independent evidence for or against condition C's harm.
+
+**Cross-corpus pooled: still strongly significant, but now effectively an English+German result.** The
+pooled leak-free figure (Δ−0.5329, p=0.0, n=152) stays close to the original (Δ−0.5424, p=0.0, n=177) and
+remains solidly significant — but this is arithmetic, not a scan contribution: scan's leak-free arm (n=12,
+p=1.0) is too small and too indeterminate to move a pool this size either way. The pooled significance would
+read essentially the same with scan dropped from the pool entirely. Framed against As-built #5/#6's original
+"significantly harmful on every corpus" claim: **the direction and magnitude are correct and the finding is
+not an artifact of the leak for English and German** (which is where the actual statistical power lives) —
+but "every corpus" is no longer an honest summary. Scan's contribution to that claim does not survive leak
+exclusion and, independently, was never clean given the Tika OCR issue; it should be dropped from the
+evidence set for condition C's harm rather than cited alongside English/German.
+
+Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility-comparison.v1.json` (already
+existing `arms.substitution_c` block, read not rewritten by this pass) and
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json` (same). No new files were written for
+this pass — `_leak_free_exclusion_report.json`'s existing per-cell detail already covers condition C.
