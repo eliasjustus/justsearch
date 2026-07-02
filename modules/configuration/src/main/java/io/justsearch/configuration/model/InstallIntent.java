@@ -2,6 +2,8 @@
 package io.justsearch.configuration.model;
 
 import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Install/runtime intent — the product-shape axis, orthogonal to hardware (tempdoc 657).
@@ -30,6 +32,8 @@ public enum InstallIntent {
   FULL_DESKTOP("full-desktop", true),
   HEADLESS("headless", true),
   MCP_LITE("mcp-lite", false);
+
+  private static final Logger log = LoggerFactory.getLogger(InstallIntent.class);
 
   /** The default intent when {@code -Djustsearch.mode} / {@code JUSTSEARCH_MODE} is unset. */
   public static final InstallIntent DEFAULT = FULL_DESKTOP;
@@ -66,7 +70,10 @@ public enum InstallIntent {
   /**
    * Resolves an intent from its config string (kebab-case; also tolerates underscores and case).
    * Returns {@link #DEFAULT} for a null/blank/unrecognized value — a bad launch flag must not brick
-   * the install, only fall back to the full experience.
+   * the install, only fall back to the full experience. A non-blank but unrecognized value (a likely
+   * typo, e.g. {@code headles}) is WARN-logged so the silent-fallback is discoverable — previously a
+   * mistyped {@code -Djustsearch.mode} / {@code JUSTSEARCH_MODE} would install/launch as Full Desktop
+   * with no signal anywhere that the requested mode was never honored.
    */
   public static InstallIntent fromConfig(String value) {
     if (value == null || value.isBlank()) {
@@ -78,6 +85,11 @@ public enum InstallIntent {
         return m;
       }
     }
+    log.warn(
+        "Unrecognized JUSTSEARCH_MODE/justsearch.mode value '{}' — falling back to {}. Valid: "
+            + "full-desktop, headless, mcp-lite",
+        value,
+        DEFAULT.id);
     return DEFAULT;
   }
 }

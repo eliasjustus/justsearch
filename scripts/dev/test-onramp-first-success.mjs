@@ -27,6 +27,9 @@ const devRunner = path.join(__dirname, 'dev-runner.cjs');
 const doctorPath = path.join(__dirname, 'doctor.mjs');
 const corpus = path.join(repoRoot, 'examples', 'onramp-corpus');
 const DEMO_QUERY = 'cinnamon heist'; // matches examples/onramp-corpus/cinnamon.md
+// Indexing-settle poll budget: 90s by default (a cold windows-latest CI runner is slower than a warm
+// local dev box); override with JUSTSEARCH_SETTLE_TIMEOUT_S for local runs.
+const SETTLE_TIMEOUT_S = Number(process.env.JUSTSEARCH_SETTLE_TIMEOUT_S) || 90;
 
 const log = makeLogger('onramp-smoke');
 
@@ -40,6 +43,7 @@ async function main() {
 
     const { results, mode } = await stageAndVerify({
       base, corpusPath: corpus, query: DEMO_QUERY,
+      pollAttempts: SETTLE_TIMEOUT_S,
       failLabel: 'FIRST-SUCCESS FAILED',
     });
 
