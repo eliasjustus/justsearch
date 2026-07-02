@@ -1,7 +1,7 @@
 ---
 title: "Install modes and model-pack decomposition: add an install-intent axis orthogonal to hardware, with runtime mode as a realized-capability projection (Full Desktop / Headless Runtime / MCP Lite as presets)"
 type: tempdocs
-status: open
+status: "in-progress — substrate implemented & live-verified 2026-07-02 (feat(657)); founder decisions, 654/655-owned items, and the follow-ups in §Implementation status remain"
 created: 2026-06-28
 updated: 2026-07-02
 category: packaging / installer / model-distribution / developer-experience
@@ -22,6 +22,88 @@ related:
 > treating any claim as current truth.
 
 # 657 - Install modes and model-pack decomposition
+
+## Implementation status (2026-07-02 — substrate shipped)
+
+The design below (D1–D8) is **implemented and live-verified**, landed as `feat(657)` (install-intent
+axis, model-pack tiers, runtime mode, honest weight breakdown, headless launcher). Everything after
+this section is the design/investigation record it was built from; this section is the current truth.
+
+### What shipped
+
+- **Tiers (D2):** `CapabilityTier` {`retrieval-core`, `retrieval-enrichment`, `llm`, `runtime`} +
+  a nullable `tier` field on `ModelPackage` (registry `model-registry.v2.json`, both copies, + loader).
+  `vision`/`mmproj` rides with `llm` (it is a supporting file of the `chat` package — not a separate
+  package), exactly as D2 specifies.
+- **Intent (D1/D3):** `InstallIntent` {`FULL_DESKTOP` (default), `HEADLESS`, `MCP_LITE`} chosen at
+  launch via `-Djustsearch.mode` / `JUSTSEARCH_MODE` (`EnvRegistry.MODE`). `InstallPlanner.plan(...)`
+  gained an intent parameter with an intent-gated skip branch parallel to the VRAM gate; MCP Lite skips
+  the `llm` + `runtime` tiers. Persisted in `InstallContract.installIntent`. Existing overloads default
+  to `FULL_DESKTOP`, so pre-existing installs are unchanged.
+- **Runtime mode (D4):** a projected `ModeInfo{intent, realized}` on `RuntimeManifest`
+  (`publishMode` in `RuntimeManifestPublisher`, wired via `RuntimeManifestListenerWiring`). `realized`
+  is coarse — `full` / `retrieval-only` / `degraded` — derived from `WorkerCapability` +
+  `InferenceCapability`, per the closure rule (schema stays v1; nullable; closure-check unaffected).
+- **Honest weight (D5):** new side-effect-free `GET /api/ai/install/plan-preview` (`InstallPlanPreview`,
+  reuses the *pure* `InstallPlanner`) returning per-tier `{totalBytes, downloadBytes, includedByIntent}`;
+  the Brain surface Models panel renders it, with intent-excluded tiers dimmed and labelled
+  ("not in <mode> mode"). Also fixed a pre-existing FE bug (per-package name read `p.id` instead of
+  `packageId`, so the column always showed a fallback).
+- **Headless launcher (D6, user-requested):** `packaging/headless/justsearch-headless.{cmd,ps1}` (staged
+  into the sidecar bundle), a `runHeadless -Pmode=<mode>` dev passthrough, and
+  `docs/how-to/headless-runtime.md`.
+- **Drift fix:** ADR-0024 reconciled (models are bundled today; only the GGUF LLM + CUDA runtime
+  download on demand). `JUSTSEARCH_MODE` documented in `environment-variables.md`; plan-preview + the
+  manifest `mode` field documented in `api-contract-map.md`.
+
+### Verification evidence
+
+- **Unit:** added tests — MCP-Lite tier-gating + untagged-package pass-through (`InstallPlannerTest`),
+  `everyPackageDeclaresATier` (`ModelRegistryLoaderTest`), intent round-trip + back-compat ctor
+  (`InstallContractIOTest`), manifest `mode` compat/round-trip (`RuntimeManifestSchemaCompatibilityTest`).
+  All changed backend modules green (`configuration`, `app-api`, `app-services`, `ui`).
+- **Live backend** (launched `-Djustsearch.mode=mcp-lite`): `GET /api/runtime/manifest` →
+  `mode = {intent: "mcp-lite", realized: "retrieval-only"}`; `GET /api/ai/install/plan-preview` →
+  `llm` and `runtime` tiers `includedByIntent:false, downloadBytes:0`; total download ≈ 2.1 GB
+  (retrieval only) vs the full ≈ 10.7 GB.
+- **Real UI (browser):** Brain surface → Models accordion renders the four tier rows with the two LLM
+  tiers dimmed and marked "not in mcp-lite mode"; no console errors.
+
+### Deferred by design (NOT bugs — owned elsewhere / need a decision)
+
+- **MCP-Lite's exposed MCP tool subset** → tempdoc 655 (this note only sets the footprint).
+- **Blessing Headless/MCP-Lite as official product shapes** (marketing/README) → tempdoc 654.
+- **Populating the low-download rung** with a small multilingual dense model (D7) → founder decision
+  (§Open decisions #2); substrate already supports it as a `retrieval-core` size/quality variant.
+- **Bundle-vs-download policy** for the ~3.5 GB ONNX (§Open decisions #1) → founder decision;
+  `stageOnnxModels` is the seam, untouched here.
+- **Splitting `mmproj` into its own package** so `vision` becomes independently selectable → only if
+  a vision-less-but-chat mode is ever wanted.
+
+### Follow-ups / unverified assumptions (do not forget)
+
+1. **Runtime enforcement gap (design nuance).** Intent gates *download* + *mode metadata*, not *runtime
+   subsystem activation*. So MCP-Lite yields "no LLM" by never downloading it (fresh install) + honest
+   `realized` reporting — but a *full* install relaunched with `mode=mcp-lite` would still start a
+   present LLM (and honestly report `realized:full`). This matches the design's explicit mechanism
+   (D4 embraces intent≠realized divergence), but if the stricter product-shape reading is wanted,
+   wire intent → the LLM autostart flag. **Open question for the owner.**
+2. **`realized:full` path unobserved live.** Only `retrieval-only` was exercised (LLM offline at
+   startup); the `full` transition (LLM ready) is simple projection logic but was not observed end-to-end.
+3. **Bundle-staged launcher unexercised.** The `bundleSidecar` Copy of the launcher scripts and their
+   in-bundle path resolution (`runtime\bin\java.exe`, `ui-headless.jar`, `lib\*`) were not run from an
+   actual built NSIS installer — only the mode *plumbing* was validated via `runHeadless -Pmode`.
+   Build the installer and confirm the launcher lands and runs before relying on it.
+4. **`InstallIntent="custom"` label (D4) not implemented.** Intent is a first-class chosen value (three
+   presets + default); there is no "custom" state derived from arbitrary per-subsystem toggle combos.
+   Minor; revisit only if free-form toggle installs need a distinct label.
+5. **Pre-existing issues found this pass (logged to the observations inbox; NOT caused here):**
+   FE `npm run typecheck` fails repo-wide on `TS5101` (tsconfig `baseUrl` deprecation, no
+   `ignoreDeprecations`) — so my FE was verified type-clean by the (empty) error list for my files,
+   not a green typecheck; and two ui-web gates are red on base (`check-theme-token-closure` ghost tokens
+   in `RecentsMenu.ts`; `check-accent-as-text` in `ActionLedgerView.ts`) — both files untouched here.
+6. **`model-inventory.md` Open Decision #1 is stale** (ONNX embedding+SPLADE are already registry
+   packages) — logged, not fixed here.
 
 ## Purpose
 
