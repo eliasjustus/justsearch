@@ -1292,10 +1292,49 @@ stays on Windows or its tests bloat the windows-native lane. Delivering the ~33%
 across ≥4 modules), for a modest win on a Windows product with no users.
 
 **Decision:** reverted the search-worker/platform-contracts/Build flip; the branch is back to the stable
-app-ui-on-Linux state (green). The honest conclusion of the whole 668 investigation: **CI's ~10–12 min
-is not meaningfully reducible without disproportionate effort** — config-cache (not blocked/not big),
-parallelism (refuted, CPU-bound runner), and Linux migration (blocked by the Windows-coupled bottleneck
-lane) are all exhausted. This *confirms the user's original intuition* that meaningful further CI
-improvement may not be realistically achievable. The lasting deliverable is the wall-clock attribution
-instrument (which produced every one of these clean refutations) plus the option-B mechanism, left in
-place on app-ui as a proven starting point should the worker ever be ported for other reasons.
+app-ui-on-Linux state (green).
+
+### CORRECTION #2 — "blocked" was premature; the full migration is tractable (~5–7 root-cause fixes) - 2026-07-02
+
+The "search-worker is pervasively Windows-coupled → migration blocked" verdict above was wrong, and it
+was the "too difficult" reflex `structural-defects-no-repeat` warns against. I stopped at truncated
+`--log-failed` summaries. Downloading the actual test-results artifacts (full stack traces) shows the
+33+ search-worker failures **collapse into a handful of root causes — most of them one bug cascading**,
+and most fixable as legitimate *cross-platform hardening* of production code (not `@windows` tags,
+which would bloat the windows-native lane and negate the win):
+
+| # | Root cause (with evidence) | Fix | Tests |
+|---|---|---|---|
+| A | `SyncDirectoryOps.isCloudPlaceholder` (`SyncDirectoryOps.java:428`) calls `Files.getAttribute(file,"dos:attributes")`; on the Linux runner the JDK reports a `dos` view (so `HAS_DOS_ATTRIBUTES` is true) but rejects the raw `attributes` name → `IllegalArgumentException: 'attributes' not recognized`, which the `catch (IOException \| UnsupportedOperationException)` misses. | **FIX (1 line):** add `IllegalArgumentException` to the catch (a file whose placeholder attr can't be read is not a placeholder — correct semantics), or tighten `HAS_DOS_ATTRIBUTES` to verify the attribute is readable. | **~30** — WorkerScanOpsTest (21), GrpcIngestServiceTest, GrpcIngestServiceSyncDirectoryPhaseTest |
+| B | `DocumentTypeDetector.extractFilename` splits on the OS separator only → a `C:\…\report.pdf` string keeps the whole path on Linux (`expected <report.pdf> but was <C:\…>`). | **FIX:** split on both `/` and `\` regardless of OS (correct — it parses paths that originate on Windows). | 3 |
+| C | `IndexRootLockTest` spawns `cmd.exe` (`error=2 No such file`), same shape as the app-util lock test. The lock itself is `ProcessHandle`-based (cross-platform). | **FIX test** (OS-appropriate throwaway-process spawn), or `@windows` if the lock semantics are Windows-only. | 3 |
+| D | `JobQueueTest.deleteByPathPrefix_blankPrefixIsRefused` — blank-prefix rejection returns wrong count on Linux. | Investigate path-prefix normalization (likely separator handling). | 3 |
+| E | `LlamaServerOpsCrashTelemetryTest.bugF_processDeath_emitsTypedHealthFailure` — process-death telemetry assertion. | Investigate (process exit-code/signal assumption); FIX or `@windows`. | 1 |
+| F | Build `:modules:{app-launcher,ui}:startScripts` fails on Linux (`application` plugin). | Investigate (classpath handling / customization); config fix. | Build lane |
+| G | `PathUpdateIntegrationTest` (adapters-lucene) doc-path rename. | Investigate (likely path literals / separator). | 3 |
+
+**Plan — full migration to ~8 min (~33%), coverage preserved:**
+
+1. **Prefer FIX over TAG.** Fixing cross-platform issues in production/test code keeps Linux coverage
+   *and* keeps the windows-native lane small — which is essential, because a bloated windows-native lane
+   (compiling many heavy modules for a few tagged tests) would itself become the critical path and
+   negate the win. Reserve `@windows` for behavior that is *genuinely* Windows-only: single-instance
+   lock semantics, job objects, power status, ORT native-lib path (`AiInstallServiceOrtNativePath`), and
+   possibly the llama-server process-death telemetry.
+2. **Order by leverage:** A (clears ~30 in one line) → B → C/D/G (search-worker remainder) → E
+   (platform-contracts) → F (Build). Each fix re-validated by an advisory `--continue` Linux run of that
+   lane before it becomes required.
+3. **Reconsider the app-ui tags:** `BrowseToolTest`/`SearchToolTest` were `@windows`-tagged as a fast
+   path; revisit whether their path assertions are fixable cross-platform (keeps Linux coverage + shrinks
+   the windows-native lane). `AppInstance/WindowsJobObject/WindowsPowerStatus/OrtNativePath` stay tagged.
+4. **Flip all lanes → ubuntu**, iterate to green, then **measure the realized PR wall-clock** and re-pin
+   the advisory budgets / walltime policy to the Linux baseline.
+5. **Guard against windows-native bloat:** after fixes, that lane should run only app-util (+ app-services
+   for OrtNativePath) — a few classes. If it trends toward the critical path, that's a signal to fix more
+   rather than tag.
+
+**Effort:** roughly a focused day plus CI iterations — bounded because the failures are concentrated, not
+scattered. **Risk:** the four "investigate" items (D, E, F, G) could surface deeper issues, but the
+dominant pattern (one attribute-read bug + path-separator handling) is routine cross-platform work. This
+supersedes CORRECTION-set's "not realistically achievable" — it is achievable; it is a real day of
+cross-platform hardening for a real ~33%, which is the call the user made ("finish the full migration").
