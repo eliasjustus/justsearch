@@ -8,6 +8,8 @@ import logging
 
 import click
 
+from ._common import _write_bench_output
+
 log = logging.getLogger(__name__)
 
 
@@ -25,10 +27,15 @@ log = logging.getLogger(__name__)
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
               default="public-pre-cutoff", show_default=True)
 @click.option("--confidence-tier", type=click.Choice(["A", "B", "C"]), default="C", show_default=True)
+@click.option("--exclude-leaked", is_flag=True,
+              help="Scan each run's agent_answer text for an answer-key-leak signature "
+                   "(a queries.json/queries.jsonl mention) and exclude matched cells from "
+                   "the paired statistics before composing (tempdoc 624 §As-built #7 "
+                   "follow-up leak-free reanalysis).")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_config_key,
-                        contamination_class, confidence_tier, output_dir):
+                        contamination_class, confidence_tier, exclude_leaked, output_dir):
     """Compose agent-eval results into a utility-comparison.v1 record (tempdoc 624).
 
     Attaches a cohort identity to each run (agent_manifest), pairs the with/without
@@ -48,6 +55,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
     cli_version = aur.claude_cli_version()
     seed_counter: dict = {}
     summaries = []
+    n_flagged = 0
     for spec in runs:
         if "=" not in spec:
             raise click.BadParameter(f"--run must be COND=PATH, got {spec!r}")
@@ -59,11 +67,18 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
             seed = seed_counter.get(cond, 0)
             seed_counter[cond] = seed + 1
         with_tool = cond in ("B", "C")
-        summaries.append(aur.build_compose_summary(
+        summary = aur.build_compose_summary(
             result, condition=cond, model=model, corpus=corpus, seed=seed,
             prompt_template=prompt_template, cli_version=cli_version,
             search_config_cohort_key=(search_config_key if with_tool else None),
-        ))
+        )
+        if exclude_leaked:
+            leaked = aur.scan_leaked_answers(result.get("results", []), condition=cond, seed=seed)
+            n_flagged += aur.apply_leak_flags([summary], leaked)
+        summaries.append(summary)
+
+    if exclude_leaked:
+        click.echo(f"leak-scan: flagged {n_flagged} per-query entries (excluded from paired stats)")
 
     record = uc.compose_utility(
         summaries,
@@ -87,12 +102,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
 
-    if output_dir:
-        out = Path(output_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "utility-comparison.v1.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
-        click.echo(f"Written record to {out}")
+    _write_bench_output(record, output_dir, "utility-comparison.v1.json")
 
 
 @click.command("utility-run")
@@ -201,11 +211,8 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
     if output_dir:
-        out = Path(output_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "utility-comparison.v1.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
-        click.echo(f"Written record to {out} (Inspect logs in {log_dir})")
+        _write_bench_output(record, output_dir, "utility-comparison.v1.json")
+        click.echo(f"(Inspect logs in {log_dir})")
 
 
 # --- Query Understanding spike (363) ---
@@ -313,10 +320,15 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
               help="Calibration sample size (only with --calibrate).")
 @click.option("--calibration-seed", default=0, show_default=True, type=int,
               help="Calibration sample RNG seed (only with --calibrate).")
+@click.option("--exclude-leaked", is_flag=True,
+              help="Scan the Inspect log dir for an answer-key-leak signature "
+                   "(a queries.json/queries.jsonl mention in each sample's completion "
+                   "text) and exclude matched cells from the paired statistics before "
+                   "composing (tempdoc 624 §As-built #7 follow-up leak-free reanalysis).")
 @click.pass_context
 def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                       contamination_class, confidence_tier, output_dir,
-                      calibrate, calibration_n, calibration_seed):
+                      calibrate, calibration_n, calibration_seed, exclude_leaked):
     """Hybrid EM->LLM-judge re-score over EvalLogs, post-hoc (tempdoc 624 C-6/E-5).
 
     EM auto-passes; the EM-misses are judged by the local model (different family
@@ -352,6 +364,11 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
     if output_dir:
         summaries = aur.eval_logs_to_summaries(
             log_dir, search_config_cohort_key=search_config_key, judge_overlay=overlay)
+        if exclude_leaked:
+            leaked = aur.scan_leaked_cells(log_dir)
+            n_flagged = aur.apply_leak_flags(summaries, leaked)
+            click.echo(f"leak-scan: {len(leaked)} leaked cell(s), "
+                       f"{n_flagged} per-query entries flagged (excluded from paired stats)")
         arms = ug.compute_loss_accounting(log_dir)
         verdict, gmetrics = ug.paired_comparability(arms)
         governance = {"comparable": verdict.comparable, "reasons": verdict.reasons,
@@ -361,16 +378,12 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
             summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
             external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
             confidence_tier=confidence_tier, governance=governance)
-        out = Path(output_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "utility-comparison.v1.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
         for slug, by_model in record["measured"].items():
             for m, cell in by_model.items():
                 acc = cell["accuracy"]
                 click.echo(f"  JUDGED [{slug}/{m}] acc {acc['baseline']}->{acc['with_tool']} "
                            f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']})")
-        click.echo(f"Written JUDGED record to {out}")
+        _write_bench_output(record, output_dir, "utility-comparison.v1.json")
 
 
 @click.command("utility-compose-cross-corpus")
@@ -383,10 +396,15 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
               default="public-pre-cutoff", show_default=True)
 @click.option("--confidence-tier", type=click.Choice(["A", "B", "C"]), default="C", show_default=True)
+@click.option("--exclude-leaked", is_flag=True,
+              help="Scan each --log-dir for an answer-key-leak signature (a "
+                   "queries.json/queries.jsonl mention in each sample's completion text) "
+                   "and exclude matched cells from the paired statistics before pooling "
+                   "(tempdoc 624 §As-built #7 follow-up leak-free reanalysis).")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamination_class,
-                                     confidence_tier, output_dir):
+                                     confidence_tier, exclude_leaked, output_dir):
     """Pool multiple corpora's Inspect logs into ONE cross-corpus stratified record (tempdoc 624).
 
     `utility-compose`/`utility-run` always produce one SEPARATE top-level record per
@@ -406,11 +424,20 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
 
     all_summaries: list = []
     per_dir = []
+    n_flagged = 0
     for ld in log_dirs:
-        all_summaries.extend(aur.eval_logs_to_summaries(ld, search_config_cohort_key=search_config_key))
+        summaries = aur.eval_logs_to_summaries(ld, search_config_cohort_key=search_config_key)
+        if exclude_leaked:
+            leaked = aur.scan_leaked_cells(ld)
+            n_flagged += aur.apply_leak_flags(summaries, leaked)
+        all_summaries.extend(summaries)
         arms = ug.compute_loss_accounting(ld)
         verdict, gmetrics = ug.paired_comparability(arms)
         per_dir.append((ld, verdict, gmetrics, arms))
+
+    if exclude_leaked:
+        click.echo(f"leak-scan: {n_flagged} per-query entries flagged across "
+                   f"{len(log_dirs)} log dir(s) (excluded from paired stats)")
 
     # A cross-corpus record cannot be more trustworthy than its least-comparable
     # input: comparable only if EVERY pooled corpus's run was itself comparable.
@@ -455,12 +482,7 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
 
-    if output_dir:
-        out = Path(output_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "utility-comparison-cross-corpus.v1.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
-        click.echo(f"Written record to {out}")
+    _write_bench_output(record, output_dir, "utility-comparison-cross-corpus.v1.json")
 
 
 COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,

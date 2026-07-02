@@ -12,6 +12,7 @@ token-efficiency comparison is not confounded by prompt caching.
 
 from __future__ import annotations
 
+import re
 import subprocess
 
 from jseval.agent_manifest import build_agent_manifest, judge_identity
@@ -190,6 +191,134 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
                 "corpus": corpus, "per_query": per_query,
             })
     return summaries
+
+
+# --- Answer-key leak text-scan (tempdoc 624 §As-built #7 follow-up, promoted from
+# the throwaway `_leak_free_recompose.py`) --------------------------------------
+#
+# The Inspect-AI path's solver (`agent_utility_inspect.claude_agent_solver`, `
+# --output-format json`) never records a `tool_calls` stream, so
+# `eval_logs_to_summaries` above has no tool-calls data for the answer-key-leak
+# backstop (`agent_retrieval_eval.find_leak_suspect_tool_calls`) to scan. This
+# re-derives the identical leak signature directly from each sample's completion
+# TEXT instead: a case-insensitive `queries.json`/`queries.jsonl` mention (the
+# eval's own gold-answer file), applied exhaustively to every (condition, seed,
+# qid) cell in a completed Inspect log dir.
+
+_LEAK_NEEDLE_RE = re.compile(r"queries\.jsonl?", re.IGNORECASE)
+
+
+def _completion_text(sample) -> str:
+    out = getattr(sample, "output", None)
+    if out is None:
+        return ""
+    comp = getattr(out, "completion", None)
+    if comp:
+        return str(comp)
+    # fall back: some samples carry completion only inside .choices[].message.text
+    choices = getattr(out, "choices", None) or []
+    parts = []
+    for ch in choices:
+        msg = getattr(ch, "message", None)
+        content = getattr(msg, "content", None) if msg else None
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for c in content:
+                t = getattr(c, "text", None) if not isinstance(c, dict) else c.get("text")
+                if t:
+                    parts.append(str(t))
+    return "\n".join(parts)
+
+
+def scan_leaked_cells(log_dir) -> dict[str, dict]:
+    """Exhaustive scan: every sample in every Inspect EvalLog file under log_dir.
+
+    :returns: ``{"{condition}|{seed}|{qid}": {"condition":, "seed":, "qid":,
+        "n_matches":, "completion_excerpt":}}`` for every LEAKED cell.
+    """
+    from pathlib import Path
+
+    from inspect_ai.log import read_eval_log
+
+    leaked: dict[str, dict] = {}
+    log_dir = Path(log_dir)
+    log_files = sorted(log_dir.glob("*.eval")) + sorted(log_dir.glob("*.json"))
+    for lf in log_files:
+        if lf.name == "logs.json":
+            continue
+        try:
+            log = read_eval_log(lf.as_posix())
+        except Exception:
+            continue
+        if not getattr(log, "eval", None):
+            continue
+        meta = log.eval.metadata or {}
+        condition = meta.get("condition")
+        for s in (log.samples or []):
+            if (s.metadata or {}).get("error"):
+                continue  # excluded cell already, not part of any paired stat
+            seed = int(s.epoch or 1) - 1
+            qid = str(s.id)
+            text = _completion_text(s)
+            matches = _LEAK_NEEDLE_RE.findall(text)
+            if matches:
+                key = f"{condition}|{seed}|{qid}"
+                leaked[key] = {
+                    "condition": condition,
+                    "seed": seed,
+                    "qid": qid,
+                    "n_matches": len(matches),
+                    "completion_excerpt": text[:400],
+                }
+    return leaked
+
+
+def apply_leak_flags(summaries: list[dict], leaked: dict[str, dict]) -> int:
+    """Stamp ``per_query[qid]["leak_suspect"] = True`` on every summary entry whose
+    ``{condition}|{seed}|{qid}`` key is present in ``leaked`` (from `scan_leaked_cells`
+    or `scan_leaked_answers`) — the exact field `utility_comparison._pair_observations`
+    already knows how to exclude from the paired statistics.
+
+    :returns: the number of per-query entries flagged.
+    """
+    n_flagged = 0
+    for s in summaries:
+        cond = s.get("condition")
+        for qid, entry in s.get("per_query", {}).items():
+            seed = s["manifest"].get("seed")
+            key = f"{cond}|{seed}|{qid}"
+            if key in leaked:
+                entry["leak_suspect"] = True
+                n_flagged += 1
+    return n_flagged
+
+
+def scan_leaked_answers(results: list[dict], *, condition: str, seed: int) -> dict[str, dict]:
+    """`scan_leaked_cells`'s non-Inspect counterpart: the ``run_agent_eval`` path
+    (``agent_retrieval_eval.AgentResult.agent_answer``) has no EvalLog to read, but
+    does carry the same raw completion text directly on each result dict — this
+    matches the identical `_LEAK_NEEDLE_RE` needle against ``agent_answer`` so
+    `apply_leak_flags` can consume either source's output unmodified (same
+    ``{"{condition}|{seed}|{qid}": {...}}`` shape).
+    """
+    leaked: dict[str, dict] = {}
+    for r in results:
+        qid = r.get("query")
+        if not qid:
+            continue
+        text = r.get("agent_answer") or ""
+        matches = _LEAK_NEEDLE_RE.findall(text)
+        if matches:
+            key = f"{condition}|{seed}|{qid}"
+            leaked[key] = {
+                "condition": condition,
+                "seed": seed,
+                "qid": qid,
+                "n_matches": len(matches),
+                "completion_excerpt": text[:400],
+            }
+    return leaked
 
 
 _WITH_TOOL = {"B", "C"}
