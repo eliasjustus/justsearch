@@ -24,6 +24,8 @@ from pathlib import Path
 
 import httpx
 
+from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
@@ -1063,6 +1065,16 @@ def run_agent_eval(
     claude_bin = shutil.which("claude")
     if not claude_bin:
         return {"error": "claude CLI not found in PATH"}
+
+    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): this is the actual
+    # eval-executing path, so — unlike the optional `utility-calibrate` CLI — a stray/
+    # broader watched root must abort the run, not just get reported. Only meaningful
+    # when a search backend is actually in play (mcp_config_path given); condition A
+    # never touches the backend.
+    if mcp_config_path:
+        watched_roots_base_url = base_url_from_mcp_config(mcp_config_path)
+        if watched_roots_base_url:
+            assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
 
     log.info("Running agent eval: %d queries, model=%s, condition=%s, parallel=%d",
              len(filtered), model, condition, parallel)

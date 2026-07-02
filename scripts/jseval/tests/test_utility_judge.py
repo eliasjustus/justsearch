@@ -264,6 +264,88 @@ class TestOverlaySchemaExtension:
         assert path.endswith("judge-overlay.json")
 
 
+# --- CLI wiring (cmd_utility_judge) ------------------------------------------
+#
+# Nothing previously pinned the `--judge-url` default or that the WARNING /
+# NOTE console lines are genuinely emitted by the Click command itself (as
+# opposed to `judge_logs()`, which already has its own coverage above). A
+# future accidental revert of just the CLI wiring wouldn't be caught by
+# anything -- these pin it at the `CliRunner` level, matching the convention
+# in tests/test_cli.py (invoke `main`, assert on `result.output`).
+
+
+class TestUtilityJudgeCli:
+    def test_judge_url_default_is_eval_backend_port(self):
+        # Introspect the Click option directly -- more robust than scraping
+        # --help text, and exercises the same object cmd_utility_judge runs.
+        from jseval.commands.utility import cmd_utility_judge
+        judge_url_param = next(p for p in cmd_utility_judge.params if p.name == "judge_url")
+        assert judge_url_param.default == "http://127.0.0.1:33221"
+
+    def test_judge_url_default_appears_in_help_output(self):
+        from click.testing import CliRunner
+
+        from jseval.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["utility-judge", "--help"])
+        assert result.exit_code == 0
+        assert "http://127.0.0.1:33221" in result.output
+
+    def test_fully_degraded_judge_prints_warning(self, tmp_path, monkeypatch):
+        # Simulates a fully-unreachable judge endpoint (judge_logs() falls
+        # back to EM for every miss): the CLI must echo the literal WARNING
+        # text, not just embed degraded_to_em silently in the artifact.
+        from click.testing import CliRunner
+
+        from jseval import utility_judge as uj
+        from jseval.cli import main
+
+        fake_overlay = {
+            "judge_identity": {"kind": "substring-em", "model": None,
+                                "version": None, "prompt_hash": "x"},
+            "stats": {
+                "em_auto_pass": 3, "judged_misses": 0, "judge_flips": 0,
+                "judge_disagreements": 0, "agreement_rate": None,
+                "call_failures": 2, "degraded_to_em": True,
+            },
+            "scores": {},
+        }
+        monkeypatch.setattr(uj, "judge_logs", lambda *a, **k: fake_overlay)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["utility-judge", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "WARNING: judge endpoint unreachable" in result.output
+        assert "NOTE:" not in result.output  # fully-degraded is WARNING, not NOTE
+
+    def test_partially_degraded_judge_prints_note_not_warning(self, tmp_path, monkeypatch):
+        # Some (not all) judge calls failed: call_failures > 0 but judged > 0,
+        # so degraded_to_em is False. The CLI must still surface the failure
+        # count -- previously silent (only recoverable from the artifact).
+        from click.testing import CliRunner
+
+        from jseval import utility_judge as uj
+        from jseval.cli import main
+
+        fake_overlay = {
+            "judge_identity": {"kind": "hybrid-em-llm", "model": "m",
+                                "version": "m", "prompt_hash": "x"},
+            "stats": {
+                "em_auto_pass": 3, "judged_misses": 5, "judge_flips": 2,
+                "judge_disagreements": 1, "agreement_rate": 0.8,
+                "call_failures": 2, "degraded_to_em": False,
+            },
+            "scores": {},
+        }
+        monkeypatch.setattr(uj, "judge_logs", lambda *a, **k: fake_overlay)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["utility-judge", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "WARNING:" not in result.output
+        assert "NOTE: 2 of 7 judge calls failed and fell back to EM" in result.output
+
+
 # --- agent-substitute heuristic raters ---------------------------------------
 
 
@@ -465,3 +547,57 @@ class TestUtilityJudgeCalibrateCli:
 
         on_disk = json.loads((Path(log) / "judge-overlay.json").read_text(encoding="utf-8"))
         assert "human_calibration" not in on_disk
+
+
+# --- write-before-print ordering (independent-reviewer nit #2) ---------------
+#
+# `cmd_utility_judge`'s `output_dir` branch used to write the composed record
+# to disk BEFORE its per-model click.echo print-summary loop; a session-624
+# consolidation pass (splitting cli.py into commands/) moved the write to AFTER
+# the print loop, so a crash in the print loop (e.g. a malformed `cell["accuracy"]`)
+# now loses an already-computed record that would previously have survived. This
+# regressed only `cmd_utility_judge` -- `cmd_utility_compose`/
+# `cmd_utility_compose_cross_corpus` were unaffected by the consolidation (both
+# already wrote after their own print loops, before AND after that session).
+
+
+class TestUtilityJudgeWriteBeforePrintOrdering:
+    def test_record_is_written_even_if_the_print_summary_loop_crashes(self, tmp_path, monkeypatch):
+        """Forces a crash inside the per-model print loop (via a monkeypatched
+        `click.echo` that raises on the `"  JUDGED"`-prefixed line) and asserts the
+        composed record still landed on disk -- proving the write happens BEFORE
+        the loop, not after. Needs a log dir with BOTH conditions (A and C) paired
+        into a real cell -- `_calibration_dry_run_logs` above is condition-C-only
+        (`measured` would be empty and the print loop would never run), so this
+        reuses `test_agent_utility_run._leak_scan_logs` (both conditions, all EM
+        correct -> no judge network calls needed)."""
+        pytest.importorskip("inspect_ai")
+        import click as _click
+
+        from jseval.commands.utility import cmd_utility_judge
+        from tests.test_agent_utility_run import _leak_scan_logs
+
+        log = _leak_scan_logs(tmp_path)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+
+        real_echo = _click.echo
+
+        def _boom(message="", *args, **kwargs):
+            if isinstance(message, str) and message.startswith("  JUDGED"):
+                raise RuntimeError("simulated print-loop crash")
+            return real_echo(message, *args, **kwargs)
+
+        monkeypatch.setattr(_click, "echo", _boom)
+
+        out_dir = tmp_path / "out"
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge, [
+            log, "--judge-url", "http://x", "--output-dir", str(out_dir),
+        ])
+        assert result.exit_code != 0
+        assert isinstance(result.exception, RuntimeError)
+
+        written = out_dir / "utility-comparison.v1.json"
+        assert written.exists(), "record must be written BEFORE the print loop, not after"

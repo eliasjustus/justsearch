@@ -102,6 +102,56 @@ def check_watched_roots_scoped(
     return ReadinessResult(passed=True, snapshot={"roots": roots})
 
 
+class StrayWatchedRootError(RuntimeError):
+    """A live eval run detected a watched root broader than its own `corpus_dir`.
+
+    Raised by `assert_watched_roots_scoped` — the automatic-prevention call site wired
+    directly into `run_utility_eval` (agent_utility_inspect.py) and `run_agent_eval`
+    (agent_retrieval_eval.py), the two functions that actually EXECUTE an eval. Before
+    this, `check_watched_roots_scoped` was only reachable via the separate, optional
+    `utility-calibrate` CLI — an eval could run (and silently leak) without ever going
+    through it. See `check_watched_roots_scoped`'s docstring for the underlying
+    mechanism (tempdoc 624 As-built #7).
+    """
+
+
+def assert_watched_roots_scoped(base_url: str, corpus_dir: str, *, timeout_sec: float = 15.0) -> None:
+    """Run `check_watched_roots_scoped` and raise `StrayWatchedRootError` on failure.
+
+    Unlike `utility-calibrate` (optional, report-only), any code path that is about to
+    actually run an eval against `base_url` must abort here rather than warn-and-continue
+    — a stray root silently serves leaked content for the rest of the run.
+    """
+    result = check_watched_roots_scoped(base_url, corpus_dir, timeout_sec=timeout_sec)
+    if not result.passed:
+        raise StrayWatchedRootError("; ".join(result.failure_reasons))
+
+
+def base_url_from_mcp_config(mcp_config_path: str) -> str | None:
+    """Derive the JustSearch backend's base_url from an eval's `--mcp-config` file.
+
+    Neither `run_utility_eval` nor `run_agent_eval` takes its own `--base-url` option —
+    the backend address they actually need for the watched-roots safety check is already
+    carried by the `--mcp-config` file the `claude` subprocess uses for its own MCP
+    transport: `{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:PORT/mcp"}}}` (see
+    `util-smoke/README.md`). Deriving it here — instead of adding a second, possibly
+    divergent base-url flag — guarantees the roots check always targets the SAME backend
+    the agent under test is configured to talk to.
+
+    Returns None if the file is missing/malformed or doesn't carry a `justsearch` server
+    `url` (e.g. condition A's `{"mcpServers":{}}` empty config) — callers should treat
+    that as "no search backend is in play for this call," not "verified clean."
+    """
+    try:
+        cfg = json.loads(Path(mcp_config_path).read_text(encoding="utf-8"))
+        url = cfg["mcpServers"]["justsearch"]["url"]
+    except Exception:
+        return None
+    if not isinstance(url, str) or not url:
+        return None
+    return url[: -len("/mcp")] if url.endswith("/mcp") else url.rstrip("/")
+
+
 def check_readiness(
     base_url: str, corpus_dir: str, *, require_dense: bool = True, timeout_sec: float = 15.0
 ) -> ReadinessResult:

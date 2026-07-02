@@ -37,6 +37,7 @@ from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
 from jseval.agent_retrieval_eval import _score_answer, build_disallowed_tools, stage_corpus_dir
+from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -180,6 +181,16 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
 
     from jseval.manifest import _sha256_canonical
 
+    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): this is the actual
+    # eval-executing path, so — unlike the optional `utility-calibrate` CLI — a stray/
+    # broader watched root must abort the run, not just get reported. Only meaningful
+    # when a search backend is actually in play (mcp_config given); condition-A-only
+    # runs never touch the backend.
+    if mcp_config:
+        watched_roots_base_url = base_url_from_mcp_config(mcp_config)
+        if watched_roots_base_url:
+            assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
+
     # The prompt template is identical across conditions → its hash is a cohort
     # field (so A and C share an agent_cohort_key, but a prompt change segregates).
     prompt_template_hash = _sha256_canonical(_PROMPT)
@@ -190,27 +201,31 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     # stage_corpus_dir's docstring for why `--add-dir corpus_dir` cannot pass the
     # persistent, gold-answer-key-sibling `corpus-dir/` directly.
     staged_corpus_dir = stage_corpus_dir(corpus_dir)
-    tasks = [
-        agent_utility_task(
-            condition=c, queries_path=queries_path, corpus_dir=staged_corpus_dir,
-            mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
-            max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
-            cli_version=cli_version,
-            mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
-            prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
-            corpus_signature=corpus_signature,
-        )
-        for c in conditions
-    ]
-    # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
-    # re-invoking after a crash fails with "log file not associated with a task"
-    # because the set identity differs across processes. Derived from the run
-    # config so the same run resumes and a different run gets a fresh set.
-    eval_set_id = _sha256_canonical({
-        "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
-        "queries": queries_path, "prompt": prompt_template_hash,
-    })[:22]
     try:
+        # `tasks` construction (agent_utility_task -> json.load on queries_path)
+        # can raise on a bad/missing/corrupted queries file — kept inside this
+        # try so a task-construction failure still hits the staged-dir cleanup
+        # below, not just an eval_set failure.
+        tasks = [
+            agent_utility_task(
+                condition=c, queries_path=queries_path, corpus_dir=staged_corpus_dir,
+                mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
+                max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
+                cli_version=cli_version,
+                mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
+                prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
+                corpus_signature=corpus_signature,
+            )
+            for c in conditions
+        ]
+        # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
+        # re-invoking after a crash fails with "log file not associated with a task"
+        # because the set identity differs across processes. Derived from the run
+        # config so the same run resumes and a different run gets a fresh set.
+        eval_set_id = _sha256_canonical({
+            "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
+            "queries": queries_path, "prompt": prompt_template_hash,
+        })[:22]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec
         # paths during eval_set's log cleanup; JSON logs are text + portable.
         eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",

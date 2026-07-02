@@ -160,3 +160,171 @@ def test_run_utility_eval_builds_tasks_with_staged_not_original_corpus_dir(tmp_p
 
     # the staging directory is a temp artifact -- must be cleaned up after the run
     assert not Path(used_corpus_dir).parent.exists()
+
+
+def test_run_utility_eval_cleans_up_staged_dir_when_task_construction_raises(tmp_path, monkeypatch):
+    """Regression test (independent-reviewer nit #1): `tasks = [...]` construction
+    calls `agent_utility_task`, which does `json.load(open(queries_path))` and can
+    raise on a bad/missing/corrupted queries file. Before the fix, only the
+    subsequent `eval_set(...)` call was wrapped in the cleanup try/finally, so a
+    task-construction failure leaked the staged temp directory. This forces the
+    failure IN task construction (not in eval_set) and asserts the staged dir is
+    still cleaned up."""
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+
+    captured = {}
+    real_stage = aui.stage_corpus_dir
+
+    def spying_stage_corpus_dir(cdir):
+        staged = real_stage(cdir)
+        captured["staged_dir"] = staged
+        return staged
+
+    def raising_agent_utility_task(*, corpus_dir, **kwargs):
+        raise ValueError("simulated bad queries.json during task construction")
+
+    monkeypatch.setattr(aui, "stage_corpus_dir", spying_stage_corpus_dir)
+    monkeypatch.setattr(aui, "agent_utility_task", raising_agent_utility_task)
+    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+
+    with pytest.raises(ValueError, match="simulated bad queries.json"):
+        aui.run_utility_eval(
+            queries_path=str(queries_for_eval), corpus_dir=str(corpus_dir), mcp_config=None,
+            conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+        )
+
+    assert "staged_dir" in captured, "stage_corpus_dir should have been invoked"
+    # the staging directory is a temp artifact -- must be cleaned up even though
+    # task construction (not eval_set) is what raised.
+    assert not Path(captured["staged_dir"]).parent.exists()
+
+
+# --- Watched-roots safety gate: run_utility_eval is the actual eval-executing path,
+# so (unlike the optional `utility-calibrate` CLI) a stray/broader watched root must
+# abort the run before any subprocess or eval_set work happens (tempdoc 624 As-built
+# #7 follow-up). ---
+
+def _mock_roots_client(MockClient, roots_paths):
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+    resp = MagicMock()
+    resp.json.return_value = {
+        "roots": [{"collection": "default", "path": p, "fileCount": 3} for p in roots_paths]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_client.get.return_value = resp
+    return mock_client
+
+
+def test_run_utility_eval_raises_on_stray_watched_root(tmp_path, monkeypatch):
+    """mcp_config given (a real search backend is in play) + a stray/broader watched
+    root reported by the live backend -> run_utility_eval must raise StrayWatchedRootError
+    and must NOT reach agent_utility_task / eval_set (no staging, no subprocess work)."""
+    from unittest.mock import patch
+
+    from jseval.utility_calibrate import StrayWatchedRootError
+
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+
+    mcp_config = tmp_path / "mcp.json"
+    mcp_config.write_text(
+        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+
+    called = {"agent_utility_task": False, "eval_set": False}
+    monkeypatch.setattr(aui, "agent_utility_task",
+                         lambda **kw: called.__setitem__("agent_utility_task", True))
+    monkeypatch.setattr(inspect_ai, "eval_set",
+                         lambda *a, **k: called.__setitem__("eval_set", True))
+
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        # a stray root broader than corpus_dir -- the corpus's own PARENT.
+        _mock_roots_client(MockClient, [str(dataset_dir)])
+
+        with pytest.raises(StrayWatchedRootError):
+            aui.run_utility_eval(
+                queries_path=str(queries_for_eval), corpus_dir=str(corpus_dir),
+                mcp_config=str(mcp_config), conditions=("A", "C"), seeds=1, concurrency=1,
+                log_dir=str(tmp_path / "logs"),
+            )
+
+    assert called["agent_utility_task"] is False
+    assert called["eval_set"] is False
+
+
+def test_run_utility_eval_proceeds_when_roots_correctly_scoped(tmp_path, monkeypatch):
+    """The mirror-positive: when the live backend's watched roots are exactly
+    corpus_dir, the safety gate must NOT block the run."""
+    from unittest.mock import patch
+
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+
+    mcp_config = tmp_path / "mcp.json"
+    mcp_config.write_text(
+        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+
+    called = {"eval_set": False}
+    monkeypatch.setattr(aui, "agent_utility_task", lambda **kw: object())
+    monkeypatch.setattr(inspect_ai, "eval_set",
+                         lambda *a, **k: called.__setitem__("eval_set", True))
+
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        _mock_roots_client(MockClient, [str(corpus_dir)])
+
+        aui.run_utility_eval(
+            queries_path=str(queries_for_eval), corpus_dir=str(corpus_dir),
+            mcp_config=str(mcp_config), conditions=("A", "C"), seeds=1, concurrency=1,
+            log_dir=str(tmp_path / "logs"),
+        )
+
+    assert called["eval_set"] is True
+
+
+def test_run_utility_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
+    """condition-A-only runs (mcp_config=None) never touch the search backend, so the
+    gate must not attempt an HTTP call at all -- covered implicitly by the pre-existing
+    staging test above (mcp_config=None there too), pinned explicitly here so a future
+    change can't silently make mcp_config=None try to hit a backend anyway."""
+    from unittest.mock import patch
+
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+
+    monkeypatch.setattr(aui, "agent_utility_task", lambda **kw: object())
+    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        aui.run_utility_eval(
+            queries_path=str(queries_for_eval), corpus_dir=str(corpus_dir), mcp_config=None,
+            conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+        )
+        MockClient.assert_not_called()

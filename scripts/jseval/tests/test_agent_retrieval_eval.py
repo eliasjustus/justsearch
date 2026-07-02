@@ -374,3 +374,135 @@ def test_run_agent_eval_invokes_subprocess_with_staged_not_original_corpus_dir(t
 
     assert result["condition"] == "A"
     assert result["errors"] == 0
+
+
+# --- Watched-roots safety gate: run_agent_eval is the actual eval-executing path,
+# so (unlike the optional `utility-calibrate` CLI) a stray/broader watched root must
+# abort the run before any subprocess work happens (tempdoc 624 As-built #7 follow-up).
+
+def _mock_roots_client(MockClient, roots_paths):
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+    resp = MagicMock()
+    resp.json.return_value = {
+        "roots": [{"collection": "default", "path": p, "fileCount": 3} for p in roots_paths]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_client.get.return_value = resp
+    return mock_client
+
+
+def test_run_agent_eval_raises_on_stray_watched_root(tmp_path, monkeypatch):
+    """mcp_config_path given (condition C actually queries the search backend) + a
+    stray/broader watched root reported live -> run_agent_eval must raise
+    StrayWatchedRootError and must NOT reach subprocess.run (no staging, no spawn)."""
+    import pytest
+
+    from jseval import agent_retrieval_eval as are
+    from jseval.utility_calibrate import StrayWatchedRootError
+
+    dataset_dir = _make_dataset_dir_with_answer_key(tmp_path)
+    corpus_dir = dataset_dir / "corpus-dir"
+
+    mcp_config = tmp_path / "mcp.json"
+    mcp_config.write_text(
+        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+
+    monkeypatch.setattr(are.shutil, "which", lambda name: "claude")
+    called = {"subprocess_run": False}
+    monkeypatch.setattr(are.subprocess, "run",
+                         lambda *a, **k: called.__setitem__("subprocess_run", True))
+
+    from unittest.mock import patch
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        # a stray root broader than corpus_dir -- the corpus's own PARENT.
+        _mock_roots_client(MockClient, [str(dataset_dir)])
+
+        with pytest.raises(StrayWatchedRootError):
+            run_agent_eval(
+                queries=[{"query": "q1", "answer": "answer", "question_type": "t"}],
+                corpus_dir=str(corpus_dir),
+                mcp_config_path=str(mcp_config),
+                condition="C",
+            )
+
+    assert called["subprocess_run"] is False
+
+
+def test_run_agent_eval_proceeds_when_roots_correctly_scoped(tmp_path, monkeypatch):
+    """The mirror-positive: when the live backend's watched roots are exactly
+    corpus_dir, the safety gate must NOT block the run."""
+    from unittest.mock import patch
+
+    from jseval import agent_retrieval_eval as are
+
+    dataset_dir = _make_dataset_dir_with_answer_key(tmp_path)
+    corpus_dir = dataset_dir / "corpus-dir"
+
+    mcp_config = tmp_path / "mcp.json"
+    mcp_config.write_text(
+        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+
+    monkeypatch.setattr(are.shutil, "which", lambda name: "claude")
+
+    class FakeCompletedProcess:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({
+            "type": "result", "is_error": False, "result": "answer",
+            "total_cost_usd": 0.01, "duration_ms": 5, "num_turns": 1,
+            "usage": {}, "session_id": "",
+        }) + "\n"
+
+    monkeypatch.setattr(are.subprocess, "run", lambda *a, **k: FakeCompletedProcess())
+
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        _mock_roots_client(MockClient, [str(corpus_dir)])
+
+        result = run_agent_eval(
+            queries=[{"query": "q1", "answer": "answer", "question_type": "t"}],
+            corpus_dir=str(corpus_dir),
+            mcp_config_path=str(mcp_config),
+            condition="C",
+        )
+
+    assert result["condition"] == "C"
+    assert result["errors"] == 0
+
+
+def test_run_agent_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
+    """condition A (mcp_config_path=None) never touches the search backend, so the
+    gate must not attempt an HTTP call at all."""
+    from unittest.mock import patch
+
+    from jseval import agent_retrieval_eval as are
+
+    dataset_dir = _make_dataset_dir_with_answer_key(tmp_path)
+    corpus_dir = dataset_dir / "corpus-dir"
+
+    monkeypatch.setattr(are.shutil, "which", lambda name: "claude")
+
+    class FakeCompletedProcess:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({
+            "type": "result", "is_error": False, "result": "answer",
+            "total_cost_usd": 0.01, "duration_ms": 5, "num_turns": 1,
+            "usage": {}, "session_id": "",
+        }) + "\n"
+
+    monkeypatch.setattr(are.subprocess, "run", lambda *a, **k: FakeCompletedProcess())
+
+    with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
+        result = run_agent_eval(
+            queries=[{"query": "q1", "answer": "answer", "question_type": "t"}],
+            corpus_dir=str(corpus_dir),
+            mcp_config_path=None,
+            condition="A",
+        )
+        MockClient.assert_not_called()
+
+    assert result["condition"] == "A"

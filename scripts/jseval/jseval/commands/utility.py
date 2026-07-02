@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 import logging
 
@@ -256,6 +257,12 @@ def cmd_utility_calibrate(ctx, queries, corpus_dir, mcp_config, base_url, model,
                f"est=${calib['cost_estimate_usd']} / {calib['time_estimate_min']}min")
     click.echo(f"config_cohort_key={calib['config_cohort_key']}")
     click.echo(f"Written calibration to {output}")
+    if not calib["readiness_passed"]:
+        # Non-zero exit — a failed calibration must not be mistaken for a passing one by
+        # a caller/script that doesn't itself inspect `readiness_passed` in the output
+        # file (matches the `sys.exit(1)` convention used across jseval's other commands
+        # for a failed readiness/capability gate, e.g. `_common.assert_run_capabilities`).
+        sys.exit(1)
 
 
 @click.command("utility-status")
@@ -353,6 +360,9 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                f"agreement={st['agreement_rate']} kind={overlay['judge_identity']['kind']}")
     if st["degraded_to_em"]:
         click.echo("WARNING: judge endpoint unreachable — overlay is EM-only (no LLM verdicts).")
+    elif st["call_failures"] > 0:
+        click.echo(f"NOTE: {st['call_failures']} of {st['judged_misses'] + st['call_failures']} "
+                   f"judge calls failed and fell back to EM for those cases.")
     if calibrate:
         hc = overlay["human_calibration"]
         jvr, rvr = hc["judge_vs_rater_agreement"], hc["rater_vs_rater_agreement"]
@@ -378,12 +388,16 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
             summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
             external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
             confidence_tier=confidence_tier, governance=governance)
+        # Write BEFORE the print loop: an already-computed record must survive a
+        # crash in the print loop (e.g. a malformed cell field) instead of being
+        # silently lost. Restores this command's own pre-consolidation order (the
+        # cli.py-split refactor moved the write to after the loop here only).
+        _write_bench_output(record, output_dir, "utility-comparison.v1.json")
         for slug, by_model in record["measured"].items():
             for m, cell in by_model.items():
                 acc = cell["accuracy"]
                 click.echo(f"  JUDGED [{slug}/{m}] acc {acc['baseline']}->{acc['with_tool']} "
                            f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']})")
-        _write_bench_output(record, output_dir, "utility-comparison.v1.json")
 
 
 @click.command("utility-compose-cross-corpus")
