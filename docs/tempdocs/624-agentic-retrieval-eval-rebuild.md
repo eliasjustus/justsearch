@@ -3425,3 +3425,64 @@ Both designs the confidence pass above cleared as ready shipped, via orchestrate
 **Design 2 remains correctly unimplemented** — its target (`RESEARCH.md`) still does not exist on `main` or this branch, re-confirmed before dispatch. Not attempted, per its own explicit scope discipline.
 
 **Still open, none of it agent-actionable**: §M.9's founder decisions, §M.8 items 3-5 (real human judge calibration, seed/n targets, `comparable=True`), and the live cross-worktree `RESEARCH.md` staleness risk (still on `worktree-salvage-667`, unmerged, unsynced with this tempdoc's corrected numbers as of this pass) — all surfaced for the founder, none acted on unilaterally.
+
+---
+
+# The combined U-Founder-2 estimate (2026-07-02, sixteenth pass) — Step 0, now producible
+
+> §M.9 U-Founder-2 stated: "Step 0 of the implementing session is the combined estimate (engineering lift
+> §T.1-T.4 + the calibrated run at the real chosen scale); the founder signs off against that number before
+> any certified-n spend." Engineering lift is now complete (this entire tempdoc's implementation arc,
+> through Item 1/Item 3 above). This pass produces the actual current number, scoped by what this session's
+> own work has since learned.
+
+## The re-seed run cost (English + German only)
+
+The existing 5-seed calibration estimates (`tmp/624-run/calibration-{en,de}.json`, computed earlier this
+session, before this session's later fixes) remain valid — the corpora themselves are unchanged, and none of
+this session's subsequent work (the leak-fix corpus staging, `--exclude-leaked`, revision metadata) changes
+the per-cell LLM cost, only post-hoc composition. Re-running calibration to re-derive an already-known-correct
+number would be redundant spend, not more rigor — the existing figures are cited directly:
+
+| Corpus | Cost (5 seeds) | Time (5 seeds) |
+|---|---|---|
+| battlefield-en-v1 | $76.75 | 136.9 min |
+| battlefield-de-v1 | $86.20 | 134.9 min |
+| **Combined (en+de)** | **$162.95** | **~272 min (~4.5 hrs)** |
+
+## The cross-family grader panel cost (Item 1's estimator, computed for real)
+
+Using the newly-built `estimate_cross_family_cost` (`external_grader.py`) with an approximate, clearly-labeled
+price table for two mid-tier frontier-model grading calls (~400 input tokens + ~30 output tokens per call,
+typical mid-2026 API pricing — **not a live quote, verify against actual current provider pricing before
+running**):
+
+| n (sample size) | Call count | Cost estimate |
+|---|---|---|
+| 40 (§M.4's floor) | 160 (2 graders × dual-order) | **$0.16** |
+| 50 (§M.4's ceiling) | 200 | **$0.20** |
+
+Genuinely negligible next to the run cost — the grader panel's own price is not a meaningful factor in the
+sign-off decision.
+
+## What's explicitly excluded, and why
+
+**`synth-scan-v1` (the OCR corpus) is excluded from this estimate entirely.** Item 3 (above) found that even
+after tempdoc 671's real, committed fix, the corpus's live nDCG@10 is still 0.0000 — not because of seed
+count or spend, but because the separate, already-documented VDU-trigger wiring gap means no real text is
+ever extracted from these documents at all (`vdu_status: PENDING` on 360 of 361 docs). **Spending on a 5-seed
+re-run of this corpus would not fix anything and would not be well spent** until that wiring gap is resolved
+first — a different, smaller, non-LLM-spend engineering task (Head-bootstrap wiring, not extraction routing),
+already tracked in tempdoc 671's own remaining-work list. This is a real, current scoping decision, not an
+oversight: en/de are ready to spend against; scan needs its own prerequisite fix before spend is well-founded
+there.
+
+## The combined number
+
+**$162.95 + $0.20 ≈ $163.15, ~4.5 hours, covering English and German at the full 5-seed target — with the
+scan/OCR corpus explicitly deferred pending its own separate, already-identified prerequisite fix, not
+included in this ask.** This is the real, current "Step 0" figure — smaller than earlier passes' framing
+implied ("hundreds-to-low-thousands... larger than 624/635's ~$50-150 small-corpus envelopes"), because the
+engineering lift that estimate worried about is now genuinely done, and because scan's own blocker turned out
+to be a different kind of problem than money solves.
+
