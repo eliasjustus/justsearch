@@ -2476,3 +2476,197 @@ cross-corpus pooled figure (p=0.185) is the closest this effort has come to a di
 still not significant. No number from any of this should be quoted publicly, per this tempdoc's own
 boundary (a) — this section exists to keep the internal record honest, not to produce a claim.
 
+---
+
+# As-built #7 (2026-07-02) — §M.7a item 3: the failure analysis on condition B's discordant queries
+
+> The one remaining honestly-available claim shape from §M.7a — the failure analysis, not the token/cost or
+> stratified-coverage claims (both closed by As-built #5/#6's real run and cross-corpus composer). Done
+> directly against the real Phase 7 Inspect-AI logs still present on disk at `tmp/624-run/logs-{en,de,scan}/`
+> (not `scripts/jseval/tmp/624-run/` as originally assumed when this item was assigned — the actual location
+> under the worktree root, confirmed present and readable before anything else was written). Reuses the
+> existing paired-comparison machinery (`compare_runs.mcnemar`, `utility_comparison._pair_observations`,
+> `agent_utility_run.eval_logs_to_summaries`) rather than hand-rolling a new comparison; a throwaway, uncommitted
+> analysis script layered on top to re-derive per-`(seed, qid)` query text / target / completion text, which
+> `compose_utility`'s aggregated summaries discard. **This pass surfaced a real eval-harness contamination bug
+> as a side effect of characterizing the discordant pairs — reported here because it directly bears on which
+> discordant pairs are even real signal, not fixed (out of scope; logged as an observation).**
+
+## Method and cross-check
+
+`eval_logs_to_summaries(log_dir)` (`scripts/jseval/jseval/agent_utility_run.py:96`) was called directly on
+each corpus's log directory to reproduce the exact per-arm `per_query` summaries the real compose step used;
+`_pair_observations(a_list, b_list)` (`scripts/jseval/jseval/utility_comparison.py:283`) built the same
+`{seed}:{qid}` paired-observation set `compose_utility` builds internally; `compare_runs.mcnemar()`
+(`scripts/jseval/jseval/compare_runs.py:297`) was run over it. This reproduced As-built #5's published
+per-corpus B-vs-A numbers exactly (n_paired=77/77/21, accuracy_delta=−0.0649/−0.0909/+0.0476,
+p=0.424356/0.210040/1.0 for en/de/scan respectively) — confirming the discordant-pair extraction below is
+built on the same pairing the official record uses, not a divergent re-derivation.
+
+Discordant-pair counts (query right in one arm, wrong in the other, over the shared `{seed}:{qid}` set):
+**English 25** (10 B-only-correct / 15 A-only-correct), **German 23** (8 / 15), **scan 9** (5 / 4) — matching
+`mcnemar()`'s own `n_b_only_correct` / `n_a_only_correct` fields exactly.
+
+For each discordant pair, `sample.input` (query text), `sample.target` (gold answer), and
+`sample.output.completion` (the agent's final answer text) were re-read directly from the Inspect `EvalLog`
+via `inspect_ai.log.read_eval_log` for both the A and B cells at that `(seed, qid)`. **A real limitation,
+already flagged as a known gap in As-built #5**: `sample.events` on every checked sample contains only
+`Span*Event`/`SampleInitEvent`/`StateEvent`/`ScoreEvent` — no `ToolEvent` — because the solver
+(`claude_agent_solver`, `agent_utility_inspect.py:71`) shells out to `claude -p --output-format json` and
+only captures the final JSON result + usage stats, not a tool-call stream. **This analysis cannot directly
+observe whether/how MCP was invoked in a given cell** (the "did the agent actually invoke and use MCP
+retrieval" question from this item's own brief) — only the final answer text, turn count, and token/cost
+usage. Where the answer text itself names its information source (e.g., "found in the queries.json file"),
+that is used as indirect evidence below, stated as inference, not as a directly-observed tool trace.
+
+## Finding 1 (discovered during this pass, not previously known): an eval-harness answer-key leak, most
+severe on the scan corpus
+
+Every `datasets/golden/<name>/` directory places `queries.json` (the gold query/answer file) as a **sibling**
+of `corpus-dir/`, not inside it. The prompt correctly scopes the agent to the subdirectory ("Answer the
+following question using only the documents in {corpus_dir}", `agent_utility_inspect.py:91`) and
+`--add-dir {corpus_dir}` (`agent_utility_inspect.py:59`) is passed with `corpus_dir` correctly resolved to the
+`.../corpus-dir` subpath (confirmed directly in the run logs' stored `corpus_dir` field and in the literal
+subprocess argv captured on error cells) — but `--add-dir` only **adds** an allowed directory to Claude Code's
+`Read`/`Glob` tools; it does not **sandbox** them to it. An agent can and, in a measurable minority of cells,
+did read the parent directory's `queries.json` directly.
+
+Scanning every sample's completion text (not just discordant ones) for a `queries.json`/`queries.jsonl`
+mention: **English** A=1/78, B=2/78, C=0/78; **German** A=2/78, B=4/78, C=0/78; **scan** A=20/60, B=14/60,
+C=6/60 (scan has 60, not 78, samples/arm — 20 retained queries × 3 seeds vs. en/de's 26 × 3, per As-built #5).
+**Every single leaked mention scored correct** — trivially, since it is reading the answer key.
+
+Condition C (MCP-only; `Read/Grep/Glob/Bash` disallowed per `build_disallowed_tools`,
+`agent_retrieval_eval.py:906`) shows **zero** leaked mentions on English/German — consistent with the
+file-tool-traversal mechanism above, since C has no file tools to traverse with. But condition C shows **6/60
+leaked mentions on scan** — with no file tools available, this content can only have come back through an MCP
+retrieval call. Direct quotes (condition C, no `Read`/`Glob`/`Bash` available in the argv):
+
+- q10 (seed 0): *"Based on the documents in the corpus directory, I found the answer in the queries.json file. ... The answer is: ochre brannik 0033"*
+- q6 (seed 0): *"Perfect! I found the answer in the queries.json file. ... This is the seventh entry in the queries file, which matches your question exactly."*
+- q7 (seed 2): *"...The agent found this information in the queries.json file within the corpus directory."*
+
+The most defensible reading: the search backend's own index for `golden/synth-scan-v1` was built over a
+materialization that included `queries.json`, so **MCP retrieval itself returned answer-key content** for
+this corpus — a distinct and more serious mechanism than the file-tool leak, because it means the tool being
+evaluated, not just the harness's file-tool sandboxing, was contaminated. This is layered on top of (not a
+duplicate of) As-built #6's already-documented Tika OCR-skip production bug — a third, independent reason
+`synth-scan-v1`'s numbers carry no signal.
+
+**Impact on the discordant sets specifically** (leak = either side's completion mentions `queries.json`):
+English 1/25 discordant pairs leaked, German 3/23, **scan 7/9 (78%)** — of scan's 5 "B-wins" pairs, **all 5**
+are leaked; of its 4 "B-regression" pairs, 2 are leaked, leaving only 2 genuinely uncontaminated discordant
+pairs on scan out of 9. Scan's discordant-pair shape is therefore not usable for any qualitative
+characterization at all, on top of already failing `comparability` (As-built #5) and having a broken
+extraction path (As-built #6) — stated plainly rather than stretched into a directional read. **Not fixed
+here** (out of this item's scope, and this tempdoc's own `synth-scan-v1` findings already mark that corpus
+unusable) — logged to the observations inbox for the eval-harness owner
+(`docs/observations.d/2f739aa0-dcf3-4609-beb2-04bf6762970d.md`).
+
+## Finding 2: the English/German discordant pairs, leak-excluded — qualitative, small-n, not a powered analysis
+
+**Explicitly stated up front, per this item's own framing**: with 24 clean discordant pairs on English and 20
+on German, split roughly 9/15 and 7/13 across win/regression direction, this is example-driven
+characterization, not a statistically powered sub-analysis. No p-value or CI is computed on these counts; they
+are reported as raw tallies to support a qualitative read, not a new statistical claim.
+
+**No question-type stratification is possible on this run**: every retained query in every corpus is
+`question_type: "2_hop"` (confirmed directly from `sample.metadata`, 78/78 en, 78/78 de, 60/60 scan) — this
+battlefield run does not vary question type, so §T.4's stratification machinery (already exercised
+successfully by As-built #6's cross-corpus composition) has no within-corpus type axis to stratify by here.
+
+**Turn/token counts do not cleanly separate wins from regressions.** Average turns/unique-tokens on the
+*losing* arm's own cell, English, leak-excluded:
+
+| | A turns (avg) | B turns (avg) | A tokens (avg) | B tokens (avg) |
+|---|---|---|---|
+| B-wins (n=9, A was wrong) | 28.9 | 20.3 | 47,673 | 36,188 |
+| B-regressions (n=15, B was wrong) | 23.7 | 23.9 | 45,746 | 43,829 |
+
+B uses fewer turns/tokens than A on average in **both** directions (consistent with the D-1 token-efficiency
+finding, independent of correctness) — but B-regression cells show essentially no turn/token gap (23.7 vs.
+23.9), meaning "B burned unusually many turns" is not, on its own, what distinguishes B's losses from its
+wins. Whatever separates a B-win from a B-regression, it is not visible in aggregate resource usage.
+
+**Keyword-classified "gave up" language** (the losing arm's own completion explicitly says the target
+location/entity "does not exist" / "cannot find" / German `nicht vorhanden` / `existiert nicht`, etc., vs. a
+confident-but-wrong chain), leak-excluded:
+
+| | B-wins: A gave up | B-regressions: B gave up |
+|---|---|---|
+| English | 2/9 (22%) | 7/15 (47%) |
+| German | 6/7 (86%) | 11/13 (85%) |
+
+This is a keyword heuristic on free text, not a rigorous classifier, but it separates the two corpora sharply
+and consistently on both sides of the pairing: **on English, a confident-but-wrong chain is the dominant
+failure mode for both arms** (most losses are not abstentions); **on German, explicit abstention
+("this location does not exist in the corpus") is the dominant failure mode for both arms, symmetrically**
+(85-86% either way). Concretely, whichever arm (A or B) fails to bridge a German natural-language
+paraphrase of a location descriptor (e.g., *"Kraftwerk, oberes Feuchtgebiet"*) to the corpus's underlying
+templated facility name (*"Reaktor, nördliches Marschland"*) overwhelmingly declines to answer rather than
+guessing — and on a substring-scored eval, an abstention always counts as a miss. This reads as a
+paraphrase-bridging gap shared by both conditions on German, not a JustSearch-specific weakness — German
+loses to itself as often as it loses to the other arm.
+
+**Concrete, clean (non-leaked), representative examples**, quoted directly from the re-read completions:
+
+1. **A genuine, replicated B-win** — English `q8` ("...publishing works in the central marketplace, the ninth
+   installation", target `verdant ferrolite 0027`): B answers correctly in 2 of 3 seeds by matching "central
+   marketplace" to the corpus's "market square" entry (*"The printing house in the market square, unit nine
+   (designated Cavstone25)... designed by Harnfen26... founder... Mirker27"*, seed 0). A, across all 3 seeds,
+   instead follows one of the corpus's *other* "unit nine" printing-house entries ("old courthouse") or an
+   unrelated chain, never landing on the market-square one. (The 3rd nominal "win", seed 1, is the
+   `queries.json`-leaked cell from Finding 1 and is excluded here.) This is the corpus's own repeated
+   "unit N" template producing multiple similar entries, where MCP's semantic retrieval resolves the
+   paraphrase and literal/file-based search anchors on the wrong duplicate.
+2. **A genuine, replicated mirror-image B-regression** — English `q23` ("...thermal spa in the high col, the
+   fourth installation", target `umber perrin 0072`): A correctly bridges "high col" to the corpus's "mountain
+   pass" entry in both seed 0 and seed 1 (*"The bathhouse in the mountain pass, unit four"*, Vexfen70). B, in
+   both seeds, explicitly gives up — verbatim: *"I'm unable to find the document matching your query in the
+   corpus. After systematically searching through files containing 'high,' 'col,' 'spa,' 'thermal,' and
+   'unit four,' I haven't located a document describing a 'thermal spa in the high col, the fourth
+   installation.'"* (seed 0); *"I've been searching through the documents but cannot find any mentions of
+   'thermal spa' or 'high col' in the corpus."* (seed 1). This is the inverse capability gap from (1): here
+   the paraphrase-bridging the corpus needs is one MCP's retrieval (or the agent's own query formulation into
+   it) did not find, and the agent abstained rather than retrying with different terms or falling back to
+   reading more broadly.
+3. **A wrong-retrieved-chunk case** — English `q18` ("...streetcar line in the enclosed grounds, the
+   nineteenth installation", target `indigo skack 0057`): B answers `azure perrin 0021` — which is the
+   *correct* answer to a **different** query in the same corpus (`q6`, "...streetcar line in the city on the
+   slopes, the seventh installation") — evidently cross-matching one of several similar tramway/streetcar
+   template entries and not catching the mismatch. A correctly follows the literal "walled garden" match
+   instead. This is the "agent trusts a wrong retrieved result" failure mode named in this item's brief,
+   concretely instantiated once in the clean set (not claimed to be the dominant pattern — it is one example
+   among 24).
+4. **The dominant German pattern, one instance** — `q0` seed 1 (*"Folgt man den Verknüpfungen ausgehend vom
+   Standort Kraftwerk, oberes Feuchtgebiet..."*, target `indigo brannik 0003`): A's own completion does the
+   paraphrase-bridging explicitly in its reasoning — *"Reaktor ≈ Kraftwerk, nördliches Marschland ≈ oberes
+   Feuchtgebiet"* — and gets it right. B, verbatim: *"I cannot find the location 'Kraftwerk, oberes
+   Feuchtgebiet' (Power plant, upper wetland) mentioned in the documents. ... The corpus contains only the
+   following facility types (first part of location): - Aquädukt (Aqueduct) - Archiv (Archive) - Badehaus
+   (Bathhouse) ..."* — lists the corpus's category vocabulary rather than attempting a semantic match, and
+   abstains. The same shape repeats (distinct
+   queries, same abstain-on-paraphrase pattern) across the majority of German's clean discordant set in both
+   directions, per the 85-86% table above — this is one representative instance of that dominant pattern, not
+   an isolated anecdote.
+
+## What this section does and does not conclude
+
+This closes §M.7a item 3: a failure analysis exists, is honestly qualitative given small n (24 clean pairs on
+English, 20 on German, effectively 2 on scan), and surfaces one genuinely new finding (Finding 1, the
+answer-key leak) that further narrows what the scan corpus's numbers can be read as. It does **not** show a
+single dominant, corpus-general mechanism for why condition B stays null — English and German show
+*different* dominant failure shapes (confident-wrong vs. abstain-on-paraphrase respectively), and the
+per-query direction is not stable across seeds for at least one query examined in passing (English `q14`:
+B-win at seed 0, B-regression at seeds 1 and 2, on the *identical* query text) — consistent with As-built #5's
+own read that the run's asymmetric-exclusion noise is plausibly seed-count-driven rather than structural.
+
+Per this item's own text and per tempdoc **655**'s stated boundary (*"Do not start by adding
+`justsearch_delete`, `justsearch_reindex`, or more lifecycle tools... this tempdoc should define the safety
+and conformance frame that makes future tool expansion coherent"*, `655:35-38`) and its explicit charge to own
+the tool-surface's conformance/capability layer (`655:24-31`) — **no tool-surface change, product lever, or
+capability recommendation is proposed here.** The concrete, testable observations above (paraphrase-bridging
+gaps in both directions, one wrong-chunk-trust instance, the leak in Finding 1) are handed off as raw material
+for whoever picks up 655's conformance frame next, not implemented as a one-off reaction to this pass's
+findings — exactly the caution §M.7a item 3 itself named in advance.
+
