@@ -38,7 +38,7 @@
       "lane": "search-worker",
       "requiredCheck": "Unit tests (search-worker)",
       "artifact": "unit-test-attribution-search-worker",
-      "runnerLabel": "ubuntu-latest/search-worker",
+      "runnerLabel": "windows-latest/search-worker",
       "owner": "search and worker hosted unit evidence",
       "platformClass": "mixed/needs targeted experiment",
       "platformRiskNotes": [
@@ -68,7 +68,7 @@
       "lane": "platform-contracts",
       "requiredCheck": "Unit tests (platform-contracts)",
       "artifact": "unit-test-attribution-platform-contracts",
-      "runnerLabel": "ubuntu-latest/platform-contracts",
+      "runnerLabel": "windows-latest/platform-contracts",
       "owner": "platform, inference, contract, and governance hosted unit evidence",
       "platformClass": "mixed/needs targeted experiment",
       "platformRiskNotes": [
