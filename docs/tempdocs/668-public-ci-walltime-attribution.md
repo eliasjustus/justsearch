@@ -1576,3 +1576,24 @@ implementation: ~8/10** — settled design, patterns to copy, top risk empirical
 two-tier artifact fiddliness + adoption. **Difficulty: low; recommend Sonnet at medium effort** (mechanical
 reuse of an existing pure function + an existing `gh` fetch + a skill-doc pointer + a fixture test; no
 Opus-tier reasoning required).
+
+### Implementation closeout — on-demand entry shipped - 2026-07-02
+
+668's remaining *owned* work is implemented (attribution logic unchanged; consumption completed):
+
+- `report-ci-walltime-attribution.mjs` gains **`--run-id <id>`**, **`--latest`** (current branch's newest
+  CI run), and **`--download-artifacts`** (opt-in unit-lane split). It self-fetches via `gh` (reusing the
+  CI job's exact `gh api …/jobs --paginate` call; `gh` resolves `{owner}/{repo}`), with best-effort
+  header facts and fail-soft artifact download. A thin **"Next lever"** line names the pacer's addressable
+  work vs fixed tax (existing fields only — no compile-vs-test for non-unit lanes, as scoped). New pure
+  exported `mergePaginatedJobs()` (depth/string-aware) makes the paging unit-testable while the `gh`
+  shell-out stays thin I/O; the `--jobs-json` CI path is untouched.
+- Test extended (`mergePaginatedJobs` cases + the next-lever assertion); `/ci-triage` skill gains the
+  "Where did the CI time go?" pointer — the discoverability home the confidence pass identified.
+- **Validated live** against run 28560174200: correct critical path (`Windows-native tests`), resolved
+  header, the next-lever line, `--download-artifacts` renders the unit split, bad run-id exits 1 cleanly;
+  test PASS; `skills-sync --check` OK; no `ci.yml` change. No UI, so no browser validation applies.
+
+The two hand-offs stand as designed and are **not** 668's to build: the larger run-id → failure-triage
+surface → **651**; the optimization band (build-output cache, windows-native shrink) → the **648-analogue**.
+668 is now complete on *attribution logic + advisory guard + on-demand consumption*.
