@@ -431,6 +431,95 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                            f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']})")
 
 
+@click.command("utility-judge-cross-family")
+@click.argument("log_dir", type=click.Path(exists=True))
+@click.option("--graders-config", required=True, type=click.Path(exists=True),
+              help="JSON file: a list of grader configs, each an object with "
+                   '"name", "endpoint_url", "model", and optionally "headers" '
+                   '(auth), "price_per_call_usd" (default 0.0), "timeout_sec", '
+                   '"system_prompt", "max_tokens", "temperature". Must define >= 2 '
+                   "configs from DIFFERENT provider families than BOTH the "
+                   "agent-under-test (Claude Haiku) and the local judge (Qwen) — "
+                   "e.g. a GPT-class and a Gemini-class grader (tempdoc 624 §M.9 "
+                   "\"U-Founder-4 revised\"). No real endpoint/model is ever "
+                   "hardcoded — this file is entirely caller-supplied.")
+@click.option("--calibration-n", default=40, show_default=True, type=int,
+              help="Calibration sample size (same stratified sampler as --calibrate).")
+@click.option("--calibration-seed", default=0, show_default=True, type=int,
+              help="Calibration sample RNG seed.")
+@click.option("--max-calls", default=None, type=int,
+              help="Hard cap on total external grader HTTP calls this run may make. "
+                   "Defaults to exactly the printed cost estimate's call_count (no "
+                   "slack) if omitted.")
+@click.option("--yes", is_flag=True,
+              help="Actually make the real network calls. WITHOUT --yes this command "
+                   "only loads the graders, prints the cost estimate, and exits — it "
+                   "NEVER calls out to a real endpoint by default.")
+@click.pass_context
+def cmd_utility_judge_cross_family(ctx, log_dir, graders_config, calibration_n,
+                                   calibration_seed, max_calls, yes):
+    """Cross-family LLM grader panel calibration (tempdoc 624 §M.9 "U-Founder-4 revised").
+
+    Replaces the (unstaffed) human-calibration session with a stratified sample
+    independently graded by >= 2 frontier models from provider families different
+    from BOTH the agent-under-test and the local judge, reporting their MUTUAL
+    cross-family agreement (kappa + CI) — weaker than human calibration on exactly
+    the hard/ambiguous cases, honestly labelled as such via the unconditional
+    `rater_kind: "cross-family-llm, NOT human"` stamp.
+
+    Reads LOG_DIR's existing `judge-overlay.json` (produced by `utility-judge`),
+    prints a cost estimate computed from --graders-config's `price_per_call_usd`
+    fields, and — ONLY with --yes — runs the real calibration and attaches
+    `cross_family_calibration` to the overlay. Without --yes, no network call is
+    ever made; the command is safe to run repeatedly to check pricing/sample size.
+    """
+    from .. import external_grader as eg
+    from .. import utility_judge as uj
+
+    overlay_path = Path(log_dir) / "judge-overlay.json"
+    if not overlay_path.exists():
+        raise click.ClickException(
+            f"{overlay_path} not found — run `jseval utility-judge {log_dir}` first "
+            "to produce a judge-overlay.json.")
+    overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+
+    raw_configs = json.loads(Path(graders_config).read_text(encoding="utf-8"))
+    if not isinstance(raw_configs, list) or len(raw_configs) < 2:
+        raise click.ClickException(
+            "--graders-config must be a JSON list of >= 2 grader config objects.")
+    price_table = {c["name"]: c.get("price_per_call_usd", 0.0) for c in raw_configs}
+    graders = [eg.GraderConfig(**{k: v for k, v in c.items() if k != "price_per_call_usd"})
+               for c in raw_configs]
+
+    estimate = eg.estimate_cross_family_cost(calibration_n, graders, price_table)
+    click.echo(
+        f"cross-family calibration cost estimate: {estimate['call_count']} calls, "
+        f"${estimate['cost_estimate_usd']:.4f} (n={estimate['n_samples']}, "
+        f"graders={estimate['n_graders']}, dual_order={estimate['dual_order']})")
+    for name, cost in estimate["per_grader"].items():
+        click.echo(f"  {name}: ${cost:.4f}")
+
+    if not yes:
+        click.echo(
+            "Dry run only (no --yes given) — NO network call was made. Re-run with "
+            "--yes once the cost estimate above is acceptable.")
+        return
+
+    cap = max_calls if max_calls is not None else estimate["call_count"]
+    result = uj.run_cross_family_calibration(
+        log_dir, overlay, graders=graders, n=calibration_n, seed=calibration_seed,
+        max_calls=cap)
+    overlay["cross_family_calibration"] = result
+    path = uj.write_overlay(log_dir, overlay)
+    jvr, rvr = result["judge_vs_rater_agreement"], result["rater_vs_rater_agreement"]
+    click.echo(
+        f"cross-family calibration (rater_kind={result['rater_kind']!r}, "
+        f"n={result['n']}, n_abstained={result['n_abstained']}): "
+        f"judge-vs-rater kappa={jvr['value']} degenerate_pe={jvr['degenerate_pe']}; "
+        f"rater-vs-rater kappa={rvr['value']} degenerate_pe={rvr['degenerate_pe']}")
+    click.echo(f"Written overlay to {path}")
+
+
 @click.command("utility-compose-cross-corpus")
 @click.option("--log-dir", "log_dirs", multiple=True, required=True, type=click.Path(exists=True),
               help="Repeatable. One completed `jseval utility-run --log-dir` Inspect log dir per "
@@ -546,4 +635,4 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
 
 
 COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
-           cmd_utility_judge, cmd_utility_compose_cross_corpus]
+           cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_compose_cross_corpus]

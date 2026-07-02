@@ -493,6 +493,107 @@ def attach_human_calibration(overlay: dict, log_dir: str, *, n: int = 40, seed: 
     return overlay
 
 
+# --- Cross-family LLM grader panel calibration (tempdoc 624 §M.9 "U-Founder-4
+# revised") -------------------------------------------------------------------
+
+
+def run_cross_family_calibration(log_dir: str, overlay: dict, *, graders, n: int = 40,
+                                  seed: int = 0, max_calls: int | None = None) -> dict:
+    """Cross-family LLM grader panel calibration — the founder-decided REPLACEMENT
+    for bulk human labeling (tempdoc 624 §M.9 "U-Founder-4 revised").
+
+    Mirrors `run_calibration_dry_run`'s exact shape and return structure —
+    stratified sample from `overlay["scores"]` (same `sample_for_calibration`,
+    oversampling the EM-disagreement stratum), same `rater_agreement_report`
+    kappa+CI machinery — but wires the sampled items into REAL external-provider
+    HTTP calls (`jseval.external_grader.call_grader_dual_order`, one per grader,
+    each a dual-order pair) instead of `run_calibration_dry_run`'s two heuristic
+    agent-substitute raters.
+
+    `graders` must be a list of >= 2 `external_grader.GraderConfig` values (the
+    `rater_agreement_report` 2-rater floor — 3+ raises `NotImplementedError` there,
+    same as `run_calibration_dry_run`'s underlying machinery) from DIFFERENT
+    provider families than BOTH the agent-under-test and the local judge — that
+    cross-family property is a caller responsibility (this function has no way to
+    mechanically verify provider identity from a `GraderConfig`), matching the
+    founder decision's own accepted honesty limit: cross-family reduces but does
+    NOT eliminate grader-correlation.
+
+    If a grader's dual-order calls disagree on an item, that grader abstains
+    (`None`) on that item; since every rater needs a label for every used item to
+    compute agreement, the WHOLE item is dropped (not just that grader's vote) —
+    counted in the returned `n_abstained`, never silently imputed.
+
+    `max_calls`, if given, is a hard cap on total external HTTP calls this run may
+    make (see `external_grader.GraderCallBudget`) — raises
+    `external_grader.GraderCallBudgetExceeded` before the call that would exceed it
+    is ever made, protecting against an unbounded loop silently ballooning cost.
+    Pass the value already confirmed via `external_grader.estimate_cross_family_cost`.
+
+    Unconditionally stamps `rater_kind: "cross-family-llm, NOT human"` — the exact
+    same unbypassable-labeling discipline `run_calibration_dry_run` already
+    established for its own `"agent-substitute, NOT human"` stamp: this value is
+    NEVER gated on any caller input, so the emitted number can never be mistaken
+    for real human-calibration.
+    """
+    from . import external_grader as eg
+
+    if len(graders) < 2:
+        raise ValueError(
+            "run_cross_family_calibration needs >= 2 graders "
+            "(rater_agreement_report's 2-rater floor)")
+
+    scores = overlay.get("scores", {})
+    sample_keys = sample_for_calibration(scores, n=n, seed=seed)
+    texts = collect_calibration_texts(log_dir, sample_keys) if sample_keys else {}
+
+    budget = eg.GraderCallBudget(max_calls) if max_calls is not None else None
+
+    rater_labels: list[list[bool]] = [[] for _ in graders]
+    judge_labels, used_keys = [], []
+    n_abstained = 0
+    for k in sample_keys:
+        t = texts.get(k)
+        if t is None:
+            continue  # sample key not found in the logs (shouldn't happen) -- skip defensively
+        verdicts = [
+            eg.call_grader_dual_order(g, t["question"], t["reference"], t["candidate"], budget=budget)
+            for g in graders
+        ]
+        if any(v is None for v in verdicts):
+            n_abstained += 1  # >=1 grader's own dual-order disagreed -- drop the item, don't guess
+            continue
+        for i, v in enumerate(verdicts):
+            rater_labels[i].append(v)
+        judge_labels.append(bool(scores[k]["final"]))
+        used_keys.append(k)
+
+    base = {
+        "rater_kind": "cross-family-llm, NOT human",
+        "n": len(used_keys),
+        "sample_qids": used_keys,
+        "n_abstained": n_abstained,
+        "graders": [g.name for g in graders],
+    }
+    if len(used_keys) < 2:
+        return {
+            **base,
+            "judge_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
+                                          "degenerate_pe": None},
+            "rater_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
+                                          "degenerate_pe": None},
+            "note": "sample has fewer than 2 usable items -- no agreement statistic computed",
+        }
+
+    report = rater_agreement_report(judge_labels, rater_labels, seed=seed)
+    return {
+        **base,
+        "n_dropped_ties": report["n_dropped_ties"],
+        "judge_vs_rater_agreement": report["judge_vs_rater_agreement"],
+        "rater_vs_rater_agreement": report["rater_vs_rater_agreement"],
+    }
+
+
 def write_overlay(log_dir: str, overlay: dict) -> str:
     """Persist the overlay dict verbatim as ``judge-overlay.json``.
 

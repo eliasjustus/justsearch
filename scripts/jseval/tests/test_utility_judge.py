@@ -601,3 +601,261 @@ class TestUtilityJudgeWriteBeforePrintOrdering:
 
         written = out_dir / "utility-comparison.v1.json"
         assert written.exists(), "record must be written BEFORE the print loop, not after"
+
+
+# --- cross-family LLM grader panel calibration (tempdoc 624 §M.9 "U-Founder-4
+# revised") --------------------------------------------------------------------
+#
+# The founder-decided REPLACEMENT for bulk human labeling: a stratified sample
+# graded by >= 2 external providers from DIFFERENT families than both the agent
+# and the local judge, reporting their mutual cross-family kappa. Every HTTP
+# call below is mocked (`monkeypatch.setattr(eg.httpx, "post", ...)`) -- no real
+# network call is ever made by this test module.
+
+
+def _fake_grader_post_agree(url, json=None, headers=None, timeout=None):
+    """Both dual-order calls, for both graders, agree: YES iff the user message
+    contains 'RESCUE' -- mirrors `_fake_judge_post` so the same
+    `_calibration_dry_run_logs` fixture produces a comparable result shape."""
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._c}}]}
+
+        def __init__(self, c):
+            self._c = c
+
+    user = json["messages"][1]["content"]
+    return _R("YES" if "RESCUE" in user else "NO")
+
+
+class TestRunCrossFamilyCalibration:
+    def _graders(self):
+        from jseval import external_grader as eg
+        return [
+            eg.GraderConfig(name="gpt-class", endpoint_url="http://gpt.invalid/v1/chat",
+                             model="gpt-family-model"),
+            eg.GraderConfig(name="gemini-class", endpoint_url="http://gemini.invalid/v1/chat",
+                             model="gemini-family-model"),
+        ]
+
+    def test_end_to_end_shape_and_honesty_stamp(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from jseval import external_grader as eg
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        monkeypatch.setattr(eg.httpx, "post", _fake_grader_post_agree)
+        result = uj.run_cross_family_calibration(
+            log, overlay, graders=self._graders(), n=6, seed=0)
+
+        # The honesty check this whole feature exists for -- unconditional, not
+        # gated by n, seed, graders, or any other input.
+        assert result["rater_kind"] == "cross-family-llm, NOT human"
+        assert result["graders"] == ["gpt-class", "gemini-class"]
+        assert result["n"] == 6
+        assert len(result["sample_qids"]) == 6
+        assert result["n_abstained"] == 0  # both graders' dual-order calls always agree here
+
+        for block_name in ("judge_vs_rater_agreement", "rater_vs_rater_agreement"):
+            block = result[block_name]
+            assert block["value"] is not None
+            assert -1.0 <= block["value"] <= 1.0
+            assert block["ci_low"] <= block["ci_high"]
+            assert block["degenerate_pe"] in (True, False)
+
+        # Round-trips through write_overlay like every other additive overlay field.
+        overlay["cross_family_calibration"] = result
+        path = uj.write_overlay(log, overlay)
+        on_disk = json.loads(open(path, encoding="utf-8").read())
+        assert on_disk["cross_family_calibration"]["rater_kind"] == "cross-family-llm, NOT human"
+
+    def test_requires_at_least_two_graders(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from jseval import external_grader as eg
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        one_grader = [eg.GraderConfig(name="only-one", endpoint_url="http://x", model="m")]
+        with pytest.raises(ValueError):
+            uj.run_cross_family_calibration(log, overlay, graders=one_grader, n=6, seed=0)
+
+    def test_degrades_gracefully_with_too_small_a_sample(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        from jseval import external_grader as eg
+        monkeypatch.setattr(eg.httpx, "post", _fake_grader_post_agree)
+        result = uj.run_cross_family_calibration(
+            log, overlay, graders=self._graders(), n=1, seed=0)
+        # Even the degraded/too-small-sample path stamps the honesty field.
+        assert result["rater_kind"] == "cross-family-llm, NOT human"
+        assert result["n"] <= 1
+        assert result["judge_vs_rater_agreement"]["value"] is None
+        assert "note" in result
+
+    def test_within_grader_dual_order_disagreement_drops_the_whole_item(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from jseval import external_grader as eg
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        # ref-first order says YES, candidate-first says NO -- every item's own
+        # dual-order calls disagree, for both graders -> every item abstains.
+        def _split_by_order(url, json=None, headers=None, timeout=None):
+            user = json["messages"][1]["content"]
+            ref_first = user.index("REFERENCE") < user.index("CANDIDATE")
+
+            class _R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"choices": [{"message": {"content": "YES" if ref_first else "NO"}}]}
+            return _R()
+
+        monkeypatch.setattr(eg.httpx, "post", _split_by_order)
+        result = uj.run_cross_family_calibration(
+            log, overlay, graders=self._graders(), n=6, seed=0)
+        assert result["rater_kind"] == "cross-family-llm, NOT human"
+        assert result["n"] == 0
+        assert result["n_abstained"] == 6
+        assert result["judge_vs_rater_agreement"]["value"] is None
+        assert "note" in result
+
+    def test_max_calls_budget_is_enforced(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from jseval import external_grader as eg
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+
+        monkeypatch.setattr(eg.httpx, "post", _fake_grader_post_agree)
+        # 6 items * 2 graders * 2 (dual-order) = 24 calls needed; cap far below that.
+        with pytest.raises(eg.GraderCallBudgetExceeded):
+            uj.run_cross_family_calibration(
+                log, overlay, graders=self._graders(), n=6, seed=0, max_calls=3)
+
+
+# --- `utility-judge-cross-family` CLI reachability -----------------------------
+
+
+class TestUtilityJudgeCrossFamilyCli:
+    def _graders_config_file(self, tmp_path):
+        cfg = [
+            {"name": "gpt-class", "endpoint_url": "http://gpt.invalid/v1/chat",
+             "model": "gpt-family-model", "price_per_call_usd": 0.01},
+            {"name": "gemini-class", "endpoint_url": "http://gemini.invalid/v1/chat",
+             "model": "gemini-family-model", "price_per_call_usd": 0.02},
+        ]
+        p = tmp_path / "graders.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        return p
+
+    def _overlay_log_dir(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+        overlay = uj.judge_logs(log, judge_url="http://x")
+        uj.write_overlay(log, overlay)
+        return log
+
+    def test_dry_run_without_yes_makes_no_network_call(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval import external_grader as eg
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        graders_config = self._graders_config_file(tmp_path)
+
+        def _boom(*a, **k):
+            raise AssertionError("no --yes given -- must never call the network")
+        monkeypatch.setattr(eg.httpx, "post", _boom)
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(graders_config), "--calibration-n", "6",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "cost estimate" in result.output
+        assert "24 calls" in result.output  # 6 * 2 graders * 2 dual-order
+        assert "NO network call was made" in result.output
+
+        on_disk = json.loads((Path(log) / "judge-overlay.json").read_text(encoding="utf-8"))
+        assert "cross_family_calibration" not in on_disk
+
+    def test_yes_flag_runs_the_real_mocked_calibration_and_writes_overlay(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval import external_grader as eg
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        graders_config = self._graders_config_file(tmp_path)
+        monkeypatch.setattr(eg.httpx, "post", _fake_grader_post_agree)
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(graders_config), "--calibration-n", "6",
+            "--calibration-seed", "0", "--yes",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "cross-family-llm, NOT human" in result.output
+        assert "Written overlay to" in result.output
+
+        on_disk = json.loads((Path(log) / "judge-overlay.json").read_text(encoding="utf-8"))
+        hc = on_disk["cross_family_calibration"]
+        assert hc["rater_kind"] == "cross-family-llm, NOT human"
+        assert hc["graders"] == ["gpt-class", "gemini-class"]
+
+    def test_missing_overlay_file_errors(self, tmp_path):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        empty_log = tmp_path / "empty"
+        empty_log.mkdir()
+        graders_config = self._graders_config_file(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            str(empty_log), "--graders-config", str(graders_config),
+        ])
+        assert result.exit_code != 0
+        assert "run `jseval utility-judge" in result.output
+
+    def test_fewer_than_two_graders_errors(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge_cross_family
+
+        log = self._overlay_log_dir(tmp_path, monkeypatch)
+        one_grader = tmp_path / "one_grader.json"
+        one_grader.write_text(json.dumps(
+            [{"name": "only-one", "endpoint_url": "http://x", "model": "m"}]), encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge_cross_family, [
+            log, "--graders-config", str(one_grader),
+        ])
+        assert result.exit_code != 0
+        assert ">= 2 grader config" in result.output
