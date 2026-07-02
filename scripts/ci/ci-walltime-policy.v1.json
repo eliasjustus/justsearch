@@ -1,0 +1,57 @@
+{
+  "kind": "justsearch-ci-walltime-policy.v1",
+  "version": 1,
+  "budgetsAreAdvisory": true,
+  "note": "Warn-only per-job wall-clock ceilings for the public CI run (tempdoc 668). Ceilings are seeded from the measured median x ~1.25 over a 15-run sample of successful `main` runs (2026-07-01); per-lane CV was ~6-10%, so a 1.25x-median ceiling rarely false-alarms while still catching a real regression. These are ADVISORY ONLY: the CI checks themselves remain the pass/fail authority, and this budget never fails a run. Ceilings are a property of the hosted-runner environment over time, not of a release, so they are hand-set here (mirroring unit-test-shard-policy.v1.json) rather than projected from a release record. Refresh deliberately when the runner image or lane membership changes; do not chase per-run noise.",
+  "lanes": [
+    {
+      "job": "Unit tests (app-ui)",
+      "requiredCheck": "Unit tests (app-ui)",
+      "owner": "app and UI hosted unit evidence",
+      "notes": "Critical path in 12/15 sampled runs; median ~600s.",
+      "advisoryBudgets": { "maxWallSeconds": 750 }
+    },
+    {
+      "job": "Unit tests (search-worker)",
+      "requiredCheck": "Unit tests (search-worker)",
+      "owner": "search and worker hosted unit evidence",
+      "notes": "Median ~528s.",
+      "advisoryBudgets": { "maxWallSeconds": 660 }
+    },
+    {
+      "job": "Unit tests (platform-contracts)",
+      "requiredCheck": "Unit tests (platform-contracts)",
+      "owner": "platform, inference, contract, and governance hosted unit evidence",
+      "notes": "Median ~511s.",
+      "advisoryBudgets": { "maxWallSeconds": 640 }
+    },
+    {
+      "job": "Build (no model blobs)",
+      "requiredCheck": "Build (no model blobs)",
+      "owner": "no-model assemble and web-bundle build",
+      "notes": "Median ~475s; likely next long pole after the app-ui shard.",
+      "advisoryBudgets": { "maxWallSeconds": 595 }
+    },
+    {
+      "job": "License and notices",
+      "requiredCheck": "License and notices",
+      "owner": "license allowlist and NOTICE projection",
+      "notes": "Median ~322s; never the critical path in the sample.",
+      "advisoryBudgets": { "maxWallSeconds": 405 }
+    },
+    {
+      "job": "Public claims",
+      "requiredCheck": "Public claims",
+      "owner": "public-claim and docs projection checks",
+      "notes": "Fast Node/docs lane; median ~20s.",
+      "advisoryBudgets": { "maxWallSeconds": 120 }
+    },
+    {
+      "job": "Secret scan",
+      "requiredCheck": "Secret scan",
+      "owner": "gitleaks public history scan",
+      "notes": "Fast lane; median ~10s.",
+      "advisoryBudgets": { "maxWallSeconds": 90 }
+    }
+  ]
+}

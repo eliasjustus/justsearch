@@ -14,6 +14,9 @@ on:
 
 permissions:
   contents: read
+  # Read-only Actions API access for the advisory `ci-walltime` job, which reads
+  # this run's own job/step timings. Grantable on fork PRs (read scope). Tempdoc 668.
+  actions: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -127,7 +130,9 @@ jobs:
 
   build:
     name: Build (no model blobs)
-    runs-on: windows-latest
+    # Migrated to Linux (tempdoc 668) — assemble is compile + web-bundle, no tests,
+    # so no Windows-test portability tail; protoc already fixed for Linux.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -152,19 +157,27 @@ jobs:
             modules/ui-web/package-lock.json
 
       - name: Assemble without model blobs
-        run: ./gradlew.bat assemble -PskipWebBuild=false
+        shell: bash
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          ./gradlew assemble -PskipWebBuild=false --console=plain
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
-    runs-on: windows-latest
+    # Per-lane runner OS (tempdoc 668 option B). app-ui is migrated to Linux (~2.8x
+    # faster, validated); its Windows-specific tests are @Tag("windows") and run on
+    # the separate windows-native-tests lane. search-worker / platform-contracts stay
+    # on Windows pending their own Linux validation.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: app-ui
+            os: ubuntu-latest
             artifact: unit-test-attribution-app-ui
-            runner_label: windows-latest/app-ui
+            runner_label: ubuntu-latest/app-ui
             gradle_tasks: >-
               :modules:app-agent:test
               :modules:app-agent-api:test
@@ -177,8 +190,9 @@ jobs:
               :modules:app-util:test
               :modules:ui:test
           - lane: search-worker
+            os: ubuntu-latest
             artifact: unit-test-attribution-search-worker
-            runner_label: windows-latest/search-worker
+            runner_label: ubuntu-latest/search-worker
             gradle_tasks: >-
               :modules:adapters-lucene:test
               :modules:configuration:test
@@ -190,8 +204,9 @@ jobs:
               :modules:worker-core:test
               :modules:worker-services:test
           - lane: platform-contracts
+            os: ubuntu-latest
             artifact: unit-test-attribution-platform-contracts
-            runner_label: windows-latest/platform-contracts
+            runner_label: ubuntu-latest/platform-contracts
             gradle_tasks: >-
               :modules:ai-backend:test
               :modules:api-contract-projection-java:test
@@ -223,7 +238,11 @@ jobs:
 
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
-        run: ./gradlew.bat ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
+        shell: bash
+        run: |
+          chmod +x ./gradlew 2>/dev/null || true
+          GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
+          "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
 
       - name: Report unit-test attribution
         if: always()
@@ -246,6 +265,30 @@ jobs:
             modules/**/build/test-results/test/TEST-*.xml
           if-no-files-found: warn
 
+  # Tempdoc 668 option B — runs ONLY the @Tag("windows") tests (single-instance lock,
+  # job objects, power status) on Windows, preserving coverage of genuinely Windows-
+  # specific product behaviour that the Linux-migrated lanes (app-ui) skip. Small + fast
+  # (a handful of classes via -PwindowsOnly). Covers the modules moved to Linux so far.
+  windows-native-tests:
+    name: Windows-native tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
+        run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -260,3 +303,59 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Advisory only — NOT a required check (see workflow-signal-policy.v1.json
+  # requiredStatusChecks; do not add this job's name there). Runs after every
+  # lane so it can read all sibling job/step timings and attribute the run's
+  # wall-clock: which lane is the critical path, and how much of each lane is
+  # fixed runner tax vs work. Warn-only budget; never fails the run. Tempdoc 668.
+  ci-walltime:
+    name: CI wall-clock attribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [public-claims, license-and-notices, build, unit-tests, secret-scan]
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Fetch this run's job timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/ci
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs" --paginate > build/ci/run-jobs.json
+
+      # Same-run cross-job download (needs no extra permission; the unit lanes are
+      # in `needs`). Lets the attribution split each unit lane's opaque test step
+      # into test CPU vs framework overhead. continue-on-error so a cancelled lane
+      # (no artifact) degrades to "no breakdown" instead of failing this advisory job.
+      - name: Download unit-test attributions (for the test-vs-overhead split)
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: unit-test-attribution-*
+          path: build/ci/unit-artifacts
+
+      - name: Report wall-clock attribution
+        run: node scripts/ci/report-ci-walltime-attribution.mjs --jobs-json build/ci/run-jobs.json --unit-attribution-dir build/ci/unit-artifacts --run-id "${{ github.run_id }}" --repository "${{ github.repository }}" --workflow "${{ github.workflow }}" --self-job "CI wall-clock attribution" --out-json build/ci/ci-walltime-attribution.json --out-md build/ci/ci-walltime-attribution.md
+
+      - name: Report wall-clock advisory budget
+        run: node scripts/ci/report-ci-walltime-budget.mjs --attribution build/ci/ci-walltime-attribution.json --out-json build/ci/ci-walltime-budget.json --out-md build/ci/ci-walltime-budget.md
+
+      - name: Upload wall-clock attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-walltime-attribution
+          path: |
+            build/ci/ci-walltime-attribution.json
+            build/ci/ci-walltime-attribution.md
+            build/ci/ci-walltime-budget.json
+            build/ci/ci-walltime-budget.md
+          if-no-files-found: warn

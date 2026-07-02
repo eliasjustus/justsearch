@@ -29,6 +29,17 @@ After touching any `@Tag("stress")` subject or concurrency-sensitive code, run:
 ./gradlew.bat test -PincludeStress=true --tests "*Stress*"
 ```
 
+## Where did the CI time go? (wall-clock attribution)
+
+To see which lane is the critical path and how much of each lane is fixed runner tax vs addressable work — instead of hand-rolling `gh api .../jobs | jq`:
+
+```bash
+node scripts/ci/report-ci-walltime-attribution.mjs --run-id <run-id> --md   # a specific run
+node scripts/ci/report-ci-walltime-attribution.mjs --latest --md            # the current branch's most recent CI run
+```
+
+Add `--download-artifacts` to also split the unit lanes into test CPU vs framework overhead. Attribution only — it changes no check result.
+
 ## Symptom → Fix Map
 
 ### Test failure

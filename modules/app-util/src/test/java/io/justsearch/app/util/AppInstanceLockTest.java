@@ -8,9 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+// Windows-specific: exercises the single-instance lock's process-liveness semantics
+// (and spawns cmd.exe). Runs only on the dedicated Windows lane (tempdoc 668 option B).
+@Tag("windows")
 class AppInstanceLockTest {
 
   @TempDir Path tempDir;

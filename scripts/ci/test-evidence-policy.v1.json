@@ -110,6 +110,13 @@
       "owner": "VDU processing",
       "reason": "VDU integration tests are domain evidence and may overlap AI/system-test opt-in behavior.",
       "cadence": "manual or targeted before changing VDU processing behavior"
+    },
+    {
+      "tag": "windows",
+      "tier": "windows-native-evidence",
+      "owner": "app-util / Windows OS integration (single-instance lock, job objects, power status)",
+      "reason": "Windows-specific product behavior. Excluded from the Linux-migrated lanes (tempdoc 668 option B) and run on the dedicated windows-native-tests lane so the coverage is preserved.",
+      "cadence": "runs every CI on the windows-native lane; touch when changing Windows OS-integration behavior"
     }
   ],
   "stressSuitePolicy": "scripts/ci/stress-suite-policy.v1.json"
