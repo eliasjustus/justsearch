@@ -2005,6 +2005,24 @@ contract, not reuse of it). This is "conform to the *principle*, not the *object
 tempdoc's own §D.2 already made once (agent-utility is a cousin record, not a 623-release sibling) applied
 one level deeper, to a *component* of that cousin record rather than the record itself.
 
+> **Correction (As-built #6, 2026-07-02) — this section's own mental model didn't match reality.** The
+> paragraph above assumes a stratification dimension is available *within* one already-composed record —
+> i.e., that a single `utility-comparison.v1` record's per-cell data already spans multiple battlefield-
+> dimension values (scale bucket, OCR-vs-text, language) for `_arm_comparison`'s `stratify_by` to bucket by.
+> That assumption is wrong: `compose_utility` groups `cell_summaries` by `(corpus, agent_model)` *before*
+> ever calling `_arm_comparison`, so each battlefield corpus (English/German/scan) always produces its own
+> separate top-level record — there is no single record whose per-cell data already crosses the battlefield
+> dimension this section's principle wants to bucket by. §M.7a's own item 2 phrasing ("stratified by
+> battlefield dimension — scale bucket, OCR-vs-text, language") anticipated the real shape more precisely
+> than this section's "governed projection of the existing record" framing did. The actual fix an independent
+> review found necessary was a **cross-corpus composition mode** — `compose_utility_cross_corpus`
+> (`utility_comparison.py`), which pools `cell_summaries` from *multiple* corpora into one `_arm_comparison`
+> call with `stratify_by` populated by source corpus, still reusing `_arm_comparison`/`_stats_from_pairs`
+> exactly as this section's principle intended, just composing across records rather than within one. See
+> As-built #6 for the real, executed result (pooled n=175, delta −0.063, p=0.185). The underlying principle
+> (a pure, versioned, additive decomposition reusing existing statistics, never inventing new ones) held; the
+> mechanism description above did not.
+
 ## Reach
 
 **Principle 1 — construction-time guarantee over detection-time gate, for any governed synthetic-corpus
