@@ -433,7 +433,11 @@ public final class WritePathOps {
     // 1. Update parent document: DOC_ID, PATH, FILENAME + re-queue for embedding/NER
     // Vector embeddings and NER status are non-stored fields that are lost during
     // readModifyWrite. Setting status to PENDING triggers backfill pipelines to re-process.
-    String newFilename = java.nio.file.Paths.get(newPath).getFileName().toString();
+    // OS-independent: newPath may carry Windows (\) or POSIX (/) separators regardless of the
+    // host OS. Paths.get() would treat a Windows path as a single segment on Linux (tempdoc 668;
+    // same pattern as LuceneRuntimeUtils).
+    int lastSep = Math.max(newPath.lastIndexOf('/'), newPath.lastIndexOf('\\'));
+    String newFilename = lastSep >= 0 ? newPath.substring(lastSep + 1) : newPath;
     boolean parentUpdated =
         readModifyWrite(
             searcher,

@@ -427,7 +427,13 @@ final class SyncDirectoryOps {
     try {
       int attrs = (int) Files.getAttribute(file, "dos:attributes");
       return (attrs & RECALL_ON_DATA_ACCESS) != 0;
-    } catch (IOException | UnsupportedOperationException e) {
+    } catch (IOException | UnsupportedOperationException | IllegalArgumentException e) {
+      // A file whose Windows cloud-placeholder attribute cannot be read is not a placeholder.
+      // On some non-Windows JDKs the default FS advertises a "dos" view (so HAS_DOS_ATTRIBUTES
+      // is true) yet rejects the raw "attributes" name with IllegalArgumentException
+      // ('attributes' not recognized) — treat that as "not a placeholder", same as the other
+      // unreadable cases. Keeps the worker's scan cross-platform (tempdoc 668). No-op on Windows,
+      // where the attribute is always readable.
       return false;
     }
   }

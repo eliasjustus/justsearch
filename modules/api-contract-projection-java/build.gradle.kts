@@ -115,7 +115,12 @@ fun resolveTool(notation: String): java.io.File {
         isCanBeResolved = true
         isTransitive = false
       }
-  return configuration.singleFile
+  val file = configuration.singleFile
+  // Maven-hosted native tools (protoc, protoc-gen-grpc-java) are cached without the
+  // executable bit; on Linux/macOS CI runners generateProto cannot exec them
+  // (java.io.IOException error=13) until they are +x. No-op on Windows. Tempdoc 668.
+  file.setExecutable(true)
+  return file
 }
 
 val protocBinary =
