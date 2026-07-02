@@ -136,19 +136,116 @@ class TestScanLeakedCells:
         assert aur.scan_leaked_cells(log_dir) == {}
 
 
+class TestEvalLogsToSummariesToolCallProjection:
+    """`eval_logs_to_summaries` must project the real tool_calls /
+    disallowed_tool_calls / leak_suspect_tool_calls that a solver stashes into
+    `state.metadata` (as the real `claude_agent_solver` now does, tempdoc 624
+    §As-built #5 residual-gap close) through into each per_query entry --
+    fixture uses a mock solver so no live `claude` CLI is needed, only a real
+    Inspect EvalLog via `eval_set` (mirrors the producer's real data flow)."""
+
+    def _logs(self, tmp_path, *, conditions=("A", "C")):
+        from inspect_ai import Task, eval_set, task
+        from inspect_ai.dataset import Sample
+        from inspect_ai.solver import solver
+
+        from jseval.agent_utility_inspect import substring_scorer
+
+        per_qid = {
+            "q0": {"tool_calls": [], "disallowed_tool_calls": [], "leak_suspect_tool_calls": []},
+            "q1": {
+                "tool_calls": [{"tool": "Bash", "input": {"command": "cat /eval/queries.json"}}],
+                "disallowed_tool_calls": [{"tool": "Bash", "input": {"command": "cat /eval/queries.json"}}],
+                "leak_suspect_tool_calls": [],
+            },
+            "q2": {
+                "tool_calls": [{"tool": "Read", "input": {"file_path": "/eval/queries.json"}}],
+                "disallowed_tool_calls": [],
+                "leak_suspect_tool_calls": [{"tool": "Read", "input": {"file_path": "/eval/queries.json"}}],
+            },
+        }
+
+        @solver
+        def fixed():
+            async def solve(state, generate):
+                qid = str(state.sample_id)
+                state.output.completion = f"answer for {qid}"
+                state.metadata.update({"cost_usd": 0.1, "unique_tokens": 500, "num_turns": 2})
+                state.metadata.update(per_qid[qid])
+                return state
+            return solve
+
+        @task
+        def ct(condition="A"):
+            samples = [Sample(id=qid, input=qid, target=f"ANS{qid[1:]}") for qid in per_qid]
+            return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
+                        metadata={"condition": condition, "model": "haiku",
+                                  "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
+                                  "cohort": _COHORT})
+
+        log_dir = (tmp_path / "logs").as_posix()
+        eval_set([ct(condition=c) for c in conditions], log_dir=log_dir, epochs=1,
+                  model="mockllm/model", log_format="json")
+        return log_dir
+
+    def test_projects_tool_calls_disallowed_and_leak_suspect(self, tmp_path):
+        pytest.importorskip("inspect_ai")
+        log_dir = self._logs(tmp_path)
+        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        by_cond = {s["condition"]: s["per_query"] for s in summaries}
+
+        q0 = by_cond["A"]["q0"]
+        assert q0["tool_calls"] == []
+        assert q0["disallowed_tool_calls"] == []
+        assert q0["leak_suspect"] is False
+
+        q1 = by_cond["A"]["q1"]
+        assert q1["tool_calls"] == [{"tool": "Bash", "input": {"command": "cat /eval/queries.json"}}]
+        assert len(q1["disallowed_tool_calls"]) == 1
+        assert q1["leak_suspect"] is False  # disallowed, but not the leak-suspect signature
+
+        q2 = by_cond["C"]["q2"]
+        assert len(q2["leak_suspect_tool_calls"]) == 1
+        assert q2["leak_suspect"] is True  # derived from the real tool-call capture
+
+    def test_tool_call_assertions_reflect_the_real_projection(self, tmp_path):
+        """End-to-end: real EvalLog -> eval_logs_to_summaries -> compose_utility's
+        tool_call_assertions rollup, no synthetic per_query dicts."""
+        pytest.importorskip("inspect_ai")
+        from jseval import utility_comparison as uc
+
+        log_dir = self._logs(tmp_path)
+        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        rec = uc.compose_utility(summaries, composed_at="t")
+
+        for cond in ("A", "C"):
+            tca = rec["tool_call_assertions"][cond]
+            assert tca["cells_total"] == 3
+            assert tca["cells_with_tool_data"] == 3  # every cell captured a (possibly empty) list
+            assert tca["cells_with_disallowed_violations"] == 1  # q1
+            assert tca["cells_with_leak_suspect"] == 1  # q2
+
+
 class TestScanLeakedCellsAppliedThroughApplyLeakFlags:
     def test_end_to_end_flags_reach_the_composed_summaries(self, tmp_path):
-        """Closes the exact gap `test_inspect_path_has_no_leak_suspect_detection_today`
-        (test_utility_comparison.py) pins as absent: the Inspect-AI path's
-        per_query entries carry NO `leak_suspect` key from `eval_logs_to_summaries`
-        alone, but running the promoted `scan_leaked_cells` + `apply_leak_flags`
-        over the same log dir now closes it for the general text-scan case."""
+        """The text-scan backstop (`scan_leaked_cells` + `apply_leak_flags`) stays
+        a second, independent detection path even now that `eval_logs_to_summaries`
+        also carries real tool-call data (tempdoc 624 §As-built #5 residual-gap
+        close): `_leak_scan_logs`'s mock solver never sets `state.metadata["tool_calls"]`
+        (it isn't `claude_agent_solver`), so `eval_logs_to_summaries` reports
+        `leak_suspect=False`/`tool_calls=None` (no tool data) for every cell
+        BEFORE the text scan runs — the text scan is what actually catches the
+        `queries.json` mention sitting in the completion text."""
         pytest.importorskip("inspect_ai")
         log_dir = _leak_scan_logs(tmp_path, conditions=("A", "C"))
         summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
         for s in summaries:
             for entry in s["per_query"].values():
-                assert "leak_suspect" not in entry  # gap confirmed still open pre-scan
+                # No tool_calls capture on this mock solver -> "no tool data",
+                # not a fabricated 0; leak_suspect is explicitly False (checked
+                # via completion text later, not yet flagged).
+                assert entry["tool_calls"] is None
+                assert entry["leak_suspect"] is False
 
         leaked = aur.scan_leaked_cells(log_dir)
         n_flagged = aur.apply_leak_flags(summaries, leaked)
@@ -159,8 +256,8 @@ class TestScanLeakedCellsAppliedThroughApplyLeakFlags:
         assert by_cond["A"]["q2"]["leak_suspect"] is True
         assert by_cond["C"]["q1"]["leak_suspect"] is True
         assert by_cond["C"]["q2"]["leak_suspect"] is True
-        # clean + errored cells never get the key at all (not even False)
-        assert "leak_suspect" not in by_cond["A"]["q0"]
+        # clean cell stays explicitly False (checked, not just absent)
+        assert by_cond["A"]["q0"]["leak_suspect"] is False
         assert "q3" not in by_cond["A"]  # errored cell excluded upstream by eval_logs_to_summaries
 
 

@@ -285,6 +285,129 @@ def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
     assert cell["leak_suspect_cells"][0]["with_tool_leak_suspect"] is True
 
 
+# --- tool_call_assertions (tempdoc 624 §As-built #5 residual-gap close) -----
+#
+# The additive coverage block that lets a consumer tell "0 violations observed
+# across N cells with real tool data" from "no tool data captured" -- the
+# credibility bar (tempdoc 624 §M.8 item 2) is a per-cell EMPIRICAL check, not
+# a config-trust assumption, and this is the record-level rollup of it.
+
+def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls=None,
+              leak_suspect=None):
+    entry = {"correct": correct, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
+    if tool_calls is not None or disallowed is not None or leak_tool_calls is not None:
+        entry["tool_calls"] = tool_calls
+        entry["disallowed_tool_calls"] = disallowed
+        entry["leak_suspect_tool_calls"] = leak_tool_calls
+    if leak_suspect is not None:
+        entry["leak_suspect"] = leak_suspect
+    return entry
+
+
+def test_tool_call_assertions_reports_clean_when_zero_violations_across_checked_cells():
+    a_pq = {f"q{i}": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]) for i in range(4)}
+    c_pq = {f"q{i}": _pq_entry(tool_calls=[{"tool": "justsearch_answer", "input": {}}],
+                               disallowed=[], leak_tool_calls=[]) for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    tca = rec["tool_call_assertions"]
+    assert tca["A"] == {"cells_total": 4, "cells_with_tool_data": 4,
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0}
+    assert tca["C"] == {"cells_total": 4, "cells_with_tool_data": 4,
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0}
+
+
+def test_tool_call_assertions_counts_disallowed_violations():
+    c_pq = {
+        "q0": _pq_entry(tool_calls=[{"tool": "Bash", "input": {}}],
+                        disallowed=[{"tool": "Bash", "input": {}}], leak_tool_calls=[]),
+        "q1": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+        "q2": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+        "q3": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+    }
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert rec["tool_call_assertions"]["C"]["cells_with_disallowed_violations"] == 1
+    assert rec["tool_call_assertions"]["C"]["cells_with_tool_data"] == 4
+
+
+def test_tool_call_assertions_distinguishes_no_data_from_verified_clean():
+    """A `None` tool_calls list (no capture) must NOT count toward
+    cells_with_tool_data, even though the cell is otherwise a normal paired
+    observation -- the tri-state distinction the whole field exists for."""
+    a_pq = {
+        "q0": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None),  # no data
+        "q1": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),        # checked, clean
+        "q2": _pq_entry(),  # no tool_calls key at all (older-shaped summary)
+        "q3": _pq_entry(),
+    }
+    c_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_total"] == 4
+    assert a["cells_with_tool_data"] == 1  # only q1 carried a real (possibly empty) list
+    assert a["cells_with_disallowed_violations"] == 0
+
+
+def test_tool_call_assertions_degrades_gracefully_for_summaries_without_tool_call_keys():
+    """The OLDEST summary shape (pre-tempdoc-624-§As-built-#5, or the classic
+    run_agent_eval path's raw dict before this fix): per_query entries carry
+    NO tool_calls/disallowed_tool_calls/leak_suspect_tool_calls keys at all.
+    Must not crash and must read as "no tool data" everywhere, never a
+    fabricated 0-violations-means-clean signal."""
+    a_pq = {f"q{i}": {"correct": True, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
+            for i in range(3)}
+    c_pq = {f"q{i}": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 2}
+            for i in range(3)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    for cond in ("A", "C"):
+        tca = rec["tool_call_assertions"][cond]
+        assert tca["cells_total"] == 3
+        assert tca["cells_with_tool_data"] == 0
+        assert tca["cells_with_disallowed_violations"] == 0
+        assert tca["cells_with_leak_suspect"] == 0
+    # the paired comparison itself must still work -- absent tool-call keys
+    # must not break the existing accuracy/cost/token pairing.
+    assert rec["measured"]["mixed/multihop-rag"]["haiku"]["n_paired_observations"] == 3
+
+
+def test_tool_call_assertions_counts_leak_suspect_from_bool_flag_even_without_tool_data():
+    """`leak_suspect` can be set by the text-scan backstop
+    (`agent_utility_run.apply_leak_flags`) on a cell that never captured real
+    tool_calls data at all -- the leak-suspect count must still pick it up
+    (unlike the disallowed-violations count, which needs real tool data)."""
+    a_pq = {
+        "q0": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None, leak_suspect=True),
+        "q1": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None, leak_suspect=False),
+    }
+    c_pq = {"q0": _pq_entry(), "q1": _pq_entry()}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_with_leak_suspect"] == 1
+    assert a["cells_with_tool_data"] == 0  # still no real tool_calls captured
+
+
+def test_tool_call_assertions_grouped_per_condition_not_merged():
+    a_pq = {"q0": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[])}
+    c_pq = {"q0": _pq_entry(tool_calls=[{"tool": "Bash", "input": {}}],
+                            disallowed=[{"tool": "Bash", "input": {}}], leak_tool_calls=[])}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert set(rec["tool_call_assertions"]) == {"A", "C"}
+    assert rec["tool_call_assertions"]["A"]["cells_with_disallowed_violations"] == 0
+    assert rec["tool_call_assertions"]["C"]["cells_with_disallowed_violations"] == 1
+
+
 # --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
 
 def test_stratified_breakdown_reveals_offsetting_substrata_signal():
@@ -444,18 +567,25 @@ def test_inspect_path_roundtrip(tmp_path):
     assert cell["n_paired_observations"] == 8            # 4 queries x 2 seeds
 
 
-def test_inspect_path_has_no_leak_suspect_detection_today(tmp_path):
-    """Documents a follow-up gap, not a bug: the Inspect-AI opt-in path's solver
-    runs claude with `--output-format json` (agent_utility_inspect.claude_agent_solver),
-    so it never parses individual tool_use blocks the way
-    agent_retrieval_eval.run_agent_eval's `--output-format stream-json` does —
-    there is no tool_calls list, and no MCP-retrieval-provenance signal either,
-    for eval_logs_to_summaries to scan. Even a sample whose solver metadata
-    happens to mention queries.json (simulating a leaked MCP response) is NOT
-    flagged, because no such capture mechanism exists on this path today
-    (tempdoc 624 §As-built #7 step 2). This test pins that absence explicitly
-    so a future capture-mechanism addition changes this assertion on purpose,
-    instead of the gap silently persisting unnoticed.
+def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
+    """The residual §As-built #5 gap (`agent_utility_inspect.claude_agent_solver`
+    running `--output-format json` with no tool_calls capture) is now closed —
+    the solver runs `--output-format stream-json --verbose` and stashes real
+    `tool_calls` / `disallowed_tool_calls` / `leak_suspect_tool_calls` into
+    `state.metadata` (mirroring `agent_retrieval_eval.run_agent_eval`; see
+    `test_eval_logs_to_summaries_surfaces_real_tool_call_data` for that path).
+
+    This test documents the boundary that remains even so: both backstops —
+    the real tool-call scan (`find_leak_suspect_tool_calls`, reads
+    `state.metadata["tool_calls"]`) and the completion-text scan
+    (`agent_utility_run.scan_leaked_cells`, reads `state.output.completion`) —
+    only see signal shapes they know to look at. A custom/mock solver that
+    stashes a leak-shaped string under an UNRELATED metadata key (simulating,
+    e.g., a raw un-parsed MCP response preview never surfaced through either
+    channel) is still invisible to both. This is not the gap this change
+    closes — it is the honest edge of what "capture real tool calls" can cover
+    for a solver that doesn't route its signal through the same channel the
+    real `claude_agent_solver` does.
     """
     pytest.importorskip("inspect_ai")
     from inspect_ai import Task, eval_set, task
@@ -471,8 +601,8 @@ def test_inspect_path_has_no_leak_suspect_detection_today(tmp_path):
             md = state.metadata or {}
             state.output.completion = md.get("echo", "")
             # Simulates an MCP tool response that happened to mention the
-            # leaked file. Inspect's solver metadata has no field any
-            # existing scan reads for this — so it cannot be detected today.
+            # leaked file, stashed under a metadata key neither the tool_calls
+            # scan nor the completion-text scan reads.
             state.metadata.update({
                 "cost_usd": 0.05, "unique_tokens": 1000, "num_turns": 2,
                 "mcp_response_preview": "...see queries.json for the answer...",
@@ -499,7 +629,11 @@ def test_inspect_path_has_no_leak_suspect_detection_today(tmp_path):
     summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
-    assert cell["leak_suspect_cells"] == []  # no detection mechanism exists on this path
+    assert cell["leak_suspect_cells"] == []  # signal sat in a key neither scan reads
+    # No tool_calls captured for this mock solver (it never sets that key) — the
+    # new coverage record must report "no tool data" here, not a fabricated 0.
+    assert rec["tool_call_assertions"]["A"]["cells_with_tool_data"] == 0
+    assert rec["tool_call_assertions"]["A"]["cells_total"] == 1
 
 
 # --- Run-governance: loss-accounting + paired comparability (tempdoc 624) ------

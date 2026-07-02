@@ -28,6 +28,7 @@ from jseval.agent_retrieval_eval import (
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
+    parse_claude_stream_json,
     run_agent_eval,
     stage_corpus_dir,
 )
@@ -506,3 +507,104 @@ def test_run_agent_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
         MockClient.assert_not_called()
 
     assert result["condition"] == "A"
+
+
+# --- parse_claude_stream_json (tempdoc 624 §As-built #5 residual-gap close) --
+#
+# Shared by run_agent_eval (above) and agent_utility_inspect.claude_agent_solver
+# -- these fixtures pin the line-delimited stream-json event shape both callers
+# depend on, independent of a live `claude` CLI invocation.
+
+def _stream_json(*events: dict) -> str:
+    return "\n".join(json.dumps(e) for e in events)
+
+
+class TestParseClaudeStreamJson:
+    def test_parses_tool_use_and_result_event(self):
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+            ]}},
+            {"type": "result", "is_error": False, "result": "final answer",
+             "total_cost_usd": 0.02, "num_turns": 1, "session_id": "sess-1",
+             "usage": {"input_tokens": 10, "cache_creation_input_tokens": 5,
+                       "cache_read_input_tokens": 0, "output_tokens": 20}},
+        )
+        tool_calls, data, session_id = parse_claude_stream_json(stdout)
+        assert tool_calls == [{"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}}]
+        assert data["result"] == "final answer"
+        assert data["total_cost_usd"] == 0.02
+        assert data["usage"]["cache_creation_input_tokens"] == 5
+        assert session_id == "sess-1"
+
+    def test_attaches_tool_result_response_preview_to_last_tool_call(self):
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+                {"type": "tool_result", "content": [{"type": "text", "text": "file body preview"}]},
+            ]}},
+            {"type": "result", "is_error": False, "result": "ok"},
+        )
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        assert tool_calls[0]["response_preview"] == "file body preview"
+
+    def test_summarizes_long_string_and_nonscalar_params(self):
+        long_val = "x" * 250
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Grep", "input": {"pattern": long_val, "paths": ["a", "b"]}},
+        ]}})
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        summary = tool_calls[0]["input"]
+        assert summary["pattern"] == "x" * 100 + "..."
+        assert summary["paths"] == json.dumps(["a", "b"])[:100]
+
+    def test_skips_malformed_json_lines(self):
+        stdout = "\n".join([
+            "not json at all {{{",
+            json.dumps({"type": "result", "is_error": False, "result": "ok"}),
+        ])
+        tool_calls, data, _sid = parse_claude_stream_json(stdout)
+        assert tool_calls == []
+        assert data["result"] == "ok"
+
+    def test_no_result_event_returns_none_data_and_empty_session(self):
+        """Mirrors a crash/timeout: the stream never emits a `result` event."""
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "x"}},
+        ]}})
+        tool_calls, data, session_id = parse_claude_stream_json(stdout)
+        assert data is None
+        assert session_id == ""
+        assert len(tool_calls) == 1  # tool calls made before the crash are still captured
+
+    def test_disallowed_tool_call_fixture_flows_through_find_disallowed_tool_calls(self):
+        """Fixture with a disallowed call: WebSearch under condition A."""
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "WebSearch", "input": {"query": "leak"}},
+        ]}})
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        flagged = find_disallowed_tool_calls(tool_calls, build_disallowed_tools("A"))
+        assert len(flagged) == 1
+        assert flagged[0]["tool"] == "WebSearch"
+
+    def test_queries_json_read_fixture_flows_through_find_leak_suspect_tool_calls(self):
+        """Fixture with a queries.json-touching Read call."""
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/eval/queries.json"}},
+        ]}})
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        flagged = find_leak_suspect_tool_calls(tool_calls)
+        assert len(flagged) == 1
+        assert flagged[0]["tool"] == "Read"
+
+    def test_run_agent_eval_and_inspect_solver_both_call_the_shared_parser(self):
+        """Not a forked reimplementation: both modules' module-level name IS the
+        shared function (import-identity, not just behavioral parity)."""
+        import pytest
+        pytest.importorskip("inspect_ai")  # agent_utility_inspect needs the opt-in extra
+
+        from jseval import agent_retrieval_eval as are
+        from jseval import agent_utility_inspect as aui
+
+        assert are.parse_claude_stream_json is parse_claude_stream_json
+        assert aui.parse_claude_stream_json is parse_claude_stream_json

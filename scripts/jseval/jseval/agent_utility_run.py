@@ -47,6 +47,16 @@ def _per_query_from_result(run_result: dict) -> dict:
             # the paired statistics and surfaces it in `leak_suspect_cells` instead
             # of silently accepting or silently dropping it.
             "leak_suspect": bool(r.get("leak_suspect_tool_calls")),
+            # Empirical tool-call assertion data (tempdoc 624 §As-built #5
+            # residual-gap close): `run_agent_eval` always parses stream-json, so
+            # these are the real per-call capture, not derived/approximated. A
+            # `None` list (vs. an empty `[]`) is preserved so
+            # `utility_comparison._tool_call_assertions` can tell "no tool data
+            # captured for this cell" from "captured and clean" — see that
+            # function's docstring for why the distinction matters.
+            "tool_calls": r.get("tool_calls"),
+            "disallowed_tool_calls": r.get("disallowed_tool_calls"),
+            "leak_suspect_tool_calls": r.get("leak_suspect_tool_calls"),
         }
     return pq
 
@@ -157,19 +167,28 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
             ov = overlay_scores.get(f"{condition}|{seed}|{qid}")
             if ov is not None:  # hybrid judge verdict supersedes EM
                 correct = bool(ov.get("final"))
-            # No "leak_suspect" key here (tempdoc 624 §As-built #7 backstop follow-up
-            # gap): agent_utility_inspect.claude_agent_solver runs claude with
-            # `--output-format json` (not `stream-json`), so it never parses individual
-            # tool_use blocks the way agent_retrieval_eval.run_agent_eval does — there is
-            # no tool_calls list in state.metadata to scan. The composer treats a missing
-            # key as "not flagged" (`.get("leak_suspect")` -> falsy), which is silent
-            # ABSENCE of a signal, not a verified-clean verdict, for runs executed through
-            # this Inspect-AI path.
+            # Real per-call tool-use data (tempdoc 624 §As-built #5 residual-gap
+            # close): `agent_utility_inspect.claude_agent_solver` now runs claude
+            # with `--output-format stream-json --verbose` (mirroring
+            # agent_retrieval_eval.run_agent_eval's exact argv) and stashes the
+            # parsed tool_calls + the two derived assertions
+            # (find_disallowed_tool_calls / find_leak_suspect_tool_calls) into
+            # `state.metadata`. A `None` here (vs. an observed empty `[]`) means
+            # this sample predates the fix (an older EvalLog written by the
+            # `--output-format json` solver) — `tool_call_assertions` below
+            # reports that as "no tool data", never a fabricated zero.
+            tool_calls = (s.metadata or {}).get("tool_calls")
+            disallowed_tool_calls = (s.metadata or {}).get("disallowed_tool_calls")
+            leak_suspect_tool_calls = (s.metadata or {}).get("leak_suspect_tool_calls")
             by_seed.setdefault(seed, {})[qid] = {
                 "correct": correct,
                 "cost_usd": (s.metadata or {}).get("cost_usd"),
                 "unique_tokens": (s.metadata or {}).get("unique_tokens"),
                 "num_turns": (s.metadata or {}).get("num_turns"),
+                "tool_calls": tool_calls,
+                "disallowed_tool_calls": disallowed_tool_calls,
+                "leak_suspect_tool_calls": leak_suspect_tool_calls,
+                "leak_suspect": bool(leak_suspect_tool_calls),
             }
 
         for seed, per_query in sorted(by_seed.items()):
@@ -196,14 +215,17 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
 # --- Answer-key leak text-scan (tempdoc 624 §As-built #7 follow-up, promoted from
 # the throwaway `_leak_free_recompose.py`) --------------------------------------
 #
-# The Inspect-AI path's solver (`agent_utility_inspect.claude_agent_solver`, `
-# --output-format json`) never records a `tool_calls` stream, so
-# `eval_logs_to_summaries` above has no tool-calls data for the answer-key-leak
-# backstop (`agent_retrieval_eval.find_leak_suspect_tool_calls`) to scan. This
-# re-derives the identical leak signature directly from each sample's completion
-# TEXT instead: a case-insensitive `queries.json`/`queries.jsonl` mention (the
-# eval's own gold-answer file), applied exhaustively to every (condition, seed,
-# qid) cell in a completed Inspect log dir.
+# `agent_utility_inspect.claude_agent_solver` now runs `--output-format
+# stream-json` and stashes real tool_calls (§As-built #5 residual-gap close,
+# see `eval_logs_to_summaries` above), so `find_leak_suspect_tool_calls` has a
+# real per-call signal for a freshly-run Inspect log. This text-scan stays as
+# an INDEPENDENT second backstop, not dead code: it also catches an EvalLog
+# written before this fix (no `tool_calls` in `state.metadata` — `leak_suspect`
+# from the pairing code would otherwise read as unflagged, not "unknown"), and
+# it re-derives the identical leak signature directly from each sample's
+# completion TEXT: a case-insensitive `queries.json`/`queries.jsonl` mention
+# (the eval's own gold-answer file), applied exhaustively to every (condition,
+# seed, qid) cell in a completed Inspect log dir.
 
 _LEAK_NEEDLE_RE = re.compile(r"queries\.jsonl?", re.IGNORECASE)
 

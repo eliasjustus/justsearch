@@ -8,8 +8,10 @@ schema-valid EvalLog — the parts a bespoke executor would re-implement (and
 fork). Verified against `inspect-ai 0.3.240` in tempdoc 624 §Confidence-pass #2.
 
 This is an **opt-in** path: `pip install jseval[agent]` (the `inspect-ai` extra).
-The composer (`utility_comparison.compose_utility`) is unchanged — it projects the
-per-cell results (read back from the EvalLogs) into `utility-comparison.v1`.
+The composer (`utility_comparison.compose_utility`) projects the per-cell results
+(read back from the EvalLogs via `agent_utility_run.eval_logs_to_summaries`) into
+`utility-comparison.v1`, including the `tool_call_assertions` coverage block
+(tempdoc 624 §As-built #5 residual-gap close).
 
 Identity carried, not forked (the "one identity, three roles" principle):
 - `sample.id` = the stable query id  → resume key,
@@ -36,7 +38,14 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
-from jseval.agent_retrieval_eval import _score_answer, build_disallowed_tools, stage_corpus_dir
+from jseval.agent_retrieval_eval import (
+    _score_answer,
+    build_disallowed_tools,
+    find_disallowed_tool_calls,
+    find_leak_suspect_tool_calls,
+    parse_claude_stream_json,
+    stage_corpus_dir,
+)
 from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
@@ -50,11 +59,22 @@ _PROMPT = (
 
 
 def _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, empty_mcp, max_budget):
-    """The condition-appropriate `claude -p` argv (mirrors agent_retrieval_eval)."""
+    """The condition-appropriate `claude -p` argv (mirrors
+    agent_retrieval_eval._build_agent_cmd's exact argv pattern, byte-for-byte on
+    the flags that matter for stream parsing).
+
+    ``--output-format stream-json`` (with mandatory ``--verbose`` — the CLI
+    requires it for stream-json under `-p`) instead of the single-shot ``json``
+    format: gives the solver real per-tool-call data (name + args), which
+    `claude_agent_solver` needs for an EMPIRICAL --disallowedTools check and the
+    answer-key-leak backstop (tempdoc 624 §As-built #5 residual-gap close — the
+    prior `json` format captured only the final result text, so neither check
+    had any tool-call data to scan for an Inspect-executed cell)."""
     cmd = [
         claude_bin, "-p", prompt,
         "--model", model,
-        "--output-format", "json",
+        "--output-format", "stream-json",
+        "--verbose",
         "--max-budget-usd", str(max_budget),
         "--permission-mode", "bypassPermissions",
         "--add-dir", corpus_dir,
@@ -97,9 +117,22 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
                 capture_output=True, text=True, timeout=timeout_s,
                 cwd=query_cwd, encoding="utf-8", errors="replace",
             )
-            data = json.loads(proc.stdout or "{}")
-            if data.get("is_error") or proc.returncode != 0:
-                state.metadata["error"] = (data.get("result") or proc.stderr or f"exit {proc.returncode}")[:300]
+            stdout = (proc.stdout or "").strip()
+            # Same event-stream shape + parser as the classic runner (both call
+            # agent_retrieval_eval.parse_claude_stream_json) — no forked logic.
+            tool_calls, data, _session_id = parse_claude_stream_json(stdout)
+            disallowed = build_disallowed_tools(condition)
+            # Stash the tool-call capture + derived assertions UNCONDITIONALLY
+            # (before the error check) so a cell that erred out mid-run still
+            # carries whatever tool calls it made before failing — the
+            # credibility bar (tempdoc 624 §M.8 item 2) is "every cell actually
+            # run", not just the successful ones.
+            state.metadata["tool_calls"] = tool_calls
+            state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
+            state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
+            if data is None or data.get("is_error") or proc.returncode != 0:
+                err = (data.get("result") if data else None) or (proc.stderr or "").strip() or f"exit {proc.returncode}"
+                state.metadata["error"] = str(err)[:300]
                 return state
             state.output.completion = data.get("result", "")
             usage = data.get("usage") or {}

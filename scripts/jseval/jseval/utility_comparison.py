@@ -20,7 +20,14 @@ Each input summary is shaped:
       "agent_model": "haiku",
       "corpus": {"dataset": "...", "signature": "...", ...},
       "per_query": {qid: {"correct": bool, "cost_usd": float,
-                          "unique_tokens": int, "num_turns": int}},
+                          "unique_tokens": int, "num_turns": int,
+                          # Optional (tempdoc 624 §As-built #5) — absent/None on
+                          # older summaries, present when the runner captured
+                          # real per-call tool-use data:
+                          "tool_calls": list | None,
+                          "disallowed_tool_calls": list | None,
+                          "leak_suspect_tool_calls": list | None,
+                          "leak_suspect": bool}},
     }
 """
 
@@ -292,7 +299,58 @@ def compose_utility(
         "coverage": coverage or _default_coverage(contamination_class),
         # External references are CITED CONSTANTS (never a projection of our runs).
         "external_baselines": external_baselines or {},
+        # Empirical --disallowedTools + answer-key-leak coverage, per condition
+        # (tempdoc 624 §As-built #5 residual-gap close). Additive field — the
+        # schema is `additionalProperties: true` and every existing field above
+        # is unchanged, so a consumer that doesn't know this key is byte-for-byte
+        # compatible with the pre-this-change record shape.
+        "tool_call_assertions": _tool_call_assertions(run_summaries),
     }
+
+
+def _tool_call_assertions(run_summaries: list[dict]) -> dict:
+    """Per-condition (arm) coverage of the empirical tool-call assertions
+    (tempdoc 624 §As-built #5 residual-gap close): how many per-query cells
+    actually carry real ``tool_calls`` data vs. how many of those show a
+    ``--disallowedTools`` violation or an answer-key-leak suspect.
+
+    Only the Inspect-AI runner (post-fix) and the classic ``run_agent_eval``
+    runner populate ``per_query[qid]["tool_calls"]``; an older on-disk EvalLog
+    or run-result JSON simply lacks the key, so ``.get("tool_calls")`` reads
+    ``None`` for that cell — degrading to "no tool data" rather than a
+    fabricated "0 violations" that would misread as a verified-clean cell.
+    This is the field that makes that distinction legible: a consumer checks
+    ``cells_with_tool_data`` before trusting ``cells_with_disallowed_violations``
+    as "verified clean" (0 violations across N *checked* cells) rather than
+    "no data" (0 of 0 checked, because none were captured).
+
+    :returns: ``{condition: {"cells_total", "cells_with_tool_data",
+        "cells_with_disallowed_violations", "cells_with_leak_suspect"}}``.
+    """
+    by_condition: dict = {}
+    for s in run_summaries:
+        condition = s.get("condition")
+        if condition is None:
+            continue
+        agg = by_condition.setdefault(condition, {
+            "cells_total": 0,
+            "cells_with_tool_data": 0,
+            "cells_with_disallowed_violations": 0,
+            "cells_with_leak_suspect": 0,
+        })
+        for entry in (s.get("per_query") or {}).values():
+            agg["cells_total"] += 1
+            if entry.get("tool_calls") is not None:
+                agg["cells_with_tool_data"] += 1
+                if entry.get("disallowed_tool_calls"):
+                    agg["cells_with_disallowed_violations"] += 1
+            # `leak_suspect` (unlike the tool-call fields above) can also be set
+            # by the text-scan backstop (`agent_utility_run.apply_leak_flags`) on
+            # a cell with no captured tool data at all, so it is counted off the
+            # bool flag directly rather than gated on `cells_with_tool_data`.
+            if entry.get("leak_suspect"):
+                agg["cells_with_leak_suspect"] += 1
+    return by_condition
 
 
 def _default_coverage(contamination_class: str) -> dict:

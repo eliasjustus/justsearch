@@ -328,3 +328,136 @@ def test_run_utility_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
             conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
         )
         MockClient.assert_not_called()
+
+
+# --- claude_agent_solver: stream-json tool-call capture (tempdoc 624 §As-built
+# #5 residual-gap close). The solver now runs `claude -p --output-format
+# stream-json --verbose` (mirroring agent_retrieval_eval.run_agent_eval's exact
+# argv) instead of the single-shot `json` format, so it can stash real
+# per-tool-call data into `state.metadata` for the empirical --disallowedTools
+# check and the answer-key-leak backstop -- these tests exercise the solver's
+# `solve` closure directly (a monkeypatched `subprocess.run` returns canned
+# stream-json stdout), no live `claude` CLI or `eval_set` needed. ---
+
+import asyncio  # noqa: E402
+
+from inspect_ai.model import ChatMessageUser, ModelName  # noqa: E402
+from inspect_ai.solver import TaskState  # noqa: E402
+
+
+def _state(input_text="what is x?", sample_id="q0"):
+    return TaskState(
+        model=ModelName("mockllm/model"), sample_id=sample_id, epoch=0,
+        input=input_text, messages=[ChatMessageUser(content=input_text)],
+    )
+
+
+class _FakeCompletedProcess:
+    def __init__(self, stdout, returncode=0, stderr=""):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _stream_json(*events: dict) -> str:
+    return "\n".join(json.dumps(e) for e in events)
+
+
+def _run_solver(monkeypatch, tmp_path, *, condition, stdout, model="haiku"):
+    monkeypatch.setattr(aui.shutil, "which", lambda name: "/usr/bin/claude")
+    monkeypatch.setattr(aui.subprocess, "run", lambda *a, **k: _FakeCompletedProcess(stdout))
+    solve = aui.claude_agent_solver(condition=condition, corpus_dir=str(tmp_path), model=model)
+    return asyncio.run(solve(_state(), generate=None))
+
+
+class TestClaudeAgentSolverStreamJsonMetadata:
+    def test_uses_stream_json_verbose_argv(self, monkeypatch, tmp_path):
+        """The argv the solver actually hands to subprocess.run must carry the
+        stream-json + verbose flags -- not just _build_argv in isolation."""
+        captured_cmd = {}
+
+        def fake_run(cmd, **kw):
+            captured_cmd["cmd"] = cmd
+            return _FakeCompletedProcess(_stream_json(
+                {"type": "result", "is_error": False, "result": "ok"}))
+
+        monkeypatch.setattr(aui.shutil, "which", lambda name: "/usr/bin/claude")
+        monkeypatch.setattr(aui.subprocess, "run", fake_run)
+        solve = aui.claude_agent_solver(condition="A", corpus_dir=str(tmp_path), model="haiku")
+        asyncio.run(solve(_state(), generate=None))
+
+        cmd = captured_cmd["cmd"]
+        idx = cmd.index("--output-format")
+        assert cmd[idx + 1] == "stream-json"
+        assert "--verbose" in cmd
+
+    def test_stashes_tool_calls_and_flags_disallowed_call(self, monkeypatch, tmp_path):
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "cat /eval/queries.json"}},
+            ]}},
+            {"type": "result", "is_error": False, "result": "the answer",
+             "total_cost_usd": 0.03, "num_turns": 2, "session_id": "s1",
+             "usage": {"cache_creation_input_tokens": 42}},
+        )
+        result = _run_solver(monkeypatch, tmp_path, condition="C", stdout=stdout)
+
+        assert result.metadata["tool_calls"] == [
+            {"tool": "Bash", "input": {"command": "cat /eval/queries.json"}},
+        ]
+        # condition C additionally disallows Bash -- empirical check must catch it
+        assert [tc["tool"] for tc in result.metadata["disallowed_tool_calls"]] == ["Bash"]
+        assert result.metadata["leak_suspect_tool_calls"] == []  # Bash isn't a leak-suspect tool
+        assert result.output.completion == "the answer"
+        assert result.metadata["cost_usd"] == 0.03
+        assert result.metadata["unique_tokens"] == 42
+        assert result.metadata["num_turns"] == 2
+        assert "error" not in result.metadata
+
+    def test_flags_leak_suspect_read_of_queries_json(self, monkeypatch, tmp_path):
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/eval/queries.json"}},
+            ]}},
+            {"type": "result", "is_error": False, "result": "leaked answer"},
+        )
+        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
+
+        assert [tc["tool"] for tc in result.metadata["leak_suspect_tool_calls"]] == ["Read"]
+        assert result.metadata["disallowed_tool_calls"] == []  # Read is allowed under A
+
+    def test_no_tool_calls_when_agent_answers_directly(self, monkeypatch, tmp_path):
+        stdout = _stream_json({"type": "result", "is_error": False, "result": "no tools needed"})
+        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
+
+        assert result.metadata["tool_calls"] == []
+        assert result.metadata["disallowed_tool_calls"] == []
+        assert result.metadata["leak_suspect_tool_calls"] == []
+
+    def test_tool_calls_captured_even_on_error_result(self, monkeypatch, tmp_path):
+        """Credibility bar (tempdoc 624 §M.8 item 2) is 'every cell actually
+        run' -- a cell whose claude subprocess errored out mid-run must still
+        carry whatever tool calls it made before failing, not silently lose them."""
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "WebSearch", "input": {"query": "x"}},
+            ]}},
+            {"type": "result", "is_error": True, "result": "budget exceeded"},
+        )
+        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
+
+        assert result.metadata["error"] == "budget exceeded"
+        assert result.metadata["tool_calls"] == [{"tool": "WebSearch", "input": {"query": "x"}}]
+        assert [tc["tool"] for tc in result.metadata["disallowed_tool_calls"]] == ["WebSearch"]
+
+    def test_no_result_event_sets_error_but_still_captures_tool_calls(self, monkeypatch, tmp_path):
+        """Crash/timeout-shaped stdout (no `result` event at all)."""
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+        ]}})
+        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
+
+        assert "error" in result.metadata
+        assert result.metadata["tool_calls"] == [
+            {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+        ]

@@ -1035,6 +1035,70 @@ def _build_agent_cmd(
     return cmd
 
 
+def parse_claude_stream_json(stdout: str) -> tuple[list[dict], dict | None, str]:
+    """Parse `claude -p --output-format stream-json --verbose` line-delimited
+    stdout into ``(tool_calls, result_event, session_id)``.
+
+    Shared by the classic runner (``run_agent_eval`` below) and the Inspect-AI
+    runner (``agent_utility_inspect.claude_agent_solver``, tempdoc 624 §As-built
+    #5 residual-gap close) so both parse the identical event shape from the
+    identical argv (`--output-format stream-json --verbose`) instead of forking
+    the parsing logic — this capture IS what ``find_disallowed_tool_calls`` /
+    ``find_leak_suspect_tool_calls`` scan.
+
+    ``tool_calls``: ``[{"tool": name, "input": {...summarized args...},
+    "response_preview": str}]`` in call order (params over 100 chars / non-
+    scalar params are summarized for compact storage).
+    ``result_event``: the parsed ``{"type": "result", ...}`` event carrying
+    ``is_error`` / ``result`` / ``total_cost_usd`` / ``usage`` / ``num_turns``,
+    or ``None`` if the stream never emitted one (crash/timeout/malformed output).
+    ``session_id``: from the result event, or ``""`` if absent.
+    """
+    tool_calls: list[dict] = []
+    data: dict | None = None
+    session_id = ""
+    for line in stdout.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = event.get("type", "")
+        if etype == "assistant":
+            msg = event.get("message", {})
+            for block in msg.get("content", []):
+                if block.get("type") == "tool_use":
+                    tool_name = block.get("name", "")
+                    tool_input = block.get("input", {})
+                    # Summarize params (keep it compact for storage)
+                    summary = {}
+                    for k, v in tool_input.items():
+                        if isinstance(v, str) and len(v) > 100:
+                            summary[k] = v[:100] + "..."
+                        elif isinstance(v, (dict, list)):
+                            summary[k] = json.dumps(v)[:100]
+                        else:
+                            summary[k] = v
+                    tool_calls.append({"tool": tool_name, "input": summary})
+                elif block.get("type") == "tool_result":
+                    # Attach response summary to last tool call
+                    if tool_calls:
+                        content = block.get("content", "")
+                        if isinstance(content, list):
+                            content = " ".join(
+                                c.get("text", "")[:200] for c in content if isinstance(c, dict)
+                            )
+                        elif isinstance(content, str):
+                            content = content[:200]
+                        tool_calls[-1]["response_preview"] = str(content)[:200]
+        elif etype == "result":
+            data = event
+            session_id = event.get("session_id", "")
+    return tool_calls, data, session_id
+
+
 def run_agent_eval(
     queries: list[dict],
     corpus_dir: str,
@@ -1121,48 +1185,7 @@ def run_agent_eval(
             stderr = proc.stderr.strip() if proc.stderr else ""
 
             # Parse stream-json: extract tool calls and final result from line-delimited JSON
-            tool_calls = []
-            data = None
-            session_id = ""
-            for line in stdout.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                etype = event.get("type", "")
-                if etype == "assistant":
-                    msg = event.get("message", {})
-                    for block in msg.get("content", []):
-                        if block.get("type") == "tool_use":
-                            tool_name = block.get("name", "")
-                            tool_input = block.get("input", {})
-                            # Summarize params (keep it compact for storage)
-                            summary = {}
-                            for k, v in tool_input.items():
-                                if isinstance(v, str) and len(v) > 100:
-                                    summary[k] = v[:100] + "..."
-                                elif isinstance(v, (dict, list)):
-                                    summary[k] = json.dumps(v)[:100]
-                                else:
-                                    summary[k] = v
-                            tool_calls.append({"tool": tool_name, "input": summary})
-                        elif block.get("type") == "tool_result":
-                            # Attach response summary to last tool call
-                            if tool_calls:
-                                content = block.get("content", "")
-                                if isinstance(content, list):
-                                    content = " ".join(
-                                        c.get("text", "")[:200] for c in content if isinstance(c, dict)
-                                    )
-                                elif isinstance(content, str):
-                                    content = content[:200]
-                                tool_calls[-1]["response_preview"] = str(content)[:200]
-                elif etype == "result":
-                    data = event
-                    session_id = event.get("session_id", "")
+            tool_calls, data, session_id = parse_claude_stream_json(stdout)
 
             result.tool_calls = tool_calls
             result.disallowed_tool_calls = find_disallowed_tool_calls(tool_calls, disallowed_tools)
