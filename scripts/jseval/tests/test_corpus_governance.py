@@ -725,6 +725,147 @@ def test_semantic_mode_defeats_grep_on_all_axes(tmp_path, axis, lang):
     assert src_meta["generation_provenance"]["semantic"] is True
 
 
+# ---------------------------------------------------------------------------
+# tempdoc 624 T.2 — the degraded-scan corpus member (axis="scan"). A new
+# axis-renderer within the existing corpus artifact abstraction: documents
+# materialize as degraded-scan PNGs (defeats a casual multimodal `Read`, per the
+# tempdoc's live confidence-pass probe) while ground-truth `text` -- used for
+# retrieval scoring, certification, and the agent's evidence view -- is unchanged.
+# Pure-function / fixture tests only, no live claude, no dev stack.
+# ---------------------------------------------------------------------------
+
+def test_render_scan_image_produces_a_valid_png():
+    pytest.importorskip("PIL")
+    import io
+
+    from PIL import Image
+
+    from jseval import corpus_generate as cg
+
+    png_bytes = cg.render_scan_image("Some fabricated chain text to render onto a page.", seed=1)
+    img = Image.open(io.BytesIO(png_bytes))
+    img.load()  # force decode -- confirms it's a genuinely valid PNG, not just a header
+    assert img.format == "PNG"
+    assert img.size[0] > 0 and img.size[1] > 0
+
+
+def test_render_scan_image_deterministic_for_same_seed_varies_by_seed():
+    pytest.importorskip("PIL")
+    text = "The reactor in the northern marshlands was designed by the engineer Quenby."
+    from jseval import corpus_generate as cg
+
+    a1 = cg.render_scan_image(text, seed=42)
+    a2 = cg.render_scan_image(text, seed=42)
+    b = cg.render_scan_image(text, seed=7)
+    assert a1 == a2, "same seed must render byte-identical PNGs (noise is the only randomized step)"
+    assert a1 != b, "a different seed must vary the salt-and-pepper noise placement"
+
+
+def test_generate_scan_axis_source_is_plain_text_like_every_other_axis(tmp_path):
+    """A `type_axis="scan"` corpus's committed *source* (`docs.jsonl`) must be identical in
+    shape to a plain prose source -- no image bytes anywhere -- so it stays small and
+    deterministic like every sibling (tempdoc 624 §T.2, revised: the scan-page PNG is a
+    materialize-time artifact, not a generation-time one; embedding it in the committed
+    source blew a doc_words=520 corpus up to 203MB vs. ~1.4-1.8MB for text-only siblings)."""
+    from jseval import corpus_generate as cg
+
+    out = tmp_path / "g"
+    stats = cg.generate(out, axis="scan", n_chains=3, hops=2, distractor_ratio=2,
+                         doc_words=520, seed=1)
+    docs = [json.loads(line) for line in (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(docs) == stats["docs"]
+    for d in docs:
+        assert set(d.keys()) == {"_id", "title", "text"}, f"{d['_id']} carries unexpected keys: {d.keys()}"
+        assert d["text"]
+    # multi-hop / unique-answer invariants (shared with every other axis) still hold
+    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+    assert all(len(q["evidence_ids"]) >= 2 for q in queries)
+    src_meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    assert src_meta["type_axis"] == "scan"
+
+
+def test_generate_scan_axis_deterministic_across_processes(tmp_path):
+    """Mirrors `test_generate_is_deterministic_across_processes` for the scan axis: since
+    `render()` now routes `axis="scan"` to the same `_render_prose` text generation as the
+    plain prose axis, this is really confirming the dispatch didn't introduce a new
+    per-process-random source -- the actual image rendering happens later, at build time."""
+    from jseval import corpus_generate as cg
+
+    out1, out2 = tmp_path / "run1", tmp_path / "run2"
+    result = cg.regenerate_and_diff(
+        out1, out2, axis="scan", lang="en", n_chains=2, hops=1,
+        distractor_ratio=2, doc_words=40, seed=9, semantic=False,
+    )
+    assert result["ok"], result.get("error")
+    assert not result["mismatched_files"], f"scan axis differs between two same-seed regenerations: {result['mismatched_files']}"
+
+
+def test_render_scan_page_deterministic_for_same_doc_id_varies_by_doc_id():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    a1 = cg.render_scan_page("doc1", "Title", "Some fabricated ground-truth text.")
+    a2 = cg.render_scan_page("doc1", "Title", "Some fabricated ground-truth text.")
+    b = cg.render_scan_page("doc2", "Title", "Some fabricated ground-truth text.")
+    assert a1 == a2, "same doc_id + content must render byte-identical PNGs"
+    assert a1 != b, "a different doc_id must vary the salt-and-pepper noise seed"
+
+
+def test_build_golden_materializes_scan_docs_as_png(tmp_path):
+    """§T.2's core mechanism: `corpus_build.build_golden` renders the scan PNG HERE, at
+    materialize time, from the doc's own ground-truth `text` (via `render_scan_page`) --
+    the committed source never carries image bytes. `corpus-dir/` (the agent file-tools /
+    real-ingest view) gets the PNG; `corpus.jsonl` (the retrieval-quality view) keeps using
+    ground-truth `text` untouched, since that view scores against the *intended* content,
+    not whatever a real ingest pipeline manages to extract from the degraded image."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+    from jseval.materialize import doc_id_to_filename
+
+    src = tmp_path / "src"
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=3)
+    docs = [json.loads(line) for line in (src / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert all("image_b64" not in d for d in docs), "committed source must carry no image bytes"
+
+    ds = tmp_path / "golden" / "scan-x"
+    corpus_build.build_golden(src, ds, now="2026-07-02")
+
+    corpus_dir = ds / "corpus-dir"
+    for d in docs:
+        png_path = corpus_dir / doc_id_to_filename(d["_id"], ext="png")
+        assert png_path.is_file(), f"{d['_id']} was not materialized as a PNG"
+        assert png_path.read_bytes().startswith(b"\x89PNG"), f"{d['_id']}.png is not a real PNG"
+        assert not (corpus_dir / doc_id_to_filename(d["_id"])).exists()  # no stray .txt
+
+    # retrieval view is unaffected -- ground-truth text, not image content
+    corpus_lines = [json.loads(line) for line in (ds / "corpus.jsonl").read_text(encoding="utf-8").splitlines()]
+    by_id = {c["_id"]: c for c in corpus_lines}
+    for d in docs:
+        assert by_id[d["_id"]]["text"] == d["text"]
+
+
+def test_build_golden_scan_materialization_is_reproducible_from_source(tmp_path):
+    """The whole point of rendering at materialize time instead of embedding in source:
+    the PNG artifact must be exactly reconstructable from the committed source alone, any
+    number of times (no hidden state) -- this is what makes it safe for `datasets/` to stay
+    gitignored for a scan-axis corpus the same as every other axis."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    src = tmp_path / "src"
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=80, seed=11)
+
+    ds1, ds2 = tmp_path / "ds1", tmp_path / "ds2"
+    corpus_build.build_golden(src, ds1, now="2026-07-02")
+    corpus_build.build_golden(src, ds2, now="2026-07-02")
+
+    pngs1 = sorted((ds1 / "corpus-dir").glob("*.png"))
+    pngs2 = sorted((ds2 / "corpus-dir").glob("*.png"))
+    assert pngs1 and len(pngs1) == len(pngs2)
+    assert [p.name for p in pngs1] == [p.name for p in pngs2]
+    assert all(a.read_bytes() == b.read_bytes() for a, b in zip(pngs1, pngs2))
+
+
 def test_validator_quiet_on_passing_fidelity():
     msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
                          "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},

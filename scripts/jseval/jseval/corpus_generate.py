@@ -24,6 +24,7 @@ to keep generation deterministic and gate-certifiable).
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import random
 import subprocess
@@ -345,6 +346,111 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
 
 
+# Degraded-scan defaults (tempdoc 624 §T.2 confidence pass): a live probe against
+# Claude Code's own `Read` tool found a plain rendered scan is read correctly via
+# multimodal vision (no block at all), but THIS band -- small font, low contrast,
+# Gaussian blur, a several-degree rotation, and salt-and-pepper noise -- made `Read`
+# correctly report it could see text but not read it clearly, and decline to answer.
+# Tuned to defeat a casual multimodal read while (intended to) remain within reach of
+# the production Tika/VLM extraction path -- the real-ingest half of this is the one
+# unverified assumption named in §T.2 (item 7 of the confidence pass).
+_SCAN_DEFAULTS = {
+    "font_size": 13,
+    "bg_gray": 210,
+    "text_gray": 70,
+    "blur_radius": 1.3,
+    "rotation_deg": 6.5,
+    "noise_ratio": 0.08,
+}
+
+
+def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=70,
+                       blur_radius=1.3, rotation_deg=6.5, noise_ratio=0.08, seed=0) -> bytes:
+    """Render ``text`` as a synthetic degraded scanned-page PNG (returns PNG bytes).
+
+    Word-wraps onto a plain page, then applies (in order) a rotation, a Gaussian
+    blur, and salt-and-pepper noise -- the degradation band confirmed live against
+    Claude Code's own `Read` tool (see ``_SCAN_DEFAULTS``). Deterministic for a
+    given ``seed`` (noise placement is the only randomized step).
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    except ImportError:
+        raise ImportError(
+            "Pillow is required for the 'scan' corpus axis. "
+            "Install with: pip install jseval[scan]"
+        )
+
+    rng = random.Random(seed)
+    font = ImageFont.load_default(size=font_size)
+    margin = 24
+    line_height = font_size + 6
+    max_line_width = width - 2 * margin
+
+    probe_img = Image.new("L", (10, 10))
+    probe_draw = ImageDraw.Draw(probe_img)
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if probe_draw.textlength(trial, font=font) <= max_line_width:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    if not lines:
+        lines = [""]
+
+    height = margin * 2 + line_height * len(lines)
+    page = Image.new("L", (width, height), color=bg_gray)
+    draw = ImageDraw.Draw(page)
+    y = margin
+    for line in lines:
+        draw.text((margin, y), line, fill=text_gray, font=font)
+        y += line_height
+
+    page = page.rotate(rotation_deg, expand=True, fillcolor=bg_gray, resample=Image.BICUBIC)
+    page = page.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+    pixels = page.load()
+    w, h = page.size
+    n_noise = int(w * h * noise_ratio)
+    for _ in range(n_noise):
+        x = rng.randrange(w)
+        y2 = rng.randrange(h)
+        pixels[x, y2] = 255 if rng.random() < 0.5 else 0
+
+    buf = io.BytesIO()
+    page.convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def render_scan_page(doc_id: str, title: str, text: str, *, degrade: dict | None = None) -> bytes:
+    """Render one document's (title, text) as a degraded scan-page PNG, deterministic
+    per ``doc_id`` (a stable SHA-256 seed, not the per-process-randomized `hash()`).
+
+    Called at MATERIALIZE time (`corpus_build.build_golden`), not generation time --
+    the ``axis="scan"`` corpus member's committed *source* (`docs.jsonl`) stays plain
+    ground-truth text, identical in shape to every other axis; the image is a derived,
+    regenerable *artifact* (same doc_id + text -> same PNG, always), never persisted in
+    source control (tempdoc 624 §T.2 -- keeps the "single source -> two projections"
+    pattern `corpus_build.py` already establishes: `datasets/` is gitignored precisely
+    because materialized artifacts are always reconstructable from the committed source).
+    """
+    page_text = f"{title}\n\n{text}" if title else text
+    # `hash()` is per-process-randomized (PEP 456) unless PYTHONHASHSEED is pinned,
+    # which this repo never does (see the axis_offset comment in generate() below) --
+    # a SHA-256 digest of the doc id is stable across processes instead.
+    seed = int(hashlib.sha256(doc_id.encode("utf-8")).hexdigest(), 16) % (2**32)
+    params = dict(_SCAN_DEFAULTS)
+    if degrade:
+        params.update(degrade)
+    return render_scan_image(page_text, seed=seed, **params)
+
+
 def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
              distractor_ratio=6, doc_words=520, suite="635-self-demo-v1", seed=635,
              semantic=False):
@@ -381,7 +487,12 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     gold_reserved = _gold_descriptor_reservations(n_chains, lang) if sem_active else None
 
     def render(e, a, sem):
-        if axis == "prose":
+        # `scan` reuses prose's text generation verbatim -- the axis only changes how a
+        # document is later MATERIALIZED (`corpus_build.build_golden` renders each doc's
+        # text as a degraded scan-page PNG at build time via `render_scan_page`), not how
+        # its ground-truth text is composed. `docs.jsonl` for a scan-axis corpus is
+        # therefore identical in shape to a plain prose source (tempdoc 624 §T.2).
+        if axis in ("prose", "scan"):
             return _render_prose(e, a, rels, doc_words, lang, sem=sem)
         if axis == "code":
             return _render_code(e, a, doc_words, rng.randint(0, 999), sem=sem)
