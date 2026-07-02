@@ -3743,3 +3743,57 @@ harness; the tempdoc's own standing rule). Scan follows separately per Lever 3 (
 prerequisites). Grader panel: local per 674's shipped seam, ~$0. Sequencing precondition unchanged from
 the previous assessment: the Inspect-runner per-cell tool-call capture/assertion gap (§As-built #5
 residual) must land first, or the record fails §M.8 item 2's empirical half by construction.
+
+---
+
+# Tempdoc-ownership sweep before the runs (2026-07-02, eighteenth pass) — what to open, reopen, or deliberately not
+
+> Trigger: founder asks whether further tempdocs should be opened/reopened before proceeding with the
+> remaining runs. Register-check pass (the `explore-before-implementing` discipline applied to tempdoc
+> ownership, the same move the tenth pass made before opening 672). Verified inputs: the observations
+> inbox, the search-quality register's open questions, the 671-674 status lines as committed in this
+> worktree, and the committed records' `git_sha` provenance.
+
+## Verdict: no new tempdoc is required before the runs — every pre-run subject has an owner
+
+| Pre-run subject | Owner | State |
+|---|---|---|
+| Inspect-runner per-cell tool-call capture + disallowed-tools/leak assertion | **624** (§As-built #5 residual; §M.8 item 2) | next work item, no spend |
+| Scan re-certification: fidelity re-run through the fixed VDU path, per-condition timeout calibration, turn-budget cap, degradation-band re-verification | **624** (§T.2/§M.2) on top of **672** (landed) | gated follow-up, $0 prerequisites |
+| Cross-family grader panel execution | **624** (§M.8 item 3, U-Founder-4 revised) + **674** (rater seam shipped) | runnable locally |
+| Routine regression detection between certified runs | **673** (shipped; D10 deferred inside it by explicit scope decision) | live, $0.144/check |
+| Operator-config isolation disclosure on the run record | **624** (§M.1 item 4 honesty field) | part of run prep |
+
+## Deliberately NOT opened now, with pre-registered triggers (so this is not re-litigated per session)
+
+1. **A "why does condition B hurt accuracy" mechanism tempdoc — not yet.** The borderline pooled figure
+   (Δ−0.094, p=0.055) is not yet a confirmed effect; opening a mechanism investigation before the 5-seed
+   run would investigate a number that may still wash out (`interrogate-results`, applied prospectively).
+   **Trigger:** the 5-seed leak-free record shows a significant negative B delta. The product-lever half
+   already has a standing owner (the As-built #7 → 655 handoff); what would need a new home then is the
+   *mechanism study* (wrong-chunk trust vs. retrieval-displaces-reading vs. paraphrase-bridging), not the
+   tool-surface response.
+2. **Reopening 625 (asserted-measurement provenance) — not yet.** Its amendment half is recorded here
+   (Design theorization #2 Reach) and its projector half (Design 2) has an explicit trigger: `RESEARCH.md`
+   existing on `main`. Founder has deferred the RESEARCH.md sync until this worktree's work finishes —
+   the trigger stands.
+3. **The `staged_recall_accounting` trec-preference fix** — already register-flagged (F-026 methodology
+   note, "a future dedicated tempdoc") and does not touch the agent-eval path; unrelated to these runs.
+4. **646 activation (event-sourced tempdoc) for this document's own 3,800-line sprawl — not as a tempdoc.**
+   The cheaper instrument is a short current-state fold section in 624 itself as part of run prep, so the
+   next reader doesn't reconstruct 18 dated passes; 646's own multi-document trigger still hasn't fired.
+
+## The one genuinely new pre-run consideration this sweep surfaced: record provenance vs. squash publication
+
+The committed records pin `cohort.git_sha` to **worktree commits** (verified: `d291240…` in the leak-free
+judged records) — SHAs that will never be reachable from public `main` under this repo's squash-publication
+policy (ADR-0045 / branch-safety merge workflow). For internal interim records that is acceptable; for the
+**certified record intended to back a public claim**, §M.8 item 5's reproducibility intent ("rerunnable at
+a stated version") is materially stronger if the run executes on a **published SHA**. This argues for a
+sequencing option, a workflow decision rather than a tempdoc: **publish this worktree's branch (the 624 arc
++ the 671/672 production fixes + 673/674) to `main` first, then execute the certified run from updated
+`main`** — which also ships 672's user-facing VDU fix independent of the eval, and shrinks the
+merge-conflict window against 3-4 parallel agents. The trade-off is PR/review latency before the run.
+Founder's call; if the run goes first instead, the mitigation is a post-merge `revision` entry on the
+record noting the public squash SHA whose tree corresponds to the run's code (the Design-1 field exists
+for exactly this class of correction).
