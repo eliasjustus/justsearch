@@ -522,6 +522,28 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
   }
 
   /**
+   * Mode projection publish (tempdoc 657) — the install/runtime mode. {@code intent} is the
+   * configured product shape ({@code full-desktop} | {@code headless} | {@code mcp-lite}); {@code
+   * realized} is the coarse capability actually up ({@code full} | {@code retrieval-only} |
+   * {@code degraded}). Call once at startup with the configured intent, then again whenever the
+   * realized capability changes (worker / inference transition). No-op when unchanged.
+   */
+  public synchronized RuntimeManifest publishMode(String intent, String realized)
+      throws IOException {
+    RuntimeManifest previous = current.get();
+    if (previous == null) {
+      throw new IllegalStateException("publishMode called before publishHead");
+    }
+    RuntimeManifest.ModeInfo modeInfo = new RuntimeManifest.ModeInfo(intent, realized);
+    if (modeInfo.equals(previous.mode())) {
+      return previous; // no-op — mode unchanged
+    }
+    RuntimeManifest manifest = RuntimeManifestBuilder.builder(previous).mode(modeInfo).build();
+    log.info("Runtime manifest updated (mode): intent={}, realized={}", intent, realized);
+    return commit(manifest, "publishMode intent=" + intent + " realized=" + realized);
+  }
+
+  /**
    * Lifecycle refresh — call when the overall lifecycle projection changes (e.g., inference
    * becomes ready) without a worker transition. Tempdoc 501 §12.1.
    */

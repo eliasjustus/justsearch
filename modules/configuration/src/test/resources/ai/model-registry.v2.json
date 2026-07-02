@@ -9,6 +9,7 @@
       "targetDir": "onnx/gte-multilingual-base",
       "termsUrl": "https://huggingface.co/Alibaba-NLP/gte-multilingual-base",
       "license": "Apache-2.0",
+      "tier": "retrieval-core",
       "minVramBytes": 0,
       "variants": [
         {
@@ -56,6 +57,7 @@
       "targetDir": "splade/naver-splade-v3",
       "termsUrl": "https://huggingface.co/opensearch-project/opensearch-neural-sparse-encoding-multilingual-v1",
       "license": "Apache-2.0",
+      "tier": "retrieval-enrichment",
       "minVramBytes": 0,
       "variants": [
         {
@@ -109,6 +111,7 @@
       "targetDir": "onnx/reranker",
       "termsUrl": "https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base",
       "license": "Apache-2.0",
+      "tier": "retrieval-enrichment",
       "minVramBytes": 0,
       "variants": [
         {
@@ -150,6 +153,7 @@
       "targetDir": "onnx/ner",
       "termsUrl": "https://huggingface.co/Davlan/distilbert-base-multilingual-cased-ner-hrl",
       "license": "AFL-3.0",
+      "tier": "retrieval-enrichment",
       "minVramBytes": 0,
       "variants": [
         {
@@ -191,6 +195,7 @@
       "targetDir": "onnx/citation-scorer",
       "termsUrl": "https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2",
       "license": "Apache-2.0",
+      "tier": "retrieval-enrichment",
       "minVramBytes": 0,
       "variants": [
         {
@@ -224,6 +229,7 @@
       "targetDir": "",
       "termsUrl": "https://huggingface.co/Qwen/Qwen3.5-9B",
       "license": "Apache-2.0",
+      "tier": "llm",
       "minVramBytes": 7500000000,
       "variants": [
         {
@@ -252,6 +258,7 @@
       "installRoot": "native-bin/llama-server/variants",
       "termsUrl": "https://docs.nvidia.com/cuda/eula/index.html",
       "license": "LicenseRef-NVIDIA-CUDA-EULA",
+      "tier": "runtime",
       "minVramBytes": 7500000000,
       "variants": [],
       "supportingFiles": [

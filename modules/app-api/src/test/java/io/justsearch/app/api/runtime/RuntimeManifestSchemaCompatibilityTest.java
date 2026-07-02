@@ -75,6 +75,33 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertEquals(null, parsed.lifecycle(), "older bodies have no lifecycle field");
     assertEquals(null, parsed.worker(), "older bodies have no worker sub-record");
     assertEquals(null, parsed.ai(), "older bodies have no ai sub-record");
+    assertEquals(null, parsed.mode(), "older bodies have no mode sub-record (tempdoc 657)");
+  }
+
+  @Test
+  void modeSubRecordRoundTripsAndStaysOptional() throws Exception {
+    // Tempdoc 657: the mode sub-record is a new OPTIONAL field. A body carrying it must round-trip;
+    // a body omitting it must still parse (mode == null), so the schema version stays 1.
+    String withMode =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-000000000009\",\n"
+            + "  \"pid\": 99,\n"
+            + "  \"startedAt\": \"2026-07-01T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/mode\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40404,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40404\",\n"
+            + "    \"readyAt\": \"2026-07-01T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"mode\": {\"intent\": \"mcp-lite\", \"realized\": \"retrieval-only\"}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withMode, RuntimeManifest.class);
+
+    assertNotNull(parsed.mode());
+    assertEquals("mcp-lite", parsed.mode().intent());
+    assertEquals("retrieval-only", parsed.mode().realized());
   }
 
   @Test

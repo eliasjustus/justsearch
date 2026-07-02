@@ -11,6 +11,19 @@ date: 2026-04-06
 ## Status
 Accepted
 
+> **Update (2026-07-02, tempdoc 657) — what "download-on-demand" covers today.**
+> Decision #2 below ("Models downloaded post-install") has since narrowed. The NSIS
+> bundle now **includes** the ONNX search-runtime models (embedding, SPLADE, reranker,
+> NER, citation ≈ 3.5 GB) plus the CPU llama-server, staged by `stageOnnxModels`
+> (`includeOnnxModels` defaults to `true`, `modules/ui/build.gradle.kts`). So a fresh
+> install does full hybrid neural **retrieval** offline with no post-install download.
+> Only the **GGUF chat pack** (chat ≈ 5.5 GB + vision projector ≈ 918 MB) and the
+> **CUDA runtime** DLLs remain download-on-demand via "Install AI" (VRAM-gated). The
+> "~748 MB installer / no models bundled / all ~8.5 GB post-install" figures below
+> describe the original design, not the current build. Tempdoc 657 adds an
+> install-intent axis and a per-tier weight breakdown so this retrieval-vs-LLM split is
+> explicit to users.
+
 ## Context
 
 JustSearch needs a Windows desktop installer. Three interlocking constraints shape the packaging decisions:

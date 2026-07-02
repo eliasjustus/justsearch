@@ -100,6 +100,56 @@ class InstallPlannerTest {
     assertEquals("onnx/embed/model.onnx", plan.downloads().get(0).targetPath());
   }
 
+  @Test
+  void mcpLiteIntent_skipsLlmTier_evenOnCapableHardware() {
+    ModelRegistry registry = registryWithTiers();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    // Full Desktop (default overload) includes the LLM tier on capable hardware.
+    InstallPlan full = InstallPlanner.plan(registry, hw, tempDir);
+    assertTrue(full.downloads().stream().anyMatch(d -> d.packageId().equals("chat")));
+
+    // MCP Lite excludes the LLM tier by intent, independent of hardware.
+    InstallPlan lite = InstallPlanner.plan(registry, hw, InstallIntent.MCP_LITE, tempDir, tempDir);
+    assertTrue(lite.downloads().stream().noneMatch(d -> d.packageId().equals("chat")));
+    assertTrue(
+        lite.skipped().stream()
+            .anyMatch(s -> s.packageId().equals("chat") && s.reason().contains("mcp-lite")));
+    // Retrieval-core stays wanted by every intent.
+    assertTrue(lite.downloads().stream().anyMatch(d -> d.packageId().equals("embedding")));
+  }
+
+  @Test
+  void untaggedPackage_alwaysWanted_soPreTierRegistriesAreUnchanged() {
+    // registryWithEmbeddingAndChat() leaves tiers null → MCP Lite must NOT exclude them; only
+    // hardware gates, and GPU_FULL keeps the chat package.
+    ModelRegistry registry = registryWithEmbeddingAndChat();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+    InstallPlan lite = InstallPlanner.plan(registry, hw, InstallIntent.MCP_LITE, tempDir, tempDir);
+    assertTrue(lite.downloads().stream().anyMatch(d -> d.packageId().equals("chat")));
+  }
+
+  private ModelRegistry registryWithTiers() {
+    ModelPackage embedding = new ModelPackage(
+        "embedding", "Embedding", "Semantic search", "onnx/embed",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "AAAA", 1_000_000, "https://example.com/fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "BBBB", 500_000, "https://example.com/fp16")),
+        List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE);
+    ModelPackage chat = new ModelPackage(
+        "chat", "Chat", "Conversational AI", "gguf",
+        List.of(
+            new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "DDDD", 5_000_000_000L, "https://example.com/gguf")),
+        List.of(
+            new SupportingFile("mmproj.gguf", "EEEE", 1_000_000_000L, "https://example.com/mmproj")),
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM);
+    return new ModelRegistry(2, "test registry", List.of(embedding, chat));
+  }
+
   private ModelRegistry registryWithEmbeddingAndChat() {
     ModelPackage embedding = new ModelPackage(
         "embedding", "Embedding", "Semantic search", "onnx/embed",

@@ -99,6 +99,7 @@ public final class AiRoutes {
 
     app.get("/api/ai/install/manifest", aiInstallController::handleGetManifest);
     app.get("/api/ai/install/status", aiInstallController::handleGetStatus);
+    app.get("/api/ai/install/plan-preview", aiInstallController::handleGetPlanPreview);
     app.post("/api/ai/install/start", aiInstallController::handleStart);
     app.post("/api/ai/install/cancel", aiInstallController::handleCancel);
     app.post("/api/ai/install/repair", aiInstallController::handleRepair);

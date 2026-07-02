@@ -1,0 +1,11 @@
+# Observations shard — session 6d3127e0-bcb7-4cd1-8a8c-0a6cec8efb3d
+
+> Per-session inbox shard (tempdoc 618 Seam C). Append-only; do not share with
+> other sessions. Folded into docs/observations.md `## Inbox` by
+> `node scripts/agent-analytics/fold-observations.mjs`.
+
+- [ ] ADR-0024 stale: claims '~748 MB installer, no models bundled, all ~8.5 GB downloaded post-install' but stageOnnxModels (includeOnnxModels defaults true) bundles ~3.5 GB ONNX retrieval models + CPU llama-server — only GGUF chat + cuda-runtime are download-on-demand — `modules/ui/build.gradle.kts:384` vs `docs/decisions/0024-app-packaging-nsis-per-user-download.md:37-52` (2026-07-01)
+- [ ] model-inventory.md Open Decision #1 ('should ONNX embedding+SPLADE enter model-registry.v2.json?') is stale/settled — they are already packages in the registry (embedding L5, splade L52), and FP32 embedding model.onnx now ships too, contradicting the doc's 'not yet in registry' notes — `docs/reference/model-inventory.md:355` vs `modules/ui/src/main/resources/ai/model-registry.v2.json` (2026-07-01)
+- [ ] Install-AI per-package name column always renders fallback 'package': FE reads p.id but backend PackageStatus emits packageId (Java field name via ctx.json); correct human label is on the wire as `label` but unread — `modules/ui-web/src/shell-v0/views/BrainSurface.ts:1599` vs `modules/app-api/.../AiInstallStatus.java:51-59` (from FE trace; verify at fix time) (2026-07-01)
+- [ ] Pre-existing: `cd modules/ui-web && npm run typecheck` exits 2 on the sole error TS5101 — tsconfig.json:28 sets deprecated `baseUrl` but has no `ignoreDeprecations: "6.0"`, which TypeScript 6.0.3 (the pinned version) treats as an error. Not introduced by tempdoc-657 (tsconfig untouched); blocks the FE typecheck gate repo-wide until `ignoreDeprecations` is added or baseUrl removed. (2026-07-02)
+- [ ] Pre-existing ui-web gate failures on base (not tempdoc-657): check-theme-token-closure flags 8 ghost tokens (--border,--radius-md,--radius-sm,--shadow-overlay,--space-1,--surface-raised,--text,--z-overlay-menu) in `modules/ui-web/src/shell-v0/components/RecentsMenu.ts`; check-accent-as-text flags an accent-fill-as-text use in `modules/ui-web/src/shell-v0/components/ActionLedgerView.ts` above baseline 0. Neither file is touched by 657. (2026-07-02)

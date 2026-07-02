@@ -64,6 +64,25 @@ public final class AiInstallController {
     ctx.json(service.getStatus());
   }
 
+  /**
+   * Side-effect-free per-tier weight preview (tempdoc 657). Drives the honest first-run download
+   * breakdown in the UI before the user commits.
+   */
+  public void handleGetPlanPreview(Context ctx) {
+    try {
+      ctx.json(service.previewInstallPlan());
+    } catch (Exception e) {
+      log.error("Failed to compute AI install plan preview", e);
+      ctx.status(500)
+          .json(
+              ApiErrorHandler.toResponse(
+                  ApiErrorCode.MANIFEST_UNAVAILABLE,
+                  "Failed to compute install plan preview",
+                  telemetry,
+                  ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
   public void handleStart(Context ctx) {
     boolean acceptTerms = parseAcceptTerms(ctx);
     try {

@@ -94,6 +94,15 @@ public enum EnvRegistry {
     /** LLM mode (local/remote). */
     LLM_MODE("justsearch.llm.mode", "JUSTSEARCH_LLM_MODE"),
 
+    /**
+     * Install/runtime intent (tempdoc 657): {@code full-desktop} | {@code headless} |
+     * {@code mcp-lite}. Set at launch by whichever launcher started the backend (the Tauri shell
+     * declares {@code full-desktop}; the headless launcher declares {@code headless}/{@code mcp-lite}).
+     * Resolved to {@code io.justsearch.configuration.model.InstallIntent} (default Full Desktop when
+     * unset), consumed by the install planner and the runtime-manifest publisher.
+     */
+    MODE("justsearch.mode", "JUSTSEARCH_MODE"),
+
     /** LLM backend selector (auto/stub/etc). */
     LLM_BACKEND("justsearch.llm.backend", "JUSTSEARCH_LLM_BACKEND"),
 

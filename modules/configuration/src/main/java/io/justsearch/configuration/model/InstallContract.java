@@ -24,6 +24,10 @@ import java.util.Map;
  *     (env var → ConfigStore → aiHome/models). Recorded so the modelsDir context survives
  *     across cold restarts even when {@code JUSTSEARCH_MODELS_DIR} env var doesn't inherit
  *     across GUI launches.
+ * @param installIntent the {@link InstallIntent} the plan was computed for (tempdoc 657). Nullable
+ *     on contracts written before tempdoc 657 — null means the (default) Full Desktop intent.
+ *     Recorded so a later consumer can tell what the install was <em>for</em>, not only what landed
+ *     on disk.
  */
 public record InstallContract(
     int schemaVersion,
@@ -31,7 +35,8 @@ public record InstallContract(
     HardwareProfile hardwareProfile,
     DownloadProfile downloadProfile,
     Map<String, InstalledModel> models,
-    Path modelsDir) {
+    Path modelsDir,
+    InstallIntent installIntent) {
 
   public static final String CONTRACT_FILENAME = "install-contract.v2.json";
 
@@ -41,7 +46,7 @@ public record InstallContract(
 
   /**
    * Backwards-compat constructor for callers (and Jackson) that pre-date the alpha.20
-   * {@code modelsDir} field. Defaults the new field to null.
+   * {@code modelsDir} field. Defaults {@code modelsDir} and {@code installIntent} to null.
    */
   public InstallContract(
       int schemaVersion,
@@ -49,7 +54,21 @@ public record InstallContract(
       HardwareProfile hardwareProfile,
       DownloadProfile downloadProfile,
       Map<String, InstalledModel> models) {
-    this(schemaVersion, installedAtEpochMs, hardwareProfile, downloadProfile, models, null);
+    this(schemaVersion, installedAtEpochMs, hardwareProfile, downloadProfile, models, null, null);
+  }
+
+  /**
+   * Backwards-compat constructor for callers (and Jackson) that pre-date the tempdoc 657
+   * {@code installIntent} field. Defaults it to null (⇒ Full Desktop).
+   */
+  public InstallContract(
+      int schemaVersion,
+      long installedAtEpochMs,
+      HardwareProfile hardwareProfile,
+      DownloadProfile downloadProfile,
+      Map<String, InstalledModel> models,
+      Path modelsDir) {
+    this(schemaVersion, installedAtEpochMs, hardwareProfile, downloadProfile, models, modelsDir, null);
   }
 
   /**

@@ -23,12 +23,40 @@ export interface InstallStatus {
   message?: string;
   errorCode?: string;
   lastError?: string;
-  packages?: Array<{ id?: string; bytesDownloaded?: number; bytesTotal?: number }>;
+  // `packageId`/`label`/`tier` are the real wire fields (backend `PackageStatus`); the legacy `id`
+  // is kept optional because older callers referenced it (it was never populated — tempdoc 657).
+  packages?: Array<{
+    packageId?: string;
+    label?: string;
+    tier?: string;
+    id?: string;
+    state?: string;
+    skipReason?: string;
+    bytesDownloaded?: number;
+    bytesTotal?: number;
+  }>;
   downloadedBytes?: number;
   totalBytes?: number;
   startedAtEpochMs?: number;
   updatedAtEpochMs?: number;
   cancelRequested?: boolean;
+}
+
+/**
+ * Side-effect-free per-tier weight preview (tempdoc 657), from `GET /api/ai/install/plan-preview`.
+ * Drives the honest first-run download breakdown before the user commits.
+ */
+export interface InstallPlanPreview {
+  intent?: string;
+  downloadProfile?: string;
+  totalDownloadBytes?: number;
+  tiers?: Array<{
+    tier?: string;
+    label?: string;
+    includedByIntent?: boolean;
+    totalBytes?: number;
+    downloadBytes?: number;
+  }>;
 }
 
 export interface AiRuntimeStatus {
