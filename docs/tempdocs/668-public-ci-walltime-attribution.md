@@ -1266,3 +1266,36 @@ parallelism → refuted; Linux → 1.5× not 2.8×). The instrument keeps doing 
 keep needing it. The decision this surfaces — finish the full migration for ~33%, or stop/revert the
 app-ui-only change (which is net-neutral on its own) — is a cost/benefit judgment worth making with the
 corrected number, not the mirage.
+
+### The full migration is blocked by the bottleneck lane — search-worker is Windows-runtime code - 2026-07-02
+
+Attempted the full migration (flip search-worker + platform-contracts + Build to Linux, `--continue`
+diagnostic). The complete Linux failure inventory:
+
+- **search-worker (the *slowest* lane, 713s): 33+ failures across 5 classes / 4 modules** —
+  `WorkerScanOpsTest` (21), `PathUpdateIntegrationTest`, `JobQueueTest`, `IndexRootLockTest`,
+  `GrpcIngestServiceTest`. Crucially, `WorkerScanOps` — *production* worker code — throws
+  `IllegalArgumentException` on Linux even with a cross-platform `@TempDir` path (not a Windows path
+  literal). The worker (Body process) is Windows-runtime code (it handles Windows cloud-placeholder /
+  OneDrive `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` semantics). These are genuine Linux-incompatibilities,
+  not test-literal assumptions — tagging them `@windows` would *mask real behavior*, and tagging the
+  whole set would move 4 heavy modules (worker-services, indexer-worker, core, adapters-lucene) onto the
+  windows-native lane, bloating it back toward the critical path.
+- **platform-contracts: 1 failure** (`LlamaServerOpsCrashTelemetryTest`) — cleanly migratable.
+- **Build: `startScripts` fails** for app-launcher + ui on Linux — a build-task issue.
+
+**Why this kills the win:** search-worker is *simultaneously the slowest lane and the least portable*.
+Because it bounds the critical path (~600–700s), migrating the portable lanes (app-ui, platform-
+contracts, Build) yields **no net PR-wall-clock improvement** — search-worker is the ceiling whether it
+stays on Windows or its tests bloat the windows-native lane. Delivering the ~33% would require a
+**large, uncertain cross-platform port of the worker itself** (real production Linux-incompatibilities
+across ≥4 modules), for a modest win on a Windows product with no users.
+
+**Decision:** reverted the search-worker/platform-contracts/Build flip; the branch is back to the stable
+app-ui-on-Linux state (green). The honest conclusion of the whole 668 investigation: **CI's ~10–12 min
+is not meaningfully reducible without disproportionate effort** — config-cache (not blocked/not big),
+parallelism (refuted, CPU-bound runner), and Linux migration (blocked by the Windows-coupled bottleneck
+lane) are all exhausted. This *confirms the user's original intuition* that meaningful further CI
+improvement may not be realistically achievable. The lasting deliverable is the wall-clock attribution
+instrument (which produced every one of these clean refutations) plus the option-B mechanism, left in
+place on app-ui as a proven starting point should the worker ever be ported for other reasons.
