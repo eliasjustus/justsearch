@@ -1,7 +1,7 @@
 ---
 title: "Deterministic demo corpus and demo mode — substrate for reproducible public demo assets and the five-minute onramp's first corpus"
 type: tempdocs
-status: IMPLEMENTED, live-verified, and critically reviewed (2026-07-02). `examples/demo-corpus/` (6 fabricated files: 2 English + French + German markdown, 1 `.docx`, 1 synthetic-OCR `.jpg`) built and staged; `corpus_signature()` widened (backward-compatible); `scripts/dev/lib/stage-reference-corpus.mjs` extracted from the onramp script (byte-identical onramp behavior confirmed live) and reused by the new `scripts/dev/stage-demo-corpus.mjs`. A critical-analysis pass found and fixed 2 real gaps against this tempdoc's own Purpose/design (the staging script never exercised multilingual/OCR — the corpus's actual reason for existing; the committed corpus-signature.json was never verified by any code) plus a related RAG-scoping bug and a status-field path bug, and — while fixing it — obtained genuine live end-to-end OCR verification (previously thought unavailable in this sandbox; the engine was present via a Scoop-shimmed system Tesseract, only the ~4MB English tessdata file was missing) confirmed both via the staging script and directly in the browser Inspector. The one remaining honest sandbox limit is the ~5.5GB GGUF chat model for a full Tier-2 UI pass (the `/api/chat/ask` contract itself was directly verified). See "Implementation" and "Critical-analysis pass" sections for full detail and evidence. A further "Future directions" research pass (2026-07-02, no code changes) recorded optional polish/simplify/extend ideas and a UX-feature case, informed by looking at how comparable open-source local-first/RAG projects handle public demos. A follow-on design pass (2026-07-02, still no code changes) settled the long-term design for the two structurally real Future Directions items — a demo/recording-mode boot flag that exposes the walkthrough system's existing dismissal function, and a Playwright-native recording extension to `ui-shot`'s existing chain-replay — both as extensions of existing mechanisms, not new ones; also named a candidate cross-cutting principle ("harness-only-determinism gap") without building shared structure for it. See "Long-term design" and "Reach" sections. A confidence-building pass (2026-07-02) verified both designs live: confirmed the boot-flag design is safe and essentially implementation-ready (exact placement pinned to `main.jsx:466`, matches an existing in-file debug-flag pattern), and simplified the recording design (no new `ui-shot` step needs registering — the existing `citation-highlight` chain already is the wanted sequence). Confidence 8/10; recommended Sonnet at medium effort for implementation. See "Confidence-building pass" section. Both designs are now IMPLEMENTED and live-verified (2026-07-02): the `?demoMode=1` boot flag (`main.jsx`) and `ui-shot --record` (`scripts/jseval`) — see "Implementation of the two long-term designs". The AI-chain recording path (`citation-highlight --record`) was not end-to-end verified — it needs the product's real pack-install flow, not just a model file present, which is out of proportion to this verification; the mechanical recording behavior is otherwise fully confirmed. No PR opened yet.
+status: IMPLEMENTED and live-verified (2026-07-02). The demo corpus, its staging scripts, corpus-signature verification, and the demo-mode boot flag + `ui-shot --record` recording tooling are all built and confirmed working against a real dev stack and real browser. One real gap remains (recording a full AI-chain answer end-to-end — needs the product's actual model-install flow, not yet exercised) plus a handful of deliberately-deferred ideas. **Start with the "Handoff summary" section near the end of this doc** for a concise account of what's done and what's genuinely left — the sections above it are the dated, in-order history of how this was designed, built, reviewed, and corrected, kept per this repo's append-only tempdoc convention. No PR opened yet.
 created: 2026-07-01
 updated: 2026-07-02
 author: filed by agent on founder direction
@@ -798,8 +798,8 @@ every time the corpus is re-staged with `--clean hard`.
   headline capability; JustSearch's demo corpus currently has no spreadsheet,
   presentation, or code file. If a punchier "look how much this handles"
   demo is ever wanted, adding one `.xlsx` and one `.pptx` (both already
-  covered by real extraction test fixtures, per this session's earlier
-  investigation) would round out format coverage without growing the corpus
+  covered by real extraction test fixtures in this codebase) would round out
+  format coverage without growing the corpus
   much.
 - **Turn the staging script into an actual asset-generation pipeline.**
   Several comparable projects (and the current industry direction more
@@ -989,13 +989,13 @@ mechanical addition to existing code, not a new capture stack. The design:
 ### What this settles about the tempdoc's own title
 
 "Demo mode," in this tempdoc's title since it was first filed, never had a
-concrete referent beyond "the staging scripts" — the investigation this
-session confirmed no other "demo mode" concept existed anywhere in the
-product. The design above is the first time "demo mode" gets an actual,
-scoped meaning: a boot-time, opt-in state (dismiss first-run walkthroughs)
-distinct from corpus staging. The title still fits as written — it doesn't
-need changing — but it's worth recording that this session is what finally
-gave "demo mode" real content, rather than leaving it as a title-only
+concrete referent beyond "the staging scripts" — investigation confirmed no
+other "demo mode" concept existed anywhere in the product. The design above
+is the first time "demo mode" gets an actual, scoped meaning: a boot-time,
+opt-in state (dismiss first-run walkthroughs) distinct from corpus staging.
+The title still fits as written — it doesn't need changing — but it's worth
+recording that this is what finally gave "demo mode" real content, rather
+than leaving it as a title-only
 placeholder.
 
 ## Reach: a recurring shape this design work revealed
@@ -1136,10 +1136,10 @@ the wanted sequence.
   video spans the whole chain replay, not just the terminal step.
 - The full `citation-highlight --record` (AI-chain) path was **not**
   live-verified end-to-end. Investigating it surfaced a real, more specific
-  finding than earlier sessions' "5.5GB model copy" framing: `ai_activate`
-  doesn't just need the GGUF file present — it fails with "No chat model
-  configured. Import a models pack first," meaning real activation requires
-  going through the product's actual pack-install machinery
+  finding than the earlier "5.5GB model copy" framing used elsewhere in this
+  tempdoc: `ai_activate` doesn't just need the GGUF file present — it fails
+  with "No chat model configured. Import a models pack first," meaning real
+  activation requires going through the product's actual pack-install machinery
   (`/api/ai/packs/import`), not just placing a file at the expected path.
   That's a materially bigger, product-install-flow investigation than a file
   copy, and disproportionate to what this verification needed — the
@@ -1152,3 +1152,59 @@ the wanted sequence.
 - A pre-existing, unrelated accessibility finding surfaced during this
   validation (`inspector-open` reports one serious axe violation) — logged
   to the observations inbox, not fixed here, per scope.
+
+## Handoff summary: what's actually left (2026-07-02)
+
+This tempdoc accumulated many passes. For anyone picking this up without
+reading the passes above in order, here is everything genuinely open,
+in one place:
+
+**The one real gap:** `citation-highlight --record` (recording a full
+search → inspector → cited-answer sequence, including a real LLM answer) has
+never been run end-to-end. Everything up to the AI step is verified —
+ingesting the demo corpus, plain search, the OCR pipeline, and the recording
+mechanism itself (confirmed on two other, non-AI chains). What's missing is
+specifically the LLM-warm case. Getting there requires the product's actual
+model-install flow (`/api/ai/packs/import` or equivalent), not just placing
+a model file on disk — that's a real, separate piece of work, not a quick
+follow-up. Whoever picks this up next should budget for that distinctly, or
+accept the existing verification (mechanical recording confirmed; the
+AI-chain's own interaction code is unchanged, pre-existing, already-shipped
+code, not touched by this work) as sufficient and move on.
+
+**Deliberately deferred, not forgotten — no action needed unless priorities
+change:**
+- GIF conversion for the recorded `.webm` output — no code exists for this;
+  it would need `ffmpeg` as a genuinely new external dependency (confirmed
+  absent from this project's toolchain everywhere today).
+- A bigger demo-corpus format tier (a spreadsheet, a slide deck) — a content
+  decision, not an engineering one; skip unless a punchier demo is wanted.
+- An in-product "load a sample corpus" button, and a Settings toggle to
+  replay/suppress onboarding — both explicitly *not* built, on purpose: no
+  second real consumer of the underlying mechanisms exists yet, and this
+  product has no real users yet to justify permanent, always-visible UI for
+  either. Revisit only if that changes.
+- The Python/Node duplication of the corpus-signature hashing algorithm —
+  harmless today; only worth consolidating if a third caller appears.
+- The named "harness-only-determinism gap" principle — recorded as an
+  observation, not built as shared infrastructure. Only two instances exist
+  (the walkthrough-dismiss seed, the ui-shot chain-replay); a third real
+  instance elsewhere in this codebase would be the trigger to generalize,
+  not a reason to go looking for one now.
+
+**Two known rough edges, not blockers:**
+- `?demoMode=1` is an internal dev convenience (matching the existing,
+  equally-undocumented `shell-demo`/`lit-health`/`presentation-demo` flags in
+  the same file) — it is not documented anywhere as a stable, public-facing
+  URL parameter, and shouldn't be treated as one without a deliberate
+  decision to publish it as such.
+- `--record`'s video output uses Playwright's own generated filename (a
+  hash, not a descriptive name) under `<output-dir>/videos/` — fine for
+  verification, a little rough for someone trying to find "the file I just
+  recorded" without reading the command's own printed output.
+
+**Everything else this tempdoc set out to do — the demo corpus itself, the
+staging scripts, corpus-signature verification, the multilingual and OCR
+canaries, and the demo-mode/recording tooling — is implemented and
+live-verified, with evidence, in the sections above.** No PR has been opened
+yet; that is the natural next step once someone wants to publish this.
