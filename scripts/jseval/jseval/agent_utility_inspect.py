@@ -261,8 +261,16 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         })[:22]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec
         # paths during eval_set's log cleanup; JSON logs are text + portable.
+        # max_tasks=1: run condition-tasks SEQUENTIALLY so the effective agent
+        # concurrency equals max_samples — the concurrency the calibration pilot
+        # sized the timeout at. Concurrent condition-tasks multiply the in-flight
+        # `claude -p` cells (~n_conditions x max_samples), inflating contended
+        # latency past the calibrated timeout (observed live 2026-07-03: 40%
+        # arm-B timeout exclusions at ~16 effective concurrency vs 0% at the
+        # calibrated 8-way in an otherwise-identical isolation repro).
         eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
-                 max_samples=concurrency, log_format="json", eval_set_id=eval_set_id)
+                 max_samples=concurrency, max_tasks=1, log_format="json",
+                 eval_set_id=eval_set_id)
     finally:
         shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)
     return log_dir
