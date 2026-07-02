@@ -103,17 +103,17 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `84b305b2be` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
+**Release:** `667-external-baselines-2026-07-01` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.756 | — |
+| beir/scifact | hybrid | 0.756 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
 | mixed/enron-qa | hybrid | 0.719 | — |
 | mixed/legal-clerc-200 | hybrid | 0.516 | — |
-| mixed/miracl-de-2k | hybrid | 0.852 | — |
-| mixed/miracl-fr-2k | hybrid | 0.866 | — |
+| mixed/miracl-de-2k | hybrid | 0.852 | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | 0.866 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 

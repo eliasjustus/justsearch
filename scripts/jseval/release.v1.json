@@ -39,7 +39,26 @@
     "measures": "retrieval ranking quality (per-corpus metrics above)"
   },
   "default_mode": "hybrid",
-  "external_baselines": {},
+  "external_baselines": {
+    "beir/scifact": [
+      { "model": "BM25 (multifield)", "value": 0.665, "source_url": "https://arxiv.org/html/2306.07471v1", "version": "Brewing BEIR (SIGIR 2024) Table 3 / SPLADE++ paper Table 4", "split": "test", "self_reproduced": false, "caveat": "multifield indexing; matches our lexical 0.661 (tempdoc 623 U5). BM25-flat is 0.679. COMPARISON CLASS: single-model retriever — our 0.757 is a full hybrid (BM25+dense+SPLADE)+rerank pipeline, so this is a system-vs-component comparison; hybrid+rerank is expected to exceed single models." },
+      { "model": "SPLADE++ EnsembleDistil", "value": 0.710, "source_url": "https://www.piwowarski.fr/publication/formal_distillation_2022-7YPDA2UJ.pdf", "version": "SPLADE++ (Formal et al., SIGIR 2022) Table 4", "split": "test", "self_reproduced": false, "caveat": "SelfDistil variant = 0.702. COMPARISON CLASS: single-model learned-sparse retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component)." },
+      { "model": "ColBERTv2", "value": 0.693, "source_url": "https://people.eecs.berkeley.edu/~matei/papers/2022/naacl_colbert_v2.pdf", "version": "ColBERTv2 (Santhanam et al., NAACL 2022) Table 5", "split": "test", "self_reproduced": false, "caveat": "confirmed independently in SPLADE++ and Brewing BEIR tables. COMPARISON CLASS: single-model late-interaction retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component)." }
+    ],
+    "mixed/miracl-fr-2k": [
+      { "model": "BM25", "value": 0.183, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL (Zhang et al., SIGIR 2023) Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split (≠ our test axis); do not mix with BGE-M3's BM25 (fr=0.458, different impl)" },
+      { "model": "mDPR (zero-shot)", "value": 0.435, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" },
+      { "model": "Hybrid (BM25+mDPR)", "value": 0.523, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" }
+    ],
+    "mixed/miracl-zh-2k": [
+      { "model": "BM25", "value": 0.180, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split (≠ our test axis)" },
+      { "model": "mDPR (zero-shot)", "value": 0.512, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" },
+      { "model": "Hybrid (BM25+mDPR)", "value": 0.526, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" }
+    ],
+    "mixed/miracl-de-2k": [
+      { "model": "BGE-M3 Dense", "value": 0.567, "source_url": "https://arxiv.org/html/2402.03216v4", "version": "BGE-M3 (Chen et al., 2024) Table 1", "split": "dev", "self_reproduced": false, "caveat": "NON-CANONICAL: German is a MIRACL surprise language with NO baseline row in the MIRACL paper; this is BGE-M3's own reproduction. DEV split. Flag as resting on a single non-canonical source." }
+    ]
+  },
   "measured": {
     "beir/scifact": {
       "ann_proof_status": "PASS",
@@ -186,9 +205,11 @@
   "notes": {
     "missing_default_mode": [],
     "tolerance_semantics": "reproduction tolerance is the within-machine ±2sigma envelope, scoped to equivalent hardware/setup (tempdoc 623 F-alpha)",
-    "enron_qa_stale_cohort": "mixed/enron-qa was NOT remeasured in this composition -- see its entry _cohort_note."
+    "enron_qa_stale_cohort": "mixed/enron-qa was NOT remeasured in this composition -- see its entry _cohort_note.",
+    "unpinned_upstream_revision_caveat": "mixed/miracl-de-2k, mixed/miracl-fr-2k, and mixed/legal-clerc-200 are fetched fresh from ir_datasets (MIRACL) and HuggingFace jhu-clsp/CLERC at materialization time (tempdoc 666). Neither fetcher currently pins an upstream revision/commit SHA, so this release's reproducibility guarantee is technically CONDITIONAL on those upstream sources not silently changing between now and a future reproduction attempt. A pinnable commit SHA exists on HuggingFace for both sources; pinning it is identified as real, not-yet-done future work (tempdoc 666 fifth pass) -- disclosed here rather than left implicit, per the project's own no-overclaiming research-channel discipline.",
+    "external_baselines_amendment": "external_baselines, release_id, and this notes block were added by hand-editing this file (tempdoc 667), NOT by re-running `jseval release` -- the `composed_at` timestamp above still reflects tempdoc 666's original compose (2026-07-01T12:43:54Z), not this amendment. The merge replicates release.py's documented `external_baselines` merge behaviour (a verbatim copy of external-baselines.v1.json's `baselines` object) but was not executed through the actual CLI, because no intact eval-results run directories could be located to recompose from. Disclosed here rather than silently backdating or faking a fresh compose timestamp."
   },
-  "release_id": null,
+  "release_id": "667-external-baselines-2026-07-01",
   "schema": "release.v1",
   "schema_version": 1
 }
