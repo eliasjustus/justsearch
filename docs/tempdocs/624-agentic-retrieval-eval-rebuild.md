@@ -3669,3 +3669,77 @@ hold for another reason? Nothing else is blocking it.
 None of these are technical judgment calls I should settle on my own — they're the same class of founder-
 level trade-off this tempdoc has consistently routed to you throughout (§M.9), and two of them (673's #2,
 674's #1) are genuinely "should we build this at all, in this shape" questions, not just sizing.
+
+---
+
+# Run-scope cost optimization (2026-07-02, seventeenth pass) — decomposing the $163 before it is signed
+
+> Trigger: the founder conditionally accepts the U-Founder-2 ask but requires, first, that the run's
+> time/money cost be checked for meaningful improvement **from a long-term perspective** (the run class may
+> recur). Analysis pass only — no spend, no run. Inputs verified directly this pass: the committed
+> `calibration-{en,de,scan}.json` (cell counts, per-cell cost, concurrency, timeouts), the `--conditions`
+> CLI surface (`commands/utility.py:130`, default `A,C`), the composer's conditional arm handling
+> (`utility_comparison.py:621-626` — arms blocks are presence-gated, `primary_arm` falls back), and the
+> now-landed 672/673/674 implementations in this worktree.
+
+## Decomposition of the signed-off-pending figure
+
+390 cells per corpus = 26 retained queries × **3 conditions (A,B,C)** × 5 seeds, at concurrency 8:
+per-cell ≈ $0.197 (en) / $0.221 (de); wall-clock ∝ cells ÷ concurrency. **Condition C is one third of
+every cell, dollar, and minute in the estimate** — and it is not needed for the certified record.
+
+## Lever 1 (adopt): drop condition C from the certified run — ≈ −$54 and −1.5h, zero engineering
+
+`--conditions A,B` already exists. Justification, in this tempdoc's own terms: §M.1 fixed C as
+**secondary/diagnostic, never headlined**; §M.8 item 2 explicitly allows "C dropped from any published
+number entirely, kept diagnostic-only"; and C's harm finding is already conclusive at the existing data
+(leak-free pooled Δ−0.533, p≈0.0, n=152 — two more seeds change nothing decision-relevant). Honest caveat:
+C's zero-file-tools property is what exposed the scan index contamination (As-built #7 Finding 1) — that
+canary function is now covered structurally (isolated per-run staging + the pre-run watched-roots
+assertion + the pending per-cell tool-call scan in the Inspect runner), so the canary is no longer the
+only detection layer. **Option value preserved**: `eval_set` treats conditions as separate tasks in the
+same log dir, so C can be added *later* to the same run at exactly C's own marginal cost (~$54) with no
+re-run of A/B — dropping it now burns nothing.
+
+## Lever 2 (adopt): the "repeated regularly" premise is already served by 673, not by repeating this run
+
+673 shipped `jseval utility-gate` (live-verified, **$0.144/invocation**, MCP-surface-hash triggered) after
+its own investigation found the realistic-arm accuracy delta is **noise-dominated even at full
+publication n** (per-seed stdev 0.05–0.10 ≈ the effect itself) — a routinely-repeated full run would be a
+statistically pointless regression detector at any affordable size. Long-term cost posture: **$0.144 per
+routine check; the ~$109-class certified run recurs only on claim re-certification events** (a major
+retrieval/tool-surface change worth re-publishing), not on a schedule.
+
+## Lever 3 (adopt, mostly free): scan re-joins as a separately-gated follow-up, cheaper than its estimate
+
+672's fix is implemented and live-verified in this worktree, so the scan corpus is unblocked — but before
+any scan spend: (a) re-run the fidelity gate through the fixed VDU path (local GPU + retrieval eval only,
+$0 API); (b) scan-specific recalibration with **per-condition** timeout sizing (the As-built #5 pathology
+was A/B cells burning time against unreadable images — the calibrate pilot must capture that, and a
+turn-budget cap on repeated `Read` attempts remains the design option). A,B-only scan ≈ **$26** (floor —
+the recalibrated timeout will likely raise it somewhat). Full three-corpus certified battlefield, A,B × 5
+seeds ≈ **$135 all-in** — less than the two-corpus $163 estimate with C.
+
+## Levers considered and rejected (named so they are not re-litigated)
+
+- **Reuse the existing 3 seeds, add 2**: cohort mismatch — the harness changed since (leak-staging fix,
+  disallow-list including `Skill`, pending stream-json runner change), so old cells carry a different
+  `agent_cohort_key` and cannot pair with new ones; mixing pre-/post-leak-fix cells is also the exact
+  hostile-reviewer attack the fix exists to close. Fresh run required.
+- **Per-cell budget/turn caps on en/de**: creates exclusions → `paired_comparability` failure — the
+  twice-learned lesson. (Scan's turn cap is different: there it *fixes* an exclusion pathology.)
+- **Hand-raised concurrency / two parallel backends**: contention → timeout tail → exclusions (the same
+  failure, observed live twice); 16 concurrent `claude` processes is an untested rate-limit regime. The
+  calibrate pilot may *probe* a higher target concurrency at ~$2 cost, but concurrency is never hand-set.
+  Wall-clock is free overnight; money is not.
+- **Anthropic Batch API / cheaper tier / smaller n or seeds**: inapplicable to interactive agent loops /
+  already haiku by binding policy / below §M.8 item 4's floor.
+
+## Revised ask (supersedes the sixteenth pass's $163.15 as the sign-off figure)
+
+**EN+DE, conditions A,B, 5 seeds ≈ $109 ± 10%, ~3h wall-clock + ~30-40 min ingest/calibration overhead**
+(fresh cheap calibrate pass ~$2-5 — re-pins the cohort key at the current SHA and validates the changed
+harness; the tempdoc's own standing rule). Scan follows separately per Lever 3 (+~$26 after its $0
+prerequisites). Grader panel: local per 674's shipped seam, ~$0. Sequencing precondition unchanged from
+the previous assessment: the Inspect-runner per-cell tool-call capture/assertion gap (§As-built #5
+residual) must land first, or the record fails §M.8 item 2's empirical half by construction.
