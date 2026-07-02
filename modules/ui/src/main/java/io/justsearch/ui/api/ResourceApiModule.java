@@ -196,12 +196,14 @@ final class ResourceApiModule implements ApiModule {
     this.navigationHistoryController =
         new NavigationHistoryController(
             headAssembly.substrate().conversation().navigationHistoryStore());
-    // Tempdoc 550 C3: shared pending-authorization registry — the backend records a
+    // Tempdoc 550 C3 / 655: shared pending-authorization registry — the backend records a
     // gated dispatch here and the FE approves by its id, so a capsule can only be minted
     // against an op the backend actually gated (WA-5). Shared between the invoke
-    // controller (creates pendings on 428) and the approve controller (consumes them).
+    // controller (creates pendings on 428), the approve controller (consumes them), AND
+    // (tempdoc 655) the MCP tool surface — sourced from the substrate now, not constructed
+    // locally, so the MCP path reaches the exact same store rather than one it can't see.
     io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore =
-        new io.justsearch.app.services.intent.PendingAuthorizationStore();
+        headAssembly.substrate().conversation().pendingAuthorizationStore();
     // Tempdoc 550 Slice A1 (Authorize face) + C3: consent-capsule mint / approve endpoint.
     this.authorizationController =
         new AuthorizationController(
@@ -266,7 +268,8 @@ final class ResourceApiModule implements ApiModule {
                 headAssembly.substrate().operations().agentTools()),
             headAssembly.substrate().operations().executor(),
             java.time.Clock.systemUTC(),
-            pendingAuthorizationStore);
+            pendingAuthorizationStore,
+            headAssembly.substrate().conversation().pendingAuthorizationChanges());
     // Tempdoc 550 Slice F2 + thesis III (Preview face): evaluate availability per op, and read
     // the trust gate from the ONE shared IntentGateEvaluator the dispatcher enforces with — so
     // the prediction (incl. the live Global Hard Stop) cannot drift from enforcement (F1 gone).
@@ -316,7 +319,8 @@ final class ResourceApiModule implements ApiModule {
             operationCompletedAdvisoryStreamController,
             healthRecoverableAdvisoryStreamController,
             actionLedgerController,
-            indexingJobsStreamController);
+            indexingJobsStreamController,
+            headAssembly.substrate().conversation().pendingAuthorizationChanges());
   }
 
   /** Binds every cohort route. All controllers are non-null; only runtimeApiRoutes can be null. */

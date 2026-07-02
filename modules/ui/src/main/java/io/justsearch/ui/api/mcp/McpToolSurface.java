@@ -96,6 +96,20 @@ public final class McpToolSurface {
   // Null when the test-only Builder path constructed the surface without one.
   private final java.util.function.Supplier<io.justsearch.ui.runtime.RuntimeManifestPublisher>
       manifestPublisherLookup;
+  // Tempdoc 655: the SAME store/broadcast the REST gate path (OperationsController) uses, so a
+  // gate fired here is visible to the one approve endpoint and the one live shell signal —
+  // nullable for legacy/test wiring, in which case the gate still fails closed, just without a
+  // surfaced pending record (matches OperationsController's own null-tolerant pattern).
+  private final io.justsearch.app.services.intent.PendingAuthorizationStore
+      pendingAuthorizationStore;
+  private final io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+      pendingAuthorizationChanges;
+  // Tempdoc 655: boundary schema validation, applied uniformly to all 6 tools regardless of
+  // which backend path (direct in-process call vs. Operation dispatch) ultimately serves them —
+  // stateless/cache-only, so a private instance per surface is fine.
+  private final io.justsearch.app.services.registry.executor.OperationInputSchemaValidator
+      inputValidator =
+          new io.justsearch.app.services.registry.executor.OperationInputSchemaValidator();
 
   public McpToolSurface(
       List<OperationCatalog> operationCatalogs,
@@ -114,6 +128,29 @@ public final class McpToolSurface {
       Clock clock,
       java.util.function.Supplier<io.justsearch.ui.runtime.RuntimeManifestPublisher>
           manifestPublisherLookup) {
+    this(
+        operationCatalogs,
+        dispatcher,
+        knowledgeLookup,
+        appFacadeLookup,
+        clock,
+        manifestPublisherLookup,
+        null,
+        null);
+  }
+
+  /** Canonical constructor (tempdoc 655): also wires the pending-authorization mechanism. */
+  public McpToolSurface(
+      List<OperationCatalog> operationCatalogs,
+      OperationDispatcher dispatcher,
+      java.util.function.Supplier<KnowledgeSearchController> knowledgeLookup,
+      java.util.function.Supplier<HeadAssembly> appFacadeLookup,
+      Clock clock,
+      java.util.function.Supplier<io.justsearch.ui.runtime.RuntimeManifestPublisher>
+          manifestPublisherLookup,
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore,
+      io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+          pendingAuthorizationChanges) {
     this.operationCatalogs = List.copyOf(operationCatalogs);
     this.dispatcher = dispatcher;
     this.knowledgeLookup = knowledgeLookup;
@@ -121,6 +158,8 @@ public final class McpToolSurface {
     this.clock = clock;
     this.manifestPublisherLookup =
         manifestPublisherLookup != null ? manifestPublisherLookup : () -> null;
+    this.pendingAuthorizationStore = pendingAuthorizationStore;
+    this.pendingAuthorizationChanges = pendingAuthorizationChanges;
   }
 
   // =========================================================================
@@ -131,36 +170,8 @@ public final class McpToolSurface {
     return Map.of(
         "tools",
         List.of(
-            tool(
-                "justsearch_answer",
-                ANSWER_DESC,
-                schema(
-                    Map.of(
-                        "query", prop("string", "The question to answer"),
-                        "top_k",
-                            prop("integer", "Number of passages to retrieve (default 5, max 20)"),
-                        "filters",
-                            prop(
-                                "object",
-                                "Hard filters: {meta_source: [...], entity_persons: [...],"
-                                    + " path_prefix: \"...\", ...}")),
-                    List.of("query")),
-                Map.of("readOnlyHint", true)),
-            tool(
-                "justsearch_search",
-                SEARCH_DESC,
-                schema(
-                    Map.of(
-                        "query", prop("string", "Search text"),
-                        "limit", prop("integer", "Max results (default 10, max 50)"),
-                        "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
-                        "filters",
-                            prop(
-                                "object",
-                                "Hard filters: {meta_source: [...], entity_persons: [...],"
-                                    + " path_prefix: \"...\", ...}")),
-                    List.of("query")),
-                Map.of("readOnlyHint", true)),
+            tool("justsearch_answer", ANSWER_DESC, ANSWER_SCHEMA, Map.of("readOnlyHint", true)),
+            tool("justsearch_search", SEARCH_DESC, SEARCH_SCHEMA, Map.of("readOnlyHint", true)),
             tool(
                 "justsearch_browse",
                 BROWSE_DESC,
@@ -187,15 +198,11 @@ public final class McpToolSurface {
                                 "Absolute file or folder paths to index")),
                     List.of("paths")),
                 Map.of("readOnlyHint", false, "idempotentHint", true)),
-            tool(
-                "justsearch_status",
-                STATUS_DESC,
-                schema(Map.of(), List.of()),
-                Map.of("readOnlyHint", true)),
+            tool("justsearch_status", STATUS_DESC, STATUS_SCHEMA, Map.of("readOnlyHint", true)),
             tool(
                 "justsearch_runtime_manifest",
                 RUNTIME_MANIFEST_DESC,
-                schema(Map.of(), List.of()),
+                RUNTIME_MANIFEST_SCHEMA,
                 Map.of("readOnlyHint", true))));
   }
 
@@ -206,12 +213,65 @@ public final class McpToolSurface {
           + "GET /api/runtime/manifest and GET /.well-known/justsearch/manifest.json — this tool "
           + "is the MCP-native surface for identity-aware caching and cross-restart detection.";
 
+  // --- Tool schemas (tempdoc 655): named so listTools()'s visible schema and the boundary
+  // validator (validateDirectDispatchArgs) provably validate against the SAME object for the 4
+  // tools with no backing Operation — not two independently-authored literals that can drift. ---
+
+  private static final Map<String, Object> ANSWER_SCHEMA =
+      schema(
+          Map.of(
+              "query", prop("string", "The question to answer"),
+              "top_k", prop("integer", "Number of passages to retrieve (default 5, max 20)"),
+              "filters",
+                  prop(
+                      "object",
+                      "Hard filters: {meta_source: [...], entity_persons: [...],"
+                          + " path_prefix: \"...\", ...}")),
+          List.of("query"));
+
+  private static final Map<String, Object> SEARCH_SCHEMA =
+      schema(
+          Map.of(
+              "query", prop("string", "Search text"),
+              "limit", prop("integer", "Max results (default 10, max 50)"),
+              "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
+              "filters",
+                  prop(
+                      "object",
+                      "Hard filters: {meta_source: [...], entity_persons: [...],"
+                          + " path_prefix: \"...\", ...}")),
+          List.of("query"));
+
+  private static final Map<String, Object> STATUS_SCHEMA = schema(Map.of(), List.of());
+
+  private static final Map<String, Object> RUNTIME_MANIFEST_SCHEMA = schema(Map.of(), List.of());
+
   // =========================================================================
   // tools/call — route to service layer
   // =========================================================================
 
   @SuppressWarnings("unchecked")
   public Map<String, Object> callTool(String name, Map<String, Object> arguments, String sessionId) {
+    // Tempdoc 655: validate every tool's arguments against its declared schema at the MCP
+    // boundary, before dispatch — independent of which backend path (direct in-process call vs.
+    // Operation dispatch) ultimately serves the tool. Previously only browse/ingest (the two
+    // Operation-backed tools) got real validation via the executor's own pipeline downstream;
+    // the other 4 skipped it entirely, so a wrong-typed argument surfaced as an unhandled cast
+    // exception rather than a clean schema error.
+    Map<String, Object> schemaForDirectDispatch =
+        switch (name) {
+          case "justsearch_answer" -> ANSWER_SCHEMA;
+          case "justsearch_search" -> SEARCH_SCHEMA;
+          case "justsearch_status" -> STATUS_SCHEMA;
+          case "justsearch_runtime_manifest" -> RUNTIME_MANIFEST_SCHEMA;
+          default -> null;
+        };
+    if (schemaForDirectDispatch != null) {
+      Map<String, Object> invalid = validateArgsOrNull(name, schemaForDirectDispatch, arguments);
+      if (invalid != null) {
+        return invalid;
+      }
+    }
     return switch (name) {
       case "justsearch_answer" -> callAnswer(arguments);
       case "justsearch_search" -> callSearch(arguments);
@@ -221,6 +281,31 @@ public final class McpToolSurface {
       case "justsearch_runtime_manifest" -> callRuntimeManifest();
       default -> unknownToolWithSuggestions(name);
     };
+  }
+
+  /**
+   * Tempdoc 655: validate {@code arguments} against {@code schema} using the same {@link
+   * io.justsearch.app.services.registry.executor.OperationInputSchemaValidator} the Operations
+   * pipeline uses. Returns a clean MCP tool error (never {@code null} on failure) instead of
+   * letting a malformed argument reach a raw unchecked cast further down; returns {@code null}
+   * when the args validate.
+   */
+  private Map<String, Object> validateArgsOrNull(
+      String cacheKey, Map<String, Object> schema, Map<String, Object> arguments) {
+    try {
+      String schemaJson = MAPPER.writeValueAsString(schema);
+      String argsJson = MAPPER.writeValueAsString(arguments == null ? Map.of() : arguments);
+      return inputValidator
+          .validate(cacheKey, schemaJson, argsJson)
+          .<Map<String, Object>>map(
+              result -> errorContent("Invalid arguments for " + cacheKey + ": " + result.message()))
+          .orElse(null);
+    } catch (Exception e) {
+      // Serialization failure on our OWN schema/args maps would be a substrate bug, not a caller
+      // error — don't fail the call closed over it, just skip validation for this invocation.
+      log.warn("MCP boundary validation failed to run for {}: {}", cacheKey, e.getMessage());
+      return null;
+    }
   }
 
   private static final List<String> KNOWN_TOOLS = List.of(
@@ -504,26 +589,26 @@ public final class McpToolSurface {
       Operation op = resolveOperation(opIdValue);
       if (op == null) return errorContent("Operation not available: " + opIdValue);
       String argsJson = MAPPER.writeValueAsString(arguments);
+      // Tempdoc 655: validate against the Operation's OWN declared schema — the real enforcement
+      // schema, not a second MCP-authored literal — before dispatch, so a malformed call gets a
+      // clean MCP error here instead of surfacing however the executor happens to fail later.
+      Map<String, Object> invalid =
+          inputValidator
+              .validate(op, argsJson)
+              .<Map<String, Object>>map(
+                  result ->
+                      errorContent("Invalid arguments for " + opIdValue + ": " + result.message()))
+              .orElse(null);
+      if (invalid != null) {
+        return invalid;
+      }
       InvocationProvenance provenance =
           InvocationProvenance.mcp(clock.instant(), Optional.ofNullable(sessionId));
       OperationResult opResult;
       try {
         opResult = dispatcher.dispatch(op, argsJson, provenance);
       } catch (ConfirmationRequiredException e) {
-        return Map.of(
-            "content",
-            List.of(
-                Map.of(
-                    "type",
-                    "text",
-                    "text",
-                    "Operation '"
-                        + e.operationRef().value()
-                        + "' requires confirmation (gate: "
-                        + e.gateBehavior()
-                        + "). Re-invoke with \"_confirmationToken\": \"confirm\" in arguments.")),
-            "isError",
-            true);
+        return handleConfirmationRequired(op, argsJson, e);
       }
       if (opResult.success()) {
         var content = new ArrayList<Map<String, Object>>();
@@ -542,6 +627,64 @@ public final class McpToolSurface {
       log.warn("MCP operation dispatch error for {}", opIdValue, e);
       return errorContent("Operation failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * Tempdoc 655: an MCP tool call hit the trust lattice's confirmation gate. Reuses the SAME
+   * mechanism the browser UI's gate path uses (via the shared {@link
+   * io.justsearch.app.services.intent.PendingAuthorizationStore}) instead of the previous
+   * fabricated {@code _confirmationToken} hint, which nothing in the codebase ever read — the
+   * tool could never actually succeed via that path.
+   *
+   * <p>Design (tempdoc 655 §"Design decision made during investigation"): approval completes the
+   * operation directly, server-side, when a human approves in the JustSearch app — not via a
+   * later MCP retry/replay. This call returns immediately either way; it never blocks waiting for
+   * human approval, sidestepping MCP hosts' inconsistent/short tool-call timeouts entirely.
+   */
+  private Map<String, Object> handleConfirmationRequired(
+      Operation op, String argsJson, ConfirmationRequiredException e) {
+    String message;
+    if (pendingAuthorizationStore == null) {
+      // Legacy/test wiring with no store — fail closed, but say so plainly rather than
+      // advertising a retry path that cannot work.
+      message =
+          "Operation '"
+              + e.operationRef().value()
+              + "' requires confirmation (gate: "
+              + e.gateBehavior()
+              + ") and no approval mechanism is wired in this deployment. It cannot be completed"
+              + " via MCP.";
+    } else {
+      String pendingId =
+          pendingAuthorizationStore.create(
+              op.id().value(), argsJson, e.sourceTier(), op.policy().risk(), e.gateBehavior(),
+              e.getMessage());
+      if (pendingAuthorizationChanges != null) {
+        pendingAuthorizationStore
+            .peek(pendingId)
+            .ifPresent(
+                pending ->
+                    pendingAuthorizationChanges.broadcast(
+                        new io.justsearch.app.observability.operations.PendingAuthorizationEvent(
+                            pending.id(),
+                            pending.operationId(),
+                            io.justsearch.ui.api.ArgsSummary.summarize(pending.argsJson()),
+                            pending.sourceTier(),
+                            pending.riskTier(),
+                            pending.gateBehavior(),
+                            pending.rationale(),
+                            pending.createdAt(),
+                            pending.expiresAt())));
+      }
+      message =
+          "Operation '"
+              + e.operationRef().value()
+              + "' requires your approval (gate: "
+              + e.gateBehavior()
+              + "). A request is now showing in the JustSearch app — once approved there, it"
+              + " completes automatically. You do not need to retry this call.";
+    }
+    return Map.of("content", List.of(Map.of("type", "text", "text", message)), "isError", true);
   }
 
   // =========================================================================
