@@ -9,7 +9,7 @@ import logging
 
 import click
 
-from ._common import _write_bench_output
+from ._common import _attach_revision, _write_bench_output
 
 log = logging.getLogger(__name__)
 
@@ -33,10 +33,22 @@ log = logging.getLogger(__name__)
                    "(a queries.json/queries.jsonl mention) and exclude matched cells from "
                    "the paired statistics before composing (tempdoc 624 §As-built #7 "
                    "follow-up leak-free reanalysis).")
+@click.option("--supersedes", default=None, type=click.Path(),
+              help="Relative path to the prior record's JSON file this run corrects. "
+                   "Must be given together with --revision-reason (tempdoc 624 Design 1). "
+                   "When both are given, the composed record gets a `revision` block; "
+                   "when neither is given, the record is unchanged (no `revision` field).")
+@click.option("--revision-reason", default=None,
+              type=click.Choice(sorted(["leak_correction", "judge_rescore", "reseed", "other"])),
+              help="Why this record supersedes --supersedes. Must be given together with "
+                   "--supersedes. The revision's `changed_fields` is left empty at the CLI "
+                   "level -- the caller isn't expected to know exactly which fields changed "
+                   "when composing from the command line; that's a deliberate, honest default.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_config_key,
-                        contamination_class, confidence_tier, exclude_leaked, output_dir):
+                        contamination_class, confidence_tier, exclude_leaked,
+                        supersedes, revision_reason, output_dir):
     """Compose agent-eval results into a utility-comparison.v1 record (tempdoc 624).
 
     Attaches a cohort identity to each run (agent_manifest), pairs the with/without
@@ -47,6 +59,8 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 
     from .. import agent_utility_run as aur
     from .. import utility_comparison as uc
+
+    _attach_revision(None, supersedes, revision_reason)  # fail fast before reading run files
 
     corpus = {"dataset": dataset, "signature": corpus_signature or dataset}
     prompt_template = (
@@ -88,6 +102,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
         contamination_class=contamination_class,
         confidence_tier=confidence_tier,
     )
+    _attach_revision(record, supersedes, revision_reason)
 
     if ctx.obj.get("json"):
         click.echo(json.dumps(record, indent=2, default=str))
@@ -332,10 +347,23 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
                    "(a queries.json/queries.jsonl mention in each sample's completion "
                    "text) and exclude matched cells from the paired statistics before "
                    "composing (tempdoc 624 §As-built #7 follow-up leak-free reanalysis).")
+@click.option("--supersedes", default=None, type=click.Path(),
+              help="Relative path to the prior record's JSON file this run corrects. "
+                   "Must be given together with --revision-reason (tempdoc 624 Design 1). "
+                   "When both are given, the re-composed record gets a `revision` block; "
+                   "when neither is given, the record is unchanged (no `revision` field). "
+                   "Only takes effect with --output-dir (no re-composed record otherwise).")
+@click.option("--revision-reason", default=None,
+              type=click.Choice(sorted(["leak_correction", "judge_rescore", "reseed", "other"])),
+              help="Why this record supersedes --supersedes. Must be given together with "
+                   "--supersedes. The revision's `changed_fields` is left empty at the CLI "
+                   "level -- the caller isn't expected to know exactly which fields changed "
+                   "when composing from the command line; that's a deliberate, honest default.")
 @click.pass_context
 def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                       contamination_class, confidence_tier, output_dir,
-                      calibrate, calibration_n, calibration_seed, exclude_leaked):
+                      calibrate, calibration_n, calibration_seed, exclude_leaked,
+                      supersedes, revision_reason):
     """Hybrid EM->LLM-judge re-score over EvalLogs, post-hoc (tempdoc 624 C-6/E-5).
 
     EM auto-passes; the EM-misses are judged by the local model (different family
@@ -349,6 +377,8 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
     from .. import utility_comparison as uc
     from .. import utility_governance as ug
     from .. import utility_judge as uj
+
+    _attach_revision(None, supersedes, revision_reason)  # fail fast before judging
 
     overlay = uj.judge_logs(log_dir, judge_url=judge_url, judge_model=judge_model)
     if calibrate:
@@ -388,6 +418,7 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
             summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
             external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
             confidence_tier=confidence_tier, governance=governance)
+        _attach_revision(record, supersedes, revision_reason)
         # Write BEFORE the print loop: an already-computed record must survive a
         # crash in the print loop (e.g. a malformed cell field) instead of being
         # silently lost. Restores this command's own pre-consolidation order (the
@@ -415,10 +446,22 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
                    "queries.json/queries.jsonl mention in each sample's completion text) "
                    "and exclude matched cells from the paired statistics before pooling "
                    "(tempdoc 624 §As-built #7 follow-up leak-free reanalysis).")
+@click.option("--supersedes", default=None, type=click.Path(),
+              help="Relative path to the prior record's JSON file this run corrects. "
+                   "Must be given together with --revision-reason (tempdoc 624 Design 1). "
+                   "When both are given, the pooled record gets a `revision` block; "
+                   "when neither is given, the record is unchanged (no `revision` field).")
+@click.option("--revision-reason", default=None,
+              type=click.Choice(sorted(["leak_correction", "judge_rescore", "reseed", "other"])),
+              help="Why this record supersedes --supersedes. Must be given together with "
+                   "--supersedes. The revision's `changed_fields` is left empty at the CLI "
+                   "level -- the caller isn't expected to know exactly which fields changed "
+                   "when composing from the command line; that's a deliberate, honest default.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamination_class,
-                                     confidence_tier, exclude_leaked, output_dir):
+                                     confidence_tier, exclude_leaked, supersedes, revision_reason,
+                                     output_dir):
     """Pool multiple corpora's Inspect logs into ONE cross-corpus stratified record (tempdoc 624).
 
     `utility-compose`/`utility-run` always produce one SEPARATE top-level record per
@@ -435,6 +478,8 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
     from .. import agent_utility_run as aur
     from .. import utility_comparison as uc
     from .. import utility_governance as ug
+
+    _attach_revision(None, supersedes, revision_reason)  # fail fast before pooling logs
 
     all_summaries: list = []
     per_dir = []
@@ -474,6 +519,7 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
         external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
         confidence_tier=confidence_tier, governance=governance,
     )
+    _attach_revision(record, supersedes, revision_reason)
 
     if ctx.obj.get("json"):
         click.echo(json.dumps(record, indent=2, default=str))

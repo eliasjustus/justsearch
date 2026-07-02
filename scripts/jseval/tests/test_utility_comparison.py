@@ -885,3 +885,22 @@ def test_build_revision_changed_fields_is_a_copy_not_the_caller_list():
         supersedes="../out/utility-comparison.v1.json", reason="judge_rescore", changed_fields=src)
     src.append("mutated_after_the_call")
     assert rev["changed_fields"] == ["cohort.judge"]
+
+
+def test_build_revision_rejects_empty_supersedes():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="non-empty path string"):
+        utility_comparison.build_revision(supersedes="", reason="leak_correction", changed_fields=[])
+
+
+def test_build_revision_rejects_whitespace_only_supersedes():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="non-empty path string"):
+        utility_comparison.build_revision(supersedes="   ", reason="leak_correction", changed_fields=[])
+
+
+def test_build_revision_rejects_non_string_changed_field():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="must be strings"):
+        utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json",
+            reason="leak_correction",
+            changed_fields=["cohort.judge", 42],
+        )

@@ -64,10 +64,19 @@ def build_revision(supersedes: str, reason: str, changed_fields: list[str]) -> d
     This is metadata construction, not a diffing engine: ``changed_fields`` is
     caller-specified, not auto-derived.
     """
+    if not isinstance(supersedes, str) or not supersedes.strip():
+        raise UtilityComposeError(
+            f"revision supersedes must be a non-empty path string, got {supersedes!r}",
+        )
     if reason not in REVISION_REASONS:
         raise UtilityComposeError(
             f"revision reason {reason!r} not in closed set: {sorted(REVISION_REASONS)}",
         )
+    for field in changed_fields:
+        if not isinstance(field, str):
+            raise UtilityComposeError(
+                f"revision changed_fields entries must be strings, got {field!r} ({type(field).__name__})",
+            )
     return {
         "supersedes": supersedes,
         "reason": reason,
