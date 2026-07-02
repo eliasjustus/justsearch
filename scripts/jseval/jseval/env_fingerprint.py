@@ -105,6 +105,16 @@ def _probe_gpu() -> dict:
     }
 
 
+def probe_gpu_vram() -> dict:
+    """Public accessor for `_probe_gpu`'s VRAM fields (tempdoc 674 remaining-work
+    slice). A thin alias, not a reimplementation -- reused as-is by
+    `utility_judge.estimate_local_serial_preflight`'s VRAM-fit check, which needs
+    the same `mem_used_mb`/`mem_total_mb`/`available` fields this module already
+    probes for its own (unrelated) fingerprinting purpose. Fail-open, same as
+    `_probe_gpu` itself: `{"available": False}` on any probe failure."""
+    return _probe_gpu()
+
+
 def _probe_power_plan() -> str | None:
     """Return the active Windows power plan name; None on non-Windows.
 

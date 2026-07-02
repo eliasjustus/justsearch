@@ -137,6 +137,29 @@ public class VduProcessor {
         this.catalog = catalog;
     }
 
+    /**
+     * Enter VDU mode (restarts server with vision-safe flags, {@code -np 1, --cache-ram 0}).
+     * Tempdoc 672 follow-up: callers must scope this to the whole batch, not per-document — each
+     * call is a full {@code llama-server} restart. {@link #process} no longer enters/exits VDU
+     * mode itself; the batch caller does it once around the whole loop.
+     */
+    public void enterVduMode() throws VduException {
+        try {
+            lifecycleControl.enterVduMode();
+        } catch (ModeTransitionException e) {
+            throw new VduException("Failed to enter VDU mode: " + e.getMessage(), e);
+        }
+    }
+
+    /** Exit VDU mode (restores normal server configuration). Logs, does not throw, on failure. */
+    public void exitVduMode() {
+        try {
+            lifecycleControl.exitVduMode();
+        } catch (ModeTransitionException e) {
+            LOG.error("Failed to exit VDU mode; server may remain in vision-safe config", e);
+        }
+    }
+
     public boolean hasVisionCapability() {
         return introspection.hasVisionCapability();
     }
@@ -163,13 +186,8 @@ public class VduProcessor {
         LOG.info("Starting VDU processing for: {}", filePath.getFileName());
         long startTime = System.currentTimeMillis();
 
-        // Enter VDU mode: restarts server with vision-safe flags (-np 1, --cache-ram 0).
-        // Must be exited in finally block to restore normal server configuration.
-        try {
-            lifecycleControl.enterVduMode();
-        } catch (ModeTransitionException e) {
-            throw new VduException("Failed to enter VDU mode: " + e.getMessage(), e);
-        }
+        // Tempdoc 672 follow-up: VDU mode is entered/exited once per batch by the caller
+        // (VduBatchProcessor), not per document — see enterVduMode()/exitVduMode() above.
 
         // Use try-with-resources to ensure temp image cleanup; record total latency via catalog
         // histogram on the way out (Phase 3d: replaces legacy Telemetry.Timer.Sample).
@@ -259,12 +277,8 @@ public class VduProcessor {
             LOG.error("VDU processing failed for: {}", filePath, e);
             throw new VduException("VDU processing failed: " + e.getMessage(), e);
         } finally {
-            // Always restore normal server configuration after VDU batch.
-            try {
-                lifecycleControl.exitVduMode();
-            } catch (ModeTransitionException e) {
-                LOG.error("Failed to exit VDU mode; server may remain in vision-safe config", e);
-            }
+            // Tempdoc 672 follow-up: VDU mode exit is now the batch caller's responsibility
+            // (VduBatchProcessor), once per batch — see exitVduMode() above.
             // Record total duration on both success and failure paths IF the
             // PdfImageRenderer was successfully constructed (legacy Timer.Sample was opened
             // inside the try-with-resources head; failure to acquire the renderer never started

@@ -33,19 +33,29 @@ node scripts/dev/prepare-worktree.cjs --no-dist # FE-only (skip the Java dists)
 ```
 
 **Shared models / runtime**: the dev-runner resolves `JUSTSEARCH_MODELS_DIR`
-from the **main** checkout automatically. Dev inference is **GPU-only**: a
-worktree's own `cuda12` runtime wins if present, else the dev-runner resolves
-and (on first use) one-time-populates a **shared** `cuda12` GPU runtime at the
-main checkout from a Gradle-built stage (`resolveCuda12ServerExe` /
-`stageSharedCuda12` in `scripts/dev/dev-runner.cjs`), so every worktree can
-reference one copy instead of re-staging. There is deliberately **no CPU
-baseline** — if no `cuda12` runtime is resolvable anywhere, inference fails
-CLOSED (a truthful "unavailable") while search still works; a CPU fallback for
-a multi-GB model would silently DOS concurrent worktrees (tempdoc 656). Only
-if you run a backend outside the dev-runner do you still need to export
-`JUSTSEARCH_MODELS_DIR`:
+from the **main** checkout automatically (tempdoc 618 §2). Runtime resolution
+is **GPU-only by design as of tempdoc 656** (Move 1 + Move 2 — this supersedes
+618 §3's CPU-baseline auto-stage, which no longer happens): the dev-runner
+resolves a **shared cuda12** llama-server — the worktree's own
+`native-bin/llama-server/variants/cuda12/` if deliberately Install-AI'd there,
+else the **main checkout's** shared cuda12 — and provisions the main checkout's
+copy once from the Gradle cuda stage if absent
+(`./gradlew :modules:ui:stageLlamaCudaVariant`, a one-time ~600 MB download).
+Every worktree then references that one shared copy with zero per-worktree
+download. Dev does not stage or fall back to a CPU llama-server baseline —
+a CPU 9B fallback runs ~10x slower and saturates every core, DOSing concurrent
+worktrees (tempdoc 381, 656) — so with no cuda12 resolvable, inference fails
+CLOSED (truthful "unavailable" via the runtime manifest's reason codes)
+instead of silently degrading onto CPU. See `resolveCuda12ServerExe` /
+`stageSharedCuda12` in `scripts/dev/dev-runner.cjs` and the regression test
+`scripts/dev/test-dev-runner-runtime-resolution.mjs`. This resolution only
+applies to backends launched **through the dev-runner** (`justsearch_dev_start`
+/ MCP tools); a backend started outside it (e.g. a bare `gradlew
+runHeadlessEval`) gets neither `JUSTSEARCH_MODELS_DIR` nor
+`JUSTSEARCH_SERVER_EXE` set automatically and needs to export both itself:
 ```
 JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
+JUSTSEARCH_SERVER_EXE=F:\JustSearch\modules\ui\native-bin\llama-server\variants\cuda12\llama-server.exe
 ```
 
 **New terminal session** — launch Claude with the `--worktree` flag:

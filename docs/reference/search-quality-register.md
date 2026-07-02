@@ -1090,7 +1090,18 @@ above)*
 
 - **Question:** 664's twelfth pass measured the descriptor-collision check **FAILING on all 5 procedurally-generated corpora** (`needle-burial-v1`, `synth-tabular-v1`, `synth-multiling-de-v1`, `synth-multihop-prose-v2`, `synth-code-v1`; 17–27 colliding groups each, `needle-burial-v1` specifically has 7 of its 20 gold chains affected) and left the fix out of scope ("a deeper generator-logic change"). For a retrieval-quality profile this is a tolerable caveat; for an **agent-utility accuracy** measurement (tempdoc 624) it directly corrupts the paired metric (a hostile reviewer can point to a distractor indistinguishable from a "gold" query). Also open: 635's own suite found 3 of its 4 members (code/tabular/German) are **grep-trivial by construction** (verbatim entity-name queries) and unusable for an agent-utility delta at any scale.
 - **Why it matters:** Tempdoc 624's 2026-07-02 methodology plan (§M.2/§M.3) promotes the collision fix from "known, deferred" to a **blocking prerequisite** for any future agent-utility spend, and separately calls for a **real-scale** (hundreds–low-thousands of docs) + **OCR-only-accessible** battlefield the current suite doesn't have at all — see 624's own §U0 framing (does the realistic file-tools-plus-JustSearch arm's near-null effect survive a harder, more representative battlefield, or does a small/clean/easy corpus just hide a genuine null).
-- **Status:** Not resolved here — flagged so a future corpus-generator or agent-eval pass doesn't have to re-derive it. See tempdoc 624 §Methodology plan (2026-07-02) for the full design; tempdoc 664 for the collision measurement; tempdoc 635 for the grep-trivial-member finding.
+- **Status: ANSWERED (2026-07-02, tempdoc 624 §As-built #5-#8).** Both halves resolved by construction,
+  not detection: the generator now excludes gold-reserved descriptors from the distractor draw and draws
+  from a combinatorial 6,240-combination descriptor space (up from 312) — measured 0 gold-involved
+  collisions across 20 seeds (§T.1 design, shipped). Two purpose-built agent-utility battlefield corpora
+  exist and are certified (closed-book ≈0.000, fidelity in-band): `golden/battlefield-en-v1` (390 docs,
+  nDCG@10 0.4143 "hard") and `golden/battlefield-de-v1` (390 docs, 0.5924 "moderate"); a degraded-scan
+  member (`golden/synth-scan-v1`, 360 docs) exists but is gated on a fidelity re-verification through the
+  tempdoc-672-fixed VDU extraction path before any use. The regeneration-determinism verifier itself was
+  found unreliable (an ambient stale editable install shadowing worktree code in its subprocess probe —
+  624 twentieth pass, fixed) — corpus signatures verified intact (recorded == on-disk == regenerated).
+  Interim agent-utility numbers from these corpora exist but every record is `comparable=False`
+  (internal only, per 624 §M.8); the certified 5-seed run is the pending step, not a corpus question.
 
 ---
 

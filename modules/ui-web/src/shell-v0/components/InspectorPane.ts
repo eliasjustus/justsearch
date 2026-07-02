@@ -533,25 +533,31 @@ export class InspectorPane extends JfElement {
     if (this.previewError) {
       return html`<jf-error-alert tone="error">${this.previewError}</jf-error-alert>`;
     }
+    // Tempdoc 671 confidence-building pass: computed before the empty-content check (not after)
+    // so the "Text source" diagnostic renders even for zero-content documents — e.g. a scan page
+    // OCR found no text on. The backend already sends this evidence unconditionally
+    // (PreviewController.java), so the prior gate behind `!previewText` was hiding it for exactly
+    // the documents where it matters most: the ones with no preview body to explain otherwise.
+    const provenanceLabel = this.previewProvenanceLabel();
+    const sourceBlock = provenanceLabel
+      ? html`<div class="preview-source">
+          <span>Text source <strong>${provenanceLabel}</strong></span>
+          ${this.previewEvidenceDetail()
+            ? html`<span class="preview-source-detail">${this.previewEvidenceDetail()}</span>`
+            : nothing}
+        </div>`
+      : nothing;
     if (!this.previewText) {
-      return html`<div class="empty">No preview available.</div>`;
+      return html`${sourceBlock}<div class="empty">No preview available.</div>`;
     }
     const lines = this.previewText.split('\n');
     const hl = this.highlightStartLine >= 0;
-    const provenanceLabel = this.previewProvenanceLabel();
     // Tempdoc 526 §12.4 — `mouseup` inside the open shadow root publishes a
     // typed `text-range` SelectionItem when the user selects text in the
     // preview. The handler runs after the browser finishes updating the
     // selection (mouseup fires after selectionchange).
     return html`
-      ${provenanceLabel
-        ? html`<div class="preview-source">
-            <span>Text source <strong>${provenanceLabel}</strong></span>
-            ${this.previewEvidenceDetail()
-              ? html`<span class="preview-source-detail">${this.previewEvidenceDetail()}</span>`
-              : nothing}
-          </div>`
-        : nothing}
+      ${sourceBlock}
       <pre @mouseup=${this.handlePreviewSelectionChange}>${lines.map(
       (line, i) =>
         html`<span

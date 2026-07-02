@@ -83,7 +83,15 @@ public final class ServicePhase {
       InferenceLifecycleManager inferenceManager,
       InferenceCapability inferenceCapability,
       UiSettingsStore settingsStore,
-      BootstrapLateBindings lateBindings) {}
+      BootstrapLateBindings lateBindings,
+      // Tempdoc 672: live supplier for the VDU offline coordinator, mirroring
+      // indexingServiceSupplier — the Worker client is null at bootstrap (async connect) and
+      // must be re-read at use-time, not captured by value.
+      Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
+      // Tempdoc 672 follow-up: live supplier for the Head's own activity/energy signals (used to
+      // abort an in-progress VDU batch if the user becomes active mid-run) — same live-reference
+      // rationale as knowledgeClientSupplier above.
+      Supplier<KnowledgeServerBootstrap> knowledgeServerBootstrapSupplier) {}
 
   /** Bundled output — all services every downstream phase consumes. */
   public record Output(
@@ -149,9 +157,27 @@ public final class ServicePhase {
     if (in.inferenceManager() != null) {
       onlineAiService = new OnlineAiServiceImpl(in.inferenceManager());
       gpuListener = InferenceWiring.wireGpuStatusBroadcast(in.inferenceManager(), in.knowledgeServer());
+      // Tempdoc 672 follow-up: composed once here and threaded down as a single BooleanSupplier —
+      // VduBatchProcessor doesn't need to know about KnowledgeServerBootstrap/EnergyState itself,
+      // only "should I stop now". Deliberately does NOT include inferenceManager.isOnline() — see
+      // VduPacingPolicy.shouldInterrupt's javadoc: the LLM is legitimately Online for the whole
+      // batch (this batch itself put it there), so that signal would self-interrupt immediately.
+      java.util.function.BooleanSupplier shouldInterruptVduBatch =
+          () -> {
+            var ks = in.knowledgeServerBootstrapSupplier().get();
+            long now = System.currentTimeMillis();
+            long msSinceActivity = ks != null ? ks.msSinceLastUserActivity(now) : Long.MAX_VALUE;
+            boolean energyReduced = ks != null && ks.energyState().reduced();
+            return io.justsearch.app.services.vdu.VduPacingPolicy.shouldInterrupt(
+                msSinceActivity, energyReduced);
+          };
       offlineCoordinator =
           OfflineCoordinatorBuilder.build(
-              in.inferenceManager(), onlineAiService, in.knowledgeClient(), in.telemetry());
+              in.inferenceManager(),
+              onlineAiService,
+              in.knowledgeClientSupplier(),
+              in.telemetry(),
+              shouldInterruptVduBatch);
       InferenceCapabilityWiring.attachInferenceModeListener(
           in.inferenceManager(), in.inferenceCapability());
       InferenceWiring.tryStartOnlineMode(in.inferenceManager());
@@ -193,8 +219,13 @@ public final class ServicePhase {
             in.knowledgeServer(),
             enterprisePolicy,
             packAllowlistService);
+    // Tempdoc 672 follow-up: live supplier, not a value captured at bootstrap (client is null then,
+    // async Worker connect) — mirrors the same fix already shipped for the VDU offline coordinator.
     WorkerFeatureCache workerFeatureCache =
-        in.knowledgeClient() != null ? in.knowledgeClient()::getLastKnownOnnxModels : List::of;
+        () -> {
+          RemoteKnowledgeClient client = in.knowledgeClientSupplier().get();
+          return client != null ? client.getLastKnownOnnxModels() : List.of();
+        };
     RuntimeActivationService runtimeActivationHelper =
         new RuntimeActivationService(
             onlineAiService,

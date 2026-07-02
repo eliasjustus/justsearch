@@ -57,3 +57,32 @@ def _write_bench_output(result: dict, output_dir: str | None, filename: str) -> 
     path = out / filename
     path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     click.echo(f"Written to {path}")
+
+
+def _attach_revision(record: dict | None, supersedes: str | None, revision_reason: str | None) -> None:
+    """Attach a `revision` block to a composed record when a CLI caller passes BOTH
+    --supersedes and --revision-reason (tempdoc 624 Design 1 CLI wiring, shared by
+    utility-compose / utility-judge / utility-compose-cross-corpus).
+
+    Requires both flags together, or neither -- a caller giving only one gets a
+    clear `click.BadParameter`. Giving neither is a no-op: `record` is left exactly
+    as `compose_utility`/`compose_utility_cross_corpus` produced it, no `revision`
+    key at all, matching today's (pre-flag) behavior.
+
+    ``record=None`` validates the both-or-neither contract WITHOUT attaching
+    anything -- call this at the top of a command (before any expensive work:
+    reading run files, replaying Inspect logs) so a mismatched pair fails fast
+    instead of silently doing nothing. Call again with the real ``record`` once
+    it exists to actually attach the block.
+
+    `changed_fields` is always empty at the CLI level: the caller isn't expected to
+    know exactly which fields changed when composing from the command line, so an
+    empty list is a deliberate, honest default -- not a corner-cutting shortcut.
+    """
+    if bool(supersedes) != bool(revision_reason):
+        raise click.BadParameter(
+            "--supersedes and --revision-reason must be given together, or neither")
+    if record is not None and supersedes and revision_reason:
+        from .. import utility_comparison as uc
+
+        record["revision"] = uc.build_revision(supersedes, revision_reason, changed_fields=[])

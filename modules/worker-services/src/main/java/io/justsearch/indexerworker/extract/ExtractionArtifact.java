@@ -62,7 +62,7 @@ public record ExtractionArtifact(
 
   public static ExtractionArtifact full(ExtractionResult result, String parserId) {
     return new ExtractionArtifact(
-        ExtractionStatus.SUCCESS_FULL,
+        ExtractionOutcomeClassifier.classify(result == null ? null : result.content(), false),
         result,
         TikaExtractionPolicy.defaults().policyId(),
         parserId,
@@ -77,7 +77,7 @@ public record ExtractionArtifact(
       ExtractionResult result, TikaExtractionPolicy policy, String parserId, boolean truncated) {
     TikaExtractionPolicy effectivePolicy = policy == null ? TikaExtractionPolicy.defaults() : policy;
     return new ExtractionArtifact(
-        truncated ? ExtractionStatus.SUCCESS_PARTIAL : ExtractionStatus.SUCCESS_FULL,
+        ExtractionOutcomeClassifier.classify(result == null ? null : result.content(), truncated),
         result,
         effectivePolicy.policyId(),
         parserId,

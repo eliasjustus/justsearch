@@ -67,6 +67,16 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private WorkerSpawner spawner;
     private RemoteKnowledgeClient client;
 
+    /**
+     * Tempdoc 672 follow-up: epoch-ms of the most recent {@link #signalUserActivity()} call — the
+     * Head-local read-back of the same fact {@link #signalUserActivity()} already writes to the
+     * MMF for the Worker's benefit (that channel is Head-writes/Worker-reads only per
+     * MainSignalBus's own doc, so this is a small separate local mirror, not a re-read of the
+     * MMF). Lets a Head-side idle check ask "how recently was the user active" in-process.
+     */
+    private final java.util.concurrent.atomic.AtomicLong lastUserActivityEpochMs =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
     /** Tempdoc 630: epoch-ms of the most recent OS-resume handled, for the "Catching up" notice. */
     private final java.util.concurrent.atomic.AtomicLong lastResumeEpochMs =
         new java.util.concurrent.atomic.AtomicLong(0);
@@ -434,9 +444,21 @@ public final class KnowledgeServerBootstrap implements Closeable {
      * Signals user activity for breath holding.
      */
     public void signalUserActivity() {
+        lastUserActivityEpochMs.set(System.currentTimeMillis());
         if (spawner != null) {
             spawner.signalUserActivity();
         }
+    }
+
+    /**
+     * Tempdoc 672 follow-up: milliseconds since the most recent {@link #signalUserActivity()}
+     * call, or {@link Long#MAX_VALUE} if none has ever been recorded (treated as "idle" by
+     * callers, never as "just active" — mirrors {@code EnergyState.unknown()}'s
+     * never-throttle-on-uncertainty posture).
+     */
+    public long msSinceLastUserActivity(long nowEpochMs) {
+        long last = lastUserActivityEpochMs.get();
+        return last == 0 ? Long.MAX_VALUE : nowEpochMs - last;
     }
 
     /**

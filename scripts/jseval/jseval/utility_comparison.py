@@ -20,7 +20,14 @@ Each input summary is shaped:
       "agent_model": "haiku",
       "corpus": {"dataset": "...", "signature": "...", ...},
       "per_query": {qid: {"correct": bool, "cost_usd": float,
-                          "unique_tokens": int, "num_turns": int}},
+                          "unique_tokens": int, "num_turns": int,
+                          # Optional (tempdoc 624 §As-built #5) — absent/None on
+                          # older summaries, present when the runner captured
+                          # real per-call tool-use data:
+                          "tool_calls": list | None,
+                          "disallowed_tool_calls": list | None,
+                          "leak_suspect_tool_calls": list | None,
+                          "leak_suspect": bool}},
     }
 """
 
@@ -33,6 +40,7 @@ from jseval.agent_manifest import agent_cohort_key
 from jseval.release import canonical_dataset_slug
 
 SCHEMA = "utility-comparison.v1"
+SCHEMA_CROSS_CORPUS = "utility-comparison-cross-corpus.v1"
 SCHEMA_VERSION = 1
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
@@ -43,6 +51,44 @@ _BASELINE = "A"
 
 class UtilityComposeError(ValueError):
     """Raised when a candidate run-set cannot form one coherent comparison."""
+
+
+# Closed set of revision reasons (tempdoc 624 Design 1). A record's `revision`
+# field is present only when it corrects a prior composition of the SAME
+# identity-bearing inputs -- never for an unrelated new measurement.
+REVISION_REASONS = frozenset({"leak_correction", "judge_rescore", "reseed", "other"})
+
+
+def build_revision(supersedes: str, reason: str, changed_fields: list[str]) -> dict:
+    """Build the `revision` object attached to a corrected ``utility-comparison.v1``
+    (or cross-corpus) record (tempdoc 624 Design 1 / Confidence pass #6).
+
+    ``supersedes`` MUST be a relative path to the prior record's JSON file --
+    no field in the record itself (``agent_cohort_key``, a pairing key) is
+    unique across revisions of the same underlying run, since those are
+    deliberately invariant across the original and every corrected version.
+
+    This is metadata construction, not a diffing engine: ``changed_fields`` is
+    caller-specified, not auto-derived.
+    """
+    if not isinstance(supersedes, str) or not supersedes.strip():
+        raise UtilityComposeError(
+            f"revision supersedes must be a non-empty path string, got {supersedes!r}",
+        )
+    if reason not in REVISION_REASONS:
+        raise UtilityComposeError(
+            f"revision reason {reason!r} not in closed set: {sorted(REVISION_REASONS)}",
+        )
+    for field in changed_fields:
+        if not isinstance(field, str):
+            raise UtilityComposeError(
+                f"revision changed_fields entries must be strings, got {field!r} ({type(field).__name__})",
+            )
+    return {
+        "supersedes": supersedes,
+        "reason": reason,
+        "changed_fields": list(changed_fields),
+    }
 
 
 # Cited external prior art (tempdoc 624 §D-4 / §D.5) — CONSTANTS, never a
@@ -253,7 +299,58 @@ def compose_utility(
         "coverage": coverage or _default_coverage(contamination_class),
         # External references are CITED CONSTANTS (never a projection of our runs).
         "external_baselines": external_baselines or {},
+        # Empirical --disallowedTools + answer-key-leak coverage, per condition
+        # (tempdoc 624 §As-built #5 residual-gap close). Additive field — the
+        # schema is `additionalProperties: true` and every existing field above
+        # is unchanged, so a consumer that doesn't know this key is byte-for-byte
+        # compatible with the pre-this-change record shape.
+        "tool_call_assertions": _tool_call_assertions(run_summaries),
     }
+
+
+def _tool_call_assertions(run_summaries: list[dict]) -> dict:
+    """Per-condition (arm) coverage of the empirical tool-call assertions
+    (tempdoc 624 §As-built #5 residual-gap close): how many per-query cells
+    actually carry real ``tool_calls`` data vs. how many of those show a
+    ``--disallowedTools`` violation or an answer-key-leak suspect.
+
+    Only the Inspect-AI runner (post-fix) and the classic ``run_agent_eval``
+    runner populate ``per_query[qid]["tool_calls"]``; an older on-disk EvalLog
+    or run-result JSON simply lacks the key, so ``.get("tool_calls")`` reads
+    ``None`` for that cell — degrading to "no tool data" rather than a
+    fabricated "0 violations" that would misread as a verified-clean cell.
+    This is the field that makes that distinction legible: a consumer checks
+    ``cells_with_tool_data`` before trusting ``cells_with_disallowed_violations``
+    as "verified clean" (0 violations across N *checked* cells) rather than
+    "no data" (0 of 0 checked, because none were captured).
+
+    :returns: ``{condition: {"cells_total", "cells_with_tool_data",
+        "cells_with_disallowed_violations", "cells_with_leak_suspect"}}``.
+    """
+    by_condition: dict = {}
+    for s in run_summaries:
+        condition = s.get("condition")
+        if condition is None:
+            continue
+        agg = by_condition.setdefault(condition, {
+            "cells_total": 0,
+            "cells_with_tool_data": 0,
+            "cells_with_disallowed_violations": 0,
+            "cells_with_leak_suspect": 0,
+        })
+        for entry in (s.get("per_query") or {}).values():
+            agg["cells_total"] += 1
+            if entry.get("tool_calls") is not None:
+                agg["cells_with_tool_data"] += 1
+                if entry.get("disallowed_tool_calls"):
+                    agg["cells_with_disallowed_violations"] += 1
+            # `leak_suspect` (unlike the tool-call fields above) can also be set
+            # by the text-scan backstop (`agent_utility_run.apply_leak_flags`) on
+            # a cell with no captured tool data at all, so it is counted off the
+            # bool flag directly rather than gated on `cells_with_tool_data`.
+            if entry.get("leak_suspect"):
+                agg["cells_with_leak_suspect"] += 1
+    return by_condition
 
 
 def _default_coverage(contamination_class: str) -> dict:
@@ -279,66 +376,107 @@ def _index_by_seed(arm: list[dict]) -> dict:
     return by_seed
 
 
-def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
-    """One paired baseline(A)-vs-with-tool-arm comparison: McNemar accuracy +
-    bootstrap-CI cost/token/turn deltas, over the seeds + queries both completed."""
-    if not baseline or not with_tool:
-        return None  # need both arms to form a comparison
+def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dict, list[dict]]:
+    """Build the paired (seed, qid) observation set ONCE — the exact pairing
+    logic ``_arm_comparison`` used to inline, now factored so both the pooled
+    comparison and any per-stratum breakdown (tempdoc 624 §T.4) share it. A
+    stratified view can therefore never disagree with the pooled view about
+    which observations are even paired.
 
-    a_correct: dict[str, bool] = {}
-    c_correct: dict[str, bool] = {}
-    a_cost: list = []
-    c_cost: list = []
-    a_tok: list = []
-    c_tok: list = []
-    a_turns: list = []
-    c_turns: list = []
-    pqm_a: dict = {}
-    pqm_c: dict = {}
-    per_seed_acc_a: list[float] = []
-    per_seed_acc_c: list[float] = []
+    Also separates out any (seed, qid) observation where EITHER arm's per-query
+    record carries ``leak_suspect`` (tempdoc 624 §As-built #7 defense-in-depth
+    backstop — an agent tool-call scan flagged a Read/Glob path naming the eval's
+    own gold-answer file). A leak-suspect observation's "correct" bit cannot be
+    trusted, so it is EXCLUDED from the returned pairs — it never reaches
+    McNemar/bootstrap-CI — and reported back separately, so it is neither
+    silently dropped from the record nor silently counted as a genuine win.
 
+    :returns: ``(pairs, leak_suspect_cells)`` where ``pairs`` is
+        ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
+        "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":}}``
+        and ``leak_suspect_cells`` is ``[{"seed":, "qid":,
+        "baseline_leak_suspect":, "with_tool_leak_suspect":}, ...]``.
+    """
     a_by_seed = _index_by_seed(baseline)
     c_by_seed = _index_by_seed(with_tool)
     shared_seeds = sorted(
         set(a_by_seed) & set(c_by_seed), key=lambda x: (x is None, x),
     )
+    pairs: dict[str, dict] = {}
+    leak_suspect_cells: list[dict] = []
     for seed in shared_seeds:
         a_pq = a_by_seed[seed][0].get("per_query", {})
         c_pq = c_by_seed[seed][0].get("per_query", {})
-        common = sorted(set(a_pq) & set(c_pq))
-        if not common:
-            continue
-        per_seed_acc_a.append(
-            sum(1 for q in common if a_pq[q].get("correct")) / len(common))
-        per_seed_acc_c.append(
-            sum(1 for q in common if c_pq[q].get("correct")) / len(common))
-        for q in common:
-            obs = f"{seed}:{q}"
-            a_correct[obs] = bool(a_pq[q].get("correct"))
-            c_correct[obs] = bool(c_pq[q].get("correct"))
+        for q in sorted(set(a_pq) & set(c_pq)):
             ca, cc = a_pq[q], c_pq[q]
-            a_cost.append(ca.get("cost_usd"))
-            c_cost.append(cc.get("cost_usd"))
-            a_tok.append(ca.get("unique_tokens"))
-            c_tok.append(cc.get("unique_tokens"))
-            a_turns.append(ca.get("num_turns"))
-            c_turns.append(cc.get("num_turns"))
-            pqm_a[obs] = {
-                "cost_usd": float(ca.get("cost_usd") or 0.0),
-                "unique_tokens": float(ca.get("unique_tokens") or 0),
-                "num_turns": float(ca.get("num_turns") or 0),
+            a_leak, c_leak = bool(ca.get("leak_suspect")), bool(cc.get("leak_suspect"))
+            if a_leak or c_leak:
+                leak_suspect_cells.append({
+                    "seed": seed,
+                    "qid": q,
+                    "baseline_leak_suspect": a_leak,
+                    "with_tool_leak_suspect": c_leak,
+                })
+                continue
+            pairs[f"{seed}:{q}"] = {
+                "seed": seed,
+                "qid": q,
+                "a_correct": bool(ca.get("correct")),
+                "c_correct": bool(cc.get("correct")),
+                "a_cost": ca.get("cost_usd"),
+                "c_cost": cc.get("cost_usd"),
+                "a_tok": ca.get("unique_tokens"),
+                "c_tok": cc.get("unique_tokens"),
+                "a_turns": ca.get("num_turns"),
+                "c_turns": cc.get("num_turns"),
             }
-            pqm_c[obs] = {
-                "cost_usd": float(cc.get("cost_usd") or 0.0),
-                "unique_tokens": float(cc.get("unique_tokens") or 0),
-                "num_turns": float(cc.get("num_turns") or 0),
-            }
+    return pairs, leak_suspect_cells
 
-    if not a_correct:
+
+def _stats_from_pairs(pairs: dict) -> dict | None:
+    """The full per-comparison stat block — McNemar accuracy + bootstrap-CI
+    cost/token/turn deltas + seed envelope — computed independently over
+    whichever paired-observation set is handed in: the pooled set, or one
+    stratum's subset (tempdoc 624 §T.4). Each call is a fully self-contained
+    significance test/CI on ITS OWN n; a per-stratum caller never borrows the
+    pooled result (§M.8 item 7)."""
+    if not pairs:
         return None
 
-    # accuracy (binary) -> McNemar over the pooled (seed, qid) discordant pairs.
+    a_correct = {obs: p["a_correct"] for obs, p in pairs.items()}
+    c_correct = {obs: p["c_correct"] for obs, p in pairs.items()}
+
+    by_seed: dict = {}
+    for p in pairs.values():
+        by_seed.setdefault(p["seed"], []).append(p)
+    seed_order = sorted(by_seed, key=lambda x: (x is None, x))
+    per_seed_acc_a = [
+        sum(1 for p in by_seed[seed] if p["a_correct"]) / len(by_seed[seed])
+        for seed in seed_order
+    ]
+    per_seed_acc_c = [
+        sum(1 for p in by_seed[seed] if p["c_correct"]) / len(by_seed[seed])
+        for seed in seed_order
+    ]
+
+    pqm_a = {
+        obs: {
+            "cost_usd": float(p["a_cost"] or 0.0),
+            "unique_tokens": float(p["a_tok"] or 0),
+            "num_turns": float(p["a_turns"] or 0),
+        }
+        for obs, p in pairs.items()
+    }
+    pqm_c = {
+        obs: {
+            "cost_usd": float(p["c_cost"] or 0.0),
+            "unique_tokens": float(p["c_tok"] or 0),
+            "num_turns": float(p["c_turns"] or 0),
+        }
+        for obs, p in pairs.items()
+    }
+
+    # accuracy (binary) -> McNemar over the (seed, qid) discordant pairs.
     mc = compare_runs.mcnemar(a_correct, c_correct)
 
     # continuous metrics -> paired delta + bootstrap CI + Cohen's d_z.
@@ -349,6 +487,13 @@ def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
         pseudo_qrels,
         metrics=["cost_usd", "unique_tokens", "num_turns"],
     )
+
+    a_cost = [p["a_cost"] for p in pairs.values()]
+    c_cost = [p["c_cost"] for p in pairs.values()]
+    a_tok = [p["a_tok"] for p in pairs.values()]
+    c_tok = [p["c_tok"] for p in pairs.values()]
+    a_turns = [p["a_turns"] for p in pairs.values()]
+    c_turns = [p["c_turns"] for p in pairs.values()]
 
     return {
         "accuracy": {
@@ -385,6 +530,130 @@ def _arm_comparison(baseline: list[dict], with_tool: list[dict]) -> dict | None:
     }
 
 
+def _arm_comparison(
+    baseline: list[dict],
+    with_tool: list[dict],
+    *,
+    stratify_by: dict[str, str] | None = None,
+) -> dict | None:
+    """One paired baseline(A)-vs-with-tool-arm comparison: McNemar accuracy +
+    bootstrap-CI cost/token/turn deltas, over the seeds + queries both completed.
+
+    ``stratify_by`` (optional ``qid -> stratum label``, tempdoc 624 §T.4) adds
+    an additive ``"stratified": {"by_stratum": {label: {...same shape as this
+    dict...}}}`` key: the identical McNemar+bootstrap computation, independently
+    re-run per stratum over ONLY that stratum's paired observations — each
+    stratum's ``mcnemar_p``/``ci_95`` is its own, never inherited from the
+    pooled result (§M.8 item 7). The pooled top-level fields are never changed
+    by this parameter, and when ``stratify_by`` is ``None`` (the default) no
+    ``"stratified"`` key is added at all — byte-identical to the
+    pre-stratification behavior.
+
+    ``leak_suspect_cells`` (tempdoc 624 §As-built #7) is always present when a
+    result is returned — the additive per-arm honesty field: the (seed, qid)
+    observations ``_pair_observations`` excluded because a leak-suspect signal
+    fired on one side of the pair. Empty when nothing was flagged, consistent
+    with the existing exclusion convention (an arm/cell with zero surviving
+    observations returns ``None``, the same as any other all-excluded case)."""
+    if not baseline or not with_tool:
+        return None  # need both arms to form a comparison
+
+    pairs, leak_suspect_cells = _pair_observations(baseline, with_tool)
+    result = _stats_from_pairs(pairs)
+    if result is None:
+        return None
+    result["leak_suspect_cells"] = leak_suspect_cells
+
+    if stratify_by:
+        labels = sorted({
+            stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by
+        })
+        by_stratum: dict = {}
+        for label in labels:
+            sub_pairs = {
+                obs: p for obs, p in pairs.items()
+                if stratify_by.get(p["qid"]) == label
+            }
+            sub_stats = _stats_from_pairs(sub_pairs)
+            if sub_stats is not None:
+                by_stratum[label] = sub_stats
+        if by_stratum:
+            result["stratified"] = {"by_stratum": by_stratum}
+
+    return result
+
+
+def _corpus_label(corpus: dict) -> str:
+    """The corpus-identity label a summary is stratified/namespaced by.
+
+    Shared by the incidental within-cell stratify path
+    (:func:`_default_corpus_stratify` — a slug whose summaries carry more
+    than one corpus SIGNATURE) and the deliberate cross-corpus composer
+    (:func:`compose_utility_cross_corpus` — summaries pooled across dataset
+    SLUGs): one derivation, two call sites, so a query's stratum label is
+    never computed two different ways."""
+    return f"{corpus.get('dataset')}:{corpus.get('signature')}"
+
+
+def _default_corpus_stratify(cell_summaries: list[dict]) -> dict[str, str] | None:
+    """Default ``qid -> corpus`` stratum mapping (tempdoc 624 §T.4).
+
+    ``compose_utility`` already groups a cell by canonical dataset SLUG, so
+    every summary in ``cell_summaries`` shares one slug — but distinct
+    summaries can still carry a different corpus SIGNATURE (e.g. the corpus
+    was refreshed between eval runs), which is the finer sub-population this
+    stratifies on automatically, with no caller-supplied mapping required.
+    Each query's label is derived from whichever summary's ``per_query`` dict
+    it appears in. Returns ``None`` (no stratification) when every query
+    resolves to the same corpus identity, so a single-corpus cell's composed
+    output stays byte-identical to the pre-stratification behavior."""
+    qid_to_label: dict[str, str] = {}
+    for s in cell_summaries:
+        label = _corpus_label(s.get("corpus") or {})
+        for qid in (s.get("per_query") or {}):
+            qid_to_label[qid] = label
+    if len({*qid_to_label.values()}) < 2:
+        return None
+    return qid_to_label
+
+
+def _namespace_for_cross_corpus(summaries: list[dict]) -> list[dict]:
+    """Rewrite ``per_query`` keys + ``manifest.seed`` so summaries pooled from
+    MULTIPLE dataset slugs can be pushed through the existing single-cell path
+    (:func:`_compose_cell` / :func:`_arm_comparison`) without collision
+    (tempdoc 624 §Cross-corpus).
+
+    Two real-world collisions would otherwise corrupt a pooled comparison:
+
+    - **Seed collision.** Every corpus's eval run independently numbers its
+      seeds ``0..N``, so pooling summaries as-is would put e.g. the English
+      run's seed 0 and the German run's seed 0 into the SAME
+      ``_index_by_seed`` bucket — ``_pair_observations`` keeps only the first
+      summary per bucket, silently discarding the rest.
+    - **Qid collision.** Every corpus's dataset independently numbers its
+      queries ``q0, q1, ...``, so a flat ``stratify_by: qid -> label`` map
+      (as :func:`_default_corpus_stratify` builds it) could only assign ONE
+      label to "q0" — corrupting every other corpus's "q0" stratum.
+
+    Namespacing both by the corpus label (:func:`_corpus_label`) makes each
+    (corpus, seed) bucket and each (corpus, qid) key globally unique, so
+    :func:`_compose_cell` composes the pooled cell exactly as it would any
+    other multi-summary cell, and :func:`_default_corpus_stratify` — called
+    downstream, UNCHANGED — recovers precisely this corpus split as the
+    per-stratum breakdown. No pairing/statistics code is touched; this only
+    reshapes the input.
+    """
+    out = []
+    for s in summaries:
+        label = _corpus_label(s.get("corpus") or {})
+        pq = s.get("per_query") or {}
+        ns = dict(s)
+        ns["manifest"] = {**s["manifest"], "seed": f"{label}::{s['manifest'].get('seed')}"}
+        ns["per_query"] = {f"{label}::{qid}": v for qid, v in pq.items()}
+        out.append(ns)
+    return out
+
+
 def _compose_cell(cell_summaries: list[dict]) -> dict | None:
     """Compose one (corpus, model) cell. The top-level headlines baseline A vs the
     REALISTIC arm — **addition B** (agent that already has file tools *and* gets
@@ -399,14 +668,17 @@ def _compose_cell(cell_summaries: list[dict]) -> dict | None:
     if not baseline or not (substitution or addition):
         return None
     primary = addition or substitution  # prefer B (realistic); never headline C (C-4)
-    cell = _arm_comparison(baseline, primary)
+    # Auto-derived qid -> corpus-signature stratum map (§T.4); None (no field
+    # added) unless this cell actually spans more than one corpus signature.
+    stratify_by = _default_corpus_stratify(cell_summaries)
+    cell = _arm_comparison(baseline, primary, stratify_by=stratify_by)
     if cell is None:
         return None
     arms: dict = {}
     if substitution:
-        arms["substitution_c"] = _arm_comparison(baseline, substitution)
+        arms["substitution_c"] = _arm_comparison(baseline, substitution, stratify_by=stratify_by)
     if addition:
-        arms["addition_b"] = _arm_comparison(baseline, addition)
+        arms["addition_b"] = _arm_comparison(baseline, addition, stratify_by=stratify_by)
     cell["arms"] = arms
     cell["primary_arm"] = "addition_b" if addition else "substitution_c"
     if cell["primary_arm"] == "substitution_c":
@@ -415,3 +687,136 @@ def _compose_cell(cell_summaries: list[dict]) -> dict | None:
             "scenario; lead with token-efficiency, not this accuracy (tempdoc 624 §C-4). Run "
             "condition B for the realistic 'addition' number.")
     return cell
+
+
+def compose_utility_cross_corpus(
+    run_summaries: list[dict],
+    *,
+    composed_at: str,
+    external_baselines: dict | None = None,
+    coverage: dict | None = None,
+    confidence_tier: str = "C",
+    contamination_class: str = "unknown",
+    governance: dict | None = None,
+) -> dict:
+    """Cross-corpus stratified sibling of :func:`compose_utility` (tempdoc 624
+    §Cross-corpus).
+
+    ``compose_utility`` groups ``cell_summaries`` by ``(corpus, agent_model)``
+    BEFORE ever calling :func:`_arm_comparison` — so every dataset slug always
+    ends up in its own, separately-composed top-level record, and the
+    per-stratum McNemar+bootstrap-CI breakdown ``_arm_comparison`` already
+    supports via ``stratify_by`` never gets a chance to stratify by the axis a
+    caller may actually care about (e.g. an English/German/scan
+    battlefield-dimension split) — ``_default_corpus_stratify`` only fires for
+    the INCIDENTAL case of one slug spanning multiple corpus signatures within
+    a single composition call, never for genuinely distinct dataset slugs.
+
+    This function pools ``cell_summaries`` from MULTIPLE dataset slugs (same
+    ``agent_model``) into ONE :func:`_compose_cell` / :func:`_arm_comparison`
+    call, reusing :func:`_default_corpus_stratify`'s existing corpus-identity
+    derivation (via :func:`_namespace_for_cross_corpus`, which only makes
+    seeds/qids collision-free — it does not reimplement pairing, McNemar, or
+    bootstrap-CI). The result is ONE record per ``agent_model`` whose
+    top-level ``accuracy``/``tokens_unique``/etc. is the POOLED cross-corpus
+    number, and whose ``stratified.by_stratum`` gives each corpus its own,
+    independently-significance-tested breakdown (§M.8 item 7) — the fallback
+    for exactly the situation where every per-corpus pooled record is
+    individually non-significant but a cross-corpus view could still reveal
+    whether any one corpus carries a real signal.
+    """
+    if not run_summaries:
+        raise UtilityComposeError("no run summaries provided")
+
+    # 1. One harness cohort across the whole record (identical check to compose_utility).
+    keys = set()
+    for s in run_summaries:
+        m = s.get("manifest")
+        if not isinstance(m, dict):
+            raise UtilityComposeError(
+                f"summary for {s.get('corpus')!r} has no embedded manifest",
+            )
+        keys.add(m.get("agent_cohort_key") or agent_cohort_key(m))
+    if len(keys) != 1:
+        raise UtilityComposeError(
+            "runs are not one harness cohort (agent_cohort_key differs): "
+            f"{sorted(k[:12] for k in keys)}",
+        )
+    cohort_key = keys.pop()
+
+    # 2. With-tool arms must share one search-config (identical check).
+    search_keys = {
+        s["manifest"].get("search_config_cohort_key")
+        for s in run_summaries
+        if s.get("condition") in _WITH_TOOL
+    }
+    search_keys.discard(None)
+    if len(search_keys) > 1:
+        raise UtilityComposeError(
+            "with-tool arms span multiple search configs: "
+            f"{sorted(k[:12] for k in search_keys)}",
+        )
+    search_config = next(iter(search_keys), None)
+
+    corpora = sorted({_corpus_label(s.get("corpus") or {}) for s in run_summaries})
+    if len(corpora) < 2:
+        raise UtilityComposeError(
+            f"cross-corpus composition needs 2+ distinct corpora, got: {corpora}",
+        )
+
+    ref = run_summaries[0]["manifest"]
+    cohort = {
+        "agent_cohort_key": cohort_key,
+        "git_sha": ref.get("git_sha"),
+        "cli_version": ref.get("cli_version"),
+        "mcp_tool_surface_hash": ref.get("mcp_tool_surface_hash"),
+        "judge": ref.get("judge"),
+        "prompt_template_hash": ref.get("prompt_template_hash"),
+        "decoding": ref.get("decoding"),
+        "eval_limits": ref.get("eval_limits"),
+        "search_config_cohort_key": search_config,
+        "hardware": ref.get("hardware"),
+    }
+
+    # 3. Pool by agent_model only (NOT by corpus) — every model's cell spans
+    #    all corpora, namespaced so _compose_cell's shared machinery can pool
+    #    them and _default_corpus_stratify can split them back apart.
+    seeds_seen: set = set()
+    measured: dict = {}
+    for model in sorted({s.get("agent_model") for s in run_summaries}):
+        model_summaries = [s for s in run_summaries if s.get("agent_model") == model]
+        for s in model_summaries:
+            seeds_seen.add(s["manifest"].get("seed"))
+        cell = _compose_cell(_namespace_for_cross_corpus(model_summaries))
+        if cell is not None:
+            measured[model] = cell
+
+    comparability = None
+    derived_tier = confidence_tier
+    if governance is not None:
+        comparability = {
+            "comparable": governance.get("comparable"),
+            "reasons": governance.get("reasons", []),
+            "metrics": governance.get("metrics", {}),
+            "per_arm_loss": governance.get("per_arm_loss", {}),
+        }
+        derived_tier = "C" if not governance.get("comparable") else confidence_tier
+
+    return {
+        "schema": SCHEMA_CROSS_CORPUS,
+        "schema_version": SCHEMA_VERSION,
+        "composed_at": composed_at,
+        "cohort": cohort,
+        "conditions": {
+            "baseline": "A (file tools only)",
+            "with_tool": "C (JustSearch only)",
+            "addition": "B (file tools + JustSearch)",
+        },
+        "corpora": corpora,
+        "measured": measured,
+        "seed_count": len([x for x in seeds_seen if x is not None]),
+        "confidence_tier": derived_tier,
+        "comparability": comparability,
+        "coverage": coverage or _default_coverage(contamination_class),
+        "external_baselines": external_baselines or {},
+    }

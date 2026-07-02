@@ -135,6 +135,8 @@ message VisualExtractionView {
   int64 visual_text_needed_count = 5 [json_name = "visualTextNeededCount"];
   string vdu_blocked_reason = 6 [json_name = "vduBlockedReason"];
   int64 visual_enrichment_needed_count = 7 [json_name = "visualEnrichmentNeededCount"];
+  // Tempdoc 672 follow-up: is a VDU offline-processing batch actively running right now.
+  bool vdu_processing = 8 [json_name = "vduProcessing"];
 }
 
 message CoreIndexView {

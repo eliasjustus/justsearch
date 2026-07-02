@@ -407,8 +407,172 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
         {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
 
 
+@click.command("utility-gate")
+@click.option("--record", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="A parsed utility-comparison.v1(-cross-corpus) JSON file (from `utility-compose`).")
+@click.option("--corpus", required=True,
+              help="Dataset slug to gate (e.g. golden/util-smoke).")
+@click.option("--model", default=None,
+              help="Agent model tier to check (default: the pinned baseline's agent_model, "
+                   "else the record's sole model for this corpus if unambiguous).")
+@click.option("--baselines", type=click.Path(exists=True, resolve_path=True), default=None,
+              help="Path to utility-ratchet-baselines.v1.json "
+                   "(default: jseval/utility-ratchet-baselines.v1.json).")
+@click.option("--report-out", type=click.Path(), default=None,
+              help="Write the full gate decision JSON to this path.")
+@click.option("--update-baseline", is_flag=True,
+              help="Re-pin corpus/model's c_floor_min (+ cli_version) from this (green) record via "
+                   "derive_baselines.")
+@click.option("--allow-realistic-corpus", is_flag=True,
+              help="Override the tempdoc-673-D8 admission refusal (the record's contamination_class "
+                   "is not the fabricated/engineered smoke-corpus marker) — an explicit, deliberate "
+                   "opt-in, mirroring leak-gate's --allow-engine-mismatch.")
+@click.pass_context
+def cmd_utility_gate(ctx, record, corpus, model, baselines, report_out, update_baseline,
+                      allow_realistic_corpus):
+    """Agent-utility standing regression detection gate (tempdoc 673).
+
+    Reads a composed utility-comparison.v1 RECORD directly (not a projections/ artifact — the utility
+    pipeline doesn't emit one) and compares CORPUS's condition-C (JustSearch-only) absolute accuracy
+    against the pinned floor in utility-ratchet-baselines.v1.json. Detection, not estimation — gates
+    on a high-contrast smoke corpus where the C-floor is low-variance, not the near-null realistic
+    with-tool-vs-baseline delta (see tempdoc 673 for why). Exit 0/PASS = no regression (or un-pinned
+    corpus), 1/FAIL = a genuine regression, 2/INCONCLUSIVE = a data problem OR a floor drop that
+    coincides with the agent's cli_version having changed since the baseline was pinned (D9).
+    """
+    from .. import utility_gate as _ugate
+
+    if baselines is None:
+        baselines = Path(__file__).resolve().parents[2] / "utility-ratchet-baselines.v1.json"
+    record_doc = json.loads(Path(record).read_text(encoding="utf-8"))
+
+    if update_baseline:
+        schema_error = _ugate.check_schema(record_doc)
+        if schema_error is not None:
+            click.echo(json.dumps({"exit_code": 2, "error": schema_error}, indent=2), err=True)
+            sys.exit(2)
+        if not allow_realistic_corpus:
+            admission_error = _ugate.check_admission(record_doc)
+            if admission_error is not None:
+                click.echo(json.dumps({"exit_code": 2, "error": admission_error}, indent=2), err=True)
+                sys.exit(2)
+        baselines_doc = (
+            json.loads(Path(baselines).read_text(encoding="utf-8")) if Path(baselines).is_file() else {}
+        )
+        proj = _ugate.derive_baselines({"record": record_doc}, allow_realistic_corpus=allow_realistic_corpus)
+        old_floor = ((baselines_doc.get("baselines") or {}).get(corpus) or {}).get("c_floor_min")
+        new_floor = (proj.get("baselines") or {}).get(corpus, {}).get("c_floor_min")
+        if new_floor is None:
+            click.echo(json.dumps(
+                {"exit_code": 2, "error": f"record has no resolvable condition-C accuracy for {corpus}"},
+                indent=2), err=True)
+            sys.exit(2)
+        from .. import baseline_shift as _bshift
+        changesets_dir = Path(baselines).resolve().parent / ".changesets"
+        try:
+            # c_floor_min is HIGHER-is-better (unlike leak's ceiling) -> lower_is_better=False: a
+            # DROP in the pinned floor is the relaxation to refuse without a justified changeset.
+            _bshift.assert_baseline_not_relaxed(
+                old_floor, new_floor, lower_is_better=False,
+                gate="utility-gate", dataset=corpus, changesets_dir=changesets_dir,
+            )
+        except _bshift.BaselineRelaxedWithoutJustificationError as e:
+            click.echo(json.dumps({"exit_code": 1, "error": str(e)}, indent=2), err=True)
+            sys.exit(1)
+        # Scoped to exactly `corpus` — `proj` can carry OTHER corpora too (a single record can
+        # legitimately measure multiple corpora), but only `corpus` has passed the relaxation guard
+        # above; merging the whole `proj["baselines"]` would silently re-pin every other corpus in
+        # the record with NO justification check at all (post-implementation review finding #1).
+        merged_baselines = dict(baselines_doc.get("baselines") or {})
+        merged_baselines[corpus] = proj["baselines"][corpus]
+        # Preserve the file's own top-level metadata (note/tempdoc/tolerance_default_abs) on an
+        # existing file — only seed it from `proj`'s defaults the first time the file is created.
+        top_level = baselines_doc if baselines_doc else {k: v for k, v in proj.items() if k != "baselines"}
+        baselines_doc = {**top_level, "baselines": merged_baselines}
+        Path(baselines).write_text(
+            json.dumps(baselines_doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        click.echo(json.dumps(
+            {"updated": corpus, "c_floor_min": new_floor, "baselines_path": str(baselines)},
+            indent=2), err=True)
+        sys.exit(0)
+
+    baselines_doc = json.loads(Path(baselines).read_text(encoding="utf-8"))
+    report = _ugate.evaluate(baselines_doc, record_doc, corpus, model)
+    from .. import ratchet_kernel as _rk
+    _rk.finalize_report(
+        report, run_dir=Path(record), baselines_path=baselines,
+        report_out=report_out, summary_fields=("current", "baseline", "floor", "verdict"),
+    )
+
+
+@click.command("utility-gate-derive")
+@click.option("--records", required=True,
+              help="Comma-separated utility-comparison.v1 JSON file paths to derive from "
+                   "(NOT the -cross-corpus.v1 schema, and NOT a realistic corpus — both are skipped "
+                   "with a WARN unless --allow-realistic-corpus).")
+@click.option("--out", type=click.Path(), default=None,
+              help="Write the baselines JSON here (default: jseval/utility-ratchet-baselines.v1.json).")
+@click.option("--tolerance", type=float, default=None,
+              help="Default tolerance_abs subtracted from each measured floor "
+                   "(else utility_gate.DEFAULT_TOLERANCE_ABS).")
+@click.option("--allow-realistic-corpus", is_flag=True,
+              help="Override the tempdoc-673-D8 admission refusal for every input file — an explicit, "
+                   "deliberate opt-in, mirroring leak-gate's --allow-engine-mismatch.")
+@click.pass_context
+def cmd_utility_gate_derive(ctx, records, out, tolerance, allow_realistic_corpus):
+    """Derive utility-gate condition-C floors from one or more measured utility-comparison.v1 records
+    (measured, not hand-typed — the utility-gate analogue of leak-gate-derive)."""
+    from .. import utility_gate as _ugate
+
+    paths = [p.strip() for p in records.split(",") if p.strip()]
+    record_docs = {}
+    for p in paths:
+        doc = json.loads(Path(p).read_text(encoding="utf-8"))
+        schema_error = _ugate.check_schema(doc)
+        if schema_error is not None:
+            click.echo(f"WARN: skipping {p}: {schema_error}", err=True)
+            continue
+        if not allow_realistic_corpus:
+            admission_error = _ugate.check_admission(doc)
+            if admission_error is not None:
+                click.echo(f"WARN: skipping {p}: {admission_error}", err=True)
+                continue
+        record_docs[p] = doc
+    kwargs = {} if tolerance is None else {"tolerance_default_abs": tolerance}
+    derived = _ugate.derive_baselines(record_docs, allow_realistic_corpus=allow_realistic_corpus, **kwargs)
+    out_path = Path(out) if out else (Path(__file__).resolve().parents[2] / "utility-ratchet-baselines.v1.json")
+
+    from .. import baseline_shift as _bshift
+    old_baselines = (
+        json.loads(out_path.read_text(encoding="utf-8")).get("baselines") or {}
+        if out_path.is_file() else {}
+    )
+    changesets_dir = out_path.resolve().parent / ".changesets"
+    try:
+        for corpus, entry in derived.get("baselines", {}).items():
+            old_floor = (old_baselines.get(corpus) or {}).get("c_floor_min")
+            new_floor = entry.get("c_floor_min")
+            if not isinstance(new_floor, (int, float)):
+                continue
+            _bshift.assert_baseline_not_relaxed(
+                old_floor, new_floor, lower_is_better=False,
+                gate="utility-gate", dataset=corpus, changesets_dir=changesets_dir,
+            )
+    except _bshift.BaselineRelaxedWithoutJustificationError as e:
+        click.echo(json.dumps({"exit_code": 1, "error": str(e)}, indent=2), err=True)
+        sys.exit(1)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(derived, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    click.echo(json.dumps(
+        {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
+
+
 @click.command("changeset-new")
-@click.option("--gate", required=True, type=click.Choice(["perf-gate", "leak-gate", "release", "*"]),
+@click.option("--gate", required=True,
+              type=click.Choice(["perf-gate", "leak-gate", "utility-gate", "release", "*"]),
               help="Which gate's relaxation this justifies.")
 @click.option("--dataset", required=True,
               help="\"<dataset>:<metric>\" for perf-gate/release, \"<dataset>\" for leak-gate, or "
@@ -726,4 +890,4 @@ def cmd_extraction_gate(ctx, baseline_run, candidate_run, mode, guard_modes,
     sys.exit(report["exit_code"])
 
 
-COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]
+COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_utility_gate, cmd_utility_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]

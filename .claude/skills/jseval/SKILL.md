@@ -89,9 +89,10 @@ python -m jseval knn-bench
 
 ### Standing ratchets (engine-quality gates)
 
-Four **relative** regression ratchets (no absolute SLO) catch silent engine regressions; the `search-engine-hint`
-hook nudges them after engine/inference edits. All share `jseval/ratchet_kernel.py` (load baselines → resolve run →
-compare → report) and project their floors from a canonical source (never hand-typed).
+Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions; the
+`search-engine-hint` hook nudges them after engine/inference/MCP-surface edits. All share
+`jseval/ratchet_kernel.py` (load baselines → resolve run → compare → report) and project their floors from a
+canonical source (never hand-typed).
 
 ```bash
 # Relevance (nDCG@10 mean) — floor projects from release.v1.json
@@ -102,12 +103,19 @@ python -m jseval perf-gate      --data-dir <dir> --dataset scifact
 python -m jseval leak-gate      --data-dir <dir> --dataset beir/scifact
 # LLM-generation latency/throughput (TTFT / e2e / tokens-sec) — needs a bench, not an eval run; AI must be active
 python -m jseval llm-bench --base-url <api-url> --output-dir <d> && python -m jseval llm-gate --bench-file <d>/llm-bench.json
+# Agent-utility (condition-C absolute-accuracy floor on the util-smoke smoke corpus — tempdoc 673; DETECTION,
+# not the near-null realistic with-tool-vs-baseline delta 624 reports) — reads a utility-comparison.v1 RECORD
+# directly (not a run-dir projection); costs a real paid agent-call run, so it's deliberate/periodic, not
+# routinely re-run like the four above.
+python -m jseval utility-gate --record <utility-comparison.v1.json> --corpus golden/util-smoke
 ```
 
 Re-pin after a deliberate change: `perf-gate --update-baseline` (re-pins from the run); `leak-gate-derive --datasets
-<slugs>`; `llm-gate --bench-file <f> --update-baseline`. Relevance re-baselines when `release.v1.json` is recomposed
-(`jseval release --latest-per-dataset`). Floor files: `scripts/jseval/{relevance,perf,llm-gen}-ratchet-baselines.v1.json`
-+ `leak-gate-baselines.v1.json`. Exit codes: 0 = within band, 1 = regression, 2 = data/projection missing.
+<slugs>`; `llm-gate --bench-file <f> --update-baseline`; `utility-gate --record <f> --update-baseline` (or
+`utility-gate-derive --records <f1,f2>` for multiple corpora at once). Relevance re-baselines when
+`release.v1.json` is recomposed (`jseval release --latest-per-dataset`). Floor files:
+`scripts/jseval/{relevance,perf,llm-gen,utility-ratchet}-baselines.v1.json` + `leak-gate-baselines.v1.json`.
+Exit codes: 0 = within band, 1 = regression, 2 = data/projection missing.
 
 ### Diagnostics
 

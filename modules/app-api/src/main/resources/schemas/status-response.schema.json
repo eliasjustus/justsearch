@@ -1029,6 +1029,9 @@
             "vduBlockedReason" : {
               "type" : "string"
             },
+            "vduProcessing" : {
+              "type" : "boolean"
+            },
             "visualEnrichmentNeededCount" : {
               "type" : "integer"
             },

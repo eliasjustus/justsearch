@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "624-battlefield-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "de",
+    "seed": 624,
+    "hops": 2,
+    "distractor_ratio": 4,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 26,
+    "doc_words": 1300
+  }
+}

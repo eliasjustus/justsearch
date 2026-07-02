@@ -8,8 +8,10 @@ schema-valid EvalLog — the parts a bespoke executor would re-implement (and
 fork). Verified against `inspect-ai 0.3.240` in tempdoc 624 §Confidence-pass #2.
 
 This is an **opt-in** path: `pip install jseval[agent]` (the `inspect-ai` extra).
-The composer (`utility_comparison.compose_utility`) is unchanged — it projects the
-per-cell results (read back from the EvalLogs) into `utility-comparison.v1`.
+The composer (`utility_comparison.compose_utility`) projects the per-cell results
+(read back from the EvalLogs via `agent_utility_run.eval_logs_to_summaries`) into
+`utility-comparison.v1`, including the `tool_call_assertions` coverage block
+(tempdoc 624 §As-built #5 residual-gap close).
 
 Identity carried, not forked (the "one identity, three roles" principle):
 - `sample.id` = the stable query id  → resume key,
@@ -36,7 +38,15 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
-from jseval.agent_retrieval_eval import _score_answer
+from jseval.agent_retrieval_eval import (
+    _score_answer,
+    build_disallowed_tools,
+    find_disallowed_tool_calls,
+    find_leak_suspect_tool_calls,
+    parse_claude_stream_json,
+    stage_corpus_dir,
+)
+from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -49,11 +59,22 @@ _PROMPT = (
 
 
 def _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, empty_mcp, max_budget):
-    """The condition-appropriate `claude -p` argv (mirrors agent_retrieval_eval)."""
+    """The condition-appropriate `claude -p` argv (mirrors
+    agent_retrieval_eval._build_agent_cmd's exact argv pattern, byte-for-byte on
+    the flags that matter for stream parsing).
+
+    ``--output-format stream-json`` (with mandatory ``--verbose`` — the CLI
+    requires it for stream-json under `-p`) instead of the single-shot ``json``
+    format: gives the solver real per-tool-call data (name + args), which
+    `claude_agent_solver` needs for an EMPIRICAL --disallowedTools check and the
+    answer-key-leak backstop (tempdoc 624 §As-built #5 residual-gap close — the
+    prior `json` format captured only the final result text, so neither check
+    had any tool-call data to scan for an Inspect-executed cell)."""
     cmd = [
         claude_bin, "-p", prompt,
         "--model", model,
-        "--output-format", "json",
+        "--output-format", "stream-json",
+        "--verbose",
         "--max-budget-usd", str(max_budget),
         "--permission-mode", "bypassPermissions",
         "--add-dir", corpus_dir,
@@ -63,8 +84,7 @@ def _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, em
     elif condition in _WITH_TOOL:
         if mcp_config:
             cmd += ["--strict-mcp-config", "--mcp-config", mcp_config]
-        if condition == "C":
-            cmd += ["--disallowedTools", "Read,Grep,Glob"]
+    cmd += ["--disallowedTools", ",".join(build_disallowed_tools(condition))]
     return cmd
 
 
@@ -97,9 +117,22 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
                 capture_output=True, text=True, timeout=timeout_s,
                 cwd=query_cwd, encoding="utf-8", errors="replace",
             )
-            data = json.loads(proc.stdout or "{}")
-            if data.get("is_error") or proc.returncode != 0:
-                state.metadata["error"] = (data.get("result") or proc.stderr or f"exit {proc.returncode}")[:300]
+            stdout = (proc.stdout or "").strip()
+            # Same event-stream shape + parser as the classic runner (both call
+            # agent_retrieval_eval.parse_claude_stream_json) — no forked logic.
+            tool_calls, data, _session_id = parse_claude_stream_json(stdout)
+            disallowed = build_disallowed_tools(condition)
+            # Stash the tool-call capture + derived assertions UNCONDITIONALLY
+            # (before the error check) so a cell that erred out mid-run still
+            # carries whatever tool calls it made before failing — the
+            # credibility bar (tempdoc 624 §M.8 item 2) is "every cell actually
+            # run", not just the successful ones.
+            state.metadata["tool_calls"] = tool_calls
+            state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
+            state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
+            if data is None or data.get("is_error") or proc.returncode != 0:
+                err = (data.get("result") if data else None) or (proc.stderr or "").strip() or f"exit {proc.returncode}"
+                state.metadata["error"] = str(err)[:300]
                 return state
             state.output.completion = data.get("result", "")
             usage = data.get("usage") or {}
@@ -181,31 +214,55 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
 
     from jseval.manifest import _sha256_canonical
 
+    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): this is the actual
+    # eval-executing path, so — unlike the optional `utility-calibrate` CLI — a stray/
+    # broader watched root must abort the run, not just get reported. Only meaningful
+    # when a search backend is actually in play (mcp_config given); condition-A-only
+    # runs never touch the backend.
+    if mcp_config:
+        watched_roots_base_url = base_url_from_mcp_config(mcp_config)
+        if watched_roots_base_url:
+            assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
+
     # The prompt template is identical across conditions → its hash is a cohort
     # field (so A and C share an agent_cohort_key, but a prompt change segregates).
     prompt_template_hash = _sha256_canonical(_PROMPT)
-    tasks = [
-        agent_utility_task(
-            condition=c, queries_path=queries_path, corpus_dir=corpus_dir,
-            mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
-            max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
-            cli_version=cli_version,
-            mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
-            prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
-            corpus_signature=corpus_signature,
-        )
-        for c in conditions
-    ]
-    # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
-    # re-invoking after a crash fails with "log file not associated with a task"
-    # because the set identity differs across processes. Derived from the run
-    # config so the same run resumes and a different run gets a fresh set.
-    eval_set_id = _sha256_canonical({
-        "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
-        "queries": queries_path, "prompt": prompt_template_hash,
-    })[:22]
-    # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths
-    # during eval_set's log cleanup; JSON logs are text + portable.
-    eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
-             max_samples=concurrency, log_format="json", eval_set_id=eval_set_id)
+    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run
+    # (reused across every condition/seed/sample this call touches — the matrix is
+    # resumable across process restarts, but corpus_dir isn't part of eval_set_id
+    # identity below, so a fresh staged path per invocation is safe). See
+    # stage_corpus_dir's docstring for why `--add-dir corpus_dir` cannot pass the
+    # persistent, gold-answer-key-sibling `corpus-dir/` directly.
+    staged_corpus_dir = stage_corpus_dir(corpus_dir)
+    try:
+        # `tasks` construction (agent_utility_task -> json.load on queries_path)
+        # can raise on a bad/missing/corrupted queries file — kept inside this
+        # try so a task-construction failure still hits the staged-dir cleanup
+        # below, not just an eval_set failure.
+        tasks = [
+            agent_utility_task(
+                condition=c, queries_path=queries_path, corpus_dir=staged_corpus_dir,
+                mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
+                max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
+                cli_version=cli_version,
+                mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
+                prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
+                corpus_signature=corpus_signature,
+            )
+            for c in conditions
+        ]
+        # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
+        # re-invoking after a crash fails with "log file not associated with a task"
+        # because the set identity differs across processes. Derived from the run
+        # config so the same run resumes and a different run gets a fresh set.
+        eval_set_id = _sha256_canonical({
+            "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
+            "queries": queries_path, "prompt": prompt_template_hash,
+        })[:22]
+        # log_format="json": the .eval (zip) recorder breaks on Windows fsspec
+        # paths during eval_set's log cleanup; JSON logs are text + portable.
+        eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
+                 max_samples=concurrency, log_format="json", eval_set_id=eval_set_id)
+    finally:
+        shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)
     return log_dir

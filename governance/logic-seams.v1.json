@@ -56,6 +56,42 @@
       "note": "Functional-core extraction from WorkerIngestionAuthority (the IO admit() short-circuit stays in the authority)."
     },
     {
+      "id": "ocr-outcome-classifier",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.extract.OcrOutcomeClassifier",
+      "targetTests": [
+        "io.justsearch.indexerworker.extract.OcrOutcomeClassifierTest"
+      ],
+      "pure": true,
+      "law": "Total, injective mapping from an OCR attempt's baseline quality to its OcrSkipReason; baselineQuality>0 maps to TEXTUAL (existing text was adequate), every other case maps to NO_TEXT_FOUND (OCR was attempted and found nothing). A swapped/reused arm silently conflates a routing decision with an extraction failure and indexes a document with no body content and no honest diagnostic (tempdoc 671).",
+      "guard": "test:OcrOutcomeClassifierTest",
+      "note": "Functional-core extraction from PolicyDrivenTikaExtractor (the IO-heavy OCR-engine calls stay in the extractor), mirroring the admission-policy seam's shape for the same failure mode in a sibling package."
+    },
+    {
+      "id": "extraction-outcome-classifier",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.extract.ExtractionOutcomeClassifier",
+      "targetTests": [
+        "io.justsearch.indexerworker.extract.ExtractionOutcomeClassifierTest"
+      ],
+      "pure": true,
+      "law": "Total, injective mapping from an extraction attempt's (content, truncated) facts to its ExtractionStatus; blank content maps to SUCCESS_EMPTY regardless of truncated, non-blank+truncated maps to SUCCESS_PARTIAL, non-blank+untruncated maps to SUCCESS_FULL. A swapped/reused arm silently claims full success for a document with no usable content — the same failure mode as ocr-outcome-classifier, one level more foundational (tempdoc 671, Long-term design part 2).",
+      "guard": "test:ExtractionOutcomeClassifierTest",
+      "note": "Functional-core extraction from ExtractionArtifact.full (both overloads) — the cross-extractor, already-indexed trust/provenance field, not OCR-specific. Confirmed via live testing to affect any empty document (plain text, third-party extractor plugins), not just scans."
+    },
+    {
+      "id": "ingestion-success-classifier",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.IngestionSuccessClassifier",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.IngestionSuccessClassifierTest"
+      ],
+      "pure": true,
+      "law": "Total mapping from a ledger transition's artifactStatus string to its success bucket (FULL/PARTIAL/EMPTY); \"SUCCESS_PARTIAL\" maps to PARTIAL, \"SUCCESS_EMPTY\" maps to EMPTY, every other value (including null and unrecognized/legacy strings) maps to FULL. A swapped/reused arm silently reproduces the extraction-outcome-classifier's conflation one layer up, at the ingestion-boundary altitude, even after ExtractionStatus itself is fixed (tempdoc 671, Long-term design part 2).",
+      "guard": "test:IngestionSuccessClassifierTest",
+      "note": "Functional-core extraction from IngestionOutcomeJournal.drainPending's inline isPartialSuccessTransition boolean (the IO-heavy ledger drain/write stays in the journal). The second, wider-scoped consumer the confidence-building pass found undertraced before implementation started."
+    },
+    {
       "id": "splade-backoff",
       "gradlePath": ":modules:worker-services",
       "targetClass": "io.justsearch.indexerworker.loop.BackoffPolicy",

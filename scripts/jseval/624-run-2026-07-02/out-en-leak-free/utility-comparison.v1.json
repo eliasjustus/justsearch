@@ -1,0 +1,412 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-07-02T11:58:40.101003+00:00",
+  "cohort": {
+    "agent_cohort_key": "681d3386eb8d997e07c3e7b8c26bc089901be840da688ba60845a2e6bece5565",
+    "git_sha": "ec3e5224a4aa276cc276dfd09ac526853de08075",
+    "cli_version": "2.1.198 (Claude Code)",
+    "mcp_tool_surface_hash": null,
+    "judge": {
+      "kind": "substring-em"
+    },
+    "prompt_template_hash": "d325302666dd71eb432033c1ac4ba7a614ba0ae3813926dc39d25bea9d0dd4ff",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "eaa0251611268cf1cbfd9cc444824db32881fb08382a48fa3996964445985156",
+    "hardware": null
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "golden/battlefield-en-v1": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.7973,
+          "with_tool": 0.7162,
+          "delta": -0.0811,
+          "mcnemar_p": 0.307456,
+          "mcnemar_test": "exact-binomial",
+          "n_with_tool_fixes": 9,
+          "n_with_tool_breaks": 15,
+          "seed_envelope_baseline": {
+            "mean": 0.7956,
+            "stdev": 0.1035,
+            "n": 3
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.7167,
+            "stdev": 0.0544,
+            "n": 3
+          }
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 74,
+            "median": 40498.0,
+            "p95": 65442.7,
+            "mean": 42811.905405
+          },
+          "with_tool": {
+            "n": 74,
+            "median": 39160.0,
+            "p95": 65625.95,
+            "mean": 42841.702703
+          },
+          "delta_mean": 29.7972972972973,
+          "delta_ci95": [
+            -4323.09527,
+            4322.219595
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 74,
+            "median": 0.19109,
+            "p95": 0.374668,
+            "mean": 0.203548
+          },
+          "with_tool": {
+            "n": 74,
+            "median": 0.182458,
+            "p95": 0.36244,
+            "mean": 0.202363
+          },
+          "delta_mean": -0.001184889189189185,
+          "delta_ci95": [
+            -0.025266,
+            0.022179
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 74,
+            "median": 22.5,
+            "p95": 39.35,
+            "mean": 22.635135
+          },
+          "with_tool": {
+            "n": 74,
+            "median": 20.5,
+            "p95": 37.35,
+            "mean": 22.162162
+          },
+          "delta_mean": -0.47297297297297297
+        },
+        "n_paired_observations": 74,
+        "leak_suspect_cells": [
+          {
+            "seed": 0,
+            "qid": "q0",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q24",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": false
+          },
+          {
+            "seed": 1,
+            "qid": "q8",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          }
+        ],
+        "arms": {
+          "substitution_c": {
+            "accuracy": {
+              "baseline": 0.7945,
+              "with_tool": 0.2055,
+              "delta": -0.589,
+              "mcnemar_p": 0.0,
+              "mcnemar_test": "chi2-continuity",
+              "n_with_tool_fixes": 4,
+              "n_with_tool_breaks": 47,
+              "seed_envelope_baseline": {
+                "mean": 0.7903,
+                "stdev": 0.0984,
+                "n": 3
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.2089,
+                "stdev": 0.0489,
+                "n": 3
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 73,
+                "median": 40466.0,
+                "p95": 64223.2,
+                "mean": 42473.027397
+              },
+              "with_tool": {
+                "n": 73,
+                "median": 15714.0,
+                "p95": 71945.8,
+                "mean": 25870.246575
+              },
+              "delta_mean": -16602.780821917808,
+              "delta_ci95": [
+                -23206.692466,
+                -9958.301027
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 73,
+                "median": 0.186584,
+                "p95": 0.361862,
+                "mean": 0.201442
+              },
+              "with_tool": {
+                "n": 73,
+                "median": 0.07135,
+                "p95": 0.432232,
+                "mean": 0.153716
+              },
+              "delta_mean": -0.04772620684931507,
+              "delta_ci95": [
+                -0.087187,
+                -0.008924
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 73,
+                "median": 22.0,
+                "p95": 39.0,
+                "mean": 22.39726
+              },
+              "with_tool": {
+                "n": 73,
+                "median": 8.0,
+                "p95": 55.8,
+                "mean": 17.383562
+              },
+              "delta_mean": -5.013698630136986
+            },
+            "n_paired_observations": 73,
+            "leak_suspect_cells": [
+              {
+                "seed": 0,
+                "qid": "q24",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              }
+            ]
+          },
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.7973,
+              "with_tool": 0.7162,
+              "delta": -0.0811,
+              "mcnemar_p": 0.307456,
+              "mcnemar_test": "exact-binomial",
+              "n_with_tool_fixes": 9,
+              "n_with_tool_breaks": 15,
+              "seed_envelope_baseline": {
+                "mean": 0.7956,
+                "stdev": 0.1035,
+                "n": 3
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.7167,
+                "stdev": 0.0544,
+                "n": 3
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 74,
+                "median": 40498.0,
+                "p95": 65442.7,
+                "mean": 42811.905405
+              },
+              "with_tool": {
+                "n": 74,
+                "median": 39160.0,
+                "p95": 65625.95,
+                "mean": 42841.702703
+              },
+              "delta_mean": 29.7972972972973,
+              "delta_ci95": [
+                -4323.09527,
+                4322.219595
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 74,
+                "median": 0.19109,
+                "p95": 0.374668,
+                "mean": 0.203548
+              },
+              "with_tool": {
+                "n": 74,
+                "median": 0.182458,
+                "p95": 0.36244,
+                "mean": 0.202363
+              },
+              "delta_mean": -0.001184889189189185,
+              "delta_ci95": [
+                -0.025266,
+                0.022179
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 74,
+                "median": 22.5,
+                "p95": 39.35,
+                "mean": 22.635135
+              },
+              "with_tool": {
+                "n": 74,
+                "median": 20.5,
+                "p95": 37.35,
+                "mean": 22.162162
+              },
+              "delta_mean": -0.47297297297297297
+            },
+            "n_paired_observations": 74,
+            "leak_suspect_cells": [
+              {
+                "seed": 0,
+                "qid": "q0",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q24",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q8",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              }
+            ]
+          }
+        },
+        "primary_arm": "addition_b"
+      }
+    }
+  },
+  "seed_count": 3,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": false,
+    "reasons": [
+      "asymmetric_exclusion: excluded_jaccard=0.3333 < 0.5 (arms dropped different queries -> biased per-arm distributions)"
+    ],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.0128,
+        "C": 0.0385,
+        "B": 0.0
+      },
+      "excluded_jaccard": 0.3333,
+      "paired_n_retention": 0.9487
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_attempted": 78,
+        "n_completed": 77,
+        "n_excluded": 1,
+        "exclusion_rate": 0.0128
+      },
+      "C": {
+        "n_attempted": 78,
+        "n_completed": 75,
+        "n_excluded": 3,
+        "exclusion_rate": 0.0385
+      },
+      "B": {
+        "n_attempted": 78,
+        "n_completed": 78,
+        "n_excluded": 0,
+        "exclusion_rate": 0.0
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "private-synthetic"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  },
+  "revision": {
+    "supersedes": "../out-en/utility-comparison.v1.json",
+    "reason": "leak_correction",
+    "changed_fields": [
+      "cohort.agent_cohort_key",
+      "cohort.git_sha",
+      "composed_at",
+      "measured.golden/battlefield-en-v1.haiku.accuracy",
+      "measured.golden/battlefield-en-v1.haiku.arms",
+      "measured.golden/battlefield-en-v1.haiku.cost_usd",
+      "measured.golden/battlefield-en-v1.haiku.leak_suspect_cells",
+      "measured.golden/battlefield-en-v1.haiku.n_paired_observations",
+      "measured.golden/battlefield-en-v1.haiku.tokens_unique",
+      "measured.golden/battlefield-en-v1.haiku.turns"
+    ]
+  }
+}

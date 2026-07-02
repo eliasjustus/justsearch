@@ -1,7 +1,7 @@
 ---
 title: "Agentic-utility eval rebuild: the agent-utility number as a cohort-identified, condition-paired comparison record — a projection over agent-eval runs cohort-identical on every axis except `condition`, conforming to the canonical-record + governed-projection seam (553/623/622); the comparison arm already exists (346) but lacks run identity, seeds, judge, and projection discipline, which is why '92% / 62%' is an identity-less fork"
 type: tempdocs
-status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. 2026-07-02: §M.9 founder decisions RESOLVED (§Founder decisions 2026-07-02) — implementation actionable; the run spend remains gated on the U-Founder-2 combined estimate.
+status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. Separately (2026-07-02, via a parallel strategy-session branch, merged into this tempdoc after the fact): §M.9 founder decisions were RESOLVED (see §Founder decisions 2026-07-02 and §U-Founder-4 revised, inserted below, immediately after this As-built #5 point) -- U-Founder-1 corpus sequencing, U-Founder-3 model tier, and U-Founder-5 timeline are settled; U-Founder-2 (budget) stays gated on a combined estimate; U-Founder-4 (judge calibration) is revised to accept a cross-family LLM grader panel in place of human raters (§M.8 item 3 amended accordingly), not yet run. **These decisions were made before the leak discovery and corrected numbers below existed** -- re-confirm with whoever made that call before treating them as settled against the current, more rigorous record. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared. 2026-07-02 (same day, eighth/ninth pass): remaining-work planning found and closed two more gaps -- the §M.7a item 3 failure analysis (As-built #7) surfaced a real, previously-unknown answer-key leak (queries.json readable by file-tool conditions via --add-dir traversal, and separately ingested into the MCP search index for the scan corpus via accretive, never-auto-narrowed watched-roots); both root causes are now fixed in code (isolated per-run corpus staging; a pre-run watched-roots scope assertion) plus a detection backstop, and a leak-free reanalysis of the already-collected data found the pooled cross-corpus effect moves from non-significant (p=0.185) to borderline-significant and NEGATIVE (delta -0.094, p=0.055) once leaked cells are excluded -- condition B trends toward measurably harmful, not null. A new tempdoc (671) was opened for a separate, out-of-scope production Tika bug found earlier. §M.8's bar remains uncleared; §M.9's founder decisions and a real human-calibration labeler remain open, not resolved by this pass. 2026-07-02 (same day, tenth pass): tempdoc 672 opened for the VDU Head-bootstrap wiring gap -- a register check found no existing tempdoc owns bootstrap-wiring completeness (607 owns extraction routing, not this; 671 explicitly declined the scope in its own status line; 519 is stale and a different specific subject). The cross-family grader panel design (§M.8 item 3) was also refined to prefer a second locally-hosted model over external paid APIs, removing the standing credential blocker as a hard dependency. No remaining design gaps in 624 itself -- everything left is either an explicit spend decision (the ~$163 re-run, the grader panel) or 672's own prerequisite fix for the scan corpus specifically. 2026-07-02 (same day, twelfth pass): the three parallel agents on 672/673/674 returned -- 672's diagnosis is CONFIRMED and its design SETTLED and de-risked (ready for a go/no-go, not a design question anymore); 673 and 674 both found that this pass's own opening framing was WRONG on 'what the hard part is' -- 673 found the accuracy-delta metric is noise-dominated even at full n and recommends NOT porting the 4-gate pattern by default; 674 found the real cost is Python orchestration (batch-by-grader), not Java app-inference lifecycle work, plus real correlated-weakness/output-drift/same-model-grading risks. See the new status section below for the consolidated decisions now needed.
 created: 2026-06-21
 updated: 2026-07-02
 author: agent analysis (research-channel design theorization), filed by agent — STUB
@@ -17,6 +17,10 @@ related:
   - 655-mcp-conformance-and-capability-policy         # the owner of any tool-surface lever this eval's failure analysis motivates (§M.7a)
   - 636-retrieval-buried-signal-long-documents        # origin of the jseval/projections/ registry pattern (stratified_metrics, staged_recall_accounting) §T.4 conforms to
   - 639-candidate-set-integrity-ann-recall-and-result-dedup  # adjacent unbuilt stub sharing §T.1's near-duplicate-detection mechanism (different consumer — production candidates, not corpus generation)
+  - 671-tika-ocr-skip-routing-misclassification     # origin of the scan-corpus VDU-wiring discovery; its own status line explicitly declines the wiring-gap scope, spun into 672
+  - 672-vdu-offline-coordinator-bootstrap-wiring     # the spun-out prerequisite fix for the scan corpus's vdu_status:PENDING blocker; hard-gates re-attempting synth-scan-v1 in this tempdoc
+  - 673-agent-utility-standing-regression-ratchet   # the missing routine/cheap counterpart to this tempdoc's one-time publication-grade run -- catches a future agent-utility regression the way relevance/perf/leak/llm-gen already do for their own axes
+  - 674-cross-family-grader-local-model-infrastructure  # prices and designs the real engineering cost of the local-model path for §M.8 item 3, previously recorded as a free footnote in this tempdoc
 ---
 
 > NOTE: Noncanonical working tempdoc. Originated as a **STUB** capturing an idea identified in
@@ -27,6 +31,34 @@ related:
 > **No implementation plan or design work yet** (per assignment).
 
 # 624 — Agentic-retrieval eval rebuild
+
+> ## Current state (fold, 2026-07-02 — read this before the dated passes below)
+>
+> This document is append-only working history (18+ dated passes). For orientation, current truth in
+> brief; everything below supersedes *older* sections but not this fold:
+>
+> - **What exists:** the full agent-utility measurement machinery — cohort-identified condition-paired
+>   record (`utility-comparison.v1` + revision provenance), Inspect-AI executor with per-cell resume,
+>   run-governance (calibration, readiness, loss-accounting, derived comparability), hybrid EM→local-LLM
+>   judge + cross-family grader-panel calibration, leak detection (structural fixes + scan backstops +
+>   per-cell tool-call assertions), three certified-generation battlefield corpora (EN/DE at scale +
+>   degraded-scan), a cheap standing regression gate (`jseval utility-gate`, tempdoc 673), and the
+>   local-grader seam (tempdoc 674). The scan corpus's production blocker (VDU bootstrap wiring) is fixed
+>   (tempdoc 672).
+> - **The current most-rigorous numbers** (leak-free + judge-scored, 3 seeds, `comparability=False` —
+>   internal only, NOT publishable): condition B (file tools + JustSearch MCP, the realistic arm) pooled
+>   accuracy Δ **−0.094, McNemar p=0.055, n=149** — trending *harmful*, not null; pooled token delta
+>   **+562, CI crosses 0** (not significant). Condition C (substitution) significantly harmful on EN/DE
+>   (Δ≈−0.55/−0.59, p≈0), indeterminate on scan. Artifacts:
+>   `scripts/jseval/624-run-2026-07-02/out-*-leak-free-judged/`.
+> - **What remains before any public number** (§M.8 bar, none of it a design question): (1) the
+>   authorized-pending re-run — EN+DE, conditions A,B, 5 seeds, ~$109/~3h (seventeenth pass; C dropped as
+>   diagnostic-only, re-addable later at marginal cost); (2) scan re-certification post-672 ($0 fidelity
+>   re-verify → per-condition recalibration → ~$26 run); (3) the cross-family grader panel (~$0 local per
+>   674); (4) then the full §M.8 checklist. Recommended sequencing (eighteenth pass): publish this branch
+>   first so the certified run executes on a public SHA.
+> - **Claim discipline:** nothing here may be quoted publicly; `RESEARCH.md` sync is deliberately
+>   deferred until this work finishes (founder decision, 2026-07-02).
 
 ## Problem (one paragraph)
 
@@ -2005,6 +2037,24 @@ contract, not reuse of it). This is "conform to the *principle*, not the *object
 tempdoc's own §D.2 already made once (agent-utility is a cousin record, not a 623-release sibling) applied
 one level deeper, to a *component* of that cousin record rather than the record itself.
 
+> **Correction (As-built #6, 2026-07-02) — this section's own mental model didn't match reality.** The
+> paragraph above assumes a stratification dimension is available *within* one already-composed record —
+> i.e., that a single `utility-comparison.v1` record's per-cell data already spans multiple battlefield-
+> dimension values (scale bucket, OCR-vs-text, language) for `_arm_comparison`'s `stratify_by` to bucket by.
+> That assumption is wrong: `compose_utility` groups `cell_summaries` by `(corpus, agent_model)` *before*
+> ever calling `_arm_comparison`, so each battlefield corpus (English/German/scan) always produces its own
+> separate top-level record — there is no single record whose per-cell data already crosses the battlefield
+> dimension this section's principle wants to bucket by. §M.7a's own item 2 phrasing ("stratified by
+> battlefield dimension — scale bucket, OCR-vs-text, language") anticipated the real shape more precisely
+> than this section's "governed projection of the existing record" framing did. The actual fix an independent
+> review found necessary was a **cross-corpus composition mode** — `compose_utility_cross_corpus`
+> (`utility_comparison.py`), which pools `cell_summaries` from *multiple* corpora into one `_arm_comparison`
+> call with `stratify_by` populated by source corpus, still reusing `_arm_comparison`/`_stats_from_pairs`
+> exactly as this section's principle intended, just composing across records rather than within one. See
+> As-built #6 for the real, executed result (pooled n=175, delta −0.063, p=0.185). The underlying principle
+> (a pure, versioned, additive decomposition reusing existing statistics, never inventing new ones) held; the
+> mechanism description above did not.
+
 ## Reach
 
 **Principle 1 — construction-time guarantee over detection-time gate, for any governed synthetic-corpus
@@ -2303,6 +2353,15 @@ diagnostic detail) were not committed.
 | battlefield-de-v1 | −0.091 (0.818→0.727) | 0.210 (n.s.) | −49 [−3035, 3060] (n.s.) | **−0.565** (0.812→0.246) | **0.000** |
 | synth-scan-v1 | +0.048 (0.667→0.714) | 1.000 (n.s.) | +3357 [−2796, 9265] (n.s.) | **−0.382** (0.706→0.324) | 0.011 |
 
+> **⚠ Superseded by leak-free reanalysis (2026-07-02, ninth pass) — read before citing any number above.**
+> The table above includes cells where the agent read or retrieved the gold answer key (`queries.json`)
+> directly — a real leak, root-caused and fixed in code (see the "queries.json answer-key leak" fix commit),
+> but the numbers above were never recomputed against it. **The leak-free pooled cross-corpus figure moves
+> from Δ−0.063 (p=0.185, not significant) to Δ−0.094 (p=0.055, borderline) — condition B trends toward
+> measurably* harmful*, not null, once cheating is excluded.** See the very end of this tempdoc (search
+> "leak-free reanalysis") for the full corrected numbers and methodology before treating anything in this
+> table as current.
+
 **Two honest, striking, consistent findings — interrogated, not just reported (per this project's own
 `interrogate-results` discipline):**
 
@@ -2417,3 +2476,1423 @@ same honesty constraints rather than silently kept-but-unstaffed:
   calibration; it stays available if the accuracy result ever becomes headline-worthy, and nothing
   in §M.10 waits on it.
 
+
+> **Merge note (2026-07-02):** the section above (§Founder decisions / §U-Founder-4 revised) was recorded on a separate, parallel branch that split from this tempdoc immediately after As-built #5 -- before the leak discovery, the corrected leak-free numbers, and the judge-scoring-gap closure documented below existed. It is preserved here verbatim (not re-authored) because reconciling a founder-level policy decision with technical findings made after that decision is not something this pass should decide unilaterally. Read what follows knowing the founder inputs above predate it.
+# As-built #6 (2026-07-02) — independent review + fixes; the OCR claim in As-built #5 was wrong, and why
+
+> A five-reviewer independent critical review (none of them the original implementers) audited every phase
+> of As-built #5 against tempdoc 624's own spec. Four reviewers found real, concrete issues; one found
+> nothing. All confirmed issues were fixed via further orchestrated Sonnet subagents and are committed. This
+> section corrects As-built #5's factual errors and — the most important part — **retracts its central OCR
+> claim**, replacing it with what a fixed, re-verified pipeline actually measured. The credibility bar
+> (§M.8) still does not clear; this section makes the shortfall more precise, not less.
+>
+> **A later pass (the leak-free reanalysis, search "leak-free reanalysis" at the end of this tempdoc) further supersedes the accuracy/McNemar numbers in this section's own text below (unchanged from As-built #5) — they include leak-contaminated cells. Read that section before citing any number here.**
+
+## The critical finding: As-built #5's OCR-extraction claim was never actually tested, and the real number is 0.0000, not 0.97
+
+As-built #5 stated: *"the production Tika/VLM path extracts it cleanly (nDCG@10=0.97 on direct
+retrieval)."* An independent reviewer found this untrue as stated — and root-caused why, then a fix-agent
+corrected the root cause and re-measured for real:
+
+- **The real bug**: `scripts/jseval/jseval/ingest.py` — the materialization chain `jseval run` (and Phase 7's
+  real eval) actually uses — never checked a corpus's `type_axis` field and always wrote plain text,
+  regardless of axis. `corpus_build.py`'s `build_golden()` had the correct scan-aware logic, but nothing in
+  the real run path called it. Confirmed on disk: the real Phase 7 run ingested from a directory containing
+  361 `.txt` files and 0 `.png` files. The 0.97 figure measured plain ground-truth text, not the degraded scan
+  images — it was never possible for that number to reflect OCR extraction quality.
+- **The fix**: one shared code path (`corpus_generate.materialize_doc_entry()`), called by both
+  `corpus_build.py` and `ingest.py` — not two independent copies of the same axis check. A regression test
+  now exercises the real `ingest.py` path specifically (the prior tests only covered `corpus_build.py`
+  directly, which is exactly why this bug went uncaught).
+- **The real, re-verified number, through the fixed path: nDCG@10 = 0.0000** (lexical mode, `comparable:
+  True`; hybrid mode failed readiness entirely — dense chunk coverage was 0). This is not "too easy" (As-built
+  #5's framing for the earlier, bogus 0.97) — it is a genuine retrieval failure.
+- **Why, traced to its real root cause**: a **second, separate, and more fundamental bug**, outside this
+  fix's scope — in the *production* Tika extraction pipeline (`modules/indexer-worker`, Java, not the Python
+  jseval harness this tempdoc's work lives in). The rendered scan PNGs are misclassified as already containing
+  a text layer (`ocrSkipReason: "textual"`, `route: "structured"`) and OCR is **skipped entirely** —
+  `textCharCount: 0`, and the VLM fallback (`vdu_status: "PENDING"`) never runs. Sampled documents were
+  retrievable only by filename/title match, never by content. This means **§T.2's structural premise — that
+  JustSearch's ingest can read degraded content a casual file-reading agent cannot — is not currently true of
+  the shipped product**, independent of anything this tempdoc's own eval-harness work controls. Logged as an
+  observation (`docs/observations.d/`), not fixed here — it is real production routing logic in a different
+  subsystem than this tempdoc's scope, and needs its own tempdoc/fix.
+- **Consequence for §T.2**: the degraded-scan corpus member (`golden/synth-scan-v1`) cannot currently
+  demonstrate the capability it was built to demonstrate. The corpus itself, the renderer, and the
+  degradation-band tuning are all confirmed correct (Claude's own `Read` is genuinely defeated; the fabricated
+  content and materialization pipeline are sound) — the blocker is entirely on the production extraction
+  side. Until the Tika-routing bug is fixed, this battlefield member should be treated as **not usable for
+  any claim**, not even a directional one.
+
+## Addendum (2026-07-02): tempdoc 672's bootstrap-wiring blocker is fixed and live-verified
+
+Tempdoc 672 (spun out from this document's own §T.2 finding above) diagnosed and fixed the actual root
+cause: the VDU offline coordinator captured the Worker/Knowledge client *by value* at Head bootstrap, when
+the client is structurally null at that point (the Worker connects asynchronously). `POST
+/api/offline/process` therefore returned 503 forever, and VDU never ran on any launch — a distinct,
+deeper-layer bug from 671's OCR-routing misclassification (already fixed).
+
+**Fixed and live-verified** against this worktree's own `datasets/golden/synth-scan-v1/corpus-dir` on the
+running dev stack: `POST /api/offline/process` now returns success; VDU actually runs (llama-server switches
+online, processes real pending files); and previously-empty documents from this corpus now carry real
+VDU-extracted body text and are returned by search with that content visible (verified live via the browser
+UI for `pellker298.png` and `pellker44.png` — their search results now show real extracted content instead
+of a zero-content filename-only match). The `visualDocumentUnderstanding` readiness component, previously
+never wired, now reports `READY`.
+
+**Not done, and explicitly out of 672's scope**: a full corpus re-run (all ~438 previously-pending VDU
+files) and a re-measured nDCG@10 for `synth-scan-v1` through the fixed path. 672's own non-goals name this
+as "624's own spend decision" — the live-verification above ran a partial batch (a few completions,
+confirmed real) and was stopped deliberately rather than occupying the shared dev stack for the ~90 minutes
+a full-corpus VDU pass would take. §M.8's bar for the scan corpus therefore remains **open**, but the nature
+of the blocker has changed: previously *structurally* blocked (the mechanism could not run at all);
+now *unblocked mechanically*, pending only the willful decision to spend on a full re-run. Re-running
+`jseval corpus-fidelity` / the full paid eval for `synth-scan-v1` is the next concrete step whenever that
+spend is authorized.
+
+## The second finding, closed: real cross-corpus stratification now exists and was run for real
+
+An independent reviewer found that §T.4's per-stratum machinery (correct, hand-verified) was never reachable
+across the actual English/German/scan battlefield dimension — `compose_utility` always produced one record
+per corpus, with no way to merge them. Fixed: `compose_utility_cross_corpus` (reusing `_arm_comparison`'s
+existing `stratify_by` mechanism, no new statistics) + a new CLI command
+(`jseval utility-compose-cross-corpus`). Run for real, at zero additional spend, against the already-completed
+Phase 7 Inspect logs:
+
+| | accuracy Δ (baseline→with-tool) | McNemar p | n |
+|---|---|---|---|
+| **Pooled (all 3 corpora)** | 0.7886→0.7257 (Δ −0.0629) | **0.185** | 175 |
+| English stratum | 0.7922→0.7273 (Δ −0.0649) | 0.424 | 77 |
+| German stratum | 0.8182→0.7273 (Δ −0.0909) | 0.210 | 77 |
+| Scan stratum | 0.6667→0.7143 (Δ +0.0476) | 1.0 | 21 |
+
+Each stratum exactly reproduces its corpus's standalone pooled record (proving the composer doesn't corrupt
+per-corpus data). The pooled figure (p=0.185) is closer to conventional significance than any individual
+corpus but still not significant — an honest answer to "does any corpus show a signal the per-corpus records
+didn't": no, English and German both point the same (mildly negative) direction and scan points the other way
+on much thinner, lower-retention data; pooling mainly confirms en/de consistency rather than surfacing a
+hidden win. Committed: `scripts/jseval/624-run-2026-07-02/out-cross-corpus/utility-comparison-cross-corpus.v1.json`.
+
+## Smaller fixes, closed
+
+- **§T.3 calibration is now reachable** (`jseval utility-judge --calibrate`), previously correct but never
+  called by anything. Still an agent-substitute dry run (`rater_kind: "agent-substitute, NOT human"`,
+  unconditional, unbypassable, independently re-verified) — real human labeling remains the one item this
+  effort could not do at all, honestly, not from lack of trying.
+- A homogeneous (all-same-label) calibration sample now carries a `degenerate_pe` flag, so a future reader
+  can tell "genuinely perfect judge-human agreement" apart from "the sample was too uniform to be
+  informative" — both previously looked identical (`kappa: 1.0`, a degenerate zero-width CI).
+- The real argv-construction code path in both eval runners now has direct test coverage (previously only the
+  underlying helper functions were tested, not their actual wiring into the subprocess command line) —
+  verified by a deliberate break-then-confirm-test-fails-then-revert cycle, not just a passing test.
+- `render_scan_image` now has sanity bounds (max text length / width / font size / computed height, each
+  ~10x real-world headroom) — low-severity hardening, not currently exploitable, flagged by a reviewer
+  explicitly asked to check for security-sensitive gaps.
+
+## Three factual corrections to As-built #5's own prose
+
+1. As-built #5 claimed "3 seeds was the design's own stated floor, §M.5" — false. §M.5 states ≥5 seeds; there
+   is no "3" floor anywhere in the design. The seed reduction was a real cost/time trade-off, correctly
+   authorized within §M.5's own stated minimum, but the false citation is retracted.
+2. As-built #5 quoted a flat "~$77 / 137 min per corpus" — this was the English figure only, silently
+   generalized. The real, distinct per-corpus figures: English $76.75/136.9min, German $86.20/134.9min, scan
+   $39.18/103.1min (scan is cheaper because it retained fewer queries, 20 vs 26).
+3. As-built #5 described English's `comparability` exclusion as "the specific excluded queries didn't
+   overlap" — mathematically wrong. `excluded_jaccard=0.3333` with `A: n_excluded=1, C: n_excluded=3` means
+   **full containment** (A's one excluded query is one of C's three), not disjoint exclusion. Only German
+   (`jaccard=0.0`, confirmed disjoint) is genuinely non-overlapping.
+
+## Where this leaves §M.8's bar
+
+Still not cleared, and now for a sharper, more honest set of reasons than As-built #5's version: English/
+German fail on genuine, likely seed-count-driven asymmetric-exclusion noise (a next real run at 5 seeds is
+the natural fix); the scan corpus fails not on a fixable eval-harness timeout as previously framed, but
+because the corpus currently cannot be meaningfully evaluated at all until a real, separate production bug
+(Tika OCR-skip routing) is fixed — a different team's subsystem, outside this tempdoc's own scope. The
+cross-corpus pooled figure (p=0.185) is the closest this effort has come to a directional signal, and it is
+still not significant. No number from any of this should be quoted publicly, per this tempdoc's own
+boundary (a) — this section exists to keep the internal record honest, not to produce a claim.
+
+---
+
+# As-built #7 (2026-07-02) — §M.7a item 3: the failure analysis on condition B's discordant queries
+
+> The one remaining honestly-available claim shape from §M.7a — the failure analysis, not the token/cost or
+> stratified-coverage claims (both closed by As-built #5/#6's real run and cross-corpus composer). Done
+> directly against the real Phase 7 Inspect-AI logs still present on disk at `tmp/624-run/logs-{en,de,scan}/`
+> (not `scripts/jseval/tmp/624-run/` as originally assumed when this item was assigned — the actual location
+> under the worktree root, confirmed present and readable before anything else was written). Reuses the
+> existing paired-comparison machinery (`compare_runs.mcnemar`, `utility_comparison._pair_observations`,
+> `agent_utility_run.eval_logs_to_summaries`) rather than hand-rolling a new comparison; a throwaway, uncommitted
+> analysis script layered on top to re-derive per-`(seed, qid)` query text / target / completion text, which
+> `compose_utility`'s aggregated summaries discard. **This pass surfaced a real eval-harness contamination bug
+> as a side effect of characterizing the discordant pairs — reported here because it directly bears on which
+> discordant pairs are even real signal, not fixed (out of scope; logged as an observation).**
+
+## Method and cross-check
+
+`eval_logs_to_summaries(log_dir)` (`scripts/jseval/jseval/agent_utility_run.py:96`) was called directly on
+each corpus's log directory to reproduce the exact per-arm `per_query` summaries the real compose step used;
+`_pair_observations(a_list, b_list)` (`scripts/jseval/jseval/utility_comparison.py:283`) built the same
+`{seed}:{qid}` paired-observation set `compose_utility` builds internally; `compare_runs.mcnemar()`
+(`scripts/jseval/jseval/compare_runs.py:297`) was run over it. This reproduced As-built #5's published
+per-corpus B-vs-A numbers exactly (n_paired=77/77/21, accuracy_delta=−0.0649/−0.0909/+0.0476,
+p=0.424356/0.210040/1.0 for en/de/scan respectively) — confirming the discordant-pair extraction below is
+built on the same pairing the official record uses, not a divergent re-derivation.
+
+Discordant-pair counts (query right in one arm, wrong in the other, over the shared `{seed}:{qid}` set):
+**English 25** (10 B-only-correct / 15 A-only-correct), **German 23** (8 / 15), **scan 9** (5 / 4) — matching
+`mcnemar()`'s own `n_b_only_correct` / `n_a_only_correct` fields exactly.
+
+For each discordant pair, `sample.input` (query text), `sample.target` (gold answer), and
+`sample.output.completion` (the agent's final answer text) were re-read directly from the Inspect `EvalLog`
+via `inspect_ai.log.read_eval_log` for both the A and B cells at that `(seed, qid)`. **A real limitation,
+already flagged as a known gap in As-built #5**: `sample.events` on every checked sample contains only
+`Span*Event`/`SampleInitEvent`/`StateEvent`/`ScoreEvent` — no `ToolEvent` — because the solver
+(`claude_agent_solver`, `agent_utility_inspect.py:71`) shells out to `claude -p --output-format json` and
+only captures the final JSON result + usage stats, not a tool-call stream. **This analysis cannot directly
+observe whether/how MCP was invoked in a given cell** (the "did the agent actually invoke and use MCP
+retrieval" question from this item's own brief) — only the final answer text, turn count, and token/cost
+usage. Where the answer text itself names its information source (e.g., "found in the queries.json file"),
+that is used as indirect evidence below, stated as inference, not as a directly-observed tool trace.
+
+## Finding 1 (discovered during this pass, not previously known): an eval-harness answer-key leak, most
+severe on the scan corpus
+
+Every `datasets/golden/<name>/` directory places `queries.json` (the gold query/answer file) as a **sibling**
+of `corpus-dir/`, not inside it. The prompt correctly scopes the agent to the subdirectory ("Answer the
+following question using only the documents in {corpus_dir}", `agent_utility_inspect.py:91`) and
+`--add-dir {corpus_dir}` (`agent_utility_inspect.py:59`) is passed with `corpus_dir` correctly resolved to the
+`.../corpus-dir` subpath (confirmed directly in the run logs' stored `corpus_dir` field and in the literal
+subprocess argv captured on error cells) — but `--add-dir` only **adds** an allowed directory to Claude Code's
+`Read`/`Glob` tools; it does not **sandbox** them to it. An agent can and, in a measurable minority of cells,
+did read the parent directory's `queries.json` directly.
+
+Scanning every sample's completion text (not just discordant ones) for a `queries.json`/`queries.jsonl`
+mention: **English** A=1/78, B=2/78, C=0/78; **German** A=2/78, B=4/78, C=0/78; **scan** A=20/60, B=14/60,
+C=6/60 (scan has 60, not 78, samples/arm — 20 retained queries × 3 seeds vs. en/de's 26 × 3, per As-built #5).
+**Every single leaked mention scored correct** — trivially, since it is reading the answer key.
+
+Condition C (MCP-only; `Read/Grep/Glob/Bash` disallowed per `build_disallowed_tools`,
+`agent_retrieval_eval.py:906`) shows **zero** leaked mentions on English/German — consistent with the
+file-tool-traversal mechanism above, since C has no file tools to traverse with. But condition C shows **6/60
+leaked mentions on scan** — with no file tools available, this content can only have come back through an MCP
+retrieval call. Direct quotes (condition C, no `Read`/`Glob`/`Bash` available in the argv):
+
+- q10 (seed 0): *"Based on the documents in the corpus directory, I found the answer in the queries.json file. ... The answer is: ochre brannik 0033"*
+- q6 (seed 0): *"Perfect! I found the answer in the queries.json file. ... This is the seventh entry in the queries file, which matches your question exactly."*
+- q7 (seed 2): *"...The agent found this information in the queries.json file within the corpus directory."*
+
+The most defensible reading: the search backend's own index for `golden/synth-scan-v1` was built over a
+materialization that included `queries.json`, so **MCP retrieval itself returned answer-key content** for
+this corpus — a distinct and more serious mechanism than the file-tool leak, because it means the tool being
+evaluated, not just the harness's file-tool sandboxing, was contaminated. This is layered on top of (not a
+duplicate of) As-built #6's already-documented Tika OCR-skip production bug — a third, independent reason
+`synth-scan-v1`'s numbers carry no signal.
+
+**Impact on the discordant sets specifically** (leak = either side's completion mentions `queries.json`):
+English 1/25 discordant pairs leaked, German 3/23, **scan 7/9 (78%)** — of scan's 5 "B-wins" pairs, **all 5**
+are leaked; of its 4 "B-regression" pairs, 2 are leaked, leaving only 2 genuinely uncontaminated discordant
+pairs on scan out of 9. Scan's discordant-pair shape is therefore not usable for any qualitative
+characterization at all, on top of already failing `comparability` (As-built #5) and having a broken
+extraction path (As-built #6) — stated plainly rather than stretched into a directional read. **Not fixed
+here** (out of this item's scope, and this tempdoc's own `synth-scan-v1` findings already mark that corpus
+unusable) — logged to the observations inbox for the eval-harness owner
+(`docs/observations.d/2f739aa0-dcf3-4609-beb2-04bf6762970d.md`).
+
+## Finding 2: the English/German discordant pairs, leak-excluded — qualitative, small-n, not a powered analysis
+
+**Explicitly stated up front, per this item's own framing**: with 24 clean discordant pairs on English and 20
+on German, split roughly 9/15 and 7/13 across win/regression direction, this is example-driven
+characterization, not a statistically powered sub-analysis. No p-value or CI is computed on these counts; they
+are reported as raw tallies to support a qualitative read, not a new statistical claim.
+
+**No question-type stratification is possible on this run**: every retained query in every corpus is
+`question_type: "2_hop"` (confirmed directly from `sample.metadata`, 78/78 en, 78/78 de, 60/60 scan) — this
+battlefield run does not vary question type, so §T.4's stratification machinery (already exercised
+successfully by As-built #6's cross-corpus composition) has no within-corpus type axis to stratify by here.
+
+**Turn/token counts do not cleanly separate wins from regressions.** Average turns/unique-tokens on the
+*losing* arm's own cell, English, leak-excluded:
+
+| | A turns (avg) | B turns (avg) | A tokens (avg) | B tokens (avg) |
+|---|---|---|---|
+| B-wins (n=9, A was wrong) | 28.9 | 20.3 | 47,673 | 36,188 |
+| B-regressions (n=15, B was wrong) | 23.7 | 23.9 | 45,746 | 43,829 |
+
+B uses fewer turns/tokens than A on average in **both** directions (consistent with the D-1 token-efficiency
+finding, independent of correctness) — but B-regression cells show essentially no turn/token gap (23.7 vs.
+23.9), meaning "B burned unusually many turns" is not, on its own, what distinguishes B's losses from its
+wins. Whatever separates a B-win from a B-regression, it is not visible in aggregate resource usage.
+
+**Keyword-classified "gave up" language** (the losing arm's own completion explicitly says the target
+location/entity "does not exist" / "cannot find" / German `nicht vorhanden` / `existiert nicht`, etc., vs. a
+confident-but-wrong chain), leak-excluded:
+
+| | B-wins: A gave up | B-regressions: B gave up |
+|---|---|---|
+| English | 2/9 (22%) | 7/15 (47%) |
+| German | 6/7 (86%) | 11/13 (85%) |
+
+This is a keyword heuristic on free text, not a rigorous classifier, but it separates the two corpora sharply
+and consistently on both sides of the pairing: **on English, a confident-but-wrong chain is the dominant
+failure mode for both arms** (most losses are not abstentions); **on German, explicit abstention
+("this location does not exist in the corpus") is the dominant failure mode for both arms, symmetrically**
+(85-86% either way). Concretely, whichever arm (A or B) fails to bridge a German natural-language
+paraphrase of a location descriptor (e.g., *"Kraftwerk, oberes Feuchtgebiet"*) to the corpus's underlying
+templated facility name (*"Reaktor, nördliches Marschland"*) overwhelmingly declines to answer rather than
+guessing — and on a substring-scored eval, an abstention always counts as a miss. This reads as a
+paraphrase-bridging gap shared by both conditions on German, not a JustSearch-specific weakness — German
+loses to itself as often as it loses to the other arm.
+
+**Concrete, clean (non-leaked), representative examples**, quoted directly from the re-read completions:
+
+1. **A genuine, replicated B-win** — English `q8` ("...publishing works in the central marketplace, the ninth
+   installation", target `verdant ferrolite 0027`): B answers correctly in 2 of 3 seeds by matching "central
+   marketplace" to the corpus's "market square" entry (*"The printing house in the market square, unit nine
+   (designated Cavstone25)... designed by Harnfen26... founder... Mirker27"*, seed 0). A, across all 3 seeds,
+   instead follows one of the corpus's *other* "unit nine" printing-house entries ("old courthouse") or an
+   unrelated chain, never landing on the market-square one. (The 3rd nominal "win", seed 1, is the
+   `queries.json`-leaked cell from Finding 1 and is excluded here.) This is the corpus's own repeated
+   "unit N" template producing multiple similar entries, where MCP's semantic retrieval resolves the
+   paraphrase and literal/file-based search anchors on the wrong duplicate.
+2. **A genuine, replicated mirror-image B-regression** — English `q23` ("...thermal spa in the high col, the
+   fourth installation", target `umber perrin 0072`): A correctly bridges "high col" to the corpus's "mountain
+   pass" entry in both seed 0 and seed 1 (*"The bathhouse in the mountain pass, unit four"*, Vexfen70). B, in
+   both seeds, explicitly gives up — verbatim: *"I'm unable to find the document matching your query in the
+   corpus. After systematically searching through files containing 'high,' 'col,' 'spa,' 'thermal,' and
+   'unit four,' I haven't located a document describing a 'thermal spa in the high col, the fourth
+   installation.'"* (seed 0); *"I've been searching through the documents but cannot find any mentions of
+   'thermal spa' or 'high col' in the corpus."* (seed 1). This is the inverse capability gap from (1): here
+   the paraphrase-bridging the corpus needs is one MCP's retrieval (or the agent's own query formulation into
+   it) did not find, and the agent abstained rather than retrying with different terms or falling back to
+   reading more broadly.
+3. **A wrong-retrieved-chunk case** — English `q18` ("...streetcar line in the enclosed grounds, the
+   nineteenth installation", target `indigo skack 0057`): B answers `azure perrin 0021` — which is the
+   *correct* answer to a **different** query in the same corpus (`q6`, "...streetcar line in the city on the
+   slopes, the seventh installation") — evidently cross-matching one of several similar tramway/streetcar
+   template entries and not catching the mismatch. A correctly follows the literal "walled garden" match
+   instead. This is the "agent trusts a wrong retrieved result" failure mode named in this item's brief,
+   concretely instantiated once in the clean set (not claimed to be the dominant pattern — it is one example
+   among 24).
+4. **The dominant German pattern, one instance** — `q0` seed 1 (*"Folgt man den Verknüpfungen ausgehend vom
+   Standort Kraftwerk, oberes Feuchtgebiet..."*, target `indigo brannik 0003`): A's own completion does the
+   paraphrase-bridging explicitly in its reasoning — *"Reaktor ≈ Kraftwerk, nördliches Marschland ≈ oberes
+   Feuchtgebiet"* — and gets it right. B, verbatim: *"I cannot find the location 'Kraftwerk, oberes
+   Feuchtgebiet' (Power plant, upper wetland) mentioned in the documents. ... The corpus contains only the
+   following facility types (first part of location): - Aquädukt (Aqueduct) - Archiv (Archive) - Badehaus
+   (Bathhouse) ..."* — lists the corpus's category vocabulary rather than attempting a semantic match, and
+   abstains. The same shape repeats (distinct
+   queries, same abstain-on-paraphrase pattern) across the majority of German's clean discordant set in both
+   directions, per the 85-86% table above — this is one representative instance of that dominant pattern, not
+   an isolated anecdote.
+
+## What this section does and does not conclude
+
+This closes §M.7a item 3: a failure analysis exists, is honestly qualitative given small n (24 clean pairs on
+English, 20 on German, effectively 2 on scan), and surfaces one genuinely new finding (Finding 1, the
+answer-key leak) that further narrows what the scan corpus's numbers can be read as. It does **not** show a
+single dominant, corpus-general mechanism for why condition B stays null — English and German show
+*different* dominant failure shapes (confident-wrong vs. abstain-on-paraphrase respectively), and the
+per-query direction is not stable across seeds for at least one query examined in passing (English `q14`:
+B-win at seed 0, B-regression at seeds 1 and 2, on the *identical* query text) — consistent with As-built #5's
+own read that the run's asymmetric-exclusion noise is plausibly seed-count-driven rather than structural.
+
+Per this item's own text and per tempdoc **655**'s stated boundary (*"Do not start by adding
+`justsearch_delete`, `justsearch_reindex`, or more lifecycle tools... this tempdoc should define the safety
+and conformance frame that makes future tool expansion coherent"*, `655:35-38`) and its explicit charge to own
+the tool-surface's conformance/capability layer (`655:24-31`) — **no tool-surface change, product lever, or
+capability recommendation is proposed here.** The concrete, testable observations above (paraphrase-bridging
+gaps in both directions, one wrong-chunk-trust instance, the leak in Finding 1) are handed off as raw material
+for whoever picks up 655's conformance frame next, not implemented as a one-off reaction to this pass's
+findings — exactly the caution §M.7a item 3 itself named in advance.
+
+---
+
+# Leak-free reanalysis (2026-07-02, ninth pass) — the queries.json leak, quantified and excluded
+
+> Follow-up to As-built #7's failure analysis (§M.7a item 3), which first found the leak qualitatively while
+> characterizing discordant queries. This pass exhaustively re-scans every cell in the already-completed real
+> run (zero additional API spend — the same raw Inspect logs, re-read) for the leak signature, excludes every
+> confirmed cell, and recomputes the paired statistics on the leak-free subset. The two structural root causes
+> behind the leak (an `--add-dir` traversal gap for file-tool conditions; accretive, never-auto-narrowed
+> watched-roots for the MCP-only condition) are separately fixed in code (search this tempdoc's git history —
+> commit "close the queries.json answer-key leak") so future runs through the classic runner don't reproduce
+> this. **This section is about the already-collected data specifically** — the fix's own new detection
+> mechanism (`find_leak_suspect_tool_calls`) turned out to have no data to act on for these particular logs,
+> because the Inspect-AI executor used for the real run never captured `tool_calls` at all (only cost/tokens/
+> turns) — a real, separate gap, noted here rather than glossed over. This reanalysis therefore used a
+> text-based leak signature (case-insensitive `queries\.jsonl?` over each cell's raw completion text) instead
+> — the same needle the code fix's `_LEAK_SUSPECT_NEEDLE` constant uses, just applied to response text rather
+> than tool-call arguments, since that's the only signal actually available in these logs.
+
+## Method and validation
+
+Every (corpus, condition, seed, qid) cell across all three corpora was scanned, not just the discordant pairs
+As-built #7's qualitative pass looked at. The scan's per-condition totals reproduced As-built #7's own
+previously-published counts **exactly** (English 1+2+0=3, German 2+4+0=6, scan 20+14+6=40 for A/B/C
+respectively) — a strong independent cross-check, since the two passes used different methods (As-built #7:
+manual reading during a discordant-pair characterization; this pass: an exhaustive automated regex scan) and
+still agreed to the cell. Four flagged cells' raw completion text were spot-checked directly and quote an
+affirmative claim of having used the answer key (e.g. *"Based on the queries.json file..."*); one unflagged
+cell was spot-checked and confirmed genuine multi-hop reasoning with zero mention of the answer key. All 49
+flagged excerpts were checked for negation language ("could not find queries.json," an attempted-but-failed
+read) — zero hits, so no ambiguous judgment calls were needed; every flagged cell is an affirmative,
+unambiguous leak.
+
+**Exclusions**: English 3 cells (`A|seed0|q24`, `B|seed0|q0`, `B|seed1|q8`), German 6 cells (`A|seed0|q0`,
+`A|seed0|q16`, `B|seed0|q1`, `B|seed0|q10`, `B|seed2|q20`, `B|seed2|q22`), scan 40 cells (20/14/6 across
+A/B/C — full per-qid list in `scripts/jseval/624-run-2026-07-02/_leak_free_exclusion_report.json`, committed
+alongside the leak-free records below).
+
+## The corrected numbers (A→B, the headline "addition, realistic" comparison)
+
+| Corpus | Original acc (leak-including) | Leak-free acc | Original McNemar p / n | Leak-free McNemar p / n |
+|---|---|---|---|---|
+| English | 0.7922→0.7273 (Δ−0.0649) | 0.7973→0.7162 (Δ−0.0811) | 0.4244 / 77 | 0.3075 / 74 |
+| German | 0.8182→0.7273 (Δ−0.0909) | 0.8169→0.7324 (Δ−0.0845) | 0.2100 / 77 | 0.2632 / 71 |
+| Scan | 0.6667→0.7143 (Δ+0.0476) | 0.5→0.0 (Δ−0.5) | 1.000 / 21 | 0.5 / 4 |
+| **Cross-corpus pooled** | **0.7886→0.7257 (Δ−0.0629)** | **0.7987→0.7047 (Δ−0.094)** | **0.1853 / 175** | **0.0553 / 149** |
+
+Independently verified against the committed JSON directly (not just the composing agent's own summary):
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json`'s pooled cell reads `baseline: 0.7987,
+with_tool: 0.7047, delta: -0.094, mcnemar_p: 0.05527, n_with_tool_fixes: 16, n_with_tool_breaks: 30` — matches
+exactly.
+
+**This is a materially different, more concerning finding than As-built #5/#6's original "no significant
+effect anywhere" conclusion.** Once cells where the agent cheated by reading the answer key are excluded, the
+pooled cross-corpus accuracy delta moves from a small, clearly non-significant −0.063 (p=0.185) to a larger,
+borderline-significant **−0.094 (p=0.055)** — condition B (file tools + JustSearch MCP) trends toward
+measurably *harmful* relative to file tools alone, not neutral. p=0.055 is not below the conventional 0.05
+threshold — this is not being reported as "significant," and per this tempdoc's own §M.7 discipline it is not
+being rounded up to one — but it is close enough, and moved far enough from the original figure, that "B has
+no effect" is no longer an honest summary of this record. Per-corpus, English and German individually move
+in the same (more-negative) direction but stay non-significant at their own (now-smaller) n; scan's leak-free
+n collapses to 4 (from an already-thin, non-comparable 21), which sharpens rather than changes As-built #7's
+own conclusion that the scan corpus carries no usable signal at all.
+
+**Comparability verdicts are unchanged** — `paired_comparability` is computed from raw completion/error
+rates, not from these leak flags, so English/German's asymmetric-exclusion issue and scan's high-error-rate
+issue persist exactly as characterized in As-built #5/#6/#7. §M.8's bar remains uncleared. The corrected
+numbers here are a more honest *interim* read of what this run actually shows, not a claim that the record
+now clears the bar — it does not, and a genuinely clean re-run (the fixed harness, ideally at the design's
+5-seed target) remains the only way to get a number that both closes the leak and clears comparability at
+once. That re-run is a real spend decision, not authorized by this pass.
+
+Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility-comparison.v1.json`,
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json`, and
+`_leak_free_exclusion_report.json` (full per-cell exclusion detail + excerpts, for anyone auditing this
+pass's own exclusion decisions rather than trusting them on faith).
+
+## Leak-free reanalysis, condition C (2026-07-02, tenth pass) — does "harmful everywhere" survive?
+
+> Follow-up to the ninth pass above, which only recomputed the A-vs-B ("addition, realistic") comparison.
+> As-built #5/#6 also measured condition C (JustSearch-only, no file tools — the "substitution" arm) as
+> **significantly harmful on every corpus** (large negative accuracy deltas, McNemar p≈0.000–0.011), and
+> that finding was never checked against the leak. Condition C is directly implicated: As-built #7's own
+> leak counts show condition C leaked 6 cells on the scan corpus specifically — since C has no file tools,
+> any leak it shows can only come from the search index itself having ingested the answer key (the
+> accretive-watched-roots root cause, not the `--add-dir` one). English and German show 0 leaked C-cells,
+> but their leaked A-cells (1 for English, 2 for German — the same `A|seed0|q24` and `A|seed0|q0`,
+> `A|seed0|q16` cells the ninth pass already listed) still corrupt the A-vs-C comparison's baseline arm.
+>
+> **No recomputation was needed for this pass.** `compose_utility` computes every arm (`addition_b` and
+> `substitution_c`) in one call, and the ninth pass already fed it leak-flagged summaries built from the
+> exact same exclusion scan. The already-committed
+> `out-{en,de,scan}-leak-free/utility-comparison.v1.json` and
+> `out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json` therefore already contain a correct,
+> leak-free `arms.substitution_c` block — this pass is a read of already-computed data, not a new
+> computation. Confirmed two ways: (1) each file's embedded `arms.substitution_c.leak_suspect_cells` list
+> matches `_leak_free_exclusion_report.json`'s per-corpus, per-condition exclusion counts (English 1 A-cell,
+> German 2 A-cells, scan 20 A-cells + 6 C-cells feeding into the A-vs-C pairing) exactly — the same
+> committed exclusion list the ninth pass used, reused rather than re-derived; (2) two cited McNemar p-values
+> below were independently reproduced from scratch with `scipy.stats.binomtest` directly on each cell's
+> `n_with_tool_fixes`/`n_with_tool_breaks` discordant-pair counts (not by trusting either script's own
+> printed summary): scan leak-free (`binomtest(3, 7, 0.5)`) → `1.0`, exact match; scan original
+> (`binomtest(5, 23, 0.5)`) → `0.010622024536132808`, matching the committed `0.010622` to the reported
+> precision.
+
+### The corrected numbers (A→C, the "substitution" comparison)
+
+| Corpus | Original acc (leak-including) | Leak-free acc | Original McNemar p / n | Leak-free McNemar p / n |
+|---|---|---|---|---|
+| English | 0.7973→0.2027 (Δ−0.5946) | 0.7945→0.2055 (Δ−0.589) | 0.0 / 74 | 0.0 / 73 |
+| German | 0.8116→0.2464 (Δ−0.5652) | 0.806→0.2537 (Δ−0.5522) | 0.0 / 69 | 0.0 / 67 |
+| Scan | 0.7059→0.3235 (Δ−0.3824) | 0.3333→0.25 (Δ−0.0833) | 0.010622 / 34 | 1.0 / 12 |
+| **Cross-corpus pooled** | **0.7853→0.2429 (Δ−0.5424)** | **0.7632→0.2303 (Δ−0.5329)** | **0.0 / 177** | **0.0 / 152** |
+
+Independently verified against the committed JSON directly: `out-scan-leak-free/utility-comparison.v1.json`'s
+`arms.substitution_c.accuracy` reads `baseline: 0.3333, with_tool: 0.25, delta: -0.0833, mcnemar_p: 1.0,
+n_with_tool_fixes: 3, n_with_tool_breaks: 4` (n_paired_observations 12) — matches exactly; the pooled
+cross-corpus file's `arms.substitution_c.accuracy` reads `baseline: 0.7632, with_tool: 0.2303, delta:
+-0.5329, mcnemar_p: 0.0, n_with_tool_fixes: 9, n_with_tool_breaks: 90` (n 152) — matches exactly.
+
+### Assessment: the finding splits by corpus, it does not survive uniformly
+
+**English and German: the "significantly harmful" finding survives essentially unchanged.** Condition C
+leaked 0 cells directly in either corpus (the leak mechanism needing file tools, which C never has), so the
+only leak-driven exclusion is through the shared A baseline: English loses exactly the one already-known
+`A|seed0|q24` cell (n 74→73), German loses its two already-known `A|seed0|q0` / `A|seed0|q16` cells (n
+69→67). Both deltas stay large and negative (English −0.5946→−0.589, German −0.5652→−0.5522) and both
+McNemar p-values stay at the floor (`0.0`, chi2-continuity, on 47/39 discordant pairs respectively). Nothing
+about "condition C is significantly harmful" changes for these two corpora — this is a real, leak-independent
+effect at this sample size.
+
+**Scan: the finding does NOT survive.** Condition C leaked 6 cells directly on scan (the MCP-index leak
+mechanism — the only one of the three corpora where this happens, since scan is the corpus whose watched
+roots accreted the answer key into the index itself), on top of 20 leaked A-baseline cells shared across
+every pairing that uses A. Combined, the A-vs-C pairing loses 22 of its original 34 cells (65%) — collapsing
+to 12 paired observations with only 7 discordant pairs (3 fixes vs 4 breaks). The result flips from
+marginally significant (p=0.010622, Δ−0.3824) to fully indeterminate (p=1.0, Δ−0.0833, an exact binomial
+coin-flip at n=7). This is not "a smaller but still real effect" — the leak-free scan sample is too thin to
+distinguish any real effect from noise at all.
+
+This scan result should not be read as "condition C is fine on scan, actually" either. As already
+characterized elsewhere in this tempdoc (see "Tika OCR-skip" in the misclassification follow-up, tracked
+separately in tempdoc 671 and not touched by this pass), the scan corpus has a known, separate
+OCR-extraction bug that affects what content condition C's search index actually contains. With the leaked
+cells excluded, what's left of scan's C-arm sample is a tiny, unpowered remainder that cannot separate three
+possible explanations for scan's original apparent harm — (a) a genuine model-capability effect, (b) the
+now-excluded answer-key leak, or (c) the Tika bug causing the index to serve degraded/empty extracted text
+regardless of leak status — and the leak-free numbers alone cannot adjudicate between them. Scan's C-arm
+result, leak-free or not, should not be cited as independent evidence for or against condition C's harm.
+
+**Cross-corpus pooled: still strongly significant, but now effectively an English+German result.** The
+pooled leak-free figure (Δ−0.5329, p=0.0, n=152) stays close to the original (Δ−0.5424, p=0.0, n=177) and
+remains solidly significant — but this is arithmetic, not a scan contribution: scan's leak-free arm (n=12,
+p=1.0) is too small and too indeterminate to move a pool this size either way. The pooled significance would
+read essentially the same with scan dropped from the pool entirely. Framed against As-built #5/#6's original
+"significantly harmful on every corpus" claim: **the direction and magnitude are correct and the finding is
+not an artifact of the leak for English and German** (which is where the actual statistical power lives) —
+but "every corpus" is no longer an honest summary. Scan's contribution to that claim does not survive leak
+exclusion and, independently, was never clean given the Tika OCR issue; it should be dropped from the
+evidence set for condition C's harm rather than cited alongside English/German.
+
+Committed: `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free/utility-comparison.v1.json` (already
+existing `arms.substitution_c` block, read not rewritten by this pass) and
+`out-cross-corpus-leak-free/utility-comparison-cross-corpus.v1.json` (same). No new files were written for
+this pass — `_leak_free_exclusion_report.json`'s existing per-cell detail already covers condition C.
+
+---
+
+# The judge-scoring gap (2026-07-02, eleventh pass) — every number on record is EM/substring-only
+
+> A targeted investigation (prompted by "what other work remains") checked whether §M.4's hybrid judge
+> pipeline (EM auto-pass → local LLM judge on the misses, a different model family than the haiku agent under
+> test) was actually applied to the real run. It was not — a real, previously undocumented gap, distinct
+> from the already-disclosed absence of *human calibration* of the judge (As-built #5 item 4/"Concrete next
+> steps" item 3, which is about validating the judge, not about whether the judge ran at all).
+
+## The finding
+
+Every committed composed record from the real run — `out-{en,de,scan}/utility-comparison.v1.json` and their
+leak-free siblings — carries `cohort.judge.kind: "substring-em"`, not `"hybrid-em-llm"`. Root cause:
+`agent_utility_inspect.py`'s `run_utility_eval` (the function `jseval utility-run` actually calls, per
+As-built #5's own stated execution path) hardcodes `judge_kind="substring-em"` and its task `scorer` is
+`substring_scorer()` — a pure exact-substring/abstention-phrase matcher, the same one this tempdoc's own §C-6
+already named as "below the 2026 bar." `utility_judge.py`'s hybrid pipeline is never called anywhere in that
+file. No `judge-overlay.json`-shaped artifact exists anywhere under `tmp/624-run/` or
+`scripts/jseval/624-run-2026-07-02/`, and the run logs confirm `substring_scorer` accuracy summaries only, no
+judge/llama-server invocation.
+
+**This means every accuracy delta and McNemar p-value currently on record — including the leak-corrected
+pooled figure (Δ−0.094, p=0.055) and the condition-C figures — is an EM/substring-only measurement**, not the
+hybrid measurement §M.4 specified as the credible baseline. As-built #4's earlier "EM-vs-judge agreement
+0.90" figure was measured against a *different*, earlier floor-log set (the MultiHop-RAG floor), not this
+run — it does not establish that this run's EM-only scoring is reliable on these three battlefield corpora.
+As-built #5's own M.4-adjacent text ("already built and reused verbatim") reads as though the hybrid pipeline
+was applied to this run; it was not, and no prior section states this plainly. Recorded here so it is.
+
+## What this does NOT mean
+
+This is not evidence the reported numbers are *wrong* — EM/substring scoring is a real, if blunt, correctness
+signal, and this tempdoc's own C-6 finding already named its limitation as a *precision* concern (missing
+correct-but-differently-phrased answers, or passing superficially-matching wrong ones), not a directional
+bias in either arm specifically. But it is a real, unstated gap against this tempdoc's own credibility bar
+(§M.8 item 3 requires the human-calibration kappa be computed "whatever the value" — which presupposes the
+judge was run at all) and should be closed or explicitly disclosed before any external claim, not left
+implicit.
+
+
+---
+
+## The judge-scoring gap — closed live (2026-07-02, same-day follow-up)
+
+The gap above is now closed: the hybrid EM-auto-pass -> local-LLM-judge pipeline (`utility_judge.py`)
+was actually invoked against all three real corpora (`tmp/624-run/logs-{en,de,scan}/`), live, via a
+local Qwen3.5-9B judge (a different model family than the claude-haiku agent under test -- the
+self-preference control), reached through the JustSearch Head API's own OpenAI-compat proxy on the
+jseval eval backend (`http://127.0.0.1:33221/v1/chat/completions`, per
+`modules/ui/src/main/java/io/justsearch/ui/api/OpenAiCompatController.java`). No paid API, no
+external spend -- `ai_activate`-equivalent local inference only, per this project's own
+`use-every-verification-tier` rule.
+
+### Two real blockers found and fixed en route (not just documented)
+
+1. **This worktree's `native-bin/llama-server/` was never staged.** `jseval.backend.start_backend`
+   runs bare `gradlew :modules:ui:runHeadlessEval`, which does NOT auto-stage the llama-server
+   binary (only `dev-runner.cjs` does that, per tempdoc 618 §3 / 656's GPU-only redesign) -- the
+   first run attempt failed with `RuntimeError: LLM inference did not become available: inference
+   stayed offline`, root-caused via `tmp/headless-eval-data/logs/headless-backend.log`:
+   `llama-server executable not found: ...\native-bin\llama-server\llama-server.exe`. Fixed by
+   self-staging the CPU-baseline prebuilt **locally in this worktree** (no cross-worktree reach):
+   `./gradlew.bat :modules:ui:stageLlamaServerFromPrebuilt` populates
+   `modules/ui/build/llama-server/stage/`, then `JUSTSEARCH_SERVER_EXE` env override points the
+   backend at it.
+2. **`jseval utility-judge`'s `--judge-url` default was wrong for eval-backend runs.** It defaulted
+   to `http://127.0.0.1:8080` -- the *production* Head API port -- not the eval backend's actual port
+   (`_DEFAULT_BASE_URL_EVAL = "http://127.0.0.1:33221"` in `jseval/commands/_common.py`, the port
+   every `jseval run --start-backend` actually uses). Confirmed via `OpenAiCompatController.java`:
+   the Head proxies `/v1/chat/completions`/`/v1/models` to whatever port llama-server actually
+   bound -- so the judge URL must be the *Head's own* base URL, not llama-server's raw ephemeral
+   port, but it has to be the Head's *actual* running port. Fixed the default (and docstrings) in
+   `scripts/jseval/jseval/utility_judge.py` and `scripts/jseval/jseval/commands/utility.py` to
+   `:33221`; re-verified against `tests/test_utility_judge.py` + `tests/test_utility_comparison.py`
+   (68 passed, no regressions). Anyone who previously ran (or will run) `jseval utility-judge <dir>`
+   against an eval-backend run without manually overriding `--judge-url` got (or would have gotten)
+   a silent `degraded_to_em` EM-only overlay -- the exact failure mode C-6/E-5 were built to avoid,
+   now closed.
+
+### The judge-vs-EM agreement pattern: zero flips, and it's real
+
+Across all three corpora, the judge **never once rescued an EM-miss to a pass** --
+`judge_flips: 0` in en (97 judged misses), de (88), and scan (61) -- 246 judged misses total, zero
+rescues. Dual-order disagreement (abstain-to-EM) was rare and mild: en 3/97 (agreement 0.9691), de
+0/88 (1.0), scan 0/61 (1.0).
+
+This was checked for a parsing/prompt bug, not taken at face value (per this project's
+`interrogate-results` rule) -- three individual overlay entries were read directly against the
+underlying question/reference/candidate text (`tmp/624-run/logs-en/judge-overlay.json` +
+`_iter_eval_records`):
+
+- `A|0|q11`: REF `"verdant lansk 0036"`, CAND concluded `"azure perrin 0387"` -- a **different
+  entity's synthetic token entirely** (the agent chained to the wrong founder in a 3-hop lookup).
+  EM=False, judge=False. Correct call.
+- `A|0|q13`: REF `"indigo perrin 0042"`, CAND concluded `"indigo lansk 0015"` -- same failure
+  shape, wrong intermediate entity. EM=False, judge=False. Correct call.
+- `B|1|q17` (the one genuine dual-order disagreement inspected): REF `"umber lansk 0054"`, CAND
+  `"54"` -- a truncated partial match (right numeric suffix, missing the two-word prefix), a
+  genuinely borderline case where dual-order flipping is the expected, designed behavior (abstain to
+  EM rather than guess). EM=False, final=False. Sound.
+
+**Why zero flips is the expected finding, not a bug**: 635's corpus uses exact synthetic-token
+answers (e.g. `"verdant lansk 0036"`) specifically so substring-EM is high-precision by
+construction (already noted in this tempdoc's own "Live-run attempt" section: "the 635 answers are
+exact synthetic tokens... so substring-EM is high-precision"). The observed EM-misses are wrong-token
+failures from multi-hop chaining errors, not correct-but-differently-phrased false negatives -- the
+exact failure mode the hybrid judge exists to catch (C-6) does not occur on this corpus's answer
+style. This is now an *empirically checked* fact about this specific run, not an assumption carried
+over from the earlier, different MultiHop-RAG floor-log measurement (the As-built #4 "0.90 agreement"
+figure this section's original finding correctly flagged as not applicable to this run).
+
+### Final numbers: leak-free AND judge-scored (the most rigorous figure available from this data)
+
+Every cell below is BOTH leak-excluded (text-derived `queries.jsonl` mention backstop, same method as
+the existing `_leak_free_recompose.py` pass) AND judge-rescored (`cohort.judge.kind: "hybrid-em-llm"`
+in every composed record, confirmed by direct read of
+`scripts/jseval/624-run-2026-07-02/out-en-leak-free-judged/utility-comparison.v1.json`). Because the
+judge changed zero verdicts, these numbers are **numerically identical** to the leak-free-only pass --
+that identity is itself the confirmation that EM scoring was not distorting this run's headline
+figures, now backed by a real judge invocation rather than an assumption:
+
+| corpus | baseline acc | with-tool acc | delta | McNemar p | n (paired) | leaked cells excluded |
+|---|---|---|---|---|---|---|
+| en | 0.7973 | 0.7162 | -0.0811 | 0.307 (exact-binomial) | 74 | 3 |
+| de | 0.8169 | 0.7324 | -0.0845 | 0.263 (exact-binomial) | 71 | 6 |
+| scan | 0.5 | 0.0 | -0.5 | 0.5 (exact-binomial) | 4 | 40 |
+| **pooled** | **0.7987** | **0.7047** | **-0.094** | **0.055 (chi2-continuity)** | **149** | -- |
+
+Pooled token-efficiency (unchanged from the leak-free pass, judge scoring does not touch tokens):
+baseline median 38324, with-tool median 38438, delta_mean +562 tokens (CI95 [-1997, 3216] -- crosses
+zero, not significant at this n).
+
+### Artifacts
+
+- `tmp/624-run/logs-{en,de,scan}/judge-overlay.json` -- the real hybrid-judge overlay per corpus
+  (verdicts + `judge_identity` + agreement stats), written by `utility_judge.write_overlay`.
+- `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free-judged/utility-comparison.v1.json` --
+  the leak-free + judge-scored composed record per corpus.
+- `scripts/jseval/624-run-2026-07-02/out-cross-corpus-leak-free-judged/utility-comparison-cross-corpus.v1.json`
+  -- the pooled figure.
+- `scripts/jseval/624-run-2026-07-02/_leak_free_judged_exclusion_report.json` -- leak cells + judge
+  stats + judge identity per corpus, the audit trail for the table above.
+- `scripts/jseval/_leak_free_judged_recompose.py` + `scripts/jseval/_run_judge_with_backend.py` --
+  throwaway, uncommitted re-analysis scripts (same convention as the existing
+  `_leak_free_recompose.py`), reusing `eval_logs_to_summaries(judge_overlay=...)`,
+  `compose_utility`/`compose_utility_cross_corpus` unmodified -- no hand-rolled stats.
+
+### What remains open
+
+This closes the judge-invocation gap specifically. It does **not** close the separate,
+already-disclosed **human-calibration** gap (As-built #5 item 4 / "Concrete next steps" item 3 /
+§M.4's kappa-against-human-labels requirement) -- that still needs a real human rater pass (or the
+`--calibrate` dry-run's agent-substitute raters, which are explicitly not a validated figure) and was
+out of scope for this pass. The scan corpus's high leak-exclusion rate (40 of ~180 samples) and small
+resulting paired n (4) were already flagged in the prior leak-free pass and are unchanged by this one.
+
+---
+
+# Practicality and future-work research pass (2026-07-02, twelfth pass) — now that the design is implemented, what next?
+
+> A deliberately open-ended pass, no fixed goal: given §T.1-T.4 and every review/fix round above are now
+> shipped, what could this effort's own machinery be *used for* beyond clearing its own credibility bar —
+> polish, simplification, extension, new UX, and practicality for a future developer or agent picking this
+> up cold? Four parallel research agents (codebase practicality audit, external 2026 landscape research,
+> product/UX ideation, documentation/discoverability audit), autonomous, documentation-only — no code
+> changed by this pass. Findings below, most time-sensitive first.
+
+## Most urgent finding: a sibling worktree's public RESEARCH.md draft is already stale relative to this tempdoc's own latest numbers
+
+`RESEARCH.md` does not exist on `main` yet — it is being actively drafted right now in sibling worktrees
+(`claude-science-benchmark-release` / `salvage-667`, tempdoc 667), independent of this effort. That draft
+already does the right thing in spirit — names the retracted "92%/62%" number, states the realistic-arm
+result honestly, frames U0 as an open research question rather than a flattered result — **but its cited
+number is now wrong**: it states "+0.00 accuracy / ~8% token savings" (this tempdoc's *original*, pre-leak-fix
+As-built #5 finding), not the corrected, leak-free, judge-confirmed finding this tempdoc now carries
+(**Δ−0.094, p=0.055 — borderline-significant and *negative*, not a clean null**), and it does not mention that
+`comparability.comparable=False` on every corpus (i.e. this tempdoc's own credibility bar, §M.8, is still not
+cleared at all). **If that draft ships before syncing with this tempdoc's current state, it would repeat the
+exact "an informal number outran its own methodology" failure mode that caused the original 92%/62% claim to
+be retracted in the first place** — the one thing this whole multi-week effort exists to prevent. This is not
+something this pass acts on unilaterally (a different worktree, another session's active work, out of this
+tempdoc's own scope per this project's own worktree-isolation discipline) — it is flagged here, prominently,
+for the founder to decide whether/how to sync the two efforts before anything publishes.
+
+## Codebase practicality: three concrete, appropriately-scoped findings
+
+1. **A reproducible bug, independent of everything else**: `python -m jseval --help` crashes with
+   `UnicodeEncodeError` on a default Windows console (`cp1252`) — a non-ASCII character in a docstring breaks
+   the most basic possible entry point for a new user. Cheap, unambiguous fix.
+2. **The "rule-of-three" question, applied honestly, says no to a big abstraction and yes to a small one.**
+   Three throwaway reanalysis scripts were written this session, but on inspection they aren't really three
+   independent instances of one pattern — `_leak_free_judged_recompose.py` already imports and reuses
+   `_leak_free_recompose.py`'s own leak-detection functions rather than reinventing them, and the
+   judge-rescoring piece already has a first-class CLI command (`utility-judge`). Building a monolithic
+   `utility-reanalyze` command would bundle unrelated concerns — the actual gap is narrower: promote
+   `scan_leaked_cells`/`apply_leak_flags` out of the throwaway script into the package proper, and add an
+   `--exclude-leaked` flag to `utility-compose`/`utility-judge`/`utility-compose-cross-corpus` (confirmed:
+   zero `leak` references exist in `commands/utility.py` today). Relocating already-proven code, not new
+   abstraction — this tempdoc's own repeatedly-applied discipline (three real *concurrent* instances is the
+   trigger, not three superficially-similar scripts) holds here too.
+3. **No canonical how-to exists for the full pipeline.** A real, working, multi-command sequence (generate →
+   certify → fidelity-check → calibrate → run → judge → compose → leak-check) exists only as narrative prose
+   scattered across this tempdoc's 3000+ lines — confirmed zero hits for `utility-run`/`utility-compose`/
+   `utility-judge` anywhere in `docs/how-to/`, `docs/reference/`, or the `/jseval` skill (which mentions this
+   tempdoc exactly once, for a cost-policy note, not a command reference). A fresh session six months from now
+   would have to already know to grep `docs/tempdocs/` by number to discover this capability exists at all —
+   exactly the failure mode this project's own `tempdocs-are-dated-history` rule anticipates. Recommended:
+   extract a `## Agent Utility Eval` section into the existing `docs/reference/jseval-pipeline-reference.md`
+   (transcription of already-working commands, not new design) and a corresponding subsection in
+   `.claude/skills/jseval/SKILL.md`. Also flagged: the `624-run-2026-07-02/` output-directory convention
+   (already 9 sibling directories for 3 corpora × 2 analysis passes) won't scale — a future pass should prefer
+   additive provenance fields on one record per corpus (`leak_excluded`, `judge_overlay_path`) over a new
+   sibling directory per analysis variant.
+
+## External research: real precedent for this project's own self-correction pattern
+
+- **Epoch AI's FrontierMath v2** (mid-2026) is the closest direct precedent to this tempdoc's own As-built
+  #5→#6→#7 correction trail: an audit found errors in a large fraction of the original benchmark, they shipped
+  a corrected version and published exactly what changed and why — rankings held, scores shifted — and it was
+  well-received, not disqualifying. Evidence that a credible "we found a bug, here's v2" narrative works, at
+  least in research-benchmark contexts (no direct precedent was found for a *product*, as opposed to a pure
+  benchmark-research org, publishing this pattern — flagged honestly as an open question, not assumed).
+- **UC Berkeley RDI's "Trustworthy Benchmarks" checklist** names a concrete practice this project already
+  independently reinvented: run a trivial/null submission through your own scorer first — if it passes, the
+  harness is broken. That is structurally the same check that would have caught the `queries.json` leak
+  earlier had it existed as a standing practice, not just a one-time investigation.
+- **Schema alignment is available cheaply, not urgently**: Hugging Face's `eval-results` convention and a 2026
+  arXiv proposal for a unifying agentic-eval schema are both small, modular, and something `utility-comparison
+  .v1` could partially adopt (a few field-name aliases) without a redesign, buying future comparability — not
+  a priority, but a low-cost option to keep in mind if/when this record is ever exposed externally.
+- An academic survey found only ~30% of published model cards disclose *any* limitations — supporting evidence
+  (not just intuition) that this project's actual track record of catching and disclosing its own mistakes is
+  genuinely unusual, if it's ever surfaced publicly.
+
+## Product/UX: the highest-leverage move is fixing a divergence, not building something new
+
+Beyond the RESEARCH.md-sync finding above (the actual highest-leverage item), two further ideas were judged
+concretely buildable and appropriately timed *now*, independent of how this tempdoc's own credibility bar
+resolves:
+- **A retrieval-leg attribution chip** extending the UI's already-shipped `SearchSurface.ts` degradation-banner
+  plumbing (`effectiveMode`/`notice-causes`, tempdoc 577/595/596) — small, in-product, doesn't touch the
+  contested agent-utility finding at all.
+- **Validating the context-sufficiency classifier** (a separate, smaller, already-named-but-unbuilt item from
+  the search-quality register, Q-007) — cheap (~20-30 labeled pairs), tractable at the project's own haiku-tier
+  cost policy, and gives a future public research doc a second, *actually finished* result to point to
+  alongside the harder agent-utility question.
+
+Two ideas were judged *premature*, not wrong: a "living/nightly re-run" of this eval (a real, working `.github/
+workflows/phase-3-observability-nightly.yml` cron precedent already exists to build on) would bake an
+unresolved, `comparable=False` number into a scheduled artifact before the methodology itself is trusted —
+automate this only after §M.8 clears. A paired-comparison/judge-powered live in-product explainability feature
+was judged a genuine stretch (wrong latency/cost shape — batch, LLM-scored, offline — for a live per-query UI
+element) rather than a natural extension, and is not recommended.
+
+## What this pass did NOT do
+
+No code was changed, no doc was extracted, no `RESEARCH.md` was touched (a different worktree's active work).
+This is a findings-and-ideas record for the founder to prioritize from, matching the assignment's own framing
+("the goal is nothing specific, all improvements are viable, there is no rush") — none of the above is
+authorized for implementation by this pass alone.
+
+---
+
+# Design theorization #2 (2026-07-02, thirteenth pass) — the correct long-term design for the twelfth pass's own findings
+
+> The twelfth pass (above) produced a findings-and-ideas list, deliberately not a design. This pass takes the
+> three items with real structural weight — the output-directory sprawl a revision record creates, the
+> RESEARCH.md staleness risk, and the ad hoc reanalysis-script/CLI duplication — and asks this tempdoc's own
+> standing question: what is the correct long-term design, does existing machinery already cover it, and
+> where does the answer conform to (rather than fork) a seam this codebase already has. Investigated via a
+> direct read of `docs/tempdocs/553-canonical-search-execution-record.md`,
+> `625-asserted-measurement-provenance.md`, `646-event-sourced-tempdoc-current-state.md`,
+> `659-public-release-trust-evidence.md`, `653-public-main-history-hygiene.md`, and
+> `645-jseval-cli-monolith-split.md` in full, plus `corpus_identity.py`/`release.py`/`commands/_common.py`
+> directly. **General design only — no code changes, no implementation. Nothing below is a shipped
+> capability or a compliance/certification claim; this repo is public and this section is written to be read
+> that way.**
+
+## Design 1 — corrected-record provenance for `utility-comparison.v1` (closes the sibling-directory sprawl)
+
+**The problem, precisely.** Three times this session, a corpus's already-composed `utility-comparison.v1`
+record needed to become a **materially different, corrected version of itself** — not a new measurement, the
+same identity-bearing inputs re-derived under a newly-discovered exclusion or scoring rule (the queries.json
+leak fix, the condition-C re-check, the judge-rescoring pass). Each time, the only available shape was a new
+sibling output directory (`out-en/` → `out-en-leak-free/` → `out-en-leak-free-judged/`) with no field on the
+record itself saying what it superseded or why. This is the practicality pass's own "won't scale" finding,
+traced to its structural root: **the record has no way to express amendment, only fresh generation.**
+
+**What already exists, investigated directly (do not rebuild what's already there).** `553`'s canonical-record
++ governed-projection seam is *synchronic only* — one execution's facts, viewed many pure-function ways at
+one point in time; revision of the record itself was never in that seam's frame, in scope or out. `625`
+(`status: proposed`, a deliberate stub) already names almost exactly this tempdoc's own worst historical
+failure mode — "every externally-asserted measurement must trace to a cohort-identified reproducible run; a
+hand-maintained number is a fork that drifts" — and explicitly cites 624's own retracted 92%/62% claim as
+its motivating case. But 625's principle stops at **single-run traceability** (does this number trace to a
+run at all); it never addresses **amendment** (what happens when that traced run's own computation is later
+found to need correcting). `646` (also a stub) is explicitly scoped to a *tempdoc's own prose* getting
+unwieldy across dated passes — not to a *data record's* evolution; it does not generalize. And directly in
+code: `corpus_identity.corpus_signature()` is a flat content hash with no `previous_signature`/`supersedes`
+field anywhere, and `release.py` carries only a `RELEASE_SCHEMA_VERSION` constant (a *schema* version, not a
+*record-instance* version) — confirming the codebase's identity model has no revision primitive at all
+today, for any canonical record, not just this one.
+
+**The design.** Add a minimal, additive `revision` object to `utility-comparison.v1`'s own schema:
+`{supersedes: <path or record identity of the prior record>, reason: <short, closed set — e.g.
+"leak_correction" | "judge_rescore" | "reseed">, changed_fields: [...]}`, present only on a record that
+*is* a revision (absent on an original composition — purely additive, no breaking change to the existing
+schema). One directory per corpus persists; a later revision pass updates the SAME record's `revision` chain
+rather than spawning a new sibling directory. This directly resolves the practicality pass's own "won't scale"
+finding with the smallest structure that closes it — not a general "amendable record" framework across every
+canonical record in the codebase, only the one place (`utility-comparison.v1`) with a real, already-repeated
+(three times) need.
+
+**Scope discipline, stated explicitly.** Do NOT extend this to `release.v1.json` or any other canonical record
+in this pass — no release has yet needed a real, in-place correction the way this record has three times;
+building the generalized "amendable canonical record" primitive now, before a second real consumer exists,
+would repeat the exact premature-abstraction mistake this tempdoc's own T.3 design explicitly declined to
+make for the human-calibration-set pattern. This is recorded as a candidate generalization in the Reach
+section below, not built beyond `utility-comparison.v1`.
+
+## Design 2 — a purpose-built public-claim projector for the agent-utility finding (addresses the RESEARCH.md staleness risk)
+
+**The problem, precisely.** The twelfth pass found a live risk: a separate, unmerged worktree/branch
+(confirmed directly via `git log --all` + `git branch --all --contains` — the tempdoc 667/668 work and its
+`RESEARCH.md` draft live only on `worktree-salvage-667`, not on `main` and not reachable from this branch) is
+independently drafting a public claim that cites this tempdoc's own *now-superseded* number. Nothing in this
+codebase currently checks whether a public doc's claim still matches the internal record it's drawn from.
+
+**What already exists, investigated directly.** `659` (public-release-trust-evidence) is a pure stub scoped to
+*security/supply-chain* trust evidence (checksums, signing, SBOMs) — it explicitly defers "public claim
+discipline" to a different tempdoc, not itself. `653` (public-main-history-hygiene) is scoped to commit/PR
+*granularity*, not claim *content*. But there IS an established, **already-instantiated multiple times**
+principle for exactly this shape of problem: `canonical-authority-and-projection` (the `principle:` field
+shared by tempdocs 623/632/633/635/622/650) — "a public claim is a projection of a declared fact, never a
+hand-copied fork" — realized every time not as one general checker, but as a **purpose-built projector
+script per claim class**, each diffing one public doc against one declared source of truth, gated in
+`docs-lint.yml`: `check-frontend-stack-claims.mjs` (stack claims vs. ADR-0032), `check-model-freshness.mjs`
+(model names vs. `model-registry.v2.json`), `gen-public-benchmark.mjs` (projects `release.v1.json` into the
+methodology doc's own marker region), `register-headline-sync.mjs`. Tempdoc 625 itself explicitly declines to
+generalize this into one reusable mechanism ("do not build the generalized enforcement from this instance") —
+confirmed the *established, repeated* practice here is many small, purpose-built projectors, not one universal
+checker. A general "public claim vs internal record" checker would be the fork this codebase's own pattern
+has already, repeatedly, declined to build.
+
+**The design.** When `RESEARCH.md` (or any future public doc citing this tempdoc's finding) actually exists on
+`main`, add one more purpose-built projector in the same shape as `check-model-freshness.mjs`/
+`gen-public-benchmark.mjs`: source the *current* authoritative finding from the committed
+`utility-comparison.v1`/cross-corpus JSON records (never from tempdoc prose — tempdocs are dated history per
+this project's own standing rule, not a source of current truth), diff against the claim text, and fail
+`docs-lint.yml` on drift — flagging both staleness (a number that changed) and overclaiming (a
+`comparability.comparable=false` record being cited without that caveat). This conforms to an established,
+repeatedly-proven seam; it is not a new kind of check.
+
+**Scope discipline, stated explicitly.** This is **not buildable right now** — its target file doesn't exist
+on any branch this worktree can reach, and building a checker against a nonexistent target would itself be
+structure ahead of its own consumer. Recorded here as the design to build at (or before) the point `RESEARCH.md`
+merges to `main`, not implemented in this pass. The live risk itself (a stale draft on an unmerged branch) is a
+coordination question for the founder, not something this pass or its design can resolve unilaterally.
+
+## Design 3 — consolidate the reanalysis logic and duplicated compose/write/print pattern into the already-shipped CLI structure
+
+**The problem, precisely.** Three throwaway analysis scripts sit outside the `jseval` package
+(`_leak_free_recompose.py`, `_leak_free_judged_recompose.py`, `_run_judge_with_backend.py`), and
+`commands/utility.py`'s `cmd_utility_compose`/`cmd_utility_judge`/`cmd_utility_compose_cross_corpus` each
+independently repeat a "compose → write JSON → print per-cell summary" block.
+
+**What already exists, investigated directly.** Tempdoc 645 (jseval-cli-monolith-split) is not a stub —
+**it is fully implemented and already merged to `main`** (commit `2c5b7fe`, PR #13), confirmed live in this
+worktree: `cli.py` is 38 lines; `commands/` holds one module per command group; `commands/_common.py` already
+hosts exactly this shape of shared helper (`_write_bench_output`, `assert_run_capabilities`).
+
+**The design.** Extend `commands/_common.py` with a `_compose_and_write(...)`-shaped helper (matching
+`_write_bench_output`'s existing pattern) that the three `cmd_utility_*` commands call instead of repeating
+the block inline. Promote the leak-detection functions (`scan_leaked_cells`/`apply_leak_flags`, currently only
+in the throwaway `_leak_free_recompose.py`) into the package proper — `agent_utility_run.py` (where the
+paired-observation/summary logic they operate on already lives), not into `_common.py` (which is scoped to
+CLI-command *shape* helpers, not eval-domain logic — the two are different concerns and `_common.py`'s
+existing contents already establish that boundary). No new abstraction is invented; this is extending
+already-merged, already-proven structure into code that was written under time pressure outside it.
+
+**Scope discipline, stated explicitly.** Do not build the `utility-reanalyze` monolithic command the twelfth
+pass's own codebase-practicality agent already considered and declined (the three scripts share less real
+structure than they appear to — judge-rescoring already has its own first-class command,
+`utility-judge --calibrate`; only the leak-detection piece is genuinely reusable). That verdict stands; this
+design narrows to exactly the two moves above.
+
+## Reach
+
+**Design 2 and Design 3 conform cleanly to already-established seams — no new principle to name.** Design 2
+is a straightforward new instance of `canonical-authority-and-projection`, already proven five times over in
+this exact shape; Design 3 is a straightforward extension of tempdoc 645's already-merged CLI structure. Both
+are correctly-scoped conformance, not reach-worthy discoveries.
+
+**Design 1 does reveal something worth naming plainly: this codebase's canonical-record model has no concept
+of amendment, anywhere, and this is the first place that gap became load-bearing rather than theoretical.**
+Stated as a candidate principle: *a canonical record that can be recomputed from the same identity-bearing
+inputs under corrected logic needs a `supersedes`/revision-reason field distinguishing "this is a materially
+different derivation of the same underlying facts" from "this is an unrelated new measurement" — construction-
+time identity alone (a content hash, a cohort key) answers "is this the same input," never "is this a
+correction of that other record."* This is a genuine extension of tempdoc 625's own still-unbuilt principle
+(single-run *traceability*) into a dimension 625 never covered (*amendability*) — 625 already named 624 as
+its own motivating case for the traceability half; this pass names the amendment half as 625's natural,
+still-unclaimed second half, not a competing idea.
+
+**Where else this would apply.** Any canonical record in this codebase's own canonical-record + governed-
+projection lineage that could plausibly need retroactive correction after being computed — concretely,
+`release.v1.json` (tempdoc 623) shares the identical structural gap: `release.py` carries only a schema-version
+constant, no instance-revision field, confirmed directly. **This is a real, present gap in already-shipped
+code, not a hypothetical** — if a release's own metric computation were ever found to need correction after
+publication (the retrieval-quality-side analogue of what happened to this tempdoc's own agent-utility numbers
+three times), there is today no way to express that correction as anything other than an unrelated new
+release. Whether that has actually happened yet for 623's release object is not established by this pass and
+is not asserted here.
+
+**Why this is recorded and not built beyond `utility-comparison.v1`.** Per this tempdoc's own repeatedly-
+applied discipline (T.3's rule-of-three, restated in Design 1 above): a real, load-bearing need has appeared
+exactly once, for exactly one record. Building a generalized "amendable canonical record" primitive now,
+before `release.v1.json` or any other record has a real, concrete second instance of this need, would be
+structure ahead of its actual consumer — the same over-eager move this tempdoc's own §T.3 explicitly declined
+to make for the human-calibration-set pattern, and the same discipline 645's own successful, merged CLI split
+demonstrates paying off when applied at the right time rather than speculatively. Recording the principle here,
+plainly, with its candidate scope and the one place it already silently applies, is deliberately separated
+from building it — so the insight is captured without becoming premature abstraction.
+
+---
+
+# Confidence pass #6 (2026-07-02, fourteenth pass) — converting Design theorization #2's assumptions into verified facts
+
+> Read-only investigation only, mirroring this tempdoc's own established "Confidence pass" discipline (used
+> five times already in this lineage — it has found a real, design-changing surprise every time it was run).
+> No schema changes, no code moved, no new CLI flags, no tests written, no `RESEARCH.md` touched. Every claim
+> below is checked against the actual current code, not re-asserted from Design theorization #2's own text.
+
+## What was verified — confidence raised
+
+- **Design 1's "purely additive" claim holds precisely.** `utility-comparison.v1.schema.json` sets
+  `"additionalProperties": true` at the top level and has no strict (`false`) `additionalProperties` anywhere
+  in the file — a new `revision` field would not be rejected by any schema validator. Stronger than assumed:
+  `compose_utility`/`compose_utility_cross_corpus` (`utility_comparison.py:144,596`) both return a **plain
+  dict** built entirely from local variables — attaching `record["revision"] = {...}` at the call site
+  requires **zero changes to either function's signature or internals**. This is lower implementation risk
+  than Design theorization #2 assumed.
+- **Design 2's "conform to the existing pattern" claim is exact, not superficial.** `gen-public-benchmark.mjs`
+  already iterates `Object.keys(release.measured)` (lines ~80, 102) to aggregate a **multi-entry, per-corpus**
+  source into one public doc — precisely the shape a future agent-utility projector would need for per-corpus
+  + pooled records. The precedent doesn't just resemble the need, it already solves the identical aggregation
+  problem. `RESEARCH.md` re-confirmed still absent from `main` and this branch — the "not buildable yet"
+  premise still holds.
+
+## What was corrected — real, small scope refinements, not blockers
+
+- **Design 1's `supersedes` field must reference a file path, not an in-record identity.** No existing field
+  (`agent_cohort_key`, `pairing_key`) is actually unique across revisions of the *same* underlying run —
+  `agent_cohort_key` is deliberately invariant across the original and every corrected version (same model,
+  same corpus, same MCP surface; only the post-hoc exclusion/scoring differs), so it cannot itself distinguish
+  "this composed record" from "that other composition of the identical cohort." Design theorization #2's own
+  text already hedged between "path or record identity" — this pass resolves the hedge: path is the only
+  currently-viable choice, not a gap.
+- **Design 3's "same pattern" claim is only half-true.** `_write_bench_output` (`commands/_common.py:51-58`)
+  is a bare, generic "write dict as JSON, echo confirmation" helper — it covers only the **write** step, not
+  the **print per-cell summary** step Design 3's text described as part of the same duplicated block.
+  Confirmed directly: `cmd_utility_compose_cross_corpus`'s print loop has genuinely extra logic
+  (`commands/utility.py`, a nested `stratified.by_stratum` loop) the other two `cmd_utility_*` commands don't
+  have — forcing one shared "compose-and-print" helper across all three would require either a lossy
+  generalization or a per-command customization hook, not a clean drop-in. **Refined design**: reuse
+  `_write_bench_output` directly for the write step (zero new code, immediate); leave each command's print-
+  summary logic bespoke rather than forcing a shared abstraction that doesn't actually fit — this is a
+  smaller, more honest scope than the original design implied, and avoids exactly the forced-generalization
+  risk this tempdoc's own discipline warns against elsewhere.
+- **Design 3's leak-detection helpers have zero existing test coverage.** `scan_leaked_cells`/
+  `apply_leak_flags` are referenced nowhere in `scripts/jseval/tests/` or the `jseval/` package proper today
+  (grepped, zero hits) — they exist only in the uncommitted throwaway script. Promoting them is therefore
+  "move the code **and** write its first tests," not merely "move the code" — a real, small scope increase,
+  honestly disclosed rather than assumed away.
+
+## Confidence rating — remaining work: **8/10**
+
+All three designs survive this pass with their core direction intact; nothing found here overturns a design
+the way earlier confidence passes in this lineage overturned T.2's original premise or found the M.1
+tool-bypass gap. Two points held back, both structural rather than risk-related: Design 2 is genuinely
+unimplementable until `RESEARCH.md` exists on a reachable branch (a real external blocker, not a design
+weakness), and Design 3's newly-confirmed need for first-time test coverage is real, if small, unplanned work.
+
+## Implementation difficulty and recommended tier
+
+**Low-to-moderate, and well-suited to the same tier this whole effort has used throughout.** Design 1 is a
+small, additive, call-site-only change with a schema confirmed permissive and zero function-signature impact —
+genuinely simple. Design 3 (refined scope: reuse `_write_bench_output` directly, promote+test the leak helpers,
+leave per-command printing alone) is equally small and mechanical. Neither surfaced any deep architectural
+risk, hidden coupling, or ambiguous design choice requiring senior judgment beyond what this pass already
+resolved. **Recommend Sonnet-5 at medium effort** for both, consistent with every other fix this session
+(L1-L3, Fix 1-7, the reanalysis tasks) — no case for escalating to opus-tier reasoning or fable-tier
+orchestration overhead for work this well-scoped and low-risk. Design 2 needs no tier recommendation yet
+(blocked); when its blocker clears, the same tier applies — the precedent scripts it would extend are small,
+single-purpose Node projectors, not complex systems.
+
+---
+
+## Designs 1 and 3 implemented and committed (2026-07-02, same day, fifteenth pass)
+
+Both designs the confidence pass above cleared as ready shipped, via orchestrated Sonnet-5 agents, each independently pytest-verified by the orchestrator before commit (not just trusted from the implementing agent's own report):
+
+- **Design 1** (corrected-record provenance): the `revision` field, `build_revision()` helper, and retrofit of all 8 already-committed corrected records with accurate, diffed (not guessed) provenance. 1312 passed / 2 pre-existing unrelated failures.
+- **Design 3** (refined): leak-detection promoted into `agent_utility_run.py` with 14 first-ever tests (break-then-revert verified), `--exclude-leaked` added to the three utility-* compose/judge commands, the write step consolidated onto `_write_bench_output`, the print step deliberately left bespoke per the confidence pass's own finding. 1326 passed / 2 pre-existing unrelated failures.
+
+**Design 2 remains correctly unimplemented** — its target (`RESEARCH.md`) still does not exist on `main` or this branch, re-confirmed before dispatch. Not attempted, per its own explicit scope discipline.
+
+**Still open, none of it agent-actionable**: §M.9's founder decisions, §M.8 items 3-5 (real human judge calibration, seed/n targets, `comparable=True`), and the live cross-worktree `RESEARCH.md` staleness risk (still on `worktree-salvage-667`, unmerged, unsynced with this tempdoc's corrected numbers as of this pass) — all surfaced for the founder, none acted on unilaterally.
+
+---
+
+# The combined U-Founder-2 estimate (2026-07-02, sixteenth pass) — Step 0, now producible
+
+> §M.9 U-Founder-2 stated: "Step 0 of the implementing session is the combined estimate (engineering lift
+> §T.1-T.4 + the calibrated run at the real chosen scale); the founder signs off against that number before
+> any certified-n spend." Engineering lift is now complete (this entire tempdoc's implementation arc,
+> through Item 1/Item 3 above). This pass produces the actual current number, scoped by what this session's
+> own work has since learned.
+
+## The re-seed run cost (English + German only)
+
+The existing 5-seed calibration estimates (`tmp/624-run/calibration-{en,de}.json`, computed earlier this
+session, before this session's later fixes) remain valid — the corpora themselves are unchanged, and none of
+this session's subsequent work (the leak-fix corpus staging, `--exclude-leaked`, revision metadata) changes
+the per-cell LLM cost, only post-hoc composition. Re-running calibration to re-derive an already-known-correct
+number would be redundant spend, not more rigor — the existing figures are cited directly:
+
+| Corpus | Cost (5 seeds) | Time (5 seeds) |
+|---|---|---|
+| battlefield-en-v1 | $76.75 | 136.9 min |
+| battlefield-de-v1 | $86.20 | 134.9 min |
+| **Combined (en+de)** | **$162.95** | **~272 min (~4.5 hrs)** |
+
+## The cross-family grader panel cost (Item 1's estimator, computed for real)
+
+Using the newly-built `estimate_cross_family_cost` (`external_grader.py`) with an approximate, clearly-labeled
+price table for two mid-tier frontier-model grading calls (~400 input tokens + ~30 output tokens per call,
+typical mid-2026 API pricing — **not a live quote, verify against actual current provider pricing before
+running**):
+
+| n (sample size) | Call count | Cost estimate |
+|---|---|---|
+| 40 (§M.4's floor) | 160 (2 graders × dual-order) | **$0.16** |
+| 50 (§M.4's ceiling) | 200 | **$0.20** |
+
+Genuinely negligible next to the run cost — the grader panel's own price is not a meaningful factor in the
+sign-off decision.
+
+## What's explicitly excluded, and why
+
+**`synth-scan-v1` (the OCR corpus) is excluded from this estimate entirely.** Item 3 (above) found that even
+after tempdoc 671's real, committed fix, the corpus's live nDCG@10 is still 0.0000 — not because of seed
+count or spend, but because the separate, already-documented VDU-trigger wiring gap means no real text is
+ever extracted from these documents at all (`vdu_status: PENDING` on 360 of 361 docs). **Spending on a 5-seed
+re-run of this corpus would not fix anything and would not be well spent** until that wiring gap is resolved
+first — a different, smaller, non-LLM-spend engineering task (Head-bootstrap wiring, not extraction routing),
+already tracked in tempdoc 671's own remaining-work list. This is a real, current scoping decision, not an
+oversight: en/de are ready to spend against; scan needs its own prerequisite fix before spend is well-founded
+there.
+
+## The combined number
+
+**$162.95 + $0.20 ≈ $163.15, ~4.5 hours, covering English and German at the full 5-seed target — with the
+scan/OCR corpus explicitly deferred pending its own separate, already-identified prerequisite fix, not
+included in this ask.** This is the real, current "Step 0" figure — smaller than earlier passes' framing
+implied ("hundreds-to-low-thousands... larger than 624/635's ~$50-150 small-corpus envelopes"), because the
+engineering lift that estimate worried about is now genuinely done, and because scan's own blocker turned out
+to be a different kind of problem than money solves.
+
+---
+
+# Tempdoc 672 opened (2026-07-02, tenth pass) — the VDU wiring gap gets a proper home
+
+The scan corpus's blocker (`vdu_status: PENDING` on 360/361 docs, traced above to a Head-bootstrap wiring
+gap rather than extraction routing) was, until this pass, tracked only as an out-of-scope remaining-work
+item inside tempdoc 671's own text — no document actually owned fixing it. A register check before opening
+anything new (**explore-before-implementing**, applied to tempdoc ownership rather than code) confirmed
+that: tempdoc 607 ("Document extraction routing authority") governs *which extraction path a document
+takes*, not *whether the VDU service is wired at Head startup at all* — grepped for
+`offlineProcessingTrigger` / `OfflineCoordinatorBuilder` / bootstrap, zero hits. Tempdoc 671 explicitly
+declines the scope in its own status line. Tempdoc 519 (Head composition graph) is stale (2026-05-18, over
+150 newer tempdocs since) and about a different specific subject (mega-class decomposition, not wiring
+completeness).
+
+**[`672-vdu-offline-coordinator-bootstrap-wiring.md`](672-vdu-offline-coordinator-bootstrap-wiring.md) is
+now open** to carry this forward. It inherits 671's own root-cause narrowing (`OfflineCoordinatorBuilder.
+java:35-38`, `ServicePhase.java:149-167`) rather than re-deriving it, and names the directly-applicable
+precedent already sitting in the postmortem register (`docs/reference/contributing/agent-postmortems.md`
+§10, `standalone-capability-stays-stuck`, tempdoc 521 merge T2.5) — a lazily-constructed capability
+whose readiness needs a late-bind bridge (`addListener`), the same shape as `HeadAssembly.
+connectKnowledgeServer`'s pre-519 bug. **672 is a hard prerequisite for re-attempting the scan corpus in
+this tempdoc**: until it lands, no amount of spend on `synth-scan-v1` re-runs produces a different result
+than the 0.0000 already measured, because the corpus's actual text never reaches the index either way.
+
+**Also refined this pass**: §M.8 item 3's cross-family grader panel doesn't necessarily need external
+paid APIs. `external_grader.py`'s client is endpoint-agnostic (URL + model name + headers as config) — it
+can point at a *second locally-hosted model of a different lineage than the local Qwen judge* (e.g. a
+Llama-class or Mistral-class GGUF already loadable via the existing `llama-server` infrastructure) exactly
+as readily as a paid frontier API, satisfying the founder decision's actual stated reasoning ("different
+training lineages fail less identically") at zero cost and with no new credential dependency. The one real
+constraint: this machine's GPU (12GB) likely can't hold two ~8-9B local models simultaneously alongside the
+rest of the stack, so the panel would need sequential load/unload between graders rather than concurrent
+calls — a real design choice for whoever implements this, not decided here. This removes the standing
+credential blocker as a hard dependency for running the panel; it does not change the panel's own cost
+figure ($0.16-$0.20), which is provider-independent.
+
+**For the next agent picking up either document**: 624's own remaining path has no open design questions
+left — everything remaining is either (a) the ~$163/4.5hr English+German re-run, gated on explicit spend
+authorization, not a design task; (b) the cross-family grader panel, buildable today against local models
+with no external dependency; or (c) 672's wiring fix, a prerequisite for the scan corpus specifically and
+independent of (a)/(b). None of these block each other except (c) gating scan's own inclusion in any future
+combined run.
+
+---
+
+# Tempdocs 673 and 674 opened (2026-07-02, eleventh pass) — the plan was missing durability and had an unpriced footnote
+
+Two gaps surfaced from a direct question against the tenth-pass plan, not from anything this tempdoc had
+already flagged:
+
+**1. The plan only ever covered a one-time run.** Every other quality axis this codebase measures
+(relevance, performance, recall-leak, LLM-generation-latency) has a standing ratchet — a pinned baseline, a
+cheap re-runnable `jseval *-gate` command, a hook nudge at the moment relevant code changes. Agent-utility
+had none of that; the ~$163 re-run was being treated as the finish line rather than a one-time credibility
+investment that goes stale the moment MCP/agent-loop/retrieval-config code changes again.
+[`673-agent-utility-standing-regression-ratchet.md`](673-agent-utility-standing-regression-ratchet.md) is
+now open for the missing routine counterpart — explicitly a different judge-cost regime than §M.8's bar
+(cheap, already-trusted judge, small n, nudge-triggered) and explicitly not a substitute for the
+publication-grade run itself.
+
+**2. The local-model grader path had an unpriced engineering cost.** The tenth pass's refinement (point the
+cross-family panel at a second local model instead of a paid API) is real and correct, but "$0 dollar cost"
+was quietly standing in for "no cost" — no local dual-model-swap infrastructure exists yet, and that work
+touches `modules/app-inference`'s real lifecycle contracts, not a config flag.
+[`674-cross-family-grader-local-model-infrastructure.md`](674-cross-family-grader-local-model-infrastructure.md)
+is now open to design and price that work properly, including verifying the assumed VRAM constraint against
+real current usage rather than asserting it.
+
+**Register check before opening either**: grepped for an existing "utility-gate" owner (zero hits) and for
+existing local-model-swap infrastructure (nothing purpose-built) — both gaps are genuinely unclaimed, not
+duplicates of anything already planned.
+
+---
+
+# 672/673/674 report back (2026-07-02, twelfth pass) — investigation done, two real reversals, decisions needed before any implementation
+
+Three agents ran the investigation-and-design-theorization pass each tempdoc asked for. None have started
+implementation. Two of them found that this tempdoc's own opening framing was wrong about where the real
+work is — worth stating plainly rather than glossing over, since both reversals are genuine, not nitpicks.
+
+## 672 (VDU wiring) — the one that's actually ready to build
+
+Diagnosis is confirmed, and the specific cause is *not* what 671's own inbox note guessed: the null
+dependency is `knowledgeClient` (the Worker/Knowledge client, value-captured null at Head construction and
+never re-bound for VDU specifically), not `inferenceManager` as the inbox hypothesized. The long-term design
+is settled: thread the Worker client into the VDU build path as a live supplier — the same
+`() -> this.knowledgeClient` idiom every other worker-dependent service already uses — instead of the direct
+value it was handed. This is confirmed to fix both independent trigger-consumer paths (REST and the
+operation registry) at their one shared source, is reconnect-safe by construction, adds no new late-binding
+holder, and a pre-implementation de-risking pass found the composition-root guardrails don't block it and
+the touched-test baseline is green. **This is no longer a design question — it's a go/no-go on implementing
+an already-settled, already-de-risked design.**
+
+## 673 (utility-gate) — my own framing reversed; do not build the accuracy ratchet by default
+
+I opened this tempdoc assuming "apply the proven 4-gate pattern to a new axis" was the shape, with sizing as
+the only open question. The investigation found that's wrong in a load-bearing way: reading the real 2026-
+07-02 calibrated data, the accuracy-delta this gate would naturally ratchet is **noise-dominated even at the
+full publication n** — per-seed stdev (0.05–0.10) is the same magnitude as the effect itself (−0.08 to
+−0.09). A ratchet only works when run-to-run noise is much smaller than the regression it needs to catch;
+here it isn't, at any affordable sample size. The agent also found the one thing a cheap variant *could*
+reliably catch (catastrophic tool breakage) is already covered for $0 by `mcp_tool_surface_hash`, existing
+contract tests, relevance/leak gates, and the existing `util-smoke` micro-run — so a paid accuracy ratchet
+would mostly duplicate cheaper existing coverage. **Recommendation from the investigation: don't port the
+accuracy-ratchet shape by default — lead with a $0 structural/behavioral-proxy tripwire, and keep any paid
+accuracy measurement as the deliberate periodic run it already is, not a routine gate.** Also surfaced: 673
+has a real sequencing dependency on 624 itself that its own non-goals glossed over — you cannot ratchet a
+baseline that hasn't been credibly established yet, and 624's own bar is still open.
+
+## 674 (local grader infrastructure) — my own framing reversed too; the cost moved from Java to Python, plus new risks
+
+I scoped this as `modules/app-inference` lifecycle work. The investigation found the model-swap primitive
+**already exists** (`OnlineAiServiceImpl.applyRuntimeOverrides(...)` does a full stop→reconfigure→start on
+the same port) and the single-tenant-GPU protocol already serializes access cleanly — so there's little new
+Java lifecycle work here. **The actual missing piece is on the Python side**: `run_cross_family_calibration`
+interleaves grader calls per item, which is incompatible with a serial single-GPU swap (up to ~160 reloads
+for a real run instead of ~2) — it needs restructuring to grade in batches per grader instead. The
+investigation also surfaced two real risks I hadn't considered: **correlated weakness** (two small local
+models may share more training overlap than two frontier models, so high agreement between them could be
+spuriously reassuring rather than a real calibration signal — this threatens the *meaning* of the number,
+not just its cost), and **silent same-model grading** (the local proxy doesn't route by model field, so a
+failed or forgotten swap would silently grade twice with the same model, producing meaningless
+near-perfect agreement unless the served-model identity is explicitly asserted before each batch).
+
+## Consolidated decisions now needed (yours, not mine to make unilaterally)
+
+**672 — one decision, low-stakes:** approve implementing the settled design (live-supplier threading), or
+hold for another reason? Nothing else is blocking it.
+
+**673 — four decisions, all load-bearing for what gets built, if anything:**
+1. Instrument: gate the noisy paired accuracy-delta as originally framed, or a lower-variance proxy
+   (tool-call success rate / turns / cost / absolute with-tool floor)?
+2. Given a cheap variant can only reliably catch catastrophic breakage already covered elsewhere — is a paid
+   `utility-gate` worth building at all, versus just the $0 structural tripwire?
+3. Cadence: manual/periodic, or hook-nudged on a narrow surface-hash-affecting trigger (not the existing
+   hooks' every-edit nudge, since every invocation here costs real money)?
+4. Sizing — only answerable once #1 is decided.
+
+**674 — five decisions, all load-bearing for the design:**
+1. Ownership: drive the existing app-inference swap primitive, spawn an eval-owned throwaway server
+   (bypassing the Head proxy entirely), or sidestep swapping via CPU concurrency?
+2. Panel composition: the ≥2-rater floor means a fully-local panel needs **two** different non-Qwen model
+   families, not one as originally scoped — or accept a hybrid (one local, one external whenever credentials
+   exist)?
+3. Is the batch-by-grader restructure a narrow eval-only branch, or a general serial/concurrent panel
+   property?
+4. Where does the served-model-identity assertion live, and how does it fail loud?
+5. Which specific non-Qwen GGUF(s), at what quantization, meeting a stated minimum grader capability?
+
+None of these are technical judgment calls I should settle on my own — they're the same class of founder-
+level trade-off this tempdoc has consistently routed to you throughout (§M.9), and two of them (673's #2,
+674's #1) are genuinely "should we build this at all, in this shape" questions, not just sizing.
+
+---
+
+# Run-scope cost optimization (2026-07-02, seventeenth pass) — decomposing the $163 before it is signed
+
+> Trigger: the founder conditionally accepts the U-Founder-2 ask but requires, first, that the run's
+> time/money cost be checked for meaningful improvement **from a long-term perspective** (the run class may
+> recur). Analysis pass only — no spend, no run. Inputs verified directly this pass: the committed
+> `calibration-{en,de,scan}.json` (cell counts, per-cell cost, concurrency, timeouts), the `--conditions`
+> CLI surface (`commands/utility.py:130`, default `A,C`), the composer's conditional arm handling
+> (`utility_comparison.py:621-626` — arms blocks are presence-gated, `primary_arm` falls back), and the
+> now-landed 672/673/674 implementations in this worktree.
+
+## Decomposition of the signed-off-pending figure
+
+390 cells per corpus = 26 retained queries × **3 conditions (A,B,C)** × 5 seeds, at concurrency 8:
+per-cell ≈ $0.197 (en) / $0.221 (de); wall-clock ∝ cells ÷ concurrency. **Condition C is one third of
+every cell, dollar, and minute in the estimate** — and it is not needed for the certified record.
+
+## Lever 1 (adopt): drop condition C from the certified run — ≈ −$54 and −1.5h, zero engineering
+
+`--conditions A,B` already exists. Justification, in this tempdoc's own terms: §M.1 fixed C as
+**secondary/diagnostic, never headlined**; §M.8 item 2 explicitly allows "C dropped from any published
+number entirely, kept diagnostic-only"; and C's harm finding is already conclusive at the existing data
+(leak-free pooled Δ−0.533, p≈0.0, n=152 — two more seeds change nothing decision-relevant). Honest caveat:
+C's zero-file-tools property is what exposed the scan index contamination (As-built #7 Finding 1) — that
+canary function is now covered structurally (isolated per-run staging + the pre-run watched-roots
+assertion + the pending per-cell tool-call scan in the Inspect runner), so the canary is no longer the
+only detection layer. **Option value preserved**: `eval_set` treats conditions as separate tasks in the
+same log dir, so C can be added *later* to the same run at exactly C's own marginal cost (~$54) with no
+re-run of A/B — dropping it now burns nothing.
+
+## Lever 2 (adopt): the "repeated regularly" premise is already served by 673, not by repeating this run
+
+673 shipped `jseval utility-gate` (live-verified, **$0.144/invocation**, MCP-surface-hash triggered) after
+its own investigation found the realistic-arm accuracy delta is **noise-dominated even at full
+publication n** (per-seed stdev 0.05–0.10 ≈ the effect itself) — a routinely-repeated full run would be a
+statistically pointless regression detector at any affordable size. Long-term cost posture: **$0.144 per
+routine check; the ~$109-class certified run recurs only on claim re-certification events** (a major
+retrieval/tool-surface change worth re-publishing), not on a schedule.
+
+## Lever 3 (adopt, mostly free): scan re-joins as a separately-gated follow-up, cheaper than its estimate
+
+672's fix is implemented and live-verified in this worktree, so the scan corpus is unblocked — but before
+any scan spend: (a) re-run the fidelity gate through the fixed VDU path (local GPU + retrieval eval only,
+$0 API); (b) scan-specific recalibration with **per-condition** timeout sizing (the As-built #5 pathology
+was A/B cells burning time against unreadable images — the calibrate pilot must capture that, and a
+turn-budget cap on repeated `Read` attempts remains the design option). A,B-only scan ≈ **$26** (floor —
+the recalibrated timeout will likely raise it somewhat). Full three-corpus certified battlefield, A,B × 5
+seeds ≈ **$135 all-in** — less than the two-corpus $163 estimate with C.
+
+## Levers considered and rejected (named so they are not re-litigated)
+
+- **Reuse the existing 3 seeds, add 2**: cohort mismatch — the harness changed since (leak-staging fix,
+  disallow-list including `Skill`, pending stream-json runner change), so old cells carry a different
+  `agent_cohort_key` and cannot pair with new ones; mixing pre-/post-leak-fix cells is also the exact
+  hostile-reviewer attack the fix exists to close. Fresh run required.
+- **Per-cell budget/turn caps on en/de**: creates exclusions → `paired_comparability` failure — the
+  twice-learned lesson. (Scan's turn cap is different: there it *fixes* an exclusion pathology.)
+- **Hand-raised concurrency / two parallel backends**: contention → timeout tail → exclusions (the same
+  failure, observed live twice); 16 concurrent `claude` processes is an untested rate-limit regime. The
+  calibrate pilot may *probe* a higher target concurrency at ~$2 cost, but concurrency is never hand-set.
+  Wall-clock is free overnight; money is not.
+- **Anthropic Batch API / cheaper tier / smaller n or seeds**: inapplicable to interactive agent loops /
+  already haiku by binding policy / below §M.8 item 4's floor.
+
+## Revised ask (supersedes the sixteenth pass's $163.15 as the sign-off figure)
+
+**EN+DE, conditions A,B, 5 seeds ≈ $109 ± 10%, ~3h wall-clock + ~30-40 min ingest/calibration overhead**
+(fresh cheap calibrate pass ~$2-5 — re-pins the cohort key at the current SHA and validates the changed
+harness; the tempdoc's own standing rule). Scan follows separately per Lever 3 (+~$26 after its $0
+prerequisites). Grader panel: local per 674's shipped seam, ~$0. Sequencing precondition unchanged from
+the previous assessment: the Inspect-runner per-cell tool-call capture/assertion gap (§As-built #5
+residual) must land first, or the record fails §M.8 item 2's empirical half by construction.
+
+---
+
+# Tempdoc-ownership sweep before the runs (2026-07-02, eighteenth pass) — what to open, reopen, or deliberately not
+
+> Trigger: founder asks whether further tempdocs should be opened/reopened before proceeding with the
+> remaining runs. Register-check pass (the `explore-before-implementing` discipline applied to tempdoc
+> ownership, the same move the tenth pass made before opening 672). Verified inputs: the observations
+> inbox, the search-quality register's open questions, the 671-674 status lines as committed in this
+> worktree, and the committed records' `git_sha` provenance.
+
+## Verdict: no new tempdoc is required before the runs — every pre-run subject has an owner
+
+| Pre-run subject | Owner | State |
+|---|---|---|
+| Inspect-runner per-cell tool-call capture + disallowed-tools/leak assertion | **624** (§As-built #5 residual; §M.8 item 2) | next work item, no spend |
+| Scan re-certification: fidelity re-run through the fixed VDU path, per-condition timeout calibration, turn-budget cap, degradation-band re-verification | **624** (§T.2/§M.2) on top of **672** (landed) | gated follow-up, $0 prerequisites |
+| Cross-family grader panel execution | **624** (§M.8 item 3, U-Founder-4 revised) + **674** (rater seam shipped) | runnable locally |
+| Routine regression detection between certified runs | **673** (shipped; D10 deferred inside it by explicit scope decision) | live, $0.144/check |
+| Operator-config isolation disclosure on the run record | **624** (§M.1 item 4 honesty field) | part of run prep |
+
+## Deliberately NOT opened now, with pre-registered triggers (so this is not re-litigated per session)
+
+1. **A "why does condition B hurt accuracy" mechanism tempdoc — not yet.** The borderline pooled figure
+   (Δ−0.094, p=0.055) is not yet a confirmed effect; opening a mechanism investigation before the 5-seed
+   run would investigate a number that may still wash out (`interrogate-results`, applied prospectively).
+   **Trigger:** the 5-seed leak-free record shows a significant negative B delta. The product-lever half
+   already has a standing owner (the As-built #7 → 655 handoff); what would need a new home then is the
+   *mechanism study* (wrong-chunk trust vs. retrieval-displaces-reading vs. paraphrase-bridging), not the
+   tool-surface response.
+2. **Reopening 625 (asserted-measurement provenance) — not yet.** Its amendment half is recorded here
+   (Design theorization #2 Reach) and its projector half (Design 2) has an explicit trigger: `RESEARCH.md`
+   existing on `main`. Founder has deferred the RESEARCH.md sync until this worktree's work finishes —
+   the trigger stands.
+3. **The `staged_recall_accounting` trec-preference fix** — already register-flagged (F-026 methodology
+   note, "a future dedicated tempdoc") and does not touch the agent-eval path; unrelated to these runs.
+4. **646 activation (event-sourced tempdoc) for this document's own 3,800-line sprawl — not as a tempdoc.**
+   The cheaper instrument is a short current-state fold section in 624 itself as part of run prep, so the
+   next reader doesn't reconstruct 18 dated passes; 646's own multi-document trigger still hasn't fired.
+
+## The one genuinely new pre-run consideration this sweep surfaced: record provenance vs. squash publication
+
+The committed records pin `cohort.git_sha` to **worktree commits** (verified: `d291240…` in the leak-free
+judged records) — SHAs that will never be reachable from public `main` under this repo's squash-publication
+policy (ADR-0045 / branch-safety merge workflow). For internal interim records that is acceptable; for the
+**certified record intended to back a public claim**, §M.8 item 5's reproducibility intent ("rerunnable at
+a stated version") is materially stronger if the run executes on a **published SHA**. This argues for a
+sequencing option, a workflow decision rather than a tempdoc: **publish this worktree's branch (the 624 arc
++ the 671/672 production fixes + 673/674) to `main` first, then execute the certified run from updated
+`main`** — which also ships 672's user-facing VDU fix independent of the eval, and shrinks the
+merge-conflict window against 3-4 parallel agents. The trade-off is PR/review latency before the run.
+Founder's call; if the run goes first instead, the mitigation is a post-merge `revision` entry on the
+record noting the public squash SHA whose tree corresponds to the run's code (the Design-1 field exists
+for exactly this class of correction).
+
+---
+
+# As-built #8 (2026-07-02, nineteenth pass) — the Inspect runner now carries per-cell tool-call data; §M.8 item 2's empirical half is closable
+
+> Founder direction: publish-then-run. This pass closes the one engineering prerequisite before the PR —
+> the §As-built #5 "Known residual gap" (the Inspect executor captured no tool calls, so the
+> `--disallowedTools` config could never be *empirically* verified per cell, and the answer-key-leak
+> tool-call backstop had no data). Implemented via an orchestrated Sonnet subagent; orchestrator-verified
+> at the cited lines before recording here.
+
+- **One shared parser, not a second copy**: the classic runner's inline stream-json parsing was extracted
+  into `agent_retrieval_eval.parse_claude_stream_json()` (`agent_retrieval_eval.py:1038`), now called by
+  both runners — no behavior change on the classic path.
+- **The Inspect solver** (`agent_utility_inspect.py:76-77`) now invokes `claude -p` with
+  `--output-format stream-json --verbose` (byte-identical argv to the classic runner) and stashes
+  `tool_calls` / `disallowed_tool_calls` / `leak_suspect_tool_calls` into every sample's metadata —
+  **unconditionally, before the error check** (`:128-132`), so an errored/timed-out cell still records
+  what it did.
+- **Aggregation to the record**: `eval_logs_to_summaries` projects the three keys per cell;
+  `compose_utility` carries an additive `tool_call_assertions` block (`utility_comparison.py:307,311`)
+  with per-condition `cells_total / cells_with_tool_data / cells_with_disallowed_violations /
+  cells_with_leak_suspect`. Back-compat is honest by construction: logs without tool data report
+  "tool data absent", never a fabricated clean zero — "0 violations across N cells with data" and
+  "no data" are distinguishable in the record, per this tempdoc's own honesty-as-fields principle.
+- **Verification**: 35 new fixture tests (including a disallowed-call fixture and a queries.json-Read
+  fixture); full jseval suite **1478 passed**; one live `claude -p` smoke ($0.0477, CLI 2.1.198) through
+  the real argv/parser confirmed stream-json parsing of real events (result text, session id,
+  cache-token split). **Honest residual**: the live smoke was a no-tool trivial prompt, so the
+  `tool_use` block shape was exercised by fixtures only — that shape is the classic runner's
+  production-proven parsing (live-verified in As-built #5's §M.1 smoke), now shared, not new code.
+- Commit: `797cb28`.
+
+**A load-bearing side-finding (own pass, below):** the full-suite run surfaced that
+`corpus_generate.generate()` is **non-deterministic across processes** at HEAD — two governance tests
+fail identically on origin/main (pre-existing, not this branch; the branch's new scan-axis determinism
+test inherits the same root cause). This breaks the 664 regeneration-determinism guarantee the certified
+corpora's recipe→signature chain depends on, so it is being root-caused and fixed before the PR rather
+than logged-and-deferred; outcome recorded in the next pass.
+
+---
+
+# Generator-determinism scare resolved (2026-07-02/03, twentieth pass) — the corpora were never at risk; the *verification harness* was lying
+
+> Root-caused and fixed via a second orchestrated Sonnet subagent (commit `53866e8`);
+> orchestrator-re-verified (the three determinism tests green from the repo-root invocation that
+> reproduced the failure 100% pre-fix).
+
+- **Root cause was environmental import resolution, not generator logic**: `regenerate_and_diff()`
+  spawned its cross-process probe via `python -c` with no pinned `cwd`
+  (`corpus_generate.py:656-662` pre-fix). Invoked from the repo root, the child's `sys.path[0]` did not
+  contain the local `jseval/`, so imports fell through to an ambient `pip install -e` of jseval pointing
+  at a **different, stale checkout still carrying the pre-664 `hash(axis)` randomization** — both
+  subprocesses ran that stale code and diverged, perfectly reproducing the pre-664 symptom on a tree
+  whose own generator was already fixed. Isolation evidence: the tests pass 100% (30+ runs) with pytest
+  cwd at `scripts/jseval/`, fail 100% from the repo root — cwd, not test order, was the variable.
+- **Fix**: pin the subprocess `cwd` to the package root (`corpus_generate.py:676,681`) so the child
+  always shadows any ambient install. The two determinism tests that fail on today's origin/main are
+  the same environmental issue — this branch fixes them for main as a side effect.
+- **No corpus reconciliation needed — verified, not assumed**: all three battlefield corpora compare
+  exact-equal across recorded `metadata.json` signature == on-disk content == post-fix regeneration
+  (per-corpus hashes in the fix commit's report). The committed corpora were generated by direct
+  in-process `generate()` calls that never touched the buggy subprocess path; only the *verifier* was
+  unreliable.
+- **The honest generalization, logged not fixed** (observations shard): other
+  `subprocess.run([sys.executable, ...])` sites in jseval were not audited for the same cwd-pinning
+  gap; and the machine-level footgun (a stale editable install silently shadowing worktree code in
+  spawned children) is a workshop-wide hazard beyond this one call site.
+- Full suite after both this and As-built #8: **1481 passed, 2 failed** — the two remaining failures
+  are the pre-existing, unrelated `test_correction_probe.py` missing-data-file pair (also failing on
+  origin/main; not this branch's subject).

@@ -23,7 +23,9 @@ to keep generation deterministic and gate-certifiable).
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import random
 import subprocess
@@ -83,6 +85,39 @@ _SEM_PLACE = [
     ("fishing wharf", "angling quay"), ("orchard slope", "fruit-grove hillside"),
 ]
 
+# Third combinatorial descriptor axis (tempdoc 624 T.1): a numbered/ordinal qualifier,
+# synonym-paired like type/place — the doc surface uses the cardinal ("unit seven"), the
+# query synonym uses the ordinal ("the seventh installation"), zero token overlap per pair.
+# This exists purely to widen the achievable non-colliding descriptor space (12 types x 26
+# places = 312 combos was measured to already produce 43-94% distractor-descriptor
+# duplication at realistic corpus scale/distractor_ratio) — it is NOT needed for gold-chain
+# uniqueness, which the place axis alone already guarantees (generate()'s semantic-mode cap
+# limits n_chains <= len(sem_places)).
+_SEM_QUAL = [
+    ("unit one", "the first installation"), ("unit two", "the second installation"),
+    ("unit three", "the third installation"), ("unit four", "the fourth installation"),
+    ("unit five", "the fifth installation"), ("unit six", "the sixth installation"),
+    ("unit seven", "the seventh installation"), ("unit eight", "the eighth installation"),
+    ("unit nine", "the ninth installation"), ("unit ten", "the tenth installation"),
+    ("unit eleven", "the eleventh installation"), ("unit twelve", "the twelfth installation"),
+    ("unit thirteen", "the thirteenth installation"), ("unit fourteen", "the fourteenth installation"),
+    ("unit fifteen", "the fifteenth installation"), ("unit sixteen", "the sixteenth installation"),
+    ("unit seventeen", "the seventeenth installation"), ("unit eighteen", "the eighteenth installation"),
+    ("unit nineteen", "the nineteenth installation"), ("unit twenty", "the twentieth installation"),
+]
+_SEM_QUAL_DE = [
+    ("Einheit eins", "die erste Anlage"), ("Einheit zwei", "die zweite Anlage"),
+    ("Einheit drei", "die dritte Anlage"), ("Einheit vier", "die vierte Anlage"),
+    ("Einheit fünf", "die fünfte Anlage"), ("Einheit sechs", "die sechste Anlage"),
+    ("Einheit sieben", "die siebte Anlage"), ("Einheit acht", "die achte Anlage"),
+    ("Einheit neun", "die neunte Anlage"), ("Einheit zehn", "die zehnte Anlage"),
+    ("Einheit elf", "die elfte Anlage"), ("Einheit zwölf", "die zwölfte Anlage"),
+    ("Einheit dreizehn", "die dreizehnte Anlage"), ("Einheit vierzehn", "die vierzehnte Anlage"),
+    ("Einheit fünfzehn", "die fünfzehnte Anlage"), ("Einheit sechzehn", "die sechzehnte Anlage"),
+    ("Einheit siebzehn", "die siebzehnte Anlage"), ("Einheit achtzehn", "die achtzehnte Anlage"),
+    ("Einheit neunzehn", "die neunzehnte Anlage"), ("Einheit zwanzig", "die zwanzigste Anlage"),
+]
+
 # German synonym pools — the Invariant-#6 (ADR-0043) showcase: the doc descriptor and the
 # query synonym share NO surface tokens, so grep/pure-BM25 fail, and the multilingual dense
 # model must bridge German↔German semantically. Catalog phrasing ("Standort: <type>, <place>.")
@@ -112,18 +147,48 @@ _SEM_PLACE_DE = [
 ]
 
 
-def _sem_for(idx, rng, *, gold, lang="en"):
-    """Build a (doc_noun, query_noun, doc_place, query_place) tuple. Gold chains get a UNIQUE
-    place by index (disambiguable); distractors get a random type+place (hard negatives).
-    ``lang`` selects the English or German synonym pools."""
+def _gold_descriptor_reservations(n_chains, lang="en"):
+    """The (type_idx, place_idx, qual_idx) index-triples the gold chains in a `generate()` call
+    will occupy — mirrors `_sem_for`'s gold branch exactly. Used to EXCLUDE those combinations
+    from the distractor draw (tempdoc 624 T.1), so a distractor can never reproduce a gold
+    descriptor by construction rather than merely being caught after the fact by
+    `corpus_certify.descriptor_collision_report`."""
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
+    return {(g % len(types), g % len(places), g % len(quals)) for g in range(n_chains)}
+
+
+def _sem_for(idx, rng, *, gold, lang="en", exclude=None):
+    """Build a (doc_noun, query_noun, doc_place, query_place, doc_qual, query_qual) tuple.
+
+    Gold chains get a deterministic (type, place, qualifier) triple cycled by index. Place
+    alone already guarantees uniqueness across gold chains within one `generate()` call
+    (`generate()`'s semantic-mode cap limits `n_chains <= len(sem_places)`) — the qualifier
+    axis exists to widen the combinatorial descriptor space, not to carry uniqueness itself.
+
+    Distractors draw UNIFORMLY AT RANDOM from the full type x place x qualifier space,
+    EXCLUDING any index-triple already reserved by a gold chain this call (``exclude`` — see
+    `_gold_descriptor_reservations`) via rejection sampling: ``exclude`` holds at most
+    `n_chains` (<=26) entries against a pool of `len(types) * len(places) * len(quals)`
+    (thousands of combinations with the qualifier axis), so this terminates in a handful of
+    draws even in the worst case. ``lang`` selects the English or German synonym pools.
+    """
+    types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
+    places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
     if gold:
-        t = types[idx % len(types)]
-        p = places[idx % len(places)]
+        ti, pi, qi = idx % len(types), idx % len(places), idx % len(quals)
     else:
-        t, p = rng.choice(types), rng.choice(places)
-    return (t[0], t[1], p[0], p[1])
+        reserved = exclude or set()
+        while True:
+            ti = rng.randrange(len(types))
+            pi = rng.randrange(len(places))
+            qi = rng.randrange(len(quals))
+            if (ti, pi, qi) not in reserved:
+                break
+    t, p, q = types[ti], places[pi], quals[qi]
+    return (t[0], t[1], p[0], p[1], q[0], q[1])
 
 
 def _name(rng: random.Random, uid: int) -> str:
@@ -177,18 +242,19 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
         rel = rels[i % len(rels)]
         if lang == "de":
             if sem and i == 0:
-                # head doc: German descriptor (sem[0]/sem[2]); the query references it by
-                # German SYNONYMS (sem[1]/sem[3]) → grep fails, multilingual dense bridges.
-                body = (f"Standort: {sem[0]}, {sem[2]}. "
+                # head doc: German descriptor (sem[0]/sem[2]/sem[4]); the query references it
+                # by German SYNONYMS (sem[1]/sem[3]/sem[5]) → grep fails, multilingual dense bridges.
+                body = (f"Standort: {sem[0]}, {sem[2]}, {sem[4]}. "
                         f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. ")
-                title = f"Standort {sem[0]}, {sem[2]}"
+                title = f"Standort {sem[0]}, {sem[2]}, {sem[4]}"
             else:
                 body = f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. "
                 title = f"Über {ents[i]}"
         elif sem and i == 0:
-            # head doc: surface descriptor (doc_noun/doc_place) + name + link
-            body = f"The {sem[0]} in the {sem[2]}, designated {ents[i]}, {rel[1]} {ents[i+1]}. "
-            title = f"The {sem[0]} in the {sem[2]}"
+            # head doc: surface descriptor (doc_noun/doc_place/doc_qual) + name + link
+            body = (f"The {sem[0]} in the {sem[2]}, {sem[4]}, designated {ents[i]}, "
+                    f"{rel[1]} {ents[i+1]}. ")
+            title = f"The {sem[0]} in the {sem[2]}, {sem[4]}"
         else:
             body = f"The {ents[i]} {rel[1]} {ents[i+1]}. "
             title = f"The {ents[i]}"
@@ -198,8 +264,8 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
         docs.append((last.lower(), f"Über {last}",
                      _pad(f"{last} ist mit dem Wert {attr} verbunden. ", target_words)))
         if sem:
-            # reference the head by its German synonym descriptor (sem[1]/sem[3]), NOT its name
-            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}, "
+            # reference the head by its German synonym descriptor (sem[1]/sem[3]/sem[5]), NOT its name
+            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}, {sem[5]}, "
                  f"mit welchem Wert ist die letzte Entität verbunden?")
         else:
             q = (f"Folgt man den Verknüpfungen ausgehend von {ents[0]}, "
@@ -207,7 +273,7 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
     else:
         docs.append((last.lower(), f"The {last}", _pad(f"{last} is associated with {attr}. ", target_words)))
         # head reference: SYNONYM descriptor (semantic) or the verbatim name (lexical)
-        head_ref = f"the {sem[1]} in the {sem[3]}" if sem else ents[0]
+        head_ref = f"the {sem[1]} in the {sem[3]}, {sem[5]}" if sem else ents[0]
         phrase = head_ref
         for i in range(len(ents) - 1):
             phrase = f"{rels[i % len(rels)][2]} {phrase}"
@@ -220,17 +286,18 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     """Render a chain as code files: fn e0 calls e1 calls ... returns attr. Multi-hop = call trace.
 
     If ``sem`` is set, the head function carries its purpose as a descriptor comment
-    (sem[0]/sem[2]) and the QUERY references it via SYNONYMS (sem[1]/sem[3]) without naming
-    the function — so grep/pure-BM25 fail at the entry and dense must bridge semantically.
+    (sem[0]/sem[2]/sem[4]) and the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5])
+    without naming the function — so grep/pure-BM25 fail at the entry and dense must bridge
+    semantically.
     """
     docs = []
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head doc: descriptor in the TITLE + a module docstring (the high-signal fields
-            # dense embeds), mirroring the prose member — sem[0]/sem[2] (doc side) so the query's
-            # sem[1]/sem[3] synonyms stay zero-overlap (grep-defeating).
-            title = f"the {sem[0]} in the {sem[2]}"
-            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}."""\n'
+            # dense embeds), mirroring the prose member — sem[0]/sem[2]/sem[4] (doc side) so the
+            # query's sem[1]/sem[3]/sem[5] synonyms stay zero-overlap (grep-defeating).
+            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
+            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}, {sem[4]}."""\n'
                     f"def {ents[i].lower()}():\n    return {ents[i+1].lower()}()\n\n"
                     + "# " + _FILLER.replace(". ", ".\n# "))
         else:
@@ -243,7 +310,7 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     docs.append((last.lower(), f"{last.lower()}.py", _pad(body, target_words)))
     if sem:
         q = (f"What value is ultimately returned by the routine for the "
-             f"{sem[1]} in the {sem[3]}?")
+             f"{sem[1]} in the {sem[3]}, {sem[5]}?")
     else:
         q = f"What value does the function {ents[0].lower()}() ultimately return when called?"
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
@@ -252,17 +319,18 @@ def _render_code(ents, attr, target_words, idx, sem=None):
 def _render_tabular(ents, attr, target_words, idx, sem=None):
     """Render a chain as table rows requiring a join across docs.
 
-    If ``sem`` is set, the head table carries a descriptor caption (sem[0]/sem[2]) and the
-    QUERY references it via SYNONYMS (sem[1]/sem[3]) without naming the head entity — so
-    grep/pure-BM25 fail and dense must bridge semantically.
+    If ``sem`` is set, the head table carries a descriptor caption (sem[0]/sem[2]/sem[4]) and
+    the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5]) without naming the head entity
+    — so grep/pure-BM25 fail and dense must bridge semantically.
     """
     docs = []
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head table: descriptor in the TITLE + a leading caption (high-signal), mirroring
-            # the prose member — doc-side sem[0]/sem[2] keeps the query's sem[1]/sem[3] zero-overlap.
-            title = f"the {sem[0]} in the {sem[2]}"
-            caption = f"Table for the {sem[0]} in the {sem[2]}.\n"
+            # the prose member — doc-side sem[0]/sem[2]/sem[4] keeps the query's
+            # sem[1]/sem[3]/sem[5] zero-overlap.
+            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
+            caption = f"Table for the {sem[0]} in the {sem[2]}, {sem[4]}.\n"
         else:
             title = f"table_{ents[i].lower()}"
             caption = ""
@@ -272,11 +340,183 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     body = (f"| entity | attribute |\n|---|---|\n| {last} | {attr} |\n\n" + _FILLER)
     docs.append((last.lower(), f"table_{last.lower()}", _pad(body, target_words)))
     if sem:
-        q = (f"In the records for the {sem[1]} in the {sem[3]}, following the links, "
+        q = (f"In the records for the {sem[1]} in the {sem[3]}, {sem[5]}, following the links, "
              f"what attribute is recorded for the final entity?")
     else:
         q = f"Following the links starting from {ents[0]}, what attribute is recorded for the final entity?"
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
+
+
+# Degraded-scan defaults (tempdoc 624 §T.2 confidence pass): a live probe against
+# Claude Code's own `Read` tool found a plain rendered scan is read correctly via
+# multimodal vision (no block at all), but THIS band -- small font, low contrast,
+# Gaussian blur, a several-degree rotation, and salt-and-pepper noise -- made `Read`
+# correctly report it could see text but not read it clearly, and decline to answer.
+# Tuned to defeat a casual multimodal read while (intended to) remain within reach of
+# the production Tika/VLM extraction path -- the real-ingest half of this is the one
+# unverified assumption named in §T.2 (item 7 of the confidence pass).
+_SCAN_DEFAULTS = {
+    "font_size": 13,
+    "bg_gray": 210,
+    "text_gray": 70,
+    "blur_radius": 1.3,
+    "rotation_deg": 6.5,
+    "noise_ratio": 0.08,
+}
+
+
+# Sanity ceilings for `render_scan_image` (tempdoc 624 confidence-pass follow-up):
+# unbounded width/font_size/text-length let `height` grow without limit before the
+# PIL `Image` is allocated -- a latent resource-exhaustion risk if this function is
+# ever reused with less-trusted input. Calibrated against the largest real caller
+# (`635-corpora/synth-scan-v1`, doc_words=520): worst committed doc is 3,888 chars
+# of title+text, rendered at the only width/font_size ever passed in this codebase
+# (900px / 13pt) to a pre-rotation page height of 580px. Each ceiling below carries
+# ~10x headroom over that real maximum -- generous enough that no existing caller
+# will ever come close, while still bounding worst-case memory allocation.
+MAX_SCAN_TEXT_CHARS = 40_000
+MAX_SCAN_WIDTH_PX = 9_000
+MAX_SCAN_FONT_SIZE = 130
+MAX_SCAN_HEIGHT_PX = 6_000
+
+
+class ScanRenderLimitExceeded(ValueError):
+    """Raised by ``render_scan_image`` when an input would allocate an unreasonably
+    large PIL Image (oversized text, width, font size, or the resulting page height)."""
+
+
+def render_scan_image(text, *, width=900, font_size=13, bg_gray=210, text_gray=70,
+                       blur_radius=1.3, rotation_deg=6.5, noise_ratio=0.08, seed=0) -> bytes:
+    """Render ``text`` as a synthetic degraded scanned-page PNG (returns PNG bytes).
+
+    Word-wraps onto a plain page, then applies (in order) a rotation, a Gaussian
+    blur, and salt-and-pepper noise -- the degradation band confirmed live against
+    Claude Code's own `Read` tool (see ``_SCAN_DEFAULTS``). Deterministic for a
+    given ``seed`` (noise placement is the only randomized step).
+
+    Raises ``ScanRenderLimitExceeded`` if ``text``, ``width``, ``font_size``, or the
+    resulting wrapped page height would exceed the sanity ceilings above -- rather
+    than silently truncating or allocating an unbounded image.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    except ImportError:
+        raise ImportError(
+            "Pillow is required for the 'scan' corpus axis. "
+            "Install with: pip install jseval[scan]"
+        )
+
+    if len(text) > MAX_SCAN_TEXT_CHARS:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: text is {len(text)} chars, exceeds the "
+            f"{MAX_SCAN_TEXT_CHARS}-char sanity ceiling"
+        )
+    if width > MAX_SCAN_WIDTH_PX:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: width={width}px exceeds the {MAX_SCAN_WIDTH_PX}px sanity ceiling"
+        )
+    if font_size > MAX_SCAN_FONT_SIZE:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: font_size={font_size} exceeds the "
+            f"{MAX_SCAN_FONT_SIZE}pt sanity ceiling"
+        )
+
+    rng = random.Random(seed)
+    font = ImageFont.load_default(size=font_size)
+    margin = 24
+    line_height = font_size + 6
+    max_line_width = width - 2 * margin
+
+    probe_img = Image.new("L", (10, 10))
+    probe_draw = ImageDraw.Draw(probe_img)
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if probe_draw.textlength(trial, font=font) <= max_line_width:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    if not lines:
+        lines = [""]
+
+    height = margin * 2 + line_height * len(lines)
+    if height > MAX_SCAN_HEIGHT_PX:
+        raise ScanRenderLimitExceeded(
+            f"render_scan_image: wrapped page height={height}px ({len(lines)} lines) "
+            f"exceeds the {MAX_SCAN_HEIGHT_PX}px sanity ceiling"
+        )
+    page = Image.new("L", (width, height), color=bg_gray)
+    draw = ImageDraw.Draw(page)
+    y = margin
+    for line in lines:
+        draw.text((margin, y), line, fill=text_gray, font=font)
+        y += line_height
+
+    page = page.rotate(rotation_deg, expand=True, fillcolor=bg_gray, resample=Image.BICUBIC)
+    page = page.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+    pixels = page.load()
+    w, h = page.size
+    n_noise = int(w * h * noise_ratio)
+    for _ in range(n_noise):
+        x = rng.randrange(w)
+        y2 = rng.randrange(h)
+        pixels[x, y2] = 255 if rng.random() < 0.5 else 0
+
+    buf = io.BytesIO()
+    page.convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def render_scan_page(doc_id: str, title: str, text: str, *, degrade: dict | None = None) -> bytes:
+    """Render one document's (title, text) as a degraded scan-page PNG, deterministic
+    per ``doc_id`` (a stable SHA-256 seed, not the per-process-randomized `hash()`).
+
+    Called at MATERIALIZE time (`corpus_build.build_golden`), not generation time --
+    the ``axis="scan"`` corpus member's committed *source* (`docs.jsonl`) stays plain
+    ground-truth text, identical in shape to every other axis; the image is a derived,
+    regenerable *artifact* (same doc_id + text -> same PNG, always), never persisted in
+    source control (tempdoc 624 §T.2 -- keeps the "single source -> two projections"
+    pattern `corpus_build.py` already establishes: `datasets/` is gitignored precisely
+    because materialized artifacts are always reconstructable from the committed source).
+    """
+    page_text = f"{title}\n\n{text}" if title else text
+    # `hash()` is per-process-randomized (PEP 456) unless PYTHONHASHSEED is pinned,
+    # which this repo never does (see the axis_offset comment in generate() below) --
+    # a SHA-256 digest of the doc id is stable across processes instead.
+    seed = int(hashlib.sha256(doc_id.encode("utf-8")).hexdigest(), 16) % (2**32)
+    params = dict(_SCAN_DEFAULTS)
+    if degrade:
+        params.update(degrade)
+    return render_scan_image(page_text, seed=seed, **params)
+
+
+def materialize_doc_entry(doc: dict, type_axis: str | None) -> dict:
+    """Build one document's `materialize.materialize()` input entry, applying the
+    axis-aware scan-rendering decision exactly once (tempdoc 624 follow-up).
+
+    `doc` is a plain BEIR-shape dict (`_id`/`title`/`text`) — a `docs.jsonl` source
+    line or a golden/mixed `corpus.jsonl` line. When `type_axis == "scan"`, attaches a
+    base64-encoded degraded-scan PNG (via `render_scan_page`) as `image_b64`, so
+    `materialize.materialize()` writes a `.png` artifact instead of a `.txt`.
+
+    This is the ONE place the `type_axis == "scan"` check + `render_scan_page` call are
+    made. Both `corpus_build.build_golden` (materializing `datasets/golden/<name>/
+    corpus-dir/`) and `ingest._materialize_into` (materializing an eval run's ingest
+    directory from `corpus.jsonl`) call this helper instead of each re-implementing the
+    check — a second independent copy is exactly how the axis got dropped silently on
+    one of the two paths the first time.
+    """
+    entry = {"_id": doc["_id"], "title": doc.get("title", ""), "text": doc["text"]}
+    if type_axis == "scan":
+        png_bytes = render_scan_page(doc["_id"], doc.get("title", ""), doc["text"])
+        entry["image_b64"] = base64.b64encode(png_bytes).decode("ascii")
+    return entry
 
 
 def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
@@ -309,9 +549,18 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     sem_places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     if sem_active:
         n_chains = min(n_chains, len(sem_places))  # one unique descriptor place per gold
+    # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
+    # will occupy, so the distractor draw can EXCLUDE them — a gold/distractor descriptor
+    # collision becomes structurally impossible rather than merely detected after the fact.
+    gold_reserved = _gold_descriptor_reservations(n_chains, lang) if sem_active else None
 
     def render(e, a, sem):
-        if axis == "prose":
+        # `scan` reuses prose's text generation verbatim -- the axis only changes how a
+        # document is later MATERIALIZED (`corpus_build.build_golden` renders each doc's
+        # text as a degraded scan-page PNG at build time via `render_scan_page`), not how
+        # its ground-truth text is composed. `docs.jsonl` for a scan-axis corpus is
+        # therefore identical in shape to a plain prose source (tempdoc 624 §T.2).
+        if axis in ("prose", "scan"):
             return _render_prose(e, a, rels, doc_words, lang, sem=sem)
         if axis == "code":
             return _render_code(e, a, doc_words, rng.randint(0, 999), sem=sem)
@@ -328,12 +577,14 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         queries.append(q)
 
     # distractors: parallel fabricated chains (globally-unique entities), rendered the
-    # same way, NOT referenced by any query → hard negatives.
+    # same way, NOT referenced by any query → hard negatives. `exclude=gold_reserved` (tempdoc
+    # 624 T.1) keeps a distractor's descriptor draw disjoint from every gold chain's, so a
+    # distractor can never be textually indistinguishable from the query's actual answer head.
     n_distract = int(len(all_docs) * distractor_ratio)
     made = 0
     while made < n_distract:
         ents, attr = _chain(rng, hops, counter)
-        sem = _sem_for(0, rng, gold=False, lang=lang) if sem_active else None
+        sem = _sem_for(0, rng, gold=False, lang=lang, exclude=gold_reserved) if sem_active else None
         docs, _q = render(ents, attr, sem)
         for did, title, text in docs:
             if made >= n_distract:
@@ -390,6 +641,24 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
     pass ephemeral `tempfile.TemporaryDirectory()`-backed paths and let its own context manager
     clean up.
 
+    A SECOND cross-process non-determinism source (found empirically: the three "deterministic
+    across processes" tests pass when the pytest invocation's cwd happens to be `scripts/jseval/`,
+    but fail reliably -- ``docs.jsonl``/``queries.json`` mismatched -- when invoked from the repo
+    root, the realistic invocation form). Root cause: `sys.executable -c <script>` gives the child
+    `sys.path[0] = ''` (its own cwd), searched *before* site-packages. Without an explicit `cwd`,
+    the child inherits the PARENT's cwd. If that cwd doesn't directly contain a `jseval/`
+    subdirectory (true for any cwd other than `scripts/jseval/` itself), import resolution falls
+    through to whatever `jseval` happens to be `pip install -e`'d globally -- which, on a dev
+    machine with a separate long-lived checkout on `PATH`/site-packages (`pip show jseval` ->
+    `Editable project location: ...`), can be a *different, stale physical checkout* containing the
+    pre-tempdoc-664 `hash(axis)` bug. Both spawned subprocesses then run that stale buggy code
+    (not the current worktree's, already-fixed `corpus_generate.py`), and since `hash()` is
+    per-process-randomized, they diverge -- reproducing the exact pre-664 symptom despite this
+    file's own fix. Pinning `cwd` to this file's OWN package directory (`Path(__file__).parent`'s
+    parent -- the dir that directly contains `jseval/`) makes the child's `sys.path[0]` shadow any
+    ambient site-packages install, guaranteeing the subprocess imports the SAME code this function
+    itself is running from, regardless of the caller's cwd.
+
     :returns: ``{"ok": True, "mismatched_files": [...]}`` or ``{"ok": False, "error": "..."}`` if a
       regeneration subprocess itself failed (not a mismatch — a hard error, e.g. bad parameters).
     """
@@ -401,11 +670,15 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
     )
     args = [axis, lang, str(seed), str(hops), str(distractor_ratio),
             str(bool(semantic)), str(n_chains), str(doc_words)]
+    # The directory that directly contains `jseval/` (this file is
+    # `<pkg_root>/jseval/corpus_generate.py`) -- passed as the subprocess's `cwd` so its
+    # `sys.path[0] = ''` resolves to THIS package, not an ambient site-packages install.
+    pkg_root = Path(__file__).resolve().parent.parent
 
     for out in (Path(out1), Path(out2)):
         result = subprocess.run(
             [sys.executable, "-c", "import sys; " + script, str(out), *args],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, cwd=pkg_root,
         )
         if result.returncode != 0:
             return {"ok": False, "error": f"regeneration subprocess failed: {result.stderr[-500:]}"}

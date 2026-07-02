@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionException;
+import io.justsearch.indexerworker.text.TextQualityAnalyzer;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
@@ -301,6 +302,51 @@ final class PolicyDrivenTikaExtractorTest {
   }
 
   @Test
+  @Timeout(30)
+  void realTesseractRuntimeRecordsNoTextFoundForBlankImageWithNoBaseline() throws Exception {
+    // Tempdoc 671: OCR is genuinely attempted (real Tesseract) against an image with no text at
+    // all and no baseline text either. Before the fix this was mislabeled OcrSkipReason.TEXTUAL
+    // ("existing text was already adequate") — the exact bug this test guards against.
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 4096, 40_000_000);
+    assumeTrue(
+        TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
+        "real Tesseract OCR runtime with eng tessdata is not available");
+    Path image = tempDir.resolve("ocr-blank.png");
+    writeBlankImage(image);
+    TestMetricRegistry registry = new TestMetricRegistry(OcrMetricCatalog.DEFINITIONS);
+    OcrMetricCatalog catalog = new OcrMetricCatalog(registry);
+
+    ExtractionArtifact artifact;
+    try (TimeboxedContentExtractor extractor =
+        ExtractionSandboxFactory.inProcessStructured(null, ocrConfig, catalog)) {
+      artifact = extractor.extractArtifact(image);
+    }
+
+    assertEquals(0, artifact.result().content().length());
+    assertTrue(
+        artifact.visualExtractionEvidenceJson().contains("\"ocrSkipReason\":\"no_text_found\""),
+        "expected no_text_found, got evidence=" + artifact.visualExtractionEvidenceJson());
+    assertTrue(artifact.visualExtractionEvidenceJson().contains("\"route\":\"structured\""));
+    assertFalse(
+        artifact.visualExtractionEvidenceJson().contains("\"ocrSkipReason\":\"textual\""),
+        "must not be mislabeled textual (tempdoc 671)");
+    // Tempdoc 671, Long-term design part 2: the more foundational, cross-extractor field must
+    // also be honestly labeled for this exact document, not just the OCR-specific evidence.
+    assertEquals(
+        ExtractionStatus.SUCCESS_EMPTY,
+        artifact.status(),
+        "must not be mislabeled SUCCESS_FULL for an empty document (tempdoc 671 part 2)");
+    assertEquals(
+        1L,
+        registry.counterValue(
+            OcrMetricCatalog.SKIPPED_TOTAL, OcrTags.OcrSkipTags.of(OcrSkipReason.NO_TEXT_FOUND)));
+    assertEquals(
+        0L,
+        registry.counterValue(
+            OcrMetricCatalog.SKIPPED_TOTAL, OcrTags.OcrSkipTags.of(OcrSkipReason.TEXTUAL)));
+  }
+
+  @Test
   @Timeout(60)
   void realTesseractRuntimeAddsSelectiveOcrEvidenceForMixedPdf() throws Exception {
     OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
@@ -375,6 +421,101 @@ final class PolicyDrivenTikaExtractorTest {
   }
 
   @Test
+  @Timeout(60)
+  void realTesseractRuntimeKeepsTextualForMixedPdfWithUnreadableImagePage() throws Exception {
+    // Tempdoc 671: empirically confirms (not just statically argues) that trySelectivePdfOcr
+    // never needs the NO_TEXT_FOUND code — a mixed PDF, by definition, always has real baseline
+    // text on another page, so its own no-improvement tail must stay TEXTUAL.
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    assumeTrue(
+        TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
+        "real Tesseract OCR runtime with eng tessdata is not available");
+    Path pdf = tempDir.resolve("mixed-unreadable-image.pdf");
+    writeMixedTextAndBlankImagePdf(pdf);
+
+    ExtractionArtifact artifact;
+    try (TimeboxedContentExtractor extractor =
+        ExtractionSandboxFactory.inProcessStructured(null, ocrConfig, OcrMetricCatalog.noop())) {
+      artifact = extractor.extractArtifact(pdf);
+    }
+
+    assertTrue(
+        artifact.visualExtractionEvidenceJson().contains("\"route\":\"structured\""),
+        "expected the unreadable image page to fall back to the structured baseline, got evidence="
+            + artifact.visualExtractionEvidenceJson());
+    assertTrue(
+        artifact.visualExtractionEvidenceJson().contains("\"ocrSkipReason\":\"textual\""),
+        "mixed PDF with real baseline text must stay textual (tempdoc 671), got evidence="
+            + artifact.visualExtractionEvidenceJson());
+    assertFalse(
+        artifact.visualExtractionEvidenceJson().contains("\"ocrSkipReason\":\"no_text_found\""),
+        "mixed PDF must never be mislabeled no_text_found (real baseline text exists)");
+    String normalized = artifact.result().content().toLowerCase(java.util.Locale.ROOT);
+    assertTrue(
+        normalized.contains("readable digital text"),
+        "expected the real text page's baseline content to survive, got: " + artifact.result().content());
+    // Tempdoc 671, Long-term design part 2: real, non-empty baseline content survives — the
+    // cross-extractor status must correctly read SUCCESS_FULL, not SUCCESS_EMPTY.
+    assertEquals(ExtractionStatus.SUCCESS_FULL, artifact.status());
+  }
+
+  @Test
+  @Timeout(60)
+  void realTesseractRuntimeNeverMislabelsTextualForImageOnlyPdfWithBlankPage() throws Exception {
+    // Tempdoc 671: regression test for the fourth affected call site (tryRenderedPdfOcr), found
+    // only during implementation.
+    //
+    // This does NOT reliably reach the removed-skip-call fallthrough (tryOcr's tail) the way
+    // this tempdoc's other new regression test does for a raw raster image: real Tesseract on a
+    // PDFRenderer-rasterized *blank* PDF page is not perfectly noise-free — it deterministically
+    // returns a few stray characters here even with nothing drawn on the page, unlike a raw
+    // synthetic blank PNG (see realTesseractRuntimeRecordsNoTextFoundForBlankImageWithNoBaseline,
+    // which does reach it reliably). Because the pre-existing (unrelated to tempdoc 671) success
+    // check is `mergedQuality >= baselineQuality` and both sides are 0 for an empty baseline, a
+    // few noise characters satisfy that check and this fixture resolves via the *success* branch
+    // instead of the no-improvement tail this test originally set out to exercise.
+    //
+    // The invariant tempdoc 671 actually cares about doesn't depend on which branch fires: an
+    // image-only PDF with no baseline text must never be mislabeled "textual" (that label means
+    // "there was already adequate text," which is false here) — assert that directly, and assert
+    // no_text_found specifically only in the branch where a skip reason is actually recorded.
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    assumeTrue(
+        TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
+        "real Tesseract OCR runtime with eng tessdata is not available");
+    Path pdf = tempDir.resolve("image-only-blank.pdf");
+    writeImageOnlyBlankPdf(pdf);
+
+    ExtractionArtifact artifact;
+    try (TimeboxedContentExtractor extractor =
+        ExtractionSandboxFactory.inProcessStructured(null, ocrConfig, OcrMetricCatalog.noop())) {
+      artifact = extractor.extractArtifact(pdf);
+    }
+
+    String evidence = artifact.visualExtractionEvidenceJson();
+    assertTrue(
+        artifact.result().content().length() < TextQualityAnalyzer.MIN_GOOD_TEXT_LENGTH,
+        "expected no meaningfully readable text from a blank page, got: " + artifact.result().content());
+    assertFalse(
+        evidence.contains("\"ocrSkipReason\":\"textual\""),
+        "image-only PDF with no baseline text must never be mislabeled textual (tempdoc 671), evidence="
+            + evidence);
+    if (evidence.contains("\"ocrSkipReason\":")) {
+      assertTrue(
+          evidence.contains("\"ocrSkipReason\":\"no_text_found\""),
+          "the only non-textual skip reason expected here is no_text_found, evidence=" + evidence);
+    }
+    // Tempdoc 671, Long-term design part 2: when content is genuinely empty, the cross-extractor
+    // status must say so too — not fall back to a mislabeled SUCCESS_FULL. When the real-Tesseract
+    // noise floor leaks a few stray characters (documented above), SUCCESS_FULL is legitimately
+    // correct per the classifier's own definition (non-empty content), so this assertion is
+    // conditional on the same noise-floor variability the rest of this test already accommodates.
+    if (artifact.result().content().isEmpty()) {
+      assertEquals(ExtractionStatus.SUCCESS_EMPTY, artifact.status());
+    }
+  }
+
+  @Test
   @Timeout(10)
   void mixedPdfEvidenceWithDisabledOcrRecordsMissingPageEvidence() {
     StructuredDocumentSummary summary =
@@ -401,6 +542,23 @@ final class PolicyDrivenTikaExtractorTest {
 
   private static void writeTextImage(Path image, String text) throws Exception {
     ImageIO.write(createTextImage(text), "png", image.toFile());
+  }
+
+  /** A genuinely blank (no drawn content) raster image — used by the tempdoc 671 regression tests. */
+  private static void writeBlankImage(Path image) throws Exception {
+    ImageIO.write(createBlankImage(), "png", image.toFile());
+  }
+
+  private static BufferedImage createBlankImage() {
+    BufferedImage buffered = new BufferedImage(900, 600, BufferedImage.TYPE_INT_RGB);
+    Graphics2D graphics = buffered.createGraphics();
+    try {
+      graphics.setColor(Color.WHITE);
+      graphics.fillRect(0, 0, buffered.getWidth(), buffered.getHeight());
+    } finally {
+      graphics.dispose();
+    }
+    return buffered;
   }
 
   private static BufferedImage createTextImage(String text) {
@@ -460,6 +618,46 @@ final class PolicyDrivenTikaExtractorTest {
       try (PDPageContentStream content = new PDPageContentStream(document, imagePage)) {
         content.drawImage(image, 72, 500, 430, 125);
       }
+      document.save(pdf.toFile());
+    }
+  }
+
+  /**
+   * Tempdoc 671 regression fixture: a mixed PDF (real text page + a genuinely empty page with no
+   * embedded image at all) — used to prove the {@code trySelectivePdfOcr} no-improvement tail
+   * correctly keeps {@code OcrSkipReason.TEXTUAL} (real baseline text exists) rather than
+   * misclassifying as {@code NO_TEXT_FOUND}. A truly empty page (not an embedded "blank" raster)
+   * is used deliberately: rendering an embedded image through {@code PDFRenderer} introduces
+   * enough incidental noise that real Tesseract occasionally reads a few stray characters off an
+   * otherwise-blank embedded raster — an empty page has nothing for OCR to latch onto.
+   */
+  private static void writeMixedTextAndBlankImagePdf(Path pdf) throws Exception {
+    try (PDDocument document = new PDDocument()) {
+      PDPage textPage = new PDPage();
+      document.addPage(textPage);
+      try (PDPageContentStream content = new PDPageContentStream(document, textPage)) {
+        content.beginText();
+        content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+        content.newLineAtOffset(72, 720);
+        content.showText("This page contains enough readable digital text for the PDF text layer. ".repeat(4));
+        content.endText();
+      }
+
+      document.addPage(new PDPage());
+      document.save(pdf.toFile());
+    }
+  }
+
+  /**
+   * Tempdoc 671 regression fixture: an image-only PDF (no PDF text layer at all) whose sole page
+   * is genuinely empty (no embedded image) — used to prove {@code tryRenderedPdfOcr}'s removed
+   * internal skip call was correctly replaced by reliance on {@code tryOcr}'s tail, not silently
+   * dropped. See {@link #writeMixedTextAndBlankImagePdf} for why an empty page, not an embedded
+   * "blank" raster, is used.
+   */
+  private static void writeImageOnlyBlankPdf(Path pdf) throws Exception {
+    try (PDDocument document = new PDDocument()) {
+      document.addPage(new PDPage());
       document.save(pdf.toFile());
     }
   }

@@ -260,7 +260,27 @@
     "group": "utility"
   },
   {
+    "name": "utility-compose-cross-corpus",
+    "group": "utility"
+  },
+  {
+    "name": "utility-gate",
+    "group": "gates"
+  },
+  {
+    "name": "utility-gate-derive",
+    "group": "gates"
+  },
+  {
     "name": "utility-judge",
+    "group": "utility"
+  },
+  {
+    "name": "utility-judge-cross-family",
+    "group": "utility"
+  },
+  {
+    "name": "utility-judge-local-swap-smoketest",
     "group": "utility"
   },
   {

@@ -211,7 +211,10 @@ final class WorkerStatusMapper {
                 visual.getOcrBlockedReason().isEmpty() ? null : visual.getOcrBlockedReason(),
                 visual.getVisualTextNeededCount(),
                 visual.getVisualEnrichmentNeededCount(),
-                visual.getVduBlockedReason().isEmpty() ? null : visual.getVduBlockedReason());
+                visual.getVduBlockedReason().isEmpty() ? null : visual.getVduBlockedReason(),
+                // Head-side fact, overlaid by StatusLifecycleHandler.overlayVduCapability; the
+                // Worker's own status response has no notion of the Head's coordinator state.
+                false);
     }
 
     /** Builds the health_check node from a HealthCheckResponse. */

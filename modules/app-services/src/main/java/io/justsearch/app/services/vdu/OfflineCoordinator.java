@@ -5,6 +5,7 @@ import io.justsearch.app.api.ModeTransitionException;
 import io.justsearch.app.api.OnlineAiLifecycleControl;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,23 +24,25 @@ public class OfflineCoordinator {
     // Tempdoc 518 Appendix F W4.2 — role-typed interface; off the concrete ILM.
     private final OnlineAiLifecycleControl inferenceManager;
     private final VduBatchProcessor vduBatchProcessor;
-    private final RemoteKnowledgeClient knowledgeClient;
+    // Tempdoc 672: live supplier, not a captured value — the Worker client is null at Head
+    // bootstrap (async connect) and must be re-read at use-time, never frozen at construction.
+    private final Supplier<RemoteKnowledgeClient> knowledgeClientSupplier;
     private final VduCapabilityState vduCapabilityState;
     private final AtomicBoolean processing = new AtomicBoolean(false);
 
     public OfflineCoordinator(OnlineAiLifecycleControl inferenceManager,
                               VduBatchProcessor vduBatchProcessor,
-                              RemoteKnowledgeClient knowledgeClient) {
-        this(inferenceManager, vduBatchProcessor, knowledgeClient, new VduCapabilityState());
+                              Supplier<RemoteKnowledgeClient> knowledgeClientSupplier) {
+        this(inferenceManager, vduBatchProcessor, knowledgeClientSupplier, new VduCapabilityState());
     }
 
     public OfflineCoordinator(OnlineAiLifecycleControl inferenceManager,
                               VduBatchProcessor vduBatchProcessor,
-                              RemoteKnowledgeClient knowledgeClient,
+                              Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
                               VduCapabilityState vduCapabilityState) {
         this.inferenceManager = inferenceManager;
         this.vduBatchProcessor = vduBatchProcessor;
-        this.knowledgeClient = knowledgeClient;
+        this.knowledgeClientSupplier = knowledgeClientSupplier;
         this.vduCapabilityState =
             vduCapabilityState != null ? vduCapabilityState : new VduCapabilityState();
     }
@@ -63,6 +66,12 @@ public class OfflineCoordinator {
         }
 
         try {
+            RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
+            if (knowledgeClient == null) {
+                LOG.info("Offline processing skipped: Worker not connected yet");
+                return;
+            }
+
             LOG.info("Starting offline processing");
 
             // Recover any documents stuck in PROCESSING state from previous crash
@@ -141,6 +150,10 @@ public class OfflineCoordinator {
      * @return true if VDU or embedding work is pending
      */
     public boolean hasPendingWork() {
+        RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
+        if (knowledgeClient == null) {
+            return false;
+        }
         return knowledgeClient.countPendingVdu() > 0
             || knowledgeClient.countPendingEmbeddings() > 0;
     }
@@ -149,14 +162,16 @@ public class OfflineCoordinator {
      * Get count of pending VDU files.
      */
     public int getPendingVduCount() {
-        return knowledgeClient.countPendingVdu();
+        RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
+        return knowledgeClient == null ? 0 : knowledgeClient.countPendingVdu();
     }
 
     /**
      * Get count of pending embeddings.
      */
     public int getPendingEmbeddingCount() {
-        return knowledgeClient.countPendingEmbeddings();
+        RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
+        return knowledgeClient == null ? 0 : knowledgeClient.countPendingEmbeddings();
     }
 
     /**
