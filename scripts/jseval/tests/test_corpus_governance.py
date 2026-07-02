@@ -117,6 +117,40 @@ def test_signature_is_corpus_plus_qrels_sha256(tmp_path):
     assert corpus_identity.corpus_signature(ds) == h.hexdigest()
 
 
+def test_corpus_signature_explicit_files_mode(tmp_path):
+    """The `files=` mode (tempdoc 669): signs an arbitrary explicit file list,
+    not the golden/mixed two-file shape, for non-eval reference corpora."""
+    import hashlib
+
+    d = tmp_path / "demo-corpus"
+    d.mkdir()
+    a = d / "a.md"
+    b = d / "b.md"
+    a.write_text("alpha", encoding="utf-8")
+    b.write_text("beta", encoding="utf-8")
+
+    sig = corpus_identity.corpus_signature(d, files=[a, b])
+    h = hashlib.sha256()
+    h.update(a.read_bytes())
+    h.update(b.read_bytes())
+    assert sig == h.hexdigest()
+
+    # Order matters (files are hashed in the given order, not re-sorted).
+    assert corpus_identity.corpus_signature(d, files=[b, a]) != sig
+
+    # A changed file changes the signature.
+    a.write_text("alpha-changed", encoding="utf-8")
+    assert corpus_identity.corpus_signature(d, files=[a, b]) != sig
+
+    # Default (no `files=`) mode on the same directory is unaffected — no
+    # corpus.jsonl/qrels here, so it returns None rather than picking up `a`/`b`.
+    assert corpus_identity.corpus_signature(d) is None
+
+    # Empty / all-missing file list -> None, same "nothing to sign" contract.
+    assert corpus_identity.corpus_signature(d, files=[]) is None
+    assert corpus_identity.corpus_signature(d, files=[d / "missing.md"]) is None
+
+
 # ---------------------------------------------------------------------------
 # corpus_build — single source -> two projections
 # ---------------------------------------------------------------------------

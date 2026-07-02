@@ -464,6 +464,27 @@ async function bootstrap() {
   const shell = document.createElement('jf-shell')
   shell.setAttribute('api-base', apiBase)
   root.appendChild(shell)
+
+  // Tempdoc 669 — demo/recording mode. Dismisses every currently-registered,
+  // not-yet-dismissed walkthrough (the first-run "Welcome to JustSearch" tour
+  // and any future one) so a real, non-headless browser session can be put
+  // into a clean state for a screen recording without clicking through the
+  // tour first. Must run AFTER root.appendChild(shell) above: <jf-shell>'s
+  // connectedCallback is what registers the core walkthroughs
+  // (installCoreWalkthroughManifest, chrome/Shell.ts), so listWalkthroughs()
+  // is empty before this point. Not a Settings toggle — deliberately narrow,
+  // opt-in tooling for recording, not a persistent user-facing preference.
+  if (params.get('demoMode') === '1') {
+    try {
+      const { listWalkthroughs } = await import('./shell-v0/commands/WalkthroughRegistry.ts')
+      const { dismissWalkthrough } = await import('./shell-v0/state/UserStateDocument.ts')
+      for (const walkthrough of listWalkthroughs()) {
+        dismissWalkthrough(walkthrough.id)
+      }
+    } catch {
+      // ignore — demo-mode tour suppression is best-effort
+    }
+  }
 }
 
 bootstrap()

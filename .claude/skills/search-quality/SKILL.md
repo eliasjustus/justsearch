@@ -456,7 +456,9 @@ leg-arbitration shipping default-on) — those decisions used real measurements 
 does not retroactively invalidate a decision already made and shipped.
 
 Current corpus signature (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.jsonl + qrels/test.tsv)`
-— the same verified-binding mechanism already shared by run manifests and release records):
+for golden/mixed corpora — the same verified-binding mechanism already shared by run manifests and release
+records; the function also accepts an explicit `files=` list for non-golden/mixed reference corpora, e.g. the
+demo corpus under `examples/demo-corpus/`, tempdoc 669):
 `1ade35791b1db58b9a7e1ff21246278d8e588e1705cbeda36d8529ceab6699ec`. Anyone re-deriving or re-verifying the
 findings below should check this signature against the corpus they're measuring against, rather than
 assuming it matches what's described.
