@@ -71,6 +71,10 @@ final class LlamaServerOpsCrashTelemetryTest {
 
   @Test
   @DisplayName("Bug F: a second crash before recovery still emits, with crashCount=2")
+  // Same Linux-CI race as bugF_processDeath_emitsTypedHealthFailure above (delay=0 recovery task
+  // races ahead of the size()==2 assertion) — doubly so here, since this test drives two crashes.
+  // Missed when that test was tagged during the tempdoc 668 Windows-native-tests migration.
+  @Tag("windows")
   void bugF_secondCrash_incrementsCount() {
     RecordingEvents events = new RecordingEvents();
     LlamaServerOps ops = newOps(events, () -> Mode.ONLINE, () -> false);
