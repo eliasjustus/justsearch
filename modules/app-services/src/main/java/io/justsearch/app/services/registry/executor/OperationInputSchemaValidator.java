@@ -59,10 +59,25 @@ public final class OperationInputSchemaValidator {
    *     human-readable message when invalid.
    */
   public Optional<ValidationResult> validate(Operation op, String argumentsJson) {
-    String inputs = op.intf().inputs();
-    // Operations that declare an effectively-empty schema don't need validation.
-    // Treat a missing or all-whitespace schema as "no constraints" rather than
-    // failing closed.
+    return validateAgainstSchema(op.id().value(), op.intf().inputs(), argumentsJson);
+  }
+
+  /**
+   * Tempdoc 655: validate against a declared schema directly, for callers with no {@link
+   * Operation} to validate against — concretely, MCP tools dispatched in-process rather than
+   * through an Operation (answer/search/status/runtime_manifest in {@code McpToolSurface}).
+   * {@code cacheKey} need only be stable and unique per schema (e.g. the MCP tool name); it plays
+   * the same role {@code op.id().value()} plays for the Operation-backed overload.
+   */
+  public Optional<ValidationResult> validate(
+      String cacheKey, String schemaJson, String argumentsJson) {
+    return validateAgainstSchema(cacheKey, schemaJson, argumentsJson);
+  }
+
+  private Optional<ValidationResult> validateAgainstSchema(
+      String cacheKey, String inputs, String argumentsJson) {
+    // Effectively-empty schemas don't need validation. Treat a missing or all-whitespace
+    // schema as "no constraints" rather than failing closed.
     if (inputs == null || inputs.isBlank() || EMPTY_SCHEMA.equals(inputs.trim())) {
       return Optional.empty();
     }
@@ -80,13 +95,12 @@ public final class OperationInputSchemaValidator {
 
     Schema schema;
     try {
-      schema = compiledByOpId.computeIfAbsent(op.id().value(), id -> compile(id, inputs));
+      schema = compiledByOpId.computeIfAbsent(cacheKey, id -> compile(id, inputs));
     } catch (RuntimeException e) {
-      // Schema compile failure is a substrate-level bug (the Operation's
-      // declared schema is malformed). Log but don't block the dispatch —
-      // the handler may still validate. Treat as "not validated" rather
-      // than "invalid input."
-      log.warn("Failed to compile input schema for {}: {}", op.id().value(), e.getMessage());
+      // Schema compile failure is a substrate-level bug (the declared schema is malformed).
+      // Log but don't block the dispatch — the handler may still validate. Treat as
+      // "not validated" rather than "invalid input."
+      log.warn("Failed to compile input schema for {}: {}", cacheKey, e.getMessage());
       return Optional.empty();
     }
 
@@ -97,7 +111,7 @@ public final class OperationInputSchemaValidator {
 
     String message = aggregate(violations);
     Map<String, Object> details = new LinkedHashMap<>();
-    details.put("operationId", op.id().value());
+    details.put("operationId", cacheKey);
     details.put("violations", violations.stream().map(com.networknt.schema.Error::getMessage).toList());
     return Optional.of(new ValidationResult(message, details));
   }

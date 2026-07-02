@@ -20,6 +20,7 @@
         "Unit tests (app-ui)",
         "Unit tests (search-worker)",
         "Unit tests (platform-contracts)",
+        "Windows-native tests",
         "Secret scan"
       ]
     },
@@ -76,6 +77,17 @@
       "owner": "tempdocs 400/404 when jseval gate is reached; workflow signal governance for setup drift",
       "failureDefault": "workflow-assumption-drift",
       "staleDays": 7,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "CI wall-clock trend",
+      "path": ".github/workflows/ci-walltime-trend.yml",
+      "class": "scheduled-quality-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 668 / public CI wall-clock attribution",
+      "failureDefault": "workflow-assumption-drift",
+      "staleDays": 30,
       "blocking": false,
       "advisory": true
     },

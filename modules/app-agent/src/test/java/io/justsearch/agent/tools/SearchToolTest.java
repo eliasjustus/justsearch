@@ -14,8 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+// Windows-specific path-form assertions (see BrowseToolTest) — runs on the
+// windows-native lane (tempdoc 668 option B).
+@Tag("windows")
 class SearchToolTest {
 
   private AtomicReference<KnowledgeSearchRequest> capturedRequest;

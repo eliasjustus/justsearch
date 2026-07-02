@@ -49,11 +49,11 @@ everywhere) — and they are **not directly apples-to-apples**. Read them honest
 
 | Corpus | Ours (mode) | nDCG@10 | Ablation | Published baselines (cited) |
 |---|---|---|---|---|
-| beir/scifact | hybrid | **0.756** | — | — |
+| beir/scifact | hybrid | **0.756** | — | BM25 (multifield) 0.665; SPLADE++ EnsembleDistil 0.710; ColBERTv2 0.693 |
 | mixed/enron-qa | hybrid | **0.719** | — | — |
 | mixed/legal-clerc-200 | hybrid | **0.516** | — | — |
-| mixed/miracl-de-2k | hybrid | **0.852** | — | — |
-| mixed/miracl-fr-2k | hybrid | **0.866** | — | — |
+| mixed/miracl-de-2k | hybrid | **0.852** | — | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | **0.866** | — | BM25 0.183 (dev); mDPR (zero-shot) 0.435 (dev); Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640; lower latency / higher throughput / lower footprint better):
 

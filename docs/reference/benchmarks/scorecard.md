@@ -12,7 +12,7 @@ description: "Generated delta-vs-guard scorecard co-locating all engine-quality 
 > ratchet guards. **Relevance is the constraint; perf + footprint are the tracked score** (the MLPerf split).
 > Status is direction-aware vs each axis's guard (floor / budget-ratio / ceiling).
 
-*Release `84b305b2be`, default mode `hybrid`.*
+*Release `667-external-baselines-2026-07-01`, default mode `hybrid`.*
 
 ### beir/scifact
 

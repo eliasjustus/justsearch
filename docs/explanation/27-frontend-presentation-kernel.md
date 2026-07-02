@@ -112,6 +112,12 @@ overlay needs; the broken state can't be expressed:
   `ModalityController` + owns the native `<dialog>` so `enter()` + `showModal()`
   fire atomically. Adopters in `governance/modals.v1.json`, enforced by
   `check-modal-arbitration.mjs`; `check-modality-contract.mjs` is the backstop.
+  The `<jf-authorization-host>` adopter (the AUTHORIZE ceremony) has two trigger
+  origins as of tempdoc 655 — a live REST 428 response, and an SSE-announced
+  pending record from an out-of-band gate firing (e.g. an MCP tool call) via
+  `pendingAuthorizationBridge.ts` — but remains ONE adopter, ONE dialog
+  instance; the second origin calls the same `authorizationBroker.requestAuthorization`
+  entry point rather than registering a new modal.
 - **`TransientController`** (`primitives/transientController.ts`) — single-open
   arbitration (register / closeOthers / unregister over `transientLayerArbiter`)
   + an opt-in outside-click/Escape dismiss (`managesDismiss`, with an optional

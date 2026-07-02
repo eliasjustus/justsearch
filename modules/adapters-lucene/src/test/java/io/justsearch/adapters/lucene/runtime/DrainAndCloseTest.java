@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -147,6 +148,11 @@ class DrainAndCloseTest {
    * lands in the final commit; a write started after drain returns throws ISE.
    */
   @Test
+  // Timing-sensitive: signals writerStarted before indexSingle, then relies on a fixed 10ms
+  // sleep to assume the writer holds the readLock when drain runs. Deterministic only with a
+  // production pause-hook mid-critical-section; on Linux CI the writer can arrive after draining
+  // starts and (correctly) get runtime_draining. Runs on the windows-native lane (tempdoc 668).
+  @Tag("windows")
   void drainAndCloseWaitsForInFlightWriter() throws Exception {
     Path indexPath = tempDir.resolve("drain-inflight");
     Files.createDirectories(indexPath);

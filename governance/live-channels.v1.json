@@ -45,7 +45,7 @@
       "openerId": "multiplexed-stream",
       "class": "always-on",
       "demandClass": "event",
-      "note": "THE shared multiplexed connection (tempdoc 662) carrying intent, the two advisory classes, action-ledger, and indexing-jobs. Constructed once at shell mount. demandClass 'event' holds for intent/advisory×2/action-ledger by Design §D1's own audit (U1); indexing-jobs is the one channel on this connection whose demand is actually BREADTH (an always-mounted tray's steady-state rows), kept here rather than poll-folded for a documented reason specific to it (design-alignment review §Gap-1, below) — not because its demand class is 'event' too."
+      "note": "THE shared multiplexed connection (tempdoc 662) carrying intent, the three advisory classes (operation-completed, health-recoverable, and — tempdoc 655's long-term design pass — authorization-pending), action-ledger, indexing-jobs, and the pending-authorization announcement channel. Constructed once at shell mount. demandClass 'event' holds for intent/advisory×3/action-ledger/pending-authorizations by Design §D1's own audit (U1) — pending-authorizations is event-only like intent (no snapshot lifecycle, each creation self-contained); indexing-jobs is the one channel on this connection whose demand is actually BREADTH (an always-mounted tray's steady-state rows), kept here rather than poll-folded for a documented reason specific to it (design-alignment review §Gap-1, below) — not because its demand class is 'event' too. Adding the third advisory class did not add a new opener call site (same one `new MultiplexedStream`), so the budget/channel count is unaffected."
     },
     {
       "file": "modules/ui-web/src/shell-v0/components/advisory/AdvisoryStore.ts",
