@@ -1,7 +1,7 @@
 ---
 title: "Agentic-utility eval rebuild: the agent-utility number as a cohort-identified, condition-paired comparison record — a projection over agent-eval runs cohort-identical on every axis except `condition`, conforming to the canonical-record + governed-projection seam (553/623/622); the comparison arm already exists (346) but lacks run identity, seeds, judge, and projection discipline, which is why '92% / 62%' is an identity-less fork"
 type: tempdocs
-status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision.
+status: implemented (machinery) — Track A retraction + the utility-comparison record + LLM-judge + condition B + run-governance/calibration shipped (see §As-built #1–4); the published number + business re-rooting remain gated on a credible record (§Open uncertainties). The §Problem…§Next-step header below is the original 2026-06-21 stub and predates the build. 2026-07-01: gating condition satisfied (agent/MCP wedge committed — see 654 direction note); hardening assignment briefed (§Assignment 2026-07-01). 2026-07-02: methodology plan delivered (§Methodology plan) — resolves U0 (does the honest realistic-arm number help the wedge) as the plan's first-class design driver, not a footnote; battlefield revised to real corpus scale + OCR-only content + multilingual as load-bearing stress tests, not deferred extras; a contingency-claim design (token/cost-at-scale, stratified capability-coverage, honest null) is specified in advance. 2026-07-02 (same day, second pass): §Design theorization settles the long-term design for the plan's four remaining-work items — descriptor-collision (construction-time exclusion + combinatorial descriptor space, not just detection), the OCR-only corpus member (a new `corpus_generate.py` axis renderer, reusing the existing certify/fidelity gates unchanged), judge human-calibration (recognized as a third instance of a recognized-but-unbuilt human-calibration-set pattern alongside register Q-007/Q-009 — named, not shared-built yet), and stratified capability-coverage (a governed projection of `utility-comparison.v1`, conforming to the `jseval/projections/` registry's principle without joining its registry). A targeted §External research pass (same day, third pass) sharpened judge-calibration (dual-rater agreement against a human-disagreement baseline, not a bare judge-vs-one-human kappa — citing arXiv 2510.09738) and OCR-content construction (a lightweight from-scratch scan-rendering step, not an external VLM/diffusion pipeline — citing arXiv 2605.08838/2602.21824), and deliberately did not re-research the already-recently-checked design areas. 2026-07-02 (same day, fourth pass): §Critical-analysis pass found and fixed four real gaps (missing M-to-T cross-references; §M.7a's stratified-coverage design being an undisciplined cherry-picking vector, closed by §M.8 item 7; the judge-calibration design left in an addendum instead of §M.4 itself; the invisible non-run engineering cost in §M.9) — and named one real, unresolved trade-off it did NOT fix: the credibility bar has grown across every pass and no leaner interim floor has been defined as an explicit alternative to the full bar, a founder cost/rigor call, not a design gap. 2026-07-02 (same day, fifth pass): a live §Confidence pass (throwaway experiments + code reads, no feature implementation) found §T.2's core premise (a plain OCR-rendered scan structurally blocks a file-reading agent) was WRONG — Claude Code's `Read` tool reads plain scans via multimodal vision; a genuinely degraded scan does block it, corrected in place as a calibration problem, not a renderer. Also found and fixed a new baseline-fairness gap (tool-restriction bypass via a spawned subagent; the harness's "isolated" claim doesn't cover the operator's own global Claude Code config) and confirmed §T.1's combinatorial-descriptor-expansion is near-mandatory (43-94% distractor-descriptor duplication measured at realistic scale), not conditional. Judge-model availability and real ingest-extraction behavior remain unverified (no dev-stack access this session). Still no eval run authorized — founder decisions (§M.9) remain open. 2026-07-02 (same day, sixth pass — §As-built #5): every remaining §T.1-T.4 design item implemented and committed via orchestrated Sonnet subagents; a real haiku-tier calibrated run executed across all three battlefield corpora (English/German/scan). Findings: condition B (realistic) shows no significant effect on any corpus (consistent with `RESEARCH.md`'s existing public honesty); condition C (substitution) is now measured as significantly *harmful* everywhere, a reversal from prior toy-scale evidence, most likely because this pass's own §M.1 fix finally closes the Bash leak that let C secretly use file tools before. `comparability.comparable=False` on all three records (English/German: mild seed-count-driven exclusion noise; scan: a real, specific, fixable timeout miscalibration) — §M.8's bar is NOT cleared; the record stays internal per boundary (a). Concrete next steps recorded, not a founder decision. 2026-07-02 (same day, seventh pass — §As-built #6): an independent five-reviewer critical review found and fixed real issues, most importantly that As-built #5's central OCR-extraction claim (nDCG@10=0.97) was never actually tested — a second, axis-unaware materializer in the real run path silently substituted plain text for the degraded scan images. Fixed (one shared code path); the real, re-verified number is nDCG@10=0.0000, traced to a separate, real production bug (Tika OCR-skip routing, outside this tempdoc's scope) that currently prevents the scan corpus from demonstrating anything. Also closed: a real cross-corpus stratified composer, run for free against the completed logs (pooled n=175, delta -0.063, p=0.185 — closer to significance than any single corpus, still not significant); judge-calibration wired into a real CLI path; three factual errors in As-built #5's own prose corrected. §M.8's bar still not cleared.
 created: 2026-06-21
 updated: 2026-07-02
 author: agent analysis (research-channel design theorization), filed by agent — STUB
@@ -2365,4 +2365,114 @@ stream to scan). The `--disallowedTools` **config** was correctly passed to ever
 the way the classic runner's live smoke test verified it. A future pass should either add the same scan to
 `agent_utility_inspect.py`'s Inspect-log parsing, or treat this as an accepted gap between the two runner
 paths.
+
+---
+
+# As-built #6 (2026-07-02) — independent review + fixes; the OCR claim in As-built #5 was wrong, and why
+
+> A five-reviewer independent critical review (none of them the original implementers) audited every phase
+> of As-built #5 against tempdoc 624's own spec. Four reviewers found real, concrete issues; one found
+> nothing. All confirmed issues were fixed via further orchestrated Sonnet subagents and are committed. This
+> section corrects As-built #5's factual errors and — the most important part — **retracts its central OCR
+> claim**, replacing it with what a fixed, re-verified pipeline actually measured. The credibility bar
+> (§M.8) still does not clear; this section makes the shortfall more precise, not less.
+
+## The critical finding: As-built #5's OCR-extraction claim was never actually tested, and the real number is 0.0000, not 0.97
+
+As-built #5 stated: *"the production Tika/VLM path extracts it cleanly (nDCG@10=0.97 on direct
+retrieval)."* An independent reviewer found this untrue as stated — and root-caused why, then a fix-agent
+corrected the root cause and re-measured for real:
+
+- **The real bug**: `scripts/jseval/jseval/ingest.py` — the materialization chain `jseval run` (and Phase 7's
+  real eval) actually uses — never checked a corpus's `type_axis` field and always wrote plain text,
+  regardless of axis. `corpus_build.py`'s `build_golden()` had the correct scan-aware logic, but nothing in
+  the real run path called it. Confirmed on disk: the real Phase 7 run ingested from a directory containing
+  361 `.txt` files and 0 `.png` files. The 0.97 figure measured plain ground-truth text, not the degraded scan
+  images — it was never possible for that number to reflect OCR extraction quality.
+- **The fix**: one shared code path (`corpus_generate.materialize_doc_entry()`), called by both
+  `corpus_build.py` and `ingest.py` — not two independent copies of the same axis check. A regression test
+  now exercises the real `ingest.py` path specifically (the prior tests only covered `corpus_build.py`
+  directly, which is exactly why this bug went uncaught).
+- **The real, re-verified number, through the fixed path: nDCG@10 = 0.0000** (lexical mode, `comparable:
+  True`; hybrid mode failed readiness entirely — dense chunk coverage was 0). This is not "too easy" (As-built
+  #5's framing for the earlier, bogus 0.97) — it is a genuine retrieval failure.
+- **Why, traced to its real root cause**: a **second, separate, and more fundamental bug**, outside this
+  fix's scope — in the *production* Tika extraction pipeline (`modules/indexer-worker`, Java, not the Python
+  jseval harness this tempdoc's work lives in). The rendered scan PNGs are misclassified as already containing
+  a text layer (`ocrSkipReason: "textual"`, `route: "structured"`) and OCR is **skipped entirely** —
+  `textCharCount: 0`, and the VLM fallback (`vdu_status: "PENDING"`) never runs. Sampled documents were
+  retrievable only by filename/title match, never by content. This means **§T.2's structural premise — that
+  JustSearch's ingest can read degraded content a casual file-reading agent cannot — is not currently true of
+  the shipped product**, independent of anything this tempdoc's own eval-harness work controls. Logged as an
+  observation (`docs/observations.d/`), not fixed here — it is real production routing logic in a different
+  subsystem than this tempdoc's scope, and needs its own tempdoc/fix.
+- **Consequence for §T.2**: the degraded-scan corpus member (`golden/synth-scan-v1`) cannot currently
+  demonstrate the capability it was built to demonstrate. The corpus itself, the renderer, and the
+  degradation-band tuning are all confirmed correct (Claude's own `Read` is genuinely defeated; the fabricated
+  content and materialization pipeline are sound) — the blocker is entirely on the production extraction
+  side. Until the Tika-routing bug is fixed, this battlefield member should be treated as **not usable for
+  any claim**, not even a directional one.
+
+## The second finding, closed: real cross-corpus stratification now exists and was run for real
+
+An independent reviewer found that §T.4's per-stratum machinery (correct, hand-verified) was never reachable
+across the actual English/German/scan battlefield dimension — `compose_utility` always produced one record
+per corpus, with no way to merge them. Fixed: `compose_utility_cross_corpus` (reusing `_arm_comparison`'s
+existing `stratify_by` mechanism, no new statistics) + a new CLI command
+(`jseval utility-compose-cross-corpus`). Run for real, at zero additional spend, against the already-completed
+Phase 7 Inspect logs:
+
+| | accuracy Δ (baseline→with-tool) | McNemar p | n |
+|---|---|---|---|
+| **Pooled (all 3 corpora)** | 0.7886→0.7257 (Δ −0.0629) | **0.185** | 175 |
+| English stratum | 0.7922→0.7273 (Δ −0.0649) | 0.424 | 77 |
+| German stratum | 0.8182→0.7273 (Δ −0.0909) | 0.210 | 77 |
+| Scan stratum | 0.6667→0.7143 (Δ +0.0476) | 1.0 | 21 |
+
+Each stratum exactly reproduces its corpus's standalone pooled record (proving the composer doesn't corrupt
+per-corpus data). The pooled figure (p=0.185) is closer to conventional significance than any individual
+corpus but still not significant — an honest answer to "does any corpus show a signal the per-corpus records
+didn't": no, English and German both point the same (mildly negative) direction and scan points the other way
+on much thinner, lower-retention data; pooling mainly confirms en/de consistency rather than surfacing a
+hidden win. Committed: `scripts/jseval/624-run-2026-07-02/out-cross-corpus/utility-comparison-cross-corpus.v1.json`.
+
+## Smaller fixes, closed
+
+- **§T.3 calibration is now reachable** (`jseval utility-judge --calibrate`), previously correct but never
+  called by anything. Still an agent-substitute dry run (`rater_kind: "agent-substitute, NOT human"`,
+  unconditional, unbypassable, independently re-verified) — real human labeling remains the one item this
+  effort could not do at all, honestly, not from lack of trying.
+- A homogeneous (all-same-label) calibration sample now carries a `degenerate_pe` flag, so a future reader
+  can tell "genuinely perfect judge-human agreement" apart from "the sample was too uniform to be
+  informative" — both previously looked identical (`kappa: 1.0`, a degenerate zero-width CI).
+- The real argv-construction code path in both eval runners now has direct test coverage (previously only the
+  underlying helper functions were tested, not their actual wiring into the subprocess command line) —
+  verified by a deliberate break-then-confirm-test-fails-then-revert cycle, not just a passing test.
+- `render_scan_image` now has sanity bounds (max text length / width / font size / computed height, each
+  ~10x real-world headroom) — low-severity hardening, not currently exploitable, flagged by a reviewer
+  explicitly asked to check for security-sensitive gaps.
+
+## Three factual corrections to As-built #5's own prose
+
+1. As-built #5 claimed "3 seeds was the design's own stated floor, §M.5" — false. §M.5 states ≥5 seeds; there
+   is no "3" floor anywhere in the design. The seed reduction was a real cost/time trade-off, correctly
+   authorized within §M.5's own stated minimum, but the false citation is retracted.
+2. As-built #5 quoted a flat "~$77 / 137 min per corpus" — this was the English figure only, silently
+   generalized. The real, distinct per-corpus figures: English $76.75/136.9min, German $86.20/134.9min, scan
+   $39.18/103.1min (scan is cheaper because it retained fewer queries, 20 vs 26).
+3. As-built #5 described English's `comparability` exclusion as "the specific excluded queries didn't
+   overlap" — mathematically wrong. `excluded_jaccard=0.3333` with `A: n_excluded=1, C: n_excluded=3` means
+   **full containment** (A's one excluded query is one of C's three), not disjoint exclusion. Only German
+   (`jaccard=0.0`, confirmed disjoint) is genuinely non-overlapping.
+
+## Where this leaves §M.8's bar
+
+Still not cleared, and now for a sharper, more honest set of reasons than As-built #5's version: English/
+German fail on genuine, likely seed-count-driven asymmetric-exclusion noise (a next real run at 5 seeds is
+the natural fix); the scan corpus fails not on a fixable eval-harness timeout as previously framed, but
+because the corpus currently cannot be meaningfully evaluated at all until a real, separate production bug
+(Tika OCR-skip routing) is fixed — a different team's subsystem, outside this tempdoc's own scope. The
+cross-corpus pooled figure (p=0.185) is the closest this effort has come to a directional signal, and it is
+still not significant. No number from any of this should be quoted publicly, per this tempdoc's own
+boundary (a) — this section exists to keep the internal record honest, not to produce a claim.
 
