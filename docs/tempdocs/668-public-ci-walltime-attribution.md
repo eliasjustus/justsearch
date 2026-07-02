@@ -1445,3 +1445,78 @@ OneDrive cloud-placeholder DOS attribute. For a Windows-first product that might
 that is real, specific intelligence: the cross-platform gap is small and named. The migration also
 *fixed latent bugs that existed on Windows too* (e.g. `PathNormalizer` blank-prefix → match-everything),
 so it was correctness work, not just CI plumbing.
+
+## Design theorization — the consumption gap and the presentation hand-off - 2026-07-02
+
+New evidence reopens one narrow question the earlier **band-closure** pass (above) had closed. That pass
+concluded 668 is *design-complete* — correct for the attribution **logic** and the guard. But the
+post-implementation research pass surfaced a fact it did not have: the very next, and largest,
+CI-latency investigation (the Windows→Linux migration) **still re-derived per-lane wall-clock by hand**
+(`gh api …/jobs | jq`, ~20×) and never invoked the instrument built to retire exactly that manual work
+(Design settlement: "a durable, every-run fact **instead of a manual re-derivation**"). So the instrument
+met its purpose for the *passive* surface (the CI step-summary) but not for the *mode where the demand
+actually is* — live, on-demand investigation. This is design theorization only; no code changed.
+
+### The gap is consumption-mode, not more attribution
+
+This is **not** a call for more instrument — Principle D correctly forbids that. No new facts, no new
+metrics, no Build sub-decomposition, no trend expansion. The gap is that the *same* attribution is not
+reachable where its documented, recurring consumer works. That consumer is not speculative: **every**
+CI-latency investigation in the repo's history (408, 651, 652, 668, and now the migration — five) opens
+with a hand-rolled re-derivation. 664's "defer until a consumer appears" is *satisfied* — the consumer
+has appeared five times. Principle D's "value realised when it changes a decision" is satisfied only
+*retrospectively*; **live**, the instrument changed nothing because it was not consumable live.
+
+### The correct long-term design: a minimal self-fetch entry (668) + a presentation hand-off (651)
+
+Investigation against the existing ownership seam settles the shape, and it is small.
+
+1. **668 owns exactly one completion: make its attribution self-fetching / on-demand.** The pure
+   `buildWalltimeReport` already exists and is correct — keep it. The only missing piece is a
+   self-sufficient entry: given a run id (or "latest"), fetch the Actions jobs JSON itself (the
+   `gh run view` fetch `workflow-signal-health.mjs` already embodies) and emit the same report — so an
+   investigation *runs the instrument* instead of re-deriving. This **conforms to 668's own structural
+   twin**: the engine's attribution (640/647) is a **local, on-demand `jseval` command an agent runs —
+   not CI-embedded**. 668 diverged from that twin by shipping CI-embedded-only; the self-fetch entry
+   brings it back into conformance. It adds no instrument — only reach. (The optional "name the next
+   lever" projection from the research pass rides here too: same report, one directional line.)
+
+2. **The larger contributor/agent surface is 651's, by declared ownership — hand it off, do not build it
+   here.** 652 already routed "the top-level CI digest, run timing ledger, build-lane attribution, and
+   contributor-facing 'what failed and how do I reproduce it' page" to **651** (which *presents and
+   trends* CI facts), and recorded a **run-id → {failed check, owning surface, local reproduce command,
+   artifact path, likely owner} triage command** as 651's to build. The wall-clock "run-id → where did
+   the time go" view is the *timing half* of that same triage tool. Design conclusion: **that unified
+   surface belongs to 651 and should *compose* 668's `buildWalltimeReport` (and 652's evidence
+   attribution), never fork them.** This is a hand-off **symmetric to the optimize hand-off** 668
+   already makes to the 648-analogue: 668 terminates at the attribution substrate; *presentation/trend*
+   delegates to **651**, *optimization* delegates to **648**.
+
+3. **Do not expand the trend/history half.** Principle D already flagged the trend workflow as the most
+   speculative shipped piece ("drift-watching for a repo no one watches… first to defer"). Durable
+   history / drift is 651's presentation lane *if anyone ever watches it*; 668 adds nothing there.
+
+Net: 668's remaining design is **one small, twin-conformant consumption completion it owns, plus two
+clean hand-offs (present → 651, optimize → 648)** — a *refinement* of "design-complete," not a reversal.
+The earlier conclusion was right given what it knew; the new live-re-derivation evidence legitimately
+reopens this one scoped completion. The title still names the two bands 668 owns; **no change**.
+
+### Reach — the consume-side complement to Principle D
+
+- **Principle E — consumption follows demand.** *An attribution instrument is consumed only where it is
+  invocable. If its demand is live / on-demand investigation, it must be invocable on-demand: emitting to
+  a passive surface (CI step-summary, uploaded artifact) satisfies the **produce** half but not the
+  **consume** half, and until both match the demand the instrument has not retired the manual work it was
+  built to retire.* This is the **consume-side complement to Principle D**: D guards against
+  over-*producing* (more instrument once the decision has changed); E guards against under-*consuming*
+  (an instrument unreachable where the decision is made). Together they bound "an instrument is done" —
+  produced enough to change the decision **and** reachable where the decision is made.
+  - *Already satisfied (the exemplars):* the engine's 640/647 attribution (local/on-demand `jseval`,
+    agent-invocable) and `report-unit-test-attribution.mjs` (invoked both in CI **and** locally with
+    `--runner-label local`).
+  - *Violated (the one clean case):* 668's wall-clock attribution — CI-embedded, no convenient
+    on-demand path — which is *precisely why* the manual re-derivation persisted. That is the scoped
+    fix; nothing wider.
+  - *Do not build a general "dual-mode instrument" framework.* One instrument needs the on-demand entry;
+    recording the principle + its two-item scope is the deliverable, per the deliberate recognise-vs-build
+    split (the same discipline 668 applied to Principles A/B/D).
