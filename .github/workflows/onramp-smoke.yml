@@ -1,0 +1,67 @@
+# Tempdoc 656 — the onramp's continuous proof-lane.
+#
+# Runs the runnable first-success proof (scripts/dev/test-onramp-first-success.mjs) on a clean
+# public-hosted runner with NO models and NO GPU, so it exercises the model-less **Tier 0** path:
+# start the stack -> index the bundled demo corpus -> a keyword query returns a real result.
+# This continuously proves the onramp's headline promise (zero-download first success) still works.
+#
+# Manual (workflow_dispatch) + advisory/non-blocking, matching the repo's "specialty workflows remain
+# manual; local-first primary" policy (ADR-0044 / CLAUDE.md). Declared in
+# scripts/ci/workflow-signal-policy.v1.json as class "scheduled-quality-signal".
+name: Onramp Smoke
+
+on:
+  workflow_dispatch: # Manual trigger — heavy (starts the full dev stack); not a per-PR gate.
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+  JAVA_VERSION: "25"
+
+jobs:
+  onramp-tier0-smoke:
+    name: Onramp first-success (Tier 0, model-less)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The dev stack spawns the Vite frontend (readiness gates on the backend only, but install its
+      # deps so the spawn is clean — mirrors the proven local run).
+      - name: Install frontend deps
+        working-directory: modules/ui-web
+        run: npm ci
+
+      # Force the model-less Tier 0 path deterministically (independent of whether models/ exists).
+      - name: Prepare empty models dir
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\empty-models" | Out-Null
+
+      - name: Onramp doctor (diagnostic — reports the tier)
+        continue-on-error: true
+        env:
+          JUSTSEARCH_MODELS_DIR: ${{ runner.temp }}\empty-models
+        run: node scripts/dev/doctor.mjs
+
+      # The proof: start stack -> ingest examples/onramp-corpus -> query -> assert a first result.
+      # Self-tears-down. Asserts Tier 0 unconditionally; the Tier-1 check is skipped with no models.
+      - name: Onramp first-success smoke (Tier 0)
+        env:
+          JUSTSEARCH_MODELS_DIR: ${{ runner.temp }}\empty-models
+        run: node scripts/dev/test-onramp-first-success.mjs

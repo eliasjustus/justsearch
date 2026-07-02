@@ -10,6 +10,9 @@ package io.justsearch.app.api;
 public enum StartupCode {
   INSUFFICIENT_VRAM("insufficient_vram"),
   MISSING_DLL("missing_dll"),
+  // Tempdoc 656 Task 3: the server executable itself was not found (pre-launch), distinct from
+  // MISSING_DLL (a launched process exiting with the Windows missing-DLL exit code).
+  EXECUTABLE_NOT_FOUND("executable_not_found"),
   PROCESS_EXITED("process_exited"),
   PORT_ALLOCATION_FAILED("port_allocation_failed"),
   EXTERNAL_SERVER_POLICY_BLOCKED("external_server_policy_blocked"),

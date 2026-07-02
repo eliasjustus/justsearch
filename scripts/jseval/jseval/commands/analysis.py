@@ -339,6 +339,11 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
         a_data["summary"], b_data["summary"],
     )
 
+    # Tempdoc 647: per-query latency STAGE decomposition diff + "which-stage-moved" attribution.
+    stage_diff = compare_runs.compare_stage_decomposition(
+        a_data["summary"], b_data["summary"], mode or _first_mode(a_data["summary"]),
+    )
+
     # Tempdoc 525: optional per-bucket stratification.
     bucket_results: dict[str, dict] = {}
     if bucket_by == "decision_kind":
@@ -348,15 +353,19 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
         output: dict[str, object] = {"metrics": results}
         if pipeline_diff:
             output["pipeline_timing"] = pipeline_diff
+        if stage_diff:
+            output["stage_decomposition"] = stage_diff
         if bucket_results:
             output["by_decision_kind"] = bucket_results
-        if not pipeline_diff and not bucket_results:
+        if not pipeline_diff and not stage_diff and not bucket_results:
             output = results  # preserve original format when no extra data
         click.echo(json.dumps(output, indent=2, default=str))
     else:
         _print_comparison(results)
         if pipeline_diff:
             _print_pipeline_comparison(pipeline_diff)
+        if stage_diff:
+            _print_stage_decomposition_comparison(stage_diff)
         if bucket_results:
             _print_decision_kind_comparison(bucket_results)
 
@@ -393,8 +402,9 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
 )
 @click.option(
     "--metric", default="nDCG@10", show_default=True,
-    help="Family to trend (tempdoc 640 R3): nDCG@10 | ce_p50_ms | primary_docs_s | "
-         "enrich_docs_s | resident_bytes. Direction is metric-aware.",
+    help="Family to trend: nDCG@10 | ce_p50_ms | primary_docs_s | enrich_docs_s | resident_bytes | "
+         "retrieval_p50_ms | unaccounted_p50_ms (tempdoc 640 R3 + 647). Direction is metric-aware "
+         "(latency/footprint lower-is-better).",
 )
 def cmd_trend(dataset, mode, output_dir, fail_on_regression, manifest_hash, metric):
     """Check metric history and trends."""
@@ -575,6 +585,31 @@ def _print_pipeline_comparison(diff: dict) -> None:
     click.echo()
 
 
+def _print_stage_decomposition_comparison(diff: dict) -> None:
+    """Tempdoc 647: per-stage query-latency p50 diffs + the which-stage-moved attribution."""
+    click.echo("Query-latency stage decomposition (run B vs run A, p50 ms):")
+    for key, comp in sorted((diff.get("stages") or {}).items()):
+        if isinstance(comp, dict) and "a" in comp and "b" in comp:
+            ratio = comp.get("ratio")
+            ratio_str = f" ({ratio:.2f}x)" if ratio else ""
+            flag = " REGRESSED" if comp.get("regressed") else ""
+            click.echo(
+                f"  {key}: {comp['a']} -> {comp['b']} (delta={comp.get('delta', 0):+.1f})"
+                f"{ratio_str}{flag}"
+            )
+    attr = diff.get("attribution") or {}
+    mover = attr.get("primary_mover")
+    total = attr.get("total_p50_delta_ms")
+    total_str = f"latency p50 {total:+.1f} ms" if isinstance(total, (int, float)) else "latency p50 (n/a)"
+    if mover:
+        click.echo(
+            f"  -> {total_str} | primary mover: {mover} ({attr.get('mover_delta_ms', 0):+.1f} ms)"
+        )
+    else:
+        click.echo(f"  -> {total_str} | no stage moved")
+    click.echo()
+
+
 def _print_decision_kind_comparison(bucket_results: dict) -> None:
     """Tempdoc 525: render per-decision-kind metric deltas."""
     click.echo("Per-decision-kind metric comparison (tempdoc 525):")
@@ -669,4 +704,122 @@ def _compare_by_decision_kind(a_data: dict, b_data: dict, qrels: dict) -> dict:
     return results
 
 
-COMMANDS = [cmd_counterfactual, cmd_shadow_eval, cmd_bisect, cmd_compare, cmd_trend, cmd_spot_check, cmd_correction_probe, cmd_diff]
+# --- tempdoc 647: per-run performance-attribution report -------------------
+
+def build_perf_report(summary: dict, manifest: dict | None, mode: str | None) -> dict:
+    """Assemble the per-run performance-attribution view (tempdoc 647) as a pure projection of the
+    MATERIALIZED decomposition — unit-testable, and it never re-derives what the record already holds.
+
+    Latency reads ``per_mode.<mode>.stage_timing_stats`` (each stage's p50/p95 + the *materialized*
+    ``share``, plus the ``unaccounted_ms`` remainder); the share is **read**, never recomputed
+    (tempdoc 647 "consumers read, never re-derive"). Footprint uses the per-component split from
+    :func:`jseval.perf_gate.derive_resident_component_bytes` (the single authority); component
+    *display* shares (``component/total``) are computed here only because footprint shares are not
+    materialized anywhere. Returns ``{"mode", "latency", "footprint"}`` with ``None`` sections when a
+    source is absent (old-format runs, unresolvable model paths) — never raises.
+    """
+    from .. import perf_gate
+
+    report: dict = {"mode": mode, "latency": None, "footprint": None}
+
+    pm = ((summary.get("per_mode") or {}).get(mode) or {}) if mode else {}
+    st = pm.get("stage_timing_stats") or {}
+    if st:
+        stages = [
+            {
+                "stage": name,
+                "p50_ms": entry.get("p50"),
+                "p95_ms": entry.get("p95"),
+                "share": entry.get("share"),  # materialized; None on pre-647 runs
+            }
+            for name, entry in st.items()
+            if isinstance(entry, dict)
+        ]
+        stages.sort(key=lambda s: (s["p50_ms"] is None, -(s["p50_ms"] or 0)))
+        report["latency"] = {
+            "total_p50_ms": (pm.get("latency_stats") or {}).get("p50_ms"),
+            "stages": stages,
+        }
+
+    components = perf_gate.derive_resident_component_bytes(manifest)
+    if components:
+        total = sum(components.values())
+        report["footprint"] = {
+            "total_bytes": total,
+            "components": [
+                {"component": k, "bytes": v, "share": round(v / total, 4) if total else None}
+                for k, v in sorted(components.items(), key=lambda kv: -kv[1])
+            ],
+        }
+    return report
+
+
+def _bar(share: object, width: int = 32) -> str:
+    """An ASCII share bar (empty when the share is unavailable — e.g. a pre-647 run)."""
+    if not isinstance(share, (int, float)):
+        return ""
+    return "#" * max(0, min(width, round(share * width)))
+
+
+def _pct(share: object) -> str:
+    return f"{share * 100:5.1f}%" if isinstance(share, (int, float)) else "   -- "
+
+
+def _print_perf_report(report: dict) -> None:
+    click.echo(f"Performance attribution report (mode: {report.get('mode') or '?'})")
+    click.echo()
+    lat = report.get("latency")
+    if lat:
+        total = lat.get("total_p50_ms")
+        total_str = f"{total} ms" if isinstance(total, (int, float)) else "n/a"
+        click.echo(f"Query latency (p50 total: {total_str}) -- stage decomposition:")
+        for s in lat["stages"]:
+            p95 = s.get("p95_ms")
+            p95_str = f"(p95 {p95})" if p95 is not None else ""
+            click.echo(
+                f"  {s['stage']:<18} {str(s.get('p50_ms')) + ' ms':>9} {p95_str:<11}"
+                f" [{_pct(s.get('share'))}] {_bar(s.get('share'))}"
+            )
+        click.echo()
+    else:
+        click.echo("Query latency: no stage_timing_stats for this mode.\n")
+    foot = report.get("footprint")
+    if foot:
+        total_mb = foot["total_bytes"] / 1024 / 1024
+        click.echo(f"Resident footprint (total: {total_mb:.0f} MB) -- per-component allocation:")
+        for c in foot["components"]:
+            mb = c["bytes"] / 1024 / 1024
+            click.echo(f"  {c['component']:<18} {mb:7.0f} MB [{_pct(c.get('share'))}] {_bar(c.get('share'))}")
+        click.echo()
+    else:
+        click.echo("Resident footprint: unresolvable (no manifest model paths).\n")
+
+
+@click.command("perf-report")
+@click.argument("run_dir", type=click.Path(exists=True))
+@click.option("--mode", default=None, help="Mode to report (auto-detected if omitted).")
+@click.pass_context
+def cmd_perf_report(ctx, run_dir, mode):
+    """Tempdoc 647: a per-run performance-attribution report -- the query-latency stage decomposition
+    (p50 + p95 tail + materialized shares) and the resident-footprint per-component allocation.
+
+    Reads a run's `summary.json` + `manifest.json`; reads the materialized decomposition (never
+    re-derives it). Old-format runs (pre-647) render p50/p95 without shares."""
+    run = Path(run_dir)
+    summary_path = run / "summary.json"
+    if not summary_path.is_file():
+        raise click.ClickException(
+            f"no summary.json in {run} -- expected an eval-results run directory.")
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    manifest_path = run / "manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else None
+    )
+    report = build_perf_report(summary, manifest, mode or _first_mode(summary))
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2, default=str))
+    else:
+        _print_perf_report(report)
+
+
+COMMANDS = [cmd_counterfactual, cmd_shadow_eval, cmd_bisect, cmd_compare, cmd_trend, cmd_spot_check, cmd_correction_probe, cmd_diff, cmd_perf_report]

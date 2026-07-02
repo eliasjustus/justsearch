@@ -527,7 +527,7 @@ public class LocalApiServer {
         core.diagnosticsController());
     IndexingRoutes.register(app, indexingController);
     DebugRoutes.register(app, core.debugStateController(), core.effectiveConfigController(), core.chunkInfoController(), this::handleDebugDashboard, core.logLevelController(), core.timeSeriesController(), core.sessionPoliciesController(), this::handleResetIndex, this::handleAdminRuntimeReload, this::handleAdminInferenceReload);
-    AiRoutes.register(app, core.previewController(), core.aiInstallController(), core.aiPackController(), core.aiRuntimeController(), convApi.chatController());
+    AiRoutes.register(app, core.previewController(), core.aiInstallController(), core.aiPackController(), core.aiRuntimeController(), core.aiModelsController(), convApi.chatController());
     InferenceRoutes.register(
         app,
         inferenceHandlers::handleInferenceStatus,

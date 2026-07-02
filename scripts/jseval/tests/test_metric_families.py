@@ -7,12 +7,32 @@ from jseval import metric_families as mf
 
 def test_registry_covers_the_families():
     names = {f.name for f in mf.REGISTRY}
-    assert names == {"quality", "perf-latency", "perf-throughput", "perf-footprint", "leak", "llm-gen"}
+    assert names == {
+        "quality", "perf-latency", "perf-throughput", "perf-footprint", "leak",
+        "judge-low-cost-weight", "llm-gen",
+    }
 
 
 def test_every_metric_key_has_a_direction():
     for fam in mf.REGISTRY:
         assert set(fam.lower_is_better) == set(fam.metric_keys), fam.name
+
+
+def test_perf_latency_family_includes_the_retrieval_stage():
+    # tempdoc 647: the latency family completes from CE-only to the per-stage decomposition — retrieval
+    # (the only non-CE stage present on every query) is promoted + gated alongside the cross-encoder.
+    lat = mf.BY_NAME["perf-latency"]
+    assert "ce_p50_ms" in lat.metric_keys and "retrieval_p50_ms" in lat.metric_keys
+    assert lat.calibrate is True  # both flow into the calibrate envelope like a quality metric
+    assert lat.bands["retrieval_p50_ms"] >= lat.bands["ce_p50_ms"]  # retrieval band is wider (noisier)
+
+
+def test_footprint_family_has_per_component_allocation():
+    # tempdoc 647: footprint completes from one sum to the per-component allocation (deterministic →
+    # an absolute per-component band is admissible). `resident_bytes` stays the summed total.
+    foot = mf.BY_NAME["perf-footprint"]
+    for k in ("resident_bytes", "embed_bytes", "splade_bytes", "reranker_bytes", "ner_bytes", "llm_bytes"):
+        assert k in foot.metric_keys and foot.bands[k] == 1.05 and foot.lower_is_better[k] is True
 
 
 def test_source_classes_are_valid_and_leak_is_projection():
@@ -34,11 +54,12 @@ def test_perf_families_use_ratio_bands():
 
 
 def test_ce_latency_lives_in_aggregate_metrics_so_it_flows_like_quality():
-    # perf-latency (CE-stage p50) is promoted into the per-mode aggregate_metrics map
+    # perf-latency stages (CE + retrieval, tempdoc 647) are promoted into the per-mode
+    # aggregate_metrics map so they flow + calibrate like a quality metric.
     lat = mf.BY_NAME["perf-latency"]
     assert lat.source_class == "per_mode"
     assert lat.source_path == "aggregate_metrics"
-    assert lat.metric_keys == ("ce_p50_ms",)
+    assert "ce_p50_ms" in lat.metric_keys
     assert lat.lower_is_better["ce_p50_ms"] is True
 
 

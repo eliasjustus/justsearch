@@ -92,6 +92,17 @@
       "advisory": true
     },
     {
+      "name": "Onramp Smoke",
+      "path": ".github/workflows/onramp-smoke.yml",
+      "class": "scheduled-quality-signal",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 656 / onramp Tier-0 first-success proof-lane",
+      "failureDefault": "product-regression",
+      "staleDays": 7,
+      "blocking": false,
+      "advisory": true
+    },
+    {
       "name": "Dependabot Updates",
       "path": "github-managed",
       "class": "dependency-automation",

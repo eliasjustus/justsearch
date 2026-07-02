@@ -316,39 +316,50 @@ Eval results are not directly comparable across different model variants.
 
 ### Stale script references
 
-These files reference outdated model names. The packaged registry (`model-registry.v2.json`)
-and the on-disk models now use `Qwen_Qwen3.5-9B-Q4_K_M.gguf` / `mmproj-F16.gguf`; the files
-below still name the older `Qwen3VL-8B-Instruct` artifacts and should be reconciled to the
-registry/disk truth (verified 2026-06-13):
+These files reference outdated model names or paths and should be reconciled to the registry/disk
+truth:
 
 | File | Stale reference | Should be (registry + disk) |
 |------|----------------|-----------|
-| `scripts/verify-prerequisites.mjs` | `models/Qwen3VL-8B-Instruct-Q4_K_M.gguf` | `models/Qwen_Qwen3.5-9B-Q4_K_M.gguf` |
-| `scripts/verify-prerequisites.mjs` | `models/mmproj-Qwen3VL-8B-Instruct-F16.gguf` | `models/mmproj-F16.gguf` |
 | `scripts/verify-prerequisites.mjs` | `models/citation-scorer/ms-marco-MiniLM-L2-v2` | `models/onnx/citation-scorer/` |
-| `modules/ui/inference-model-id.txt` | `Qwen3VL-8B-Instruct-Q4_K_M.gguf` | `Qwen_Qwen3.5-9B-Q4_K_M.gguf` |
 
-## Repo-Root Model Presence
+(The `Qwen3VL-8B-Instruct` naming drift previously tracked here — in
+`scripts/verify-prerequisites.mjs`'s chat/mmproj checks and `modules/ui/inference-model-id.txt` —
+was fixed: the script now reads the expected filename live from `model-registry.v2.json`'s `chat`
+package instead of hardcoding it, so it cannot drift again the same way. Verified 2026-07-01.)
 
-All search-runtime models are now tracked in git under `models/`. Runtime cache files
-(`.onnx.optimized`, `.opt-meta`, `.sha256`) are gitignored via `models/.gitignore`.
+## Model identity (Repo-Root layout)
 
-| Path | Size | `build.json` | Status |
-|------|------|-------------|--------|
-| `models/onnx/embeddinggemma-300m/model.onnx` | 188 MB | Yes | Q4, GPU default |
-| `models/onnx/embeddinggemma-300m/model_int8.onnx` | 298 MB | Yes | INT8, CPU fallback |
-| `models/onnx/gte-multilingual-base/model_fp16.onnx` | 628 MB | Yes | FP16, packaged/registry default |
-| `models/onnx/gte-multilingual-base/model.onnx` | 1.26 GB | Yes | FP32, not yet in registry |
-| `models/onnx/embedding/model.onnx` | 131 MB | No | Nomic INT8, legacy fallback |
-| `models/splade/naver-splade-v3/model.onnx` | 345 MB | Yes | FP32 baked-PRESPARSE, CPU (multilingual-v1) |
-| `models/splade/naver-splade-v3/model_fp16.onnx` | 173 MB | Yes | FP16 baked-PRESPARSE, GPU (multilingual-v1) |
-| `models/onnx/reranker/model.onnx` | ~340 MB | Yes | GTE-multilingual-reranker FP32 |
-| `models/onnx/reranker/model_fp16.onnx` | ~340 MB | Yes | GTE-multilingual-reranker FP16, GPU default |
-| `models/onnx/reranker-minilm-backup/model.onnx` | 23 MB | No | Legacy MiniLM, backup only |
-| `models/onnx/citation-scorer/model.onnx` | 22 MB | Yes | MiniLM-L6 INT8 |
-| `models/onnx/ner/model.onnx` | 66 MB | Yes | Multilingual-NER-HRL INT8, CPU |
-| `models/onnx/ner/model_fp16.onnx` | 125 MB | Yes | Multilingual-NER-HRL FP16, GPU |
-| GGUF models (chat, embedding, mmproj) | — | No | Packaged layer — deferred |
+**This table describes model *identity* — which model, which precision, which purpose — not
+whether the file is currently present on this machine or in this git checkout.** The public repo
+does not commit the model binaries themselves (they are fetched on first run via the "Install AI"
+flow, per ADR-0024); a canonical reference asserting per-file presence/status as a static fact goes
+stale the moment the snapshot/distribution policy changes, which is exactly what happened here
+(tempdoc 656 §Investigation A.1) — this table used to claim every path below was present with a
+size and status, which was true of the private development checkout this doc was originally written
+against, but is not true of a fresh `justsearch-public` clone.
+
+**For the live, authoritative answer to "is this actually present on this machine right now,"**
+query `GET /api/ai/models/status` (tempdoc 656 Task 4) — it reconciles this same registry against
+actual on-disk state and reports per-package completeness, rather than a table that can only ever
+describe a snapshot in time.
+
+| Path | `build.json` | Identity |
+|------|-------------|--------|
+| `models/onnx/embeddinggemma-300m/model.onnx` | Yes | Q4, GPU default |
+| `models/onnx/embeddinggemma-300m/model_int8.onnx` | Yes | INT8, CPU fallback |
+| `models/onnx/gte-multilingual-base/model_fp16.onnx` | Yes | FP16, packaged/registry default |
+| `models/onnx/gte-multilingual-base/model.onnx` | Yes | FP32, not yet in registry |
+| `models/onnx/embedding/model.onnx` | No | Nomic INT8, legacy fallback |
+| `models/splade/naver-splade-v3/model.onnx` | Yes | FP32 baked-PRESPARSE, CPU (multilingual-v1) |
+| `models/splade/naver-splade-v3/model_fp16.onnx` | Yes | FP16 baked-PRESPARSE, GPU (multilingual-v1) |
+| `models/onnx/reranker/model.onnx` | Yes | GTE-multilingual-reranker FP32 |
+| `models/onnx/reranker/model_fp16.onnx` | Yes | GTE-multilingual-reranker FP16, GPU default |
+| `models/onnx/reranker-minilm-backup/model.onnx` | No | Legacy MiniLM, backup only |
+| `models/onnx/citation-scorer/model.onnx` | Yes | MiniLM-L6 INT8 |
+| `models/onnx/ner/model.onnx` | Yes | Multilingual-NER-HRL INT8, CPU |
+| `models/onnx/ner/model_fp16.onnx` | Yes | Multilingual-NER-HRL FP16, GPU |
+| GGUF models (chat, embedding, mmproj) | No | Packaged layer — deferred |
 
 ## Open Decisions
 

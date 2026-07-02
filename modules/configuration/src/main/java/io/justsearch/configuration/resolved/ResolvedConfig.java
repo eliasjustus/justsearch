@@ -284,6 +284,13 @@ public record ResolvedConfig(
         int minHits,
         int maxSeqLen,
         int maxAvgDocLengthChars,
+        // Tempdoc 643: judge-stage refinement floor (blend CE reorder with fusion order).
+        boolean judgeBlendEnabled,
+        double judgeBlendAlpha,
+        // Tempdoc 643 (E1/E2): per-query confidence-driven arbitration + perf-skip.
+        boolean judgeArbitrationEnabled,
+        double judgeArbitrationAlphaDiverge,
+        boolean judgeArbitrationSkipEnabled,
         ChunkReranker chunks) {
 
       public record ChunkReranker(

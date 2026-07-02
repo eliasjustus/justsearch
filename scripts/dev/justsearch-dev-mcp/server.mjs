@@ -1647,25 +1647,28 @@ export async function main() {
         details.noInferenceOrphan = 'OK';
       }
 
-      // 5. Llama-server runtime resolvable for ai_activate (tempdoc 618 §3). REPORT-ONLY: the
-      // stack starts fine without it and ai_activate is on-demand, so this does NOT gate `ready`.
+      // 5. Shared cuda12 GPU llama-server resolvable (tempdoc 656). REPORT-ONLY: the stack starts
+      // fine without it (inference fails closed), so this does NOT gate `ready`. GPU-only by design:
+      // there is deliberately no CPU baseline in dev (a CPU 9B fallback DOSes concurrent worktrees).
       let llamaVariantResolvable = true;
       try {
         const exe = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
-        const uiNativeBin = path.join(repoRoot, 'modules', 'ui', 'native-bin', 'llama-server');
-        const present = [];
-        for (const p of [path.join(uiNativeBin, exe), path.join(uiNativeBin, 'variants', 'cuda12', exe)]) {
-          try { await fsp.lstat(p); present.push(p); } catch { /* not present */ }
-        }
-        if (present.length > 0) {
-          details.llamaVariantResolvable = `OK (${present.length} resolvable: default${present.length > 1 ? '+cuda12' : ''})`;
+        const cuda12 = ['native-bin', 'llama-server', 'variants', 'cuda12', exe];
+        const mainRepoRoot = resolveMainRepoRoot(repoRoot);
+        const worktreeCuda12 = path.join(repoRoot, 'modules', 'ui', ...cuda12);
+        const sharedCuda12 = path.join(mainRepoRoot, 'modules', 'ui', ...cuda12);
+        let where = null;
+        try { await fsp.lstat(worktreeCuda12); where = 'worktree'; } catch { /* not present */ }
+        if (!where) { try { await fsp.lstat(sharedCuda12); where = 'shared main-checkout'; } catch { /* not present */ } }
+        if (where) {
+          details.llamaVariantResolvable = `OK (cuda12 GPU runtime resolvable — ${where})`;
         } else {
           llamaVariantResolvable = false;
-          let staged = false;
-          try { await fsp.lstat(path.join(repoRoot, 'modules', 'ui', 'build', 'llama-server', 'stage', exe)); staged = true; } catch { /* not staged */ }
-          details.llamaVariantResolvable = staged
-            ? 'No runtime in native-bin. Starting the stack auto-stages a CPU baseline for ai_activate {variantId:"default"}; for GPU cuda12 run "Install AI".'
-            : 'No llama-server built/installed. Run "Install AI" for the cuda12 GPU variant, or build the CPU baseline; ai_activate fails until then.';
+          details.llamaVariantResolvable =
+            'No cuda12 GPU runtime resolvable. Provision the shared runtime ONCE at the main checkout: '
+            + '`./gradlew :modules:ui:stageLlamaCudaVariant` (~600 MB), then the dev-runner auto-populates '
+            + 'the shared native-bin and every worktree references it. Dev is GPU-only (no CPU baseline); '
+            + 'until then inference is unavailable (fails closed) but search works.';
         }
       } catch {
         details.llamaVariantResolvable = 'OK (check skipped)';

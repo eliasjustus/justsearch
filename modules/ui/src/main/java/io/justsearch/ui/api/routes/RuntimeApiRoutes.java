@@ -54,6 +54,10 @@ public final class RuntimeApiRoutes {
     registry.registerProbe("/api/runtime/live", Reachability.AUDIENCE_PUBLIC);
     registry.registerMcpTool(
         "justsearch_runtime_manifest", Reachability.AUDIENCE_PUBLIC);
+    // Tempdoc 654: advertise the MCP ingress endpoint itself (POST /mcp) so the manifest —
+    // the one discovery object — self-describes the Runtime Contract's MCP surface. The 5-tool
+    // set is discovered via MCP's own tools/list once connected.
+    registry.registerHttp("/mcp", Reachability.AUDIENCE_PUBLIC);
     registry.registerFilesystem(
         publisher.manifestPath().toString(), Reachability.AUDIENCE_FULL);
     publisher.setTransportRegistry(registry);

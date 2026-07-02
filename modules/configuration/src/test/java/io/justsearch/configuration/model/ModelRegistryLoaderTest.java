@@ -127,6 +127,26 @@ class ModelRegistryLoaderTest {
   }
 
   /**
+   * Tempdoc 657 — every package must declare a capability tier so an install intent can include or
+   * exclude whole capability groups. A missing tier would silently make a package always-installed
+   * (untagged ⇒ always wanted), defeating MCP Lite's ability to skip the LLM.
+   */
+  @Test
+  void everyPackageDeclaresATier() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    for (ModelPackage pkg : registry.packages()) {
+      assertNotNull(pkg.tier(), "package '" + pkg.id() + "' is missing a capability tier (tempdoc 657)");
+    }
+    // Spot-check the retrieval vs LLM vs runtime split MCP Lite depends on.
+    assertEquals(CapabilityTier.RETRIEVAL_CORE, registry.findPackage("embedding").tier());
+    assertEquals(CapabilityTier.RETRIEVAL_ENRICHMENT, registry.findPackage("splade").tier());
+    assertEquals(CapabilityTier.LLM, registry.findPackage("chat").tier());
+    assertEquals(CapabilityTier.RUNTIME, registry.findPackage("cuda-runtime").tier());
+  }
+
+  /**
    * Tempdoc 633 #6 — first-run robustness. Every model/file download must resolve over HTTPS from an
    * allowlisted *public* host, so a stranger can clone → build → first-run without hitting a private or
    * unreachable source. This makes the README's "downloads from public sources" line a checked invariant

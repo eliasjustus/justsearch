@@ -8,6 +8,9 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import provenance
+from .retriever import resolve_doc_id
+
 log = logging.getLogger(__name__)
 
 
@@ -204,6 +207,23 @@ def _build_per_query_entries(
         trace = resp.get("searchTrace") or {}
         decision_kind = trace.get("decisionKind") if isinstance(trace, dict) else None
 
+        # Tempdoc 643: per-hit judge-arbitration signals (CE score + per-leg ranks), read from
+        # each hit's own trace slice — always-on structural data (no debug/include_detail flag
+        # needed). Feeds the U1/U2 pre-design measurements (rank distribution, CE-on/off signal
+        # separation); not consumed by existing per-query metrics. Doc-id resolution failures are
+        # skipped (mirroring retriever.retrieve's allow_errors fallback at retriever.py:133-142)
+        # rather than aborting the whole per-query artifact write over one malformed hit.
+        judge_signals = []
+        for h in (resp.get("results") or []):
+            if not isinstance(h, dict):
+                continue
+            try:
+                doc_id = resolve_doc_id(h)
+            except ValueError as e:
+                log.warning("judgeSignals: doc ID resolution failed for query %s: %s", qid, e)
+                continue
+            judge_signals.append({"docId": doc_id, **provenance.extract_judge_signals(h)})
+
         entry = {
             "qid": qid,
             "query": query_records[qid].text if query_records and qid in query_records else None,
@@ -228,6 +248,8 @@ def _build_per_query_entries(
             # 525: decision_kind dimension for stratified eval bucketing.
             "decision_kind": decision_kind,
             "error": resp.get("error"),
+            # Tempdoc 643: per-hit {docId, bm25/splade/dense rank+score, fusion_score, ce_score}.
+            "judgeSignals": judge_signals,
         }
         entries.append(entry)
 

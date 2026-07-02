@@ -67,7 +67,26 @@ public record RuntimeManifest(
      * Schema-version stays at 1: {@code @JsonInclude(NON_NULL)} keeps the
      * field optional for older readers.
      */
-    Reachability reachability) {
+    Reachability reachability,
+    /**
+     * Install/runtime mode (tempdoc 657). {@code intent} is the configured product shape
+     * ({@code full-desktop} | {@code headless} | {@code mcp-lite}, from {@code -Djustsearch.mode});
+     * {@code realized} is the coarse capability actually up ({@code full} | {@code retrieval-only} |
+     * {@code degraded}), projected from {@code WorkerCapability} + {@code InferenceCapability}. So the
+     * advertised mode never outruns what is actually loaded. Nullable — a manifest written before the
+     * first mode publish omits it; {@code @JsonInclude(NON_NULL)} keeps it optional and the schema
+     * version stays 1 (older readers unaffected).
+     */
+    ModeInfo mode,
+    /**
+     * Tempdoc 654: the JustSearch Runtime Contract descriptor — the coarse contract version plus
+     * the pinned versions of the contract's constituent surfaces (manifest schema, lifecycle
+     * subset, MCP protocol + tool surface). Advertised here so the manifest is the one object an
+     * external agent reads to learn "what is promised, at what version." A projection over
+     * existing version single-sources (see {@link RuntimeContract#current()}); nullable and
+     * {@code @JsonInclude(NON_NULL)}, so older readers are unaffected and no schema bump is needed.
+     */
+    RuntimeContract runtimeContract) {
 
   public static final int CURRENT_SCHEMA_VERSION = 1;
 
@@ -180,6 +199,29 @@ public record RuntimeManifest(
   }
 
   /**
+   * Install/runtime mode surface (tempdoc 657) — nullable until the first mode publish.
+   *
+   * <p>{@code intent} is the producer-owned primitive: the configured product shape from
+   * {@code -Djustsearch.mode} ({@code full-desktop} | {@code headless} | {@code mcp-lite}; defaults to
+   * {@code full-desktop}). {@code realized} is a coarse projection of what is actually up —
+   * {@code full} (retrieval + LLM ready), {@code retrieval-only} (retrieval up, LLM not required/offline),
+   * or {@code degraded} — derived from {@code WorkerCapability} + {@code InferenceCapability}. Consumers
+   * branch on {@code realized}; when it diverges from {@code intent} the manifest tells the honest truth.
+   */
+  @RecordBuilder
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  public record ModeInfo(String intent, String realized) {
+
+    /**
+     * Public projection (tempdoc 501 §13.4.5 audience axis). Mode carries no credentials; the public
+     * view is identity. Same structural commitment as {@link AiInfo#publicProjection}.
+     */
+    public ModeInfo publicProjection() {
+      return this;
+    }
+  }
+
+  /**
    * Public projection of the whole manifest (tempdoc 501 §13.4.5 audience
    * axis). Each sub-record declares its own {@code publicProjection()}; this
    * method composes them. The type system enforces that new sensitive
@@ -195,14 +237,19 @@ public record RuntimeManifest(
     WorkerInfo publicWorker = worker == null ? null : worker.publicProjection();
     AiInfo publicAi = ai == null ? null : ai.publicProjection();
     Reachability publicReach = reachability == null ? null : reachability.publicProjection();
+    ModeInfo publicMode = mode == null ? null : mode.publicProjection();
+    RuntimeContract publicContract =
+        runtimeContract == null ? null : runtimeContract.publicProjection();
     if (publicHead == head
         && publicWorker == worker
         && publicAi == ai
-        && publicReach == reachability) {
+        && publicReach == reachability
+        && publicMode == mode
+        && publicContract == runtimeContract) {
       return this;
     }
     return new RuntimeManifest(
         schemaVersion, instanceId, pid, startedAt, dataDir, lifecycle,
-        publicHead, publicWorker, publicAi, publicReach);
+        publicHead, publicWorker, publicAi, publicReach, publicMode, publicContract);
   }
 }

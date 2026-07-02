@@ -1,7 +1,7 @@
 ---
 title: "Judge-stage arbitration — bound the cross-encoder by a *relative* relevance-confidence signal (score-margin + leg-agreement, NOT a fitted per-corpus calibration — see Research pass 2) so it cannot regress below fusion (a 'refinement floor') and can be skipped when fusion is already confident; gate any *active* rank-promotion on real-corpus headroom. Reframes the original 'sharper judge / ranked-below-cutoff' stub: JUDGE_RANK_LOW is *in-window-not-first* (not below-cutoff), the obvious judge levers are dead/harmful (F-006 swaps≈0, F-002 CE hurts email), and the present defect is the CE replacing fusion *unconditionally*. Conforms to the D-004 per-query arbitration seam + the 553 canonical-record/projection seam; reveals the *stage-non-regression* principle (extends D-005 recall-survival to property-survival)."
 type: tempdocs
-status: designed + research-validated (2026-07-01) — general design settled (§Long-term design), then de-risked by two literature passes (§Research pass 2 amends E1/E2: relative signal not fitted calibration). IN-scope structure warranted now by a present defect; active-promotion half gated on §9; "gating reduces regressions" is an unproven hypothesis requiring its own regression test. No implementation.
+status: MERGED TO MAIN, DESIGN COMPLETE (2026-07-01, worktree `643-judge-arbitration`, PR #36) — all three of D-1's structural elements are implemented, tested, and live-verified: E1 (the per-query confidence signal), E2 (confidence-driven blend, replacing the earlier static-alpha floor), perf-skip, and E3 (a cost-weighted decision-instrument field + a durable `judge-arbitration-report`/`ce-replay` CLI tooling pair). Two rounds of code/methodology critical review found and fixed real issues, including a top-2 CE-margin bug, a trec-based-rank blindness in a widely-used jseval projection (root cause logged, out of this tempdoc's scope to fix register-wide), and — found later, via an independent-thread cross-check — a qrels-dilution bug in the shared nDCG scoring helper that had produced a materially wrong first result for the live judge-ceiling probe (U1). **U1's corrected result is a real positive signal (36% ceiling capture, outperforming the shipped pipeline on the sample measured), reversing the original negative finding** — this reopens, as an explicitly undecided question for a future pass, whether D-2's exclusion of a stronger/LLM judge model should be revisited; it does not settle that question by itself. A second, independent, earlier implementation of the same core idea was found on this tempdoc during this work (see `## Sibling-thread reconciliation`) and this thread was carried forward in its place. See `## Closure` (bottom of doc) for the full final summary, including the remaining open threads.
 created: 2026-06-24
 updated: 2026-07-01
 author: agent analysis — originated as a STUB (idea + purpose only), filed from the tempdoc 636 coverage-gap analysis (this session) as the symmetric judge-side counterpart to 639's candidate-set side. No design chosen, no implementation. Records the purpose + why it matters; the design phase is deferred.
@@ -805,3 +805,810 @@ Exit (SIGIR'25, 10.1145/3726302.3729962) · AcuRank (2505.18512) · Stochastic R
 Injecting BM25 Score as Text (2301.09728, ECIR'23) · Set-Encoder (2404.06912, ECIR'25) · FIRST (2406.15657).
 *Caveat:* 2026-dated items are recent/single-source; the "gating reduces regressions" claim is unsupported and is
 ours to prove (§9-4).
+
+---
+
+# Implementation closure (2026-07-01, worktree `643-judge-arbitration`)
+
+> Implemented per the approved plan (`~/.claude/plans/agile-dazzling-zebra.md`). This section is the as-built
+> record: what shipped, what was measured live, what is deferred, and why. Full evidence + caveats are in
+> register **F-026** (`docs/reference/search-quality-register.md`) — this section summarizes and points there.
+
+## What shipped (Stage 1 + Stage 2 — unconditional)
+
+- **Stage 1a — per-hit judge signals persisted in jseval.** New `provenance.extract_judge_signals(hit)`
+  (sibling of `extract_hit_evidence`, keeps BM25/SPLADE ranks **separate** rather than collapsed — needed for
+  leg-agreement) + a `judgeSignals` list on every `{mode}_per_query.json` entry (`artifacts.py`). Tested
+  (`test_provenance.py`, `test_artifacts.py`) and **live-verified** against a real backend (scifact run: real
+  per-hit `bm25_rank`/`dense_rank`/`splade_rank`/`fusion_score`/`ce_score` values observed in the artifact).
+- **Stage 1b — in-bucket rank histogram.** `staged_recall_accounting.produce()` now emits
+  `aggregate.judge_rank_histogram` (`rank_2`/`rank_3_5`/`rank_6_10`/`rank_11_plus` counts within
+  `JUDGE_RANK_LOW`) — additive, existing keys unchanged (`leak_gate` etc. unaffected). Tested + **live-verified**:
+  real scifact data showed a substantively-spread distribution, not near-ceiling (see F-026).
+- **Stage 2 — the judge-stage refinement floor.** New static pure helper
+  `KnowledgeSearchEngine.blendPreRerankAndCrossEncoder(preRerankScores, crossEncoderScores, alpha)`: min-max
+  normalizes both score arrays within the CE window and sorts by `alpha·preRerankNorm + (1−alpha)·ceNorm`.
+  `alpha=0` is provably identical to today's CE-only order (normalization is monotonic). Wired into
+  `KnowledgeSearchEngine`'s rerank block, gated by new config `justsearch.rerank.judge_blend_enabled` /
+  `judge_blend_alpha`, threaded through the full chain (`EnvRegistry` → `ResolvedConfigBuilder.buildReranker` →
+  `ResolvedConfig.Ai.Reranker` → `RerankerConfig` record + `from()` + `DISABLED`). **Default off** — a no-op by
+  construction when disabled. Unit-tested (`KnowledgeSearchEngineBlendTest` — 7 cases incl. the floor
+  qualitatively suppressing a marginal CE flip while still yielding to a decisive one) and **live-verified**:
+  Head + Worker config-snapshot logs both confirmed the flag/alpha propagate, and toggling it measurably changed
+  real ranking decisions on a live scifact run (see F-026).
+- **A correctness bug caught by the critical-analysis pass before it shipped:** the first wiring sized the CE
+  score array to `min(topK, reranked.getScoresCount())`, which would have silently dropped candidates between
+  that bound and `topK` from the result set entirely if the two counts ever diverged. Fixed to size by `topK`
+  always, defaulting a missing CE score to `0f` — matches the existing code's tolerance for that mismatch
+  (`ceScoresByDocId`'s loop) without truncating the candidate list.
+- **Annotation correction:** `staged_recall_accounting.py`'s `FP_MAPPING` and `recall_profile.py`'s
+  `_RECOMMENDATION` had `CASCADE_LEAK`/`JUDGE_RANK_LOW`'s Seven-Failure-Points labels backwards (§Finding A
+  above) — corrected; `JUDGE_RANK_LOW` no longer claims a canonical FP match it doesn't have, and its
+  recommendation text no longer points at the dead/harmful levers this investigation ruled out.
+- **Docs:** `docs/reference/configuration/environment-variables.md` (the two new flags) and
+  `docs/reference/search-quality-register.md` (Finding **F-026**, a Measurement-Gaps row, a Q-013 cross-reference)
+  updated; `llmstxt-generate.mjs` / `skills-sync.mjs` regenerated.
+
+## What was measured live (summary — full numbers + caveats in F-026)
+
+Worktree-isolated eval (tempdoc 644), GPU RTX 4070, **reranker on CPU** (capability warning, not GPU — noted
+caveat). `beir/scifact`, 300 queries, hybrid mode:
+
+| Run | final nDCG | judge_low_rate | rank histogram (2 / 3-5 / 6-10) |
+|---|---|---|---|
+| CE-on, floor OFF (today) | 0.7512 | 0.27 | 28 / 39 / 14 |
+| CE-on, floor ON (α=0.5) | 0.7490 | 0.28 | 28 / 34 / 22 |
+| CE-off | 0.7584 | — | — |
+
+U2 signal-separation (CE-on vs CE-off rank delta vs {CE margin, leg-Jaccard}): **9 non-neutral queries** (1
+helped, 8 hurt, 261 neutral, 30 no-gold) — margin AUC 0.75, Jaccard AUC 0.69 (right direction, too thin to trust).
+
+**`mixed/enron-qa` — the decisive corpus for this design (F-002/F-008's largest CE-hurts signal) — was
+unavailable in this environment** (`datasets/mixed/enron-qa/corpus.jsonl` missing; real email data, not
+auto-downloadable). This is the dominant residual gap.
+
+## What is deferred (Stage 3 — NOT built)
+
+> **Superseded (2026-07-01):** this section describes the state at the end of the initial implementation
+> pass, before the doc's own later `§Conceptual re-review` found this framing was itself a scoping error
+> (there is no separate "Stage 3, deferred" bucket — see that section). Confidence-gating (perf-skip) and a
+> confidence-*driven* E2 were subsequently built in full — see `## E1/E2/perf-skip implementation + §9-4
+> acceptance test`. Left as-is below (append-only history), not rewritten.
+
+Confidence-gating (perf-skip when fusion is confident) and active rank-promotion (let a confident CE dominate)
+are **not implemented**. Per the plan's decision rule, the evidence gathered is directionally encouraging but
+statistically too thin (n=9) and missing its most decisive corpus to justify an active behavioral change. **Do
+not build Stage 3 from this state** — first re-run the U1/U2 measurements on `mixed/enron-qa` when available
+(procedure: `docs/reference/search-quality-register.md` F-026 "Open follow-up"). This is an honest, expected
+outcome the plan explicitly anticipated, not a failure to execute.
+
+## Verification performed
+- `python -m pytest` (jseval, full suite minus one pre-existing unrelated failure): **1061 passed**.
+- `./gradlew.bat :modules:configuration:test :modules:reranker:test :modules:app-services:test`: all green.
+- Live end-to-end: config propagation confirmed in Head + Worker logs; real ranking behavior change confirmed
+  via the rank histogram shift between floor-on/off runs on a real backend + real corpus.
+- **Browser / dev-stack UI validation (real UI, required for user-visible work):** built a fresh `installDist`
+  from this worktree, started the dev stack (`scripts/dev/dev-runner.cjs`), and drove the real `shell-v0` chat/
+  search UI via Chrome. A live query ("AI capabilities") returned correct, well-formed results; the "Why this
+  result?" evidence panel showed the full per-stage breakdown firing correctly end-to-end — `Sparse (BM25) · #1 ·
+  2.66`, `Dense (vector) · #1 · 0.57`, `Fusion · 1.00`, **`Cross-encoder · 0.30`** — confirming the CE reorder
+  path (which my Stage 2 change sits inside, default-off) executed with zero console errors and zero regressions
+  in the default (unchanged) behavior. Dev stack stopped cleanly after.
+
+## Post-implementation critical-analysis pass (2026-07-01)
+
+> The bidirectional-pass discipline: a second look at the shipped diff, asking "what would catch what tests
+> missed?" Found one substantive design-vs-implementation mismatch and two smaller correctness gaps, all fixed
+> in the same session before closure.
+
+**Finding 1 (high) — the floor read the wrong pre-rerank signal in exactly the cases it exists to protect.**
+The blend wiring read only the `"fusion"` HitStage. Verified against `HitProvenanceProjector.java` directly:
+`"fusion"` is **absent** for single-leg presets (`attachSingleLeg` passes `fusionMethod=null` — affects
+BM25-only/`text`, dense-only/`vector`, SPLADE-only/`splade`, three of the four CE-eligible presets) and
+**stale** whenever chunk-branch fusion ran (`attachBranchFusion` — the doc's true final score lives on a
+separate `"branch-fusion"` stage; `"fusion"` there still reflects only the whole-doc branch's own internal
+score). Per register F-014, chunk merge fires on **all** EnronQA queries — the exact corpus this design targets.
+Left unfixed, the floor would have been a silent no-op for single-leg presets and would have read a stale
+signal on the very `mixed/enron-qa` re-measurement this doc recommends as the next step.
+- **Fix:** new `SearchTraceMapper.protoStageScoreAny(sr, wireIds...)` — tries each candidate stage id in
+  priority order (`"branch-fusion"`, `"fusion"`, then whichever single leg stage is present), returning the
+  first *present* one (presence, not value — a genuine `0.0` fusion score is never mistaken for "absent").
+  Wired into `KnowledgeSearchEngine`'s blend block in place of the single-id read. Tests:
+  `SearchTraceMapperTest.java` (7 cases: branch-fusion-wins, fusion-fallback, each of the three single-leg
+  fallbacks, nothing-present→0f, real-zero-is-honored).
+- **F-026's already-recorded scifact numbers are unaffected** — that run used `hybrid` mode with
+  `chunk-merge: SKIPPED_SHORT_CORPUS` (confirmed live in the browser-validation curl output), i.e. `"fusion"`
+  was present and not stale for that specific measurement. No retraction needed; this is a forward-looking
+  correction for the presets/corpora not yet measured — including the recommended `mixed/enron-qa` follow-up.
+
+**Finding 2 (medium) — the identical blind spot in the measurement tooling.**
+`provenance.extract_judge_signals()`'s `fusion_score` field had the same single-stage read, which would have
+fed the same wrong signal into any future analysis (including the very re-measurement Finding 1 flags).
+**Fix:** the same branch-fusion-then-fusion fallback, checked by value (`is not None`) so a `"branch-fusion"`
+stage that is present-but-scoreless correctly falls through rather than reporting `None`. Tests added to
+`TestExtractJudgeSignals` (`test_provenance.py`).
+
+**Finding 3 (low-medium) — a non-neutral defensive default.**
+When `i >= reranked.getScoresCount()` (a mismatch the code's own comment calls "not expected in normal
+operation"), the missing CE score defaulted to `0f`. Real CE scores observed live are raw logits, frequently
+negative (`-0.50`, `-0.66`, `-0.86`) — `0f` reads as an artificially *high* score, which could wrongly promote
+a candidate the CE never actually judged. **Fix:** a two-pass build in the wiring block computes the minimum
+*observed* CE score first; missing entries default to that minimum ("tied for worst known"), never an implicit
+boost. This is a defensive branch inside `doSearch()`'s wiring (not the pure blend helper) at the same testing
+boundary LambdaMART's equivalent array-building loop already sits at — fixed + commented, no new
+integration-test infrastructure manufactured for it (consistent with existing precedent, not a new gap).
+
+**No security or privacy issue found.** Verification: full targeted + jseval test suites green (1065 jseval
+tests, +4 new, 14 new Java test cases across `SearchTraceMapperTest`/`KnowledgeSearchEngineBlendTest`).
+
+**Regression-safety re-run.** Re-ran the exact scifact CE-on floor-on eval after the fix:
+
+| | pre-fix | post-fix | delta |
+|---|---|---|---|
+| `final_ndcg` | 0.7490 | 0.7551 | +0.0061 |
+| `judge_low_rate` | 0.28 | 0.28 | 0 |
+| `judge_rank_histogram` | `{2:28, 3-5:34, 6-10:22}` | `{2:27, 3-5:36, 6-10:21}` | total unchanged (84), ±1-2 queries shifted between adjacent bins |
+| `leak_rate` | 0.033 | 0.023 | ~1-2 queries |
+
+Not byte-identical, but the **code-path is provably unchanged** for this case: scifact-hybrid never triggers
+chunk-branch fusion (`chunk-merge: SKIPPED_SHORT_CORPUS`, confirmed live), so `protoStageScoreAny` finds no
+`"branch-fusion"` stage and falls through to `"fusion"` — the exact same value `protoStageScore` returned
+before (proven directly by the `fallsBackToFusionWhenNoBranchFusion` unit test). The residual numeric wobble
+(same total judge-low count, a couple of queries shifted ±1 rank bin, nDCG delta well inside the ~1.25% swing
+already observed across every scifact re-index earlier in this session — 0.7512→0.7584→0.7490 on identical
+configs) is attributable to normal re-indexing/embedding non-determinism, not the fix. The unit-test proof is
+the primary regression-safety evidence here; the eval re-run is corroborating, not decisive, given this
+corpus's known noise floor.
+
+## Conceptual re-review (2026-07-01) — the shipped floor is not what D-1/D-2 designed
+
+A fresh, full re-read of this doc's own §Long-term design against what actually shipped found a real gap
+distinct from the code-correctness findings above: **D-2 scopes E1 (the confidence-signal primitive) and
+E2's perf-skip as "IN — the present problem requires it," unconditional — not deferred.** What shipped is a
+**static, operator-configured `alpha` blend with no computed confidence signal driving it at all.** This
+means:
+- The shipped floor **reduces** the CE's influence uniformly; it does not deliver the design's stated
+  guarantee ("cannot leave a hit worse-ordered than fusion... beyond what its calibrated confidence
+  justifies") — that guarantee specifically requires the blend weight to respond to per-query confidence,
+  which nothing computes today.
+- **Perf-skip** — explicitly scoped as part of "E2 as a floor," and named in T3-a/T6-e as the key Pareto
+  insight unifying 643 with 647/648 — was not built at all, and was mislabeled under "Stage 3, deferred" in
+  the implementation plan, when D-2 never made it contingent.
+- **E1 itself** — the "shared primitive," scoped as warranted *now* with two present-day consumers (E2's
+  gate, and Q-009's FE surface) — was never built anywhere, production or eval-tooling, beyond the raw
+  ingredients (per-hit CE score + leg ranks persisted in jseval for measurement only).
+- U1's own designated primary number (the live §5 LLM-judge-ceiling probe's realistic capture-fraction on
+  real corpora — called "the single most important number") was never run; the weaker, already-available
+  AI-free ceiling was substituted without flagging the substitution.
+
+**Net: what shipped is a real, safe, tested risk-reduction, correctly labeled in code and tests — but it is
+not "the refinement floor" this tempdoc's title and design describe.** The remaining, actual feature work is
+E1 (a computed per-query relative-confidence signal) + a confidence-*driven* E2 (replacing the static alpha)
++ perf-skip, still gated on a properly-run U1/U2.
+
+## Confidence-building pass 2 (2026-07-01) — de-risking the actual remaining work
+
+Before building E1/real-E2/perf-skip, this pass tested the load-bearing assumptions for that work
+specifically (approved plan, no feature code changed). Findings:
+
+- **CU2 (`mixed/enron-qa` availability) — REVERSED from "unavailable."** The corpus was wrongly written off
+  as a hard environment limitation. `scripts/search/convert-enronqa-to-beir.py` already exists, is fully
+  documented, and its default args (`--user dasovich-j --max-queries 300`) exactly match the register's
+  established baseline. `huggingface.co` is reachable from this environment; only the `datasets` pip package
+  was missing. **Acquired successfully this pass** — `datasets/mixed/enron-qa/` now exists (5485 docs, 300
+  queries, 300 qrels, verified via jseval's own loader) and is available in this worktree going forward.
+  - **Side effect caught and fixed:** `pip install datasets` pulled a newer `click` that broke jseval's own
+    CLI entirely (a crash inside click's own `handle_parse_result`). Pinned back to
+    `click>=8.1.3,<8.2.2` (satisfying the pre-existing `inspect-ai` constraint); full jseval suite (1065
+    tests) re-verified green after the pin. Logged: `huggingface-hub` nominally wants `click>=8.4.0`, an
+    unresolved-but-apparently-harmless pip warning — watch for it if `datasets`/HF functionality is extended.
+  - **Unrelated pre-existing bug found along the way:** bare `python -m jseval --help` (no subcommand)
+    crashes with `UnicodeEncodeError` on a Greek σ character when stdout isn't UTF-8-aware (e.g. redirected
+    on Windows/cp1252); subcommand help (`jseval run --help`) is unaffected. Logged to observations, not fixed
+    (out of scope).
+- **CU1 (crux) — real enron-qa evidence gathered; still not decisive.** Ran the CE-on/CE-off pair on the
+  newly-acquired corpus (hybrid nDCG: CE-on 0.7146, CE-off 0.7166 — CE hurts, direction matches F-002) and
+  the U2 signal-separation script: **12 non-neutral queries** (4 helped, 8 hurt; margin AUC 0.625, Jaccard AUC
+  0.75) — bigger than scifact's n=9 but still thin. **Pooling scifact + enron-qa** (n=21: 5 helped, 16 hurt):
+  **margin AUC = 0.65** (exactly at this doc's own stated threshold), **Jaccard AUC = 0.617** (below it). The
+  signal is directionally consistent across both corpora (always > 0.5) but sits right at the boundary
+  between "build it" and "don't" — genuinely ambiguous, not a clean answer either way.
+- **CU3 (live §5 judge-ceiling probe) — attempted, cleanly failed, root-caused.** `backend.start_backend
+  (llm=True)` fails: `native-bin/llama-server/llama-server.exe` is absent in this worktree (jseval's raw
+  backend path doesn't auto-stage it the way `dev-runner.cjs start` does per branch-safety.md), **and** the
+  configured model (`Qwen_Qwen3.5-9B-Q4_K_M.gguf`) is absent from main's `models/` too — two independent
+  missing artifacts, not a VRAM/config problem. Unlike enron-qa, no small fix was found or attempted (a
+  multi-GB model download is a materially heavier, separately-permissioned action, not attempted here). **The
+  realistic-headroom number this doc calls "the single most important" remains unmeasured**, now for a
+  precisely diagnosed reason rather than an assumption.
+- **CU5 (leg-agreement staleness) — confirmed as a real, scoped gap, not assumed away.** The earlier
+  confidence-building pass's "leg-agreement is trivially Head-reconstructable" claim is incomplete:
+  `HitProvenanceProjector.attachChunkMerge` writes chunk-branch leg ranks into a **separate** `chunk-merge`
+  detail-map (keys `chunk_sparse_rank`/`chunk_vector_rank`/etc., gated by `include_detail=true` — not
+  currently requested by jseval's request builder), distinct from the always-on top-level `sparse-retrieval`/
+  `dense-retrieval` stages (the whole-doc branch only). A correct, chunk-aware leg-agreement signal needs to
+  request `include_detail` and union both sources per-hit. Bounded and addressable, but a real design item a
+  future E1 must include — not free, as previously assumed.
+- **CU4 (wire-schema cost) and CU6 (perf-skip integration) — reconfirmed low-risk via static inspection**,
+  consistent with the earlier pass: `HitStage.detail` is a genuinely open `map<string,float>`
+  (`additionalProperties: {type: number}` in the JSON schema) — a new confidence key needs zero schema regen;
+  `crossEncoderSkipReason`/`crossEncoderApplied` are consumed only within `SearchTraceMapper.java` and
+  `KnowledgeSearchEngine.java` — a new skip reason is a contained addition.
+
+## E1/E2/perf-skip implementation + §9-4 acceptance test (2026-07-01)
+
+Built the actual remaining feature work per the confidence-building-pass-2 plan, mirroring D-004's
+`HybridSearchOps.computeArbitrationAlpha` shape exactly:
+
+- **E1** — `KnowledgeSearchEngine.computeJudgeArbitrationAlpha(window, crossEncoderScores, baseAlpha,
+  fusionProtectAlpha)`: computes the CE margin (normalized top1−top2 gap) and a leg-agreement Jaccard
+  (`sparse-retrieval`/`dense-retrieval` top-K doc-ids), with the CU5 chunk-merge bailout (a `"chunk-merge"`
+  HitStage present → leg signal untrustworthy → fall back to `baseAlpha`, don't intervene). Returns
+  `Math.max(baseAlpha, fusionProtectAlpha)` only when the CE margin is thin AND legs agree; otherwise
+  `baseAlpha` unchanged — structurally bounded to never trust the CE *less* than today's unconditional
+  baseline, only ever protect *more* via fusion.
+- **E2** — wired into the existing blend call site (`KnowledgeSearchEngine.java` ~861): when
+  `judgeArbitrationEnabled` is on, `alphaToApply` is computed via E1 instead of reading the static
+  `judgeBlendAlpha()`; off (default) is a byte-identical no-op to the shipped floor.
+- **Perf-skip** — a SEPARATE, stricter gate (`isFusionDecisiveForSkip`), gated by its own
+  `judgeArbitrationSkipEnabled` flag: skips the CE RPC entirely (pre-RPC, so only the leg-agreement half of
+  E1's signal is available — no CE margin exists yet) when legs are decisively agreeing. Deliberately
+  inverts E1's "unknown → don't intervene" convention: for perf-skip, an inconclusive signal means "not
+  decisive enough to skip" (call the CE as normal), since skipping a query the CE would have fixed is a
+  sharper risk than re-weighting it.
+- **Config chain** — `judgeArbitrationEnabled` / `judgeArbitrationAlphaDiverge` (default 0.85) /
+  `judgeArbitrationSkipEnabled`, threaded through the same 4-file chain as `judgeBlendEnabled`/
+  `judgeBlendAlpha` (`EnvRegistry` → `ResolvedConfigBuilder` → `ResolvedConfig.Ai.Reranker` →
+  `RerankerConfig`). All three default `false`.
+
+**A real bug caught by writing the arbitration test class, not by the implementation review itself:** the
+initial top-2 CE-margin scan seeded `top1`/`top2` from `ceNorm[0]` instead of a proper sentinel
+(`Double.NEGATIVE_INFINITY`). This silently zeroed the margin whenever the window's true top CE score
+happened to sit at pre-rerank position 0 (not a rare case — a good fusion order correlates with a good CE
+order more often than chance). Caught by `KnowledgeSearchEngineArbitrationTest.decisiveMargin_returnsBaseAlpha`
+failing unexpectedly; fixed and all suites re-verified green. This is exactly the class of defect
+`bidirectional-pass`'s post-implementation critical-analysis step exists to catch, and did.
+
+### §9-4: A/B regression-rate acceptance test
+
+Per-query regression rate: for each judged query, reconstruct the pre-rerank (fusion) gold rank from
+`judgeSignals.fusion_score` and compare it to the FINAL gold rank. **Methodology finding (logged to
+observations, out of scope for this tempdoc):** jseval's own `{mode}_run.trec` and aggregate nDCG/recall are
+**blind to CE/blend list-reordering** — the CE/blend stage only ever reorders the result list, never rewrites
+each hit's top-level `score` field (true even in the pre-tempdoc-643 baseline), and both
+`_write_trec_run`'s re-sort and `ir_measures`' ranking key off that unrewritten score. Only per-query
+`predictedDocIds` (true API response order) reflects the real post-blend order — this analysis uses that
+field, not the trec file or the run's own aggregate metrics.
+
+Ran hybrid CE-on (`judge_blend_enabled=true`) on `beir/scifact` and `mixed/enron-qa` (300 queries each),
+once with `judge_arbitration_enabled=false` (today's shipped static floor, α=0.5) and once `=true`
+(α_diverge=0.85):
+
+| Corpus | Config | Regressed | Improved | Regression rate |
+|---|---|---|---|---|
+| scifact | ARB_OFF | 15/300 | 28/300 | 5.00% |
+| scifact | ARB_ON | 11/300 | 31/300 | 3.67% |
+| enron-qa | ARB_OFF | 22/300 | 46/300 | 7.33% |
+| enron-qa | ARB_ON | 22/300 | 45/300 | 7.33% |
+
+Aggregate counts alone would read as "no effect on enron-qa" — interrogating which *specific* queries
+regressed (not just the count) tells a different, more accurate story:
+
+- **scifact: net positive, 5:1 fix:break ratio.** Arbitration fixed 5 previously-regressed queries
+  (`1041, 213, 238, 535, 971`) and caused exactly 1 new one (`831`) — net −4 regressions, matching the
+  aggregate delta exactly.
+- **enron-qa: a wash, 1:1 fix:break ratio, not a conservative no-op.** Arbitration fixed 2 queries
+  (`q_206, q_294`) and caused 2 new ones (`q_219, q_273`) — net 0. This is NOT the CU5 chunk-merge bailout
+  firing (checked directly: `chunkMergeApplied=false` for all 300 queries in this run, contradicting this
+  doc's own earlier assumption that F-014's "chunk merge fires on all 300 enron-qa queries" would explain a
+  no-op here) — the gate genuinely evaluated real leg-agreement/CE-margin signal on every query and it
+  simply wasn't discriminative enough to net a benefit. This matches confidence-building-pass-2's own
+  measurement almost exactly: the pooled scifact+enron-qa signal-separation AUC sat "right at the boundary"
+  (margin AUC=0.65, Jaccard AUC=0.617) — a wash on the weaker-signal corpus and a real win on the
+  stronger-signal one is the predicted shape, not a surprise.
+
+**Conclusion:** the mechanism is never net-harmful on either corpus (worst case is a wash, not a regression)
+and is measurably net-positive on scifact. Per this plan's own non-goals and D-004's default-off →
+measure → default-on template, **defaults stay off** — this evidence supports that default-on is a
+reasonable follow-up decision once `judge_blend_enabled` itself has its own default-on case made (F-026's
+existing wobble/noise caveat on the underlying floor still applies), not that this plan should flip it
+unilaterally.
+
+## Second critical-analysis pass (2026-07-01) — findings on the E1/E2/perf-skip phase
+
+A dedicated critical-review request against this phase's own diff (E1/E2/perf-skip, config chain, tests,
+§9-4 evidence) found no security/privacy issues, but four real findings, all now fixed:
+
+1. **[Major] F-026's own "Floor OFF vs Floor ON" evidence used trec-based rank, which is structurally blind
+   to the floor's list-only reordering.** Recomputed directly on the archived run pair that produced the
+   original numbers: the headline `judge_low_rate` barely moves when corrected (0.270→0.267 for Floor OFF),
+   but the floor-effect claim itself was wrong — trec-based comparison showed only 12/300 queries shifting
+   bucket (exactly the published "5 queries rank_3_5→rank_6_10"), which is provably noise between the two
+   eval runs, not the floor's effect (trec-order cannot see it at all). True final-order comparison shows
+   **58/300** queries shift — the floor's real per-query effect is ~5x larger than reported, though its
+   aggregate direction is not distinguishable from this corpus's own documented run-to-run wobble from a
+   single-run comparison. Fixed: F-026 corrected in place (search-quality-register.md) with the true
+   numbers and an honest account of what the original claim actually measured. My own §9-4 numbers above
+   were unaffected (that script used `predictedDocIds` from the start). Root cause
+   (`staged_recall_accounting.py`'s trec-preference) logged as an observation for a future dedicated
+   tempdoc — fixing it register-wide is out of this tempdoc's scope (confirmed with the user).
+2. **[Moderate] §9-4's own regression-rate numbers had a narrower survivorship-bias**: the hybrid preset's
+   CE window defaults to 20 (`rerankConfig.topK()`), but the jseval runs used the default display page of
+   10 — so a query where CE/blend pushes gold from a would-be-visible rank to a still-invisible rank beyond
+   position 10 was undetectable. Fixed: re-ran all 4 §9-4 configs with `--top-k 20` (matching the CE
+   window); results below.
+3. **[Minor] Doc-precision gap**: `JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ENABLED`'s doc claimed a blanket
+   "requires judge_blend_enabled," true only for the alpha-computation effect — perf-skip (gated by the
+   same flag) is independent of it. Fixed in `EnvRegistry.java`, `RerankerConfig.java`, and
+   `environment-variables.md`.
+4. **[Minor-moderate] No test guarded the wiring itself** (only the extracted pure functions were tested).
+   Fixed by extracting the two inline gating decisions into `resolveBlendAlpha`/`shouldSkipCrossEncoder`
+   (package-private static methods, zero RPC mocking needed) and adding gating tests for each flag
+   combination in `KnowledgeSearchEngineArbitrationTest.java`.
+
+### §9-4 re-measured with `--top-k 20` (supersedes the original §9-4 numbers above)
+
+Re-ran all 4 configs (hybrid CE-on, 300 queries each) with `--top-k 20` matching the CE window default,
+closing the display-page survivorship-bias gap. (The `arb_regression_rate.py` sentinel for "gold absent
+from the window" also had to be fixed from a hardcoded `11` — correct only at `--top-k 10` — to
+`max(window_sizes) + 1`, since 11 is a valid real rank at window width 20.)
+
+| Corpus | Config | Regressed | Improved | Regression rate | vs. original (top-k 10) |
+|---|---|---|---|---|---|
+| scifact | ARB_OFF | 17/300 | 33/300 | 5.67% | 5.00% |
+| scifact | ARB_ON | 12/300 | 31/300 | 4.00% | 3.67% |
+| enron-qa | ARB_OFF | 25/300 | 49/300 | 8.33% | 7.33% |
+| enron-qa | ARB_ON | 26/300 | 49/300 | 8.67% | 7.33% |
+
+Both corpora's rates rose under the wider window, confirming the predicted direction (the original numbers
+were a conservative undercount). The per-query fix/break breakdown:
+
+- **scifact: cleaner win than originally measured.** Arbitration fixed 5 queries (`1041, 213, 535, 971,
+  1226`) and caused **zero** new regressions (vs. 1 new regression in the original top-k-10 measurement) —
+  net −5, a strictly one-directional improvement with no offsetting cost.
+- **enron-qa: a small net negative, not an exact wash.** Arbitration fixed 1 query (`q_181`) and caused 2
+  new ones (`q_159, q_166`) — net +1 regression (26 vs 25). The original top-k-10 measurement reported an
+  exact wash (2 fixed, 2 caused); the corrected, wider-window measurement shows a thin but real net
+  negative on this corpus. The magnitude (1/300 = 0.33pp) is not a strong signal either way, and is
+  consistent with the borderline pooled AUC already measured (confidence-building-pass-2) — but it means
+  the honest characterization is "roughly neutral, slightly unfavorable," not "never net-harmful."
+
+**Corrected conclusion (supersedes the original §9-4 conclusion above):** the mechanism is a clean,
+one-directional win on scifact and a small, thin net negative on enron-qa — not "never net-harmful on
+either corpus." This does not change the shipping decision (defaults stay off regardless, per this plan's
+own non-goals and D-004's template), but it is a more honest characterization of the evidence than the
+original write-up gave, and reinforces that a corpus with weak underlying signal (enron-qa, per the
+borderline AUC) should not be expected to show a clean win just because scifact does.
+
+## U1: live judge-ceiling probe result (2026-07-01)
+
+With the user's explicit authorization, downloaded the packaged-default chat model
+(`Qwen_Qwen3.5-9B-Q4_K_M.gguf`, 5.5GB, SHA-256 verified against `model-registry.v2.json`'s manifest value)
+and ran the actual U1 probe — `jseval judge-ceiling` (tempdoc 636 §5), previously blocked three separate
+times on a missing model file.
+
+**Infrastructure gaps found and fixed along the way** (none of this had ever been exercised live before):
+- `llama-server.exe` was not staged anywhere on this machine — jseval's raw backend path
+  (`jseval dev --llm`) does not auto-stage it the way `dev-runner.cjs start` does. Fixed by running the
+  project's own `stageLlamaServerFromPrebuilt`/`stageLlamaServer` Gradle tasks and copying the result into
+  both `native-bin` locations the Head process checks (`modules/ui/native-bin/llama-server/` and
+  `<worktree-root>/native-bin/llama-server/` — `runHeadlessEval` resolves the latter, `dev-runner.cjs` the
+  former; they're not the same path).
+- `judge_ceiling.py`'s `make_chat_rank_fn` had `max_tokens=512`, too small for a realistic leg-union pool
+  (observed up to 29 candidates on scifact) — truncated the JSON response mid-string. Fixed to 2048 (paired
+  with bumping `timeout` from 120s→300s to match observed CPU throughput at the time).
+- More importantly: `judge_ceiling_report`'s loop had no per-query error handling — a single query's
+  malformed/truncated response aborted the *entire* probe (discarding every other query's already-completed,
+  already-paid-for LLM call). Fixed to catch `AIUnavailable` per query, skip just that query, and only
+  degrade the whole probe if *every* attempted query fails (genuine unavailability, not an isolated hiccup).
+  Both fixes are covered by new tests in `test_judge_ceiling.py` (11 tests total, up from 9).
+- The CUDA-accelerated llama-server variant's initial build failed with a transient `SSLHandshakeException`
+  fetching its prebuilt zip from GitHub's release CDN — confirmed transient (a sibling download in the same
+  build succeeded, and a bare retry with zero code changes succeeded cleanly) via `curl` reaching the same
+  URL fine both before and after. Staged the CUDA variant too once retried successfully — GPU inference
+  (RTX 4070, 33/33 layers offloaded, confirmed via `nvidia-smi` VRAM delta) is dramatically faster than the
+  CPU baseline and is what actually produced the results below.
+
+**Methodology finding while first attempting the probe (worth recording as its own lesson):** the first
+run used `judge-ceiling` without `--corpus-dir` (no `docs.jsonl` existed for the BEIR-materialized scifact
+corpus, which jseval keeps as per-doc `.txt` files instead). This degrades the probe to *text-light* mode —
+the LLM ranks candidates using **only their bare numeric doc-ids**, no actual document content. That run
+produced `top1_agreement: 0.0` (the order-swap position-sensitivity guardrail) — a value low enough to be a
+red flag in itself, not a real finding: an LLM with zero content to reason about can only be reacting to
+prompt position, not relevance. Built a minimal `docs.jsonl` from the corpus's `.txt` files (663 doc-ids —
+exactly the ones this run's candidate pool referenced) and re-ran with `--corpus-dir` pointed at it. This is
+the credible run; the text-light run is not reported as a finding, only as the reason the credible run's
+methodology was tightened.
+
+**Correction (2026-07-01, later the same day) — the first-reported result below was wrong, and the corrected
+result reverses its conclusion.** While building an unrelated AI-free cross-check (`ce_replay_report`, see
+`## Sibling-thread reconciliation`), an implausible number in that new probe led to interrogating the shared
+scoring function both probes use, `_score_ranking`. It was passing this run's full corpus `qrels.json`
+(300 scifact queries) straight into the nDCG computation, but this run only judged 40 of them (a capped
+`--max-queries` run) — the scorer silently treated every one of the other ~260 corpus queries as a
+zero-relevance miss and folded that into the mean. The result was diluted by roughly the ratio of judged to
+total corpus queries. This affects `_score_ranking` for every caller, not just this probe, and was fixed at
+that single root cause with a regression test (`scripts/jseval/jseval/judge_ceiling.py`,
+`test_capped_run_qrels_does_not_dilute_the_score`). The probe was re-run against the exact same archived
+model outputs' inputs (same run, same corpus text, a fresh live call since the raw per-query rankings
+were not persisted) with the fix in place.
+
+**Original (wrong) result, kept for the record:** `llm_ndcg=0.111` vs `final_ndcg=0.831`,
+`capture_fraction=−6.06` — reported as "this local model performs dramatically worse than the pipeline."
+That conclusion does not survive the fix below and should not be relied on.
+
+**Corrected result** (scifact, 40-query sample, GPU-accelerated, real document text, 38/40 queries succeeded):
+
+| Metric | Value |
+|---|---|
+| `final_ndcg` (current shipped pipeline) | 0.831 |
+| `llm_ndcg` (this local model reranking the leg-union pool) | **0.874** |
+| `judge_headroom_ceiling` (AI-free, perfect-judge upper bound) | 0.119 |
+| `headroom_realized` (llm_ndcg − final_ndcg) | **+0.042** |
+| `capture_fraction` (headroom_realized / ceiling) | **+0.357** |
+| position-sensitivity (`top1_agreement`, forward vs. reversed order) | 0.658 |
+
+**This reverses the earlier conclusion.** `top1_agreement=0.658` is the same kind of reasonable,
+non-degenerate value as before (the model is meaningfully consistent across presentation order, not reacting
+to prompt position alone), so this remains a credible measurement, not an artifact of the fix overcorrecting.
+The corrected reading: **this local model, used via the same single structured-JSON listwise reranking call,
+outperforms the current shipped pipeline on this 40-query sample** (nDCG 0.874 vs 0.831) and captures a real,
+positive **36% of the AI-free theoretical ceiling** — a meaningful, decision-relevant amount of headroom, not
+a rounding error. This is also the more internally-consistent result: a smaller-scale pointwise sanity check
+run earlier in this same investigation (Confidence-building pass 3, R4) already showed this same model
+correctly identifying the gold document with a clear score margin on nearly every query it was asked about —
+that finding was always in tension with the originally-reported catastrophic listwise failure, and the tension
+is resolved now that the failure is known to have been a measurement artifact, not a real result.
+
+**What this settles, revised:** D-2 scoped "a stronger/heavier judge model" as OUT, on the CE-model-swap
+evidence (F-006, ≈0 nDCG difference) and cost/complexity grounds. U1 was meant to be the one number that could
+overturn that scoping decision by showing real, exploitable headroom from a genuinely capable judge. The
+corrected measurement now says it can: a 36% capture on a real corpus is a concrete, positive signal that a
+local LLM judge is not dead on arrival the way the original (wrong) number suggested. This does **not**, on
+its own, mean D-2's exclusion should be reversed immediately — one 40-query sample, one corpus, one specific
+prompt design, and the known cost of a listwise call per query (the field's own caution about LLM-rerank
+latency, cited earlier in this tempdoc's own investigation) are all real reasons to want a larger, more
+rigorous measurement before committing design effort. But the honest state is: **the evidence base D-2 rested
+on for excluding a stronger judge has changed, and this should be treated as a live, re-open question for a
+future pass, not a closed one.** The three open Theorization-pass-2 threads (R1, R4, default-on) already
+carried this tempdoc's remaining decisions forward as explicitly undecided; this correction adds "should D-2's
+LLM-judge exclusion be revisited" to that same undecided set — it is not something this correction unilaterally
+decides.
+
+## Theorization pass 2 — the remaining threads (2026-07-01)
+
+> Purpose: think broadly about what a second critical-analysis pass surfaced (three gaps between the
+> design's own framing and what was verified) plus what U1's result changes about the rest of 643's open
+> threads. **Nothing here is a chosen design or an implementation** — it is possibility space for a future
+> pass to draw on, in the same spirit as the earlier `Theorization — possibility space` section.
+
+### R1. The "cannot do worse than fusion" gap has at least three different resolutions, not one
+
+The design's own rationale (§8-A) claims the arbitration "cannot, by construction, do worse than fusion."
+What is actually built is a continuous blend, which cannot offer that as a per-query, hard guarantee — only
+a bounded-trust one ("never trusts the judge more than the pre-existing baseline"). Three different ways a
+future pass could close this gap, with different tradeoffs:
+
+- **Say the true thing instead of changing the mechanism.** Soften the claim to match what a blend can
+  actually promise — an expected-value risk reduction, not a per-query invariant. Cheapest option; costs
+  nothing but honesty, but doesn't get any closer to the originally-desired property.
+- **Replace the continuous blend with a discrete switch** (fully trust the judge, or fully trust fusion,
+  chosen by the confidence signal, never a weighted mix). This delivers something closer to a literal
+  per-query floor. The tradeoff: a hard switch can flip discontinuously as the confidence signal crosses its
+  threshold, which is a form of instability a smooth blend does not have — swapping one risk (residual
+  judge influence when "protecting" fusion) for another (order instability near the threshold boundary).
+- **Bound the *damage*, not the *trust*.** Instead of blending scores, cap how far the judge is allowed to
+  move a candidate in rank position (e.g., at most K places), regardless of how large its score gap is. This
+  is a genuinely different mechanism shape — a distance-capped adjustment rather than a score blend — and
+  is the option that could deliver something closest to the originally-imagined guarantee ("this cannot move
+  more than K ranks away from where fusion put it"), at the cost of being a new primitive rather than an
+  extension of the existing D-004-style blend seam the current design deliberately reused.
+
+None of these is obviously right; they trade off differently against the reuse-the-existing-seam principle
+that motivated the current design in the first place.
+
+### R2. What U1's result changes about the unfinished half of E3
+
+The design's decision instrument (E3) asked for two things: an in-bucket rank breakdown (already present in
+the eval projection, independent of this tempdoc's later work) and a cost-weight hook (never built). U1 has
+now effectively answered the question the cost-weight hook existed to help decide — whether the judge
+bucket is worth further attention relative to its neighbors — with a direct negative measurement instead of
+a cost-weighted priority score. That reframes the hook's remaining value: it is no longer something *this*
+tempdoc's own decision depends on, but it may still be worth building as a *general* capability the next
+bucket-prioritization decision (extraction quality, or the candidate-set/leg-miss side) could reuse, since
+the underlying problem it names — a triage instrument that counts failures without weighting them by
+product cost — is not specific to the judge stage.
+
+A related, cheaper thread: the ad hoc analysis built for the regression-rate measurement and for assembling
+real document text for the live probe were both one-off scripts, not committed to the evaluation tooling.
+Because they were built to work around the *same* underlying limitation (a widely-used projection field
+that is blind to a stage's actual effect when that stage only reorders results without rescoring them),
+promoting a `predictedDocIds`-based analysis into reusable tooling could simultaneously close out this
+tempdoc's own leftover instrumentation debt *and* the previously-identified, more general instrumentation
+gap — one fix serving two open threads instead of two separate ones.
+
+### R3. The perf-skip latency claim may need a different number than "a benchmark"
+
+The design justifies the skip mechanism on two axes — it protects quality *and* it should reduce latency,
+since the judge stage is most of a query's cost. The quality axis has real, measured evidence behind it now;
+the latency axis does not. But the uncertain part may not be "does skipping save time" — skipping a network
+call trivially saves that call's time by construction, and does not need a benchmark to prove. The genuinely
+unknown number is *how often* the skip actually fires on realistic traffic, since that determines whether
+the trivially-true per-skip saving adds up to anything that matters in aggregate. A firing-rate measurement
+across representative queries may be a cheaper, more direct way to close this gap than a full latency
+benchmark, and would also make the quality and perf axes comparable on the same underlying signal (how
+often the confidence gate actually engages).
+
+### R4. An untested alternative for the judge-ceiling question itself
+
+U1 tested exactly one way of asking a local model to judge relevance: present the whole candidate list at
+once and ask for a full re-ordering in a single response. That is also the hardest version of the task for
+a model to do reliably — a single-shot listwise judgment is a different (and, per the literature already
+surveyed in this tempdoc's own investigation, generally less reliable) task than asking simpler questions
+one at a time: score each candidate independently on a fixed scale, or compare two candidates directly
+against each other. U1's negative result is evidence against *this specific* way of using a local model as
+a judge; it is not evidence against every way a local model could be asked to help. A future pass that
+wants to reopen this question at all should test a narrower question first, since it is cheaper to fail
+fast on than a full listwise redesign.
+
+### R5. A related tension worth naming, not resolving: does one global on/off default even fit the evidence?
+
+The measured picture is corpus-dependent in shape (a clean win on one real corpus, a thin loss on another),
+which sits awkwardly against a design that ships a single global on/off switch. Making the switch itself
+corpus-aware would need something to key on at runtime — which runs straight into the same constraint this
+tempdoc's own research pass already established for the confidence signal itself: a fitted, per-corpus
+calibration does not transfer and is the wrong shape for a cold-start engine with no stable notion of "which
+corpus is this." Whether there is a *runtime*, label-free way to approximate "this workload looks like one
+where the signal has been reliable so far" — as opposed to a static per-corpus setting — is an open
+question this tempdoc surfaces but does not answer.
+
+### R6. Candidate principles this pass surfaces (recorded, not adopted)
+
+- **A claimed guarantee is only as strong as what its acceptance test can actually check.** A hard invariant
+  ("cannot regress") and an expected-value risk reduction ("regresses less often, on average") need
+  different kinds of evidence to accept — the first needs a proof or an exhaustive check, the second needs a
+  statistical measurement with an honest error bar. Naming which kind of claim a design is actually making,
+  up front, would have caught R1's gap earlier than a later re-review did.
+- **Instrumentation planned in a design is easy to quietly defer as one-off scripts under time pressure,
+  without anyone deciding to skip it.** A design phase that budgets for a decision instrument, and an
+  implementation phase that answers the same question with throwaway analysis instead, can both look
+  complete individually while leaving the actual instrument unbuilt — the same shape as a subagent audit's
+  claim resting on an unwritten test, but for measurement tooling rather than test coverage.
+
+### R7. What does not need re-litigating
+
+U1's result does not reopen D-2's exclusions (a stronger/heavier judge model, LLM-as-reranker, learned
+fusion, in-domain fine-tuning) — if anything it strengthens the case for leaving them out, since the one
+concrete attempt at a stronger judge measured *worse* than doing nothing further. The open threads above are
+about the instrumentation and framing *around* the shipped mechanism, not about whether the shipped
+mechanism's basic shape (confidence-gated blend, reusing the existing arbitration seam) was the right choice.
+
+## Confidence-building pass 3 (2026-07-01) — de-risking the R1-R4 threads before any design is chosen
+
+> Purpose: reduce genuine uncertainty about the Theorization pass 2 threads (R1-R4) before any of them
+> become a chosen design, using reprocessing of data already on disk and one small bounded experiment —
+> **no feature implementation happens in this pass.** R5/R6 are open questions, not implementation-adjacent,
+> and are not addressed here.
+
+**R1 finding — the arbitration mechanism's actual footprint is narrow.** Re-deriving the exact confidence
+gate against the already-archived §9-4 per-query data (both `--top-k 20` runs) shows the mechanism only
+ever diverges from the pre-existing baseline behavior on a small minority of queries: the fusion-protect
+branch fires on 13/300 (4.3%) of scifact queries and 7/300 (2.3%) of enron-qa queries. Every other query
+gets exactly the same behavior it always had. This narrows what a hard-switch alternative (one of R1's three
+options) would actually change: it is a small, low-blast-radius population, not a systemic behavior change
+— which lowers the risk of trying it, but also means it would not move the aggregate numbers by much either
+way. It does not resolve *which* of R1's three options is right, only that the stakes of picking one are
+smaller than they first appeared.
+
+**R3 finding — perf-skip's real firing rate, measured for the first time.** The same reprocessing shows the
+skip condition would trigger on about 5% of queries on both real corpora (15/300 on scifact, 17/300 on
+enron-qa — corrected from an initially-reported 15/300 on both; see the E3 implementation note below for how
+the discrepancy was caught). This is the first time this number has existed anywhere — it was previously
+asserted, never measured. A firing rate this low means the latency benefit, while real and mechanically
+guaranteed once it fires, is modest in aggregate on these two corpora — a one-in-twenty-queries win, not the
+dramatic reduction "most of a query's cost" framing might suggest at first read. Whether that is still worth
+having depends on how cheap the check itself is (very cheap — it reads signals already computed) rather than
+on the size of the win.
+
+**R2a finding — the decision-instrument's remaining integration point still exists exactly as described.**
+Reading the current evaluation-tooling code confirms a same-shaped feature (a cross-mode metric sourced from
+this same projection file) is already live and working, so the described way to add a cost-weighted metric
+is a real, unblocked path, not something that has drifted since it was first proposed.
+
+**R2b finding — promoting one-off analysis scripts into reusable tooling fits existing conventions cleanly.**
+The evaluation command-line tool already has several commands shaped exactly like what a durable version of
+the regression-rate analysis would need (a data directory, a run directory, a report file), and none of the
+existing commands already do this — there is a clear, unclaimed place for it to live.
+
+**R4 finding — a small, bounded live experiment materially changes the picture.** U1 tested exactly one way
+of asking the local model to judge relevance (rank a whole candidate list in one call) and found it failed
+badly. A tiny follow-up experiment — scoring each candidate independently on a fixed 0-10 scale instead of
+asking for one full re-ordering — was run on the same model, same corpus, a handful of real queries. The
+result: on the queries where a scorable answer existed in the pool, the correct document was scored highest
+(or a very close second) in every case, with a clear separation from the other candidates' scores. This is
+a tiny, non-benchmark sample and should not be read as a finished result — but it is a clear, concrete signal
+that the earlier catastrophic failure was a property of *asking for one big reordering in a single response*,
+not necessarily a property of what the model can distinguish when asked a narrower question. This raises
+confidence that R4 is worth a real, larger measurement later rather than a dead end — while also being
+clear that this alone does not reopen the decision to keep a stronger judge out of scope, since scoring N
+candidates independently is N model calls instead of one, a real cost this small check did not attempt to
+
+> **Correction (2026-07-01, later the same day):** the "earlier catastrophic failure" this paragraph explains
+> away as a listwise-formulation problem turned out to be a measurement bug, not a real listwise result at all
+> — see `## U1: live judge-ceiling probe result`'s correction. The corrected listwise result is also
+> reasonably strong (36% capture), which is actually more consistent with this paragraph's own pointwise
+> finding than the original miscalculated contrast was. The comparative point this paragraph makes (a narrower
+> per-candidate question may be easier for a small model than a full reordering) may still be worth testing on
+> its own merits, but it is no longer motivated by "listwise catastrophically fails, pointwise doesn't" — both
+> now show a real, positive signal.
+weigh against the tiny benefit U1 already showed was on the table even in a best case.
+
+**What did not change.** Nothing in this pass revisits whether the shipped mechanism's basic shape was the
+right choice, or whether the corpora tested are representative enough to generalize from — those remain as
+open, unresolved questions regardless of the above.
+
+**Overall confidence rating for the remaining work: 6/10.** The instrumentation gaps (R2a/R2b) are now
+low-risk, well-understood, small pieces of work with a clear, unblocked path — confidence there is high.
+The measurement gaps (R1/R3) are closed for the two corpora already measured, but generalizing them further
+would need the same kind of reprocessing repeated elsewhere, which is a known, bounded cost, not an unknown
+one. The open item pulling the rating down from higher is R4: the sanity check is a genuine, encouraging
+signal, but it is four data points, not a corpus-scale measurement, and it is the one thread here that
+points toward *new* scope (a different judge-prompting shape) rather than tidying up existing scope — that
+is a meaningfully different, less certain kind of next step than the other three.
+
+> **Correction (2026-07-01, later the same day):** "the tiny benefit U1 already showed" above is no longer
+> accurate — U1's corrected result (see its own section) is a real, positive 36% capture, not a near-zero one.
+> The rating and its reasoning are left as written above (the underlying uncertainty — one small sample, one
+> corpus, not yet a corpus-scale measurement — has not changed), but the *direction* of the evidence pointing
+> at R4 is now more encouraging than this paragraph describes, not less. A future pass reading this rating
+> should weight R4 accordingly.
+
+**Recommended effort for whichever direction is chosen next:** the R2a/R2b instrumentation work (a metric
+family + a CLI command, following two directly-precedented existing patterns) is mechanical, well-scoped,
+low-risk work — a mid-tier model at standard effort is a reasonable fit, since the main risk is following
+convention precisely, not judgment calls. Deciding *whether* to chase R1's floor-guarantee gap further, or
+running a real corpus-scale version of R4's pointwise experiment and deciding what to do with the result, is
+a different kind of task — it involves weighing tradeoffs this pass surfaced but did not resolve (hard
+switch vs. blend; N-calls cost vs. quality signal) against the project's own settled constraints (the perf
+budget, D-005, the cold-start no-labels reality) — that calls for a stronger model at higher reasoning
+effort, since a wrong call there would be a design mistake, not an implementation bug.
+
+## E3 implementation (2026-07-01)
+
+D-2's third and last "IN scope" structural element — the decision instrument — is now built, closing the
+one item that remained from the original design after E1/E2/perf-skip.
+
+**Cost-weighted judge-rank-low severity.** The existing rank-distribution breakdown (rank-2 vs rank-3-5 vs
+rank-6-10, already present) now has a derived `judge_low_cost_weight` field alongside it — a `[0,1]` weighted
+average using a documented default weighting (rank-2 counts as near-free, rank-6-10 as full cost, matching
+this tempdoc's own product-tolerance finding), operationalizing "dominant-count ≠ dominant-cost" as one
+number instead of leaving it as an unweighted rate. Registered as a metric family alongside the existing
+leak-rate family, following the same shape. No new data collection — it's a pure function of numbers already
+computed. Live-verified against a real 40-query run (`judge_low_cost_weight: 0.4`, matching the histogram
+arithmetic exactly), not just unit-tested.
+
+**A durable judge-arbitration report tool**, replacing the one-off scripts written for the earlier acceptance
+test and the confidence-building passes: re-derives the arbitration gate's branch split and the perf-skip
+gate's firing rate from a run's already-archived per-query data, and compares two runs' true result order
+directly (bypassing the same trec-preference blind spot this tempdoc already found and worked around once).
+Verified against the already-known reference numbers from earlier this session and reproduced them exactly on
+scifact — but on enron-qa, it caught a real discrepancy in the earlier ad hoc measurement: the perf-skip
+firing rate is actually **17/300** (5.7%), not 15/300 as recorded earlier in Confidence-building pass 3 above.
+The earlier script had incorrectly skipped the perf-skip check on the same condition that (correctly) short-
+circuits the unrelated alpha-branch calculation, even though the two gates read different signals. This is
+now corrected above, and is itself a small, concrete demonstration of exactly the risk Theorization pass 2's
+R2 named — a one-off script can silently carry a bug that only a second, independent, tested implementation
+catches.
+
+No user-visible surface changed (this is evaluation tooling only, consumed by future measurement passes, not
+by the running product) — no UI/browser validation applies. Verified via unit tests, a live pipeline run, and
+a full build.
+
+## Sibling-thread reconciliation (2026-07-01)
+
+A second, independent implementation thread on this same tempdoc was found — authored earlier and separately
+(2026-06-24 through 2026-06-30, before the thread that produced everything from `## Investigation — takeover
+pass` onward), unaware of this one and unaware it existed. It reached the same core design (gate the
+cross-encoder's reorder on its own confidence, never regress below fusion, ship default-off) independently,
+but implemented it differently: a binary trust/don't-trust switch keyed only on the CE's own raw score margin,
+versus this thread's continuous blend keyed on both the CE margin and cross-leg agreement. Neither had been
+merged or published at the time of comparison, so this is a reconciliation between two unpublished threads,
+not a live conflict.
+
+That sibling thread's own closing self-review concluded its runtime mechanism was built ahead of the evidence
+that would justify it, and recommended retracting it, keeping only its diagnostic instrument. Weighing the two
+threads: this one carries more direct evidence (the §9-4 real-corpus acceptance test, critically re-reviewed
+twice; the U1 live-judge measurement; the now-complete E1/E2/E3 scope) and one additional real capability
+(perf-skip, unifying the quality lever with a latency lever) that the sibling thread does not have. This
+thread is the one carried forward; the sibling's runtime mechanism is not adopted.
+
+**The crux measurement neither thread had run, run now.** Both threads separately named the same missing
+number: does the cross-encoder's own confidence signal actually discriminate, at the level of individual
+queries, "reordering the fusion result helped the correct answer's rank" from "reordering hurt it" — as
+opposed to only checking whether the aggregate score moved. Using already-archived data (the pre-existing
+baseline behavior, arbitration disabled), this was computed directly: the raw margin signal alone reaches an
+AUC of essentially 0.56 on both scifact and enron-qa — barely better than chance, and a significance test
+finds this is not distinguishable from chance at either (p≈0.20-0.26). This thread's actual combined gate
+(margin plus leg-agreement, the real condition that decides when to intervene) shows a promising direction on
+enron-qa specifically — every query where the gate would protect fusion also turned out to be a query the raw
+reorder would have hurt — but on only 3 such queries; scifact's equivalent population (6 queries) does not
+even show the favorable direction. **Honest reading: this measurement remains genuinely unresolved, not
+merely unmeasured.** Both mechanisms' gates fire rarely enough (roughly 1 in 20-40 queries) that neither of
+the two 300-query corpora available currently has the statistical power to confirm or refute the premise
+either way. This is itself a useful, decision-relevant fact, not a null result to shrug off — it says a
+confident answer to this question needs either a much larger query set or a corpus specifically constructed
+to contain more low-confidence-judge cases, not more analysis of the data already on hand.
+
+**What else the sibling thread surfaced, and what was and wasn't carried forward.** It built a richer
+diagnostic — classifying *why* a judge-rank-low query happened (a tie in the gold labels, the judge never
+seeing the candidate at all, the judge's own preference being overridden, an upstream fusion demotion, or
+none of the above) rather than only *how far off* rank-one it landed, which is what this thread's own
+cost-weighted severity field measures. The two are complementary, not competing, but the cause breakdown was
+not ported here — it adds diagnostic depth without changing any decision already made. It also ran a
+three-round investigation into whether the judge's input *window* (not the judge model itself) was silently
+excluding the correct answer's text — found apparent evidence of this on a synthetic corpus, then in a third
+pass discovered the synthetic corpus's construction made that evidence an artifact (the string it searched
+for wasn't actually present in the gold document at all), and retracted the finding. That arc is not repeated
+here; its methodological lesson — validate what an eval probe is actually testing before drawing a conclusion
+from it — is one this thread's own U1 measurement already followed (using a real corpus with real relevance
+judgments, not a synthetic construction), but is worth naming as a real risk in this kind of work generally.
+
+**One concrete, genuinely useful thing it built that this thread did not have: an AI-free realizable-headroom
+replay of the actual production judge**, as opposed to this thread's own U1 (which asked whether a *different*,
+local LLM judge would do better). Replaying the judge that is actually shipped, over the full candidate pool,
+needs no model download and no live LLM backend — and the sibling thread's own measurement of it on scifact
+found essentially zero realizable gain, independently corroborating this thread's own U1 conclusion by a
+completely different, much cheaper method. Built directly into this thread (`ce_replay_report` /
+`jseval ce-replay`, `scripts/jseval/jseval/judge_ceiling.py`), not copied from the sibling worktree, following
+this thread's own established module and testing conventions.
+
+**Building it caught a real, previously-unnoticed bug that also affects the earlier U1 result.** The first
+live attempt produced an implausible, near-catastrophic number; interrogating it (not just reporting it) found
+the cause: `_score_ranking`'s nDCG computation was passed the full corpus's `qrels.json` unfiltered, but on a
+capped (`--max-queries`) run that file still holds every corpus query, not just the ones actually judged —
+`ir_measures` silently scores every un-judged query as 0 and folds it into the mean. On this run (40 of 300
+scifact queries judged), that diluted the result by roughly the ratio of judged to total queries. Confirmed
+directly: after filtering the qrels to only the queries actually present before scoring, the same run's
+`ce_replay_ndcg` moved from an implausible 0.11 to 0.86 — matching `final_ndcg` (0.86) almost exactly, and
+now closely corroborating the sibling thread's own near-zero finding (`capture_fraction` ≈ −0.03 here vs their
+0.004). Fixed at the shared root cause (`_score_ranking` itself, so every caller is protected, not just this
+one), with a regression test. **This same function is what U1's live-LLM measurement used, on the same kind
+of capped run — so U1's originally-reported numbers are also dilution-affected and are being recomputed with
+the fix; see the U1 section for the corrected result once it is in.**
+
+## Closure
+643's purpose-only stub is now: investigated, theorized, designed, research-validated, **implemented in
+full** (E1 confidence signal, E2 confidence-driven blend, perf-skip, all default-off; the earlier static
+floor is now the E1/E2 mechanism's own `baseAlpha` fallback, not a separate parallel implementation), and
+**critically re-reviewed twice, with all code-level and measurement-methodology findings fixed in-session**
+(including the top-2 margin bug caught while writing tests for this final phase, and the F-026 trec-blindness
+correction above). §9-4's acceptance test (re-measured at `--top-k 20`, the authoritative numbers) found the
+mechanism a clean, one-directional win on scifact and a small, thin net negative on enron-qa — not "never
+net-harmful either corpus" as an earlier draft of this paragraph stated before the wider-window correction.
+**The live judge-ceiling probe (U1) is now measured** (see `## U1: live judge-ceiling probe result` above,
+2026-07-01) — closing the doc's last open measurement gap, though not with the result first reported. A
+dilution bug in the shared nDCG scoring function (found and fixed via the sibling-thread ce-replay cross-check,
+see `## Sibling-thread reconciliation`) meant the first U1 number was wrong; the corrected result is a real,
+**positive** signal (this local model captures 36% of the AI-free ceiling, `capture_fraction=+0.357`,
+outperforming the current pipeline on this sample). This does not, by itself, overturn D-2's decision to keep
+a stronger/heavier judge model out of scope — one 40-query sample on one corpus is not enough for that — but
+it does mean the evidence D-2's exclusion rested on has changed, and whether to revisit that exclusion is now
+an open question for a future pass, not something this correction settles either way.
+**E3 — the last of D-2's three "IN scope" structural elements — is now built** (see `## E3 implementation`
+above, 2026-07-01): a cost-weighted judge-rank-low severity field and a durable, tested judge-arbitration
+report tool replacing the earlier one-off analysis scripts. All three of D-1's structural elements (E1, E2,
+E3) are now implemented, tested, and live-verified — the design is complete, not just the two most novel
+pieces of it.
+Default-on remains a deliberate follow-up decision, not part of this closure, as do the three open threads
+Theorization pass 2 raised (the floor-guarantee framing gap, the pointwise-judge alternative, and the
+corpus-adaptive-default tension) — none of them were part of D-2's decided scope, and Confidence-building
+pass 3 explicitly left them for a future, separate decision. **The one crux measurement both this thread and
+the sibling thread separately flagged as missing — does the confidence signal actually discriminate a helpful
+reorder from a harmful one, at individual-query granularity — was run** (see `## Sibling-thread
+reconciliation`) and came back genuinely inconclusive: the raw signal alone does not reach significance on
+either corpus tested, and the population where the shipped gate actually intervenes is too small on these two
+300-query corpora to say more either way. This is left as an honest, named limit, not something a future pass
+should treat as either confirming or refuting the mechanism's premise — it would need a larger query set or a
+corpus built to contain more low-confidence-judge cases to move past "inconclusive." Everything D-2 scoped as
+this tempdoc's own work is closed; what remains is a short list of explicitly-named, explicitly-undecided
+follow-up questions, not unfinished implementation.
