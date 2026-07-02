@@ -17,9 +17,6 @@ log = logging.getLogger(__name__)
 # Backpressure defaults (from PS1 BeirEval.Indexing.psm1)
 HIGH_WATERMARK = 90_000
 LOW_WATERMARK = 70_000
-BACKPRESSURE_POLL_SEC = 2.0
-BATCH_SIZE = 200
-REQUEST_TIMEOUT_SEC = 25.0
 
 
 def ingest_and_wait(
@@ -160,50 +157,6 @@ def add_watched_root(
         )
         resp.raise_for_status()
     log.info("Watched root added successfully")
-
-
-def ingest_batches(
-    base_url: str,
-    docs_dir: Path,
-    *,
-    batch_size: int = BATCH_SIZE,
-    high_watermark: int = HIGH_WATERMARK,
-    low_watermark: int = LOW_WATERMARK,
-    poll_sec: float = BACKPRESSURE_POLL_SEC,
-    request_timeout_sec: float = REQUEST_TIMEOUT_SEC,
-) -> int:
-    """Submit files in batches with backpressure.
-
-    Returns the number of batches submitted.
-    """
-    files = sorted(docs_dir.glob("*.txt"))
-    total_files = len(files)
-    if total_files == 0:
-        log.warning("No .txt files found in %s", docs_dir)
-        return 0
-
-    log.info("Ingesting %d files in batches of %d", total_files, batch_size)
-    batches_submitted = 0
-
-    with httpx.Client(base_url=base_url, timeout=request_timeout_sec) as client:
-        for i in range(0, total_files, batch_size):
-            batch = files[i : i + batch_size]
-
-            # Backpressure: wait if queue is too full
-            _wait_for_backpressure(client, high_watermark, low_watermark, poll_sec)
-
-            # Submit batch
-            _submit_batch(client, batch)
-            batches_submitted += 1
-
-            if batches_submitted % 25 == 0 or i + batch_size >= total_files:
-                log.info(
-                    "Submitted %d/%d files (%d batches)",
-                    min(i + batch_size, total_files), total_files, batches_submitted,
-                )
-
-    log.info("Batch ingestion complete: %d batches", batches_submitted)
-    return batches_submitted
 
 
 def prepare_corpus(
@@ -485,10 +438,3 @@ def _wait_for_backpressure(
             except Exception:
                 continue
         return  # Queue drained below low watermark
-
-
-def _submit_batch(client: httpx.Client, files: list[Path]) -> None:
-    """Submit a batch of files for ingestion."""
-    paths = [str(f.resolve()) for f in files]
-    resp = client.post("/api/knowledge/ingest", json={"paths": paths})
-    resp.raise_for_status()

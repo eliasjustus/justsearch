@@ -18,7 +18,6 @@ from jseval.ingest import (
     _wait_for_backpressure,
     _watcher_settle_timeout,
     add_watched_root,
-    ingest_batches,
     prepare_corpus,
 )
 from jseval.types import IngestConfig
@@ -132,50 +131,6 @@ def test_backpressure_waits_then_resumes(mock_sleep):
 
     _wait_for_backpressure(client, HIGH_WATERMARK, LOW_WATERMARK, 0.01)
     assert client.get.call_count == 3
-
-
-# ---------------------------------------------------------------------------
-# ingest_batches
-# ---------------------------------------------------------------------------
-
-def test_ingest_batches_empty_dir(tmp_path):
-    """No .txt files → 0 batches."""
-    count = ingest_batches("http://localhost", tmp_path, batch_size=10)
-    assert count == 0
-
-
-@patch("jseval.ingest.httpx.Client")
-def test_ingest_batches_submits_files(MockClient, tmp_path):
-    # Create 5 test files
-    for i in range(5):
-        (tmp_path / f"doc{i}.txt").write_text(f"content {i}")
-
-    mock_client = MagicMock()
-    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
-    MockClient.return_value.__exit__ = MagicMock(return_value=False)
-
-    # Status check returns low queue depth (no backpressure)
-    status_resp = MagicMock()
-    status_resp.json.return_value = {"pendingJobs": 0}
-    status_resp.raise_for_status = MagicMock()
-
-    # Ingest POST returns success
-    ingest_resp = MagicMock()
-    ingest_resp.raise_for_status = MagicMock()
-
-    mock_client.get.return_value = status_resp
-    mock_client.post.return_value = ingest_resp
-
-    batches = ingest_batches(
-        "http://localhost", tmp_path, batch_size=3,
-    )
-
-    # 5 files in batches of 3 → 2 batches
-    assert batches == 2
-    # 2 POST calls for ingest
-    post_calls = [c for c in mock_client.post.call_args_list
-                  if c[0][0] == "/api/knowledge/ingest"]
-    assert len(post_calls) == 2
 
 
 # ---------------------------------------------------------------------------
