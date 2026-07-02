@@ -83,7 +83,9 @@ then `python -m jseval relevance-gate --dataset beir/scifact`. Slugs: `beir/scif
 `mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
 Full methodology, comparison-class caveats, and reproduction:
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md). The table above is
-projected from `scripts/jseval/release.v1.json` (the canonical 2026-06-21 release), not hand-transcribed.
+projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-01 release), not hand-transcribed.
+For the broader research angle — open questions, what's deferred, and how to get involved — see
+[`RESEARCH.md`](RESEARCH.md).
 
 ## Quickstart (build from source)
 
@@ -133,7 +135,8 @@ commits are co-authored.
 Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (CLA required). Please read
 [`NON-GOALS.md`](NON-GOALS.md) first so a change fits the project's scope. Security: [`SECURITY.md`](SECURITY.md).
 You **don't** need any of the agent/governance machinery to contribute — it's published as transparency
-([`MAINTAINING.md`](MAINTAINING.md)), not a required path.
+([`MAINTAINING.md`](MAINTAINING.md)), not a required path. Interested in the research side (open questions,
+what's deferred, collaboration) rather than contributing code? See [`RESEARCH.md`](RESEARCH.md).
 
 ## License
 
