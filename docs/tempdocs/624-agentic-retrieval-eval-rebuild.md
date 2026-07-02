@@ -32,6 +32,34 @@ related:
 
 # 624 — Agentic-retrieval eval rebuild
 
+> ## Current state (fold, 2026-07-02 — read this before the dated passes below)
+>
+> This document is append-only working history (18+ dated passes). For orientation, current truth in
+> brief; everything below supersedes *older* sections but not this fold:
+>
+> - **What exists:** the full agent-utility measurement machinery — cohort-identified condition-paired
+>   record (`utility-comparison.v1` + revision provenance), Inspect-AI executor with per-cell resume,
+>   run-governance (calibration, readiness, loss-accounting, derived comparability), hybrid EM→local-LLM
+>   judge + cross-family grader-panel calibration, leak detection (structural fixes + scan backstops +
+>   per-cell tool-call assertions), three certified-generation battlefield corpora (EN/DE at scale +
+>   degraded-scan), a cheap standing regression gate (`jseval utility-gate`, tempdoc 673), and the
+>   local-grader seam (tempdoc 674). The scan corpus's production blocker (VDU bootstrap wiring) is fixed
+>   (tempdoc 672).
+> - **The current most-rigorous numbers** (leak-free + judge-scored, 3 seeds, `comparability=False` —
+>   internal only, NOT publishable): condition B (file tools + JustSearch MCP, the realistic arm) pooled
+>   accuracy Δ **−0.094, McNemar p=0.055, n=149** — trending *harmful*, not null; pooled token delta
+>   **+562, CI crosses 0** (not significant). Condition C (substitution) significantly harmful on EN/DE
+>   (Δ≈−0.55/−0.59, p≈0), indeterminate on scan. Artifacts:
+>   `scripts/jseval/624-run-2026-07-02/out-*-leak-free-judged/`.
+> - **What remains before any public number** (§M.8 bar, none of it a design question): (1) the
+>   authorized-pending re-run — EN+DE, conditions A,B, 5 seeds, ~$109/~3h (seventeenth pass; C dropped as
+>   diagnostic-only, re-addable later at marginal cost); (2) scan re-certification post-672 ($0 fidelity
+>   re-verify → per-condition recalibration → ~$26 run); (3) the cross-family grader panel (~$0 local per
+>   674); (4) then the full §M.8 checklist. Recommended sequencing (eighteenth pass): publish this branch
+>   first so the certified run executes on a public SHA.
+> - **Claim discipline:** nothing here may be quoted publicly; `RESEARCH.md` sync is deliberately
+>   deferred until this work finishes (founder decision, 2026-07-02).
+
 ## Problem (one paragraph)
 
 The strategy/business docs lead the developer/MCP wedge with a **"92% accuracy / 62% cheaper"
@@ -3797,3 +3825,74 @@ merge-conflict window against 3-4 parallel agents. The trade-off is PR/review la
 Founder's call; if the run goes first instead, the mitigation is a post-merge `revision` entry on the
 record noting the public squash SHA whose tree corresponds to the run's code (the Design-1 field exists
 for exactly this class of correction).
+
+---
+
+# As-built #8 (2026-07-02, nineteenth pass) — the Inspect runner now carries per-cell tool-call data; §M.8 item 2's empirical half is closable
+
+> Founder direction: publish-then-run. This pass closes the one engineering prerequisite before the PR —
+> the §As-built #5 "Known residual gap" (the Inspect executor captured no tool calls, so the
+> `--disallowedTools` config could never be *empirically* verified per cell, and the answer-key-leak
+> tool-call backstop had no data). Implemented via an orchestrated Sonnet subagent; orchestrator-verified
+> at the cited lines before recording here.
+
+- **One shared parser, not a second copy**: the classic runner's inline stream-json parsing was extracted
+  into `agent_retrieval_eval.parse_claude_stream_json()` (`agent_retrieval_eval.py:1038`), now called by
+  both runners — no behavior change on the classic path.
+- **The Inspect solver** (`agent_utility_inspect.py:76-77`) now invokes `claude -p` with
+  `--output-format stream-json --verbose` (byte-identical argv to the classic runner) and stashes
+  `tool_calls` / `disallowed_tool_calls` / `leak_suspect_tool_calls` into every sample's metadata —
+  **unconditionally, before the error check** (`:128-132`), so an errored/timed-out cell still records
+  what it did.
+- **Aggregation to the record**: `eval_logs_to_summaries` projects the three keys per cell;
+  `compose_utility` carries an additive `tool_call_assertions` block (`utility_comparison.py:307,311`)
+  with per-condition `cells_total / cells_with_tool_data / cells_with_disallowed_violations /
+  cells_with_leak_suspect`. Back-compat is honest by construction: logs without tool data report
+  "tool data absent", never a fabricated clean zero — "0 violations across N cells with data" and
+  "no data" are distinguishable in the record, per this tempdoc's own honesty-as-fields principle.
+- **Verification**: 35 new fixture tests (including a disallowed-call fixture and a queries.json-Read
+  fixture); full jseval suite **1478 passed**; one live `claude -p` smoke ($0.0477, CLI 2.1.198) through
+  the real argv/parser confirmed stream-json parsing of real events (result text, session id,
+  cache-token split). **Honest residual**: the live smoke was a no-tool trivial prompt, so the
+  `tool_use` block shape was exercised by fixtures only — that shape is the classic runner's
+  production-proven parsing (live-verified in As-built #5's §M.1 smoke), now shared, not new code.
+- Commit: `797cb28`.
+
+**A load-bearing side-finding (own pass, below):** the full-suite run surfaced that
+`corpus_generate.generate()` is **non-deterministic across processes** at HEAD — two governance tests
+fail identically on origin/main (pre-existing, not this branch; the branch's new scan-axis determinism
+test inherits the same root cause). This breaks the 664 regeneration-determinism guarantee the certified
+corpora's recipe→signature chain depends on, so it is being root-caused and fixed before the PR rather
+than logged-and-deferred; outcome recorded in the next pass.
+
+---
+
+# Generator-determinism scare resolved (2026-07-02/03, twentieth pass) — the corpora were never at risk; the *verification harness* was lying
+
+> Root-caused and fixed via a second orchestrated Sonnet subagent (commit `53866e8`);
+> orchestrator-re-verified (the three determinism tests green from the repo-root invocation that
+> reproduced the failure 100% pre-fix).
+
+- **Root cause was environmental import resolution, not generator logic**: `regenerate_and_diff()`
+  spawned its cross-process probe via `python -c` with no pinned `cwd`
+  (`corpus_generate.py:656-662` pre-fix). Invoked from the repo root, the child's `sys.path[0]` did not
+  contain the local `jseval/`, so imports fell through to an ambient `pip install -e` of jseval pointing
+  at a **different, stale checkout still carrying the pre-664 `hash(axis)` randomization** — both
+  subprocesses ran that stale code and diverged, perfectly reproducing the pre-664 symptom on a tree
+  whose own generator was already fixed. Isolation evidence: the tests pass 100% (30+ runs) with pytest
+  cwd at `scripts/jseval/`, fail 100% from the repo root — cwd, not test order, was the variable.
+- **Fix**: pin the subprocess `cwd` to the package root (`corpus_generate.py:676,681`) so the child
+  always shadows any ambient install. The two determinism tests that fail on today's origin/main are
+  the same environmental issue — this branch fixes them for main as a side effect.
+- **No corpus reconciliation needed — verified, not assumed**: all three battlefield corpora compare
+  exact-equal across recorded `metadata.json` signature == on-disk content == post-fix regeneration
+  (per-corpus hashes in the fix commit's report). The committed corpora were generated by direct
+  in-process `generate()` calls that never touched the buggy subprocess path; only the *verifier* was
+  unreliable.
+- **The honest generalization, logged not fixed** (observations shard): other
+  `subprocess.run([sys.executable, ...])` sites in jseval were not audited for the same cwd-pinning
+  gap; and the machine-level footgun (a stale editable install silently shadowing worktree code in
+  spawned children) is a workshop-wide hazard beyond this one call site.
+- Full suite after both this and As-built #8: **1481 passed, 2 failed** — the two remaining failures
+  are the pre-existing, unrelated `test_correction_probe.py` missing-data-file pair (also failing on
+  origin/main; not this branch's subject).
