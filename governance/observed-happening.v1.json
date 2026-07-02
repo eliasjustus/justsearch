@@ -72,6 +72,14 @@
       "stateful": false
     },
     {
+      "id": "advisory-authorization-pending",
+      "kind": "event-stream",
+      "canonicalSource": "core.advisory-authorization-pending",
+      "contributors": ["core.advisory-authorization-pending"],
+      "stateful": false,
+      "note": "Tempdoc 655 long-term design pass — a pending MCP approval waiting for a decision (REQUIRES_ACK). Rendered as a toast + inbox badge, same as the other two advisory classes — projections intentionally undeclared (575 §9)."
+    },
+    {
       "id": "metric-gpu-utilization",
       "kind": "timeseries",
       "canonicalSource": "core.metric-gpu-utilization-percent",
