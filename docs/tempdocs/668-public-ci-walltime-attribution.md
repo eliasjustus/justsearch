@@ -1232,3 +1232,37 @@ The throwaway experiment job has been removed now that the data is captured. **T
 in the whole effort that actually moves minutes** — ~6.5 min off the critical path — and the
 instrument (the wall-clock attribution) is exactly what produced the clean before/after that proved
 it.
+
+### CORRECTION — the real Linux delta is ~1.5×, not ~2.8×; app-ui alone is a net wash - 2026-07-02
+
+The app-ui Linux migration is now **complete and green** (option B: `@Tag("windows")` split, Linux
+native artifacts in verification-metadata, protoc `setExecutable`, per-lane matrix `os`, a
+`windows-native-tests` lane). But finishing it exposed that **my ~2.8× claim was wrong**, and honesty
+requires the correction:
+
+- **The ~2.8× (204s) came from a *partial* run.** That advisory-experiment number was measured while
+  both protobuf modules' `generateProto` were *failing* on Linux (protoc not executable) — which
+  cascaded: every module depending on the generated code failed to compile, so **their tests never
+  ran**. 204s was a lane with a big chunk of tests silently skipped, not the real lane.
+- **The real full app-ui lane on Linux is 405s** (run 28555822284, fully green, all tests running) vs
+  a ~598s Windows baseline — **~1.5× / ~32% faster**, not 2.8×.
+- **Migrating app-ui alone produced no PR-wall-clock win.** Measured per-lane this run: search-worker
+  **713s** (Windows), platform-contracts 561s, Build 534s, app-ui **405s** (Linux), windows-native
+  362s, License 320s. The critical path just **shifted** from app-ui to search-worker (still Windows);
+  the run total (~741s) is unchanged within variance. One migrated lane can't help when equally-slow
+  Windows lanes still bound the critical path.
+- **The `windows-native-tests` lane costs ~362s** — almost entirely *compiling* app-util+app-agent+
+  app-services to run just 6 tagged test classes. This overhead grows as more modules migrate, and it
+  partially offsets the Linux win.
+
+**Honest revised value:** a *full* migration (search-worker, platform-contracts, Build too — each
+~1.5× and each with its own Windows-portability tail, e.g. `IndexRootLockTest`, GPU/ORT) would take the
+PR wall-clock from ~12 min toward ~8 min — a **real but modest ~33%**, not a 3×. And it carries ongoing
+cost: the windows-native lane, Linux-portability maintenance, and the split's complexity — on a
+Windows product with no users yet.
+
+This is the third time actually measuring corrected a claim (config-cache → not blocked/not big;
+parallelism → refuted; Linux → 1.5× not 2.8×). The instrument keeps doing its job; my extrapolations
+keep needing it. The decision this surfaces — finish the full migration for ~33%, or stop/revert the
+app-ui-only change (which is net-neutral on its own) — is a cost/benefit judgment worth making with the
+corrected number, not the mirage.
