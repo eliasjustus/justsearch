@@ -240,6 +240,35 @@ def collect_calibration_texts(log_dir: str, keys) -> dict:
     return out
 
 
+_KAPPA_PE_EPS = 1e-12
+
+
+def _kappa_pe(labels_a, labels_b) -> float:
+    """Chance-expected agreement given each rater's marginal YES rate — the
+    ``p_e`` term shared by `cohens_kappa` and `is_degenerate_pe`."""
+    a = np.asarray(list(labels_a), dtype=bool)
+    b = np.asarray(list(labels_b), dtype=bool)
+    p_a1, p_b1 = float(np.mean(a)), float(np.mean(b))
+    return p_a1 * p_b1 + (1 - p_a1) * (1 - p_b1)
+
+
+def is_degenerate_pe(labels_a, labels_b) -> bool:
+    """True when both raters gave every item the same single label (``p_e ~= 1``)
+    — the homogeneous-sample case `cohens_kappa` special-cases to ``kappa = 1.0``.
+
+    That ``kappa = 1.0`` is mathematically correct as the limiting value, but it
+    is indistinguishable on its own from a genuine, informative "judge and rater
+    independently agree on a diverse sample" result. Callers that report kappa
+    (`rater_agreement_report`) should surface this flag alongside it so a reader
+    can tell the two cases apart, instead of trusting a bare ``kappa: 1.0``.
+    """
+    a = np.asarray(list(labels_a), dtype=bool)
+    b = np.asarray(list(labels_b), dtype=bool)
+    if len(a) == 0:
+        raise ValueError("is_degenerate_pe needs at least one labeled item")
+    return _kappa_pe(a, b) >= 1.0 - _KAPPA_PE_EPS
+
+
 def cohens_kappa(labels_a, labels_b) -> float:
     """Cohen's kappa for exactly two raters over parallel boolean label sequences.
 
@@ -247,7 +276,8 @@ def cohens_kappa(labels_a, labels_b) -> float:
     ``p_e`` is chance-expected agreement given each rater's marginal YES rate.
     The degenerate case (``p_e == 1``, i.e. both raters gave every item the same
     single label) can only occur alongside perfect observed agreement, so it is
-    defined as ``kappa = 1.0`` rather than dividing by zero.
+    defined as ``kappa = 1.0`` rather than dividing by zero — see `is_degenerate_pe`
+    for the companion flag that tells this case apart from a genuine kappa=1.0.
     """
     a = np.asarray(list(labels_a), dtype=bool)
     b = np.asarray(list(labels_b), dtype=bool)
@@ -256,9 +286,8 @@ def cohens_kappa(labels_a, labels_b) -> float:
     if len(a) == 0:
         raise ValueError("cohens_kappa needs at least one labeled item")
     po = float(np.mean(a == b))
-    p_a1, p_b1 = float(np.mean(a)), float(np.mean(b))
-    pe = p_a1 * p_b1 + (1 - p_a1) * (1 - p_b1)
-    if pe >= 1.0 - 1e-12:
+    pe = _kappa_pe(a, b)
+    if pe >= 1.0 - _KAPPA_PE_EPS:
         return 1.0
     return (po - pe) / (1 - pe)
 
@@ -316,7 +345,11 @@ def rater_agreement_report(judge_verdicts: list[bool], raters: list[list[bool]],
     - **rater-vs-rater agreement** — the natural-disagreement baseline the judge's
       own agreement should be read against, not a bare number in isolation.
 
-    Both as Cohen's kappa (exactly 2 raters) with a bootstrap CI. Structured to
+    Both as Cohen's kappa (exactly 2 raters) with a bootstrap CI, plus a
+    ``degenerate_pe`` flag (see `is_degenerate_pe`) — ``True`` when the two label
+    sequences behind that kappa are a homogeneous sample (both raters gave every
+    item the same single label), so a bare ``kappa: 1.0`` isn't mistaken for a
+    genuine, informative agreement result on a diverse sample. Structured to
     generalize to Krippendorff's alpha for 3+ raters later (`rater_majority_vote`
     already N-rater-general); 3+ raters isn't implemented yet — only the 2-rater
     dry-run path is built/tested (tempdoc 624 §M.4/§T.3).
@@ -332,6 +365,7 @@ def rater_agreement_report(judge_verdicts: list[bool], raters: list[list[bool]],
     rater_a, rater_b = raters
     rvr_kappa = cohens_kappa(rater_a, rater_b)
     rvr_lo, rvr_hi = bootstrap_kappa_ci(rater_a, rater_b, n_resamples=n_resamples, seed=seed)
+    rvr_degenerate = is_degenerate_pe(rater_a, rater_b)
 
     majority = rater_majority_vote(raters)
     pairs = [(j, m) for j, m in zip(judge_verdicts, majority) if m is not None]
@@ -340,14 +374,17 @@ def rater_agreement_report(judge_verdicts: list[bool], raters: list[list[bool]],
         j_labels, m_labels = zip(*pairs)
         jvm_kappa = cohens_kappa(j_labels, m_labels)
         jvm_lo, jvm_hi = bootstrap_kappa_ci(j_labels, m_labels, n_resamples=n_resamples, seed=seed)
+        jvm_degenerate = is_degenerate_pe(j_labels, m_labels)
     else:
-        jvm_kappa = jvm_lo = jvm_hi = None
+        jvm_kappa = jvm_lo = jvm_hi = jvm_degenerate = None
 
     return {
         "n": len(judge_verdicts),
         "n_dropped_ties": n_dropped_ties,
-        "judge_vs_rater_agreement": {"value": jvm_kappa, "ci_low": jvm_lo, "ci_high": jvm_hi},
-        "rater_vs_rater_agreement": {"value": rvr_kappa, "ci_low": rvr_lo, "ci_high": rvr_hi},
+        "judge_vs_rater_agreement": {"value": jvm_kappa, "ci_low": jvm_lo, "ci_high": jvm_hi,
+                                      "degenerate_pe": jvm_degenerate},
+        "rater_vs_rater_agreement": {"value": rvr_kappa, "ci_low": rvr_lo, "ci_high": rvr_hi,
+                                      "degenerate_pe": rvr_degenerate},
     }
 
 
@@ -420,8 +457,10 @@ def run_calibration_dry_run(log_dir: str, overlay: dict, *, n: int = 40, seed: i
     if len(used_keys) < 2:
         return {
             **base,
-            "judge_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None},
-            "rater_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None},
+            "judge_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
+                                          "degenerate_pe": None},
+            "rater_vs_rater_agreement": {"value": None, "ci_low": None, "ci_high": None,
+                                          "degenerate_pe": None},
             "note": "sample has fewer than 2 items -- no agreement statistic computed",
         }
 

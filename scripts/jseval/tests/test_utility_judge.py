@@ -13,6 +13,7 @@ the emitted `rater_kind` field.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +105,27 @@ class TestCohensKappa:
             uj.cohens_kappa([], [])
 
 
+class TestIsDegeneratePe:
+    def test_true_when_both_raters_gave_every_item_the_same_label(self):
+        labels = [True] * 10
+        assert uj.is_degenerate_pe(labels, labels) is True
+
+    def test_true_when_both_raters_agree_on_a_single_shared_constant_even_if_not_identical_calls(self):
+        # p_e is a function of each rater's marginal rate, not identity of the arrays.
+        assert uj.is_degenerate_pe([False] * 6, [False] * 6) is True
+
+    def test_false_on_wikipedia_worked_example(self):
+        # Same genuinely-mixed fixture as TestCohensKappa.test_wikipedia_worked_example
+        # (kappa=0.4) -- both raters have non-degenerate marginals, so p_e < 1.
+        labels_a = [True] * 20 + [True] * 5 + [False] * 10 + [False] * 15
+        labels_b = [True] * 20 + [False] * 5 + [True] * 10 + [False] * 15
+        assert uj.is_degenerate_pe(labels_a, labels_b) is False
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError):
+            uj.is_degenerate_pe([], [])
+
+
 class TestBootstrapKappaCi:
     def test_ci_present_and_sane_on_partial_agreement_case(self):
         # Same Wikipedia worked example as above -- a genuine partial-agreement
@@ -168,6 +190,7 @@ class TestRaterAgreementReport:
             block = report[block_name]
             assert -1.0 <= block["value"] <= 1.0
             assert block["ci_low"] <= block["ci_high"]
+            assert "degenerate_pe" in block
 
     def test_ties_are_dropped_and_counted(self):
         # rater_a/rater_b disagree on every item -> majority is always None.
@@ -177,6 +200,30 @@ class TestRaterAgreementReport:
         report = uj.rater_agreement_report(judge, [rater_a, rater_b], n_resamples=200, seed=1)
         assert report["n_dropped_ties"] == 3
         assert report["judge_vs_rater_agreement"]["value"] is None
+        assert report["judge_vs_rater_agreement"]["degenerate_pe"] is None
+
+    def test_homogeneous_sample_flags_degenerate_pe_true(self):
+        # Both raters (and the judge, via a unanimous majority) give every item
+        # the same label -- kappa=1.0 for the "wrong" (homogeneous-sample) reason.
+        judge = [True] * 6
+        rater_a = [True] * 6
+        rater_b = [True] * 6
+        report = uj.rater_agreement_report(judge, [rater_a, rater_b], n_resamples=200, seed=1)
+        assert report["rater_vs_rater_agreement"]["value"] == pytest.approx(1.0)
+        assert report["rater_vs_rater_agreement"]["degenerate_pe"] is True
+        assert report["judge_vs_rater_agreement"]["value"] == pytest.approx(1.0)
+        assert report["judge_vs_rater_agreement"]["degenerate_pe"] is True
+
+    def test_mixed_agreement_sample_flags_degenerate_pe_false(self):
+        # Wikipedia worked-example marginals (kappa=0.4) reused as the rater pair
+        # -- a genuinely mixed, non-degenerate sample.
+        rater_a = [True] * 20 + [True] * 5 + [False] * 10 + [False] * 15
+        rater_b = [True] * 20 + [False] * 5 + [True] * 10 + [False] * 15
+        judge = rater_a  # any non-constant judge sequence; majority == rater_a here
+        report = uj.rater_agreement_report(judge, [rater_a, rater_b], n_resamples=200, seed=1)
+        assert report["rater_vs_rater_agreement"]["value"] == pytest.approx(0.4, abs=1e-9)
+        assert report["rater_vs_rater_agreement"]["degenerate_pe"] is False
+        assert report["judge_vs_rater_agreement"]["degenerate_pe"] is False
 
 
 # --- overlay schema extension (write_overlay round-trip) ---------------------
@@ -329,6 +376,7 @@ class TestCalibrationDryRunEndToEnd:
             assert block["value"] is not None
             assert -1.0 <= block["value"] <= 1.0
             assert block["ci_low"] <= block["ci_high"]
+            assert block["degenerate_pe"] in (True, False)
 
         # Round-trips through write_overlay/JSON like every other overlay field.
         path = uj.write_overlay(log, overlay)
@@ -349,3 +397,71 @@ class TestCalibrationDryRunEndToEnd:
         assert result["n"] <= 1
         assert result["judge_vs_rater_agreement"]["value"] is None
         assert "note" in result
+
+
+# --- `utility-judge --calibrate` CLI reachability ----------------------------
+#
+# Gap 1 (tempdoc 624 hardening pass): `run_calibration_dry_run` / `attach_human_
+# calibration` were correct and unit-tested but unreachable from any CLI command.
+# These tests exercise the actual `jseval utility-judge` Click command end-to-end
+# (not just the library functions) to prove the wiring, per the audit-driven-fixes-
+# need-a-runnable-test discipline.
+
+
+class TestUtilityJudgeCalibrateCli:
+    def test_calibrate_flag_is_advertised_in_help(self):
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge, ["--help"])
+        assert result.exit_code == 0
+        assert "--calibrate" in result.output
+        normalized = " ".join(result.output.split())
+        # rater_kind honesty caveat surfaced in --help too (Click wraps long help
+        # text across lines, so compare against whitespace-normalized output).
+        assert "NOT real human raters" in normalized
+
+    def test_calibrate_flag_attaches_human_calibration_to_the_written_overlay(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge, [
+            log, "--judge-url", "http://x",
+            "--calibrate", "--calibration-n", "6", "--calibration-seed", "0",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "calibration (rater_kind='agent-substitute, NOT human'" in result.output
+
+        on_disk = json.loads((Path(log) / "judge-overlay.json").read_text(encoding="utf-8"))
+        assert "human_calibration" in on_disk
+        hc = on_disk["human_calibration"]
+        assert hc["rater_kind"] == "agent-substitute, NOT human"  # unconditional, not gated by the flag's value
+        for block_name in ("judge_vs_rater_agreement", "rater_vs_rater_agreement"):
+            assert "degenerate_pe" in hc[block_name]
+
+    def test_without_calibrate_flag_overlay_has_no_human_calibration_block(self, tmp_path, monkeypatch):
+        pytest.importorskip("inspect_ai")
+        from click.testing import CliRunner
+
+        from jseval.commands.utility import cmd_utility_judge
+
+        log = _calibration_dry_run_logs(tmp_path)
+        monkeypatch.setattr(uj.httpx, "post", _fake_judge_post)
+        monkeypatch.setattr(uj, "_probe_judge_model", lambda url: "local-judge-v1")
+
+        runner = CliRunner()
+        result = runner.invoke(cmd_utility_judge, [log, "--judge-url", "http://x"])
+        assert result.exit_code == 0, result.output
+        assert "calibration (" not in result.output
+
+        on_disk = json.loads((Path(log) / "judge-overlay.json").read_text(encoding="utf-8"))
+        assert "human_calibration" not in on_disk
