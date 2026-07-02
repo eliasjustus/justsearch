@@ -15,6 +15,10 @@ This doc answers: "Where is the source of truth for JustSearch API schemas and s
 
 **Source of truth:** `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java`
 
+> This subset is one of the three **Runtime Contract** public surfaces (tempdoc 654). Which
+> surfaces are promised (public-contract) vs reference-client vs internal, plus the version
+> matrix and stability policy, is defined in [Runtime Contract](runtime-contract.md).
+
 This contract test defines the minimum stable subset shared by:
 
 - `GET /api/health` (lifecycle gate; HTTP `200` for `READY|DEGRADED`, `503` otherwise)
@@ -372,7 +376,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25`. No separate process.
+**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 5-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 

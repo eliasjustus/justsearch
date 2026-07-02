@@ -67,7 +67,16 @@ public record RuntimeManifest(
      * Schema-version stays at 1: {@code @JsonInclude(NON_NULL)} keeps the
      * field optional for older readers.
      */
-    Reachability reachability) {
+    Reachability reachability,
+    /**
+     * Tempdoc 654: the JustSearch Runtime Contract descriptor — the coarse contract version plus
+     * the pinned versions of the contract's constituent surfaces (manifest schema, lifecycle
+     * subset, MCP protocol + tool surface). Advertised here so the manifest is the one object an
+     * external agent reads to learn "what is promised, at what version." A projection over
+     * existing version single-sources (see {@link RuntimeContract#current()}); nullable and
+     * {@code @JsonInclude(NON_NULL)}, so older readers are unaffected and no schema bump is needed.
+     */
+    RuntimeContract runtimeContract) {
 
   public static final int CURRENT_SCHEMA_VERSION = 1;
 
@@ -195,14 +204,17 @@ public record RuntimeManifest(
     WorkerInfo publicWorker = worker == null ? null : worker.publicProjection();
     AiInfo publicAi = ai == null ? null : ai.publicProjection();
     Reachability publicReach = reachability == null ? null : reachability.publicProjection();
+    RuntimeContract publicContract =
+        runtimeContract == null ? null : runtimeContract.publicProjection();
     if (publicHead == head
         && publicWorker == worker
         && publicAi == ai
-        && publicReach == reachability) {
+        && publicReach == reachability
+        && publicContract == runtimeContract) {
       return this;
     }
     return new RuntimeManifest(
         schemaVersion, instanceId, pid, startedAt, dataDir, lifecycle,
-        publicHead, publicWorker, publicAi, publicReach);
+        publicHead, publicWorker, publicAi, publicReach, publicContract);
   }
 }
