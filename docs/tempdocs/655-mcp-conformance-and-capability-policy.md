@@ -634,3 +634,116 @@ fixes using capabilities the codebase already has sitting unused, which is a bet
 "needs a new subsystem" — consistent with this tempdoc's own recurring theme (extend what exists
 before building something new).
 
+## Long-term design for the two practicality-review ideas (2026-07-02)
+
+A design pass on the two concrete ideas from the section above, grounded in investigating what
+already exists — with one correction to the earlier, less-researched framing of each. Design
+level only (not implementation-level); nothing here has been built.
+
+### The desktop-notification idea, corrected
+
+The practicality-review section above suggested wiring `sendDesktopNotification` directly into
+`pendingAuthorizationBridge.ts`. Investigation found that would have been a mistake: JustSearch
+already collapsed exactly this class of problem once before. Tempdoc 559 explicitly retired a
+second, parallel toast mechanism in favor of **one client-message channel** —
+`emitEphemeralToast()` → `AdvisoryStore` → `AdvisoryToastHost` — with the doc comment on
+`ephemeralToast.ts` stating plainly: "THE single client-originated message channel... Before 559
+a SECOND toast system ran parallel to the advisory model; this collapses it." A direct,
+feature-local call to `sendDesktopNotification` from `pendingAuthorizationBridge.ts` would
+reopen exactly that seam — a second, parallel "tell the user something" path existing alongside
+the one already-collapsed model, for no reason other than that the new feature didn't know the
+old model was there.
+
+**The corrected design:** route the pending-authorization signal through the existing single
+channel, as a new *client-originated* emission from `pendingAuthorizationBridge.ts` — the same
+way any other locally-detected event already reaches the user, not a bespoke path. Two further
+pieces of existing infrastructure make this cleaner than starting fresh, rather than harder:
+
+- The backend Advisory system already has a render-hint vocabulary
+  (`EmissionPolicy`/`RenderHint`) with an `EPHEMERAL` (toast, vanish) / `PERSISTED` (inbox) /
+  `REQUIRES_ACK` (inbox, must-acknowledge) distinction — and `REQUIRES_ACK`'s own doc comment
+  already names **"destructive-action confirmations the user dismissed"** as its intended future
+  use, unused by any class today. A pending MCP approval is close to a textbook instance of what
+  that hint was reserved for. This gives the "pending approvals indicator" idea from the
+  practicality-review section for free, via whatever inbox/badge surface already renders
+  `REQUIRES_ACK` records — no separate indicator needs designing.
+- **Desktop-notification escalation belongs at the render layer, not the feature layer.** The
+  correct place for "if the user isn't looking, also fire an OS notification" is a single
+  conditional in the shared dispatch point (wherever `AdvisoryToastHost` — or whatever ends up
+  rendering `REQUIRES_ACK`-classed records — decides to show something), keyed on document
+  visibility/window focus and the record's severity/render-hint. Placed there, MCP's pending
+  approval becomes the *first* caller to benefit, but the capability is reusable by any future
+  must-acknowledge event (a health failure, an install failure — tempdoc 663 shipped a
+  completion/failure toast for exactly that shape only a day earlier) without additional
+  plumbing. This is not "build a general notification framework" — it is choosing the one
+  correct existing integration point for a real, present need, which happens to generalize
+  because that point was already the right altitude for this kind of decision. The distinction
+  matters: nothing broader is being built now, only placed correctly.
+
+### The MCP client-identity idea, corrected
+
+The practicality-review section proposed showing `clientInfo.name` in the dialog and, longer
+term, scoping durable grants per client name. Investigation found the first half straightforward
+but the second half needs a real correction, not just a caveat.
+
+**What's actually true today:** `McpProtocolHandler.handleInitialize` does not merely discard
+`clientInfo` — it never parses the `initialize` request body at all; the session object
+(`McpSession`) holds only a last-activity timestamp and a subscription set. Capturing
+`clientInfo.name`/`version` at `initialize` and carrying it as an optional field on the session,
+then into `PendingAuthorization` and the existing `GET /api/authorizations/pending/{id}` response
+built in the fix pass, is a small, additive, well-scoped change — a new nullable field flowing
+through structures that already exist, not a redesign.
+
+**Where the earlier framing needs correcting:** `DurableGrantStore`'s grant identity today
+(`OperationKey`/`FamilyKey`) is composed exclusively of structural, enforced fields — the
+operation/family id (declared by the Operation registry) and `SourceTier` (derived by the trust
+lattice from transport, not asserted by the caller). There is no precedent anywhere in that store
+for keying a grant by caller-self-reported data, and this codebase already has a canonical,
+explicit line between "hint" and "enforced policy": ADR-0030, which draws it for MCP tool
+annotations specifically (`ToolAnnotations` are untrusted hints; `OperationPolicy` is enforced,
+diverging deliberately from raw MCP discipline for CORE/TRUSTED_PLUGIN tiers). `clientInfo.name`
+is exactly a hint in that same sense — asserted by the client, unverifiable, no different in kind
+from a tool annotation. Baking it into `DurableGrantStore`'s key — even as a narrowing, not a
+widening, of trust — would blur a line this codebase has already deliberately drawn once and
+documented. The corrected design: **`clientInfo` stays a display/audit-only field, full stop, in
+this pass.** If per-client trust scoping is ever wanted, it needs its own justification and its
+own mechanism (most plausibly: a real paired/registered client credential, not a self-reported
+name) — a materially bigger, separate problem this tempdoc does not need to solve now, and
+naming it here is enough; building toward it isn't warranted by anything currently in scope.
+
+## Principle and reach, second pass (2026-07-02)
+
+**The principle, stated plainly:** *a cross-cutting "the user should know" signal belongs to the
+one existing dispatch mechanism for that concern, not a new one invented per feature — and where
+a decision needs to escalate (e.g. to an OS-level notification), that decision belongs at the
+shared dispatch point, keyed on general properties (severity, focus state), not duplicated
+per-caller.* This is not a new discovery — it's the same shape as this tempdoc's very first
+principle ("consent satisfaction belongs to the transport-agnostic gate, not the caller
+surface") and as tempdoc 559's own retirement of the second toast system, applied a third time.
+The pattern in this codebase, now confirmed three times over, is: when a new feature needs a
+cross-cutting capability (consent, user-notification), the correct move is almost always to make
+that feature the Nth caller of an existing single mechanism, not the 1st caller of a new one.
+
+**Where else this applies:** any future feature needing to alert the user asynchronously — a
+plugin-marketplace update, a background corpus sync finishing, a scheduled-trigger result —
+should route through the same single messaging model, and would get OS-level escalation for free
+once the render-layer hook above exists, without inventing its own.
+
+**Where existing code already brushes against violating it:** `sendDesktopNotification` itself,
+sitting outside the collapsed messaging model since the initial public release with zero callers,
+is a small, latent instance of exactly the "second channel" risk tempdoc 559 was written to
+prevent — not yet a violation (nothing calls it), but the practicality-review section's original,
+uncorrected suggestion would have created one. Recording this here is the point of separating
+"recognize the principle" from "build the general structure": the fix is to route the one new
+caller through the existing model correctly, not to leave the orphaned function as a standing
+invitation for the next feature to wire it up ad hoc instead.
+
+**The second principle — reapplied, not new:** self-reported/unverified caller metadata
+(`clientInfo`, MCP tool annotations, and by the same logic any future handshake-declared
+identity from an external protocol) is display/audit data, never trust-key data. ADR-0030 already
+states this for MCP tool annotations; this pass confirms it extends cleanly to MCP client
+identity, and would extend the same way to any future external-caller metadata this codebase
+ever receives. No new structure is needed to enforce this — the existing line already covers it;
+the discipline is simply to keep recognizing new instances of the same shape rather than
+re-litigating the question each time.
+
