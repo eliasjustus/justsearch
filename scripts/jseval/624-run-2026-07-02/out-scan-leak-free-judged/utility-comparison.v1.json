@@ -1,0 +1,692 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-07-02T13:44:21.163762+00:00",
+  "cohort": {
+    "agent_cohort_key": "fb27856be770c37d5c27513838f5ef64303adaa9ea13e76305621029b346234e",
+    "git_sha": "d2912405a8b10a6691bb8711930d66db46421f97",
+    "cli_version": "2.1.198 (Claude Code)",
+    "mcp_tool_surface_hash": null,
+    "judge": {
+      "kind": "hybrid-em-llm"
+    },
+    "prompt_template_hash": "d325302666dd71eb432033c1ac4ba7a614ba0ae3813926dc39d25bea9d0dd4ff",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "eaa0251611268cf1cbfd9cc444824db32881fb08382a48fa3996964445985156",
+    "hardware": null
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "golden/synth-scan-v1": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.5,
+          "with_tool": 0.0,
+          "delta": -0.5,
+          "mcnemar_p": 0.5,
+          "mcnemar_test": "exact-binomial",
+          "n_with_tool_fixes": 0,
+          "n_with_tool_breaks": 2,
+          "seed_envelope_baseline": {
+            "mean": 0.6667,
+            "stdev": 0.3333,
+            "n": 2
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.0,
+            "stdev": 0.0,
+            "n": 2
+          }
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 4,
+            "median": 30811.5,
+            "p95": 33642.4,
+            "mean": 30654.0
+          },
+          "with_tool": {
+            "n": 4,
+            "median": 41708.5,
+            "p95": 54778.0,
+            "mean": 40202.25
+          },
+          "delta_mean": 9548.25,
+          "delta_ci95": [
+            -3793.25,
+            21226.0
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 4,
+            "median": 0.177553,
+            "p95": 0.263891,
+            "mean": 0.180619
+          },
+          "with_tool": {
+            "n": 4,
+            "median": 0.280143,
+            "p95": 0.310706,
+            "mean": 0.250027
+          },
+          "delta_mean": 0.06940770000000004,
+          "delta_ci95": [
+            -0.047619,
+            0.186435
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 4,
+            "median": 28.5,
+            "p95": 38.7,
+            "mean": 26.5
+          },
+          "with_tool": {
+            "n": 4,
+            "median": 33.5,
+            "p95": 40.4,
+            "mean": 32.5
+          },
+          "delta_mean": 6.0
+        },
+        "n_paired_observations": 4,
+        "leak_suspect_cells": [
+          {
+            "seed": 0,
+            "qid": "q0",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q11",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q12",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q13",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q14",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q16",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q17",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": false
+          },
+          {
+            "seed": 0,
+            "qid": "q18",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q19",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q2",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q6",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 0,
+            "qid": "q7",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": false
+          },
+          {
+            "seed": 0,
+            "qid": "q8",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 1,
+            "qid": "q10",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 1,
+            "qid": "q11",
+            "baseline_leak_suspect": false,
+            "with_tool_leak_suspect": true
+          },
+          {
+            "seed": 1,
+            "qid": "q17",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": false
+          },
+          {
+            "seed": 1,
+            "qid": "q6",
+            "baseline_leak_suspect": true,
+            "with_tool_leak_suspect": true
+          }
+        ],
+        "arms": {
+          "substitution_c": {
+            "accuracy": {
+              "baseline": 0.3333,
+              "with_tool": 0.25,
+              "delta": -0.0833,
+              "mcnemar_p": 1.0,
+              "mcnemar_test": "exact-binomial",
+              "n_with_tool_fixes": 3,
+              "n_with_tool_breaks": 4,
+              "seed_envelope_baseline": {
+                "mean": 0.3175,
+                "stdev": 0.2731,
+                "n": 3
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.3254,
+                "stdev": 0.1459,
+                "n": 3
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 12,
+                "median": 25381.5,
+                "p95": 50236.95,
+                "mean": 28973.916667
+              },
+              "with_tool": {
+                "n": 12,
+                "median": 5980.0,
+                "p95": 56494.75,
+                "mean": 17470.416667
+              },
+              "delta_mean": -11503.5,
+              "delta_ci95": [
+                -22805.114583,
+                2921.047917
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 12,
+                "median": 0.152142,
+                "p95": 0.261862,
+                "mean": 0.159874
+              },
+              "with_tool": {
+                "n": 12,
+                "median": 0.126849,
+                "p95": 0.481619,
+                "mean": 0.190402
+              },
+              "delta_mean": 0.030528379166666692,
+              "delta_ci95": [
+                -0.068005,
+                0.14023
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 12,
+                "median": 23.0,
+                "p95": 34.25,
+                "mean": 23.083333
+              },
+              "with_tool": {
+                "n": 12,
+                "median": 5.0,
+                "p95": 54.15,
+                "mean": 15.0
+              },
+              "delta_mean": -8.083333333333334
+            },
+            "n_paired_observations": 12,
+            "leak_suspect_cells": [
+              {
+                "seed": 0,
+                "qid": "q10",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q11",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q12",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q14",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q16",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q17",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q18",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q2",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q3",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q4",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q6",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q7",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q0",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q10",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q16",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 1,
+                "qid": "q17",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q6",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q7",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 2,
+                "qid": "q10",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 2,
+                "qid": "q11",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 2,
+                "qid": "q5",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 2,
+                "qid": "q8",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              }
+            ]
+          },
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.5,
+              "with_tool": 0.0,
+              "delta": -0.5,
+              "mcnemar_p": 0.5,
+              "mcnemar_test": "exact-binomial",
+              "n_with_tool_fixes": 0,
+              "n_with_tool_breaks": 2,
+              "seed_envelope_baseline": {
+                "mean": 0.6667,
+                "stdev": 0.3333,
+                "n": 2
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.0,
+                "stdev": 0.0,
+                "n": 2
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 4,
+                "median": 30811.5,
+                "p95": 33642.4,
+                "mean": 30654.0
+              },
+              "with_tool": {
+                "n": 4,
+                "median": 41708.5,
+                "p95": 54778.0,
+                "mean": 40202.25
+              },
+              "delta_mean": 9548.25,
+              "delta_ci95": [
+                -3793.25,
+                21226.0
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 4,
+                "median": 0.177553,
+                "p95": 0.263891,
+                "mean": 0.180619
+              },
+              "with_tool": {
+                "n": 4,
+                "median": 0.280143,
+                "p95": 0.310706,
+                "mean": 0.250027
+              },
+              "delta_mean": 0.06940770000000004,
+              "delta_ci95": [
+                -0.047619,
+                0.186435
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 4,
+                "median": 28.5,
+                "p95": 38.7,
+                "mean": 26.5
+              },
+              "with_tool": {
+                "n": 4,
+                "median": 33.5,
+                "p95": 40.4,
+                "mean": 32.5
+              },
+              "delta_mean": 6.0
+            },
+            "n_paired_observations": 4,
+            "leak_suspect_cells": [
+              {
+                "seed": 0,
+                "qid": "q0",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q11",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q12",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q13",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q14",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q16",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q17",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q18",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q19",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q2",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q6",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 0,
+                "qid": "q7",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 0,
+                "qid": "q8",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 1,
+                "qid": "q10",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 1,
+                "qid": "q11",
+                "baseline_leak_suspect": false,
+                "with_tool_leak_suspect": true
+              },
+              {
+                "seed": 1,
+                "qid": "q17",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": false
+              },
+              {
+                "seed": 1,
+                "qid": "q6",
+                "baseline_leak_suspect": true,
+                "with_tool_leak_suspect": true
+              }
+            ]
+          }
+        },
+        "primary_arm": "addition_b"
+      }
+    }
+  },
+  "seed_count": 3,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": false,
+    "reasons": [
+      "arm_A: error_rate=0.367 > 0.15",
+      "arm_B: error_rate=0.600 > 0.15",
+      "low_paired_retention: 0.525 < 0.7 (too few both-arms-completed queries)"
+    ],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.3667,
+        "B": 0.6,
+        "C": 0.0833
+      },
+      "excluded_jaccard": 0.75,
+      "paired_n_retention": 0.525
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_attempted": 60,
+        "n_completed": 38,
+        "n_excluded": 22,
+        "exclusion_rate": 0.3667
+      },
+      "B": {
+        "n_attempted": 60,
+        "n_completed": 24,
+        "n_excluded": 36,
+        "exclusion_rate": 0.6
+      },
+      "C": {
+        "n_attempted": 60,
+        "n_completed": 55,
+        "n_excluded": 5,
+        "exclusion_rate": 0.0833
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "private-synthetic"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  }
+}

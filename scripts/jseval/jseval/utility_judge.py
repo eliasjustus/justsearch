@@ -130,7 +130,7 @@ def _iter_eval_records(log_dir: str):
                    "reference": ref, "candidate": cand, "em": em}
 
 
-def judge_logs(log_dir: str, *, judge_url: str = "http://127.0.0.1:8080",
+def judge_logs(log_dir: str, *, judge_url: str = "http://127.0.0.1:33221",
                judge_model: str | None = None) -> dict:
     """Hybrid re-score over the EvalLogs. Returns the overlay artifact (dict).
 
@@ -138,6 +138,16 @@ def judge_logs(log_dir: str, *, judge_url: str = "http://127.0.0.1:8080",
     {"em", "judge", "final"}}}``. ``judge`` is null for EM auto-passes and for
     null/abstention queries (the judge grades factual answers, not abstention —
     those stay EM). On any judge-call failure the cell falls back to EM (graceful).
+
+    ``judge_url`` is the JustSearch **Head API's own base URL** (its OpenAI-compat
+    proxy, ``OpenAiCompatController.java``), NOT llama-server's raw ephemeral port —
+    the Head forwards ``/v1/chat/completions``/``/v1/models`` to whichever port
+    llama-server actually bound, specifically so callers don't have to discover it.
+    The default matches jseval's own eval-backend port
+    (``_DEFAULT_BASE_URL_EVAL`` in ``jseval/commands/_common.py``); override with
+    the live backend's real base URL if it was started on a different port. Prior
+    default (``:8080``) was the *production* Head API port, wrong for eval-backend
+    runs which use ``:33221`` (tempdoc 624 "judge-scoring gap" follow-up).
     """
     model = judge_model or _probe_judge_model(judge_url)
     scores: dict = {}

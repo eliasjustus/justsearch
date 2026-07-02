@@ -288,8 +288,15 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
 
 @click.command("utility-judge")
 @click.argument("log_dir", type=click.Path(exists=True))
-@click.option("--judge-url", default="http://127.0.0.1:8080", show_default=True,
-              help="Local llama-server (OpenAI-compatible) — a DIFFERENT family than the claude agent (C-6).")
+@click.option("--judge-url", default="http://127.0.0.1:33221", show_default=True,
+              help="The JustSearch Head API's OWN base URL (its OpenAI-compat proxy — "
+                   "OpenAiCompatController.java forwards /v1/chat/completions and /v1/models "
+                   "to whatever port llama-server actually bound), NOT llama-server's raw "
+                   "ephemeral port. Default matches jseval's own eval-backend port "
+                   "(_DEFAULT_BASE_URL_EVAL in jseval/commands/_common.py) — override with the "
+                   "live backend's base URL if it was started on a different port. A different "
+                   "model family than the claude agent under test is the self-preference "
+                   "control (C-6).")
 @click.option("--judge-model", default=None, help="Override the served model id (else auto-probed).")
 @click.option("--search-config-key", default=None)
 @click.option("--contamination-class",

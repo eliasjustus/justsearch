@@ -2905,3 +2905,119 @@ bias in either arm specifically. But it is a real, unstated gap against this tem
 judge was run at all) and should be closed or explicitly disclosed before any external claim, not left
 implicit.
 
+
+---
+
+## The judge-scoring gap — closed live (2026-07-02, same-day follow-up)
+
+The gap above is now closed: the hybrid EM-auto-pass -> local-LLM-judge pipeline (`utility_judge.py`)
+was actually invoked against all three real corpora (`tmp/624-run/logs-{en,de,scan}/`), live, via a
+local Qwen3.5-9B judge (a different model family than the claude-haiku agent under test -- the
+self-preference control), reached through the JustSearch Head API's own OpenAI-compat proxy on the
+jseval eval backend (`http://127.0.0.1:33221/v1/chat/completions`, per
+`modules/ui/src/main/java/io/justsearch/ui/api/OpenAiCompatController.java`). No paid API, no
+external spend -- `ai_activate`-equivalent local inference only, per this project's own
+`use-every-verification-tier` rule.
+
+### Two real blockers found and fixed en route (not just documented)
+
+1. **This worktree's `native-bin/llama-server/` was never staged.** `jseval.backend.start_backend`
+   runs bare `gradlew :modules:ui:runHeadlessEval`, which does NOT auto-stage the llama-server
+   binary (only `dev-runner.cjs` does that, per tempdoc 618 §3 / 656's GPU-only redesign) -- the
+   first run attempt failed with `RuntimeError: LLM inference did not become available: inference
+   stayed offline`, root-caused via `tmp/headless-eval-data/logs/headless-backend.log`:
+   `llama-server executable not found: ...\native-bin\llama-server\llama-server.exe`. Fixed by
+   self-staging the CPU-baseline prebuilt **locally in this worktree** (no cross-worktree reach):
+   `./gradlew.bat :modules:ui:stageLlamaServerFromPrebuilt` populates
+   `modules/ui/build/llama-server/stage/`, then `JUSTSEARCH_SERVER_EXE` env override points the
+   backend at it.
+2. **`jseval utility-judge`'s `--judge-url` default was wrong for eval-backend runs.** It defaulted
+   to `http://127.0.0.1:8080` -- the *production* Head API port -- not the eval backend's actual port
+   (`_DEFAULT_BASE_URL_EVAL = "http://127.0.0.1:33221"` in `jseval/commands/_common.py`, the port
+   every `jseval run --start-backend` actually uses). Confirmed via `OpenAiCompatController.java`:
+   the Head proxies `/v1/chat/completions`/`/v1/models` to whatever port llama-server actually
+   bound -- so the judge URL must be the *Head's own* base URL, not llama-server's raw ephemeral
+   port, but it has to be the Head's *actual* running port. Fixed the default (and docstrings) in
+   `scripts/jseval/jseval/utility_judge.py` and `scripts/jseval/jseval/commands/utility.py` to
+   `:33221`; re-verified against `tests/test_utility_judge.py` + `tests/test_utility_comparison.py`
+   (68 passed, no regressions). Anyone who previously ran (or will run) `jseval utility-judge <dir>`
+   against an eval-backend run without manually overriding `--judge-url` got (or would have gotten)
+   a silent `degraded_to_em` EM-only overlay -- the exact failure mode C-6/E-5 were built to avoid,
+   now closed.
+
+### The judge-vs-EM agreement pattern: zero flips, and it's real
+
+Across all three corpora, the judge **never once rescued an EM-miss to a pass** --
+`judge_flips: 0` in en (97 judged misses), de (88), and scan (61) -- 246 judged misses total, zero
+rescues. Dual-order disagreement (abstain-to-EM) was rare and mild: en 3/97 (agreement 0.9691), de
+0/88 (1.0), scan 0/61 (1.0).
+
+This was checked for a parsing/prompt bug, not taken at face value (per this project's
+`interrogate-results` rule) -- three individual overlay entries were read directly against the
+underlying question/reference/candidate text (`tmp/624-run/logs-en/judge-overlay.json` +
+`_iter_eval_records`):
+
+- `A|0|q11`: REF `"verdant lansk 0036"`, CAND concluded `"azure perrin 0387"` -- a **different
+  entity's synthetic token entirely** (the agent chained to the wrong founder in a 3-hop lookup).
+  EM=False, judge=False. Correct call.
+- `A|0|q13`: REF `"indigo perrin 0042"`, CAND concluded `"indigo lansk 0015"` -- same failure
+  shape, wrong intermediate entity. EM=False, judge=False. Correct call.
+- `B|1|q17` (the one genuine dual-order disagreement inspected): REF `"umber lansk 0054"`, CAND
+  `"54"` -- a truncated partial match (right numeric suffix, missing the two-word prefix), a
+  genuinely borderline case where dual-order flipping is the expected, designed behavior (abstain to
+  EM rather than guess). EM=False, final=False. Sound.
+
+**Why zero flips is the expected finding, not a bug**: 635's corpus uses exact synthetic-token
+answers (e.g. `"verdant lansk 0036"`) specifically so substring-EM is high-precision by
+construction (already noted in this tempdoc's own "Live-run attempt" section: "the 635 answers are
+exact synthetic tokens... so substring-EM is high-precision"). The observed EM-misses are wrong-token
+failures from multi-hop chaining errors, not correct-but-differently-phrased false negatives -- the
+exact failure mode the hybrid judge exists to catch (C-6) does not occur on this corpus's answer
+style. This is now an *empirically checked* fact about this specific run, not an assumption carried
+over from the earlier, different MultiHop-RAG floor-log measurement (the As-built #4 "0.90 agreement"
+figure this section's original finding correctly flagged as not applicable to this run).
+
+### Final numbers: leak-free AND judge-scored (the most rigorous figure available from this data)
+
+Every cell below is BOTH leak-excluded (text-derived `queries.jsonl` mention backstop, same method as
+the existing `_leak_free_recompose.py` pass) AND judge-rescored (`cohort.judge.kind: "hybrid-em-llm"`
+in every composed record, confirmed by direct read of
+`scripts/jseval/624-run-2026-07-02/out-en-leak-free-judged/utility-comparison.v1.json`). Because the
+judge changed zero verdicts, these numbers are **numerically identical** to the leak-free-only pass --
+that identity is itself the confirmation that EM scoring was not distorting this run's headline
+figures, now backed by a real judge invocation rather than an assumption:
+
+| corpus | baseline acc | with-tool acc | delta | McNemar p | n (paired) | leaked cells excluded |
+|---|---|---|---|---|---|---|
+| en | 0.7973 | 0.7162 | -0.0811 | 0.307 (exact-binomial) | 74 | 3 |
+| de | 0.8169 | 0.7324 | -0.0845 | 0.263 (exact-binomial) | 71 | 6 |
+| scan | 0.5 | 0.0 | -0.5 | 0.5 (exact-binomial) | 4 | 40 |
+| **pooled** | **0.7987** | **0.7047** | **-0.094** | **0.055 (chi2-continuity)** | **149** | -- |
+
+Pooled token-efficiency (unchanged from the leak-free pass, judge scoring does not touch tokens):
+baseline median 38324, with-tool median 38438, delta_mean +562 tokens (CI95 [-1997, 3216] -- crosses
+zero, not significant at this n).
+
+### Artifacts
+
+- `tmp/624-run/logs-{en,de,scan}/judge-overlay.json` -- the real hybrid-judge overlay per corpus
+  (verdicts + `judge_identity` + agreement stats), written by `utility_judge.write_overlay`.
+- `scripts/jseval/624-run-2026-07-02/out-{en,de,scan}-leak-free-judged/utility-comparison.v1.json` --
+  the leak-free + judge-scored composed record per corpus.
+- `scripts/jseval/624-run-2026-07-02/out-cross-corpus-leak-free-judged/utility-comparison-cross-corpus.v1.json`
+  -- the pooled figure.
+- `scripts/jseval/624-run-2026-07-02/_leak_free_judged_exclusion_report.json` -- leak cells + judge
+  stats + judge identity per corpus, the audit trail for the table above.
+- `scripts/jseval/_leak_free_judged_recompose.py` + `scripts/jseval/_run_judge_with_backend.py` --
+  throwaway, uncommitted re-analysis scripts (same convention as the existing
+  `_leak_free_recompose.py`), reusing `eval_logs_to_summaries(judge_overlay=...)`,
+  `compose_utility`/`compose_utility_cross_corpus` unmodified -- no hand-rolled stats.
+
+### What remains open
+
+This closes the judge-invocation gap specifically. It does **not** close the separate,
+already-disclosed **human-calibration** gap (As-built #5 item 4 / "Concrete next steps" item 3 /
+§M.4's kappa-against-human-labels requirement) -- that still needs a real human rater pass (or the
+`--calibrate` dry-run's agent-substitute raters, which are explicitly not a validated figure) and was
+out of scope for this pass. The scan corpus's high leak-exclusion rate (40 of ~180 samples) and small
+resulting paired n (4) were already flagged in the prior leak-free pass and are unchanged by this one.
