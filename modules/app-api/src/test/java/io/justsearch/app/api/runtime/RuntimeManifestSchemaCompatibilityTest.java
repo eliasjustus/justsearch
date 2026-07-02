@@ -165,4 +165,48 @@ class RuntimeManifestSchemaCompatibilityTest {
             + "depends on is an explicit Jackson choice, not a default the codebase happens "
             + "to inherit.");
   }
+
+  @Test
+  void runtimeContractRoundTripsAndIsOmittedWhenAbsent() throws Exception {
+    // Tempdoc 654: the runtimeContract field is additive. When absent it must be omitted from JSON
+    // (@JsonInclude(NON_NULL)) so older readers are unaffected; when present it must round-trip.
+    RuntimeManifest.HeadInfo head =
+        RuntimeManifestHeadInfoBuilder.builder()
+            .apiPort(12345)
+            .apiBaseUrl("http://127.0.0.1:12345")
+            .readyAt("2026-07-02T00:00:00Z")
+            .build();
+
+    RuntimeManifest without =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("00000000-0000-0000-0000-0000000000c1")
+            .pid(1)
+            .startedAt("2026-07-02T00:00:00Z")
+            .dataDir("/tmp/c1")
+            .head(head)
+            .build();
+    String jsonWithout = TOLERANT.writeValueAsString(without);
+    assertTrue(
+        !jsonWithout.contains("runtimeContract"),
+        "absent runtimeContract must be omitted (NON_NULL): " + jsonWithout);
+
+    RuntimeManifest with =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("00000000-0000-0000-0000-0000000000c2")
+            .pid(2)
+            .startedAt("2026-07-02T00:00:00Z")
+            .dataDir("/tmp/c2")
+            .head(head)
+            .runtimeContract(RuntimeContract.current())
+            .build();
+    RuntimeManifest reparsed =
+        TOLERANT.readValue(TOLERANT.writeValueAsString(with), RuntimeManifest.class);
+    assertNotNull(reparsed.runtimeContract());
+    assertEquals(RuntimeContract.CURRENT_VERSION, reparsed.runtimeContract().version());
+    assertEquals(
+        RuntimeManifest.CURRENT_SCHEMA_VERSION,
+        reparsed.runtimeContract().constituents().manifestSchemaVersion());
+  }
 }

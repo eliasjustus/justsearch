@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.justsearch.app.api.runtime.RuntimeContract;
 import io.justsearch.app.api.runtime.RuntimeManifest;
 import io.justsearch.app.api.runtime.RuntimeManifestBuilder;
 import io.justsearch.app.api.runtime.RuntimeManifestHeadInfoBuilder;
@@ -107,5 +108,40 @@ class RuntimeManifestControllerRedactionTest {
     assertNotNull(publicView.ai(), "ai sub-record must survive projection");
     assertEquals("READY", publicView.ai().phase());
     assertNull(publicView.head().sessionToken());
+  }
+
+  @Test
+  void publicProjectionPreservesRuntimeContractWhileStrippingToken() {
+    // Tempdoc 654: the RuntimeContract descriptor must survive the public projection that the
+    // HTTP / SSE / MCP / well-known transports serve — even on the redaction (non-identity) branch
+    // that strips the session token. This is the exact serve path an external agent reads.
+    RuntimeManifest.HeadInfo head =
+        RuntimeManifestHeadInfoBuilder.builder()
+            .apiPort(54321)
+            .apiBaseUrl("http://127.0.0.1:54321")
+            .sessionToken("super-secret-prod-token")
+            .readyAt("2026-05-20T20:00:00Z")
+            .build();
+    RuntimeManifest manifest =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("ddd-eee-fff")
+            .pid(1234L)
+            .startedAt("2026-05-20T19:59:00Z")
+            .dataDir("/tmp/whatever")
+            .head(head)
+            .runtimeContract(RuntimeContract.current())
+            .build();
+
+    RuntimeManifest publicView = manifest.publicProjection();
+
+    assertNull(publicView.head().sessionToken(), "sessionToken must still be stripped");
+    assertNotNull(publicView.runtimeContract(), "runtimeContract must survive projection");
+    assertEquals(RuntimeContract.CURRENT_VERSION, publicView.runtimeContract().version());
+    assertNotNull(publicView.runtimeContract().constituents());
+    assertEquals(
+        RuntimeContract.current().constituents().mcpToolSurfaceVersion(),
+        publicView.runtimeContract().constituents().mcpToolSurfaceVersion(),
+        "constituent versions must be intact on the public view");
   }
 }

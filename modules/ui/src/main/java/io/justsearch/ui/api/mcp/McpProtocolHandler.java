@@ -3,6 +3,7 @@ package io.justsearch.ui.api.mcp;
 
 import io.javalin.http.Context;
 import io.justsearch.agent.api.registry.ResourceCatalog;
+import io.justsearch.app.api.mcp.McpContractVersions;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,9 +32,11 @@ public final class McpProtocolHandler {
   private static final Logger log = LoggerFactory.getLogger(McpProtocolHandler.class);
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
   private static final String JSONRPC_VERSION = "2.0";
-  private static final String MCP_PROTOCOL_VERSION = "2025-11-25";
+  // Tempdoc 654: single-sourced from app-api so the manifest's RuntimeContract and this
+  // initialize response report identical versions by construction (projection, not fork).
+  private static final String MCP_PROTOCOL_VERSION = McpContractVersions.PROTOCOL_VERSION;
   private static final String SERVER_NAME = "JustSearch";
-  private static final String SERVER_VERSION = "1.0.0";
+  private static final String SERVER_VERSION = McpContractVersions.TOOL_SURFACE_VERSION;
   private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
   private final McpToolSurface surface;

@@ -404,6 +404,9 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
             .lifecycle(io.justsearch.contract.wire.LifecycleState.LIFECYCLE_STATE_STARTING.name())
             .head(headInfo)
             .reachability(reachability)
+            // Tempdoc 654: advertise the Runtime Contract descriptor. Set once at head-publish;
+            // subsequent publishes use RuntimeManifestBuilder.builder(previous) so it carries forward.
+            .runtimeContract(io.justsearch.app.api.runtime.RuntimeContract.current())
             .build();
     log.info(
         "Runtime manifest published (head-ready): instanceId={}, apiPort={}, dataDir={}",

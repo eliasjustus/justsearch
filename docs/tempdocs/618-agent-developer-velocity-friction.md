@@ -1899,3 +1899,37 @@ fixture — fails on `origin/main` too, i.e. environmental/pre-existing; (3) `br
 also claims; the `prose-tier-register` gate only enforces in-file uniqueness, so the collision resolves at
 merge — renumber whichever lands second.
 
+## §656 cross-reference (2026-07-01)
+
+Tempdoc 656 (five-minute-agent-runtime-onramp) independently re-derived this doc's §3 root cause
+(`stage → native-bin` only happens in `bundleSidecarResources`, never for a dev checkout) while
+investigating a live incident of agents reporting missing models/llama-server, before finding this
+doc already existed. Recorded here so a future reader of 618 sees where the scope boundary actually
+sits, rather than assuming §3's fix closed the whole problem class.
+
+**What 618's §3 fix covers:** the *activation* consumers only —
+`RuntimeActivationService.resolveVariantsRoot()`'s dev-mode fallback and `dev-runner.cjs`'s
+`ensureLlamaStagedInNativeBin()` probing/auto-copy. If a runtime is already staged somewhere
+findable (this worktree's own build, or the main checkout's, via the existing fallback), activation
+now works.
+
+**What 618's §3 fix does not cover:** the *install/download* consumer —
+`AiInstallService`/`RuntimeRestoreUtil`. `RuntimeRestoreUtil.ensureRuntimePresent()`
+(`modules/app-services/.../ai/install/RuntimeRestoreUtil.java`) resolves its "bundled" runtime
+source to `<repoRoot>/native-bin/llama-server` — a path shape that only exists in a packaged
+installer's app-root layout, never checked or fixed by this doc's §3 work. `POST
+/api/ai/install/start` (the REST endpoint `AiInstallService` exposes) hard-fails at this check
+before downloading anything, live-confirmed in 656's investigation. This matters distinctly from
+§3's scope because an agent/dev with **nothing staged at all** — no prior build, no main-checkout
+copy to fall back to — needs this install/download path specifically, not activation of something
+already present.
+
+**Also relevant to 618's own subject (agent developer velocity) but recorded in 656, not here**: a
+reframe of what "fixed" should mean for either consumer — per-worktree redownload of the runtime
+binary (or models) is not viable given 3-4 concurrent worktrees is the norm here, so any fix to the
+install/download consumer must preserve or extend the "populate once, share via main-checkout
+resolution" property models already have via `JUSTSEARCH_MODELS_DIR` (`EnvRegistry.MODELS_DIR`) —
+the runtime binary currently has no equivalent registered env var, only 618's own JS-side,
+copy-based (not zero-copy) fallback. See tempdoc 656 §Reframing the actual goal for the full
+analysis; not repeated here to avoid two authorities on the same question.
+

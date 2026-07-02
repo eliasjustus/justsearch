@@ -77,7 +77,16 @@ public record RuntimeManifest(
      * first mode publish omits it; {@code @JsonInclude(NON_NULL)} keeps it optional and the schema
      * version stays 1 (older readers unaffected).
      */
-    ModeInfo mode) {
+    ModeInfo mode,
+    /**
+     * Tempdoc 654: the JustSearch Runtime Contract descriptor — the coarse contract version plus
+     * the pinned versions of the contract's constituent surfaces (manifest schema, lifecycle
+     * subset, MCP protocol + tool surface). Advertised here so the manifest is the one object an
+     * external agent reads to learn "what is promised, at what version." A projection over
+     * existing version single-sources (see {@link RuntimeContract#current()}); nullable and
+     * {@code @JsonInclude(NON_NULL)}, so older readers are unaffected and no schema bump is needed.
+     */
+    RuntimeContract runtimeContract) {
 
   public static final int CURRENT_SCHEMA_VERSION = 1;
 
@@ -229,15 +238,18 @@ public record RuntimeManifest(
     AiInfo publicAi = ai == null ? null : ai.publicProjection();
     Reachability publicReach = reachability == null ? null : reachability.publicProjection();
     ModeInfo publicMode = mode == null ? null : mode.publicProjection();
+    RuntimeContract publicContract =
+        runtimeContract == null ? null : runtimeContract.publicProjection();
     if (publicHead == head
         && publicWorker == worker
         && publicAi == ai
         && publicReach == reachability
-        && publicMode == mode) {
+        && publicMode == mode
+        && publicContract == runtimeContract) {
       return this;
     }
     return new RuntimeManifest(
         schemaVersion, instanceId, pid, startedAt, dataDir, lifecycle,
-        publicHead, publicWorker, publicAi, publicReach, publicMode);
+        publicHead, publicWorker, publicAi, publicReach, publicMode, publicContract);
   }
 }

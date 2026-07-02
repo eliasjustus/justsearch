@@ -1,7 +1,7 @@
 ---
 title: "Install modes and model-pack decomposition: add an install-intent axis orthogonal to hardware, with runtime mode as a realized-capability projection (Full Desktop / Headless Runtime / MCP Lite as presets)"
 type: tempdocs
-status: "in-progress — substrate implemented & live-verified 2026-07-02 (feat(657)); founder decisions, 654/655-owned items, and the follow-ups in §Implementation status remain"
+status: "in-progress — LAUNCH-BLOCKER (re-scoped 2026-07-01, §Re-scope note); substrate implemented & live-verified 2026-07-02 (feat(657)); founder tier-boundary decision, 654/655-owned items, and the §Implementation status follow-ups remain"
 created: 2026-06-28
 updated: 2026-07-02
 category: packaging / installer / model-distribution / developer-experience
@@ -525,3 +525,21 @@ compat template and guarding test:
   ADR-0024 reconciliation is a prerequisite doc fix (`stable` decision record — may want founder
   sign-off); (h) whether to populate the low-download rung with a small multilingual dense model is an
   open founder decision (D7 / coordinated with 656's onramp-tier choice).
+
+---
+
+## Re-scope note (2026-07-01, from #46) — satisfied by the implementation
+
+Elevated to **launch-blocker** alongside 656: install-mode / model-pack decomposition is what makes
+the five-minute path physically possible.
+
+One decision this design must NOT make unilaterally: **which capability tier the lightest mode
+ships** (search-only vs. search + small model) — that choice shapes the public first-touch claim
+and is reserved for founder/strategy input. Design the decomposition so the tier boundary is a
+configuration choice, then surface the options with their trade-offs.
+
+> **Status (2026-07-02):** honored. The shipped substrate makes the tier boundary a **configuration
+> choice** (install intent → wanted tiers), and the founder options are surfaced with trade-offs in
+> **D7** and **Open decisions #2** (BM25 zero-download rung vs. adding a ~118 MB small multilingual
+> dense rung). The design makes no unilateral tier-boundary call — it stays a `retrieval-core`
+> variant selection left to the founder.

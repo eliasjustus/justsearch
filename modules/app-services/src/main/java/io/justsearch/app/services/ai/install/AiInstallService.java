@@ -162,6 +162,20 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     return ModelRegistryLoader.loadFromClasspath(REGISTRY_RESOURCE);
   }
 
+  /**
+   * Tempdoc 656 Task 4: the already-resolved models root (honors {@code JUSTSEARCH_MODELS_DIR}
+   * per the constructor above), exposed read-only so a preflight check can resolve the same
+   * on-disk paths this service uses to install, without re-deriving the env-override logic.
+   */
+  public Path modelsDir() {
+    return modelsDir;
+  }
+
+  /** Tempdoc 656 Task 4: the resolved AI home directory, for packages using {@code installRoot}. */
+  public Path aiHome() {
+    return homeDir;
+  }
+
   public AiInstallStatus getStatus() {
     maybeRecomputeInstalledFromDisk();
     synchronized (lock) {

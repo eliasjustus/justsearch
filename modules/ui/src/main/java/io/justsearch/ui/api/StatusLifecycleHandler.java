@@ -1000,6 +1000,20 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return gate;
   }
 
+  /**
+   * Tempdoc 656: {@code inferenceCapability.pendingReason()} holds a real
+   * {@link LifecycleReasonCode#code()} when set via {@code RuntimeActivationService}'s wiring
+   * (Task 2), but can also hold arbitrary free prose from
+   * {@code InferenceCapabilityWiring.attachInferenceModeListener}'s mode-change callback (e.g.
+   * "Inference offline", "GPU allocated to indexing") — only forward it when it's a known code;
+   * otherwise fall back to the generic {@code INFERENCE_OFFLINE}, same as before this fix.
+   */
+  private static String resolveInferenceReasonCode(
+      io.justsearch.app.services.lifecycle.InferenceCapability inferenceCapability) {
+    String reason = inferenceCapability.pendingReason();
+    return LifecycleReasonCode.isKnown(reason) ? reason : LifecycleReasonCode.INFERENCE_OFFLINE.code();
+  }
+
   static String throughputReadinessReason(WorkerOperationalView workerView) {
     if (workerView == null || !hasActiveIndexWork(workerView)) {
       return null;
@@ -1064,17 +1078,20 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     };
 
     // Inference component: derived from capability health (migrated from OnlineAiService).
+    // Tempdoc 656: mirrors the WORKER component's pattern just above (prefer a specific known
+    // reason over the generic fallback) — previously every non-READY/non-STARTING state hardcoded
+    // INFERENCE_OFFLINE regardless of what inferenceCapability.pendingReason() actually held,
+    // which is why RuntimeActivationService's now-wired precise reasons (Task 2) weren't reaching
+    // this composite/the FE degradation banner even after the runtime-manifest fix landed.
     LifecycleSnapshotV1.Component inference = switch (inferenceCapability.health()) {
       case READY -> new LifecycleSnapshotV1.Component(LifecycleState.LIFECYCLE_STATE_READY, null);
       case PENDING -> onlineAi != null && onlineAi.isStartingUp()
           ? new LifecycleSnapshotV1.Component(
               LifecycleState.LIFECYCLE_STATE_STARTING, LifecycleReasonCode.INFERENCE_STARTING.code())
           : new LifecycleSnapshotV1.Component(
-              LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
-      case DEGRADED, RECOVERING -> new LifecycleSnapshotV1.Component(
-          LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
-      case OFFLINE -> new LifecycleSnapshotV1.Component(
-          LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
+              LifecycleState.LIFECYCLE_STATE_DEGRADED, resolveInferenceReasonCode(inferenceCapability));
+      case DEGRADED, RECOVERING, OFFLINE -> new LifecycleSnapshotV1.Component(
+          LifecycleState.LIFECYCLE_STATE_DEGRADED, resolveInferenceReasonCode(inferenceCapability));
     };
 
     LifecycleSnapshotV1.Components components =

@@ -502,7 +502,23 @@ final class LlamaServerOps {
 
   // ==================== Process Launch Helpers ====================
 
-  private void launchManagedLlamaServer(List<String> command) throws IOException {
+  private void launchManagedLlamaServer(List<String> command)
+      throws IOException, ModeTransitionException {
+    // Tempdoc 656 Task 3: a missing llama-server.exe previously failed inside ProcessBuilder.start()
+    // below with a raw IOException (Windows error 2), which propagates past every typed handler and
+    // is caught generically by InferenceLifecycleManager, collapsing into the coarse
+    // TransitionCode.ONLINE_START_FAILED with the real cause preserved only as free text. This
+    // pre-launch check mirrors the existing MISSING_DLL pattern (detect a specific missing-artifact
+    // condition, throw a typed reason) but at an earlier failure point — before a process exists,
+    // rather than by inspecting an already-launched process's exit code.
+    Path exe = config.get().serverExecutable();
+    if (exe == null || !Files.isRegularFile(exe)) {
+      throw new ModeTransitionException(
+          ModeTransitionException.Reason.EXECUTABLE_NOT_FOUND,
+          "llama-server executable not found at "
+              + exe
+              + ". Try 'Repair AI' or reinstall the AI runtime, then retry Online Mode.");
+    }
     ProcessBuilder pb = new ProcessBuilder(command);
     // Ensure the DLL search path includes the llama-server directory and the bundled runtime/bin
     // directory (which often contains the VC++ runtime DLLs inside our packaged headless runtime

@@ -72,6 +72,16 @@ document with these fields:
   entries; the filesystem transport carries both. The publisher reads
   the list from `RuntimeTransportRegistry` populated at
   `LocalApiServer` route-registration time — single source of truth.
+- `runtimeContract` — the JustSearch Runtime Contract descriptor (tempdoc
+  654): the coarse `version` plus a `constituents` block pinning the
+  manifest-schema / lifecycle-schema / MCP-protocol / MCP-tool-surface
+  versions. A projection over existing version single-sources
+  (`RuntimeContract.current()` in `app-api`), nullable and `NON_NULL`, so it
+  is additive at schema v1. This is the field an external agent reads to learn
+  "what is promised, at what version." Full definition, compatibility matrix,
+  stability policy, and surface classification:
+  [The Runtime Contract](28-runtime-contract.md) +
+  [Runtime Contract reference](../reference/runtime-contract.md).
 
 History per instance lands at `<dataDir>/runtime/instances/<instanceId>/`
 (tempdoc 501 §13.4.4 / Phase 24-25):
