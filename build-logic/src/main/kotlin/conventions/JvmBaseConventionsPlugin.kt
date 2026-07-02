@@ -72,17 +72,26 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
       val includeStress = project.findProperty("includeStress")?.toString()?.toBoolean() ?: false
       // Tempdoc 668 Windows→Linux migration (option B): tests tagged "windows" exercise
       // genuinely Windows-specific product behaviour (single-instance lock, job objects,
-      // power status). They are EXCLUDED by default so the bulk of CI can run on the ~2.8x
-      // faster Linux runners, and run ONLY on the small dedicated Windows lane via
-      // -PwindowsOnly=true (includeTags "windows"), preserving their coverage.
+      // power status). They are excluded on NON-Windows hosts (the Linux CI lanes) so the bulk
+      // of CI runs on the ~2.8x faster Linux runners; the dedicated windows-native lane runs
+      // ONLY the tagged tests via -PwindowsOnly=true (includeTags "windows"). On a Windows host
+      // (local dev, or that lane's runner) they run normally in the default flow — they can only
+      // be tested on Windows, so excluding them there would silently drop their local coverage
+      // (and make `--tests "*WindowsFooTest*"` fail with "no tests found").
       val windowsOnly = project.findProperty("windowsOnly")?.toString()?.toBoolean() ?: false
+      val isWindowsHost =
+          System.getProperty("os.name").lowercase(java.util.Locale.ROOT).contains("windows")
       project.tasks.withType(Test::class.java).configureEach {
         usesService(testGate)
         useJUnitPlatform {
           if (windowsOnly) {
             includeTags("windows")
           } else {
-            val excluded = mutableListOf("windows")
+            val excluded = mutableListOf<String>()
+            // Skip the Windows-specific tests only where they cannot run (non-Windows CI).
+            if (!isWindowsHost) {
+              excluded.add("windows")
+            }
             if (!includeExperiment) {
               excluded.add("evidence")
               excluded.add("experiment")
@@ -93,7 +102,9 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
             if (!includeStress) {
               excluded.add("stress")
             }
-            excludeTags(*excluded.toTypedArray())
+            if (excluded.isNotEmpty()) {
+              excludeTags(*excluded.toTypedArray())
+            }
           }
         }
         maxHeapSize = "384m"
