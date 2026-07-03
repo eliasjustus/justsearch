@@ -1,0 +1,283 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-07-03T02:22:30.463054+00:00",
+  "cohort": {
+    "agent_cohort_key": "d8dda4bb7beae041c9f7ff6719802dc6aedc82a80ac1c40f6120a3e62c0a9290",
+    "git_sha": "4dcf510bb8e59ec8abbc4a8180b33ae17b451d56",
+    "cli_version": "2.1.199 (Claude Code)",
+    "mcp_tool_surface_hash": "a676c7a5927091c5f5c6b5b100248d2fcdb250539083c321b3a080ced8a9b377",
+    "judge": {
+      "kind": "hybrid-em-llm"
+    },
+    "prompt_template_hash": "d325302666dd71eb432033c1ac4ba7a614ba0ae3813926dc39d25bea9d0dd4ff",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "fd70efb5f594e2a68778e7dff9e5b2502821af382bbdb418068af9c1eed1993e",
+    "hardware": null
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "golden/battlefield-de-v1": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.5615,
+          "with_tool": 0.5769,
+          "delta": 0.0154,
+          "mcnemar_p": 0.859684,
+          "mcnemar_test": "chi2-continuity",
+          "n_with_tool_fixes": 17,
+          "n_with_tool_breaks": 15,
+          "seed_envelope_baseline": {
+            "mean": 0.5615,
+            "stdev": 0.0929,
+            "n": 5
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.5769,
+            "stdev": 0.0769,
+            "n": 5
+          }
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 130,
+            "median": 35342.0,
+            "p95": 53987.65,
+            "mean": 36106.361538
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 35186.0,
+            "p95": 52016.45,
+            "mean": 35578.869231
+          },
+          "delta_mean": -527.4923076923077,
+          "delta_ci95": [
+            -2843.574615,
+            1836.665769
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 130,
+            "median": 0.163156,
+            "p95": 0.311342,
+            "mean": 0.183139
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 0.164305,
+            "p95": 0.321026,
+            "mean": 0.178963
+          },
+          "delta_mean": -0.004175976923076922,
+          "delta_ci95": [
+            -0.019718,
+            0.011589
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 130,
+            "median": 18.0,
+            "p95": 31.55,
+            "mean": 19.061538
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 17.5,
+            "p95": 31.55,
+            "mean": 18.623077
+          },
+          "delta_mean": -0.43846153846153846
+        },
+        "n_paired_observations": 130,
+        "leak_suspect_cells": [],
+        "arms": {
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.5615,
+              "with_tool": 0.5769,
+              "delta": 0.0154,
+              "mcnemar_p": 0.859684,
+              "mcnemar_test": "chi2-continuity",
+              "n_with_tool_fixes": 17,
+              "n_with_tool_breaks": 15,
+              "seed_envelope_baseline": {
+                "mean": 0.5615,
+                "stdev": 0.0929,
+                "n": 5
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.5769,
+                "stdev": 0.0769,
+                "n": 5
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 130,
+                "median": 35342.0,
+                "p95": 53987.65,
+                "mean": 36106.361538
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 35186.0,
+                "p95": 52016.45,
+                "mean": 35578.869231
+              },
+              "delta_mean": -527.4923076923077,
+              "delta_ci95": [
+                -2843.574615,
+                1836.665769
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 130,
+                "median": 0.163156,
+                "p95": 0.311342,
+                "mean": 0.183139
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 0.164305,
+                "p95": 0.321026,
+                "mean": 0.178963
+              },
+              "delta_mean": -0.004175976923076922,
+              "delta_ci95": [
+                -0.019718,
+                0.011589
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 130,
+                "median": 18.0,
+                "p95": 31.55,
+                "mean": 19.061538
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 17.5,
+                "p95": 31.55,
+                "mean": 18.623077
+              },
+              "delta_mean": -0.43846153846153846
+            },
+            "n_paired_observations": 130,
+            "leak_suspect_cells": []
+          }
+        },
+        "primary_arm": "addition_b"
+      }
+    }
+  },
+  "seed_count": 5,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": true,
+    "reasons": [],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.0,
+        "B": 0.0
+      },
+      "excluded_jaccard": 1.0,
+      "paired_n_retention": 1.0
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_excluded": 0
+      },
+      "B": {
+        "n_excluded": 0
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "private-synthetic"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  },
+  "tool_call_assertions": {
+    "A": {
+      "cells_total": 130,
+      "cells_with_tool_data": 130,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0
+    },
+    "B": {
+      "cells_total": 130,
+      "cells_with_tool_data": 130,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0
+    }
+  },
+  "revision": {
+    "supersedes": "../out-de/utility-comparison.v1.json",
+    "reason": "judge_rescore",
+    "changed_fields": [
+      "cohort.judge.kind",
+      "cohort.git_sha",
+      "composed_at"
+    ]
+  }
+}
