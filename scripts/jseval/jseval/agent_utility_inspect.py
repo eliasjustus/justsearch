@@ -111,38 +111,63 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
             Path(empty_mcp).write_text('{"mcpServers":{}}', encoding="utf-8")
         prompt = _PROMPT.format(corpus_dir=corpus_dir, query=state.input_text)
         cmd = _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, empty_mcp, max_budget)
-        try:
-            proc = await asyncio.to_thread(
-                subprocess.run, cmd,
-                capture_output=True, text=True, timeout=timeout_s,
-                cwd=query_cwd, encoding="utf-8", errors="replace",
-            )
-            stdout = (proc.stdout or "").strip()
-            # Same event-stream shape + parser as the classic runner (both call
-            # agent_retrieval_eval.parse_claude_stream_json) — no forked logic.
-            tool_calls, data, _session_id = parse_claude_stream_json(stdout)
-            disallowed = build_disallowed_tools(condition)
-            # Stash the tool-call capture + derived assertions UNCONDITIONALLY
-            # (before the error check) so a cell that erred out mid-run still
-            # carries whatever tool calls it made before failing — the
-            # credibility bar (tempdoc 624 §M.8 item 2) is "every cell actually
-            # run", not just the successful ones.
-            state.metadata["tool_calls"] = tool_calls
-            state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
-            state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
-            if data is None or data.get("is_error") or proc.returncode != 0:
-                err = (data.get("result") if data else None) or (proc.stderr or "").strip() or f"exit {proc.returncode}"
-                state.metadata["error"] = str(err)[:300]
-                return state
-            state.output.completion = data.get("result", "")
-            usage = data.get("usage") or {}
-            state.metadata.update({
-                "cost_usd": data.get("total_cost_usd"),
-                "unique_tokens": usage.get("cache_creation_input_tokens"),
-                "num_turns": data.get("num_turns"),
-            })
-        except Exception as e:  # timeout / json / subprocess failure → excluded cell
-            state.metadata["error"] = str(e)[:300]
+        # Bounded per-cell retry (max 2 attempts) for TRANSIENT infra failures —
+        # a silent `claude` CLI death (rc!=0, empty stderr) was measured at a
+        # ~5%/cell background rate under sustained 8-way load (2026-07-03 probe:
+        # 38/40 ok), and one such rate compounds into comparability-breaking
+        # per-arm exclusion. The retry is symmetric across conditions and
+        # DISCLOSED per cell (`attempts`, `first_error`) so the record shows
+        # exactly which cells needed it; a cell failing both attempts is still
+        # excluded via `error` as before.
+        first_error: str | None = None
+        for attempt in (1, 2):
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run, cmd,
+                    capture_output=True, text=True, timeout=timeout_s,
+                    cwd=query_cwd, encoding="utf-8", errors="replace",
+                    stdin=subprocess.DEVNULL,  # never inherit the harness console
+                )
+                stdout = (proc.stdout or "").strip()
+                # Same event-stream shape + parser as the classic runner (both call
+                # agent_retrieval_eval.parse_claude_stream_json) — no forked logic.
+                tool_calls, data, _session_id = parse_claude_stream_json(stdout)
+                disallowed = build_disallowed_tools(condition)
+                # Stash the tool-call capture + derived assertions UNCONDITIONALLY
+                # (before the error check) so a cell that erred out mid-run still
+                # carries whatever tool calls it made before failing — the
+                # credibility bar (tempdoc 624 §M.8 item 2) is "every cell actually
+                # run", not just the successful ones.
+                state.metadata["tool_calls"] = tool_calls
+                state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
+                state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
+                if data is None or data.get("is_error") or proc.returncode != 0:
+                    # Forensics INTO the record: a bare "exit 1" with no stderr was
+                    # unactionable across two failed runs — keep the evidence.
+                    err = (data.get("result") if data else None) or (proc.stderr or "").strip() or f"exit {proc.returncode}"
+                    err = (f"exit {proc.returncode}: {str(err)[:200]} | stderr: {(proc.stderr or '')[:150]!r}"
+                           f" | stdout_tail: {stdout[-200:]!r}")
+                    if attempt == 1:
+                        first_error = err
+                        continue
+                    state.metadata["error"] = err[:600]
+                    break
+                state.output.completion = data.get("result", "")
+                usage = data.get("usage") or {}
+                state.metadata.update({
+                    "cost_usd": data.get("total_cost_usd"),
+                    "unique_tokens": usage.get("cache_creation_input_tokens"),
+                    "num_turns": data.get("num_turns"),
+                })
+                break
+            except Exception as e:  # timeout / json / subprocess failure
+                if attempt == 1:
+                    first_error = f"{type(e).__name__}: {str(e)[:250]}"
+                    continue
+                state.metadata["error"] = f"{type(e).__name__}: {str(e)[:250]}"
+        state.metadata["attempts"] = attempt
+        if first_error is not None:
+            state.metadata["first_error"] = first_error
         return state
 
     return solve

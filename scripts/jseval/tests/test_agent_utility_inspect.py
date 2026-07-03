@@ -446,7 +446,9 @@ class TestClaudeAgentSolverStreamJsonMetadata:
         )
         result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
 
-        assert result.metadata["error"] == "budget exceeded"
+        # The error string now carries forensics (exit code, stderr, stdout tail)
+        # around the CLI's own message — assert the message survives within it.
+        assert "budget exceeded" in result.metadata["error"]
         assert result.metadata["tool_calls"] == [{"tool": "WebSearch", "input": {"query": "x"}}]
         assert [tc["tool"] for tc in result.metadata["disallowed_tool_calls"]] == ["WebSearch"]
 
