@@ -226,6 +226,73 @@ class TestEvalLogsToSummariesToolCallProjection:
             assert tca["cells_with_leak_suspect"] == 1  # q2
 
 
+class TestEvalLogsToSummariesMcpSurfaceProjection:
+    """`eval_logs_to_summaries` must project the offered-MCP-tool-surface fields
+    (`mcp_servers` / `mcp_tools_offered` / `mcp_surface_unverified`) that
+    `claude_agent_solver` stashes into `state.metadata` (tempdoc 624 battlefield
+    retrospective) -- mirrors `TestEvalLogsToSummariesToolCallProjection` above,
+    same real-EvalLog-via-eval_set fixture style, a mock solver so no live
+    `claude` CLI is needed."""
+
+    def _logs(self, tmp_path):
+        from inspect_ai import Task, eval_set, task
+        from inspect_ai.dataset import Sample
+        from inspect_ai.solver import solver
+
+        from jseval.agent_utility_inspect import substring_scorer
+
+        per_qid = {
+            "q0": {"mcp_servers": [{"name": "justsearch", "status": "connected"}],
+                   "mcp_tools_offered": 2},
+            "q1": {"mcp_surface_unverified": True},
+            "q2": {},  # neither field set (e.g. condition A)
+        }
+
+        @solver
+        def fixed():
+            async def solve(state, generate):
+                qid = str(state.sample_id)
+                state.output.completion = f"answer for {qid}"
+                state.metadata.update({"cost_usd": 0.1, "unique_tokens": 500, "num_turns": 2})
+                state.metadata.update(per_qid[qid])
+                return state
+            return solve
+
+        @task
+        def ct(condition="C"):
+            samples = [Sample(id=qid, input=qid, target=f"ANS{qid[1:]}") for qid in per_qid]
+            return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
+                        metadata={"condition": condition, "model": "haiku",
+                                  "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
+                                  "cohort": _COHORT})
+
+        log_dir = (tmp_path / "logs").as_posix()
+        eval_set([ct(condition="C")], log_dir=log_dir, epochs=1,
+                  model="mockllm/model", log_format="json")
+        return log_dir
+
+    def test_projects_mcp_surface_fields(self, tmp_path):
+        pytest.importorskip("inspect_ai")
+        log_dir = self._logs(tmp_path)
+        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        per_query = summaries[0]["per_query"]
+
+        q0 = per_query["q0"]
+        assert q0["mcp_servers"] == [{"name": "justsearch", "status": "connected"}]
+        assert q0["mcp_tools_offered"] == 2
+        assert q0["mcp_surface_unverified"] is False
+
+        q1 = per_query["q1"]
+        assert q1["mcp_servers"] is None
+        assert q1["mcp_tools_offered"] is None
+        assert q1["mcp_surface_unverified"] is True
+
+        q2 = per_query["q2"]
+        assert q2["mcp_servers"] is None
+        assert q2["mcp_tools_offered"] is None
+        assert q2["mcp_surface_unverified"] is False
+
+
 class TestScanLeakedCellsAppliedThroughApplyLeakFlags:
     def test_end_to_end_flags_reach_the_composed_summaries(self, tmp_path):
         """The text-scan backstop (`scan_leaked_cells` + `apply_leak_flags`) stays

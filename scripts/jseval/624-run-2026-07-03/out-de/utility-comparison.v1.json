@@ -276,5 +276,13 @@
       "cells_with_disallowed_violations": 0,
       "cells_with_leak_suspect": 0
     }
+  },
+  "arm_invalidation": {
+    "date": "2026-07-03",
+    "finding": "ARM-INVALIDATED: zero MCP tool invocations occurred in any with-tool cell of this record -- the run's mcp.json lacked \"type\":\"http\" and the Claude CLI silently dropped the server entry, so the JustSearch tools were never offered to the model. Condition B was behaviorally identical to condition A. This record remains valid as a governed A-vs-A noise-floor measurement of the methodology; NO agent-utility conclusion may be drawn from it. A future genuine with-tool record should supersede this one via revision.reason=arm_invalidation.",
+    "evidence": "tempdoc 624 twenty-third pass (2026-07-03): five-way verification incl. per-cell tool-call trace census and a live config A/B probe",
+    "affected_arms": [
+      "B"
+    ]
   }
 }

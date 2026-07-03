@@ -56,7 +56,15 @@ class UtilityComposeError(ValueError):
 # Closed set of revision reasons (tempdoc 624 Design 1). A record's `revision`
 # field is present only when it corrects a prior composition of the SAME
 # identity-bearing inputs -- never for an unrelated new measurement.
-REVISION_REASONS = frozenset({"leak_correction", "judge_rescore", "reseed", "other"})
+#
+# "arm_invalidation" (tempdoc 624 battlefield retrospective, 2026-07-03): the
+# with-tool arm (B/C) was certified using a dead `mcp_config` (a `url`-only
+# `mcpServers` entry the `claude` CLI silently drops, see
+# `utility_calibrate.McpConfigMissingTypeError`) -- annotates a record whose
+# with-tool arm is now known to have run tool-less, not a scoring/judge/seed
+# correction of an otherwise-valid measurement.
+REVISION_REASONS = frozenset(
+    {"leak_correction", "judge_rescore", "reseed", "arm_invalidation", "other"})
 
 
 def build_revision(supersedes: str, reason: str, changed_fields: list[str]) -> dict:
@@ -324,8 +332,19 @@ def _tool_call_assertions(run_summaries: list[dict]) -> dict:
     as "verified clean" (0 violations across N *checked* cells) rather than
     "no data" (0 of 0 checked, because none were captured).
 
+    Also carries the offered-MCP-tool-surface coverage (tempdoc 624 battlefield
+    retrospective): ``cells_with_mcp_surface_verified`` counts cells where the
+    solver actually parsed an init event AND it offered >=1 ``mcp__justsearch``
+    tool (a cell that FAILED this check never reaches here — it was excluded
+    upstream as an errored cell, same as any other infra failure);
+    ``cells_mcp_surface_unverified`` counts cells where no init event could be
+    parsed at all (crash/timeout before the CLI's first stream-json line) — an
+    unknown, not a verified-clean 0. Only the Inspect-AI solver currently
+    populates these; a classic ``run_agent_eval`` result reads both as absent.
+
     :returns: ``{condition: {"cells_total", "cells_with_tool_data",
-        "cells_with_disallowed_violations", "cells_with_leak_suspect"}}``.
+        "cells_with_disallowed_violations", "cells_with_leak_suspect",
+        "cells_with_mcp_surface_verified", "cells_mcp_surface_unverified"}}``.
     """
     by_condition: dict = {}
     for s in run_summaries:
@@ -337,6 +356,8 @@ def _tool_call_assertions(run_summaries: list[dict]) -> dict:
             "cells_with_tool_data": 0,
             "cells_with_disallowed_violations": 0,
             "cells_with_leak_suspect": 0,
+            "cells_with_mcp_surface_verified": 0,
+            "cells_mcp_surface_unverified": 0,
         })
         for entry in (s.get("per_query") or {}).values():
             agg["cells_total"] += 1
@@ -350,6 +371,20 @@ def _tool_call_assertions(run_summaries: list[dict]) -> dict:
             # bool flag directly rather than gated on `cells_with_tool_data`.
             if entry.get("leak_suspect"):
                 agg["cells_with_leak_suspect"] += 1
+            # Offered MCP tool-surface visibility (tempdoc 624 battlefield
+            # retrospective): a cell whose surface assertion actually FAILED
+            # never reaches here (excluded upstream as an `error`'d cell, same
+            # as any other infra failure) -- these two counters distinguish, of
+            # the cells that DID reach the composer, how many carry a positive
+            # "yes, the agent was actually offered mcp__justsearch tools"
+            # confirmation vs. how many never got a parseable init event at all
+            # (crash/timeout before the CLI's first stream-json line) and so
+            # remain an unknown, not a verified-clean 0.
+            mcp_tools_offered = entry.get("mcp_tools_offered")
+            if mcp_tools_offered is not None and mcp_tools_offered > 0:
+                agg["cells_with_mcp_surface_verified"] += 1
+            if entry.get("mcp_surface_unverified"):
+                agg["cells_mcp_surface_unverified"] += 1
     return by_condition
 
 

@@ -567,9 +567,24 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
-### F-027: the certified agent-utility measurement (U0) is an honest null — the first `comparable=True` record; the leak-era "B trends harmful" signal did not survive the clean harness
+### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
-- **Answer:** The first fully comparable agent-utility records (tempdoc 624, 2026-07-03; conditions
+- **INVALIDATION (2026-07-03, 624 twenty-third pass — read first):** a five-agent mechanism
+  investigation over the records' own per-cell tool-call traces found **zero MCP invocations in all
+  260 B cells**: the harness `mcp.json` lacked `"type":"http"` and the Claude CLI silently drops such
+  entries (A/B-probe proven; independently verified five ways). Condition B was behaviorally condition
+  A; condition C (in the July-2 records) had no tools at all — its "significantly harmful" finding is
+  likewise arm-invalidated. The records below remain valid *as a governed A-vs-A noise-floor
+  measurement* (pooled Δ−0.027, p=0.476 between two identical arms = the methodology's empirical seed
+  noise), and every mechanically-governed property (comparability, loss-accounting, judge, panel)
+  stands — but **no agent-utility conclusion may be drawn from them**. Standing mechanism findings
+  that survive: the task is pure retrieval (oracle ceiling 95-99%); the engine wins the decisive hop-1
+  paraphrase step at 90-96% top-3 with one reformulation (69% verbatim — the gap is tempdoc 678),
+  language-invariantly, while the file-tools agent wins it 78% EN / 51% DE stochastically. Honest
+  projection for a REAL with-tool arm: EN parity-to-modest-gain, DE +0.2 to +0.4 — to be measured, not
+  assumed. Records annotated via `revision.reason=arm_invalidation`; harness now fail-fasts on the
+  config shape and asserts the offered tool surface per cell.
+- **Original answer (superseded interpretation, numbers accurate as an A-vs-A measurement):** The first fully comparable agent-utility records (tempdoc 624, 2026-07-03; conditions
   A vs B, 5 seeds × 26 queries per corpus, haiku, calibrated + leak-scan-excluded + judge-scored):
   **pooled across `golden/battlefield-{en,de}-v1`, n=260 paired, B accuracy Δ −0.027 (McNemar
   p=0.476); tokens a wash** (median Δ ≈ +449 mean, CI crosses 0). Per-stratum: EN Δ −0.069 (p=0.200),
@@ -1115,6 +1130,25 @@ above)*
 - **Why it matters:** A parallel recall instrument is the exact one-authority **fork** that 553 (one canonical record; every surface a governed projection) and 636 §Reach (the *layer-invariant* observe-by-survival / one-canonical-authority principle) warn against — two un-coordinated answers to "did retrieval keep the right doc", guaranteed to drift. ANN-recall is a *refinement* of leg-recall (it asks whether the ANN index returned the true neighbours a leg *should* have surfaced), so it composes as a sub-measure of the same projection rather than a rival.
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
+
+### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them?
+
+- **Question:** On `mixed/legal-clerc-200`, `vector` scores 0.060 and `splade` 0.059 while `lexical`
+  scores 0.686 (register baselines, 666) — two of three legs are effectively dead on a real,
+  citable legal-retrieval benchmark, and the production `hybrid` (0.516-0.521) underperforms plain
+  BM25 there. Is this an embedding-truncation/long-document representation failure, a
+  citation-style-query mismatch, a chunking/whole-doc granularity issue, or an ANN/recall problem?
+- **Why it matters:** a whole leg family failing on a domain is the largest single scorecard gap the
+  register currently records, and legal/long-document content is a core personal-files domain. Any
+  fix also feeds the published benchmark numbers directly (grant-claims relevant, 624 lineage).
+- **Prior art / adjacency:** the retired courtlistener corpus showed the same BM25-dominance shape;
+  639 (candidate-set integrity / ANN recall, stub) owns the ANN-recall sub-question and should not be
+  forked — a diagnosis pass here should attribute the collapse before 639 or a new doc claims the fix.
+  F-023/F-025's staged-recall instrumentation (leg-recall decomposition) is the ready-made diagnostic.
+- **Suggested approach:** run the staged-recall/leg-recall decomposition on legal-clerc; inspect
+  whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
+  compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
+  for representation/granularity if that's the finding).
 
 ### Q-014: Does any procedurally-generated `golden/` corpus clear the descriptor-collision gate, and is any of them suitable for an agent-utility (not just retrieval-quality) measurement?
 

@@ -243,9 +243,13 @@ def test_run_utility_eval_raises_on_stray_watched_root(tmp_path, monkeypatch):
     queries_for_eval.write_text(
         json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
 
+    # "type":"http" is mandatory (McpConfigMissingTypeError) -- these tests exercise
+    # the watched-roots gate specifically, so the config must pass the earlier
+    # dead-config fail-fast check to reach it.
     mcp_config = tmp_path / "mcp.json"
     mcp_config.write_text(
-        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+        '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:56300/mcp"}}}',
+        encoding="utf-8")
 
     called = {"agent_utility_task": False, "eval_set": False}
     monkeypatch.setattr(aui, "agent_utility_task",
@@ -282,9 +286,13 @@ def test_run_utility_eval_proceeds_when_roots_correctly_scoped(tmp_path, monkeyp
     queries_for_eval.write_text(
         json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
 
+    # "type":"http" is mandatory (McpConfigMissingTypeError) -- these tests exercise
+    # the watched-roots gate specifically, so the config must pass the earlier
+    # dead-config fail-fast check to reach it.
     mcp_config = tmp_path / "mcp.json"
     mcp_config.write_text(
-        '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}', encoding="utf-8")
+        '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:56300/mcp"}}}',
+        encoding="utf-8")
 
     called = {"eval_set": False}
     monkeypatch.setattr(aui, "agent_utility_task", lambda **kw: object())
@@ -363,10 +371,11 @@ def _stream_json(*events: dict) -> str:
     return "\n".join(json.dumps(e) for e in events)
 
 
-def _run_solver(monkeypatch, tmp_path, *, condition, stdout, model="haiku"):
+def _run_solver(monkeypatch, tmp_path, *, condition, stdout, model="haiku", mcp_config=None):
     monkeypatch.setattr(aui.shutil, "which", lambda name: "/usr/bin/claude")
     monkeypatch.setattr(aui.subprocess, "run", lambda *a, **k: _FakeCompletedProcess(stdout))
-    solve = aui.claude_agent_solver(condition=condition, corpus_dir=str(tmp_path), model=model)
+    solve = aui.claude_agent_solver(
+        condition=condition, corpus_dir=str(tmp_path), mcp_config=mcp_config, model=model)
     return asyncio.run(solve(_state(), generate=None))
 
 
@@ -463,3 +472,104 @@ class TestClaudeAgentSolverStreamJsonMetadata:
         assert result.metadata["tool_calls"] == [
             {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
         ]
+
+
+# --- Offered MCP tool-surface capture + assertion (tempdoc 624 battlefield
+# retrospective, 2026-07-03): every certified condition-B battlefield cell ran
+# with a dead `mcp_config` (a `url`-only `mcpServers` entry the `claude` CLI
+# silently drops) -- 0 MCP tool calls, indistinguishable from a healthy run by
+# exit code alone. These tests exercise the solver's empirical assertion that
+# the offered tool surface actually included `mcp__justsearch*` tools. ---
+
+class TestClaudeAgentSolverMcpSurfaceAssertion:
+    def test_condition_b_with_healthy_mcp_surface_passes(self, monkeypatch, tmp_path):
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init",
+             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
+             "tools": ["Read", "Grep", "mcp__justsearch__search_query"]},
+            {"type": "result", "is_error": False, "result": "the answer",
+             "total_cost_usd": 0.02, "num_turns": 1,
+             "usage": {"cache_creation_input_tokens": 10}},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_servers"] == [{"name": "justsearch", "status": "connected"}]
+        assert result.metadata["mcp_tools_offered"] == 1
+        assert "error" not in result.metadata
+        assert "mcp_surface_unverified" not in result.metadata
+        assert result.output.completion == "the answer"
+
+    def test_condition_b_with_dead_mcp_surface_errors(self, monkeypatch, tmp_path):
+        """The exact battlefield signature: init event fires (CLI connected fine),
+        but mcp_servers is empty and no mcp__justsearch tool was offered -- the
+        underlying claude call itself still "succeeds" (is_error False)."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [],
+             "tools": ["Read", "Grep", "Glob", "Bash"]},
+            {"type": "result", "is_error": False, "result": "answered from files anyway"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert "expected MCP tool surface not offered" in result.metadata["error"]
+        assert "mcp_servers=[]" in result.metadata["error"]
+        assert result.metadata["mcp_tools_offered"] == 0
+        assert "mcp_surface_unverified" not in result.metadata
+        # Deterministic config problem -- must not burn the bounded retry.
+        assert result.metadata["attempts"] == 1
+
+    def test_condition_c_with_dead_mcp_surface_errors(self, monkeypatch, tmp_path):
+        """Same assertion applies to condition C (JustSearch-only substitution)."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
+            {"type": "result", "is_error": False, "result": "answered anyway"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="C", stdout=stdout, mcp_config="/mcp.json")
+
+        assert "expected MCP tool surface not offered" in result.metadata["error"]
+
+    def test_no_init_event_flags_unverified_without_erroring(self, monkeypatch, tmp_path):
+        """No init event could be parsed (e.g. an older/nonstandard stream shape) but
+        the run otherwise completed cleanly -- an unknown must not be conflated with
+        a known-bad cell, so no `error` may be set on this basis."""
+        stdout = _stream_json(
+            {"type": "result", "is_error": False, "result": "the answer"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_surface_unverified"] is True
+        assert result.metadata["mcp_servers"] is None
+        assert result.metadata["mcp_tools_offered"] is None
+        assert "error" not in result.metadata
+
+    def test_condition_a_exempt_from_assertion_even_with_zero_mcp_tools(self, monkeypatch, tmp_path):
+        """Condition A intentionally never carries a real mcp_config in its argv
+        (_build_argv always substitutes the empty config) -- the assertion must not
+        fire for it even if a caller passed mcp_config through to the solver."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
+            {"type": "result", "is_error": False, "result": "the answer"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="A", stdout=stdout, mcp_config="/mcp.json")
+
+        assert "error" not in result.metadata
+        assert "mcp_surface_unverified" not in result.metadata
+        # Capture fields are still stashed regardless of condition/assertion.
+        assert result.metadata["mcp_servers"] == []
+        assert result.metadata["mcp_tools_offered"] == 0
+
+    def test_with_tool_condition_without_mcp_config_is_exempt(self, monkeypatch, tmp_path):
+        """B/C with mcp_config=None (no real config in play at all, e.g. a
+        negative-control run) must not be held to the offered-surface assertion."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
+            {"type": "result", "is_error": False, "result": "the answer"},
+        )
+        result = _run_solver(monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config=None)
+
+        assert "error" not in result.metadata
+        assert "mcp_surface_unverified" not in result.metadata
