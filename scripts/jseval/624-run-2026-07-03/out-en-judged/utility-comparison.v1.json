@@ -279,5 +279,65 @@
       "cohort.git_sha",
       "composed_at"
     ]
+  },
+  "cross_family_calibration": {
+    "rater_kind": "cross-family-llm, NOT human",
+    "n": 36,
+    "sample_qids": [
+      "A|1|q19",
+      "B|2|q6",
+      "A|3|q9",
+      "B|2|q9",
+      "B|3|q12",
+      "B|4|q21",
+      "A|3|q14",
+      "B|4|q18",
+      "A|1|q17",
+      "B|3|q4",
+      "A|2|q9",
+      "A|0|q9",
+      "B|2|q12",
+      "A|4|q25",
+      "A|3|q1",
+      "B|2|q25",
+      "B|4|q20",
+      "B|3|q8",
+      "A|2|q4",
+      "A|4|q23",
+      "B|2|q19",
+      "B|1|q3",
+      "A|3|q20",
+      "B|1|q10",
+      "A|0|q4",
+      "A|4|q9",
+      "A|2|q2",
+      "B|3|q15",
+      "A|2|q11",
+      "B|0|q8",
+      "B|0|q3",
+      "B|4|q15",
+      "B|0|q14",
+      "A|0|q8",
+      "B|4|q1",
+      "A|0|q25"
+    ],
+    "n_abstained": 4,
+    "n_dropped_ties": 0,
+    "judge_vs_rater_agreement": {
+      "value": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "degenerate_pe": false
+    },
+    "rater_vs_rater_agreement": {
+      "value": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "degenerate_pe": false
+    },
+    "graders": [
+      "mistral-family",
+      "gemma-family"
+    ]
   }
 }

@@ -587,6 +587,15 @@ above)*
   class inflated DE's pre-cleanup baseline 0.82→0.56). §M.8 items outstanding: the cross-family
   grader-panel calibration (item 3) and the claim text (item 6, must use the §M.7a-3 null framing).
   No number publishes until the full bar clears (624 boundary (a)).
+- **Update (2026-07-03, 624 twenty-second pass):** §M.8 item 3 is CLOSED — the judge is calibrated
+  against a fully-local two-model cross-family panel (Mistral-7B + Gemma-2-9B via 674's serial-swap
+  seam, run live on the dev stack): EN judge-vs-panel kappa=1.0 / panel-mutual 1.0; DE 1.0 / 0.944
+  (n=36+4 abstained each, non-degenerate, labeled "cross-family-llm, NOT human"). The scan member is
+  now measured **unbuildable at its shipped degradation band** — the band defeats the product's own
+  extraction stack too (the VLM hallucinates plausible text on unreadable scans and that text is
+  INDEXED as real content — a separate production quality finding), so fidelity is honestly 0.0 and no
+  run spend applies until a pipeline-readable/agent-unreadable band is found (a research question).
+  Only §M.8 item 6 (founder sign-off on the null claim text, drafted in the tempdoc) remains.
 
 ### F-026: judge-rank-low is real and substantively spread (not near-ceiling) on a real corpus, but the obvious judge levers are dead/harmful — the surviving lever is a confidence-bounded floor, not a sharper judge
 
