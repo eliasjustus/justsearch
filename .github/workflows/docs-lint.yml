@@ -55,6 +55,12 @@ jobs:
       - name: Verify model-name freshness (no retired Qwen3VL as current; registry-projected)
         run: node scripts/docs/check-model-freshness.mjs
 
+      - name: Agent-utility claims projector self-test
+        run: node scripts/ci/check-agent-utility-claims.test.mjs
+
+      - name: Verify agent-utility claims (RESEARCH.md region vs committed utility-comparison records)
+        run: node scripts/ci/check-agent-utility-claims.mjs
+
       - name: Verify privacy claims (CSP loopback-lock + no telemetry SDK)
         run: node scripts/docs/check-privacy-claims.mjs
 

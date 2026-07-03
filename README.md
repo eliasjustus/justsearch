@@ -33,8 +33,10 @@ Five tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch
 `justsearch_status`. Your documents never leave the machine — only the agent's answer does.
 
 A reproducible agent-utility benchmark — how much JustSearch's retrieval tool improves an agent's task
-performance versus generic file tools — *is in development; reproducible figures will be published with the
-project's benchmark methodology* (no bare percentage ships until it clears that bar).
+performance versus generic file tools — has completed its first certified round, with an honest null result
+on the tested regime (small clean-text corpora an agent can already navigate with file tools alone): no
+measurable accuracy or token-cost effect. The full claim, its caveats, and the designed next round are in
+[`RESEARCH.md`](RESEARCH.md); no bare percentage ships until a measurement clears that bar.
 
 **As a desktop app** *(for non-developers)*
 Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch/releases/latest**

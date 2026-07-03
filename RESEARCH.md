@@ -25,23 +25,49 @@ on a different split (test vs. the published dev baselines) — so it is not a c
 the official leaderboard, only evidence that dropping per-language tuning doesn't show a measurable quality
 collapse on our own corpus. Full comparison-class detail: `docs/reference/benchmarks/methodology.md`.
 
-## What's deferred, honestly
+## The agent-utility question, answered honestly — and what's still deferred
 
-**The agent-utility question — does JustSearch's retrieval actually help an agent complete a task, not just
-rank passages well — is not yet answered credibly, and the preliminary signal is not obviously flattering.**
-An earlier internal number (quoted informally as "92% accuracy / 62% cheaper") turned out on audit to
-conflate two unrelated measurements from a 50-query, single-model eval with no real comparison arm, and has
-been retracted rather than published. The rebuild (tracked internally as tempdoc 624) has its machinery
-built — a cohort-identified, condition-paired comparison record, an LLM-judge, run governance — but the
-project's own preliminary data from that rebuild shows the **realistic** comparison (an agent that already
-has generic file tools, plus JustSearch) at **+0.00 accuracy / roughly 8% token savings** — not the +0.20
-accuracy / ~40% figure from a more favorable but less realistic comparison arm (an agent with no file access
-at all). The tempdoc names this directly as its central open question: does a properly-powered, honest
-measurement even support the claim, or does the finding need to be reframed rather than just measured
-harder? As of this writing, a methodology plan for that measurement exists and founder decisions on it are
-resolved — but the run itself, and therefore the honest answer, has not happened yet. **This is exactly the
-kind of open, uncertain question a research grant is well-suited to fund** — not because we're confident of
-the outcome, but because the methodology to find out rigorously already exists and isn't yet resourced.
+**Does JustSearch's retrieval actually help an agent complete a task, not just rank passages well?** An
+earlier internal number (quoted informally as "92% accuracy / 62% cheaper") turned out on audit to conflate
+two unrelated measurements from a 50-query, single-model eval with no real comparison arm, and has been
+retracted rather than published. The rebuild (tracked internally as tempdoc 624) replaced it with a
+cohort-identified, condition-paired comparison harness — seeded paired runs, per-cell tool-restriction
+verification, an LLM judge with cross-family calibration, explicit comparability accounting — and the first
+certified round of that measurement has now been run (2026-07-03). The result is an honest null:
+
+<!-- agent-utility-claim:begin -->
+> On two held-out, closed-book-certified, contamination-free synthetic corpora of buried-fact multi-hop
+> retrieval queries (English and German; 390 documents each; paraphrase-bridged descriptors, collision-free
+> by construction), an agent with JustSearch's MCP retrieval added to its existing file tools showed **no
+> measurable effect on accuracy** (pooled n=260 paired, Δ −0.027, McNemar p=0.476; per-corpus Δ −0.069 /
+> p=0.200 and +0.015 / p=0.860) **and no measurable token-cost difference** (mean Δ +449 unique tokens,
+> CI95 [−1467, +2376]). Every cell completed (zero exclusions); tool restrictions were verified per cell
+> from tool-call traces; answers were judge-scored (hybrid EM → local LLM judge, zero verdict flips) with
+> the judge calibrated against a two-model cross-family panel (κ ≥ 0.94, labeled non-human). This
+> measurement covers text corpora only — a degraded-scan member was designed but is currently unmeasurable
+> (the degradation defeats both the agent's vision and the extraction pipeline). Replacing file tools
+> entirely with retrieval (substitution) was separately measured significantly harmful and is reported
+> diagnostically only.
+<!-- agent-utility-claim:end -->
+
+(The numbers above are projected from the committed run records under `scripts/jseval/624-run-2026-07-03/`
+and checked in CI — they cannot silently drift from the measurement.)
+
+What we think the null means, honestly: it is informative about the regime it tested — a few-hundred-
+document, clean-text corpus that an agent with generic file tools can already navigate on its own. In that
+regime, adding retrieval neither helped nor hurt, and we won't claim otherwise. It does not test the regime
+the product thesis actually lives in. Round two is designed for exactly that regime: corpora at a scale
+where brute-force exploration is infeasible; real format heterogeneity (email, PDF, Office documents); a
+cross-lingual member where the query language differs from the document language — grep-proof by
+construction; pre-registered coverage-shaped claims (the fraction of queries only answerable via retrieval)
+rather than mean deltas; and a model-tier sensitivity check. That round is designed but not yet resourced.
+**This is the open research question a grant is well-suited to fund** — not because we're confident of the
+outcome (round one is exactly why we aren't), but because the methodology to find out rigorously already
+exists and the honest round-one answer makes the next measurement better-posed, not weaker.
+
+The round-one run also surfaced product findings now tracked as ordinary engineering work — most notably
+that the extraction pipeline does not yet abstain cleanly on degraded scanned documents, which is being
+fixed independently of any research claim.
 
 A related, smaller open question: JustSearch's retrieval-time context-sufficiency classifier (used by
 agent-facing endpoints to signal whether retrieved context can actually answer a query) has never been
