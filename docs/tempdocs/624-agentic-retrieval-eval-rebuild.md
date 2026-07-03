@@ -4109,3 +4109,122 @@ measurement, not an agent-utility measurement). Register: F-027 corrected accord
 collapse observed en route filed as a new open question. The genuine certified run — working config,
 adoption measured before utility — is a fresh spend decision (~$3 adoption pilot, then ~$90 full run)
 with a mechanism-backed prediction to test.
+
+## Pass-23 addendum (2026-07-03): evidence annex + the bar amendment queued
+
+- **The five mechanism reports are preserved verbatim** at
+  `scripts/jseval/624-run-2026-07-03/analysis/` (01 B-arm usage census, 02 engine replay, 03 A-arm
+  strategy, 04 discordant pairs, 05 corpus structure) — this pass's summaries compress them; the
+  granular taxonomies, tables, and exemplars (including the raw material handed to 655: the
+  paraphrase-bridging failure exemplars, the `all_locations.txt` hallucinated-index-file pattern,
+  the wrong-sibling trust cases) live there.
+- **§M.8 bar-text amendment QUEUED (not yet applied):** the bar must gain (a) an offered-tool-surface
+  item — every with-tool cell's init event shows the expected MCP tools connected/offered (the
+  machinery now exists; the bar text predates it), and (b) an adoption-measurement item — the record
+  reports tool-adoption per arm, and utility is interpreted conditional on adoption; and item 4's
+  "token-efficiency CI excludes 0" must be rewritten outcome-neutral (twice now it has presumed a
+  direction the data did not take). Applying the amendment is part of the next measurement session's
+  step 0, alongside the harness prompt-neutrality review (the current cell prompt frames the task as
+  filesystem-only, which suppresses adoption independently of the config bug).
+
+
+---
+
+# Measurement campaign direction (2026-07-03, twenty-fourth pass) — pre-registered next-weeks plan for the implementing agents
+
+> Direction-setting pass (Fable): no implementation this week; this pass settles the judgment-heavy
+> decisions so next-weeks sessions execute rather than decide. Everything here is pre-registered
+> BEFORE the real measurement so outcomes cannot quietly reshape the design.
+
+## 1. Campaign sequence (each step is a separate session-sized unit)
+
+**Step 0 — bar + prompt (no spend).** Apply the queued §M.8 amendment (below, final text). Replace the
+cell prompt with the neutral form (below). Re-run the harness unit suite.
+**Step 1 — adoption pilot (~$3).** 8-12 B cells, working config, neutral prompt: measure adoption
+(below) and nothing else. Gate: if adoption is ~0 even with tools offered, STOP — the next work is
+655's (tool descriptions), not a $90 run measuring defaults.
+**Step 2 — the real certified EN/DE run (~$90, founder-signed).** A,B × 5 seeds × 26 queries per
+corpus, calibrated, through every guard now built. Interpretation strictly via §3's tree.
+**Step 3 — battlefield extensions, in order of claim value:** (a) scale member (the token claim's
+home — A's search-output explosion projects budget death in low-thousands of docs; generate at
+~2-4k docs, calibrate A's budget honestly upward so the comparison is fair-at-scale, not
+budget-starved); (b) cross-lingual member per §4's TEMPERED design (after the true-language-filler
+generator fix); (c) scan stays blocked on its band research (unchanged).
+
+## 2. Adoption measurement + neutral prompt (Step 0/1 design, settled)
+
+- **Neutral prompt (replaces the filesystem-priming one):** "Answer the following question about the
+  document collection at {corpus_dir}. You may use any tools available to you. Do not use prior
+  knowledge. Be concise. Question: {query}" — names no tool class, neither suppresses nor shills
+  retrieval. The old prompt ("using only the documents in {corpus_dir}") is a confound and must not
+  be reused for any with-tool arm.
+- **Adoption metrics (per arm, on the record):** `adoption_rate` (cells with ≥1 MCP call),
+  `first_mcp_call_turn` (median), `mcp_call_share` (MCP calls / all tool calls). All derivable from
+  the existing per-cell tool-call capture — reporting cuts, no new machinery.
+- **Dual-view reporting (the epidemiology import, pre-registered):** every utility comparison reports
+  BOTH **intention-to-treat** (all B cells vs A — what offering the tool does in practice) and
+  **per-protocol** (B cells that adopted vs A — what using the tool does), with the selection-bias
+  caveat stated on the per-protocol view (adopters may be the cells that were struggling, or the
+  confident ones — direction unknowable without randomized steering). Neither view may be presented
+  without the other. If adoption is high (>80%) the views converge and this is moot; pre-registering
+  it prevents cherry-picking if they diverge.
+
+## 3. §M.8 amendment (final text, to be applied verbatim in Step 0)
+
+- **New item 2b:** every with-tool cell's init event shows the expected MCP server connected and its
+  tools offered (`cells_with_mcp_surface_verified == cells_total` for B/C, from the record's own
+  `tool_call_assertions`); cells failing this are excluded AND their count reported.
+- **New item 2c:** adoption metrics (§2) reported per arm; the claim text states the
+  intention-to-treat number and, where they diverge, the per-protocol number with its caveat.
+- **Item 4 rewritten (outcome-neutral):** "≥5 seeds and n≥100 paired completed; every headline metric
+  reported with its own uncertainty (McNemar p for accuracy, bootstrap CI for continuous metrics);
+  the claim text's emphasis follows the measured significances — no metric is promoted because it was
+  hoped for nor demoted because it disappointed." (The old text presumed a token-efficiency win —
+  twice now the data declined the presumption.)
+
+## 4. Cross-lingual battlefield — my own earlier framing CORRECTED before it misleads anyone
+
+I previously called cross-lingual "the flagship stratum" on the logic that grep cannot cross
+languages. **That logic is flawed and the design must not assume it: the baseline agent brings its
+own bridge** — a frontier model can translate query terms and grep the target language directly (the
+DE-A cells already grep German terms today). So query-language ≠ document-language is a
+**quantitative** advantage stratum (the engine's bridging measured better and cheaper than the
+agent's translate-and-grep loop), not a structural-impossibility one. Design consequences, settled:
+(a) the baseline arm must be given its honest best shot — no framing that implies A "cannot" do
+cross-lingual; (b) the claim shape is a *margin*, not a capability gap; (c) prerequisite remains the
+true-target-language filler fix (a corpus that is 90% English cannot back any cross-lingual claim);
+(d) expected-effect honesty: the DE monolingual data already shows the agent's German bridging is
+weaker than its English (0.51 vs 0.78 hop-1 success), and the engine is language-invariant — the
+margin is plausible but must be measured, not narrated. The only genuinely *structural* strata remain
+**scale** (budget mathematics) and **scan** (blocked).
+
+## 5. Interpretation tree for Step 2 (pre-registered, extends §M.7a)
+
+- **B > A significantly (either corpus):** claim per §M.7/§M.7a discipline; per-stratum items clear
+  their own bars (§M.8 item 7); DE-driven wins must state the mechanism honestly (the agent's weaker
+  German bridging is part of why the margin exists).
+- **Null again, with high adoption:** a REAL null this time — the honest claim is M.7a-3 with a new
+  clause: "offered and used, no measurable marginal benefit at this scale"; the next lever is the
+  scale member, not re-measurement.
+- **Null with low adoption:** not a utility finding at all — an adoption finding; route to 655; the
+  per-protocol view (if n allows) is directional input, never a headline.
+- **B < A significantly:** investigate before reporting (tool-latency cost? wrong-chunk trust? —
+  the per-cell traces + failure-analysis playbook from the annex apply); if it survives
+  interrogation, it publishes as honestly as a win would.
+
+## 6. Residual unverified links (the hostile-audit shortlist for a next-weeks verification session)
+
+The dead-config class question — "what else is asserted but never verified?" — walked end-to-end;
+top remaining items, each one session-checkable: (a) **read-anywhere under `bypassPermissions`**:
+staging removed the obvious sibling, but nothing *prevents* a cell reading the original
+`datasets/golden/**` paths; detection (the leak needle) exists, prevention does not — evaluate
+per-cell permission deny-rules for paths outside the staged dir; (b) **the max_tasks=1 temporal
+confound**: serializing conditions means arm A and arm B run in disjoint time windows — API
+conditions may drift between arms; executor v2 should interleave conditions within one pool
+(recorded in 675's direction), and until then the record should note the window times; (c)
+**certification-era drift**: the corpora's closed-book certification predates several harness/CLI
+changes — re-run the (cheap) memory gate at the next run's own CLI/model version as part of
+calibration rather than trusting the old stamp; (d) **scorer case/whitespace semantics**
+(`_score_answer`) — one fixture pass to pin exact-match behavior against plausible answer
+formattings; (e) **qrels vs `evidence_ids` consistency** was verified by the replay agent for these
+corpora — keep it as a standing generation-time check rather than a one-off.

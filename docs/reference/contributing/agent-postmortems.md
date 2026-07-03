@@ -89,3 +89,42 @@ Running the FE discipline gates *individually* (composition / run-renderers / st
 ## 14. `green-masked-destructive` — tempdoc 618 §3
 
 The 618 §3 dev-runner native-bin staging passed a live `ai_activate` → "GPU runtime activated" — green. But the activation only succeeded because the build had *already downloaded* the cuda12 variant; that green masked a destructive variant-only path that overwrote/pruned an Install-AI'd `variants/cuda12` runtime on a machine without the build's download. A second agent's review (and a re-read against the adverse precondition) caught it; the regression hard-breaks GPU activation with no recovery short of a ~3 GB re-install. **Principle** (an `interrogate-results` corollary): when a passing verification depends on an environment precondition, confirm the result holds *for the reason you think* by testing the **adverse** precondition (here: a variant-only Install-AI'd native-bin), not just the happy one — a green the environment happened to satisfy can hide the branch that fails everywhere else. Fix + guard: 618 Implementation (`hasAnyLlamaRuntime` read-only guard; the pruning `stageLlamaToDevNativeBin` Sync task removed).
+
+## 15. `instrument-kills-spend` — tempdoc 624 twenty-first pass
+
+Two healthy certified eval runs were aborted mid-spend because the live-monitoring projection
+(`utility-status`/loss-accounting) computed exclusions as `planned − completed` — arithmetic correct
+on a finished log, systematically wrong on a partial one, so every in-flight cell read as "excluded"
+and phantom 40% exclusion alarms fired on runs that were in fact clean. The instrument had never been
+validated on the partial-input case it was being trusted to judge. **Principle**: a monitoring or
+verification instrument must itself be validated on the input regime it will actually see *before*
+its verdicts are allowed to trigger destructive actions (aborts, spend cuts, rollbacks) —
+`interrogate-results` applies to your own instruments first, because a wrong instrument converts
+healthy work into losses with the full authority of "the data said so." Predictable evasion to
+pre-empt: "the projection is simple arithmetic, it can't be wrong" — the arithmetic was correct; the
+input contract was not.
+
+## 16. `retyped-hash` — tempdoc 624 certified-run session
+
+An orchestrating agent printed only the first 16 characters of a config-cohort hash for display, then
+*retyped* a full-length value into the next command — fabricating the tail — and a record briefly
+carried a fake identity key before self-review caught it one command later. **Principle**: values
+whose exactness the record depends on (hashes, cohort keys, signatures, SHAs) are **piped, never
+retyped** — capture into a variable or file and pass it mechanically; any content-bearing identifier
+that transits through free text is presumed corrupted. Predictable evasion: "I can see the value
+right there in the output" — the failure was not misreading, it was the truncated display plus the
+fluency of plausible continuation.
+
+## 17. `offered-not-asserted` — tempdoc 624 twenty-third pass
+
+Every battlefield-era agent-utility run executed its with-tool arms against a **silently dead** MCP
+config (a `url`-without-`type` server entry the CLI drops without warning): the harness empirically
+asserted the *disallowed* tools per cell but never asserted the *expected* tool surface was actually
+offered, so 260 certified "with-tool" cells contained zero tool invocations and a governed,
+`comparable=True` record measured an A-vs-A replication. Five review passes, live smokes of adjacent
+paths, and a populated tool-surface hash (computed from *outside* the cells) all failed to catch it.
+**Principle**: for any treatment-vs-control measurement, assert the *presence and delivery of the
+treatment itself* inside each treated unit, from the treated unit's own runtime disclosure — config
+passed ≠ capability delivered, and negative guards (nothing forbidden happened) prove nothing about
+the positive precondition (the thing being measured was there). Predictable evasion: "the config is
+in the cohort identity, so it's covered" — identity recorded an *intention*, not a delivery.

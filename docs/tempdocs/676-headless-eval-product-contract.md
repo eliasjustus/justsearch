@@ -63,3 +63,40 @@ live incidents and stop resolving them with one-off evasions that bypass deliber
 Not a weakening of the product's user-facing heuristics or of eval-mode settings immutability — both
 are correct for their audiences; the gap is the absence of a defined third audience (sanctioned
 automation). Not a general scheduling or configuration redesign.
+
+---
+
+## Contract semantics (2026-07-03, authored as direction — the judgment-heavy core, settled; mechanism design remains the implementing agent's)
+
+**Three audiences, named.** The product currently distinguishes two implicit audiences — the human
+user (heuristics: presence, energy, interactive trust) and eval-mode (settings immutability). The
+contract introduces the third explicitly: **sanctioned measurement automation**. Its defining
+property: it is *declared*, never inferred — automation identifies itself per session; the product
+never guesses "this traffic looks automated."
+
+**Semantics, settled:**
+1. **A measurement session is a declared, scoped, expiring state** (per backend run, with an explicit
+   opt-in at launch — mechanism open: env/flag/API — and it must be visible in `/api/debug/state`
+   and recorded into any run manifest that executes under it). Inside it: presence/energy pacing
+   treats the session as permanently idle FOR BACKGROUND WORK SCHEDULING ONLY (batch processing runs
+   at full duty cycle, chained to completion); nothing else about product behavior changes.
+2. **What the contract explicitly does NOT grant:** settings mutability (eval-mode immutability is
+   correct and stays; capabilities that need writable settings get a HOST answer, not an override —
+   the capability/host matrix below), relaxed security posture, or any behavior difference visible
+   to retrieval/ranking (a measurement session must measure the product users get — D-005's spirit
+   at the ops layer).
+3. **The capability/host matrix is part of the contract's deliverable:** one table stating, for each
+   eval capability (calibrate, utility-run, judge, grader-panel swap, fidelity, ingest), which
+   backend hosts it (eval backend / dev stack) and why — so a capability/host mismatch fails with a
+   pointer to the table instead of a bare 409 (the grader-panel incident, twice).
+4. **Measurement preconditions become an assertable primitive**, callable by every measuring entry
+   point (not only the certified runners): index-content-matches-declared-corpus (doc count +
+   corpus signature), watched-roots scope, enrichment coverage. One shared assertion, many callers —
+   the mixed-index incident class ends here.
+5. **Progress observability contract:** background-work metrics distinguish
+   queued / processing / completed (the marking-vs-extraction ambiguity misled diagnosis twice);
+   any queue a measurement can wait on exposes all three.
+
+**Anti-goals, restated with teeth:** no ambient auto-detection of automation (an inference-based
+"looks like a bot" path recreates the starvation bug in reverse); no global pacing kill-switch that
+survives the session (expiring scope is the safety property); no second settings store.
