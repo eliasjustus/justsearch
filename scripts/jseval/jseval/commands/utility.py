@@ -294,8 +294,9 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
 
     arms = ug.compute_loss_accounting(log_dir)
     for c, l in sorted(arms.items()):
-        click.echo(f"  {c}: completed={l.n_completed}/{l.n_attempted} "
-                   f"excluded={l.n_excluded} ({l.exclusion_rate:.0%})")
+        click.echo(f"  {c}: completed={l.n_completed} excluded={l.n_excluded} "
+                   f"({l.exclusion_rate:.0%} of {l.n_attempted} attempted) "
+                   f"pending~{l.n_pending} of {l.n_planned} planned")
     verdict, m = ug.paired_comparability(arms)
     click.echo(f"  comparable(so far)={verdict.comparable}  {m}")
     if not verdict.comparable:
