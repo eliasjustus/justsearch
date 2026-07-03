@@ -641,17 +641,41 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
 def test_paired_comparability_clean_and_asymmetric():
     from jseval.utility_governance import ArmLoss, paired_comparability
     full = {0: set(f"q{i}" for i in range(10)), 1: set(f"q{i}" for i in range(10))}
-    A = ArmLoss("A", 2, 10, 20, set(), {k: set(v) for k, v in full.items()})
-    C = ArmLoss("C", 2, 10, 20, set(), {k: set(v) for k, v in full.items()})
+    A = ArmLoss("A", 2, 10, 20, n_error_cells=0,
+                excluded_query_ids=set(), ok_by_seed={k: set(v) for k, v in full.items()})
+    C = ArmLoss("C", 2, 10, 20, n_error_cells=0,
+                excluded_query_ids=set(), ok_by_seed={k: set(v) for k, v in full.items()})
     v, m = paired_comparability({"A": A, "C": C})
     assert v.comparable is True and m["paired_n_retention"] == 1.0
-    # C drops q5-q8 (asymmetric, high rate); A drops none
+    # C drops q5-q8 (asymmetric, high rate: 9 errored cells of 20); A drops none
     okC = {0: {"q0", "q1", "q2", "q3", "q4"}, 1: {"q0", "q1", "q2", "q3", "q4", "q9"}}
-    Cbad = ArmLoss("C", 2, 10, 11, {"q5", "q6", "q7", "q8"}, okC)
+    Cbad = ArmLoss("C", 2, 10, 11, n_error_cells=9,
+                   excluded_query_ids={"q5", "q6", "q7", "q8"}, ok_by_seed=okC)
     v2, m2 = paired_comparability({"A": A, "C": Cbad})
     assert v2.comparable is False
     assert any("arm_C" in r for r in v2.reasons)        # per-arm exclusion rate
     assert m2["excluded_jaccard"] < 0.5                 # asymmetry caught
+
+
+def test_loss_accounting_partial_log_pending_is_not_excluded():
+    """Regression (2026-07-03): on a PARTIAL log, in-flight cells must count as
+    PENDING, never as excluded. The old arithmetic (n_excluded = planned -
+    completed) reported phantom 40%+ exclusion on healthy mid-flight runs and
+    got two healthy certified runs aborted."""
+    from jseval.utility_governance import ArmLoss
+    # Mid-run snapshot: 5 seeds x 10 queries seen (50 planned), 30 flushed clean,
+    # 0 errored — 20 cells simply in flight.
+    live = ArmLoss("A", 5, 10, 30, n_error_cells=0)
+    assert live.n_planned == 50
+    assert live.n_attempted == 30
+    assert live.n_pending == 20
+    assert live.n_excluded == 0            # the regression: this was 20 before
+    assert live.exclusion_rate == 0.0
+    # Same snapshot with 3 real error cells: only those 3 are excluded.
+    live_err = ArmLoss("A", 5, 10, 30, n_error_cells=3)
+    assert live_err.n_excluded == 3
+    assert live_err.n_attempted == 33 and live_err.n_pending == 17
+    assert abs(live_err.exclusion_rate - 3 / 33) < 1e-9
 
 
 def test_governance_end_to_end(tmp_path):

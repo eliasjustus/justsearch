@@ -24,22 +24,44 @@ _BASELINE = "A"
 
 @dataclass
 class ArmLoss:
-    """Per-arm execution loss-accounting (excluded = solver errors / timeouts)."""
+    """Per-arm execution loss-accounting (excluded = solver errors / timeouts).
+
+    ``n_excluded`` counts flushed samples carrying ``metadata.error`` — NEVER
+    ``planned - completed``. The prior arithmetic
+    (``n_seeds*n_queries - n_completed``) silently counted every not-yet-flushed
+    in-flight cell as excluded on a PARTIAL log, so the live view
+    (`utility-status`, mid-run watchdogs) reported phantom 40%+ exclusion on
+    healthy runs — two healthy certified runs were aborted on exactly this
+    artifact (2026-07-03). On a completed log the two formulas agree; on a
+    partial log only the error-count is truthful, with the remainder pending.
+    """
 
     condition: str
     n_seeds: int
     n_queries: int                       # distinct queries per seed
     n_completed: int
+    n_error_cells: int = 0               # flushed samples with metadata.error
     excluded_query_ids: set = field(default_factory=set)   # excluded in >=1 seed
     ok_by_seed: dict = field(default_factory=dict)         # seed -> {completed query ids}
 
     @property
-    def n_attempted(self) -> int:
+    def n_planned(self) -> int:
+        """Full seed x query cross-product observed so far."""
         return self.n_seeds * self.n_queries
 
     @property
+    def n_attempted(self) -> int:
+        """Cells with a flushed outcome (completed or errored)."""
+        return self.n_completed + self.n_error_cells
+
+    @property
+    def n_pending(self) -> int:
+        """Planned cells without a flushed outcome yet (in-flight / not started)."""
+        return max(0, self.n_planned - self.n_attempted)
+
+    @property
     def n_excluded(self) -> int:
-        return self.n_attempted - self.n_completed
+        return self.n_error_cells
 
     @property
     def exclusion_rate(self) -> float:
@@ -69,6 +91,7 @@ def compute_loss_accounting(log_dir: str) -> dict[str, ArmLoss]:
         if cond is None:
             continue
         completed = 0
+        error_cells = 0
         excluded_ids: set = set()
         ok_by_seed: dict = {}
         all_q: set = set()
@@ -79,13 +102,15 @@ def compute_loss_accounting(log_dir: str) -> dict[str, ArmLoss]:
             all_q.add(qid)
             seeds.add(seed)
             if (s.metadata or {}).get("error"):
+                error_cells += 1
                 excluded_ids.add(qid)
             else:
                 completed += 1
                 ok_by_seed.setdefault(seed, set()).add(qid)
         arms[cond] = ArmLoss(
             condition=cond, n_seeds=len(seeds) or 1, n_queries=len(all_q),
-            n_completed=completed, excluded_query_ids=excluded_ids, ok_by_seed=ok_by_seed,
+            n_completed=completed, n_error_cells=error_cells,
+            excluded_query_ids=excluded_ids, ok_by_seed=ok_by_seed,
         )
     return arms
 
