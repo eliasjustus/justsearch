@@ -1239,3 +1239,31 @@ live-verified; the eighth-pass brainstorm's "New UX" ideas remain an explicit, u
 this tempdoc's to resolve); the ninth-pass's deferred canonical-record trigger has not fired (still correctly
 not built); and every concrete "Extend" item the eleventh pass found ready is implemented (twelfth pass) with
 its one downstream documentation gap now closed (this pass).
+
+---
+
+# A new instance of this tempdoc's own subject, found live (2026-07-03, filed from tempdoc 624's certified-run session) — the identity boundary does not cover the materialized corpus-dir
+
+**Reopening-grade finding, recorded here because this subject is 664's, not 624's.** The verified-identity
+boundary this tempdoc built — `corpus_signature = sha256(corpus.jsonl + qrels)` — does **not** cover the
+**materialized `corpus-dir/`**, which is what agents and ingestion actually touch. Two live incidents
+demonstrated the gap in one session:
+
+1. **Agent-written solver artifacts persisted inside canonical corpus-dirs** (from earlier eval runs that
+   had direct write access): `battlefield-de-v1/corpus-dir` carried `connections.txt` — a complete
+   entity-link map of the corpus — plus chain-tracing scripts; `synth-scan-v1/corpus-dir` carried 84
+   agent-made image-processing artifacts. The pollution rode through archives, was re-ingested into a live
+   index, and measurably inflated DE's baseline accuracy (0.82 → 0.56 after cleanup) — while
+   `corpus_signature` verified **clean throughout**, because the signature never sees corpus-dir.
+2. The pre-existing stale-materialization incident (858 leftover files at a different generation scale,
+   observations 2026-07-02) is the same class from a different producer.
+
+**The general shape, in this tempdoc's own terms:** identity was made verifiable for the corpus's
+*declared* content, but the corpus's *deployed* form (the directory a condition-A agent reads and the
+ingest pipeline indexes) has no integrity guarantee at all — anything can be added to it by any past
+process, and every downstream measurement inherits the addition silently. The goal for whoever picks this
+up: extend the verified-identity boundary (or add a companion integrity check) so that a materialized
+corpus-dir provably contains exactly the declared documents — enforced at the point of use, for **every**
+measuring entry point, not only the certified-run path. (Interim mitigations from the 624 session —
+manual cleanup + an ingest doc-count assertion — are incident response, not the guarantee.) Goals and
+context only; design belongs to the pass that takes this up.
