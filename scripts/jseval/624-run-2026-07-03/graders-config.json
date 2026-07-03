@@ -1,0 +1,16 @@
+[
+ {
+  "name": "mistral-family",
+  "kind": "local-serial",
+  "model_path": "F:\\justsearch-public\\tmp\\grader-models\\Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+  "price_per_call_usd": 0,
+  "backend_base_url": "http://127.0.0.1:61214"
+ },
+ {
+  "name": "gemma-family",
+  "kind": "local-serial",
+  "model_path": "F:\\justsearch-public\\tmp\\grader-models\\gemma-2-9b-it-Q4_K_M.gguf",
+  "price_per_call_usd": 0,
+  "backend_base_url": "http://127.0.0.1:61214"
+ }
+]

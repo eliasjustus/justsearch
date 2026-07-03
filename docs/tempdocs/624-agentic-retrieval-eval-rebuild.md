@@ -3967,3 +3967,71 @@ Item **6** (claim text) — to be drafted against the M.7a-3 shape, founder sign
 ~$42 EN + ~$47 DE certified runs, ~$8 calibrations, ~$10 probes/repros, ~$25–30 burned by the two
 stale-harness/phantom-alarm attempts ≈ **~$130–135 total** vs the $109 revised ask — overage entirely
 attributable to the defects found (and now fixed for every future run).
+
+---
+
+# Scan-battlefield resolution + cross-family panel (2026-07-03, twenty-second pass) — §M.8 item 3 CLOSED; the scan member is measured unbuildable at its shipped degradation band
+
+## The scan chain (post-672, first genuine full-scale extraction) — three real findings
+
+1. **The eval's own probing starves the VDU pacing policy.** VDU batches interrupt when
+   `msSinceLastUserActivity < 5min` — and search API calls signal user activity
+   (`KnowledgeSearchController` → `signalUserActivity`). The orchestration's content probes kept the
+   backend permanently "active", so every triggered batch bailed at its first checkpoint ("interrupted
+   (user active or energy-reduced), leaving N docs PENDING... 0 processed") while `vduQueueSize`
+   *appeared* to drain (that number tracks marking, not extraction — an observability trap that cost
+   this session two false "extraction complete" conclusions, one of them also confounded by a
+   mixed-index restart without `--clean`). Resolution: **go search-silent and let the idle sampler
+   self-trigger** — with zero API searches for 5+ minutes, the designed auto-trigger chained all
+   batches unattended (360/360 genuinely extracted at ~8 docs/min, status-only polling confirmed safe).
+2. **The VLM hallucinates on unreadable scans, and the hallucination is indexed as real content.**
+   With all 360 docs `vdu_status: COMPLETED`, retrieval still scored **nDCG@10 = 0.0000** — the
+   extracted "text" is confabulation (e.g., a generic mathematics-books bibliography for a degraded
+   synthetic scan whose true text appears nowhere). No abstention/confidence gate exists on the VDU
+   output path (observations; production quality issue, 607/671 lineage).
+3. **§T.2's premise resolves NEGATIVE at the shipped band** (the fifth-pass confidence table's item 7,
+   the one unverified load-bearing assumption, now answered): the degradation tuned to defeat Claude
+   Code's multimodal `Read` ALSO defeats the product's own extraction stack. The structural-advantage
+   window requires extraction ≥ agent vision; the local extractor is *weaker* than frontier vision, so a
+   viable band (pipeline-readable, agent-unreadable) may not exist — finding one would need
+   degradations adversarial to frontier vision yet OCR-friendly: a research question, not a parameter
+   tweak. **The fidelity gate's 0.0 refusal is the system working as designed** — no run spend was
+   authorized against an unmeasurable corpus. U0's scan stratum stays open, with a sharper,
+   evidence-backed reason than "not yet built."
+
+## The cross-family grader panel (§M.8 item 3) — CLOSED, fully local, $0
+
+674's local-serial seam ran live for the first time. Two findings en route: (a) it CANNOT run against
+the eval backend — `POST /api/settings/v2` returns 409 because eval-mode settings are read-only *by
+design*; (b) the `JUSTSEARCH_UI_SETTINGS_MODE=READ_WRITE` env override did not reach the Gradle-forked
+JVM (the CLAUDE.md "Windows env vars unreliable" pitfall, reconfirmed). Resolution: host the panel on
+the **dev stack** (writable settings, `ai_activate`) — where the full swap cycle (Qwen → Mistral-7B →
+Gemma-2-9B → Qwen restore) worked end-to-end. Graders: Mistral-7B-Instruct-v0.3 + gemma-2-9b-it
+(Mistral + Google lineages; ≠ agent family, ≠ judge family; local GGUFs, zero API cost — the founder's
+no-API-keys constraint honored). **Results, stratified n=36+4 abstained per corpus, non-degenerate:
+EN judge-vs-panel κ=1.0, panel-mutual κ=1.0; DE judge-vs-panel κ=1.0, panel-mutual κ=0.944.** Attached
+to the judged records as `cross_family_calibration` (rater_kind honestly stamped "cross-family-llm,
+NOT human") with the overlays archived beside them. 674's correlated-weakness caveat stands in the
+record's own labeling; with three distinct lineages unanimous on non-degenerate samples, the judge's
+verdicts are as validated as this design allows without human raters.
+
+## §M.8 final state
+
+Items **1, 2, 3, 5, 7: satisfied.** Item **4**: seeds/n satisfied; the token-efficiency-CI criterion is
+inapplicable (the honest outcome is the §M.7a-3 null — there is no token win to power). Item **6**: the
+claim text (below, twenty-second-pass draft) awaits founder sign-off; nothing publishes before it.
+
+## Claim text draft (§M.8 item 6, §M.7a-3 shape — for founder sign-off, not published)
+
+> On two held-out, closed-book-certified, contamination-free synthetic corpora of buried-fact multi-hop
+> retrieval queries (English and German; 390 documents each; paraphrase-bridged descriptors,
+> collision-free by construction), an agent with JustSearch's MCP retrieval added to its existing file
+> tools showed **no measurable effect on accuracy** (pooled n=260 paired, Δ −0.027, McNemar p=0.476;
+> per-corpus Δ −0.069 / p=0.200 and +0.015 / p=0.860) **and no measurable token-cost difference**
+> (mean Δ +449 unique tokens, CI95 [−1467, +2376]). Every cell completed (zero exclusions); tool
+> restrictions were verified per cell from tool-call traces; answers were judge-scored (hybrid EM →
+> local LLM judge, zero verdict flips) with the judge calibrated against a two-model cross-family panel
+> (κ ≥ 0.94, labeled non-human). This measurement covers text corpora only — a degraded-scan member was
+> designed but is currently unmeasurable (the degradation defeats both the agent's vision and the
+> extraction pipeline). Replacing file tools entirely with retrieval (substitution) was separately
+> measured significantly harmful and is reported diagnostically only.
