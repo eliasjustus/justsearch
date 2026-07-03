@@ -3896,3 +3896,74 @@ than logged-and-deferred; outcome recorded in the next pass.
 - Full suite after both this and As-built #8: **1481 passed, 2 failed** — the two remaining failures
   are the pre-existing, unrelated `test_correction_probe.py` missing-data-file pair (also failing on
   origin/main; not this branch's subject).
+
+---
+
+# The certified EN+DE run (2026-07-03, twenty-first pass) — first fully comparable records; U0 answers as an honest null
+
+> Founder-authorized (publish-then-run, ~$109 revised ask). Executed from public `main`, through
+> `utility-calibrate` → `utility-run --calibration`, conditions A,B × 5 seeds × 26 queries per corpus,
+> haiku, concurrency 8. **Every record: `comparable=True`** — the first time in this effort's history.
+> Records: `scripts/jseval/624-run-2026-07-03/out-{en,de}-judged/` + `out-cross-corpus/` (all pinning
+> public SHA `4dcf510`, clean tree, populated `mcp_tool_surface_hash` — previously always null).
+
+## The result (leak-scan-excluded: 0 leaked cells; judge-scored: 0 verdict flips)
+
+| Record | B accuracy (baseline→with-tool) | McNemar p | n | tokens (median Δ) |
+|---|---|---|---|---|
+| battlefield-en-v1 (judged) | 0.815→0.746 (Δ **−0.069**) | 0.200 | 130 | +1,704 |
+| battlefield-de-v1 (judged) | 0.562→0.577 (Δ **+0.015**) | 0.860 | 130 | −156 |
+| **Pooled cross-corpus** | **0.689→0.662 (Δ −0.027)** | **0.476** | **260** | ≈ wash (d_mean +449) |
+
+**U0's answer at certified quality: an honest null, in both metrics, both directions.** The leak-era
+borderline-negative (Δ−0.094, p=0.055) did NOT survive the clean 5-seed harness — it relaxes to
+Δ−0.027, p=0.476. Neither "B helps" nor "B harms" is demonstrated at n=260 on this battlefield.
+Loss-accounting: **0 excluded cells in any arm** (7 transient CLI deaths absorbed by the disclosed
+per-cell retry); `tool_call_assertions`: 520/520 cells with tool data, **0 disallowed-tool violations,
+0 leak suspects** — §M.8 item 2's empirical half holds on every cell actually run. Judge: hybrid
+EM→local-Qwen ran live per corpus (EN 57 misses judged / 0 flips / dual-order agreement 0.947; DE 112 /
+0 / 1.0) — the judged numbers ARE the EM numbers, now verified rather than assumed. (The cross-corpus
+composer does not consume judge overlays — labeled `substring-em` — numerically identical given 0 flips.)
+
+## Five real defects found and fixed en route (each its own commit/PR; the run failed twice before succeeding)
+
+1. **`eval_set` ran condition-tasks concurrently** → effective concurrency ~2× the calibrated pilot →
+   timeout tail. Fixed `max_tasks=1` (PR #64).
+2. **The stale-editable-install trap hit a second time in one day**: bare `python -m jseval` from the
+   repo root ran the June-22 harness via the `F:\JustSearch` editable install — the first two run
+   attempts executed 3-week-old code. Install re-pointed to this checkout; a runtime
+   imported-jseval-matches-repo assertion is now twice-proven-needed (observations).
+3. **Silent claude-CLI cell deaths (~5%/cell under sustained 8-way load; rc=1, empty stderr)** →
+   solver hardening: `stdin=DEVNULL`, one bounded DISCLOSED retry (`attempts`/`first_error` fields),
+   failure forensics into the record (PR #65). Post-fix Inspect probe: 40/40 first-attempt clean.
+4. **The loss-accounting live view counted in-flight cells as excluded on partial logs**
+   (`n_excluded = planned − completed`) — phantom 40%+ exclusion alarms got two HEALTHY runs aborted
+   before a persisted-samples read contradicted the projection. Fixed with real error-cell counting +
+   `n_pending` (PR #66, regression-tested).
+5. **A new leak class: agent-authored solver artifacts inside the canonical corpus-dir.** An earlier
+   (pre-isolated-staging) run's cells wrote `connections.txt` — the corpus's complete entity-link
+   map — plus chain-tracing scripts into `battlefield-de-v1/corpus-dir`, which this cycle re-ingested
+   into the MCP index (394 docs vs 390+sentinel) before being caught. Cleaned + clean re-ingest
+   (asserted 391). **EN verified unaffected** via the per-cell tool-call capture (0 genuine write
+   commands across 5,862 calls). **Corroborating evidence the pollution mattered: DE's absolute
+   baseline accuracy fell 0.82→0.56 once the link map was removed** (EN, never polluted, stayed
+   ~0.82 across runs). `synth-scan-v1`'s corpus-dir is ALSO polluted (OCR-processing artifacts) —
+   must be cleaned before any scan work. Residual gap (observations): cells share ONE staged corpus
+   copy per run, so within-run cross-cell writes remain possible; per-cell or read-only staging
+   would close it.
+
+## §M.8 state after this run
+
+Items **1** (corpus, EN+DE, scan-absence to be stated), **2** (baseline + empirical assertion), **5**
+(cohort-identified, comparable=True, rerunnable at a public SHA), and **7** (strata reported with own
+p-values, both n.s.) — **satisfied**. Item **3** (cross-family grader panel) — **the one remaining
+mechanical step** (~$0.20 external or local per 674's shipped seam). Item **4** — seeds/n satisfied;
+its "token-efficiency CI excludes 0" criterion is **inapplicable**: the honest outcome is §M.7a
+contingency 3 (null), so the claim text must be the null-framing, not a token-efficiency headline.
+Item **6** (claim text) — to be drafted against the M.7a-3 shape, founder sign-off per boundary (a).
+
+## Spend accounting (honest)
+
+~$42 EN + ~$47 DE certified runs, ~$8 calibrations, ~$10 probes/repros, ~$25–30 burned by the two
+stale-harness/phantom-alarm attempts ≈ **~$130–135 total** vs the $109 revised ask — overage entirely
+attributable to the defects found (and now fixed for every future run).

@@ -567,6 +567,27 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-027: the certified agent-utility measurement (U0) is an honest null — the first `comparable=True` record; the leak-era "B trends harmful" signal did not survive the clean harness
+
+- **Answer:** The first fully comparable agent-utility records (tempdoc 624, 2026-07-03; conditions
+  A vs B, 5 seeds × 26 queries per corpus, haiku, calibrated + leak-scan-excluded + judge-scored):
+  **pooled across `golden/battlefield-{en,de}-v1`, n=260 paired, B accuracy Δ −0.027 (McNemar
+  p=0.476); tokens a wash** (median Δ ≈ +449 mean, CI crosses 0). Per-stratum: EN Δ −0.069 (p=0.200),
+  DE Δ +0.015 (p=0.860) — both n.s., opposite directions. **Neither benefit nor harm is demonstrated**
+  for adding JustSearch MCP to a haiku agent that already has file tools, on this battlefield. The
+  prior borderline-negative (Δ −0.094, p=0.055, leak-free 3-seed reanalysis) washed out on the clean
+  5-seed harness.
+- **Evidence:** `scripts/jseval/624-run-2026-07-03/out-{en,de}-judged/utility-comparison.v1.json` +
+  `out-cross-corpus/` — `comparable=True`, 0 excluded cells any arm, `tool_call_assertions` 520/520
+  cells with tool data / 0 disallowed violations / 0 leak suspects, judge `hybrid-em-llm` with 0
+  verdict flips (169 misses judged), public git SHA `4dcf510`, populated MCP tool-surface hash.
+- **Conditions/caveats:** haiku-only (binding cost policy); EN+DE text battlefield only — the
+  degraded-scan member is still pending its post-672 fidelity re-verify AND a corpus-dir pollution
+  cleanup (agent-authored solver artifacts, see tempdoc 624 twenty-first pass — the same pollution
+  class inflated DE's pre-cleanup baseline 0.82→0.56). §M.8 items outstanding: the cross-family
+  grader-panel calibration (item 3) and the claim text (item 6, must use the §M.7a-3 null framing).
+  No number publishes until the full bar clears (624 boundary (a)).
+
 ### F-026: judge-rank-low is real and substantively spread (not near-ceiling) on a real corpus, but the obvious judge levers are dead/harmful — the surviving lever is a confidence-bounded floor, not a sharper judge
 
 - **Answer:** Tempdoc 643 picked up the judge-rank-low bucket F-025 pointed at. Three corrections to the
