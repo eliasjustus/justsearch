@@ -293,7 +293,7 @@ def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
 # a config-trust assumption, and this is the record-level rollup of it.
 
 def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls=None,
-              leak_suspect=None):
+              leak_suspect=None, mcp_tools_offered=None, mcp_surface_unverified=None):
     entry = {"correct": correct, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
     if tool_calls is not None or disallowed is not None or leak_tool_calls is not None:
         entry["tool_calls"] = tool_calls
@@ -301,6 +301,10 @@ def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls
         entry["leak_suspect_tool_calls"] = leak_tool_calls
     if leak_suspect is not None:
         entry["leak_suspect"] = leak_suspect
+    if mcp_tools_offered is not None:
+        entry["mcp_tools_offered"] = mcp_tools_offered
+    if mcp_surface_unverified is not None:
+        entry["mcp_surface_unverified"] = mcp_surface_unverified
     return entry
 
 
@@ -313,9 +317,11 @@ def test_tool_call_assertions_reports_clean_when_zero_violations_across_checked_
 
     tca = rec["tool_call_assertions"]
     assert tca["A"] == {"cells_total": 4, "cells_with_tool_data": 4,
-                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0}
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0,
+                        "cells_with_mcp_surface_verified": 0, "cells_mcp_surface_unverified": 0}
     assert tca["C"] == {"cells_total": 4, "cells_with_tool_data": 4,
-                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0}
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0,
+                        "cells_with_mcp_surface_verified": 0, "cells_mcp_surface_unverified": 0}
 
 
 def test_tool_call_assertions_counts_disallowed_violations():
@@ -406,6 +412,30 @@ def test_tool_call_assertions_grouped_per_condition_not_merged():
     assert set(rec["tool_call_assertions"]) == {"A", "C"}
     assert rec["tool_call_assertions"]["A"]["cells_with_disallowed_violations"] == 0
     assert rec["tool_call_assertions"]["C"]["cells_with_disallowed_violations"] == 1
+
+
+def test_tool_call_assertions_counts_mcp_surface_verified_and_unverified():
+    """tempdoc 624 battlefield retrospective: a cell offering >=1 mcp__justsearch
+    tool counts as verified; a cell whose init event never parsed counts as
+    unverified (an unknown, not a fabricated clean 0); a cell offering 0 tools
+    should never reach here at all (it was excluded upstream as `error`'d) --
+    this test only exercises the composer-side counting of what DOES arrive."""
+    c_pq = {
+        "q0": _pq_entry(mcp_tools_offered=2),                       # verified
+        "q1": _pq_entry(mcp_tools_offered=1),                       # verified
+        "q2": _pq_entry(mcp_surface_unverified=True),               # unverified
+        "q3": _pq_entry(),                                          # neither (condition A-like)
+    }
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    c = rec["tool_call_assertions"]["C"]
+    assert c["cells_with_mcp_surface_verified"] == 2
+    assert c["cells_mcp_surface_unverified"] == 1
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_with_mcp_surface_verified"] == 0
+    assert a["cells_mcp_surface_unverified"] == 0
 
 
 # --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
@@ -1026,6 +1056,17 @@ def test_build_revision_accepts_every_closed_set_reason():
         rev = utility_comparison.build_revision(
             supersedes="../out/utility-comparison.v1.json", reason=reason, changed_fields=[])
         assert rev["reason"] == reason
+
+
+def test_build_revision_accepts_arm_invalidation_reason():
+    """tempdoc 624 battlefield retrospective: annotates a record whose with-tool
+    arm is now known to have run under a dead mcp_config (0 MCP tool calls)."""
+    rev = utility_comparison.build_revision(
+        supersedes="../out/utility-comparison.v1.json",
+        reason="arm_invalidation",
+        changed_fields=["measured.golden/battlefield-en-v1.haiku.with_tool"],
+    )
+    assert rev["reason"] == "arm_invalidation"
 
 
 def test_build_revision_rejects_reason_outside_closed_set():

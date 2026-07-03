@@ -57,6 +57,13 @@ def _per_query_from_result(run_result: dict) -> dict:
             "tool_calls": r.get("tool_calls"),
             "disallowed_tool_calls": r.get("disallowed_tool_calls"),
             "leak_suspect_tool_calls": r.get("leak_suspect_tool_calls"),
+            # Offered MCP tool-surface capture (tempdoc 624 battlefield retrospective):
+            # only `agent_utility_inspect.claude_agent_solver` currently populates these
+            # (`r.get(...)` reads None for a classic `run_agent_eval` result, same "no
+            # data" semantics as `tool_calls` above -- see `_tool_call_assertions`).
+            "mcp_servers": r.get("mcp_servers"),
+            "mcp_tools_offered": r.get("mcp_tools_offered"),
+            "mcp_surface_unverified": bool(r.get("mcp_surface_unverified")),
         }
     return pq
 
@@ -180,6 +187,11 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
             tool_calls = (s.metadata or {}).get("tool_calls")
             disallowed_tool_calls = (s.metadata or {}).get("disallowed_tool_calls")
             leak_suspect_tool_calls = (s.metadata or {}).get("leak_suspect_tool_calls")
+            # Offered MCP tool-surface capture (tempdoc 624 battlefield retrospective):
+            # `claude_agent_solver` stashes these alongside tool_calls above. A cell
+            # whose surface assertion FAILED already set `error` and was excluded by
+            # the `continue` above, so anything reaching here is either surface-clean,
+            # surface-unverified, or condition A (exempt, both fields absent -> None).
             by_seed.setdefault(seed, {})[qid] = {
                 "correct": correct,
                 "cost_usd": (s.metadata or {}).get("cost_usd"),
@@ -189,6 +201,9 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
                 "disallowed_tool_calls": disallowed_tool_calls,
                 "leak_suspect_tool_calls": leak_suspect_tool_calls,
                 "leak_suspect": bool(leak_suspect_tool_calls),
+                "mcp_servers": (s.metadata or {}).get("mcp_servers"),
+                "mcp_tools_offered": (s.metadata or {}).get("mcp_tools_offered"),
+                "mcp_surface_unverified": bool((s.metadata or {}).get("mcp_surface_unverified")),
             }
 
         for seed, per_query in sorted(by_seed.items()):

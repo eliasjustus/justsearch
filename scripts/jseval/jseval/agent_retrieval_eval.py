@@ -1099,6 +1099,46 @@ def parse_claude_stream_json(stdout: str) -> tuple[list[dict], dict | None, str]
     return tool_calls, data, session_id
 
 
+def parse_claude_init_event(stdout: str) -> dict | None:
+    """Parse the `{"type":"system","subtype":"init",...}` event from `claude -p
+    --output-format stream-json --verbose` stdout — the FIRST event in the stream,
+    disclosing which MCP servers actually connected and which tools were actually
+    offered for THIS invocation (tempdoc 624 battlefield retrospective, 2026-07-03).
+
+    Distinct from `parse_claude_stream_json` (which extracts `tool_use` calls and
+    the terminal `result` event): a dead/silently-dropped `--mcp-config` entry
+    (`{"url": "..."}` without `"type": "http"` — see
+    `utility_calibrate.McpConfigMissingTypeError`) shows up HERE as an empty
+    `mcp_servers` list and no `mcp__`-prefixed tool name, even though the CLI
+    process still exits 0 and answers (from file tools) as if nothing were wrong.
+    This is exactly the gap that left all 260 certified condition-B battlefield
+    cells with zero MCP tool calls, undetected by every other check.
+
+    :returns: ``{"mcp_servers": [{"name": str, "status": str}, ...], "tools":
+        [str, ...]}`` from the init event, or ``None`` if the stream never emitted
+        a `system`/`init` event (crash/timeout/malformed output before the CLI
+        even got that far).
+    """
+    for line in stdout.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            servers = event.get("mcp_servers") or []
+            return {
+                "mcp_servers": [
+                    {"name": s.get("name"), "status": s.get("status")}
+                    for s in servers if isinstance(s, dict)
+                ],
+                "tools": list(event.get("tools") or []),
+            }
+    return None
+
+
 def run_agent_eval(
     queries: list[dict],
     corpus_dir: str,

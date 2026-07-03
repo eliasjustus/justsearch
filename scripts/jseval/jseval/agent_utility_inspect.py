@@ -43,10 +43,15 @@ from jseval.agent_retrieval_eval import (
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
+    parse_claude_init_event,
     parse_claude_stream_json,
     stage_corpus_dir,
 )
-from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
+from jseval.utility_calibrate import (
+    assert_mcp_config_http_typed,
+    assert_watched_roots_scoped,
+    base_url_from_mcp_config,
+)
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -141,6 +146,38 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
                 state.metadata["tool_calls"] = tool_calls
                 state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
                 state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
+                # Offered MCP tool-surface capture + assertion (tempdoc 624 battlefield
+                # retrospective): parse_claude_init_event reads the CLI's own disclosure of
+                # what it actually connected/offered for THIS invocation -- the signal a
+                # dead mcp_config (missing "type":"http", silently dropped by the CLI) does
+                # NOT show up in (the process still exits 0 and answers from file tools).
+                # Stashed unconditionally like tool_calls above; the ASSERTION below only
+                # fires for a real with-tool config (B/C with mcp_config set) -- condition A
+                # is exempt by construction (its argv always uses the empty config).
+                init_event = parse_claude_init_event(stdout)
+                mcp_servers = init_event["mcp_servers"] if init_event else None
+                mcp_tools_offered = (
+                    sum(1 for t in init_event["tools"] if t.startswith("mcp__"))
+                    if init_event else None
+                )
+                state.metadata["mcp_servers"] = mcp_servers
+                state.metadata["mcp_tools_offered"] = mcp_tools_offered
+                if condition in _WITH_TOOL and mcp_config:
+                    if init_event is None:
+                        # Stream never reached/emitted an init event (crash/timeout
+                        # before the CLI got that far) -- not proof the surface was
+                        # missing, so this must not error; flag unverified instead so
+                        # "unknown" is never conflated with "verified healthy".
+                        state.metadata["mcp_surface_unverified"] = True
+                    else:
+                        justsearch_tools = [
+                            t for t in init_event["tools"] if t.startswith("mcp__justsearch")
+                        ]
+                        if not justsearch_tools:
+                            state.metadata["error"] = (
+                                f"expected MCP tool surface not offered: mcp_servers={mcp_servers}"
+                            )
+                            break
                 if data is None or data.get("is_error") or proc.returncode != 0:
                     # Forensics INTO the record: a bare "exit 1" with no stderr was
                     # unactionable across two failed runs — keep the evidence.
@@ -235,6 +272,15 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
     samples). condition A passes no mcp_config; B/C pass the JustSearch one.
     """
+    # Dead-config fail-fast (tempdoc 624 battlefield retrospective): a `url`-only
+    # `mcpServers` entry (no `"type":"http"`) is silently DROPPED by the `claude`
+    # CLI — the run would otherwise complete "successfully" with zero MCP tool
+    # calls per cell (proven: all 260 certified condition-B battlefield cells hit
+    # exactly this). Checked before anything else in this function so a dead
+    # config aborts before any staging/subprocess work happens.
+    if mcp_config:
+        assert_mcp_config_http_typed(mcp_config)
+
     from inspect_ai import eval_set
 
     from jseval.manifest import _sha256_canonical

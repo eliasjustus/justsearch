@@ -16,8 +16,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jseval.utility_calibrate import (
+    McpConfigMissingTypeError,
     StrayWatchedRootError,
     _normalize_root_path,
+    assert_mcp_config_http_typed,
     assert_watched_roots_scoped,
     base_url_from_mcp_config,
     check_watched_roots_scoped,
@@ -221,6 +223,61 @@ class TestBaseUrlFromMcpConfig:
         cfg = tmp_path / "mcp.json"
         cfg.write_text("not json", encoding="utf-8")
         assert base_url_from_mcp_config(str(cfg)) is None
+
+
+# --- assert_mcp_config_http_typed: fail-fast on the silent-drop config shape
+# (tempdoc 624 battlefield retrospective) ---
+
+
+class TestAssertMcpConfigHttpTyped:
+    def test_raises_on_url_without_type(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigMissingTypeError) as exc_info:
+            assert_mcp_config_http_typed(str(cfg))
+        msg = str(exc_info.value)
+        assert "justsearch" in msg
+        assert "type" in msg
+        assert '"type": "http"' in msg  # the fix must be shown, not just named
+
+    def test_passes_with_type_http(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:56300/mcp"}}}',
+            encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # must not raise
+
+    def test_passes_for_command_style_entry_without_url(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"command":"node","args":["server.js"]}}}',
+            encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # no `url` -- not the silent-drop shape
+
+    def test_passes_for_empty_mcp_servers(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text('{"mcpServers":{}}', encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # condition A's empty config
+
+    def test_passes_for_missing_file(self, tmp_path):
+        assert_mcp_config_http_typed(str(tmp_path / "does-not-exist.json"))  # must not raise
+
+    def test_passes_for_malformed_json(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text("not json", encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # must not raise
+
+    def test_raises_naming_the_offending_server(self, tmp_path):
+        """Multiple servers -- the error must name the specific one missing `type`."""
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"other":{"type":"http","url":"http://x/mcp"},'
+            '"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigMissingTypeError, match="justsearch"):
+            assert_mcp_config_http_typed(str(cfg))
 
 
 # --- cmd_utility_calibrate CLI wiring: exit non-zero on failed readiness ---

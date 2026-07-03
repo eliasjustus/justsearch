@@ -4035,3 +4035,77 @@ claim text (below, twenty-second-pass draft) awaits founder sign-off; nothing pu
 > designed but is currently unmeasurable (the degradation defeats both the agent's vision and the
 > extraction pipeline). Replacing file tools entirely with retrieval (substitution) was separately
 > measured significantly harmful and is reported diagnostically only.
+
+---
+
+# The dead-config discovery (2026-07-03, twenty-third pass) — condition B never had the tools; the certified "null" is an A-vs-A replication; the true U0 is REOPENED
+
+> A five-agent mechanism investigation over the certified records' per-cell tool-call traces (the
+> capability As-built #8 added), launched to answer "did B agents call the tools, distrust results,
+> get wrong chunks, or fail reasoning?" — and the answer was none of the above.
+
+## The finding, with its verification chain
+
+**Zero MCP tool invocations exist in any of the 260 certified B cells — because the JustSearch tools
+were never offered to the model.** The harness's `mcp.json`
+(`{"mcpServers":{"justsearch":{"url":...}}}`) lacks `"type":"http"`, and the Claude CLI **silently
+drops** such an entry. Verification, each step independent: (1) three-way scan of the certified logs
+(tool-name census, raw `mcp__` substring over the whole JSON, completion-text scan) — zero, while the
+same capture recorded 5,309 file-tool calls; (2) the orchestrator's independent scan of tonight's
+separate repro logs — zero; (3) a live probe with the backend up and the exact as-run config: the
+init event reports `mcp_servers: []`, no justsearch tools among the 29 offered; (4) the decisive
+one-line A/B: adding `"type":"http"` connects instantly and offers all six `mcp__justsearch__*`
+tools; (5) two further agents independently re-confirmed zero MCP calls across **every** battlefield
+log directory ever recorded, including all aborted runs. The broken shape is even documented as the
+canonical transport in `utility_calibrate.py`'s own docstring — the doc carried the bug.
+
+## What this reinterprets (every battlefield-era number, honestly restated)
+
+- **Condition B was behaviorally condition A with a dead config attached.** The certified pooled
+  Δ−0.027 (p=0.476) with sign-flipping strata is the **noise floor between two identical arms** — the
+  one silver lining: it empirically validates the methodology's seed-noise envelope with real money.
+- **Condition C was no-tools-at-all** (file tools disallowed AND MCP dead). "Substitution is
+  significantly harmful" — As-built #5's headline reversal, attributed then to the Bash-leak fix — is
+  reinterpreted: C agents had nothing to work with. All July-2 and 2026-07-03 B/C numbers carry dead
+  arms. The June MultiHop floor runs predate this config file and are not impugned by this finding.
+- **The governance gap is exact and ironic:** §M.8 item 2 empirically asserts *disallowed* tools per
+  cell; nothing ever asserted the *expected* surface was offered. Even the record's
+  `mcp_tool_surface_hash` was computed from outside the cells — a surface the cells never saw. The
+  twenty-second pass's claim-text draft is **WITHDRAWN** — its "no measurable effect" sentence, while
+  numerically true of the record, would misrepresent a measurement in which the treatment was never
+  administered.
+
+## The mechanism investigation's standing findings (valid regardless of the config — the context any future improvement plan starts from)
+
+1. **The battlefield task is pure retrieval**: given all three chain docs, accuracy is 1.00 in both
+   languages (0/71 discordant pairs failed with docs in hand; oracle ceiling ~95-99%). The decisive
+   step is hop-1: mapping the question's paraphrase onto the corpus's literal vocabulary.
+2. **The file-tools agent plays hop-1 as a stochastic synonym-expansion gamble** (~2-5 broad greps),
+   winning 78% (EN) / 51% (DE); losses split 59% explicit abstention / 34% confident wrong-sibling.
+   It reads ~1.5% of the corpus (never scans), gets hops 2-3 nearly free via the corpus's
+   entity≡filename convention, and its scaling limit is search-output explosion (structural greps
+   scale linearly with corpus size; budget death projected in the low thousands of docs). A
+   28%-of-DE-cells hallucinated-index-file pattern (`all_locations.txt`) and weaker German synonym
+   bridging explain most of the DE gap; corpus structure is provably draw-identical across languages.
+3. **The engine wins the same gamble near-deterministically and language-invariantly** (clean-index
+   replay): verbatim-question paste → hop-1 top-3 69% / top-10 79% (EN = DE); one plausible
+   reformulation → 90/96%; best-of-3 → 94/98%. Residual misses are the corpus's widest deliberate
+   paraphrase gaps. The 69→90 verbatim-vs-descriptor gap is an engine-side opportunity in its own
+   right (question boilerplate dilutes ranking) — spun out as tempdoc 678; the agents' ~20-turn
+   chain-walking cost anatomy is spun out as tempdoc 679 (hard-triggered on the re-run's traces).
+4. **Honest projection for a real B arm** (labeled projection, to be tested not assumed): EN
+   parity-to-modest-gain (the baseline is genuinely strong at 390 docs); DE potentially +0.2 to +0.4
+   (engine language-invariance vs agent language collapse) — large enough to clear the measured
+   seed-noise floor at current n.
+
+## Corrective obligations (this pass's actions)
+
+Harness: config-shape validation (fail-fast on url-without-type), per-cell offered-surface capture +
+assertion from the init event (the mirror of the disallowed assertion; B/C cells with a config but no
+offered justsearch tools are invalid cells), aggregate surface-verification counts on the record, and
+an `arm_invalidation` revision reason. Records: every 2026-07-03 certified record annotated via the
+revision field as arm-invalidated (kept as history — they are a real, well-governed noise-floor
+measurement, not an agent-utility measurement). Register: F-027 corrected accordingly; the legal-leg
+collapse observed en route filed as a new open question. The genuine certified run — working config,
+adoption measured before utility — is a fresh spend decision (~$3 adoption pilot, then ~$90 full run)
+with a mechanism-backed prediction to test.

@@ -133,10 +133,13 @@ def base_url_from_mcp_config(mcp_config_path: str) -> str | None:
     Neither `run_utility_eval` nor `run_agent_eval` takes its own `--base-url` option —
     the backend address they actually need for the watched-roots safety check is already
     carried by the `--mcp-config` file the `claude` subprocess uses for its own MCP
-    transport: `{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:PORT/mcp"}}}` (see
-    `util-smoke/README.md`). Deriving it here — instead of adding a second, possibly
-    divergent base-url flag — guarantees the roots check always targets the SAME backend
-    the agent under test is configured to talk to.
+    transport: `{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:PORT/mcp"}}}`
+    (see `util-smoke/README.md`). **The `"type":"http"` field is mandatory** — a `url`-only
+    entry is silently DROPPED by the `claude` CLI (see `assert_mcp_config_http_typed`), so an
+    omitted `"type"` is not just a documentation nit here, it is the exact shape that produces
+    a dead config. Deriving the base_url here — instead of adding a second, possibly divergent
+    base-url flag — guarantees the roots check always targets the SAME backend the agent under
+    test is configured to talk to.
 
     Returns None if the file is missing/malformed or doesn't carry a `justsearch` server
     `url` (e.g. condition A's `{"mcpServers":{}}` empty config) — callers should treat
@@ -150,6 +153,51 @@ def base_url_from_mcp_config(mcp_config_path: str) -> str | None:
     if not isinstance(url, str) or not url:
         return None
     return url[: -len("/mcp")] if url.endswith("/mcp") else url.rstrip("/")
+
+
+class McpConfigMissingTypeError(ValueError):
+    """A `--mcp-config` file has an `mcpServers` entry with a `url` but no `type` field.
+
+    Proven (2026-07-03 A/B probe, tempdoc 624 battlefield retrospective): the `claude` CLI
+    SILENTLY DROPS an `mcpServers` entry shaped `{"url": "..."}` without `"type": "http"` —
+    the init event reports `mcp_servers: []` and 0 `mcp__`-prefixed tools, with no warning
+    and a clean exit code. Every condition B/C battlefield cell that used this shape ran with
+    zero MCP tool calls, indistinguishable from a healthy run by exit code or stdout length
+    alone. Fix: add `"type": "http"` to the server entry.
+    """
+
+
+def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
+    """Raise `McpConfigMissingTypeError` if `mcp_config_path` carries an `mcpServers` entry
+    with a `url` but no `type` — the exact shape the `claude` CLI silently drops (see
+    `McpConfigMissingTypeError`'s docstring). Called up front by any code path about to
+    actually hand this config to a `claude` subprocess (`run_utility_eval`), so a dead
+    config aborts the run immediately instead of producing 0-tool-call cells that read as
+    healthy.
+
+    A missing/malformed config file, a config with no `mcpServers` key, an empty
+    `mcpServers` (condition A's `{"mcpServers":{}}`), or a command-style entry
+    (`{"command": ..., "args": [...]}`, no `url`) is NOT an error here — this guards only
+    the specific silent-drop shape (`url` present, `type` absent).
+    """
+    try:
+        cfg = json.loads(Path(mcp_config_path).read_text(encoding="utf-8"))
+    except Exception:
+        return  # missing/malformed config file: not this function's concern
+    servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
+    if not isinstance(servers, dict):
+        return
+    for name, entry in servers.items():
+        if not isinstance(entry, dict):
+            continue
+        if "url" in entry and "type" not in entry:
+            raise McpConfigMissingTypeError(
+                f"mcp_config {mcp_config_path!r} server {name!r} has a `url` but no `type` "
+                "-- the `claude` CLI silently DROPS this entry (proven: url-only -> init "
+                "event mcp_servers=[], 0 tools, clean exit). Fix: add `\"type\": \"http\"` "
+                f"to the server entry, e.g. "
+                f'{{"mcpServers":{{{name!r}:{{"type":"http","url":{entry.get("url")!r}}}}}}}.'
+            )
 
 
 def check_readiness(

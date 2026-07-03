@@ -28,6 +28,7 @@ from jseval.agent_retrieval_eval import (
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
+    parse_claude_init_event,
     parse_claude_stream_json,
     run_agent_eval,
     stage_corpus_dir,
@@ -608,3 +609,59 @@ class TestParseClaudeStreamJson:
 
         assert are.parse_claude_stream_json is parse_claude_stream_json
         assert aui.parse_claude_stream_json is parse_claude_stream_json
+
+
+# --- parse_claude_init_event (tempdoc 624 battlefield retrospective): reads the
+# `system`/`init` event -- the CLI's own disclosure of what it actually connected/
+# offered, distinct from parse_claude_stream_json's tool_use/result extraction. ---
+
+class TestParseClaudeInitEvent:
+    def test_parses_mcp_servers_and_tools(self):
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init",
+             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
+             "tools": ["Read", "Grep", "mcp__justsearch__search_query",
+                       "mcp__justsearch__ingest"]},
+            {"type": "result", "is_error": False, "result": "ok"},
+        )
+        event = parse_claude_init_event(stdout)
+        assert event["mcp_servers"] == [{"name": "justsearch", "status": "connected"}]
+        assert event["tools"] == ["Read", "Grep", "mcp__justsearch__search_query",
+                                   "mcp__justsearch__ingest"]
+
+    def test_dead_config_shows_empty_mcp_servers_and_no_mcp_tools(self):
+        """The exact signature of a silently-dropped `url`-only mcp_config entry:
+        the init event still fires, but mcp_servers is empty and no mcp__ tool
+        is offered -- clean exit, no error, just a missing surface."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [],
+             "tools": ["Read", "Grep", "Glob", "Bash"]},
+            {"type": "result", "is_error": False, "result": "answered from files"},
+        )
+        event = parse_claude_init_event(stdout)
+        assert event["mcp_servers"] == []
+        assert all(not t.startswith("mcp__") for t in event["tools"])
+
+    def test_returns_none_when_no_init_event(self):
+        """Crash/timeout-shaped stdout: the stream never reached an init event."""
+        stdout = _stream_json({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "x"}},
+        ]}})
+        assert parse_claude_init_event(stdout) is None
+
+    def test_skips_malformed_lines_before_init_event(self):
+        stdout = "\n".join([
+            "not json {{{",
+            json.dumps({"type": "system", "subtype": "init", "mcp_servers": [],
+                        "tools": ["Read"]}),
+        ])
+        event = parse_claude_init_event(stdout)
+        assert event["tools"] == ["Read"]
+
+    def test_ignores_non_init_system_events(self):
+        stdout = _stream_json(
+            {"type": "system", "subtype": "other", "tools": ["ignored"]},
+            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
+        )
+        event = parse_claude_init_event(stdout)
+        assert event["tools"] == ["Read"]
