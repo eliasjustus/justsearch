@@ -1,7 +1,7 @@
 ---
 title: "Observations channel, long-term design: the inbox is a peripheral-signal CHANNEL (many scoped writers → one consumer), and a channel is only complete with identity, derived status, routed destinations, and a named consumer — free-text append + egress-by-convention cannot deliver its own contract (measured: the 665 convention fired zero times while the store quadrupled). Design: keep 618's write path verbatim; add grouping at the fold (recurrence becomes the ranking signal, not a rule violation), probe-derived retirement (propose-then-accept), kind-routing to already-existing owned destinations (issues/, baseline-style expected-state, lesson delivery, owning tempdocs), and a named periodic consumer. Conforms to the canonical-authority-and-projection seam (622/623/625/646) — the inbox's 'still true / seen N times' state becomes a projection of evidence, not asserted prose. Design-recorded; supersedes the egress half of 665 on post-implementation evidence; write-path mechanics unchanged."
 type: tempdocs
-status: "open — DESIGN SETTLED, NOT IMPLEMENTED (theorization only, per owner direction 2026-07-05). No code, rules, or observations.md content changed by this pass. The one genuine owner decision is recorded in §The fork (graded channel vs honest scratchpad); everything else follows from it. Same-day targeted §Research pass: harness-native auto memory verified as NOT displacing the channel (machine-local, per-user, untriaged) but adding a named fork risk to the lessons lane; the field's shared-memory-layer convergence recorded as a deliberate, reasoned divergence; quarantine-list practice confirms the expected-state lane and adds an exit-discipline requirement to its pins. Same-day §Confidence pass: both falsifiers tested against the live inbox — identity model holds (77% mechanically anchorable; transitive merging refuted, propose-and-confirm adopted), probes strongly validated (7/7 writable, 2/7 groups already stale incl. a red-test group that now passes), delivery seam and blast radius confirmed small. Ready for an implementing session."
+status: "IMPLEMENTED 2026-07-06 (§As-built, worktree 680-observations-channel — every design move, both absorbed items, and all five orphan teardowns shipped and validated; not yet a PR). The fork was resolved to option A (graded channel) by the implementation go-ahead; the fallback-to-scratchpad condition stands as designed. Earlier same-doc history: design settled + research pass + confidence pass 2026-07-05. Same-day targeted §Research pass: harness-native auto memory verified as NOT displacing the channel (machine-local, per-user, untriaged) but adding a named fork risk to the lessons lane; the field's shared-memory-layer convergence recorded as a deliberate, reasoned divergence; quarantine-list practice confirms the expected-state lane and adds an exit-discipline requirement to its pins. Same-day §Confidence pass: both falsifiers tested against the live inbox — identity model holds (77% mechanically anchorable; transitive merging refuted, propose-and-confirm adopted), probes strongly validated (7/7 writable, 2/7 groups already stale incl. a red-test group that now passes), delivery seam and blast radius confirmed small. Ready for an implementing session."
 created: 2026-07-05
 updated: 2026-07-06
 author: agent design-theorization pass (live repo inspection: docs/observations.md working-tree state, docs/observations.d/, scripts/agent-analytics/{note-observation,fold-observations}.mjs, docs/reference/issues/*, docs/reference/contributing/development-philosophy.md, .claude/rules/hooks-reference.md; full read of tempdoc 665 incl. its theorization/design/kill-list, tempdoc 646, tempdoc 618's Seam C record via 665's citations + branch-safety.md)
@@ -427,3 +427,52 @@ isolate-and-reconcile, via its rules-layer projection and 665's citations); 646 
 conforms to and the genre model for design-recorded-not-built); 653 (rules out bot-commit folds);
 673's kernel-shape evaluation inherited via 665 (kernel rejected as enforcement weight here, same
 verdict). Newer stubs 675–679 are eval-domain and do not touch this channel.
+
+## As-built (2026-07-06, worktree `680-observations-channel` — all design items implemented)
+
+**Shipped, per design move:**
+1. **Blind writers** — `note-observation.mjs`/shards untouched; the skip-duplicates rule deleted
+   everywhere it lived (observations.md Rules, `development-philosophy.md`, the `subagent-guide`
+   brief), replaced by "re-observation is signal".
+2. **Identity at the fold** — new `lib/observations-store.mjs` (grouped-store grammar, primary-
+   anchor+symptom fingerprinting, occurrence merge, kind heuristics; 13 tests);
+   `fold-observations.mjs` rewritten to fold shard entries into conditions (10 tests preserving the
+   618 properties: crash-safe order, dry-run purity, idempotence, failed-delete recovery).
+3. **Derived status** — `observations-triage.mjs --probe` janitor: probe exit 0 ⇒ writes
+   `proposed-retire` (deletion stays human); live-verified against the real store (3 cheap probes,
+   all correctly re-affirmed, zero false retirements; 6 tests).
+4. **Kind routing + destinations** — kinds route per the Rules; the environment lane shipped as
+   `expected-state.v1.json` (6 pins, each with an exitProbe or reviewBy — the research-pass exit
+   discipline) delivered by the new `known-state-hint` PreToolUse Bash advisory (pipe-mask-hint
+   template; 12 precision tests; registered in `governance/agent-hooks.v1.json` with a unit bite;
+   wiring regenerated; hook-integrity gate green; runtime-probed firing and silent). The
+   posture-adjudication destination shipped as `development-philosophy.md §Softness portfolio`
+   (3 public-evidenced seeds).
+5. **Named consumer feedstock** — `observations-triage.mjs` default mode is the read-model; first
+   live run: depth 358 (343 open, 9 proposed-retire, 6 parked), top-by-seen 12×/12×/12×/9×/8×.
+6. **Structure** — the one-time migration: 460 flat entries → 345 curated conditions (31 hand-merged
+   cross-anchor clusters; 459 occurrences preserved; 1 parse artifact excluded), then the extended
+   fold consumed 5 pending real shards (19 entries: 6 merged, 13 new) → 358 conditions.
+   Re-fold verified idempotent.
+
+**Orphan checklist (teardown rode along, per §Orphans):** (1) skip-duplicates rule — deleted in all
+three homes ✓; (2) delete-on-resolve demoted to opportunistic path in both rule texts ✓; (3)
+`insertIntoInbox` exact-line dedupe + `countStaleResolved` — removed from the fold ✓; (4) flat
+`## Inbox` format — migrated; the fold now refuses (with a pointer) a pre-680 store ✓; (5) 665's
+structured-storage rejection — superseded as a decision, recorded in this doc; 665 itself untouched
+(dated history) ✓.
+
+**Deviations, recorded honestly:** (a) kind confirmation is complete for all manually-curated and
+multi-entry conditions; the ~300 singleton tail keeps fold-proposed `?` markers — incremental
+confirmation at triage is exactly what the marker exists for, and bulk-stripping it would have
+asserted review that didn't happen at depth. (b) No `hooks-reference.md` entry for the new hook:
+that file is over its always-loaded budget and tempdoc 681 owns shrinking it; the hook's own
+message self-documents (decision per 681's direction). (c) `.claude/settings.local.json` hook
+wiring is per-checkout (gitignored); other checkouts pick the new hook up at their next
+`gen-agent-hooks-wiring` run — the known regen gap is itself a condition in the store.
+(d) Merge-time step for whenever this branch is published: rebase, then run the fold once — flat
+entries that accumulated on main fold into conditions by construction.
+
+**Validation:** all five suites green (store 13, fold 10, note 11, triage 6, hook 12);
+hook-integrity gate green; live fold + janitor + read-model runs against the real store;
+`check-tempdoc-numbers` green; full `gradlew build -x test` at close (see final commit).
