@@ -24,7 +24,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './ResultsCard.js';
-import type { ResultsCard, CardHit, CardSelectionDetail, CardSnapshot } from './ResultsCard.js';
+import type {
+  ResultsCard,
+  CardHit,
+  CardSelectionDetail,
+  CardSnapshot,
+  SearchProvenance,
+} from './ResultsCard.js';
 import type { Availability } from '../../state/availability.js';
 
 function hit(id: string, extra: Partial<CardHit> = {}): CardHit {
@@ -46,6 +52,8 @@ interface MountOpts {
   selectedIds?: ReadonlySet<string>;
   askAvailability?: Availability | null;
   facetSelections?: Record<string, string[]>;
+  variant?: 'live' | 'snapshot' | 'excerpt';
+  provenance?: SearchProvenance | null;
 }
 
 async function mount(snapshot: CardSnapshot, opts: MountOpts = {}): Promise<ResultsCard> {
@@ -54,10 +62,21 @@ async function mount(snapshot: CardSnapshot, opts: MountOpts = {}): Promise<Resu
   if (opts.selectedIds) el.selectedIds = opts.selectedIds;
   if (opts.askAvailability !== undefined) el.askAvailability = opts.askAvailability;
   if (opts.facetSelections) el.facetSelections = opts.facetSelections;
+  if (opts.variant) el.variant = opts.variant;
+  if (opts.provenance !== undefined) el.provenance = opts.provenance;
   document.body.appendChild(el);
   await el.updateComplete;
   return el;
 }
+
+const PROVENANCE: SearchProvenance = {
+  actor: 'user',
+  query: 'pipeline',
+  mode: 'HYBRID',
+  matchCount: 5,
+  resultCount: 5,
+  executedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+};
 
 function meta(el: ResultsCard): Element {
   const m = el.shadowRoot?.querySelector('[data-testid="card-meta"]');
@@ -323,5 +342,133 @@ describe('ResultsCard — quick badge', () => {
       passStage: 'quick',
     });
     expect(el.shadowRoot?.querySelector('[data-testid="meta-quick"]')).not.toBeNull();
+  });
+});
+
+describe('ResultsCard — variant="snapshot" (Search Thread S4-final)', () => {
+  const SNAPSHOT_HITS = [hit('a'), hit('b'), hit('c'), hit('d')];
+
+  it('renders the provenance header instead of the live meta line', async () => {
+    const el = await mount(
+      { ...BASE, results: SNAPSHOT_HITS, matchCount: 5, totalHits: 5 },
+      { variant: 'snapshot', provenance: PROVENANCE },
+    );
+    const header = el.shadowRoot?.querySelector('[data-testid="card-provenance"]');
+    expect(header).not.toBeNull();
+    expect(header!.textContent).toContain('You');
+    expect(header!.textContent).toContain('searched');
+    expect(header!.textContent).toContain('"pipeline"');
+    expect(header!.textContent).toContain('Semantic + keyword');
+    expect(el.shadowRoot?.querySelector('[data-testid="card-meta"]')).toBeNull();
+  });
+
+  it('collapses to the top 3 rows with a "Show all N" expander that toggles to every row', async () => {
+    const el = await mount(
+      { ...BASE, results: SNAPSHOT_HITS, matchCount: 4, totalHits: 4 },
+      { variant: 'snapshot', provenance: PROVENANCE },
+    );
+    expect(el.shadowRoot?.querySelectorAll('[data-testid="search-result-row"]').length).toBe(3);
+    const expander = el.shadowRoot?.querySelector('[data-testid="snapshot-expander"]') as HTMLButtonElement;
+    expect(expander).not.toBeNull();
+    expect(expander.textContent).toContain('Show all 4');
+
+    expander.click();
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelectorAll('[data-testid="search-result-row"]').length).toBe(4);
+    expect(expander.textContent).toContain('Show less');
+  });
+
+  it('has no copy actions / facets / Ask AI (a frozen record)', async () => {
+    const el = await mount(
+      { ...BASE, results: SNAPSHOT_HITS, matchCount: 4, totalHits: 4, facets: { file_kind: { markdown: 4 } } },
+      { variant: 'snapshot', provenance: PROVENANCE, askAvailability: { kind: 'available' } },
+    );
+    expect(el.shadowRoot?.querySelector('[data-testid="copy-actions"]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('[data-testid="facet-row"]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('.ask-ai-btn')).toBeNull();
+  });
+
+  it('rows are openable (card-open) but not selectable (no card-selection, no context menu)', async () => {
+    const el = await mount(
+      { ...BASE, results: SNAPSHOT_HITS, matchCount: 4, totalHits: 4 },
+      { variant: 'snapshot', provenance: PROVENANCE },
+    );
+    const opens: string[] = [];
+    const selections = collectSelections(el);
+    el.addEventListener('card-open', (e) => opens.push((e as CustomEvent<{ id: string }>).detail.id));
+
+    clickRow(el, 'b');
+
+    expect(opens).toEqual(['b']);
+    expect(selections).toEqual([]);
+    expect(el.shadowRoot?.querySelector('[data-testid="row-actions"]')).toBeNull();
+  });
+
+  it('the "Search again" affordance dispatches a bubbling card-fork with the frozen query', async () => {
+    const el = await mount(
+      { ...BASE, results: SNAPSHOT_HITS, matchCount: 4, totalHits: 4 },
+      { variant: 'snapshot', provenance: PROVENANCE },
+    );
+    const forks: Array<{ query: string }> = [];
+    document.body.addEventListener('card-fork', (e) => forks.push((e as CustomEvent<{ query: string }>).detail));
+
+    (el.shadowRoot?.querySelector('[data-testid="card-fork-btn"]') as HTMLButtonElement).click();
+
+    expect(forks).toEqual([{ query: 'pipeline' }]);
+  });
+
+  it('renders the honest empty note (not fabricated rows) when no hits are stored', async () => {
+    const el = await mount(
+      { ...BASE, results: [], matchCount: 4, totalHits: 4 },
+      { variant: 'snapshot', provenance: PROVENANCE },
+    );
+    expect(el.shadowRoot?.querySelector('[data-testid="snapshot-empty-note"]')?.textContent).toContain(
+      'results not stored',
+    );
+    expect(el.shadowRoot?.querySelector('[data-testid="search-result-row"]')).toBeNull();
+  });
+});
+
+describe('ResultsCard — variant="excerpt" (Search Thread S4-final)', () => {
+  it('renders one collapsed line summarizing the query + result count', async () => {
+    const el = await mount(
+      { ...BASE, results: [hit('a'), hit('b')], matchCount: 2, totalHits: 2 },
+      { variant: 'excerpt', provenance: { ...PROVENANCE, resultCount: 2 } },
+    );
+    const btn = el.shadowRoot?.querySelector('[data-testid="card-excerpt"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain('pipeline');
+    expect(btn!.textContent).toContain('2 result');
+    expect(el.shadowRoot?.querySelector('[data-testid="card-snapshot"]')).toBeNull();
+  });
+
+  it('expands in place to the full snapshot rendering on click', async () => {
+    const el = await mount(
+      { ...BASE, results: [hit('a'), hit('b')], matchCount: 2, totalHits: 2 },
+      { variant: 'excerpt', provenance: { ...PROVENANCE, resultCount: 2 } },
+    );
+    (el.shadowRoot?.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('[data-testid="card-snapshot"]')).not.toBeNull();
+    expect(el.shadowRoot?.querySelectorAll('[data-testid="search-result-row"]').length).toBe(2);
+    const collapse = el.shadowRoot?.querySelector('[data-testid="excerpt-collapse"]') as HTMLButtonElement;
+    expect(collapse).not.toBeNull();
+
+    collapse.click();
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('[data-testid="card-excerpt"]')).not.toBeNull();
+  });
+
+  it('a restored thread event (no persisted hits) expands to the honesty note, not fabricated rows', async () => {
+    const el = await mount(
+      { ...BASE, results: [], matchCount: 3, totalHits: 3 },
+      { variant: 'excerpt', provenance: { ...PROVENANCE, resultCount: 3 } },
+    );
+    (el.shadowRoot?.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('[data-testid="snapshot-empty-note"]')).not.toBeNull();
+    expect(el.shadowRoot?.querySelector('[data-testid="card-fork-btn"]')).not.toBeNull();
   });
 });

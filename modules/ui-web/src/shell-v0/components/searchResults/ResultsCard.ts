@@ -57,6 +57,7 @@ import { openContextMenu } from '../ContextMenu.js';
 import { setMenuAnchor } from '../../utils/selectionAnchor.js';
 import { recordOpenDisposition } from '../../state/searchState.js';
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
+import { formatRelative } from '../../utils/relativeTime.js';
 import type { Availability } from '../../state/availability.js';
 import type { SearchTrace } from '../../../api/generated/index.js';
 import '../Control.js';
@@ -96,8 +97,31 @@ export interface CardSelectionDetail {
   primaryIndex: number;
 }
 
+/**
+ * Search Thread S4-final — the identity of a COMMITTED (frozen) search, carried by `variant`
+ * `'snapshot'` | `'excerpt'`: who ran it, what they typed, and the funnel counts at the moment it
+ * froze. Distinct from `snapshot` (the row DATA, which may be empty for a restored thread event —
+ * the backend persists only `docIds`, not full hit objects) — `provenance` is always present for a
+ * non-`'live'` card; `snapshot` supplies the rows when they happen to be available.
+ */
+export interface SearchProvenance {
+  readonly actor: 'user' | 'agent';
+  readonly query: string;
+  readonly mode: string;
+  readonly matchCount: number;
+  readonly resultCount: number;
+  /** ISO-8601 — when the frozen search ran. */
+  readonly executedAt: string;
+}
+
 /** How long the terminal "refined ✓" stamp stays before decaying to the mode text. */
 const REFINED_STAMP_MS = 4000;
+
+/** Search Thread S1/S4-final — the retrieval-mode label, shared by the live meta line
+ *  ({@link ResultsCard.renderRetrievalMode}) and the frozen-card provenance header. */
+function retrievalModeLabel(mode: string | null | undefined): string | null {
+  return mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
+}
 
 export class ResultsCard extends JfElement {
   static properties = {
@@ -108,6 +132,13 @@ export class ResultsCard extends JfElement {
     copyText: { attribute: false },
     variant: { type: String },
     refinedStampVisible: { state: true },
+    // Search Thread S4-final — the frozen-card identity (who/what/when); required for
+    // 'snapshot'/'excerpt', ignored for 'live'.
+    provenance: { attribute: false },
+    // 'snapshot' — the "Show all N" / "Show less" toggle over the row list (collapsed to 3 by
+    // default). 'excerpt' — the inline expand-to-snapshot toggle.
+    expanded: { state: true },
+    excerptOpen: { state: true },
   };
 
   declare snapshot: CardSnapshot | null;
@@ -117,9 +148,13 @@ export class ResultsCard extends JfElement {
   declare askAvailability: Availability | null;
   /** Host clipboard seam (plugin hosts route host.ui.copyToClipboard); defaults to the shared util. */
   declare copyText: (text: string) => Promise<unknown>;
-  /** 'live' today; 'snapshot' | 'excerpt' arrive with the thread stages. */
+  /** 'live' — the active search. 'snapshot' — a committed frozen record (full render, collapsible
+   *  rows). 'excerpt' — the one-line collapsed form of a snapshot (expands in place). */
   declare variant: 'live' | 'snapshot' | 'excerpt';
   declare refinedStampVisible: boolean;
+  declare provenance: SearchProvenance | null;
+  declare expanded: boolean;
+  declare excerptOpen: boolean;
 
   /** Shift-range anchor (ports SearchSurface's 508-followup §γ4 model into the one card). */
   private anchorIndex = -1;
@@ -135,6 +170,9 @@ export class ResultsCard extends JfElement {
     this.askAvailability = null;
     this.variant = 'live';
     this.refinedStampVisible = false;
+    this.provenance = null;
+    this.expanded = false;
+    this.excerptOpen = false;
     // The one shared clipboard seam by default; plugin hosts may override with
     // their host.ui.copyToClipboard wrapper (same util underneath).
     this.copyText = (text: string) => copyToClipboard(text);
@@ -186,6 +224,14 @@ export class ResultsCard extends JfElement {
    * positive-outcome signal — 580 §17 P3) so neither host can forget it.
    */
   private handleRowClick(hit: CardHit, event: MouseEvent): void {
+    // Search Thread S4-final — a frozen card's rows are OPENABLE but not SELECTABLE: no
+    // multi-select event, and no `recordOpenDisposition` (that feedback signal is keyed to the
+    // CURRENT live search's interactionId in the searchState singleton — attributing it to a
+    // historical/frozen search here would misfile the ranking signal under the wrong query).
+    if (this.variant !== 'live') {
+      this.emitCard('card-open', { id: hit.id });
+      return;
+    }
     const hits = this.snapshot?.results ?? [];
     const clickedIndex = hits.findIndex((h) => h.id === hit.id);
     recordOpenDisposition(hit.id);
@@ -262,8 +308,7 @@ export class ResultsCard extends JfElement {
 
   private renderRetrievalMode(): unknown {
     const mode = (this.snapshot?.searchTrace as SearchTrace | null | undefined)?.effectiveMode;
-    const label =
-      mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
+    const label = retrievalModeLabel(mode);
     if (label == null) return nothing;
     return html` <span class="retrieval-mode" data-testid="retrieval-mode" data-mode=${mode}>· ${label}</span>`;
   }
@@ -347,7 +392,11 @@ export class ResultsCard extends JfElement {
   }
 
   private renderRow(hit: CardHit): TemplateResult {
-    const selected = this.selectedIds.has(hit.id);
+    // Search Thread S4-final — a frozen card's rows never carry the live selection/context-menu
+    // affordances (no multi-select, no "Ask about this file" scope mutation from a historical
+    // search); they stay openable via the plain click branch in handleRowClick.
+    const isLive = this.variant === 'live';
+    const selected = isLive && this.selectedIds.has(hit.id);
     const view = projectResultView(hit as unknown as ResultViewInput);
     const query = this.snapshot?.query ?? '';
     return html`
@@ -363,6 +412,7 @@ export class ResultsCard extends JfElement {
         data-addressable-id=${hit.id}
         @click=${(e: MouseEvent) => this.handleRowClick(hit, e)}
         @contextmenu=${(e: MouseEvent) => {
+          if (!isLive) return;
           e.preventDefault();
           void this.openResultMenu(hit, { x: e.clientX, y: e.clientY });
         }}
@@ -373,17 +423,19 @@ export class ResultsCard extends JfElement {
           ${view.kind === 'code' && view.approxLine != null
             ? html`<span class="line-anchor">:L${view.approxLine}</span>`
             : nothing}
-          <button
-            class="row-actions"
-            data-testid="row-actions"
-            title="Actions"
-            aria-label=${`Actions for ${view.title}`}
-            @click=${(e: MouseEvent) => {
-              e.stopPropagation();
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              void this.openResultMenu(hit, { x: r.left, y: r.bottom });
-            }}
-          >⋯</button>
+          ${isLive
+            ? html`<button
+                class="row-actions"
+                data-testid="row-actions"
+                title="Actions"
+                aria-label=${`Actions for ${view.title}`}
+                @click=${(e: MouseEvent) => {
+                  e.stopPropagation();
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  void this.openResultMenu(hit, { x: r.left, y: r.bottom });
+                }}
+              >⋯</button>`
+            : nothing}
         </div>
         <div class="path" title=${hit.path}>${formatDisplayPath(hit.path)}</div>
         ${view.snippet
@@ -396,7 +448,114 @@ export class ResultsCard extends JfElement {
     `;
   }
 
+  /**
+   * Search Thread S4-final — the frozen-card provenance header: "[actor] searched "<query>" ·
+   * <funnel counts> · <mode> · <relative time>" + the "Search again" fork affordance. Shared by
+   * `variant='snapshot'` and the expanded form of `variant='excerpt'`.
+   */
+  private renderProvenanceHeader(): TemplateResult | typeof nothing {
+    const p = this.provenance;
+    if (!p) return nothing;
+    const actorLabel = p.actor === 'agent' ? 'Agent' : 'You';
+    const countLabel = matchCountLabel(p.matchCount, p.resultCount, p.mode === 'VECTOR', p.matchCount, false);
+    const mLabel = retrievalModeLabel(p.mode);
+    const when = formatRelative(new Date(p.executedAt).getTime());
+    return html`<div class="provenance" data-testid="card-provenance">
+      <span class="provenance-text">
+        <span class="provenance-actor">${actorLabel}</span> searched
+        <span class="provenance-query">"${p.query}"</span>
+        · ${countLabel}${mLabel ? html` · ${mLabel}` : nothing} · ${when}
+      </span>
+      <button
+        type="button"
+        class="provenance-fork"
+        data-testid="card-fork-btn"
+        @click=${() => this.emitCard('card-fork', { query: p.query })}
+      >Search again</button>
+    </div>`;
+  }
+
+  /**
+   * Search Thread S4-final — the row list under the provenance header: collapsed to the top 3
+   * rows with a "Show all N" expander, or (a restored thread event carries no persisted hits — the
+   * backend keeps only `docIds`) an honest empty note instead of a fabricated row list.
+   */
+  private renderSnapshotRows(): TemplateResult {
+    const rows = this.snapshot?.results ?? [];
+    if (rows.length === 0) {
+      return html`<div class="snapshot-empty-note" data-testid="snapshot-empty-note">
+        results not stored — run again to see them
+      </div>`;
+    }
+    const visible = this.expanded ? rows : rows.slice(0, 3);
+    return html`
+      <div class="results-list snapshot-rows" role="list" id="search-results-list" aria-label="Search results">
+        ${repeat(
+          visible,
+          (h) => h.id,
+          (h) => this.renderRow(h),
+        )}
+      </div>
+      ${rows.length > 3
+        ? html`<button
+            type="button"
+            class="snapshot-expander"
+            data-testid="snapshot-expander"
+            @click=${() => {
+              this.expanded = !this.expanded;
+            }}
+          >${this.expanded ? 'Show less' : `Show all ${rows.length}`}</button>`
+        : nothing}
+    `;
+  }
+
+  /** Search Thread S4-final — the full frozen-card render: header + collapsible rows. */
+  private renderSnapshotVariant(): TemplateResult {
+    return html`<div class="results-card-snapshot" data-testid="card-snapshot">
+      ${this.renderProvenanceHeader()} ${this.renderSnapshotRows()}
+    </div>`;
+  }
+
+  /**
+   * Search Thread S4-final — the collapsed one-line form: a compact chip-style summary that
+   * expands IN PLACE to the full snapshot rendering (never navigates away / never mutates the
+   * underlying commit — append-only).
+   */
+  private renderExcerpt(): TemplateResult {
+    const p = this.provenance;
+    if (!p) return html``;
+    if (this.excerptOpen) {
+      return html`<div class="results-card-excerpt-expanded" data-testid="card-excerpt-expanded">
+        ${this.renderSnapshotVariant()}
+        <button
+          type="button"
+          class="excerpt-collapse"
+          data-testid="excerpt-collapse"
+          @click=${() => {
+            this.excerptOpen = false;
+          }}
+        >Collapse</button>
+      </div>`;
+    }
+    const n = this.snapshot?.results?.length ? this.snapshot.results.length : p.resultCount;
+    return html`<button
+      type="button"
+      class="results-card-excerpt"
+      data-testid="card-excerpt"
+      aria-expanded="false"
+      @click=${() => {
+        this.excerptOpen = true;
+      }}
+    >
+      <span aria-hidden="true">🔍</span> "${p.query}" · ${n} result${n === 1 ? '' : 's'} ▸
+    </button>`;
+  }
+
   override render(): TemplateResult | typeof nothing {
+    // Search Thread S4-final — a frozen card renders entirely through its own template (the
+    // provenance header replaces the live meta line; no facets/copy/Ask AI on a frozen record).
+    if (this.variant === 'excerpt') return this.renderExcerpt();
+    if (this.variant === 'snapshot') return this.renderSnapshotVariant();
     const s = this.snapshot;
     const results = s?.results ?? [];
     if (!s || (!s.isSearching && results.length === 0 && !(s.query ?? '').trim())) return nothing;
@@ -596,6 +755,109 @@ export class ResultsCard extends JfElement {
         color: var(--text-primary);
         border-color: var(--border-subtle);
         background: var(--surface-hover);
+        outline: none;
+      }
+      /* Search Thread S4-final — the frozen-card frame: a bordered card distinguishes a committed
+         snapshot from the live card it sits above in the retrieve tier's flow. */
+      .results-card-snapshot {
+        margin: 0.35rem 0;
+        border: 1px solid var(--border-subtle);
+        border-radius: 0.375rem;
+        overflow: hidden;
+      }
+      .results-card-excerpt-expanded .results-card-snapshot {
+        margin: 0;
+        border: none;
+        border-radius: 0;
+      }
+      .provenance {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.5rem 1.25rem;
+        font-size: var(--font-size-xs);
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .provenance-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .provenance-actor {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .provenance-query {
+        color: var(--text-primary);
+      }
+      .provenance-fork {
+        flex-shrink: 0;
+        padding: 0.125rem 0.5rem;
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        border-radius: 0.25rem;
+        color: var(--text-link);
+        font-size: var(--font-size-xs);
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .provenance-fork:hover,
+      .provenance-fork:focus-visible {
+        color: var(--text-primary);
+        border-color: var(--accent-tint);
+        outline: none;
+      }
+      .snapshot-rows .row {
+        cursor: pointer;
+      }
+      .snapshot-expander,
+      .excerpt-collapse {
+        display: block;
+        margin: 0.25rem 1.25rem 0.6rem;
+        padding: 0.125rem 0.5rem;
+        background: transparent;
+        border: 1px solid var(--border-subtle);
+        border-radius: 0.25rem;
+        color: var(--text-secondary);
+        font-size: var(--font-size-xs);
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .snapshot-expander:hover,
+      .snapshot-expander:focus-visible,
+      .excerpt-collapse:hover,
+      .excerpt-collapse:focus-visible {
+        color: var(--text-primary);
+        border-color: var(--accent-tint);
+        outline: none;
+      }
+      .snapshot-empty-note {
+        padding: 0.5rem 1.25rem 0.75rem;
+        font-size: var(--font-size-xs);
+        color: var(--text-tertiary);
+        font-style: italic;
+      }
+      .results-card-excerpt {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        width: 100%;
+        padding: 0.4rem 1.25rem;
+        background: transparent;
+        border: none;
+        color: var(--text-secondary);
+        font-size: var(--font-size-sm);
+        font-family: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .results-card-excerpt:hover,
+      .results-card-excerpt:focus-visible {
+        background: var(--surface-secondary);
+        color: var(--text-primary);
         outline: none;
       }
     `,

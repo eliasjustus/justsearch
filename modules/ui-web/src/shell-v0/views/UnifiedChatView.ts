@@ -34,7 +34,13 @@ import '../components/Composer.js';
 import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun, compose } from '../utils/compose.js';
 // Search Thread S1 — the ONE results card (side-effect import registers <jf-results-card>).
 import '../components/searchResults/ResultsCard.js';
-import type { CardSelectionDetail } from '../components/searchResults/ResultsCard.js';
+import type {
+  CardSelectionDetail,
+  CardHit,
+  CardSnapshot,
+  SearchProvenance,
+} from '../components/searchResults/ResultsCard.js';
+import type { SearchTrace } from '../../api/generated/index.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 import {
   getSelection as getCurrentSelection,
@@ -264,6 +270,37 @@ import { computeSpacedPositions } from '../primitives/adaptiveSpacing.js';
 import { NavigationController } from '../primitives/navigation.js';
 import '../components/chat/RunNode.js';
 
+/**
+ * Search Thread S4-final — a live search FROZEN at the moment of consequence (open/ask/pin). A
+ * view-local capture of the searchState snapshot at commit time, rendered as a `jf-results-card`
+ * `variant='snapshot'`/`'excerpt'` card. NOT a second search authority: every field is copied
+ * verbatim from `SearchState`/`SearchTrace` at the instant of commit, never independently derived
+ * (the projection-not-fork discipline) — and it is APPEND-ONLY: a commit is never mutated or
+ * removed, only added to (see `commitLiveSearch`).
+ */
+interface CommittedSearch {
+  readonly id: string;
+  readonly query: string;
+  readonly mode: string;
+  readonly matchCount: number;
+  readonly resultCount: number;
+  readonly docIds: string[];
+  readonly executedAt: string;
+  /** Up to 20 hits captured at commit time (the card's rows). */
+  readonly hits: CardHit[];
+}
+
+/**
+ * Opaque id for a {@link CommittedSearch}. Prefers `crypto.randomUUID` (happy-dom shims it in
+ * tests, per pinnedSearchState.ts's `makePinId` — the same defensive pattern reused here); falls
+ * back to a timestamp+random hybrid for older environments.
+ */
+function makeCommittedSearchId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return `cs-${c.randomUUID()}`;
+  return `cs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -344,6 +381,16 @@ export class UnifiedChatView extends JfElement {
     // Search Thread D5 (stage S3) — the pinned scope chips (mirrored from the searchState module
     // store). Recoverable task state, not a transient — survives tab switch like selection/facets.
     scopeChips: { state: true },
+    // Search Thread S4-final — committed (frozen) searches, oldest first. Recoverable task state
+    // (like `thread`/`scopeChips`): these are part of the visible thread history, not in-flight UI —
+    // NOT reset in settleTransients.
+    committedSearches: { state: true },
+    // Search Thread S4-final — the last 8 distinct committed-or-superseded queries this session,
+    // newest first. Recoverable (a convenience history), not a transient.
+    queryTrail: { state: true },
+    // Search Thread S4-final — the query-trail dropdown's open/closed toggle. A transient UI panel
+    // (closes in settleTransients), mirroring showAbilities/forkEditing.
+    queryTrailOpen: { state: true },
   };
 
   declare apiBase: string;
@@ -422,6 +469,12 @@ export class UnifiedChatView extends JfElement {
    *  buildSearchIntent, already unioned in searchState) and AI retrieval (unioned into docIds at
    *  send time — see effectiveDocIds()). */
   declare scopeChips: SearchScopeChip[];
+  /** Search Thread S4-final — committed (frozen) searches, oldest first; see {@link CommittedSearch}. */
+  declare committedSearches: CommittedSearch[];
+  /** Search Thread S4-final — recent-query trail, newest first, deduped, capped at 8. */
+  declare queryTrail: string[];
+  /** Search Thread S4-final — the query-trail dropdown's open/closed toggle. */
+  declare queryTrailOpen: boolean;
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
@@ -579,6 +632,9 @@ export class UnifiedChatView extends JfElement {
     this.facetSelections = {};
     this.routeOverride = null;
     this.scopeChips = [];
+    this.committedSearches = [];
+    this.queryTrail = [];
+    this.queryTrailOpen = false;
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
     this.parentFirstMessagePreview = null;
@@ -707,6 +763,11 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 577 Goal 3 — the retrieve base tier reads the one search store. Same apiBase as chat.
     setSearchApiBase(this.apiBase || '');
     this.searchUnsub = subscribeSearch((s) => {
+      // Search Thread S4-final — a query change SUPERSEDES the previous one; remember it on the
+      // trail before it's gone (the "committed-or-superseded" half — commitLiveSearch below covers
+      // the "committed" half at consequence time).
+      const prevQuery = this.searchSnapshot?.query ?? '';
+      if (prevQuery.trim() && prevQuery !== s.query) this.rememberQueryInTrail(prevQuery);
       this.searchSnapshot = s;
     });
     // §3.9a — facet selections drive the retrieve tier's chips; seed + subscribe.
@@ -769,6 +830,10 @@ export class UnifiedChatView extends JfElement {
     // Search Thread D2/D3 (stage S2) — the per-turn route override is a transient (per-turn) choice,
     // not recoverable task state; a return should re-run the heuristic guess, not keep a stale flip.
     this.routeOverride = null;
+    // Search Thread S4-final — the query-trail dropdown is a transient panel (mirrors
+    // showAbilities/forkEditing above); `committedSearches`/`queryTrail` themselves are deliberately
+    // NOT touched here — they are recoverable task state, the same category as `thread`/`scopeChips`.
+    this.queryTrailOpen = false;
   }
 
   override disconnectedCallback(): void {
@@ -2214,8 +2279,15 @@ export class UnifiedChatView extends JfElement {
     }
   }
 
-  /** Search Thread D2/D3 (stage S2) — escalate the current retrieve turn to a grounded Ask. */
+  /**
+   * Search Thread D2/D3 (stage S2) — escalate the current retrieve turn to a grounded Ask.
+   * Search Thread S4-final — asking is a consequence: commit-on-consequence freezes the active
+   * search BEFORE the affordance flips away from retrieve (reason 'ask') — flipping first would
+   * leave `searchSnapshot` looking the same, but the commit belongs to the query the user was
+   * escalating FROM, so the order is deliberate.
+   */
   private escalateAsk(): void {
+    this.commitLiveSearch('ask');
     this.affordance = 'documents';
     void this.send();
     this.routeOverride = null;
@@ -2224,10 +2296,12 @@ export class UnifiedChatView extends JfElement {
   /**
    * Search Thread D2/D3 (stage S2) — the visible per-turn route indicator, shown only in the retrieve
    * affordance (documents/extract/agent have no ambiguous Enter to disambiguate).
+   * Search Thread S4-final — also hosts the "⌄ recent" query-trail dropdown.
    */
   private renderRouteRow(): TemplateResult {
     const route = this.currentRoute();
     return html`<div class="route-row">
+      ${this.renderQueryTrail()}
       <jf-route-chip
         .route=${route}
         .askAvailability=${projectAvailability('documents', this.aiState)}
@@ -3000,6 +3074,7 @@ export class UnifiedChatView extends JfElement {
     return html`<div class="retrieve-tier" data-testid="retrieve-tier">
       ${/* Search Thread S3 live fix — the card's meta line is the ONE empty-state
             message ("No matches for …"); the view no longer duplicates it. */ ''}
+      ${this.renderCommittedSearches()}
       ${this.retrieveSelectedIds.size > 1
         ? html`<button
             type="button"
@@ -3060,10 +3135,224 @@ export class UnifiedChatView extends JfElement {
     if (!this.askPinned()) this.routeOverride = 'ask';
   }
 
-  /** Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses). */
+  /**
+   * Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses).
+   * Search Thread S4-final — opening a hit on the LIVE card is a consequence: it FREEZES the active
+   * search into a committed snapshot before navigating (commit-on-consequence, reason 'open').
+   */
   private handleRetrieveCardOpen(hitId: string): void {
     const hit = (this.searchSnapshot?.results ?? []).find((h) => h.id === hitId);
-    if (hit) this.openRetrieveHit(hit);
+    if (hit) {
+      this.commitLiveSearch('open');
+      this.openRetrieveHit(hit);
+    }
+  }
+
+  /**
+   * Search Thread S4-final — a `card-open` from an already-committed snapshot/excerpt card
+   * navigates to the document but commits nothing new: the snapshot already froze that search;
+   * only the LIVE card's own open ({@link handleRetrieveCardOpen}) creates a fresh commit
+   * (commit-on-consequence is about the ACTIVE query, not re-interacting with history). Deliberately
+   * does not reuse `openRetrieveHit` verbatim — that helper also calls `recordOpenDisposition`,
+   * which would misattribute a historical open to whatever interactionId the CURRENT live search
+   * happens to hold.
+   */
+  private handleCommittedCardOpen(hitId: string): void {
+    const host = this.host_;
+    if (!host?.search || !host?.ui) return;
+    for (const cs of this.committedSearches) {
+      const hit = cs.hits.find((h) => h.id === hitId);
+      if (hit) {
+        host.ui.showInspector(
+          host.search.hitToSelectedItem(hit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+        );
+        return;
+      }
+    }
+  }
+
+  /**
+   * Search Thread S4-final — "Search again" (a snapshot/excerpt card's provenance-header fork
+   * affordance, `card-fork`): re-issue the frozen query as a NEW live search. Append-only — the
+   * commit the affordance was clicked from is never mutated, only a fresh search starts.
+   */
+  private handleCardFork(query: string): void {
+    this.affordance = 'retrieve';
+    // A fork can be clicked from documents/agent affordance (a restored SEARCH thread item renders
+    // there too); without this the aiState subscription's auto-upgrade-to-'documents' would snap
+    // the affordance straight back the moment aiState next emits (see connectedCallback).
+    this.userToggledAffordance = true;
+    this.routeOverride = null;
+    this.inputDraft = query;
+    setSearchQuery(query);
+    this.onFocusComposer();
+  }
+
+  /**
+   * Search Thread S4-final — remember `query` on the recent-query trail: newest-first, deduped
+   * (an existing entry moves to the front rather than duplicating), capped at 8.
+   */
+  private rememberQueryInTrail(query: string): void {
+    const q = query.trim();
+    if (!q) return;
+    this.queryTrail = [q, ...this.queryTrail.filter((existing) => existing !== q)].slice(0, 8);
+  }
+
+  /** Search Thread S4-final — the query-trail dropdown's entry click: restore the draft + re-issue. */
+  private pickTrailQuery(query: string): void {
+    this.queryTrailOpen = false;
+    this.inputDraft = query;
+    setSearchQuery(query);
+    this.onFocusComposer();
+  }
+
+  /**
+   * Search Thread S4-final — commit-on-consequence: the user OPENED a hit, ASKED (escalated), or
+   * PINNED the active retrieve-tier search. Captures the live search into an append-only
+   * {@link CommittedSearch} snapshot (rendered above the live card, oldest first —
+   * {@link renderCommittedSearches}) and persists it once `this.sessionId` exists. A no-op when
+   * there is no active query or it carries no results (nothing to freeze). The live search is left
+   * running — the commit is a frozen COPY, never a replacement (the live card keeps updating).
+   *
+   * `reason` is accepted (not read) — it documents WHICH consequence triggered the commit at each
+   * call site (handleRetrieveCardOpen / escalateAsk); there is no per-reason branching today.
+   */
+  private commitLiveSearch(reason: 'open' | 'ask' | 'pin'): void {
+    void reason;
+    const s = this.searchSnapshot;
+    const query = (s?.query ?? '').trim();
+    if (!s || !query || s.results.length === 0) return;
+    const mode = (s.searchTrace as SearchTrace | null | undefined)?.effectiveMode ?? 'TEXT';
+    const committed: CommittedSearch = {
+      id: makeCommittedSearchId(),
+      query,
+      mode,
+      matchCount: s.matchCount,
+      resultCount: s.results.length,
+      docIds: s.results.map((h) => h.path),
+      executedAt: new Date().toISOString(),
+      hits: s.results.slice(0, 20),
+    };
+    this.committedSearches = [...this.committedSearches, committed];
+    this.rememberQueryInTrail(query);
+    // Search Thread S4-final — `this.sessionId` (constructor: `createConversationId()`) is a
+    // client-generated id present from the moment this view mounts, and the backend's write path
+    // (`AgentRunStore.appendSearchEvent`) keys/creates the event's home purely off this string with
+    // NO precondition that a "conversation" already exists server-side (verified against
+    // unifiedThreadClient.ts's GET path + InteractionThreadController/AgentRunStore.java) — so there
+    // is no FE-observable "conversationId absent" state to special-case here: the id is always
+    // present, and the POST always fires immediately. The guard stays explicit (not a dead
+    // assumption) so a future change making sessionId nullable degrades to FE-local-only rather than
+    // posting an empty path segment.
+    if (this.sessionId) void this.postSearchEvent(committed);
+  }
+
+  /** Search Thread S4-final — POST the committed search as a durable SEARCH thread event
+   *  (fire-and-forget: a failure is warned, never surfaced to the user — the live/FE-local
+   *  snapshot already rendered and stays correct either way). */
+  private async postSearchEvent(committed: CommittedSearch): Promise<void> {
+    try {
+      const res = await fetch(
+        `${this.apiBase || ''}/api/thread/${encodeURIComponent(this.sessionId)}/events`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'SEARCH',
+            query: committed.query,
+            mode: committed.mode,
+            matchCount: committed.matchCount,
+            resultCount: committed.resultCount,
+            docIds: committed.docIds,
+            executedAt: committed.executedAt,
+          }),
+        },
+      );
+      if (!res.ok) {
+        console.warn(`commitLiveSearch: failed to persist SEARCH event (HTTP ${res.status})`);
+      }
+    } catch (err) {
+      console.warn('commitLiveSearch: failed to persist SEARCH event', err);
+    }
+  }
+
+  /**
+   * Search Thread S4-final — the committed searches, rendered ABOVE the live card, oldest first.
+   * Auto-collapse (item 4): only the 3 most recent render as the full `variant='snapshot'`; older
+   * ones collapse to the one-line `variant='excerpt'`.
+   */
+  private renderCommittedSearches(): TemplateResult | typeof nothing {
+    if (this.committedSearches.length === 0) return nothing;
+    const total = this.committedSearches.length;
+    return html`${this.committedSearches.map((cs, i) => {
+      const variant: 'snapshot' | 'excerpt' = total - i <= 3 ? 'snapshot' : 'excerpt';
+      const snapshot: CardSnapshot = {
+        query: cs.query,
+        results: cs.hits,
+        matchCount: cs.matchCount,
+        totalHits: cs.resultCount,
+        facetsTruncated: false,
+        isSearching: false,
+        processingTimeMs: null,
+        error: null,
+      };
+      const provenance: SearchProvenance = {
+        actor: 'user',
+        query: cs.query,
+        mode: cs.mode,
+        matchCount: cs.matchCount,
+        resultCount: cs.resultCount,
+        executedAt: cs.executedAt,
+      };
+      return html`<jf-results-card
+        variant=${variant}
+        .snapshot=${snapshot}
+        .provenance=${provenance}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleCommittedCardOpen(e.detail.id)}
+        @card-fork=${(e: CustomEvent<{ query: string }>) => this.handleCardFork(e.detail.query)}
+      ></jf-results-card>`;
+    })}`;
+  }
+
+  /**
+   * Search Thread S4-final — the "⌄ recent" query-trail dropdown, rendered beside the route chip.
+   * Mirrors `RecentsMenu`'s native-button + `role="menu"`/`role="menuitem"` convention (keyboard-
+   * operable by construction; Escape closes from any descendant via the wrapper's bubbling keydown).
+   */
+  private renderQueryTrail(): TemplateResult | typeof nothing {
+    if (this.queryTrail.length === 0) return nothing;
+    return html`<div
+      class="query-trail"
+      @keydown=${(e: KeyboardEvent) => {
+        if (e.key === 'Escape') this.queryTrailOpen = false;
+      }}
+    >
+      <button
+        type="button"
+        class="query-trail-toggle"
+        data-testid="query-trail-toggle"
+        aria-haspopup="menu"
+        aria-expanded=${this.queryTrailOpen ? 'true' : 'false'}
+        aria-label="Recent searches"
+        title="Recent searches"
+        @click=${() => {
+          this.queryTrailOpen = !this.queryTrailOpen;
+        }}
+      >⌄ recent</button>
+      ${this.queryTrailOpen
+        ? html`<div class="query-trail-menu" role="menu" data-testid="query-trail-menu">
+            ${this.queryTrail.map(
+              (q) => html`<button
+                type="button"
+                class="query-trail-item"
+                role="menuitem"
+                data-testid="query-trail-item"
+                @click=${() => this.pickTrailQuery(q)}
+              >${q}</button>`,
+            )}
+          </div>`
+        : nothing}
+    </div>`;
   }
 
   /**
@@ -3836,6 +4125,14 @@ export class UnifiedChatView extends JfElement {
         return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>`;
       }
       case 'progress':
+        // Search Thread S4-final (item 3) — a restored SEARCH event. `unifiedThreadProjection.ts`
+        // (read-only to this consumer) rides SEARCH on the existing 'progress' UnifiedTurnKind —
+        // UnifiedTurnKind is a closed union owned by that file, so branching on the `searchEvent`
+        // marker attribute HERE (rather than adding a new UnifiedTurnKind literal there) is the only
+        // option available to this consumer; see `renderRestoredSearchItem` for the render.
+        if (it.attributes?.searchEvent === true) {
+          return this.renderRestoredSearchItem(it);
+        }
         // Tempdoc 565 §30 — a human STEERING directive (the DIRECTION authority's interject) renders as
         // a distinct human-origin chip, not an ambient agent step, so the user sees their direction land.
         if (it.attributes?.steer === true) {
@@ -3864,6 +4161,40 @@ export class UnifiedChatView extends JfElement {
         ></jf-handoff-card>`;
       }
     }
+  }
+
+  /**
+   * Search Thread S4-final (item 3) — a restored SEARCH thread event, rendered `variant='excerpt'`
+   * (collapsed by default, matching a reloaded thread's ambient posture). The backend persists only
+   * the search's IDENTITY (`query`/`mode`/`matchCount`/`resultCount`/`docIds`/`executedAt`) — never
+   * the full hit objects — so `snapshot.results` is deliberately empty here: expanding shows the
+   * provenance header + the "Search again" fork affordance + `renderSnapshotRows`'s honest
+   * "results not stored — run again to see them" note, never a fabricated row list.
+   */
+  private renderRestoredSearchItem(it: UnifiedTurnItem): TemplateResult {
+    const a = it.attributes;
+    const query = typeof a.query === 'string' ? a.query : '';
+    const mode = typeof a.mode === 'string' ? a.mode : 'TEXT';
+    const matchCount = typeof a.matchCount === 'number' ? a.matchCount : 0;
+    const resultCount = typeof a.resultCount === 'number' ? a.resultCount : 0;
+    const executedAt = typeof a.executedAt === 'string' ? a.executedAt : new Date(it.ts).toISOString();
+    const snapshot: CardSnapshot = {
+      query,
+      results: [],
+      matchCount,
+      totalHits: resultCount,
+      facetsTruncated: false,
+      isSearching: false,
+      processingTimeMs: null,
+      error: null,
+    };
+    const provenance: SearchProvenance = { actor: 'user', query, mode, matchCount, resultCount, executedAt };
+    return html`<jf-results-card
+      variant="excerpt"
+      .snapshot=${snapshot}
+      .provenance=${provenance}
+      @card-fork=${(e: CustomEvent<{ query: string }>) => this.handleCardFork(e.detail.query)}
+    ></jf-results-card>`;
   }
 
   /**

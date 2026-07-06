@@ -997,11 +997,74 @@ export const unifiedChatBodyStyles = css`
       flex: 0 0 auto;
     }
     /* Search Thread D2/D3 (stage S2, item 4) — the per-turn route indicator row, right-aligned above
-       the composer, shown only in the retrieve affordance. */
+       the composer, shown only in the retrieve affordance. Search Thread S4-final — also hosts the
+       "⌄ recent" query-trail dropdown alongside the route chip. */
     .route-row {
       display: flex;
+      align-items: center;
       justify-content: flex-end;
+      gap: 0.5rem;
       font-size: var(--font-size-xs);
+    }
+    /* Search Thread S4-final — the recent-query trail dropdown (item 5): mirrors RecentsMenu's
+       native-button + role="menu" convention. */
+    .query-trail {
+      position: relative;
+      display: inline-flex;
+    }
+    .query-trail-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      background: transparent;
+      border: none;
+      padding: 0.125rem 0.35rem;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary);
+      cursor: pointer;
+      border-radius: 0.25rem;
+    }
+    .query-trail-toggle:hover,
+    .query-trail-toggle:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
+    }
+    .query-trail-menu {
+      position: absolute;
+      top: calc(100% + 0.25rem);
+      right: 0;
+      z-index: var(--z-overlay-float);
+      min-width: 12rem;
+      max-width: 20rem;
+      padding: 0.25rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      box-shadow: var(--shadow-float);
+    }
+    .query-trail-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: var(--font-size-sm);
+      padding: 0.35rem 0.5rem;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .query-trail-item:hover,
+    .query-trail-item:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
     }
     /* Search Thread D5 (stage S3) — the pinned scope-chip row, shown above the composer (and above
        .route-row when present) in every affordance — a scope constrains both search and ask. */

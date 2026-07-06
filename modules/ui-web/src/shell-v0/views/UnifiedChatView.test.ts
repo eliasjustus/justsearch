@@ -16,7 +16,7 @@
  * we need to lock in.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
@@ -2828,6 +2828,244 @@ describe('UnifiedChatView per-message exclude (610 §E.3)', () => {
     const atFloor = fp('m-3', 2);
     expect(atFloor.cls).toBe('');
     expect(typeof atFloor.divider).toBe('object'); // a TemplateResult
+    view.remove();
+  });
+});
+
+// Search Thread S4-final — commit-on-consequence (the user's own searches become committed,
+// persisted thread events), the auto-collapse of older commits, restored SEARCH thread events, and
+// the recent-query trail.
+describe('Search Thread S4-final — commit-on-consequence + query trail', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    searchListener = null;
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Push a fabricated refined-pass snapshot with 2 results through the mocked search store. */
+  function pushSearch(view: UnifiedChatView, query: string): void {
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({
+      query,
+      results: [
+        { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' },
+        { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()' },
+      ],
+      matchCount: 2,
+      totalHits: 2,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: { effectiveMode: 'HYBRID' },
+    });
+  }
+
+  it('commit-on-open: freezes the live search into a snapshot card above the live card, and POSTs the event', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-1' }) });
+    const view = mountView();
+    await view.updateComplete;
+    // connectedCallback's incidental `loadConversations()` fetch (unrelated to this test) is not
+    // mocked away by the module-level conversationListStore mock — clear it so the assertions below
+    // isolate the commit's OWN POST.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-open';
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+
+    const liveCardBefore = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCardBefore).not.toBeNull();
+    liveCardBefore!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]).toMatchObject({
+      query: 'invoice audit',
+      mode: 'HYBRID',
+      matchCount: 2,
+      resultCount: 2,
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+
+    // The snapshot card renders ABOVE the live card; the live card is still running (no variant attr).
+    const cards = Array.from(view.shadowRoot?.querySelectorAll('jf-results-card') ?? []);
+    expect(cards.length).toBe(2);
+    expect(cards[0]!.getAttribute('variant')).toBe('snapshot');
+    expect(cards[1]!.hasAttribute('variant')).toBe(false);
+
+    // Filter to the commit's own POST — other view machinery (e.g. the incidental conversations-list
+    // fetch on connect) shares the same mocked global fetch and is not this test's concern.
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(1);
+    expect(eventCalls[0]![0]).toBe('http://localhost:5173/api/thread/uc-commit-open/events');
+    const body = JSON.parse((eventCalls[0]![1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      kind: 'SEARCH',
+      query: 'invoice audit',
+      mode: 'HYBRID',
+      matchCount: 2,
+      resultCount: 2,
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+    view.remove();
+  });
+
+  it('commit-on-ask: escalateAsk commits the retrieve-tier query before the affordance flips to documents', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-2' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-ask';
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+    view.inputDraft = 'invoice march'; // heuristic guesses 'search'; alt-submit sends the OPPOSITE (ask)
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new CustomEvent('composer-submit-alt'));
+    await view.updateComplete;
+
+    expect(view.affordance).toBe('documents');
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.query).toBe('invoice march');
+    // Only ONE commit's worth of /events POSTs, regardless of other fetches send() may issue
+    // (e.g. the chat dispatch) — the same commit-isolation rationale as commit-on-open above.
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(1);
+    view.remove();
+  });
+
+  it('plain query iteration (no open/ask) commits nothing, but the superseded query lands on the trail', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-3' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+    pushSearch(view, 'first query');
+    await view.updateComplete;
+    pushSearch(view, 'second query');
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: unknown[] }).committedSearches;
+    expect(committed.length).toBe(0);
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(0);
+    const trail = (view as unknown as { queryTrail: string[] }).queryTrail;
+    expect(trail).toEqual(['first query']);
+    view.remove();
+  });
+
+  it('auto-collapse: only the 3 most recent commits render as full snapshot; older ones collapse to excerpt', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const committedList = Array.from({ length: 4 }, (_, i) => ({
+      id: `cs-${i}`,
+      query: `q${i}`,
+      mode: 'TEXT',
+      matchCount: 1,
+      resultCount: 1,
+      docIds: [`/docs/${i}.md`],
+      executedAt: new Date().toISOString(),
+      hits: [{ id: `h${i}`, title: `T${i}`, path: `/docs/${i}.md` }],
+    }));
+    (view as unknown as { committedSearches: unknown[] }).committedSearches = committedList;
+    pushSearch(view, 'active query'); // an active query is required for the retrieve tier to render at all
+    await view.updateComplete;
+
+    const cards = Array.from(view.shadowRoot?.querySelectorAll('jf-results-card') ?? []);
+    const excerptCount = cards.filter((c) => c.getAttribute('variant') === 'excerpt').length;
+    const snapshotCount = cards.filter((c) => c.getAttribute('variant') === 'snapshot').length;
+    expect(excerptCount).toBe(1);
+    expect(snapshotCount).toBe(3);
+    view.remove();
+  });
+
+  it('a restored SEARCH thread event renders as an excerpt card with a "Search again" affordance', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      {
+        id: 'se1',
+        occurredAt: '2026-01-01T00:00:01Z',
+        kind: 'SEARCH',
+        originator: 'user',
+        content: '',
+        attributes: {
+          query: 'restored query',
+          mode: 'HYBRID',
+          matchCount: 5,
+          resultCount: 5,
+          docIds: ['/docs/a.md'],
+          executedAt: '2026-01-01T00:00:01Z',
+        },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const card = view.shadowRoot?.querySelector('jf-results-card[variant="excerpt"]') as
+      | (Element & { updateComplete: Promise<unknown> })
+      | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
+    expect(card!.shadowRoot?.textContent).toContain('restored query');
+
+    // Expand: no hits were persisted, so the honest empty note shows (not fabricated rows), plus
+    // the fork affordance.
+    (card!.shadowRoot?.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await card!.updateComplete;
+    expect(card!.shadowRoot?.querySelector('[data-testid="snapshot-empty-note"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="card-fork-btn"]')).not.toBeNull();
+    view.remove();
+  });
+
+  it('the query-trail dropdown lists recent queries newest-first (deduped); clicking one restores the draft + re-issues the query', async () => {
+    const { setQuery } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    pushSearch(view, 'alpha');
+    await view.updateComplete;
+    pushSearch(view, 'beta');
+    await view.updateComplete;
+    pushSearch(view, 'alpha'); // re-search alpha: supersedes beta
+    await view.updateComplete;
+    pushSearch(view, 'beta'); // re-search beta: supersedes alpha — dedup moves alpha to front, no duplicate
+    await view.updateComplete;
+
+    expect((view as unknown as { queryTrail: string[] }).queryTrail).toEqual(['alpha', 'beta']);
+
+    const toggle = view.shadowRoot?.querySelector('[data-testid="query-trail-toggle"]') as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    toggle.click();
+    await view.updateComplete;
+    const items = Array.from(view.shadowRoot?.querySelectorAll('[data-testid="query-trail-item"]') ?? []);
+    expect(items.map((i) => i.textContent)).toEqual(['alpha', 'beta']);
+
+    (items[1] as HTMLButtonElement).click(); // pick 'beta'
+    await view.updateComplete;
+
+    expect(view.inputDraft).toBe('beta');
+    expect(setQuery).toHaveBeenCalledWith('beta');
+    // The dropdown closes after picking an entry.
+    expect(view.shadowRoot?.querySelector('[data-testid="query-trail-menu"]')).toBeNull();
     view.remove();
   });
 });
