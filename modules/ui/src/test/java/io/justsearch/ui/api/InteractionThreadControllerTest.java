@@ -2,9 +2,12 @@ package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.javalin.http.Context;
@@ -15,6 +18,7 @@ import io.justsearch.agent.api.interaction.InteractionEventKind;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -137,5 +141,114 @@ final class InteractionThreadControllerTest {
     // The producer-owned calibration is projected too (rendered FROM the record, not re-derived).
     JsonNode cal = ev.get("attributes").get("calibration");
     assertEquals(0.91, cal.get("bestChunkScore").asDouble());
+  }
+
+  /** Invokes {@code POST /api/thread/{id}/events}, capturing the response status + JSON body. */
+  private JsonNode invokePostEvent(
+      InteractionThreadController controller, String id, String requestBody, AtomicInteger statusOut) {
+    Context ctx = mock(Context.class);
+    when(ctx.pathParam("id")).thenReturn(id);
+    when(ctx.body()).thenReturn(requestBody);
+    when(ctx.status(anyInt()))
+        .thenAnswer(
+            inv -> {
+              statusOut.set(inv.getArgument(0, Integer.class));
+              return ctx;
+            });
+    AtomicReference<Object> capturedJson = new AtomicReference<>();
+    when(ctx.json(any()))
+        .thenAnswer(
+            inv -> {
+              capturedJson.set(inv.getArgument(0));
+              return ctx;
+            });
+    controller.handlePostEvent(ctx);
+    return capturedJson.get() == null ? null : MAPPER.valueToTree(capturedJson.get());
+  }
+
+  @Test
+  @DisplayName("S4b: POST /api/thread/{id}/events persists a SEARCH event and returns its id (201)")
+  void postSearchEventPersistsAndReturnsId() {
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.appendSearchEvent(eq("conv-1"), any())).thenReturn("conv-1:search:123");
+
+    AtomicInteger status = new AtomicInteger(-1);
+    JsonNode body =
+        invokePostEvent(
+            new InteractionThreadController(conversationStore, agentService),
+            "conv-1",
+            "{\"kind\":\"SEARCH\",\"query\":\"invoices\",\"mode\":\"hybrid\","
+                + "\"matchCount\":42,\"resultCount\":10,\"docIds\":[\"a.pdf\",\"b.pdf\"],"
+                + "\"executedAt\":\"2026-07-06T00:00:00Z\"}",
+            status);
+
+    assertEquals(201, status.get());
+    assertEquals("conv-1:search:123", body.get("id").asString());
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object>[] captured = new Map[1];
+    verify(agentService)
+        .appendSearchEvent(
+            eq("conv-1"),
+            org.mockito.ArgumentMatchers.argThat(
+                attrs -> {
+                  captured[0] = attrs;
+                  return true;
+                }));
+    assertEquals("invoices", captured[0].get("query"));
+    assertEquals("hybrid", captured[0].get("mode"));
+    assertEquals(List.of("a.pdf", "b.pdf"), captured[0].get("docIds"));
+    assertEquals("2026-07-06T00:00:00Z", captured[0].get("executedAt"));
+  }
+
+  @Test
+  @DisplayName("S4b: an unsupported event kind is rejected with 400")
+  void postEventRejectsUnsupportedKind() {
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    AgentService agentService = mock(AgentService.class);
+
+    AtomicInteger status = new AtomicInteger(-1);
+    invokePostEvent(
+        new InteractionThreadController(conversationStore, agentService),
+        "conv-1",
+        "{\"kind\":\"BOGUS\"}",
+        status);
+
+    assertEquals(400, status.get());
+  }
+
+  @Test
+  @DisplayName("S4b: a SEARCH body missing required fields is rejected with 400")
+  void postEventRejectsIncompleteSearchBody() {
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    AgentService agentService = mock(AgentService.class);
+
+    AtomicInteger status = new AtomicInteger(-1);
+    invokePostEvent(
+        new InteractionThreadController(conversationStore, agentService),
+        "conv-1",
+        "{\"kind\":\"SEARCH\",\"query\":\"invoices\"}",
+        status);
+
+    assertEquals(400, status.get());
+  }
+
+  @Test
+  @DisplayName("S4b: a null id from the write path (persistence failure) surfaces as 500")
+  void postEventSurfaces500WhenWritePathFails() {
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.appendSearchEvent(anyString(), any())).thenReturn(null);
+
+    AtomicInteger status = new AtomicInteger(-1);
+    invokePostEvent(
+        new InteractionThreadController(conversationStore, agentService),
+        "conv-1",
+        "{\"kind\":\"SEARCH\",\"query\":\"invoices\",\"mode\":\"hybrid\","
+            + "\"matchCount\":42,\"resultCount\":10,\"docIds\":[]}",
+        status);
+
+    assertEquals(500, status.get());
   }
 }

@@ -84,6 +84,13 @@ const SEARCH_EMPTY = {
   error: null,
   searchTrace: null,
 };
+// Search Thread D5 (stage S3) — control the scope-chip store the same way as the search store above:
+// capture the subscribed listener so a test can push fabricated chip snapshots, and stub the mutators
+// so we can assert on how the view calls them without touching the real module-level array.
+let scopeChipsListener: ((chips: unknown) => void) | null = null;
+const scopeChipsMock = {
+  chips: [] as Array<{ kind: string; label: string; docIds: readonly string[] }>,
+};
 vi.mock('../state/searchState.js', () => ({
   subscribeSearch: vi.fn((listener: (s: unknown) => void) => {
     searchListener = listener;
@@ -95,7 +102,25 @@ vi.mock('../state/searchState.js', () => ({
   setQuery: vi.fn(),
   submitSearch: vi.fn(),
   setSearchApiBase: vi.fn(),
+  recordOpenDisposition: vi.fn(),
   getSearchState: vi.fn(() => SEARCH_EMPTY),
+  subscribeScopeChips: vi.fn((listener: (chips: unknown) => void) => {
+    scopeChipsListener = listener;
+    listener(scopeChipsMock.chips);
+    return () => {
+      scopeChipsListener = null;
+    };
+  }),
+  addScopeChip: vi.fn(
+    (chip: { kind: string; label: string; docIds: readonly string[] }) => {
+      scopeChipsMock.chips = [...scopeChipsMock.chips, chip];
+      scopeChipsListener?.(scopeChipsMock.chips);
+    },
+  ),
+  removeScopeChip: vi.fn((index: number) => {
+    scopeChipsMock.chips = scopeChipsMock.chips.filter((_, i) => i !== index);
+    scopeChipsListener?.(scopeChipsMock.chips);
+  }),
 }));
 
 // Mock the network layer so resumeConversation + fetchMessageIds don't
@@ -1713,12 +1738,21 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).not.toBeNull();
       expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
       expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+      // Landing mode is a CLASS on the stable bottom slot, not a different mount point.
+      expect(view.shadowRoot?.querySelector('.composer.landing-dock')).not.toBeNull();
+      const textareaBefore = view.shadowRoot?.querySelector('jf-composer textarea');
 
       expect(searchListener).not.toBeNull();
       searchListener!({ ...SEARCH_EMPTY, query: 'invoice' });
       await view.updateComplete;
       expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).toBeNull();
       expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+      expect(view.shadowRoot?.querySelector('.composer.landing-dock')).toBeNull();
+      // Stable-slot invariant (live-validation finding): the textarea must be the SAME node
+      // across the landing→docked transition — a re-parented textarea drops keystrokes that
+      // race the first render, eating the user's sentence after its first character.
+      const textareaAfter = view.shadowRoot?.querySelector('jf-composer textarea');
+      expect(textareaAfter).toBe(textareaBefore);
       view.remove();
     });
 
@@ -1734,6 +1768,223 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       expect(focusSpy).toHaveBeenCalled();
       view.remove();
     });
+  });
+});
+
+// Search Thread tempdoc D5 (stage S3) — pinned scope chips (a file / a result set) constrain both
+// instant search and a grounded Ask. searchState's mutators are stubbed above (scopeChipsMock); these
+// tests assert the VIEW's mount/render/handler wiring, not the store itself (covered by
+// searchState.test.ts).
+describe('Search Thread D5 (stage S3) — scope chips', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    scopeChipsMock.chips = [];
+  });
+
+  function pushHits(): void {
+    searchListener!({
+      query: 'invoice',
+      results: [
+        { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due', kind: 'markdown' },
+        { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()', kind: 'code' },
+      ],
+      totalHits: 2,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: null,
+    });
+  }
+
+  it('renders the scope-chip row from the subscribed store', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(scopeChipsListener).not.toBeNull();
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-chip-row"]')).not.toBeNull();
+    view.remove();
+  });
+
+  it('renders no scope-chip row when no chips are pinned', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-chip-row"]')).toBeNull();
+    view.remove();
+  });
+
+  it('card-scope-file ("Ask about this file") adds a file chip carrying the PATH, not the hit id', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    expect(card).not.toBeNull();
+    card.dispatchEvent(
+      new CustomEvent('card-scope-file', {
+        detail: { id: 'h1', path: '/docs/q1.md', title: 'Q1 invoice' },
+      }),
+    );
+    await view.updateComplete;
+    expect(addScopeChip).toHaveBeenCalledWith({
+      kind: 'file',
+      label: 'q1.md',
+      docIds: ['/docs/q1.md'],
+    });
+    // Not pinned (chat capability is available per AI_STATE_READY) — routes to ask-readiness.
+    expect(view.routeOverride).toBe('ask');
+    view.remove();
+  });
+
+  it('card-scope-file does NOT flip routeOverride to ask when Ask is pinned to search', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    view.aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    } as unknown as UnifiedChatView['aiState'];
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    card.dispatchEvent(
+      new CustomEvent('card-scope-file', {
+        detail: { id: 'h1', path: '/docs/q1.md', title: 'Q1 invoice' },
+      }),
+    );
+    await view.updateComplete;
+    expect(view.routeOverride).toBeNull();
+    view.remove();
+  });
+
+  it('shows "Ask about these N results" only when >1 selected, and clicking pins a result-set chip of PATHS', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    // handleRetrieveCardSelection's >1 branch publishes a real 'result-set' SelectionItem
+    // (setInternalSelection, real selectionState module — not mocked); its subscription would
+    // otherwise auto-flip affordance to 'documents' (refreshDocsFromSelection) since the affordance
+    // here was set directly, not via toggleAffordance(). Pin it explicit, as a real click would.
+    (view as unknown as { userToggledAffordance: boolean }).userToggledAffordance = true;
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-selection-btn"]')).toBeNull();
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    card.dispatchEvent(
+      new CustomEvent('card-selection', {
+        detail: { ids: ['h1', 'h2'], primaryId: 'h1', primaryIndex: 0 },
+      }),
+    );
+    await view.updateComplete;
+    const btn = view.shadowRoot?.querySelector(
+      '[data-testid="scope-selection-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain('2 results');
+    btn!.click();
+    await view.updateComplete;
+    expect(addScopeChip).toHaveBeenCalledWith({
+      kind: 'result-set',
+      label: '2 results',
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+    expect(view.routeOverride).toBe('ask');
+    view.remove();
+  });
+
+  it('Backspace on an empty draft pops the last pinned scope chip', async () => {
+    const { removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    scopeChipsListener!([
+      { kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] },
+      { kind: 'file', label: 'helper.ts', docIds: ['/src/helper.ts'] },
+    ]);
+    view.inputDraft = '';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).toHaveBeenCalledWith(1);
+    view.remove();
+  });
+
+  it('Backspace does NOT pop a chip while the draft has text', async () => {
+    const { removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.inputDraft = 'still typing';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).not.toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('removing a chip via its remove affordance re-runs submitSearch while a retrieve query is active', async () => {
+    const { submitSearch, removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    await view.updateComplete;
+    pushHits();
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    const chip = view.shadowRoot?.querySelector('jf-scope-chip');
+    expect(chip).not.toBeNull();
+    chip!.dispatchEvent(new CustomEvent('scope-remove', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).toHaveBeenCalledWith(0);
+    expect(submitSearch).toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('removing a chip outside the retrieve tier does NOT re-run submitSearch', async () => {
+    const { submitSearch } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    const chip = view.shadowRoot?.querySelector('jf-scope-chip');
+    expect(chip).not.toBeNull();
+    chip!.dispatchEvent(new CustomEvent('scope-remove', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect(submitSearch).not.toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('a grounded Ask forwards the union of pinnedDocIds and scope-chip docIds (both PATHS), deduped', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.pinnedDocIds = ['/legacy/pinned.md', '/docs/q1.md'];
+    scopeChipsListener!([
+      { kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }, // overlaps pinnedDocIds — deduped
+      { kind: 'result-set', label: '2 results', docIds: ['/docs/a.md', '/docs/b.md'] },
+    ]);
+    view.affordance = 'documents';
+    view.inputDraft = 'summarize these';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    const body = streamMock.mock.calls[0]![1] as { shapeId?: string; docIds?: string[] };
+    expect(body.shapeId).toBe('core.rag-ask');
+    expect(body.docIds).toEqual(['/legacy/pinned.md', '/docs/q1.md', '/docs/a.md', '/docs/b.md']);
+    view.remove();
   });
 });
 

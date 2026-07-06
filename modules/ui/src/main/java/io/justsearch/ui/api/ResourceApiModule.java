@@ -427,6 +427,9 @@ final class ResourceApiModule implements ApiModule {
     app.get("/api/presence", interactionThreadController::handlePresence);
     // Tempdoc 561 P-D2: POST /api/presence/run — the non-interactive background-run trigger.
     app.post("/api/presence/run", interactionThreadController::handlePresenceRun);
+    // Tempdoc S4b (Search Thread): POST /api/thread/{id}/events — the FE write path for a thread
+    // event kind that does not originate from the agent loop (today: kind="SEARCH").
+    app.post("/api/thread/{id}/events", interactionThreadController::handlePostEvent);
 
     // Tempdoc 561 P-E: the learned-memory user surface — inspect / record / forget.
     app.get("/api/memory", memoryController::handleList);

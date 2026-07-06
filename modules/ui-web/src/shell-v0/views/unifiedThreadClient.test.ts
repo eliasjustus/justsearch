@@ -33,26 +33,33 @@ describe('parseThreadEvent (S4a per-event parsing)', () => {
     expect(event!.content).toBe('hello');
   });
 
+  // Tempdoc S4b — SEARCH is now a real, known kind (see the dedicated `SEARCH-kind event parsing`
+  // describe block below), so these forward-tolerance tests use a still-unrecognized placeholder kind
+  // (`WORKSPACE_SYNCED`) instead.
   it('degrades an unrecognized kind STRING to a generic UNKNOWN event carrying rawKind', () => {
     const event = parseThreadEvent({
       id: 's1',
       occurredAt: '2026-01-01T00:00:02Z',
-      kind: 'SEARCH',
+      kind: 'WORKSPACE_SYNCED',
       originator: 'agent',
-      content: 'searching…',
+      content: 'syncing…',
       attributes: { query: 'invoices' },
     });
     expect(event).not.toBeNull();
     expect(event!.kind).toBe('UNKNOWN');
-    expect(event!.rawKind).toBe('SEARCH');
+    expect(event!.rawKind).toBe('WORKSPACE_SYNCED');
     expect(event!.attributes.query).toBe('invoices');
   });
 
   it('degrades an unrecognized kind even when originator/content/attributes are absent (loose passthrough)', () => {
-    const event = parseThreadEvent({ id: 's2', occurredAt: '2026-01-01T00:00:03Z', kind: 'SEARCH' });
+    const event = parseThreadEvent({
+      id: 's2',
+      occurredAt: '2026-01-01T00:00:03Z',
+      kind: 'WORKSPACE_SYNCED',
+    });
     expect(event).not.toBeNull();
     expect(event!.kind).toBe('UNKNOWN');
-    expect(event!.rawKind).toBe('SEARCH');
+    expect(event!.rawKind).toBe('WORKSPACE_SYNCED');
     expect(event!.originator).toBe('');
     expect(event!.content).toBe('');
     expect(event!.attributes).toEqual({});
@@ -62,7 +69,9 @@ describe('parseThreadEvent (S4a per-event parsing)', () => {
     expect(
       parseThreadEvent({ occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', content: 'hi' }),
     ).toBeNull();
-    expect(parseThreadEvent({ occurredAt: '2026-01-01T00:00:01Z', kind: 'SEARCH' })).toBeNull();
+    expect(
+      parseThreadEvent({ occurredAt: '2026-01-01T00:00:01Z', kind: 'WORKSPACE_SYNCED' }),
+    ).toBeNull();
   });
 
   // 4c — verify + preserve current known-kind strictness: a KNOWN kind whose required field is missing
@@ -94,8 +103,64 @@ describe('parseThreadEvent (S4a per-event parsing)', () => {
   });
 });
 
+// Tempdoc S4b (Search Thread) — SEARCH's own strict attributes schema (searchThreadEventSchema),
+// distinct from the generic per-kind schema every other known kind shares.
+describe('parseThreadEvent (S4b SEARCH-kind strict attributes)', () => {
+  function searchWireEvent(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 's1',
+      occurredAt: '2026-01-01T00:00:02Z',
+      kind: 'SEARCH',
+      originator: 'user',
+      content: '',
+      attributes: {
+        query: 'invoices',
+        mode: 'hybrid',
+        matchCount: 42,
+        resultCount: 10,
+        docIds: ['a.pdf', 'b.pdf'],
+        executedAt: '2026-01-01T00:00:02Z',
+      },
+      ...overrides,
+    };
+  }
+
+  it('parses a well-formed SEARCH event with its typed attributes intact', () => {
+    const event = parseThreadEvent(searchWireEvent());
+    expect(event).not.toBeNull();
+    expect(event!.kind).toBe('SEARCH');
+    expect(event!.attributes.query).toBe('invoices');
+    expect(event!.attributes.mode).toBe('hybrid');
+    expect(event!.attributes.matchCount).toBe(42);
+    expect(event!.attributes.resultCount).toBe(10);
+    expect(event!.attributes.docIds).toEqual(['a.pdf', 'b.pdf']);
+    expect(event!.attributes.executedAt).toBe('2026-01-01T00:00:02Z');
+  });
+
+  it('drops (not UNKNOWN-degrades) a SEARCH event missing a required attribute', () => {
+    const missingDocIds = searchWireEvent({
+      attributes: { query: 'invoices', mode: 'hybrid', matchCount: 42, resultCount: 10 },
+    });
+    expect(parseThreadEvent(missingDocIds)).toBeNull();
+  });
+
+  it('drops a SEARCH event with a wrong-typed attribute (matchCount as a string)', () => {
+    const wrongType = searchWireEvent({
+      attributes: {
+        query: 'invoices',
+        mode: 'hybrid',
+        matchCount: '42',
+        resultCount: 10,
+        docIds: [],
+        executedAt: '2026-01-01T00:00:02Z',
+      },
+    });
+    expect(parseThreadEvent(wrongType)).toBeNull();
+  });
+});
+
 describe('fetchUnifiedThread (S4a forward-tolerant array parsing)', () => {
-  it('a thread with one SEARCH-kind event + two known events parses to 3 events; the thread is NOT empty', async () => {
+  it('a thread with one unrecognized-kind event + two known events parses to 3 events; the thread is NOT empty', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
         conversationId: 'c1',
@@ -111,9 +176,9 @@ describe('fetchUnifiedThread (S4a forward-tolerant array parsing)', () => {
           {
             id: 's1',
             occurredAt: '2026-01-01T00:00:02Z',
-            kind: 'SEARCH',
+            kind: 'WORKSPACE_SYNCED',
             originator: 'agent',
-            content: 'searching…',
+            content: 'syncing…',
             attributes: { query: 'invoices' },
           },
           {
@@ -134,7 +199,7 @@ describe('fetchUnifiedThread (S4a forward-tolerant array parsing)', () => {
     expect(res.events).toHaveLength(3);
     expect(res.events.map((e) => e.kind)).toEqual(['USER_MESSAGE', 'UNKNOWN', 'ASSISTANT_MESSAGE']);
     const unknown = res.events.find((e) => e.id === 's1')!;
-    expect(unknown.rawKind).toBe('SEARCH');
+    expect(unknown.rawKind).toBe('WORKSPACE_SYNCED');
   });
 
   it('drops a structurally invalid event but keeps its siblings, and warns once naming the count', async () => {

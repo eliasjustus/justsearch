@@ -877,6 +877,21 @@ export class Shell extends JfElement {
       source: 'default',
       provenance: CORE_PROVENANCE,
     });
+    // Search Thread S2 — the bar is reachable from anywhere: Ctrl+L always; '/'
+    // only outside editable targets (the dispatcher's editable-target guard skips
+    // modifier-less bindings when typing).
+    registerKeybindingEntry({
+      key: 'mod+l',
+      commandId: 'shell.focus-composer',
+      source: 'default',
+      provenance: CORE_PROVENANCE,
+    });
+    registerKeybindingEntry({
+      key: '/',
+      commandId: 'shell.focus-composer',
+      source: 'default',
+      provenance: CORE_PROVENANCE,
+    });
     loadPersistedKeybindings();
     this.keybindingTeardown = attachKeybindingDispatcher((commandId) => invokeCommand(commandId));
 

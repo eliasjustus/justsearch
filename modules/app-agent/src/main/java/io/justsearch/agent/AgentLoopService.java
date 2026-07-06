@@ -729,6 +729,11 @@ public final class AgentLoopService implements AgentService {
   }
 
   @Override
+  public String appendSearchEvent(String conversationId, Map<String, Object> attributes) {
+    return runStore.appendSearchEvent(conversationId, attributes);
+  }
+
+  @Override
   public boolean isAvailable() {
     return !operationCatalog.definitions().isEmpty();
   }

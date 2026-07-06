@@ -106,9 +106,15 @@ import {
   submitSearch,
   setSearchApiBase,
   recordOpenDisposition,
+  subscribeScopeChips,
+  addScopeChip,
+  removeScopeChip,
   type SearchState,
   type SearchHit,
+  type SearchScopeChip,
 } from '../state/searchState.js';
+// Search Thread S3 — the shared scope-chip row renderer (mirrors the facet-chip precedent).
+import { renderScopeChips, scopeChipRowStyles } from '../components/scopeChipRow.js';
 import { icon } from '../components/Icon.js';
 // Search Thread S1 — the why/facet/count/highlight RENDERING moved into the one
 // `jf-results-card`; this view keeps only the shared style sheets its remaining
@@ -335,6 +341,9 @@ export class UnifiedChatView extends JfElement {
     // Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override (chip click /
     // Ctrl+Enter). null = follow the inferRoute() heuristic guess.
     routeOverride: { state: true },
+    // Search Thread D5 (stage S3) — the pinned scope chips (mirrored from the searchState module
+    // store). Recoverable task state, not a transient — survives tab switch like selection/facets.
+    scopeChips: { state: true },
   };
 
   declare apiBase: string;
@@ -408,6 +417,11 @@ export class UnifiedChatView extends JfElement {
   /** Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override, or null to follow
    * the {@link inferRoute} heuristic guess. Reset on submit and whenever the draft empties out. */
   declare routeOverride: TurnRoute | null;
+  /** Search Thread D5 (stage S3) — the pinned scope chips, mirrored from the searchState module
+   *  store (subscribeScopeChips in connectedCallback). Constrains both instant search (via
+   *  buildSearchIntent, already unioned in searchState) and AI retrieval (unioned into docIds at
+   *  send time — see effectiveDocIds()). */
+  declare scopeChips: SearchScopeChip[];
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
@@ -445,6 +459,8 @@ export class UnifiedChatView extends JfElement {
   // Tempdoc 577 Goal 3 — the retrieve base tier's search-store subscription.
   private searchUnsub: (() => void) | null = null;
   private facetUnsub: (() => void) | null = null;
+  // Search Thread D5 (stage S3) — the scope-chip store subscription.
+  private scopeChipsUnsub: (() => void) | null = null;
   // Tempdoc 561 C-2: re-render the graded chrome when the autonomy dial changes (chrome only).
   private autonomyUnsubscribe: (() => void) | null = null;
   /** Tempdoc 610 §J.3 — re-render when the shared hidden-source set changes (e.g. toggled from the rail). */
@@ -562,6 +578,7 @@ export class UnifiedChatView extends JfElement {
     this.retrieveSelectedIds = new Set<string>();
     this.facetSelections = {};
     this.routeOverride = null;
+    this.scopeChips = [];
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
     this.parentFirstMessagePreview = null;
@@ -697,6 +714,11 @@ export class UnifiedChatView extends JfElement {
     this.facetUnsub = subscribeFacetSelections((sel) => {
       this.facetSelections = sel;
     });
+    // Search Thread D5 (stage S3) — mirror the scope-chip store (fires once immediately with the
+    // current chips, mirroring subscribeSearch/subscribeFacetSelections above).
+    this.scopeChipsUnsub = subscribeScopeChips((chips) => {
+      this.scopeChips = chips;
+    });
   }
 
   /**
@@ -769,6 +791,8 @@ export class UnifiedChatView extends JfElement {
     this.searchUnsub = null;
     this.facetUnsub?.();
     this.facetUnsub = null;
+    this.scopeChipsUnsub?.();
+    this.scopeChipsUnsub = null;
     this.excludedSourcesUnsub?.();
     this.excludedSourcesUnsub = null;
     // §21 — the run-spine's observers + scroll listeners are torn down by NavigationController.hostDisconnected.
@@ -1309,6 +1333,8 @@ export class UnifiedChatView extends JfElement {
     if (isContextInspectorOpen()) {
       setContextInspectorView(this.buildInspectorView());
     }
+    // (Search Thread S2 note: the landing→docked transition is CSS-only — the composer never
+    // re-parents, so no focus restoration is needed; see the stable-slot rule in renderAnswerPlane.)
   }
 
   /**
@@ -1768,7 +1794,7 @@ export class UnifiedChatView extends JfElement {
     return nothing;
   }
 
-  static styles = [composerStyles, unsafeCSS(SEARCH_EVIDENCE_CSS), whyThisResultStyles, facetChipStyles, highlightStyles, unifiedChatBodyStyles,
+  static styles = [composerStyles, unsafeCSS(SEARCH_EVIDENCE_CSS), whyThisResultStyles, facetChipStyles, highlightStyles, scopeChipRowStyles, unifiedChatBodyStyles,
     // §13 Pillar B — the GENERATED grid frame for the conversation-zone (replaces the hand-authored
     // grid-template-columns + per-zone placements removed above; faithful per de-risk Probe S2).
     composeGridStyles(CONVERSATION_ZONES, {
@@ -2051,13 +2077,22 @@ export class UnifiedChatView extends JfElement {
       ${this.renderActivityRail()}
       ${this.renderContextMeter()}
       ${this.renderExcludedSummary()}
-      ${/* Search Thread D2/D3 (stage S2, tempdoc decision 8) — on the bare landing the composer lives
-            INSIDE the centered `.landing` block (rendered above, inside the conversation column), so the
-            bottom slab is omitted entirely — ONE jf-composer instance ever mounted. Otherwise the
-            composer docks at the bottom exactly as before. */ ''}
-      ${this.isLanding()
-        ? nothing
-        : html`<div class="composer">${this.renderComposerBlock()}</div>`}
+      ${/* Search Thread D2/D3 (stage S2, tempdoc decision 8) — the composer lives in ONE stable DOM
+            slot in every state. Live-validation found that re-parenting it into a landing block drops
+            keystrokes racing the first render (the landing→dock transition detaches the textarea
+            mid-word), so landing centering is pure CSS: the `.landing-dock` class bounds and centers
+            this container while the intro (title/corpus) renders in the conversation column and the
+            escalation strip rides under the bar. */ ''}
+      <div class="composer ${this.isLanding() ? 'landing-dock' : ''}">
+        ${this.renderComposerBlock()}
+        ${this.isLanding()
+          ? html`<div class="escalation-strip">
+              <div>Search instantly · no AI</div>
+              <div>Ask — answers with citations</div>
+              <div>Delegate — the agent works multi-step</div>
+            </div>`
+          : nothing}
+      </div>
     `;
   }
 
@@ -2072,6 +2107,7 @@ export class UnifiedChatView extends JfElement {
       ${this.renderSteerInput()}
       ${this.renderAffordancePreview()}
       ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
+      ${this.renderScopeChipRow()}
       ${this.affordance === 'retrieve' ? this.renderRouteRow() : nothing}
       <jf-composer
         cancellable
@@ -2102,8 +2138,47 @@ export class UnifiedChatView extends JfElement {
         @composer-submit=${() => this.handleComposerSubmit()}
         @composer-submit-alt=${() => this.handleComposerSubmitAlt()}
         @composer-cancel=${() => this.abortController?.abort()}
+        @keydown=${(e: KeyboardEvent) => this.handleComposerKeydown(e)}
       ></jf-composer>
     `;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — the pinned scope-chip row: shown above the composer (and above the
+   * retrieve-only route-chip row when present) in EVERY affordance — a pinned file/result-set scopes
+   * both instant search and a grounded Ask, so it isn't gated to the retrieve tier. Empty when no
+   * chips are pinned (renderScopeChips returns `nothing`).
+   */
+  private renderScopeChipRow(): TemplateResult | typeof nothing {
+    if (this.scopeChips.length === 0) return nothing;
+    return html`<div class="scope-row">
+      ${renderScopeChips(this.scopeChips, { onRemove: (i) => this.handleScopeChipRemove(i) })}
+    </div>`;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — remove a pinned scope chip. Mirrors the facet-toggle re-issue
+   * precedent: the store mutation is pure, the host decides whether to re-run the active search.
+   */
+  private handleScopeChipRemove(index: number): void {
+    removeScopeChip(index);
+    if (this.affordance === 'retrieve' && (this.searchSnapshot?.query ?? '').trim()) {
+      submitSearch();
+    }
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — Backspace on an EMPTY draft pops the last pinned scope chip (the
+   * chip-as-token-in-the-input affordance). The composer renders its textarea in light DOM (own
+   * `createRenderRoot` returns `this`), so a native (uncomposed) keydown bubbles from the textarea up
+   * through `<jf-composer>` without crossing a shadow boundary — this handler on the host element
+   * catches it directly; Composer itself is not edited.
+   */
+  private handleComposerKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Backspace') return;
+    if (this.inputDraft !== '') return;
+    if (this.scopeChips.length === 0) return;
+    this.handleScopeChipRemove(this.scopeChips.length - 1);
   }
 
   /**
@@ -2181,7 +2256,11 @@ export class UnifiedChatView extends JfElement {
     );
   }
 
-  /** Search Thread D2/D3 (tempdoc decision 8, stage S2) — the centered landing search bar. */
+  /**
+   * Search Thread D2/D3 (tempdoc decision 8, stage S2) — the landing INTRO only (title + corpus
+   * line). The composer itself never moves (stable-slot rule above); this block renders at the
+   * bottom of the conversation column so the intro sits directly above the CSS-centered bar.
+   */
   private renderLanding(): TemplateResult {
     const docs = this.aiState?.lastSettledIndex;
     const hasDocs = docs != null && docs.documentCount > 0;
@@ -2198,12 +2277,6 @@ export class UnifiedChatView extends JfElement {
               >
                 Add folders in Library to start searching
               </button>`}
-        </div>
-        <div class="landing-composer">${this.renderComposerBlock()}</div>
-        <div class="escalation-strip">
-          <div>Search instantly · no AI</div>
-          <div>Ask — answers with citations</div>
-          <div>Delegate — the agent works multi-step</div>
         </div>
       </div>
     `;
@@ -2919,15 +2992,23 @@ export class UnifiedChatView extends JfElement {
         <div class="error" data-testid="retrieve-error">${s.error}</div>
       </div>`;
     }
-    const results = s?.results ?? [];
     // Search Thread S1 — the retrieve tier renders the ONE results card (`jf-results-card`),
     // the same component the standalone Search surface mounts: meta line (funnel count via the
     // shared matchCountLabel + latency + retrieval mode + quick/refining/refined✓), facet chips,
     // copy actions, Ask AI, and the multi-select row list. The bespoke retrieve-row markup this
     // replaces was the last presentational fork between the two surfaces.
     return html`<div class="retrieve-tier" data-testid="retrieve-tier">
-      ${results.length === 0 && !s?.isSearching
-        ? html`<div class="retrieve-meta"><span>No matches for "${q}"</span></div>`
+      ${/* Search Thread S3 live fix — the card's meta line is the ONE empty-state
+            message ("No matches for …"); the view no longer duplicates it. */ ''}
+      ${this.retrieveSelectedIds.size > 1
+        ? html`<button
+            type="button"
+            class="scope-selection-btn"
+            data-testid="scope-selection-btn"
+            @click=${() => this.handleScopeSelectionClick()}
+          >
+            Ask about these ${this.retrieveSelectedIds.size} results
+          </button>`
         : nothing}
       <jf-results-card
         .snapshot=${s}
@@ -2939,8 +3020,44 @@ export class UnifiedChatView extends JfElement {
         @card-facet-toggle=${(e: CustomEvent<{ field: string; value: string }>) =>
           this.handleRetrieveFacetToggle(e.detail.field, e.detail.value)}
         @card-ask-ai=${() => this.handleRetrieveAskAi()}
+        @card-scope-file=${(e: CustomEvent<{ id: string; path: string; title: string }>) =>
+          this.handleCardScopeFile(e.detail)}
       ></jf-results-card>
     </div>`;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — "Ask about this file" (the card's context-menu affordance) pins a
+   * `file` scope chip. `docIds` carries the hit's PATH, not its `id` — the finding from item 5:
+   * `handleRetrieveCardSelection`'s existing result-set publish already sends `{ id: h.path }` down
+   * the rag-ask docIds path (below, §2964), and the backend's `filters.docIds` term-filter matches
+   * against `SchemaFields.PATH` (QueryFilterBuilder.java:187/260) — so a chip's docIds must be paths
+   * to be consistent with BOTH consumers, never the SearchHit `id`.
+   */
+  private handleCardScopeFile(detail: { id: string; path: string; title: string }): void {
+    addScopeChip({ kind: 'file', label: filenameOf(detail.path), docIds: [detail.path] });
+    if ((this.searchSnapshot?.query ?? '').trim()) submitSearch();
+    // Route the user to ask-readiness — the natural next intent after scoping to a file is asking
+    // about it — unless Ask is pinned to search (Hard Invariant: never a silent no-op).
+    if (!this.askPinned()) this.routeOverride = 'ask';
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — the quiet "Ask about these N results" affordance shown above the
+   * card when >1 rows are selected. Does NOT auto-add on selection (526 §17 T1B publishes the
+   * `result-set` SelectionItem for the existing ask path already); this is a SEPARATE, explicit pin
+   * of the same selection as a scope chip. `docIds` carries paths (same reconciliation as
+   * {@link handleCardScopeFile}).
+   */
+  private handleScopeSelectionClick(): void {
+    const hits = this.searchSnapshot?.results ?? [];
+    const paths: string[] = [];
+    for (const h of hits) {
+      if (this.retrieveSelectedIds.has(h.id)) paths.push(h.path);
+    }
+    if (paths.length === 0) return;
+    addScopeChip({ kind: 'result-set', label: `${paths.length} results`, docIds: paths });
+    if (!this.askPinned()) this.routeOverride = 'ask';
   }
 
   /** Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses). */
@@ -4128,6 +4245,20 @@ export class UnifiedChatView extends JfElement {
     return 'Send';
   }
 
+  /**
+   * Search Thread D5 (stage S3) — the docIds a grounded Ask forwards: the union of `pinnedDocIds`
+   * (the existing selectionState-sourced result-set pin, Slice 515 FIX-1) and every pinned scope
+   * chip's docIds, deduped. Both sources carry PATHS (not the SearchHit `id` — see the reconciliation
+   * note on {@link handleCardScopeFile}), so the union is a plain string-set merge.
+   */
+  private effectiveDocIds(): string[] {
+    const ids = new Set<string>(this.pinnedDocIds);
+    for (const chip of this.scopeChips) {
+      for (const id of chip.docIds) ids.add(id);
+    }
+    return [...ids];
+  }
+
   private async send(): Promise<void> {
     const text = this.inputDraft.trim();
     if (!text || this.isStreaming) return;
@@ -4180,7 +4311,7 @@ export class UnifiedChatView extends JfElement {
       text,
       this.sessionId,
       this.schemaDraft,
-      this.pinnedDocIds,
+      this.effectiveDocIds(),
       selection,
     );
 

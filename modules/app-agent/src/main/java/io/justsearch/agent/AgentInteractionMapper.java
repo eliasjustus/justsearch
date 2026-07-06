@@ -208,6 +208,26 @@ public final class AgentInteractionMapper {
                   "agent",
                   str(payload.get("output")),
                   Map.of()));
+      // Tempdoc S4b (Search Thread) — the manually-triggered search action's durable event, written by
+      // `AgentRunStore.appendSearchEvent` (its own small `core.search-event`-shaped run, joined to the
+      // conversation exactly like a workflow run). Carries the search's identity/outcome verbatim so the
+      // reloaded thread renders the same committed search card the live UI showed.
+      case "search_executed" ->
+          Optional.of(
+              new InteractionEvent(
+                  searchEventId(conversationId, at),
+                  conversationId,
+                  at,
+                  InteractionEventKind.SEARCH,
+                  "user",
+                  "",
+                  attrs(
+                      "query", payload.get("query"),
+                      "mode", payload.get("mode"),
+                      "matchCount", payload.get("matchCount"),
+                      "resultCount", payload.get("resultCount"),
+                      "docIds", payload.get("docIds"),
+                      "executedAt", payload.get("executedAt"))));
       default -> Optional.empty();
     };
   }
@@ -259,6 +279,15 @@ public final class AgentInteractionMapper {
         + str(nodeId)
         + ":"
         + stamp;
+  }
+
+  /**
+   * Tempdoc S4b — a SEARCH event's stable projected id, shared by the read-time projection here and
+   * the write-time return value ({@code AgentRunStore.appendSearchEvent}) so the id the write path
+   * hands back to the caller is the SAME id the event will carry on the next {@code GET /api/thread}.
+   */
+  static String searchEventId(String conversationId, Instant at) {
+    return conversationId + ":search:" + at.toEpochMilli();
   }
 
   static Instant parseTs(Object raw) {

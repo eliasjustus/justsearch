@@ -1003,16 +1003,48 @@ export const unifiedChatBodyStyles = css`
       justify-content: flex-end;
       font-size: var(--font-size-xs);
     }
-    /* Search Thread D2/D3 (tempdoc decision 8, stage S2, item 7) — the bare-landing search bar: centered
-       in the conversation column instead of docked at the bottom, until a draft/history/query docks it. */
+    /* Search Thread D5 (stage S3) — the pinned scope-chip row, shown above the composer (and above
+       .route-row when present) in every affordance — a scope constrains both search and ask. */
+    .scope-row {
+      display: flex;
+      justify-content: flex-start;
+    }
+    /* Search Thread D5 (stage S3) — the quiet "Ask about these N results" affordance shown above the
+       retrieve card when >1 rows are selected. */
+    .scope-selection-btn {
+      align-self: flex-start;
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      font-size: var(--font-size-sm);
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    /* Search Thread D2/D3 (tempdoc decision 8, stage S2, item 7; stable-slot rev) — the bare-landing
+       intro (title + corpus) sits at the BOTTOM of the conversation column, directly above the
+       CSS-centered composer; the composer itself never re-parents (a re-parented textarea drops
+       keystrokes racing the first render — live-validation finding). */
     .landing {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-end;
       gap: 0.75rem;
-      min-height: 40vh;
+      min-height: 32vh;
       text-align: center;
+      padding-bottom: 1rem;
+    }
+    /* The stable bottom slot in landing mode: bounded, centered, lifted off the floor. */
+    .composer.landing-dock {
+      align-self: center;
+      width: min(42rem, 100%);
+      margin-bottom: 26vh;
+      border-top: none;
+    }
+    .composer.landing-dock .escalation-strip {
+      margin-top: 0.75rem;
     }
     .landing-title {
       font-size: var(--font-size-lg);
@@ -1032,9 +1064,6 @@ export const unifiedChatBodyStyles = css`
       color: var(--accent);
       text-decoration: underline;
       cursor: pointer;
-    }
-    .landing-composer {
-      width: min(42rem, 100%);
     }
     .escalation-strip {
       display: flex;

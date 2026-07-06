@@ -65,6 +65,36 @@ describe('projectUnifiedThread (561 P-A/P-B Slice 2)', () => {
   it('returns an empty thread for no events', () => {
     expect(projectUnifiedThread([])).toEqual([]);
   });
+
+  // Tempdoc S4b (Search Thread) — a SEARCH event rides the existing `progress` UnifiedTurnKind (no new
+  // render kind), marked with a dedicated `searchEvent` flag distinct from the UNKNOWN degrade's
+  // `rawKind` marker, with its typed attributes passed through verbatim.
+  it('maps a SEARCH event to the progress kind, marked searchEvent:true with attributes passed through', () => {
+    const out = projectUnifiedThread([
+      ev({
+        id: 's1',
+        kind: 'SEARCH',
+        occurredAt: '2026-01-01T00:00:01Z',
+        originator: 'user',
+        attributes: {
+          query: 'invoices',
+          mode: 'hybrid',
+          matchCount: 42,
+          resultCount: 10,
+          docIds: ['a.pdf', 'b.pdf'],
+          executedAt: '2026-01-01T00:00:01Z',
+        },
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.kind).toBe('progress');
+    expect(out[0]!.attributes.searchEvent).toBe(true);
+    expect(out[0]!.attributes.query).toBe('invoices');
+    expect(out[0]!.attributes.mode).toBe('hybrid');
+    expect(out[0]!.attributes.matchCount).toBe(42);
+    expect(out[0]!.attributes.resultCount).toBe(10);
+    expect(out[0]!.attributes.docIds).toEqual(['a.pdf', 'b.pdf']);
+  });
 });
 
 function entry(

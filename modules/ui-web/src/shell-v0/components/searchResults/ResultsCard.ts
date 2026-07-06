@@ -314,7 +314,7 @@ export class ResultsCard extends JfElement {
                   : this.refinedStampVisible
                     ? html` <span class="meta-refined" data-testid="meta-refined">refined ✓</span>`
                     : nothing}`
-            : html`<span class="meta-empty">0 matches</span>`}
+            : html`<span class="meta-empty">No matches for "${s.query}"</span>`}
       </div>
       ${s.results.length > 0
         ? html`<div class="copy-actions" data-testid="copy-actions">

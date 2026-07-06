@@ -22,6 +22,7 @@ const KNOWN_EVENT_KINDS = [
   'PROGRESS',
   'ERROR',
   'HANDOFF',
+  'SEARCH',
 ] as const;
 
 /** Tempdoc 561 P-A/P-A2 — the typed loop object summary (state + Turn/Iteration counts + budget). */
@@ -49,20 +50,53 @@ export interface ThreadResponse {
 
 /**
  * The exact pre-S4a schema/strictness for a KNOWN-kind event — unchanged: `kind` must be one of the
- * six {@link KNOWN_EVENT_KINDS}, and originator/content/attributes are all required. A known-kind event
- * that fails this (e.g. a missing `content`) is still treated as invalid — S4a only changes the BLAST
- * RADIUS of that failure (this one event is dropped, tempdoc S4a §4c), never the strictness itself.
+ * seven {@link KNOWN_EVENT_KINDS} (minus `SEARCH`, which has its own strict attributes schema below),
+ * and originator/content/attributes are all required. A known-kind event that fails this (e.g. a
+ * missing `content`) is still treated as invalid — S4a only changes the BLAST RADIUS of that failure
+ * (this one event is dropped, tempdoc S4a §4c), never the strictness itself.
  */
-const knownThreadEventSchema = z
+const genericKnownThreadEventSchema = z
   .object({
     id: z.string(),
     occurredAt: z.string(),
-    kind: z.enum(KNOWN_EVENT_KINDS),
+    kind: z.enum(KNOWN_EVENT_KINDS).exclude(['SEARCH']),
     originator: z.string(),
     content: z.string(),
     attributes: z.record(z.string(), z.unknown()),
   })
   .loose();
+
+/**
+ * Tempdoc S4b (Search Thread) — the typed attribute shape of a `SEARCH` event, matching what
+ * `AgentInteractionMapper`'s `search_executed` case persists: the identity of a manually-triggered
+ * search action (not a tool call), so the reloaded thread renders the same committed search card.
+ */
+const searchAttributesSchema = z.object({
+  query: z.string(),
+  mode: z.string(),
+  matchCount: z.number().int(),
+  resultCount: z.number().int(),
+  docIds: z.array(z.string()),
+  executedAt: z.string(),
+});
+
+/**
+ * Tempdoc S4b — `SEARCH` is a KNOWN kind (unlike the generic per-kind schema above) with STRICTLY
+ * typed attributes, since the FE needs `query`/`mode`/`matchCount`/`resultCount`/`docIds`/`executedAt`
+ * to render the committed search card, not an opaque `Record<string, unknown>`.
+ */
+const searchThreadEventSchema = z
+  .object({
+    id: z.string(),
+    occurredAt: z.string(),
+    kind: z.literal('SEARCH'),
+    originator: z.string(),
+    content: z.string(),
+    attributes: searchAttributesSchema,
+  })
+  .loose();
+
+const knownThreadEventSchema = z.union([genericKnownThreadEventSchema, searchThreadEventSchema]);
 
 /** The minimal structural shape ANY event (known or not) must have to be worth degrading, rather than
  * dropping outright: a stable id + an authoritative order key. */
