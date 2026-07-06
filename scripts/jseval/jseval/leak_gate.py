@@ -42,6 +42,42 @@ def _leak_rate(projection_doc: dict) -> Any:
     return (projection_doc.get("aggregate") or {}).get("leak_rate")
 
 
+def project_release_to_baselines(
+    release: dict,
+    *,
+    tolerance_default_abs: float = DEFAULT_TOLERANCE_ABS,
+    per_corpus_tolerance: dict | None = None,
+) -> dict:
+    """Project a ``release.v1`` object's optional ``leak`` section into baseline ceilings.
+
+    The leak-gate twin of :func:`relevance_gate.project_release_to_baselines`
+    (tempdoc 683): when the canonical release carries per-corpus measured leak
+    rates (composed from runs with ``staged_recall_accounting`` projections), the
+    ceiling projects live from the release; a corpus absent from the section is
+    simply not projected (the pointer file's ``fallback_baselines`` then governs
+    via :func:`ratchet_kernel.load_baselines_doc`'s merge).
+    """
+    per_corpus_tolerance = per_corpus_tolerance or {}
+    cohort = release.get("cohort") or {}
+    src_tag = release.get("release_id") or (cohort.get("git_sha") or "")[:10]
+    baselines: dict[str, dict] = {}
+    for dataset, entry in (release.get("leak") or {}).items():
+        rate = (entry or {}).get("leak_rate")
+        if not isinstance(rate, (int, float)):
+            continue
+        baselines[dataset] = {
+            "leak_rate_max": float(rate),
+            "tolerance_abs": per_corpus_tolerance.get(dataset, tolerance_default_abs),
+            "src": f"projected from release {src_tag}".strip(),
+        }
+    return {
+        "schema": "leak-gate-baseline.v1",
+        "tolerance_default_abs": tolerance_default_abs,
+        "projected_from_release": True,
+        "baselines": baselines,
+    }
+
+
 def derive_baselines(
     projections_by_dataset: dict,
     *,

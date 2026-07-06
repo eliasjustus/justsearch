@@ -140,6 +140,11 @@ async function main() {
       evidence_bundle_version: { const: 'EvidenceBundle/v1' },
       scenario: { type: 'string', minLength: 1 },
       run_id: { type: 'string', minLength: 1 },
+      session_id: {
+        type: 'string',
+        minLength: 1,
+        description: 'Optional agent session id that produced this bundle (capture-evidence-bundle --session-id).',
+      },
       started_at: { type: 'string' },
       finished_at: { type: 'string' },
       status: { enum: ['passed', 'failed'] },
