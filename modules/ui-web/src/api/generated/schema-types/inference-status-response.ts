@@ -49,13 +49,13 @@ export interface InferenceStatusResponse {
   tier?: string;
   vduQueueSize?: number;
 }
-export const inferenceStatusResponseSchema = z.object({
+export const inferenceStatusResponseSchema = z.strictObject({
   "activeModelId": z.string().optional(),
   "available": z.boolean().optional(),
   "configuredContextTokens": z.number().int().optional(),
   "cudaRuntimeWarning": z.string().optional(),
   "embeddingQueueSize": z.number().int().optional(),
-  "externalServer": z.object({
+  "externalServer": z.strictObject({
     "adoptedAtMs": z.number().int().optional(),
     "consecutiveHealthFailures": z.number().int().optional(),
     "contextTokens": z.number().int().nullable().optional(),
@@ -69,7 +69,7 @@ export const inferenceStatusResponseSchema = z.object({
     "verified": z.boolean().optional(),
   }).optional(),
   "generation": z.number().int().optional(),
-  "gpu": z.object({
+  "gpu": z.strictObject({
     "cudaAvailable": z.boolean().optional(),
     "cudaVersion": z.string().optional(),
     "nvidiaSmiAvailable": z.boolean().optional(),

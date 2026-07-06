@@ -5,8 +5,8 @@
  * `./schema-types/`. The barrel re-exports those generated authorities (plus the FE-ergonomic body
  * aliases derived from them — see the health family below) so existing consumers keep stable import
  * paths. The earlier parallel paths are retired: the typescript-generator `wire-types.ts` snapshot
- * (Phase 4) and the `*_pb`-sourced FE types (the `*_pb` files remain the gated buf contract + runtime
- * validators, but no longer source FE types).
+ * (Phase 4) and the `*_pb`-sourced FE types (tempdoc 683: the protoc-gen-es `*_pb` outputs are
+ * deleted from the FE entirely; the proto contract remains gated on the Java side).
  */
 
 // Tempdoc 564 Phase 4: TimeseriesSnapshot derives from its generated schema-types projection; this

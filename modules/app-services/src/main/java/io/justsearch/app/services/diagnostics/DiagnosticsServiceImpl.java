@@ -88,6 +88,11 @@ public final class DiagnosticsServiceImpl implements DiagnosticsService {
 
   @Override
   public Path exportDiagnostics() throws Exception {
+    return exportDiagnostics(null);
+  }
+
+  @Override
+  public Path exportDiagnostics(String feTelemetryJson) throws Exception {
     Path aiHome = PlatformPaths.resolveAiHome();
     Path dataDir = PlatformPaths.resolveDataDir();
     Path outDir = aiHome.resolve("diagnostics");
@@ -136,6 +141,13 @@ public final class DiagnosticsServiceImpl implements DiagnosticsService {
       addTelemetryFiles(zos, dataDir);
       addCrashReports(zos, dataDir);
       addRuntimeSnapshots(zos);
+
+      if (feTelemetryJson != null && !feTelemetryJson.isBlank()) {
+        addBytesRedacted(
+            zos,
+            feTelemetryJson.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            "frontend/fe-telemetry.json");
+      }
     }
 
     return outZip;

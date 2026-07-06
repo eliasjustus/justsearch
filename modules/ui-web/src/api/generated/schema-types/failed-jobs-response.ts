@@ -20,9 +20,9 @@ export interface FailedJobsResponse {
     path?: string | null;
   })[] | null;
 }
-export const failedJobsResponseSchema = z.object({
+export const failedJobsResponseSchema = z.strictObject({
   "count": z.number().int().optional(),
-  "jobs": z.array(z.object({
+  "jobs": z.array(z.strictObject({
     "attempts": z.number().int().optional(),
     "collection": z.string().nullable().optional(),
     "errorMessage": z.string().nullable().optional(),

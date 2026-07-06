@@ -391,7 +391,7 @@ function zodObject(schema, depth) {
     if (!required.has(k)) e += '.optional()';
     return pad + JSON.stringify(k) + ': ' + e + ',';
   });
-  return 'z.object({\n' + lines.join('\n') + '\n' + closePad + '})';
+  return 'z.strictObject({\n' + lines.join('\n') + '\n' + closePad + '})';
 }
 
 function renderZodDeclaration(typeName, schema) {

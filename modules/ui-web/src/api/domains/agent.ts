@@ -4,7 +4,7 @@
  */
 
 import { request } from '../http';
-import { AgentSessionSnapshotSchema, parseWireContract, validateWithFallback } from '../schemas';
+import { AgentSessionSnapshotSchema, parseWireContract } from '../schemas';
 import { agentHistoryResponseSchema } from '../generated/schema-types/agent-history-response.js';
 import { agentSessionsResponseSchema } from '../generated/schema-types/agent-sessions-response.js';
 
@@ -196,7 +196,7 @@ export async function getAgentSessionSnapshot(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}`,
     { signal },
   );
-  return validateWithFallback(
+  return parseWireContract(
     AgentSessionSnapshotSchema,
     raw,
     `GET /api/chat/sessions/${sessionId}`,

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-package io.justsearch.ui.api.dto;
+package io.justsearch.app.api.settings;
 
 /**
  * LLM/inference settings in the v2 canonical contract.

@@ -19,9 +19,9 @@ export interface ProvenanceWire {
   tier: "CORE" | "TRUSTED_PLUGIN" | "UNTRUSTED_PLUGIN";
   version: string;
 }
-export const provenanceWireSchema = z.object({
+export const provenanceWireSchema = z.strictObject({
   "contributorId": z.string(),
-  "identity": z.object({
+  "identity": z.strictObject({
     "signature": z.string().nullable(),
     "verified": z.boolean(),
   }).nullable(),

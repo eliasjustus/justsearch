@@ -20,7 +20,7 @@ export interface TimeseriesSnapshot {
   endedAt: string;
   catalogVersion: number;
 }
-export const timeseriesSnapshotSchema = z.object({
+export const timeseriesSnapshotSchema = z.strictObject({
   "resourceId": z.string(),
   "windowMs": z.number().int(),
   "sampleIntervalMs": z.number().int(),
