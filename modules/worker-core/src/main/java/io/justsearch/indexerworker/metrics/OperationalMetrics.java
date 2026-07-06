@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.metrics;
 
+import io.justsearch.telemetry.RollingMonitorWindow;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -430,10 +431,11 @@ public final class OperationalMetrics {
 
   /** Rolling-window throughput estimator for the indexing pipeline. */
   public static final class ThroughputMonitor {
-    private static final long WINDOW_MS = 180_000;
-    private static final long MAX_GAP_MS = 600_000;
-    // Must be >= WINDOW_MS / minPollIntervalMs + 1. At 2s polling: 91 minimum.
-    private static final int MAX_SAMPLES = 100;
+    // Window trio authority: io.justsearch.telemetry.RollingMonitorWindow (shared with the
+    // head-side GpuSaturationMonitor).
+    private static final long WINDOW_MS = RollingMonitorWindow.WINDOW_MS;
+    private static final long MAX_GAP_MS = RollingMonitorWindow.MAX_GAP_MS;
+    private static final int MAX_SAMPLES = RollingMonitorWindow.MAX_SAMPLES;
 
     private record Sample(long timeMs, long docs) {}
 
