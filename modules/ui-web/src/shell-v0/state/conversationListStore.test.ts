@@ -5,7 +5,7 @@
  *
  * Covers the store-level surface added in slice 513 (branchConversation,
  * fetchMessageIds, resumeConversation parent pointers). Vitest mocks
- * global.fetch so the tests stay purely unit-level — no dev stack needed.
+ * globalThis.fetch so the tests stay purely unit-level — no dev stack needed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -70,7 +70,7 @@ interface RecordedCall {
 
 function mockFetch(handler: (url: string, method: string) => Response): RecordedCall[] {
   const calls: RecordedCall[] = [];
-  global.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
     const u = url.toString();
     const method = init?.method ?? 'GET';
     calls.push({ url: u, method });
@@ -135,7 +135,7 @@ describe('conversationListStore branching', () => {
   });
 
   it('branchConversation returns null on network error', async () => {
-    global.fetch = vi.fn(() => Promise.reject(new Error('netdown'))) as typeof fetch;
+    globalThis.fetch = vi.fn(() => Promise.reject(new Error('netdown'))) as typeof fetch;
     const result = await branchConversation('p', 'm');
     expect(result).toBeNull();
   });
@@ -166,7 +166,7 @@ describe('conversationListStore branching', () => {
   });
 
   it('fetchMessageIds returns null on network error', async () => {
-    global.fetch = vi.fn(() => Promise.reject(new Error('boom'))) as typeof fetch;
+    globalThis.fetch = vi.fn(() => Promise.reject(new Error('boom'))) as typeof fetch;
     expect(await fetchMessageIds('x')).toBeNull();
   });
 
@@ -315,7 +315,7 @@ describe('deleteConversationWithCascade (Slice 517 FIX-U1)', () => {
     // child id; child DELETE → 200; parent retry → 200.
     let parentAttempt = 0;
     const fetched: string[] = [];
-    global.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
       const u = url.toString();
       const method = init?.method ?? 'GET';
       fetched.push(`${method} ${u}`);
@@ -349,7 +349,7 @@ describe('deleteConversationWithCascade (Slice 517 FIX-U1)', () => {
 
   it('cascade aborts if a child delete fails — parent stays intact', async () => {
     let parentAttempt = 0;
-    global.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
       const u = url.toString();
       const method = init?.method ?? 'GET';
       if (u.includes('/parent-2') && method === 'DELETE') {

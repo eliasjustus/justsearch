@@ -6,12 +6,12 @@ describe('resourceCatalog', () => {
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
     vi.resetModules();
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.clearAllMocks();
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('justsearch.resourceCatalog.en.body');
@@ -58,13 +58,13 @@ describe('resourceCatalog', () => {
         }),
         headers: { get: (name: string) => name === 'ETag' ? '"abc123"' : null },
       };
-      global.fetch = vi.fn().mockResolvedValue(mockResponse);
+      globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
 
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
       await mod.bootResourceCatalog('http://localhost:33221');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         'http://localhost:33221/api/messages/registry-resource/en',
         expect.objectContaining({ headers: expect.any(Object) }),
       );
@@ -80,7 +80,7 @@ describe('resourceCatalog', () => {
       localStorage.setItem('justsearch.resourceCatalog.en.etag', '"cached-etag"');
 
       let capturedHeaders: Record<string, string> | undefined;
-      global.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         capturedHeaders = init?.headers as Record<string, string>;
         return Promise.resolve({
           ok: false,
@@ -108,7 +108,7 @@ describe('resourceCatalog', () => {
     });
 
     it('falls back to raw-key passthrough when the fetch fails', async () => {
-      global.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
 
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
@@ -118,13 +118,13 @@ describe('resourceCatalog', () => {
     });
 
     it('skips the network round-trip when baseUrl is empty', async () => {
-      global.fetch = vi.fn();
+      globalThis.fetch = vi.fn();
 
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
       await mod.bootResourceCatalog('');
 
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it('uses a distinct localStorage key from errorCatalog', async () => {
@@ -139,7 +139,7 @@ describe('resourceCatalog', () => {
         }),
         headers: { get: (name: string) => name === 'ETag' ? '"resource-etag"' : null },
       };
-      global.fetch = vi.fn().mockResolvedValue(mockResponse);
+      globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
 
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
@@ -162,13 +162,13 @@ describe('resourceCatalog', () => {
         }),
         headers: { get: () => null },
       };
-      global.fetch = vi.fn().mockResolvedValue(mockResponse);
+      globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
 
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
       await mod.bootWorkflowCatalog('http://localhost:33221');
 
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         'http://localhost:33221/api/messages/registry-workflow/en',
       );
       expect(mod.localizeResourceKey('registry-workflow.research-brief.label'))
@@ -176,7 +176,7 @@ describe('resourceCatalog', () => {
     });
 
     it('falls back to raw-key passthrough when the fetch fails', async () => {
-      global.fetch = vi.fn().mockRejectedValue(new Error('network down'));
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
       await mod.bootWorkflowCatalog('http://localhost:33221');
@@ -186,11 +186,11 @@ describe('resourceCatalog', () => {
     });
 
     it('skips the network round-trip when baseUrl is empty', async () => {
-      global.fetch = vi.fn();
+      globalThis.fetch = vi.fn();
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
       await mod.bootWorkflowCatalog('');
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     // Tempdoc 565 §28 — the cold-boot clobber regression. bootResourceCatalog used to REPLACE
@@ -200,7 +200,7 @@ describe('resourceCatalog', () => {
     // makes bootResourceCatalog merge too; this test pins that workflow keys survive a following
     // resource boot (it FAILS under the old replace semantics).
     it('a following bootResourceCatalog (200) does NOT clobber already-merged workflow labels', async () => {
-      global.fetch = vi.fn((url: string) => {
+      globalThis.fetch = vi.fn((url: string) => {
         const messages = url.includes('registry-workflow')
           ? { 'registry-workflow.demo-compose.label': 'Compose demo' }
           : { 'registry-resource.health-events.label': 'Health events' };

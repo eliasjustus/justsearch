@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, type Mock } from 'vitest';
-import './SearchSurface.ts';
+import './SearchSurface.js';
 import { SearchSurface } from './SearchSurface.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';

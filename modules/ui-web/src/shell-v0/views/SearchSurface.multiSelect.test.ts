@@ -1,140 +1,119 @@
 // @vitest-environment happy-dom
 
 /**
- * Tempdoc 508-followup §γ4 — multi-select shift-click in SearchSurface.
+ * Tempdoc 508-followup §γ4 — Search Thread S1 rework.
  *
- * Exercises the click handler's three branches:
- *   - plain click   → replace selection with [hit]
- *   - shift-click   → range from anchor to clicked index
- *   - ctrl/meta+click → toggle hit membership
+ * The multi-select CLICK MECHANICS (plain/shift-range/ctrl-toggle, anchor
+ * tracking) moved into the shared `<jf-results-card>` — see
+ * ResultsCard.test.ts's "multi-select event model" suite, which asserts the
+ * emitted `card-selection` detail directly (`SearchSurface.handleClick` no
+ * longer exists; the card owns click handling now).
  *
- * Each branch publishes through selectionState; the assertions read
- * the internal state directly.
+ * This file keeps the surface-level HOST WIRING: `.selectedIds`/`.snapshot`
+ * reach the mounted card, and a `card-selection` event publishes through
+ * `selectionState` via `applySelection` — unchanged production logic on
+ * SearchSurface that ResultsCard has no visibility into (single-hit
+ * capability projection; multi-select >1 collapsing to ONE result-set
+ * SelectionItem, tempdoc 526 §17 T1B).
  */
-
 import { describe, it, expect, beforeEach } from 'vitest';
-import './SearchSurface.ts';
+import './SearchSurface.js';
 import { SearchSurface } from './SearchSurface.js';
-import {
-  __resetSelectionForTest,
-  getSelection,
-} from '../state/selectionState.js';
+import { __resetSelectionForTest, getSelection } from '../state/selectionState.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
+import type { CardSelectionDetail } from '../components/searchResults/ResultsCard.js';
 
-function mountSurface(results: Array<{ id: string; title: string; path: string }>): SearchSurface {
+interface TestHit {
+  docId: string;
+  score: number;
+  fields: Record<string, unknown>;
+  id: string;
+  title: string;
+  path: string;
+}
+function hit(id: string): TestHit {
+  return { docId: id, score: 1, fields: {}, id, title: id, path: `/${id}` };
+}
+
+async function mount(results: string[]): Promise<SearchSurface> {
   __resetSelectionForTest();
   const surface = document.createElement('jf-search-surface') as SearchSurface;
   surface.host_ = createMockHostApi({
-    search: {
-      hitToSelectedItem: (h) => ({ id: h.id, title: h.title, path: h.path }),
-    },
+    search: { hitToSelectedItem: (h) => ({ id: h.id, title: h.title, path: h.path }) },
   });
-  const fullResults = results.map((r) => ({
-    docId: r.id,
-    score: 1,
-    fields: {},
-    id: r.id,
-    title: r.title,
-    path: r.path,
-  }));
+  document.body.appendChild(surface);
   surface.s = {
     query: 'x',
-    results: fullResults,
+    results: results.map(hit),
     totalHits: results.length,
     matchCount: results.length,
     facetsTruncated: false,
     isSearching: false,
     processingTimeMs: null,
     error: null,
-  };
+  } as unknown as SearchSurface['s'];
+  await surface.updateComplete;
   return surface;
 }
 
-function clickRow(surface: SearchSurface, hitId: string, modifiers: Partial<MouseEventInit> = {}): void {
-  const hit = surface.s.results.find((h) => h.id === hitId);
-  if (!hit) throw new Error(`hit ${hitId} not in results`);
-  const event = new MouseEvent('click', { ...modifiers, bubbles: true });
-  // Reach into the private handler for a deterministic unit test —
-  // happy-dom's lit-render path doesn't reliably fire Lit's @click
-  // bindings without a full lifecycle attach.
-  (surface as unknown as { handleClick: (h: typeof hit, e: MouseEvent) => void }).handleClick(hit, event);
+function card(surface: SearchSurface): Element {
+  const c = surface.shadowRoot?.querySelector('jf-results-card');
+  if (!c) throw new Error('jf-results-card not mounted');
+  return c;
 }
 
-const HITS = [
-  { id: 'a', title: 'A', path: '/a' },
-  { id: 'b', title: 'B', path: '/b' },
-  { id: 'c', title: 'C', path: '/c' },
-  { id: 'd', title: 'D', path: '/d' },
-];
+/** Fires the same `card-selection` shape ResultsCard's real click handler emits. */
+function fireCardSelection(surface: SearchSurface, ids: string[], primaryIndex = 0): void {
+  card(surface).dispatchEvent(
+    new CustomEvent<CardSelectionDetail>('card-selection', {
+      detail: { ids, primaryId: ids[primaryIndex] ?? ids[0]!, primaryIndex },
+      bubbles: true,
+      composed: true,
+    }),
+  );
+}
+
+const HITS = ['a', 'b', 'c', 'd'];
 
 beforeEach(() => {
   __resetSelectionForTest();
 });
 
-describe('SearchSurface multi-select (tempdoc 508-followup §γ4)', () => {
-  it('plain click selects a single hit', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'b');
+describe('SearchSurface → jf-results-card selection wiring (508-followup §γ4 / Search Thread S1)', () => {
+  it('passes .selectedIds and .snapshot through to the mounted card', async () => {
+    const s = await mount(HITS);
+    const c = card(s) as unknown as { selectedIds: ReadonlySet<string>; snapshot: unknown };
+    expect(c.selectedIds).toBe(s.selectedHitIds);
+    expect(c.snapshot).toBe(s.s);
+  });
+
+  it('a single-id card-selection publishes a search-hit SelectionItem with the projected capabilities', async () => {
+    const s = await mount(HITS);
+    fireCardSelection(s, ['b'], 0);
+
     expect(s.selectedHitIds.size).toBe(1);
     expect(s.selectedHitIds.has('b')).toBe(true);
     const sel = getSelection();
     expect(sel.items).toHaveLength(1);
     expect(sel.surfaceId).toBe('core.search-surface');
+    const caps = sel.items[0]!.capabilities;
+    expect(caps.has('open')).toBe(true);
+    expect(caps.has('pin')).toBe(true);
   });
 
-  it('subsequent plain click replaces the selection', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'a');
-    clickRow(s, 'c');
-    expect(s.selectedHitIds.size).toBe(1);
-    expect(s.selectedHitIds.has('c')).toBe(true);
-  });
+  // The ONE selectionState assertion kept alive at surface level (Search Thread S1
+  // scope note): multi-select (>1) collapses to a single result-set SelectionItem —
+  // SearchSurface.applySelection's own behavior, not something the card can see.
+  it('multi-select (>1) card-selection publishes ONE result-set SelectionItem with surfaceId core.search-surface', async () => {
+    const s = await mount(HITS);
+    fireCardSelection(s, ['a', 'b', 'c'], 0);
 
-  it('shift-click selects a range from anchor to clicked', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'a'); // anchor on a (index 0)
-    clickRow(s, 'c', { shiftKey: true }); // range a..c
     expect(Array.from(s.selectedHitIds).sort()).toEqual(['a', 'b', 'c']);
-    // Tempdoc 526 §17 T1B — multi-select publishes a single result-set
-    // SelectionItem wrapping the N selected docs, not N individual
-    // search-hit items. The substrate consumer (F9 menu's "Summarize all"
-    // / "Ask about all" actions) reads the result-set kind.
     const sel = getSelection();
+    expect(sel.surfaceId).toBe('core.search-surface');
     expect(sel.items).toHaveLength(1);
     expect(sel.items[0]?.kind).toBe('result-set');
     const item = sel.items[0] as { kind: 'result-set'; items: ReadonlyArray<{ id: string }> };
     expect(item.items.map((r) => r.id).sort()).toEqual(['/a', '/b', '/c']);
-  });
-
-  it('shift-click range is direction-agnostic', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'd'); // anchor on d
-    clickRow(s, 'b', { shiftKey: true }); // range b..d
-    expect(Array.from(s.selectedHitIds).sort()).toEqual(['b', 'c', 'd']);
-  });
-
-  it('ctrl-click toggles a hit on then off', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'a');
-    clickRow(s, 'c', { ctrlKey: true });
-    expect(Array.from(s.selectedHitIds).sort()).toEqual(['a', 'c']);
-    clickRow(s, 'c', { ctrlKey: true });
-    expect(Array.from(s.selectedHitIds).sort()).toEqual(['a']);
-  });
-
-  it('meta-click behaves like ctrl-click', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'a');
-    clickRow(s, 'd', { metaKey: true });
-    expect(Array.from(s.selectedHitIds).sort()).toEqual(['a', 'd']);
-  });
-
-  it('publishes selectionCapabilities derived from search-hit default', () => {
-    const s = mountSurface(HITS);
-    clickRow(s, 'b');
-    const sel = getSelection();
-    const caps = sel.items[0]!.capabilities;
-    expect(caps.has('open')).toBe(true);
-    expect(caps.has('pin')).toBe(true);
   });
 });

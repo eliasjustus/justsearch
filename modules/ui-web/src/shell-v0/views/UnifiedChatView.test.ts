@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
 import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape } from '../utils/compose.js';
@@ -1361,7 +1362,11 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const rows = view.shadowRoot?.querySelectorAll('[data-testid="retrieve-result-row"]');
+    // Search Thread S1 — the tier renders the ONE results card; rows live in its shadow root.
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
+    const rows = card!.shadowRoot?.querySelectorAll('[data-testid="search-result-row"]');
     expect(rows?.length).toBe(2);
     // The hit-list is NOT a chat message — no assistant/user turn was created.
     expect(view.thread.length).toBe(0);
@@ -1409,10 +1414,14 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       facets: { file_kind: { markdown: 3, pdf: 1 } },
     });
     await view.updateComplete;
+    // Search Thread S1 — facet chips + why disclosures render inside the shared card.
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
     // Facet chips (shared render) appear above the list.
-    expect(view.shadowRoot?.querySelector('[data-testid="facet-row"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="facet-row"]')).not.toBeNull();
     // Per-hit "Why this result?" disclosure (shared render) appears on the row.
-    expect(view.shadowRoot?.querySelector('[data-testid="hit-why"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="hit-why"]')).not.toBeNull();
   });
 
   it('602 R3 — the retrieve row formats the path + highlights query terms like the Search surface', async () => {
@@ -1443,15 +1452,18 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const sr = view.shadowRoot!;
+    // Search Thread S1 — the row presentation lives in the shared card's shadow root.
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const sr = card.shadowRoot!;
     // Path is middle-ellipsis formatted (shared formatDisplayPath) — keeps the filename,
     // drops the middle — not the raw 90-char path; the raw path stays in the title attr.
-    const pathEl = sr.querySelector('.retrieve-row-path')!;
+    const pathEl = sr.querySelector('.row .path')!;
     expect(pathEl.textContent).toContain('…');
     expect(pathEl.textContent).toContain('quarterly-report.md');
     expect(pathEl.getAttribute('title')).toBe(longPath);
     // Query term is wrapped in the shared <mark class="hl"> highlight.
-    const mark = sr.querySelector('.retrieve-row-snippet mark.hl');
+    const mark = sr.querySelector('.row .snippet mark.hl');
     expect(mark, 'snippet highlights the query term').not.toBeNull();
     expect(mark!.textContent?.toLowerCase()).toBe('invoice');
   });
@@ -1483,7 +1495,9 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const meta = view.shadowRoot?.querySelector('.retrieve-meta')?.textContent ?? '';
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const meta = card.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
     expect(meta).toContain('Top 2 of 451 matches');
     expect(meta).not.toContain('110 result'); // the old window-as-count is gone
   });
@@ -1505,7 +1519,9 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const meta = view.shadowRoot?.querySelector('.retrieve-meta')?.textContent ?? '';
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const meta = card.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
     expect(meta).toContain('3 matches');
     expect(meta).not.toContain('50 result');
   });

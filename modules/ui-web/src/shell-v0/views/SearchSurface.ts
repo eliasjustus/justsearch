@@ -24,20 +24,10 @@ import { html, css, type TemplateResult, nothing } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { surfaceLayoutStyles } from '../primitives/surfaceLayout.js';
 import { compose } from '../utils/compose.js';
-import { setMenuAnchor } from '../utils/selectionAnchor.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import { icon } from '../components/Icon.js';
 import '../components/ErrorAlert.js';
-
-// Tempdoc 602 R3 — the path/snippet presentation is the ONE shared authority
-// (sibling of matchCountLabel.ts); both this surface and the retrieve tier
-// project the same formatted path + highlighted snippet from this module.
-import {
-  formatDisplayPath,
-  highlightTerms,
-  highlightStyles,
-} from '../components/searchResults/resultRowPresentation.js';
 
 // B3 — surface the backend's retrieval-degraded / reindex-required signal in the
 // Search UI, projected from the ONE observed-state authority (aiStateStore).
@@ -50,7 +40,6 @@ import '../components/Control.js';
 // Q8: gate the raw retrieval-trace diagnostics behind Advanced mode.
 import { subscribeUiMode, type UiMode } from '../state/uiModeState.js';
 import {
-  recordOpenDisposition,
   getSearchScope,
   setSearchScope,
   type SearchScope,
@@ -60,16 +49,6 @@ import {
 // in isolated (test) mounts; bootstrapAggregateSubstrate() registers its strategy
 // at app boot.
 import '../aggregate-substrate/components/JfSearchTrace.js';
-// Tempdoc 577 Phase 3 (Ext I) — the one stage-label vocabulary for the per-hit chips.
-import {
-  renderWhyDisclosure,
-  whyThisResultStyles,
-  type WhyHit,
-} from '../components/searchResults/whyThisResult.js';
-import {
-  renderFacetChips,
-  facetChipStyles,
-} from '../components/searchResults/facetChips.js';
 import { matchCountLabel } from '../components/searchResults/matchCountLabel.js';
 import '../components/SystemNotice.js';
 // Tempdoc 577 Phase 2 (Ext III) — the cause+remedy projection behind the degradation
@@ -77,9 +56,6 @@ import '../components/SystemNotice.js';
 import { readinessNotice } from '../state/readinessNotice.js';
 // Tempdoc 613 §6 R-3 — "don't push what's already pulled": suppress a cause-toast the banner shows.
 import { causePushSuppressedByBanner } from '../state/messageRouting.js';
-// Tempdoc 613 §6 — the in-control RECEIPT surface authority (the copy-confirmation flash is a receipt,
-// `locality: 'at-control'`, not a window toast); replaces the bespoke `copyFlash` state.
-import { ReceiptController } from '../primitives/receiptController.js';
 import { RetainedScroll } from '../controllers/retainedScroll.js';
 // Tempdoc 577 Phase 6 (Move E) — keyword facet selections (the clickable half of dual
 // filtering). Direct state import: this is a core surface; the plugin host API does not
@@ -88,8 +64,6 @@ import {
   toggleFacetValue,
   subscribeFacetSelections,
 } from '../state/searchFiltersState.js';
-// Tempdoc 577 Phase 7 (Move B / 570 §18 D3) — the typed result view projection.
-import { projectResultView, type ResultViewInput } from './searchResultViewModel.js';
 import '../components/OpButton.js';
 import '../components/Button.js';
 import type { SearchTrace } from '../../api/generated/index.js';
@@ -100,16 +74,6 @@ import type {
   SearchPinSnapshot,
   SearchFilterSnapshot,
 } from '../plugin-api/plugin-types.js';
-import {
-  formatAsMarkdown,
-  formatAsJson,
-  formatAsPaths,
-} from '../utils/searchResultFormatters.js';
-// §28.W2 — production consumer of the search-result projector.
-// Right-click on a result row opens a context menu whose plugin-
-// contributed actions can branch on flat-key facts the projector
-// produces (searchResult_hasScore, searchResult_path, etc.).
-import { openContextMenu } from '../components/ContextMenu.js';
 // Tempdoc 508-followup §γ4 — multi-select. SearchSurface is core
 // chrome, so it publishes through the internal selectionState
 // (typed SelectionItem union); the host.selection sub-interface
@@ -119,6 +83,10 @@ import {
   DEFAULT_CAPABILITIES_BY_KIND,
   type SelectionItem,
 } from '../state/selectionState.js';
+// Search Thread S1 — the ONE results card; this surface mounts it and wires its
+// intent events (open/selection/facet/ask) through the existing host seams.
+import '../components/searchResults/ResultsCard.js';
+import type { CardSelectionDetail } from '../components/searchResults/ResultsCard.js';
 
 /**
  * Slice 486 G36-widening (filter-snapshot) — short human-readable description of a filter
@@ -215,12 +183,6 @@ export class SearchSurface extends JfElement {
   declare advanced: boolean;
   /** Tempdoc 577 Phase 6 — active facet selections (mirrors searchFiltersState). */
   declare facetSelections: Record<string, string[]>;
-  /**
-   * Tempdoc 508-followup §γ4 — anchor index for shift-click range
-   * selection. Reset on plain-click, advanced on every click that
-   * lands on a hit.
-   */
-  private anchorIndex: number = -1;
 
   private unsub: (() => void) | null = null;
   private unsubFacets: (() => void) | null = null;
@@ -232,8 +194,6 @@ export class SearchSurface extends JfElement {
   private setSearchQueryListener: ((e: Event) => void) | null = null;
   private setSearchFilterListener: ((e: Event) => void) | null = null;
   private inputRef: HTMLInputElement | null = null;
-  /** Tempdoc 613 §6 — the in-control receipt surface for copy confirmations (keyed per format). */
-  private readonly copyReceipt = new ReceiptController(this);
   /**
    * Tempdoc 609 §R (P4) — result-list scroll save/restore, generalized into the shared RetainedScroll
    * controller (captures `.body` scrollTop on disconnect, restores after the reconnected render paints).
@@ -261,14 +221,11 @@ export class SearchSurface extends JfElement {
 
   // Tempdoc 559 Authority I: :host / .header region contract owned by
   // surfaceLayoutStyles (the one layout authority); only bespoke rules here.
+  // Search Thread S1 — row/meta/copy/facet/why/highlight styles moved into the one
+  // `jf-results-card` (its own shadow root); this surface keeps only header/pins/
+  // filter/scope/banner/explain chrome.
   static styles = [
     surfaceLayoutStyles,
-    // Tempdoc 577 Goal 3 §3.9a — the per-hit "why" + facet-chip styles are shared
-    // with the unified window's retrieve tier (one render authority, no fork).
-    whyThisResultStyles,
-    facetChipStyles,
-    // Tempdoc 602 R3 — the query-term highlight mark style is shared (one authority).
-    highlightStyles,
     css`
     /* B3 — retrieval-degraded / reindex-required banner. 559: the notice shell
        (tone/bg/border/a11y) is owned by <jf-system-notice>; this owns only the
@@ -367,107 +324,10 @@ export class SearchSurface extends JfElement {
       border-color: var(--accent-tint);
       box-shadow: 0 0 0 2px var(--accent-tint-16);
     }
-    .meta {
-      margin-top: 0.4rem;
-      font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
     .body {
       /* 559 Authority I: flex/overflow from surfaceLayoutStyles; zero-horizontal
          padding is surface-specific (rows carry their own 1.25rem). */
       padding: 0.5rem 0;
-    }
-    .row {
-      padding: 0.625rem 1.25rem;
-      cursor: pointer;
-      border-left: 2px solid transparent;
-    }
-    .row:hover {
-      background: var(--surface-secondary);
-    }
-    .row.selected {
-      border-left-color: var(--accent-tint);
-      background: var(--accent-tint-08);
-    }
-    .row .title {
-      font-size: var(--font-size-sm);
-      font-weight: 500;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .row .path {
-      font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      font-family: monospace;
-      margin-top: 0.125rem;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .row .snippet {
-      font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      margin-top: 0.25rem;
-      line-height: 1.4;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    /* Q11 — query-term highlight: the mark.hl style now lives in the shared
-       highlightStyles (602 R3); both surfaces consume the one authority. */
-    /* 577 Phase 7 — typed-row chrome: kind glyph, link-role title, code line anchor. */
-    .row .title {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-      color: var(--text-link);
-    }
-    .row .kind-icon {
-      display: inline-flex;
-      color: var(--text-tertiary);
-      flex-shrink: 0;
-    }
-    .row .title-text {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .row .line-anchor {
-      color: var(--text-tertiary);
-      font-size: var(--font-size-xs);
-      flex-shrink: 0;
-    }
-    /* 577 Phase 8 — per-row actions affordance (visible on hover/focus; always
-       focusable, so keyboard users reach the same verb-space). */
-    .row .row-actions {
-      margin-left: auto;
-      padding: 0 0.4rem;
-      font-size: var(--font-size-sm);
-      font-family: inherit;
-      line-height: 1.2;
-      border: 1px solid transparent;
-      border-radius: 4px;
-      background: none;
-      color: var(--text-tertiary);
-      cursor: pointer;
-      opacity: 0;
-      flex-shrink: 0;
-    }
-    .row:hover .row-actions,
-    .row .row-actions:focus-visible {
-      opacity: 1;
-    }
-    .row .row-actions:hover,
-    .row .row-actions:focus-visible {
-      color: var(--text-primary);
-      border-color: var(--border-subtle);
-      background: var(--surface-hover);
-      outline: none;
     }
     .empty {
       padding: 3rem 1rem;
@@ -499,6 +359,14 @@ export class SearchSurface extends JfElement {
     .input-wrap .pin-btn:focus {
       outline: none;
       border-color: var(--accent-tint);
+    }
+    .meta {
+      margin-top: 0.4rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .meta-empty {
+      opacity: 0.6;
     }
     /* Tempdoc 585 §D Phase 4 (D4b) — the search-scope segmented control. */
     .scope-selector {
@@ -922,23 +790,6 @@ export class SearchSurface extends JfElement {
     this.host_.search.unpinSearch(pin.id);
   }
 
-  /**
-   * Slice 486 G35 — format current results + copy to clipboard +
-   * flash the button label as confirmation. The flash auto-clears
-   * after 1500ms; rapid re-clicks reset the timer.
-   */
-  private async handleCopyClick(format: 'md' | 'json' | 'paths'): Promise<void> {
-    const results = this.s.results;
-    let text = '';
-    const hits = results as unknown as import('../state/searchState.js').SearchHit[];
-    if (format === 'md') text = formatAsMarkdown(hits);
-    else if (format === 'json') text = formatAsJson(hits);
-    else text = formatAsPaths(hits);
-    await this.host_.ui.copyToClipboard(text);
-    // Tempdoc 613 §6 — a copy confirmation is a RECEIPT (locality: at-control), flashed in the button
-    // it was triggered from, NOT a window toast (`routePushSurface('at-control') === 'receipt'`).
-    this.copyReceipt.flash('Copied!', { key: format });
-  }
 
   override updated(): void {
     if (!this.inputRef) {
@@ -951,68 +802,11 @@ export class SearchSurface extends JfElement {
     }
   }
 
-  /**
-   * Tempdoc 508-followup §γ4 — multi-select aware click handler.
-   *
-   *   - No modifier: replace selection with `[hit]`, set anchor.
-   *   - shift+click: select the range [anchor..clickedIndex] (inclusive).
-   *   - ctrl/meta+click: toggle the hit's membership in the set; keep
-   *     anchor on the clicked hit.
-   *
-   * Publishes the resulting set to selectionState and shows the primary
-   * hit in the inspector. selectionState propagates to ShellContext so
-   * `when`-gated commands (e.g., "Export selected") light up.
-   */
-  private handleClick(hit: SearchHitSnapshot, event: MouseEvent): void {
-    const hits = this.s.results as readonly SearchHitSnapshot[];
-    const clickedIndex = hits.findIndex((h) => h.id === hit.id);
-    // Tempdoc 580 §17 P3 — opening a result is the positive disposition; emit it to the canonical
-    // feedback stream (joins this query's snapshot by interactionId — the §17.4 join).
-    recordOpenDisposition(hit.id);
-    // Tempdoc 526 §17 T1B — publish the clicked row's bounding rect to the
-    // F9 menu anchor register BEFORE updating selection state. The menu
-    // subscribes to both selection state and the anchor register; the
-    // selection publish happens in applySelection().
-    const rowEl = event.currentTarget as HTMLElement | null;
-    if (rowEl) {
-      const rect = rowEl.getBoundingClientRect();
-      if (rect.width > 0 || rect.height > 0) {
-        setMenuAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right });
-      }
-    }
-    if (clickedIndex < 0) {
-      // Out-of-list (defensive — shouldn't fire), fall through to single.
-      this.applySelection(new Set([hit.id]), clickedIndex);
-      this.host_.ui.showInspector(this.host_.search.hitToSelectedItem(hit));
-      return;
-    }
 
-    let nextIds: Set<string>;
-    if (event.shiftKey && this.anchorIndex >= 0 && this.anchorIndex < hits.length) {
-      const start = Math.min(this.anchorIndex, clickedIndex);
-      const end = Math.max(this.anchorIndex, clickedIndex);
-      nextIds = new Set<string>();
-      for (let i = start; i <= end; i++) {
-        const h = hits[i];
-        if (h) nextIds.add(h.id);
-      }
-      // Shift-click keeps the original anchor.
-    } else if (event.ctrlKey || event.metaKey) {
-      nextIds = new Set(this.selectedHitIds);
-      if (nextIds.has(hit.id)) {
-        nextIds.delete(hit.id);
-      } else {
-        nextIds.add(hit.id);
-      }
-      this.anchorIndex = clickedIndex;
-    } else {
-      nextIds = new Set([hit.id]);
-      this.anchorIndex = clickedIndex;
-    }
-
-    this.applySelection(nextIds, clickedIndex);
-    // Inspector reflects the clicked hit (the "primary").
-    this.host_.ui.showInspector(this.host_.search.hitToSelectedItem(hit));
+  /** Search Thread S1 — card open → inspector via the host seam (selection arrives separately). */
+  private handleCardOpen(hitId: string): void {
+    const hit = (this.s.results as readonly SearchHitSnapshot[]).find((h) => h.id === hitId);
+    if (hit) this.host_.ui.showInspector(this.host_.search.hitToSelectedItem(hit));
   }
 
   private applySelection(nextIds: ReadonlySet<string>, primaryIndex: number): void {
@@ -1065,75 +859,8 @@ export class SearchSurface extends JfElement {
     });
   }
 
-  /**
-   * Tempdoc 577 Phase 7 (Move B, the 570 §18 D3 interim) — the row renders from the
-   * typed result view: kind glyph + per-kind details (code rows carry the excerpt's
-   * line anchor; image rows defer thumbnails — named follow-up). Snippets come from
-   * the projection (excerptRegions preferred, word-boundary truncated).
-   */
-  private renderRow(hit: SearchHitSnapshot): TemplateResult {
-    const selected = this.selectedHitIds.has(hit.id);
-    const view = projectResultView(hit as unknown as ResultViewInput);
-    return html`
-      <div
-        class=${selected ? 'row selected' : 'row'}
-        role="listitem"
-        id=${`search-opt-${hit.id}`}
-        data-testid="search-result-row"
-        aria-current=${selected ? 'true' : 'false'}
-        data-selected=${selected ? 'true' : 'false'}
-        data-kind=${view.kind}
-        data-addressable-kind="search-result"
-        data-addressable-id=${hit.id}
-        @click=${(e: MouseEvent) => this.handleClick(hit, e)}
-        @contextmenu=${(e: MouseEvent) => void this.handleRowContextMenu(hit, e)}
-      >
-        <div class="title">
-          <span class="kind-icon" aria-hidden="true">${icon({ name: view.icon, size: 13 })}</span>
-          <span class="title-text">${view.title}</span>
-          ${view.kind === 'code' && view.approxLine != null
-            ? html`<span class="line-anchor">:L${view.approxLine}</span>`
-            : nothing}
-          <button
-            class="row-actions"
-            data-testid="row-actions"
-            title="Actions"
-            aria-label=${`Actions for ${view.title}`}
-            @click=${(e: MouseEvent) => {
-              e.stopPropagation();
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              void this.openResultMenu(hit, { x: r.left, y: r.bottom });
-            }}
-          >⋯</button>
-        </div>
-        <div class="path" title=${hit.path}>${formatDisplayPath(hit.path)}</div>
-        ${view.snippet
-          ? html`<div class="snippet" data-snippet-source=${view.snippetSource}>
-              ${highlightTerms(view.snippet, this.s.query)}
-            </div>`
-          : nothing}
-        ${this.renderWhy(hit)}
-      </div>
-    `;
-  }
 
-  /**
-   * Tempdoc 549 (Slice 3 / G111) — per-hit "Why this result?" disclosure.
-   * Tempdoc 577 Goal 3 §3.9a: delegates to the ONE shared `renderWhyDisclosure`
-   * (chips from the per-hit trace + the "Explain in words" → core.summarize
-   * action), shared with the unified window's retrieve tier so the two are not
-   * forks. Path-sparse: returns `nothing` when the hit carries no trace.
-   */
-  private renderWhy(hit: SearchHitSnapshot): unknown {
-    // SearchHitSnapshot.trace is typed `unknown` (the wire snapshot); it carries
-    // HitStage[] at runtime, the same cast the retired private traceChipsFor used.
-    return renderWhyDisclosure(hit as unknown as WhyHit);
-  }
 
-  /** Tempdoc 577 Phase 4 — honest latency formatting: seconds past 1s, ms below. */
-  private static formatLatency(ms: number): string {
-    return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
-  }
 
   /**
    * Tempdoc 597 — the truthful result-count label as a FUNNEL (see {@link matchCountLabel}).
@@ -1152,29 +879,6 @@ export class SearchSurface extends JfElement {
     return matchCountLabel(matched, shown, rankedOnly, ranked, truncated);
   }
 
-  /**
-   * Tempdoc 598 R1 (§34.1) — the glanceable retrieval-mode indicator: the ONE honest signal of
-   * WHICH retrieval actually ran, projected from the response's effective mode (the same
-   * `searchTrace.effectiveMode` the count label reads) — never a client-side guess. After the
-   * capability-derived default lands, this reads HYBRID when the dense leg ran and TEXT when the
-   * engine degraded to keyword (embeddings not ready), so the surface never silently presents
-   * keyword results as semantic. Renders nothing until a trace is present.
-   */
-  private renderRetrievalMode(): unknown {
-    const mode = (this.s.searchTrace as SearchTrace | null)?.effectiveMode;
-    const label =
-      mode === 'HYBRID'
-        ? 'Semantic + keyword'
-        : mode === 'VECTOR'
-          ? 'Semantic'
-          : mode === 'TEXT'
-            ? 'Keyword'
-            : null;
-    if (label == null) return nothing;
-    return html` <span class="retrieval-mode" data-testid="retrieval-mode" data-mode=${mode}
-      >· ${label}</span
-    >`;
-  }
 
   /**
    * Tempdoc 577 Phase 6 (Move E) / Goal 3 §3.9a — the clickable half of dual
@@ -1206,90 +910,14 @@ export class SearchSurface extends JfElement {
     </div>`;
   }
 
-  private renderFacetRow(): TemplateResult | typeof nothing {
-    return renderFacetChips(this.s.facets, this.facetSelections, {
-      onToggle: (field, value) => this.handleFacetToggle(field, value),
-    });
-  }
-
   private handleFacetToggle(field: string, value: string): void {
     toggleFacetValue(field, value);
     // Selections change the result set — re-run the full pass through the one seam.
     if (this.s.query.trim().length > 0) this.host_.search.submitQuery();
   }
 
-  /**
-   * §28.W2 — right-click on a search-result row opens the kernel
-   * ContextMenu wired to the EvaluationContext layer. Construction of
-   * the Addressable {kind: 'search-result', id, payload: hit} threads
-   * through `listContextActions(context, payload, addressable)` →
-   * `buildEvaluationContext({addressable})` → registered projector
-   * runs → flat-key facts populate the ctx → `when`-clauses on
-   * plugin-contributed ContextActions evaluate against them.
-   *
-   * Closes §13.6 #6 STRUCTURAL → PRODUCTION: this is the first
-   * production callsite where the search-result projector actually
-   * fires.
-   */
-  private async handleRowContextMenu(
-    hit: SearchHitSnapshot,
-    event: MouseEvent,
-  ): Promise<void> {
-    event.preventDefault();
-    await this.openResultMenu(hit, { x: event.clientX, y: event.clientY });
-  }
 
-  /**
-   * Tempdoc 577 Phase 8 (570 Move C) — the result's verb-space comes from the
-   * ONE ContextActionRegistry seam (open / reveal / copy-path register at boot
-   * via `searchResultActions`; plugins contribute through the same registry).
-   * Only the surface-COUPLED action stays an explicit arg: open-in-inspector
-   * manipulates this surface's selection state, which a registry handler
-   * cannot reach — the two-layer cut, applied to surface coupling.
-   */
-  private async openResultMenu(
-    hit: SearchHitSnapshot,
-    anchor: { x: number; y: number },
-  ): Promise<void> {
-    const addressable = {
-      kind: 'search-result' as const,
-      id: hit.id,
-      payload: hit,
-    };
-    const result = await openContextMenu({
-      actions: [
-        { id: 'open-in-inspector', label: 'Open in inspector', icon: 'layers', category: 'system', enabled: true },
-      ],
-      anchor,
-      context: 'search-result-row',
-      payload: hit,
-      addressable,
-    });
-    if (result === 'open-in-inspector') {
-      this.applySelection(new Set([hit.id]), 0);
-    }
-  }
 
-  /**
-   * Slice 486 G35 — render one copy button. Flashes "Copied!" for
-   * ~1.5s after a successful copy (driven by `this.copyFlash`).
-   */
-  private renderCopyBtn(
-    format: 'md' | 'json' | 'paths',
-    title: string,
-    label: string,
-  ): TemplateResult {
-    const flashing = this.copyReceipt.isFlashing(format);
-    return html`<button
-      class=${flashing ? 'copy-btn flashing' : 'copy-btn'}
-      title=${title}
-      data-testid="copy-btn-${format}"
-      @click=${() => void this.handleCopyClick(format)}
-    >
-      ${icon({ name: 'clipboard-copy', size: 11 })}
-      ${flashing ? 'Copied!' : label}
-    </button>`;
-  }
 
   /**
    * Slice 486 G36-widening (run-history) — render the run-history subscript line for a
@@ -1430,49 +1058,9 @@ export class SearchSurface extends JfElement {
             : nothing}
         </div>
         ${this.renderScopeSelector()}
-        <div class="meta">
-          <div class="meta-info">
-            ${this.s.isSearching
-              ? html`${icon({ name: 'loader-2', size: 11, spin: true })} ${this.s.slowSearch
-                    ? 'Searching your documents — almost there…'
-                    : 'Searching…'}`
-              : this.s.results.length > 0
-                ? html`${SearchSurface.matchCountLabel(
-                    this.s.matchCount,
-                    this.s.results.length,
-                    (this.s.searchTrace as SearchTrace | null)?.effectiveMode === 'VECTOR',
-                    this.s.totalHits,
-                    this.s.facetsTruncated,
-                  )}${this.s.processingTimeMs != null
-                    ? html` · ${SearchSurface.formatLatency(this.s.processingTimeMs)}`
-                    : nothing}${this.renderRetrievalMode()}${this.s.isRefining
-                    ? html` <span class="meta-refining" data-testid="meta-refining"
-                        >${icon({ name: 'loader-2', size: 10, spin: true })} refining…</span
-                      >`
-                    : this.s.passStage === 'quick'
-                      ? html` <span class="meta-refining" data-testid="meta-quick">· quick results</span>`
-                      : nothing}`
-                : this.s.query.trim()
-                  ? html`<span style="opacity:0.6">0 matches</span>`
-                  : html`<span style="opacity:0.6">Type to search</span>`}
-          </div>
-          ${this.s.results.length > 0
-            ? html`<div class="copy-actions" data-testid="copy-actions">
-                ${this.renderCopyBtn('md', 'Copy as Markdown', 'MD')}
-                ${this.renderCopyBtn('json', 'Copy as JSON', 'JSON')}
-                ${this.renderCopyBtn('paths', 'Copy paths only', 'Paths')}
-                ${/* Tempdoc 596 §1.2 — jf-control with typed availability: offline it is declared
-                      unavailable (focusable, reason reachable, click surfaces the reason) instead of a
-                      live-looking button that silently no-ops. */ ''}
-                <jf-control
-                  class="copy-btn ask-ai-btn"
-                  .availability=${this.askAiAvailability()}
-                  .onActivate=${() => this.handleAskAi()}
-                  >Ask AI</jf-control
-                >
-              </div>`
-            : nothing}
-        </div>
+        ${this.s.query.trim().length === 0 && !this.s.isSearching && this.s.results.length === 0
+          ? html`<div class="meta"><span class="meta-empty">Type to search</span></div>`
+          : nothing}
         <!-- Slice 486 G36-widening (filter-snapshot) — modified-at date range filter. -->
         <div
           class="filter-row"
@@ -1515,7 +1103,6 @@ export class SearchSurface extends JfElement {
               </button>`
             : nothing}
         </div>
-        ${this.renderFacetRow()}
       </div>
       ${this.renderDegradationBanner()}
       ${this.pins.length > 0
@@ -1598,23 +1185,25 @@ export class SearchSurface extends JfElement {
    */
   private renderBodyEmptyOrResults(): unknown {
     if (this.s.isSearching || this.s.results.length > 0) {
-      // Tempdoc 559 Authority II: the result set is a semantic list; each row is
-      // a listitem carrying aria-current when it is the active selection (from
-      // selectedHitIds, the 526 state). NOT a listbox/option — rows contain their
-      // own interactive "Why this result?" disclosure, so option (a leaf role)
-      // would trip axe nested-interactive; list/listitem composes with sub-controls.
-      return html`<div
-        class="results-list"
-        role="list"
-        id="search-results-list"
-        aria-label="Search results"
-      >
-        ${repeat(
-          this.s.results,
-          (h) => h.id,
-          (h) => this.renderRow(h),
-        )}
-      </div>`;
+      // Search Thread S1 — the results presentation (meta line, facet chips, copy
+      // actions, Ask AI, multi-select rows) is the ONE shared `jf-results-card`;
+      // this surface supplies its snapshot/selection and handles the card's
+      // intent events through its existing host seams. The 559 Authority II
+      // list/listitem/aria-current semantics live inside the card now (the
+      // a11y-closure check's SEARCH constant points there).
+      return html`<jf-results-card
+        .snapshot=${this.s}
+        .facetSelections=${this.facetSelections}
+        .selectedIds=${this.selectedHitIds}
+        .askAvailability=${this.askAiAvailability()}
+        .copyText=${(text: string) => this.host_.ui.copyToClipboard(text)}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleCardOpen(e.detail.id)}
+        @card-selection=${(e: CustomEvent<CardSelectionDetail>) =>
+          this.applySelection(new Set(e.detail.ids), e.detail.primaryIndex)}
+        @card-facet-toggle=${(e: CustomEvent<{ field: string; value: string }>) =>
+          this.handleFacetToggle(e.detail.field, e.detail.value)}
+        @card-ask-ai=${() => this.handleAskAi()}
+      ></jf-results-card>`;
     }
     const hasQuery = this.s.query.trim().length > 0;
     const filterActive = this.host_.search.hasActiveFilter();

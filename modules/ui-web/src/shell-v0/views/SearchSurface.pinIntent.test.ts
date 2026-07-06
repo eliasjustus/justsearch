@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import './SearchSurface.ts';
+import './SearchSurface.js';
 import { SearchSurface } from './SearchSurface.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 

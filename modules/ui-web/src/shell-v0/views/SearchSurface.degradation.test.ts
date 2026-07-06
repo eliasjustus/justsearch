@@ -9,7 +9,7 @@
  * present/absent strictly tracks the backend composite.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import './SearchSurface.ts';
+import './SearchSurface.js';
 import { SearchSurface } from './SearchSurface.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 import {

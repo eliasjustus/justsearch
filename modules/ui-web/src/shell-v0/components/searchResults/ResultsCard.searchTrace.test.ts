@@ -1,0 +1,128 @@
+// @vitest-environment happy-dom
+
+/**
+ * ResultsCard.searchTrace.test.ts — Search Thread S1 (the conformance guard
+ * cited by ResultsCard's own docstring / the execution-surfaces register,
+ * `fe-results-card`: it projects from `SearchTrace.effectiveMode`).
+ *
+ * Ports two suites that used to live on SearchSurface into card-level checks,
+ * because the behavior itself moved into the ONE shared `<jf-results-card>`:
+ *
+ *  - SearchSurface.searchTrace.test.ts's per-hit "Why this result?" disclosure
+ *    assertions (tempdoc 549 G111 / 577 Ext I). `SearchSurface.renderWhy` no
+ *    longer exists — ResultsCard.renderRow inlines the shared
+ *    `renderWhyDisclosure` directly, so this suite drives the real rendered
+ *    DOM instead of reaching into a private method.
+ *  - SearchSurface.retrievalMode.test.ts's retrieval-mode-indicator assertions
+ *    (tempdoc 598 R1). `SearchSurface.renderRetrievalMode` no longer exists —
+ *    it moved into ResultsCard entirely (`renderRetrievalMode` + the
+ *    `data-testid="retrieval-mode"` span in the meta line).
+ *
+ * SearchSurface's OWN query-level explain panel (`renderExplainPanel` / G33,
+ * the `<jf-search-trace>` mount) is a DIFFERENT feature, untouched by Search
+ * Thread S1, and stays covered by the slimmed SearchSurface.searchTrace.test.ts.
+ *
+ * The `traceChipsFor` chip-formatting test is pure-function (no DOM), ported
+ * here unchanged because it directly guards the per-hit rationale grammar the
+ * Why-disclosure renders from.
+ */
+import { describe, it, expect } from 'vitest';
+import './ResultsCard.js';
+import type { ResultsCard, CardSnapshot, CardHit } from './ResultsCard.js';
+import { traceChipsFor } from './whyThisResult.js';
+
+const BASE: CardSnapshot = {
+  query: 'x',
+  results: [],
+  matchCount: 1,
+  totalHits: 1,
+  facetsTruncated: false,
+  isSearching: false,
+  processingTimeMs: null,
+  error: null,
+};
+
+function hit(id: string, extra: Partial<CardHit> = {}): CardHit {
+  return { id, title: `Title ${id}`, path: `/${id}.md`, ...extra };
+}
+
+async function mount(snapshot: CardSnapshot): Promise<ResultsCard> {
+  const el = document.createElement('jf-results-card') as ResultsCard;
+  el.snapshot = snapshot;
+  document.body.appendChild(el);
+  await el.updateComplete;
+  return el;
+}
+
+function trace(effectiveMode: string): unknown {
+  return { version: 1, decisionKind: 'multi_leg', effectiveMode, stages: [] };
+}
+
+describe('ResultsCard — retrieval-mode indicator (ported from SearchSurface.retrievalMode.test, tempdoc 598 R1)', () => {
+  it('reads HYBRID as "Semantic + keyword"', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('HYBRID') });
+    const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
+    expect(modeEl?.getAttribute('data-mode')).toBe('HYBRID');
+    expect(modeEl?.textContent).toContain('Semantic + keyword');
+  });
+
+  it('reads VECTOR as "Semantic"', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('VECTOR') });
+    const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
+    expect(modeEl?.textContent).toContain('Semantic');
+  });
+
+  it('reads TEXT as "Keyword" (honest keyword fallback, not semantic)', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('TEXT') });
+    const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
+    expect(modeEl?.textContent).toContain('Keyword');
+    expect(modeEl?.textContent).not.toContain('Semantic');
+  });
+
+  it('renders nothing when no trace is present', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')] });
+    expect(el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')).toBeNull();
+  });
+});
+
+describe('ResultsCard — per-hit "Why this result?" disclosure (ported from SearchSurface.searchTrace.test, tempdoc 549 G111 / 577 Ext I)', () => {
+  it('renders the Why disclosure from the unified per-hit trace (canonical path)', async () => {
+    const el = await mount({
+      ...BASE,
+      results: [
+        hit('a', {
+          trace: [
+            { id: 'sparse-retrieval', rank: 1, score: 5.5 },
+            { id: 'cross-encoder', score: 0.1 },
+          ] as never,
+        }),
+      ],
+    });
+    expect(el.shadowRoot?.querySelector('[data-testid="hit-why"]')).not.toBeNull();
+  });
+
+  it('omits the Why disclosure when the hit has no trace (CardHit carries no legacy provenance fallback)', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')] });
+    expect(el.shadowRoot?.querySelector('[data-testid="hit-why"]')).toBeNull();
+  });
+
+  it('omits the Why disclosure when the hit carries an empty trace array', async () => {
+    const el = await mount({ ...BASE, results: [hit('a', { trace: [] as never })] });
+    expect(el.shadowRoot?.querySelector('[data-testid="hit-why"]')).toBeNull();
+  });
+});
+
+describe('traceChipsFor — labeled, separated chips with worded negative deltas (577 Ext I)', () => {
+  const HIT = { docId: 'a', score: 1, fields: {}, id: 'a', title: 'A', path: '/a' };
+
+  it('formats stage signals as labeled chips with worded negative deltas', () => {
+    const chips = traceChipsFor({
+      ...HIT,
+      trace: [
+        { id: 'sparse-retrieval', rank: 2, score: 3.32 },
+        { id: 'cross-encoder', score: -0.2 },
+      ],
+    });
+    expect(chips).toEqual(['Sparse (BM25) · #2 · 3.32', 'Cross-encoder · ranked down (-0.20)']);
+  });
+});

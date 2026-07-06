@@ -33,7 +33,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const SHELL = 'modules/ui-web/src/shell-v0/chrome/Shell.ts';
 const VIEWS_DIR = 'modules/ui-web/src/shell-v0/views';
-const SEARCH = 'modules/ui-web/src/shell-v0/views/SearchSurface.ts';
+// Search Thread S1 — the results-list markup (role=list/listitem + aria-current) moved from
+// SearchSurface into the ONE shared results card; the closure check follows the markup's owner.
+const SEARCH = 'modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts';
 const LANDMARKS = 'modules/ui-web/src/shell-v0/display/landmarks.ts';
 const SURFACE_TYPES = 'modules/ui-web/src/api/types/surface.ts';
 
@@ -113,12 +115,12 @@ if (h1Count !== 1) {
 // leaf option role would trip nested-interactive; verified live, 559 §live-batch).
 if (!/role=(['"`])list\1/.test(search)) {
   failures.push(
-    `a11y-closure: SearchSurface.ts results must be a role="list" (559 Authority II selection projection).`,
+    `a11y-closure: ResultsCard.ts results must be a role="list" (559 Authority II selection projection).`,
   );
 }
 if (!/role=(['"`])listitem\1/.test(search) || !/aria-current=/.test(search)) {
   failures.push(
-    `a11y-closure: SearchSurface.ts result rows must be role="listitem" with aria-current (559 Authority II).`,
+    `a11y-closure: ResultsCard.ts result rows must be role="listitem" with aria-current (559 Authority II).`,
   );
 }
 

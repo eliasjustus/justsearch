@@ -7,6 +7,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "types": ["node"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -22,13 +23,7 @@
     "forceConsistentCasingInFileNames": true,
 
     // Skip lib check for faster builds
-    "skipLibCheck": true,
-
-    // Paths
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "e2e", "scripts"]

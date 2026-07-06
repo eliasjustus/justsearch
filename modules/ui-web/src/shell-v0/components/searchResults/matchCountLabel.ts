@@ -31,6 +31,16 @@ export function matchCountLabel(
   // an exact count. Render "M+" (the Elasticsearch `track_total_hits` `gte` / Lucene
   // `TotalHits.Relation` convention) so the headline never presents a capped count as exact.
   const m = `${matched.toLocaleString()}${truncated ? '+' : ''}`;
-  if (shown >= matched) return `${m} matches`;
-  return `Top ${shown.toLocaleString()} of ${m} matches`;
+  // Search Thread S1 (count coherence) — when MORE rows render than documents matched (fusion can
+  // surface related candidates beyond the exact-match set), the old collapse to "M matches" made
+  // the headline contradict the visible list ("1 matches" above four rows — live audit finding B1).
+  // The surplus is now classified instead of hidden: count what is rendered, then say how many
+  // matched exactly. The invariant: the headline's first number always equals the rendered rows,
+  // or names both truthfully.
+  if (shown > matched && !truncated) {
+    return `${shown.toLocaleString()} ${shown === 1 ? 'result' : 'results'} · ${m} matched exactly`;
+  }
+  const noun = matched === 1 && !truncated ? 'match' : 'matches';
+  if (shown >= matched) return `${m} ${noun}`;
+  return `Top ${shown.toLocaleString()} of ${m} ${noun}`;
 }

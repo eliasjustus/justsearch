@@ -223,5 +223,12 @@ function namespacedCustomElements(
       const r = real as { getName?: (c: CustomElementConstructor) => string | null };
       return r.getName ? r.getName(constructor) : null;
     },
+    initialize(root: Node): void {
+      // `initialize` (scoped custom element registries) is not yet
+      // implemented everywhere (e.g. jsdom in tests); forward if present,
+      // otherwise no-op.
+      const r = real as { initialize?: (root: Node) => void };
+      r.initialize?.(root);
+    },
   };
 }

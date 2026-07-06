@@ -31,11 +31,17 @@ import { composeGridStyles } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
-import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun } from '../utils/compose.js';
+import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun, compose } from '../utils/compose.js';
+// Search Thread S1 — the ONE results card (side-effect import registers <jf-results-card>).
+import '../components/searchResults/ResultsCard.js';
+import type { CardSelectionDetail } from '../components/searchResults/ResultsCard.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 import {
   getSelection as getCurrentSelection,
   subscribeSelection,
+  setSelection as setInternalSelection,
+  DEFAULT_CAPABILITIES_BY_KIND,
+  type SelectionItem,
 } from '../state/selectionState.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../state/aiStateStore.js';
 import { subscribeWide } from '../state/responsiveState.js';
@@ -100,23 +106,13 @@ import {
   type SearchState,
   type SearchHit,
 } from '../state/searchState.js';
-import { projectResultView, type ResultViewInput } from './searchResultViewModel.js';
 import { icon } from '../components/Icon.js';
-import {
-  renderWhyDisclosure,
-  whyThisResultStyles,
-} from '../components/searchResults/whyThisResult.js';
-import {
-  renderFacetChips,
-  facetChipStyles,
-} from '../components/searchResults/facetChips.js';
-import { matchCountLabel } from '../components/searchResults/matchCountLabel.js';
-// Tempdoc 602 R3 — the same path/snippet presentation the dedicated Search surface uses.
-import {
-  formatDisplayPath,
-  highlightTerms,
-  highlightStyles,
-} from '../components/searchResults/resultRowPresentation.js';
+// Search Thread S1 — the why/facet/count/highlight RENDERING moved into the one
+// `jf-results-card`; this view keeps only the shared style sheets its remaining
+// templates still compose (the card carries its own copies for its shadow root).
+import { whyThisResultStyles } from '../components/searchResults/whyThisResult.js';
+import { facetChipStyles } from '../components/searchResults/facetChips.js';
+import { highlightStyles } from '../components/searchResults/resultRowPresentation.js';
 import {
   getFacetSelections,
   subscribeFacetSelections,
@@ -330,6 +326,7 @@ export class UnifiedChatView extends JfElement {
     claims: { state: true },
     // Tempdoc 577 Goal 3 — the retrieve base tier's live search snapshot (ephemeral hit-list).
     searchSnapshot: { state: true },
+    retrieveSelectedIds: { state: true },
     // Tempdoc 577 Goal 3 §3.9a — facet selections drive the retrieve tier's chips.
     facetSelections: { state: true },
   };
@@ -395,6 +392,12 @@ export class UnifiedChatView extends JfElement {
   declare aiState: AiState | null;
   /** Tempdoc 577 Goal 3 — the retrieve base tier's live search snapshot (ephemeral hit-list). */
   declare searchSnapshot: SearchState | null;
+  /**
+   * Search Thread S1 — multi-select set for the retrieve tier's card (mirrors SearchSurface's
+   * selectedHitIds; instance @state so the Stage's element retention preserves it across
+   * navigation — 609). Selection is retained view state by design, not a transient.
+   */
+  declare retrieveSelectedIds: ReadonlySet<string>;
   declare facetSelections: Record<string, string[]>;
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
@@ -544,6 +547,7 @@ export class UnifiedChatView extends JfElement {
     this.claims = [];
     this.aiState = null;
     this.searchSnapshot = null;
+    this.retrieveSelectedIds = new Set<string>();
     this.facetSelections = {};
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
@@ -2747,69 +2751,99 @@ export class UnifiedChatView extends JfElement {
       </div>`;
     }
     const results = s?.results ?? [];
-    // Tempdoc 597 R-1 — project the SAME funnel count label as the dedicated Search surface (the one
-    // shared `matchCountLabel` helper, off the same `searchState`), so the two surfaces can never
-    // report different counts for one query. Was the bounded window-as-count (`totalHits`).
-    const countLabel = matchCountLabel(
-      s?.matchCount ?? 0,
-      results.length,
-      s?.searchTrace?.effectiveMode === 'VECTOR',
-      s?.totalHits ?? 0,
-      s?.facetsTruncated ?? false,
-    );
+    // Search Thread S1 — the retrieve tier renders the ONE results card (`jf-results-card`),
+    // the same component the standalone Search surface mounts: meta line (funnel count via the
+    // shared matchCountLabel + latency + retrieval mode + quick/refining/refined✓), facet chips,
+    // copy actions, Ask AI, and the multi-select row list. The bespoke retrieve-row markup this
+    // replaces was the last presentational fork between the two surfaces.
     return html`<div class="retrieve-tier" data-testid="retrieve-tier">
-      <div class="retrieve-meta">
-        ${results.length === 0 && s?.isSearching
-          ? html`<span>Searching…</span>`
-          : results.length === 0
-            ? html`<span>No matches for "${q}"</span>`
-            : html`<span
-                >${countLabel}${s?.isRefining ? ' · refining…' : nothing}</span
-              >`}
-      </div>
-      ${/* §3.9a — the same shared facet chips the standalone surface renders; toggling re-runs
-            the search through the one searchState seam (buildSearchIntent reads the selections). */ ''}
-      ${renderFacetChips(s?.facets, this.facetSelections, {
-        onToggle: (field, value) => this.handleRetrieveFacetToggle(field, value),
-      })}
-      <div class="retrieve-results" role="list" aria-label="Search results">
-        ${results.map((hit) => this.renderRetrieveRow(hit, q))}
-      </div>
+      ${results.length === 0 && !s?.isSearching
+        ? html`<div class="retrieve-meta"><span>No matches for "${q}"</span></div>`
+        : nothing}
+      <jf-results-card
+        .snapshot=${s}
+        .facetSelections=${this.facetSelections}
+        .selectedIds=${this.retrieveSelectedIds}
+        .askAvailability=${projectAvailability('documents', this.aiState)}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleRetrieveCardOpen(e.detail.id)}
+        @card-selection=${(e: CustomEvent<CardSelectionDetail>) => this.handleRetrieveCardSelection(e.detail)}
+        @card-facet-toggle=${(e: CustomEvent<{ field: string; value: string }>) =>
+          this.handleRetrieveFacetToggle(e.detail.field, e.detail.value)}
+        @card-ask-ai=${() => this.handleRetrieveAskAi()}
+      ></jf-results-card>
     </div>`;
+  }
+
+  /** Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses). */
+  private handleRetrieveCardOpen(hitId: string): void {
+    const hit = (this.searchSnapshot?.results ?? []).find((h) => h.id === hitId);
+    if (hit) this.openRetrieveHit(hit);
+  }
+
+  /**
+   * Search Thread S1 — the retrieve tier gains the same multi-select publish the standalone
+   * surface has (526 §17 T1B): >1 selected docs publish ONE `result-set` SelectionItem (the
+   * substrate the S3 scope chips consume); single select keeps the per-hit publish shape.
+   */
+  private handleRetrieveCardSelection(detail: CardSelectionDetail): void {
+    this.retrieveSelectedIds = new Set(detail.ids);
+    const hits = this.searchSnapshot?.results ?? [];
+    const ids = new Set(detail.ids);
+    if (ids.size > 1) {
+      const refs: Array<{ id: string; kind: 'doc' }> = [];
+      for (const h of hits) {
+        if (ids.has(h.id)) refs.push({ id: h.path, kind: 'doc' });
+      }
+      setInternalSelection({
+        items: [
+          {
+            kind: 'result-set',
+            items: refs,
+            query: this.searchSnapshot?.query || undefined,
+            capabilities: DEFAULT_CAPABILITIES_BY_KIND['result-set'],
+          },
+        ],
+        primaryIndex: 0,
+        surfaceId: 'core.unified-chat-surface',
+      });
+      return;
+    }
+    const items: SelectionItem[] = [];
+    let normalizedPrimary = 0;
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i]!;
+      if (!ids.has(h.id)) continue;
+      if (i === detail.primaryIndex) normalizedPrimary = items.length;
+      items.push({
+        kind: 'search-hit',
+        hitId: h.id,
+        title: h.title,
+        path: h.path,
+        capabilities: DEFAULT_CAPABILITIES_BY_KIND['search-hit'],
+      });
+    }
+    setInternalSelection({ items, primaryIndex: normalizedPrimary, surfaceId: 'core.unified-chat-surface' });
+  }
+
+  /**
+   * Search Thread S1 — "Ask AI" escalation FROM the default search tier (live-audit finding II.C
+   * D1: the retrieve tier previously had no path from results to AI at all). Routes through the
+   * one compose() seam with the current query, exactly like SearchSurface.handleAskAi; the card's
+   * jf-control is availability-gated, so offline this is reachable-reason, never a silent no-op.
+   */
+  private handleRetrieveAskAi(): void {
+    compose({
+      operation: 'core.ask',
+      source: 'BUTTON',
+      userPrompt: this.searchSnapshot?.query ?? '',
+      affordance: 'documents',
+    });
   }
 
   /** §3.9a — toggle a facet then re-run through the one searchState seam (picks up selections). */
   private handleRetrieveFacetToggle(field: string, value: string): void {
     toggleFacetValue(field, value);
     if ((this.searchSnapshot?.query ?? '').trim().length > 0) submitSearch();
-  }
-
-  /**
-   * One ephemeral hit row — typed via the shared `projectResultView` (Goal 1 Move B), with the
-   * shared per-hit "Why this result?" disclosure (§3.9a). The row is a container `<div>` (not a
-   * `<button>`) so the disclosure's own buttons are valid siblings, not nested interactives; the
-   * open action is a keyboard-operable button over the title/path/snippet.
-   */
-  private renderRetrieveRow(hit: SearchHit, query: string): TemplateResult {
-    const view = projectResultView(hit as unknown as ResultViewInput);
-    return html`<div class="retrieve-row" role="listitem" data-testid="retrieve-result-row" data-kind=${view.kind}>
-      <button type="button" class="retrieve-row-open" @click=${() => this.openRetrieveHit(hit)}>
-        <span class="retrieve-row-title">
-          <span class="kind-icon" aria-hidden="true">${icon({ name: view.icon, size: 13 })}</span>
-          <span class="title-text">${view.title}</span>
-          ${view.kind === 'code' && view.approxLine != null
-            ? html`<span class="line-anchor">:L${view.approxLine}</span>`
-            : nothing}
-        </span>
-        ${/* Tempdoc 602 R3 — same formatted path (middle-ellipsis) the Search surface shows;
-              raw path stays in the title attribute for hover. */ ''}
-        <span class="retrieve-row-path" title=${view.path}>${formatDisplayPath(view.path)}</span>
-        ${view.snippet
-          ? html`<span class="retrieve-row-snippet">${highlightTerms(view.snippet, query)}</span>`
-          : nothing}
-      </button>
-      ${renderWhyDisclosure(hit)}
-    </div>`;
   }
 
   /** Open a hit through the shared host inspector seam (same path SearchSurface uses). */

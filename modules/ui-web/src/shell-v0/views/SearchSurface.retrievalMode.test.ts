@@ -1,22 +1,19 @@
 // @vitest-environment happy-dom
 
 /**
- * Tempdoc 598 R1 (§34.1) — the glanceable retrieval-mode indicator.
+ * Tempdoc 598 R1 (§34.1) — Search Thread S1 rework.
  *
- * The ONE honest signal of WHICH retrieval actually ran, projected from the response's
- * effective mode (`searchTrace.effectiveMode`) — never a client-side guess. After the
- * capability-derived default lands it reads "Semantic + keyword" when the dense leg ran and
- * "Keyword" when the engine degraded to keyword, so the surface never silently presents
- * keyword results as semantic.
- *
- * Drives the private `renderRetrievalMode()` directly (mirrors SearchSurface.searchTrace.test —
- * happy-dom doesn't reliably run Lit's full render lifecycle), rendering the returned template
- * into a detached container to assert the surfaced text.
+ * The retrieval-mode-indicator assertions (HYBRID/VECTOR/TEXT labels; renders
+ * nothing without a trace) moved entirely to ResultsCard.searchTrace.test.ts —
+ * `SearchSurface.renderRetrievalMode` no longer exists; the shared
+ * `<jf-results-card>` renders the indicator now. This file keeps a slim
+ * end-to-end check that the surface's `.snapshot` (with its `searchTrace`)
+ * reaches the mounted card and the indicator is visible through the surface's
+ * own shadow DOM — the wiring, not the render logic.
  */
 import { describe, it, expect } from 'vitest';
-import './SearchSurface.ts';
+import './SearchSurface.js';
 import { SearchSurface } from './SearchSurface.js';
-import { nothing, render } from 'lit';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 import type { SearchSnapshot } from '../plugin-api/plugin-types.js';
 
@@ -33,45 +30,43 @@ const base: SearchSnapshot = {
   error: null,
 };
 
-function trace(effectiveMode: string) {
+function trace(effectiveMode: string): unknown {
   return { version: 1, decisionKind: 'multi_leg', effectiveMode, stages: [] };
 }
 
-function surfaceWith(s: SearchSnapshot): SearchSurface {
+async function mount(s: SearchSnapshot): Promise<SearchSurface> {
   const el = document.createElement('jf-search-surface') as SearchSurface;
   el.host_ = createMockHostApi({});
+  document.body.appendChild(el);
   el.s = s;
+  await el.updateComplete;
+  const c = el.shadowRoot?.querySelector('jf-results-card') as
+    | (HTMLElement & { updateComplete: Promise<boolean> })
+    | null;
+  if (c) await c.updateComplete;
   return el;
 }
 
-function renderMode(el: SearchSurface): unknown {
-  return (el as unknown as { renderRetrievalMode: () => unknown }).renderRetrievalMode();
+function modeEl(el: SearchSurface): Element | null | undefined {
+  return el.shadowRoot?.querySelector('jf-results-card')?.shadowRoot?.querySelector(
+    '[data-testid="retrieval-mode"]',
+  );
 }
 
-function modeText(s: SearchSnapshot): string {
-  const tpl = renderMode(surfaceWith(s));
-  if (tpl === nothing) return '';
-  const div = document.createElement('div');
-  render(tpl as never, div);
-  return div.textContent ?? '';
-}
-
-describe('SearchSurface — retrieval-mode indicator (tempdoc 598 R1)', () => {
-  it('reads HYBRID as "Semantic + keyword"', () => {
-    expect(modeText({ ...base, searchTrace: trace('HYBRID') })).toContain('Semantic + keyword');
+describe('SearchSurface — retrieval-mode indicator now renders via the shared jf-results-card (Search Thread S1)', () => {
+  it('surfaces the HYBRID indicator through the surface shadow DOM (end-to-end wiring)', async () => {
+    const el = await mount({ ...base, searchTrace: trace('HYBRID') });
+    expect(modeEl(el)?.textContent).toContain('Semantic + keyword');
   });
 
-  it('reads VECTOR as "Semantic"', () => {
-    expect(modeText({ ...base, searchTrace: trace('VECTOR') })).toContain('Semantic');
+  it('surfaces the TEXT indicator as "Keyword", never "Semantic" (end-to-end wiring)', async () => {
+    const el = await mount({ ...base, searchTrace: trace('TEXT') });
+    expect(modeEl(el)?.textContent).toContain('Keyword');
+    expect(modeEl(el)?.textContent).not.toContain('Semantic');
   });
 
-  it('reads TEXT as "Keyword" (honest keyword fallback, not semantic)', () => {
-    const text = modeText({ ...base, searchTrace: trace('TEXT') });
-    expect(text).toContain('Keyword');
-    expect(text).not.toContain('Semantic');
-  });
-
-  it('renders nothing when no trace is present', () => {
-    expect(renderMode(surfaceWith({ ...base }))).toBe(nothing);
+  it('omits the indicator when no trace is present (end-to-end wiring)', async () => {
+    const el = await mount({ ...base });
+    expect(modeEl(el)).toBeFalsy();
   });
 });
