@@ -53,6 +53,9 @@ import { projectAvailability, unavailableBecause, type Availability } from '../s
 import '../components/SystemNotice.js';
 import '../components/OpButton.js';
 import '../components/Control.js';
+// Search Thread D2/D3 (stage S2) — the per-turn ROUTE heuristic + its visible chip.
+import { inferRoute, type TurnRoute } from '../state/routeHeuristic.js';
+import '../components/RouteChip.js';
 import {
   projectUnifiedThread,
   projectLiveAgentActivity,
@@ -329,6 +332,9 @@ export class UnifiedChatView extends JfElement {
     retrieveSelectedIds: { state: true },
     // Tempdoc 577 Goal 3 §3.9a — facet selections drive the retrieve tier's chips.
     facetSelections: { state: true },
+    // Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override (chip click /
+    // Ctrl+Enter). null = follow the inferRoute() heuristic guess.
+    routeOverride: { state: true },
   };
 
   declare apiBase: string;
@@ -399,6 +405,9 @@ export class UnifiedChatView extends JfElement {
    */
   declare retrieveSelectedIds: ReadonlySet<string>;
   declare facetSelections: Record<string, string[]>;
+  /** Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override, or null to follow
+   * the {@link inferRoute} heuristic guess. Reset on submit and whenever the draft empties out. */
+  declare routeOverride: TurnRoute | null;
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
@@ -499,6 +508,9 @@ export class UnifiedChatView extends JfElement {
   // Tempdoc 565 §33 — J/K step-nav is a window-level shortcut (the conversation div is not focusable, so
   // a div-scoped @keydown never fired for a real user). Added on connect, removed on disconnect.
   private boundWindowKeydown = this.onConversationKeydown.bind(this);
+  // Search Thread D2/D3 (stage S2) — Shell dispatches `jf-focus-composer` on Ctrl+L / '/'; focus the
+  // composer textarea. Added on connect, removed on disconnect (mirrors boundWindowKeydown).
+  private boundFocusComposer = this.onFocusComposer.bind(this);
   private hoverCard: CitationHoverCard | null = null;
   // Slice 515 FIX-4 — monotonic token to discard stale syncMessageIds
   // responses. Each invocation bumps the token; only the latest one's
@@ -549,6 +561,7 @@ export class UnifiedChatView extends JfElement {
     this.searchSnapshot = null;
     this.retrieveSelectedIds = new Set<string>();
     this.facetSelections = {};
+    this.routeOverride = null;
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
     this.parentFirstMessagePreview = null;
@@ -641,6 +654,8 @@ export class UnifiedChatView extends JfElement {
     this.addEventListener('cite-ref-leave', this.boundCiteRefLeave as EventListener);
     // §33 — window-level J/K step-nav (guarded to the agent run + non-input focus inside the handler).
     window.addEventListener('keydown', this.boundWindowKeydown);
+    // Search Thread D2/D3 (stage S2) — Ctrl+L / '/' (dispatched by Shell) focuses the composer.
+    window.addEventListener('jf-focus-composer', this.boundFocusComposer);
 
     setConversationApiBase(this.apiBase || '');
     // Tempdoc 610 Phase B — track the loaded conversation list so the inline
@@ -729,6 +744,9 @@ export class UnifiedChatView extends JfElement {
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
+    // Search Thread D2/D3 (stage S2) — the per-turn route override is a transient (per-turn) choice,
+    // not recoverable task state; a return should re-run the heuristic guess, not keep a stale flip.
+    this.routeOverride = null;
   }
 
   override disconnectedCallback(): void {
@@ -769,6 +787,7 @@ export class UnifiedChatView extends JfElement {
     this.removeEventListener('cite-ref-hover', this.boundCiteRefHover as EventListener);
     this.removeEventListener('cite-ref-leave', this.boundCiteRefLeave as EventListener);
     window.removeEventListener('keydown', this.boundWindowKeydown);
+    window.removeEventListener('jf-focus-composer', this.boundFocusComposer);
     this.hoverCard?.remove();
   }
 
@@ -1872,6 +1891,26 @@ export class UnifiedChatView extends JfElement {
     return projectAvailability(affordance, this.aiState);
   }
 
+  /**
+   * Search Thread D2/D3 (stage S2) — Ask is PINNED to `'search'` when the documents affordance is
+   * unavailable/blocked (Hard Invariant: never a silent no-op). Mirrors `RouteChip`'s own pinned
+   * semantics so the chip and the actual Enter-key routing can never disagree.
+   */
+  private askPinned(): boolean {
+    const a = projectAvailability('documents', this.aiState);
+    return a.kind === 'unavailable' || a.kind === 'blocked';
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the route Enter (or the submit button) will take for the
+   * current turn: the user's explicit per-turn override when set, else the {@link inferRoute}
+   * heuristic guess — pinned to `'search'` whenever Ask is unavailable.
+   */
+  private currentRoute(): TurnRoute {
+    if (this.askPinned()) return 'search';
+    return this.routeOverride ?? inferRoute(this.inputDraft);
+  }
+
   private renderAffordanceBar(agentMode: boolean): TemplateResult {
     return html`
       <div class="affordance-bar">
@@ -1970,6 +2009,10 @@ export class UnifiedChatView extends JfElement {
                 guards it to the bare landing in retrieve, and "Continue" leaves retrieve to show the thread. */ ''}
           ${this.renderResumePrompt()}
           ${this.affordance === 'retrieve' ? this.renderRetrieveTier() : nothing}
+          ${/* Search Thread D2/D3 (stage S2) — the bare landing (empty draft, no history, no active
+                query) renders the centered search-bar landing INSIDE the conversation column, in place
+                of the retired empty prompt (whose own branch now just returns nothing below). */ ''}
+          ${this.isLanding() ? this.renderLanding() : nothing}
           ${this.affordance === 'retrieve'
             ? nothing
             : html`
@@ -2008,39 +2051,168 @@ export class UnifiedChatView extends JfElement {
       ${this.renderActivityRail()}
       ${this.renderContextMeter()}
       ${this.renderExcludedSummary()}
-      <div class="composer">
-        ${this.renderSteerInput()}
-        ${this.renderAffordancePreview()}
-        ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
-        <jf-composer
-          cancellable
-          .value=${this.inputDraft}
-          placeholder=${this.getPlaceholder()}
-          ?streaming=${this.isStreaming}
-          ?submit-disabled=${!this.inputDraft.trim() ||
-          this.aiState?.verdict?.kind === 'unreachable' ||
-          (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
-          submit-label=${this.getSubmitLabel()}
-          submit-title=${
-            this.aiState?.verdict?.kind === 'unreachable'
-              ? 'Backend disconnected'
-              : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
-                ? 'AI offline'
-                : ''
-          }
-          cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
-          @composer-input=${(e: CustomEvent<{ value: string }>) => {
-            this.inputDraft = e.detail.value;
-            // Tempdoc 577 Goal 3 — in the retrieve tier the one input drives LIVE search (the staged
-            // quick pass), no LLM dispatch; the hit-list is ephemeral (never a thread turn).
-            if (this.affordance === 'retrieve') setSearchQuery(e.detail.value);
-          }}
-          @composer-submit=${() =>
-            this.affordance === 'retrieve' ? submitSearch() : void this.send()}
-          @composer-cancel=${() => this.abortController?.abort()}
-        ></jf-composer>
+      ${/* Search Thread D2/D3 (stage S2, tempdoc decision 8) — on the bare landing the composer lives
+            INSIDE the centered `.landing` block (rendered above, inside the conversation column), so the
+            bottom slab is omitted entirely — ONE jf-composer instance ever mounted. Otherwise the
+            composer docks at the bottom exactly as before. */ ''}
+      ${this.isLanding()
+        ? nothing
+        : html`<div class="composer">${this.renderComposerBlock()}</div>`}
+    `;
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the composer's inner content (steer input / affordance preview /
+   * schema input / the retrieve-tier route chip / the one `jf-composer`), extracted so both the
+   * docked (bottom) composer and the landing composer render the SAME template — never two mounted
+   * instances.
+   */
+  private renderComposerBlock(): TemplateResult {
+    return html`
+      ${this.renderSteerInput()}
+      ${this.renderAffordancePreview()}
+      ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
+      ${this.affordance === 'retrieve' ? this.renderRouteRow() : nothing}
+      <jf-composer
+        cancellable
+        .value=${this.inputDraft}
+        placeholder=${this.getPlaceholder()}
+        ?streaming=${this.isStreaming}
+        ?submit-disabled=${!this.inputDraft.trim() ||
+        this.aiState?.verdict?.kind === 'unreachable' ||
+        (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
+        submit-label=${this.getSubmitLabel()}
+        submit-title=${
+          this.aiState?.verdict?.kind === 'unreachable'
+            ? 'Backend disconnected'
+            : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
+              ? 'AI offline'
+              : ''
+        }
+        cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
+        @composer-input=${(e: CustomEvent<{ value: string }>) => {
+          this.inputDraft = e.detail.value;
+          // Search Thread D2/D3 (stage S2) — the FLOOR RULE: every keystroke feeds instant search
+          // regardless of route/affordance (the always-on search rail behind Ask/Delegate).
+          setSearchQuery(e.detail.value);
+          // Search Thread D2/D3 (stage S2) — an emptied draft drops any explicit route override so the
+          // NEXT turn starts back at the plain heuristic guess rather than a stale flip.
+          if (!e.detail.value.trim()) this.routeOverride = null;
+        }}
+        @composer-submit=${() => this.handleComposerSubmit()}
+        @composer-submit-alt=${() => this.handleComposerSubmitAlt()}
+        @composer-cancel=${() => this.abortController?.abort()}
+      ></jf-composer>
+    `;
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the composer's Enter path. Only the retrieve affordance routes
+   * per-turn (documents/extract/agent keep their existing dispatch, untouched this stage).
+   */
+  private handleComposerSubmit(): void {
+    if (this.affordance !== 'retrieve') {
+      void this.send();
+      return;
+    }
+    this.runRoute(this.currentRoute());
+  }
+
+  /** Search Thread D2/D3 (stage S2) — Ctrl+Enter: the OPPOSITE of whatever Enter would do right now. */
+  private handleComposerSubmitAlt(): void {
+    if (this.affordance !== 'retrieve') return;
+    this.runRoute(this.currentRoute() === 'search' ? 'ask' : 'search');
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — run ONE route for the current turn. Never escalates to `'ask'`
+   * while pinned (Hard Invariant: no silent no-op — the pinned reason is reachable via the chip's own
+   * tooltip, so a forced-search fallback here is a safe default, not a swallowed intent).
+   */
+  private runRoute(route: TurnRoute): void {
+    const effective = route === 'ask' && this.askPinned() ? 'search' : route;
+    if (effective === 'search') {
+      submitSearch();
+      this.routeOverride = null;
+    } else {
+      this.escalateAsk();
+    }
+  }
+
+  /** Search Thread D2/D3 (stage S2) — escalate the current retrieve turn to a grounded Ask. */
+  private escalateAsk(): void {
+    this.affordance = 'documents';
+    void this.send();
+    this.routeOverride = null;
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the visible per-turn route indicator, shown only in the retrieve
+   * affordance (documents/extract/agent have no ambiguous Enter to disambiguate).
+   */
+  private renderRouteRow(): TemplateResult {
+    const route = this.currentRoute();
+    return html`<div class="route-row">
+      <jf-route-chip
+        .route=${route}
+        .askAvailability=${projectAvailability('documents', this.aiState)}
+        ?pinned=${this.askPinned()}
+        @route-toggle=${() => {
+          this.routeOverride = route === 'search' ? 'ask' : 'search';
+        }}
+      ></jf-route-chip>
+    </div>`;
+  }
+
+  /**
+   * Search Thread D2/D3 (tempdoc decision 8, stage S2) — the bare landing: no draft, no history, no
+   * active query, no agent conversation. The search bar is CENTERED in the conversation column rather
+   * than docked at the bottom; it docks the moment any of those conditions stop holding.
+   */
+  private isLanding(): boolean {
+    return (
+      this.affordance === 'retrieve' &&
+      !this.isStreaming &&
+      this.thread.length === 0 &&
+      this.unifiedEvents.length === 0 &&
+      (this.agentCtrl?.conversation.length ?? 0) === 0 &&
+      (this.agentCtrl?.streamingText.length ?? 0) === 0 &&
+      (this.searchSnapshot?.query ?? '').trim() === ''
+    );
+  }
+
+  /** Search Thread D2/D3 (tempdoc decision 8, stage S2) — the centered landing search bar. */
+  private renderLanding(): TemplateResult {
+    const docs = this.aiState?.lastSettledIndex;
+    const hasDocs = docs != null && docs.documentCount > 0;
+    return html`
+      <div class="landing">
+        <div class="landing-title">Search your files</div>
+        <div class="landing-corpus" data-testid="landing-corpus">
+          ${hasDocs
+            ? html`Searching ${docs!.documentCount} files`
+            : html`<button
+                type="button"
+                class="landing-add-folders"
+                @click=${() => this.openRemedyTarget('core.library-surface')}
+              >
+                Add folders in Library to start searching
+              </button>`}
+        </div>
+        <div class="landing-composer">${this.renderComposerBlock()}</div>
+        <div class="escalation-strip">
+          <div>Search instantly · no AI</div>
+          <div>Ask — answers with citations</div>
+          <div>Delegate — the agent works multi-step</div>
+        </div>
       </div>
     `;
+  }
+
+  /** Search Thread D2/D3 (stage S2) — window-level `jf-focus-composer` → focus the textarea. */
+  private onFocusComposer(): void {
+    const textarea = this.shadowRoot?.querySelector('jf-composer textarea');
+    if (textarea instanceof HTMLTextAreaElement) textarea.focus();
   }
 
   /**
@@ -2733,17 +2905,14 @@ export class UnifiedChatView extends JfElement {
    * grounded) or Agent (Delegate, run) via the affordance bar is what promotes intent to a turn.
    * Rendered in the conversation-zone in place of the chat thread while `affordance === 'retrieve'`.
    */
-  private renderRetrieveTier(): TemplateResult {
+  private renderRetrieveTier(): TemplateResult | typeof nothing {
     const s = this.searchSnapshot;
     const q = (s?.query ?? '').trim();
     if (!q) {
-      return html`<div class="retrieve-tier retrieve-empty" data-testid="retrieve-empty-prompt">
-        <p>
-          Search your files — type above for instant results. Then escalate:
-          <strong>Documents</strong> to ask a grounded question, or <strong>Agent</strong> to
-          delegate a task.
-        </p>
-      </div>`;
+      // Search Thread D2/D3 (tempdoc decision 8, stage S2) — the old static empty prompt is retired;
+      // the bare landing now renders the centered `.landing` search bar instead (see isLanding() /
+      // renderLanding(), inserted by renderAnswerPlane immediately after this call).
+      return nothing;
     }
     if (s?.error) {
       return html`<div class="retrieve-tier">
@@ -3947,9 +4116,11 @@ export class UnifiedChatView extends JfElement {
 
   /** Tempdoc 561 C-2: the send-button label grades with the agency posture (agent mode only). */
   private getSubmitLabel(): string {
-    // Tempdoc 577 Goal 3 — the retrieve base tier is pure search (no LLM); its submit runs the
-    // search, so it reads "Search" whether or not a chat model is online (it never says "AI Offline").
-    if (this.affordance === 'retrieve') return 'Search';
+    // Tempdoc 577 Goal 3 / Search Thread D2/D3 (stage S2) — the retrieve base tier is pure search
+    // (no LLM dispatch by default); its submit runs the search, so it reads "Search" whether or not a
+    // chat model is online (it never says "AI Offline") — UNLESS the current turn's route reads as
+    // 'ask' (a '?', a starter word, …), in which case the button names what Enter will actually do.
+    if (this.affordance === 'retrieve') return this.currentRoute() === 'ask' ? 'Ask' : 'Search';
     if (!this.aiState?.capabilities?.chat) return 'AI Offline';
     if (this.affordance === 'agent') {
       return postureChrome(agencyPosture(this.affordance, getAutonomyLevel())).sendLabel;

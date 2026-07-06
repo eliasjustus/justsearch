@@ -227,12 +227,19 @@ export class ResultsCard extends JfElement {
     const result = await openContextMenu({
       actions: [
         { id: 'open-in-inspector', label: 'Open in inspector', icon: 'layers', category: 'system', enabled: true },
+        // Search Thread S3 (tempdoc D5) — scope the thread to this file: hosts add a
+        // scope chip constraining both the instant-search floor and AI retrieval.
+        { id: 'ask-about-this', label: 'Ask about this file', icon: 'message-square', category: 'system', enabled: true },
       ],
       anchor,
       context: 'search-result-row',
       payload: hit,
       addressable,
     });
+    if (result === 'ask-about-this') {
+      this.emitCard('card-scope-file', { id: hit.id, path: hit.path, title: hit.title });
+      return;
+    }
     if (result === 'open-in-inspector') {
       this.emitCard<CardSelectionDetail>('card-selection', {
         ids: [hit.id],

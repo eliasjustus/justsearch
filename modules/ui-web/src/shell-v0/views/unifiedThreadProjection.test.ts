@@ -416,4 +416,40 @@ describe('assignRunSegments (565 §26.A/§26.B — the run-structure authority)'
     expect(out.map((i) => i.id)).toEqual(['t1']);
     expect(out[0]!.segment?.nodeId).toBe('act');
   });
+
+  // Tempdoc S4a (risk-review finding #1) — forward-tolerant UNKNOWN-kind projection: a not-yet-shipped
+  // backend event kind (e.g. SEARCH) must degrade to a generic item, never blank/omit the thread.
+  describe('an UNKNOWN-kind event (S4a forward tolerance)', () => {
+    it('projects to a secondary-prominence generic item labelled from the humanized rawKind', () => {
+      const out = projectUnifiedThread([
+        ev({ id: 'u1', kind: 'USER_MESSAGE', occurredAt: '2026-01-01T00:00:01Z', content: 'find invoices' }),
+        ev({
+          id: 's1',
+          kind: 'UNKNOWN',
+          occurredAt: '2026-01-01T00:00:02Z',
+          originator: 'agent',
+          rawKind: 'SEARCH',
+          content: 'raw backend content',
+          attributes: { query: 'invoices' },
+        }),
+        ev({ id: 'a1', kind: 'ASSISTANT_MESSAGE', occurredAt: '2026-01-01T00:00:03Z', content: 'done' }),
+      ]);
+      // Three events in -> three items out; an unrecognized kind never drops sibling events or blanks
+      // the thread (the risk-review finding this closes).
+      expect(out).toHaveLength(3);
+      const unknown = out.find((i) => i.id === 's1')!;
+      expect(unknown.kind).toBe('progress'); // carried as the existing kind (see KIND_MAP comment)
+      expect(unknown.prominence).toBe('secondary'); // NOT the ambient default for `progress`
+      expect(unknown.content).toBe('Search'); // 'SEARCH' humanized
+      expect(unknown.attributes.rawKind).toBe('SEARCH');
+      expect(unknown.attributes.query).toBe('invoices'); // original attributes passthrough
+    });
+
+    it('humanizes a multi-word rawKind (SEARCH_RESULT -> Search result)', () => {
+      const out = projectUnifiedThread([
+        ev({ id: 's1', kind: 'UNKNOWN', occurredAt: '2026-01-01T00:00:01Z', rawKind: 'SEARCH_RESULT' }),
+      ]);
+      expect(out[0]!.content).toBe('Search result');
+    });
+  });
 });

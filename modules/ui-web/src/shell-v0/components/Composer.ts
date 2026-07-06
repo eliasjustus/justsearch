@@ -176,6 +176,15 @@ export class JfComposer extends JfElement {
       }
       return;
     }
+    // Search Thread D3/S2 — in 'enter' mode, Ctrl+Enter is the ALTERNATE submit
+    // ("send via the other route"): hosts that route per-turn listen for
+    // `composer-submit-alt`; hosts that don't simply ignore it (no behavior
+    // change for ctrl-enter-mode consumers, whose Ctrl+Enter stays the submit).
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      this.fireSubmitAlt();
+      return;
+    }
     handleSubmitKey(e, () => this.fireSubmit());
   };
 
@@ -183,6 +192,13 @@ export class JfComposer extends JfElement {
     if (this.streaming || this.submitDisabled) return;
     this.dispatchEvent(
       new CustomEvent('composer-submit', { bubbles: true, composed: true }),
+    );
+  }
+
+  private fireSubmitAlt(): void {
+    if (this.streaming || this.submitDisabled) return;
+    this.dispatchEvent(
+      new CustomEvent('composer-submit-alt', { bubbles: true, composed: true }),
     );
   }
 

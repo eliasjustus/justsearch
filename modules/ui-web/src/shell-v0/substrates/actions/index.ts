@@ -753,6 +753,8 @@ export interface ShellActionDeps {
   readonly navigate: (target: string) => void;
   readonly toggleInspector: () => void;
   readonly togglePalette: () => void;
+  /** Search Thread S2 — focus the one input bar (the unified window's composer). */
+  readonly focusComposer: () => void;
 }
 
 /**
@@ -813,6 +815,18 @@ export function registerShellActions(deps: ShellActionDeps): void {
       return { kind: 'noop' as const };
     },
     { shortcut: 'mod+k' },
+  );
+
+  // Search Thread S2 (tempdoc D2/D13) — focus the bar from anywhere: Ctrl+L always,
+  // '/' when not typing (the dispatcher's editable-target guard covers plain keys).
+  shellAction(
+    'core.action.shell.focus-composer',
+    'Focus the search bar',
+    () => {
+      deps.focusComposer();
+      return { kind: 'noop' as const };
+    },
+    { shortcut: 'mod+l' },
   );
 }
 

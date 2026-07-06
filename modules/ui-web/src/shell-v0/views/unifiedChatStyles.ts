@@ -979,6 +979,71 @@ export const unifiedChatBodyStyles = css`
       gap: 0.5rem;
       align-items: stretch;
     }
+    /*
+     * Search Thread D2/D3 (stage S2, item 5) — jf-composer renders its own div.composer into LIGHT
+     * DOM (Composer.ts createRenderRoot returns "this"), so that inner div lands in THIS shadow root
+     * too, directly under jf-composer, and inherits the .composer{flex-direction:column} override
+     * above meant for the OUTER wrapper — stretching the submit button to the wrapper's full width.
+     * Restore composerStyles' own row layout specifically for the nested instance (the docked
+     * .composer > jf-composer case only — the landing composer wraps in .landing-composer instead,
+     * so it never nests under a .composer-classed ancestor and needs no override).
+     */
+    .composer > jf-composer > .composer {
+      flex-direction: row;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+    .composer > jf-composer > .composer button {
+      flex: 0 0 auto;
+    }
+    /* Search Thread D2/D3 (stage S2, item 4) — the per-turn route indicator row, right-aligned above
+       the composer, shown only in the retrieve affordance. */
+    .route-row {
+      display: flex;
+      justify-content: flex-end;
+      font-size: var(--font-size-xs);
+    }
+    /* Search Thread D2/D3 (tempdoc decision 8, stage S2, item 7) — the bare-landing search bar: centered
+       in the conversation column instead of docked at the bottom, until a draft/history/query docks it. */
+    .landing {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      min-height: 40vh;
+      text-align: center;
+    }
+    .landing-title {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .landing-corpus {
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary);
+    }
+    .landing-add-folders {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      font-size: var(--font-size-sm);
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .landing-composer {
+      width: min(42rem, 100%);
+    }
+    .escalation-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary);
+    }
     /* Schema input textarea: not migrated to jf-composer (no submit). */
     .composer textarea.mono {
       font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;

@@ -1338,8 +1338,10 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
     (searchBtn as HTMLElement).click();
     await view.updateComplete;
     expect(searchBtn?.classList.contains('active')).toBe(true);
-    // The chat thread is replaced by the retrieve prompt (ephemeral, no thread history).
-    expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).not.toBeNull();
+    // Search Thread D2/D3 (stage S2) — the chat thread is replaced by the bare LANDING (ephemeral, no
+    // thread history), not the old static retrieve-empty-prompt (retired in favor of the landing bar).
+    expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).not.toBeNull();
   });
 
   it('renders the ephemeral hit-list from the search store, never as thread turns', async () => {
@@ -1580,6 +1582,158 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       'an active retrieve query hides the resume card',
     ).toBeNull();
     view.remove();
+  });
+
+  // Search Thread D2/D3 (stage S2) — the floor rule, per-turn ROUTE, and the bare-landing search bar.
+  describe('Search Thread D2/D3 (stage S2) — route + landing', () => {
+    it('the floor rule feeds instant search on every keystroke, even outside retrieve', async () => {
+      const { setQuery } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'documents';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      expect(composer).not.toBeNull();
+      composer!.dispatchEvent(
+        new CustomEvent('composer-input', { detail: { value: 'quarterly report' } }),
+      );
+      expect(setQuery).toHaveBeenCalledWith('quarterly report');
+      view.remove();
+    });
+
+    it('routes an interrogative draft to Ask (escalates), never to submitSearch', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(view.affordance).toBe('documents');
+      expect(submitSearch).not.toHaveBeenCalled();
+      view.remove();
+    });
+
+    it('routes a keyword draft to Search (submitSearch), staying in the retrieve tier', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(submitSearch).toHaveBeenCalled();
+      expect(view.affordance).toBe('retrieve');
+      view.remove();
+    });
+
+    it('composer-submit-alt sends the OPPOSITE route from composer-submit', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march'; // heuristic guesses 'search'
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit-alt'));
+      await view.updateComplete;
+      // Ctrl+Enter sends the OTHER way: the opposite of 'search' is 'ask' — escalates.
+      expect(view.affordance).toBe('documents');
+      expect(submitSearch).not.toHaveBeenCalled();
+      view.remove();
+    });
+
+    it('renders the route chip in retrieve; route-toggle flips the displayed route', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march'; // heuristic guesses 'search'
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string })
+        | null;
+      expect(chip).not.toBeNull();
+      expect(chip!.route).toBe('search');
+      chip!.dispatchEvent(new CustomEvent('route-toggle', { bubbles: true, composed: true }));
+      await view.updateComplete;
+      const chipAfter = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string })
+        | null;
+      expect(chipAfter!.route).toBe('ask');
+      view.remove();
+    });
+
+    it('pins the chip (and the route) to search when Ask is unavailable', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?'; // heuristic would otherwise guess 'ask'
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip).not.toBeNull();
+      expect(chip!.pinned).toBe(true);
+      expect(chip!.route).toBe('search');
+      view.remove();
+    });
+
+    it('never escalates to Ask when pinned — submit runs a search instead', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(submitSearch).toHaveBeenCalled();
+      expect(view.affordance).toBe('retrieve');
+      view.remove();
+    });
+
+    it('renders the bare landing when empty, docks when a query is typed — exactly one jf-composer either way', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      await view.updateComplete;
+      expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).not.toBeNull();
+      expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
+      expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+
+      expect(searchListener).not.toBeNull();
+      searchListener!({ ...SEARCH_EMPTY, query: 'invoice' });
+      await view.updateComplete;
+      expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).toBeNull();
+      expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+      view.remove();
+    });
+
+    it('the jf-focus-composer window event focuses the composer textarea', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      const textarea = view.shadowRoot?.querySelector('jf-composer textarea') as
+        | HTMLTextAreaElement
+        | null;
+      expect(textarea).not.toBeNull();
+      const focusSpy = vi.spyOn(textarea!, 'focus');
+      window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+      expect(focusSpy).toHaveBeenCalled();
+      view.remove();
+    });
   });
 });
 

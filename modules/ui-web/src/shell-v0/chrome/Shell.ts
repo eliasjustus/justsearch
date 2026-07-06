@@ -741,6 +741,9 @@ export class Shell extends JfElement {
     // §21.E.
     registerShellActions({
       navigate: (target) => this.activateSurface(target, {}, 'BUTTON'),
+      // Search Thread S2 — focus the one bar: broadcast; the unified window (and
+      // any future bar host) listens and focuses its composer textarea.
+      focusComposer: () => window.dispatchEvent(new CustomEvent('jf-focus-composer')),
       toggleInspector: () => {
         setInspectorOpen(!getInspectorStateInternal().isOpen);
       },

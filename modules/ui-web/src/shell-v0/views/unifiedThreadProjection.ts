@@ -13,7 +13,17 @@
  * stores pending/completed/rejected as separate rows; the thread shows one card per call).
  */
 
-/** One wire row from {@code GET /api/thread/{id}} (the backend serialization). */
+/**
+ * One wire row from {@code GET /api/thread/{id}} (the backend serialization).
+ *
+ * <p>Tempdoc S4a (risk-review finding #1) — the `kind` union carries an extra `'UNKNOWN'` member
+ * alongside the six backend-declared kinds, so a forward-deployed backend event (e.g. a not-yet-shipped
+ * `SEARCH` kind) still type-checks as a plain `ThreadEvent` everywhere one is already pinned to a fixed
+ * shape (`UnifiedChatView.unifiedEvents: ThreadEvent[]`) — extending the UNION, not forking a parallel
+ * array-element type, is the least-invasive shape once that consumer is read. `rawKind` is set ONLY for
+ * the `'UNKNOWN'` member (see {@link UnknownThreadEvent}); it carries the backend's original,
+ * unrecognized kind string so the projection can still label the item meaningfully.
+ */
 export interface ThreadEvent {
   readonly id: string;
   /** ISO-8601 authoritative order key. */
@@ -24,11 +34,21 @@ export interface ThreadEvent {
     | 'TOOL_ACTIVITY'
     | 'PROGRESS'
     | 'ERROR'
-    | 'HANDOFF';
+    | 'HANDOFF'
+    | 'UNKNOWN';
   readonly originator: string;
   readonly content: string;
   readonly attributes: Readonly<Record<string, unknown>>;
+  /** Set only when {@link kind} is `'UNKNOWN'` — the backend's original, unrecognized kind string. */
+  readonly rawKind?: string;
 }
+
+/**
+ * A {@link ThreadEvent} narrowed to the forward-tolerant `'UNKNOWN'` member (kind + rawKind both
+ * required). A type ALIAS over the same `ThreadEvent` shape, not a separate interface, so every
+ * existing `ThreadEvent`/`ThreadEvent[]` consumer accepts it without change (see the interface doc above).
+ */
+export type UnknownThreadEvent = ThreadEvent & { readonly kind: 'UNKNOWN'; readonly rawKind: string };
 
 export type UnifiedTurnKind =
   | 'user'
@@ -200,7 +220,25 @@ const KIND_MAP: Readonly<Record<ThreadEvent['kind'], UnifiedTurnKind>> = {
   PROGRESS: 'progress',
   ERROR: 'error',
   HANDOFF: 'handoff',
+  // Tempdoc S4a — carried as the existing `progress` UnifiedTurnKind (not a new kind literal) so
+  // UnifiedChatView.renderUnifiedItem's exhaustive `switch (it.kind)` (no `default`) stays exhaustive
+  // and needs no change here; `projectUnifiedThread` below overrides this item's prominence + content
+  // so it doesn't just read as ordinary ambient progress chatter.
+  UNKNOWN: 'progress',
 };
+
+/**
+ * Tempdoc S4a — humanize a raw unrecognized-kind wire string for the generic UNKNOWN item's label
+ * (`'SEARCH'` → `'Search'`, `'SEARCH_RESULT'` → `'Search result'`).
+ */
+function humanizeRawKind(rawKind: string): string {
+  const words = rawKind
+    .toLowerCase()
+    .split('_')
+    .filter((w) => w.length > 0);
+  if (words.length === 0) return rawKind;
+  return [words[0]!.charAt(0).toUpperCase() + words[0]!.slice(1), ...words.slice(1)].join(' ');
+}
 
 /**
  * Project the record's events into the rendered unified thread: map kinds, collapse each tool call
@@ -236,6 +274,23 @@ export function projectUnifiedThread(events: ReadonlyArray<ThreadEvent>): Unifie
 
   const items: UnifiedTurnItem[] = [...passthrough, ...mergedToolByCall.values()].map((e) => {
     const kind = KIND_MAP[e.kind];
+    if (e.kind === 'UNKNOWN') {
+      // Tempdoc S4a — a forward-deployed backend event kind this build doesn't recognize yet (e.g. a
+      // not-yet-shipped SEARCH kind) degrades to a generic SECONDARY item labelled from its raw kind,
+      // instead of the whole thread failing to parse (the risk-review finding this closes). `secondary`
+      // is an explicit override — `progress` otherwise defaults to `ambient` (PROMINENCE_MAP) — so it
+      // reads as a distinct generic item, not ordinary progress chatter.
+      const rawKind = e.rawKind ?? 'UNKNOWN';
+      return {
+        id: e.id,
+        ts: toMillis(e.occurredAt),
+        kind,
+        prominence: 'secondary',
+        originator: e.originator,
+        content: humanizeRawKind(rawKind),
+        attributes: { ...e.attributes, rawKind },
+      };
+    }
     return {
       id: e.id,
       ts: toMillis(e.occurredAt),
