@@ -182,11 +182,25 @@ public record RuntimeManifest(
    * {@code required} reports whether inference is configured for this stack at all —
    * consumers should treat {@code required=false} + {@code phase=OFFLINE} as the expected
    * state, not a failure.
+   *
+   * <p>Tempdoc 682 Item 2 — llama-server build pin surfacing. {@code serverBuildExpected} is
+   * the pinned build tag ({@code bNNNN}) from the staging-time {@code runtime-version.txt}
+   * marker next to the configured llama-server executable; {@code serverBuildActual} is the
+   * build the running server reports via {@code GET /props} ({@code build_info}). Both are
+   * nullable — unknown is a supported state (externally-started/adopted servers, dev setups,
+   * no server yet). Divergent non-null values are the visible expected-vs-actual drift
+   * signal; the producer also logs it loudly. No schema bump: nullable additive fields under
+   * {@code @JsonInclude(NON_NULL)}.
    */
   @RecordBuilder
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record AiInfo(
-      String phase, boolean required, String pendingReason, String readyAt) {
+      String phase,
+      boolean required,
+      String pendingReason,
+      String readyAt,
+      String serverBuildExpected,
+      String serverBuildActual) {
 
     /**
      * Public projection (tempdoc 501 §13.4.5 audience axis). AI carries no
