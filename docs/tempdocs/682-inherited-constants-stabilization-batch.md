@@ -92,6 +92,98 @@ codegen'd or drift-checked. Grep for the literals finds one authority + referenc
   already an observations-inbox item; it is a one-line bugfix a triage pass should take
   (whoever fixes it must decide which value is the *intended* default before aligning).
 
+## As-built (2026-07-06, implementing session, branch `worktree-682-constants`)
+
+### Item 3 — DONE (commit `adfb1d1`)
+
+- **Cluster 1 (VRAM threshold):** authority is now `VramRequirements.COMFORTABLE_VRAM_BYTES`
+  (`VramRequirements.java:32`); `VramDetector` and `VramFlagsUtil` reference it. Pre-unification
+  check confirmed all three literals were identical (no hidden drift). A stale comment in
+  `VramDetector` referencing a constant name that never existed (`TWELVE_GB_THRESHOLD`) was
+  replaced by the authority pointer. Acceptance grep: one production literal + one deliberate
+  boundary-value pin in `VramFlagsUtilTest` (`@CsvSource` input, kept as a regression pin).
+- **Cluster 2 (monitor window trio):** authority is new `RollingMonitorWindow`
+  (`modules/telemetry/.../RollingMonitorWindow.java` — `WINDOW_MS`/`MAX_GAP_MS`/`MAX_SAMPLES`);
+  both `OperationalMetrics` (worker; note: lives in `worker-core`, not `worker-services` as this
+  doc originally said) and `GpuSaturationMonitor` (head) alias it. `telemetry` chosen because it
+  is already a direct dependency of both consumers and a layering-leaf — **no new module edge**;
+  `LayeringEnforcementTest` green. Values unchanged.
+- **Cluster 3 (FE/BE 9000):** codegen absorption was evaluated and **rejected as
+  disproportionate** (the liveness generator family is shape-specialized and its generated Java
+  lives in `modules/ui`, which `app-observability` cannot import; the "wire gate comment-pair"
+  option this doc hypothesized does not exist — the wire gate is contracts-only). Implemented
+  the cheapest existing-mechanism check instead: a cross-language drift test in
+  `bootIntentStreamBridge.test.ts` (regex-reads both files, asserts equality), following the
+  existing cross-tree-read test pattern. **Mutation-verified**: setting the FE value to 9001
+  fails the test with `expected 9001 to be 9000`. Comment pairs at all four sites.
+- Verification: `spotlessApply` + `build -x test` green; module tests
+  `:gpu-bridge :worker-core :ui :app-observability :telemetry` green; FE `test:unit:run` 3510
+  tests green (includes the new drift test). Known pre-existing red: `npm run typecheck` fails
+  at the branch base on TS5101/`baseUrl` (tracked in observations; not caused here).
+
+### Item 2 — DONE, one acceptance sub-item deferred to a live run (commit `267b094`)
+
+- **Pin:** the authority already existed (`llamaPrebuiltVersion = "b8571"`,
+  `modules/ui/build.gradle.kts`); what was missing was assertion. `stageLlamaCudaVariant` now
+  writes a machine-readable `runtime-version.txt` into `variants/cuda12/` (same convention as
+  the existing CPU-stage stamp; consumed by `RuntimeRestoreUtil` and copied by dev-runner's
+  flat-file copy — dev-runner untouched).
+- **Compare:** new pure `LlamaServerBuildCheck` (parses `bNNNN` from marker and from `/props
+  build_info`; exact-match; unknown-tolerant) — 11 unit tests green.
+- **Surface:** `ServerPropsOps.applyBuildInsightsFromProps` records the actual build on BOTH
+  the managed-start and adoption paths (set-sites verified, not assumed); WARNs once per
+  (expected,actual) pair on mismatch; missing marker ⇒ expected=unknown, actual recorded, no
+  warning (externally-started servers are a supported state). `RuntimeManifest.AiInfo` gains
+  nullable `serverBuildExpected`/`serverBuildActual`, published live via
+  `RuntimeManifestListenerWiring`; the redaction test asserts the pair survives the public
+  projection.
+- Verification: full `gradlew test` green; `check-runtime-manifest-closure` 0 violations (no
+  new runtime files); `:modules:app-api:updateSchemas` run post-hoc by the orchestrator —
+  **zero content changes** (EOL-only phantom diffs restored), i.e. the manifest fields touch no
+  generated schema surface. **Deferred to a live run:** executing the real ~600 MB stage (the
+  marker write is in `doLast`, verified by dry-run/config inspection only) and the "mismatch
+  drill" against a live server.
+- Out-of-scope finding logged to observations: the cuda12 zip download is URL-pinned but not
+  SHA-256-pinned, unlike the CPU zip.
+
+### Item 1 — DONE: measured, verdict RAISE, default now `1g`
+
+**Corpus reality check first:** the machine holds no real PDF corpus (`ohr-bench-tika-pdf` is
+*pre-extracted text*, not PDFs; only 3 fixture PDFs exist anywhere). The measurement therefore
+covers the **enrichment-pipeline watermark**, with live Tika-PDF/office parse pressure
+explicitly unexercised — stated in the constant-site annotation as a scope limit (and it makes
+the measured pressure a lower bound, since parse buffers only add).
+
+**Measurement (2026-07-06):** `jseval run --dataset mixed/desktop-mixed-v1 --max-queries 0
+--pipeline --start-backend --clean` (2286 mixed desktop docs; primary indexing + chunking +
+embedding + SPLADE + NER on GPU), worker verified on its live command line to run the shipping
+default `-Xms512m -Xmx512m` plus `-Xlog:gc:file=tmp/worker-gc-682.log`. The monitoring process
+was externally stopped twice; the second run's backend kept indexing to ~74% enrichment
+(embed 74% / SPLADE 73% / NER 1700/2287 / chunks 16%) before the stack was cleaned up, giving
+**543s of GC log under real load (153 GC events)** — partial, but decisive:
+
+- **After-GC live-set peak: 348M of 512M (68% occupancy).**
+- **Heap repeatedly full before collections** (499–512M before-GC values).
+- **5 G1 evacuation failures** — two `G1 Humongous Allocation`-triggered — e.g.
+  `GC(142) Pause Young (Mixed) (Evacuation Failure: Allocation) 512M->310M(512M)` at 482s and
+  `GC(7) ... (G1 Humongous Allocation) (Evacuation Failure: Allocation) 499M->211M(512M)` at
+  5.4s. No `Pause Full` and no OOM — the worker survives, but with zero comfort margin, at
+  only ~74% enrichment, on a modest 2286-doc corpus, without PDF parsing.
+
+**Verdict: the Nov-2025 `512m` is not comfortably correct — raised to `1g`** (live-set peak
+becomes ~34% occupancy; measured 2× raise, not the speculative 4×). The derivation is written
+at the constant site (`KnowledgeServerConfig.java`, `DEFAULT_WORKER_HEAP` javadoc) per the
+item's acceptance: dataset, date, numbers, scope caveat, and the `JUSTSEARCH_WORKER_HEAP`
+override for constrained devices. Full GC log preserved at the worktree's
+`tmp/worker-gc-682.log` (gitignored) for re-inspection.
+
+**Verification:** `spotlessApply` + `build -x test` green; `:modules:app-services:test` green
+(task executed, not up-to-date); no test asserts the old default (the only test heap reference
+is an explicit `"256m"` parameter, unaffected).
+
+**Follow-up worth one future measurement (not this tempdoc):** re-run the same instrumented
+recipe once a real PDF/office corpus exists locally, to close the Tika-pressure scope gap.
+
 ## Verification map
 
 Item 1: the measurement run itself + the citation landing at the constant site.
