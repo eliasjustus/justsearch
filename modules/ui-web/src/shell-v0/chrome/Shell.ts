@@ -1805,7 +1805,10 @@ export class Shell extends JfElement {
    * is the user-facing label for the `advanced` mode.
    */
   private renderUiModeToggle(): TemplateResult {
-    const mode = this.uiMode;
+    // Read the authority LIVE (not the cached `this.uiMode`) so the toggle can never desync from what
+    // the surfaces render — e.g. when the async settings seed sets the mode after this component's
+    // constructor ran. `this.uiMode` + the subscription remain only to trigger the re-render.
+    const mode = getUiMode();
     return html`<div class="ui-mode-toggle" role="group" aria-label="Detail level">
       ${(['simple', 'advanced'] as const).map(
         (m) => html`<button
