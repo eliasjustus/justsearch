@@ -75,10 +75,12 @@ from jseval.utility_calibrate import (
 _WITH_TOOL = {"B", "C"}
 
 # Generous default per-cell turn cap (tempdoc 675 lever 3): clips the pathological
-# many-turn tail that inflates the per-cell mean, set well ABOVE the useful range so
-# it does not bias the measured tool-use. The calibrated wall-clock budget
-# (`timeout_s`) is the primary bound.
-_DEFAULT_MAX_TURNS = 40
+# many-turn tail, set well ABOVE the useful range so it does not bias the measured
+# tool-use. Raised 40 -> 100 (tempdoc 675 review F1): live cells were observed at
+# 36-39 turns, i.e. 40 sat INSIDE the useful range and clipped valid cells. The
+# calibrated wall-clock budget (`timeout_s`) remains the primary bound; this is the
+# safety net. Overridable via `--max-turns`.
+_DEFAULT_MAX_TURNS = 100
 
 # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1): the prior
 # "using only the documents in {corpus_dir}" wording primed the agent toward
@@ -132,7 +134,7 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str]]
 
 @solver
 def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
-                        model: str = "haiku", max_budget: float = 0.50,
+                        model: str = "haiku", max_budget: str = "0.50",
                         timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS):
     """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
@@ -142,17 +144,33 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     `asyncio.wait_for(timeout_s)` wall-clock budget, so a retry can never hold a
     concurrency slot for 2× the budget (tempdoc 675 per-cell budget). Stashes cost /
     unique-tokens / turns in `state.metadata` (A4). An errored cell sets
-    `metadata.error` so the projection excludes it (valid-only parity)."""
+    `metadata.error` so the projection excludes it (valid-only parity).
+
+    `max_budget` is a STR by design (tempdoc 675 F0 resume fix): it is threaded
+    through the Inspect task/solver IDENTITY, and a *float* there breaks `eval_set`
+    resume — the JSON recorder reads persisted floats back as `Decimal` (ijson
+    without `use_float`), so `task_identifier` re-hashes the resumed task to a
+    different id than the persisted log and raises PrerequisiteError. A str
+    round-trips identically. Converted to float only at the point of use below. Do
+    NOT reintroduce any float into the task/solver arg surface."""
     mcp_servers = _mcp_servers_from_config(mcp_config)
 
-    async def _one_attempt(condition: str, prompt: str, disallowed: list[str]) -> dict:
-        """Run one SDK session; return a dict of the captured objects (or raise)."""
+    def _fresh_capture() -> dict:
+        return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
+                "mcp_servers": None, "justsearch_tools": []}
+
+    async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
+        """Run one SDK session, writing captured objects INCREMENTALLY into the shared
+        `capture` dict so partial evidence survives an `asyncio.wait_for` cancellation
+        or exception (tempdoc 675 F2 — 'timed-out cells lose their partial evidence'
+        was the failure mode v2 must fix; capture is owned by the caller, so a
+        cancelled coroutine's partial writes are not lost)."""
         query_cwd = tempfile.mkdtemp(prefix="jseval-cell-")  # isolate from any ambient CLAUDE.md
         opts = ClaudeAgentOptions(
             model=model,
             permission_mode="bypassPermissions",
             max_turns=max_turns,
-            max_budget_usd=max_budget,
+            max_budget_usd=float(max_budget),
             cwd=query_cwd,
             add_dirs=[corpus_dir],
             setting_sources=None,  # tempdoc 675 finding: zero ambient-context leakage
@@ -160,12 +178,6 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
             mcp_servers=(mcp_servers if condition in _WITH_TOOL else {}),
             strict_mcp_config=True,
         )
-        attempts: dict[str, dict] = {}   # tool_use_id -> {"tool","input"}
-        results: dict[str, dict] = {}    # tool_use_id -> {"is_error"}
-        texts: list[str] = []
-        rmsg: ResultMessage | None = None
-        servers_seen: list | None = None
-        justsearch_tools: list[str] = []
         try:
             async with ClaudeSDKClient(options=opts) as client:
                 await client.query(prompt)
@@ -173,22 +185,18 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     if isinstance(msg, AssistantMessage):
                         for b in (msg.content or []):
                             if isinstance(b, ToolUseBlock):
-                                attempts[b.id] = {"tool": b.name, "input": b.input}
+                                capture["attempts"][b.id] = {"tool": b.name, "input": b.input}
                             elif isinstance(b, TextBlock):
-                                texts.append(b.text)
+                                capture["texts"].append(b.text)
                     elif isinstance(msg, UserMessage):
                         for b in (getattr(msg, "content", None) or []):
                             if isinstance(b, ToolResultBlock):
-                                results[b.tool_use_id] = {"is_error": bool(b.is_error)}
+                                capture["results"][b.tool_use_id] = {"is_error": bool(b.is_error)}
                     elif isinstance(msg, ResultMessage):
-                        rmsg = msg
-                servers_seen, justsearch_tools = await _mcp_surface(client)
+                        capture["rmsg"] = msg
+                capture["mcp_servers"], capture["justsearch_tools"] = await _mcp_surface(client)
         finally:
             shutil.rmtree(query_cwd, ignore_errors=True)
-        return {
-            "attempts": attempts, "results": results, "texts": texts,
-            "rmsg": rmsg, "mcp_servers": servers_seen, "justsearch_tools": justsearch_tools,
-        }
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         condition = state.metadata.get("condition")
@@ -199,33 +207,38 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         # the retry visible per cell; a cell failing both is excluded via `error`.
         first_error: str | None = None
         attempt = 0
+        capture: dict | None = None
         deadline = asyncio.get_event_loop().time() + timeout_s
         for attempt in (1, 2):
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 state.metadata.setdefault("error", "per-cell wall-clock budget exhausted")
                 break
+            capture = _fresh_capture()
             try:
-                got = await asyncio.wait_for(
-                    _one_attempt(condition, prompt, disallowed), timeout=remaining)
+                await asyncio.wait_for(
+                    _one_attempt(condition, prompt, disallowed, capture), timeout=remaining)
             except asyncio.TimeoutError:
                 state.metadata["error"] = "per-cell wall-clock budget exhausted"
-                break
+                break  # `capture` holds whatever arrived before the timeout (F2)
             except Exception as e:  # noqa: BLE001 — max_turns/budget/SDK/connection failure
                 err = f"{type(e).__name__}: {str(e)[:250]}"
                 if attempt == 1:
                     first_error = err
                     continue
                 state.metadata["error"] = err
-                break
+                break  # `capture` holds this attempt's partial evidence (F2)
+            break  # success
+        # ALWAYS project what was captured (partial or complete) so a timed-out /
+        # errored cell still records what it ran (tempdoc 675 F2 forensic completeness).
+        # `_record_cell` stashes tool_calls unconditionally and uses setdefault for its
+        # own errors, so it never clobbers an error already set above.
+        if capture is not None:
             try:
-                _record_cell(state, got, condition, disallowed, mcp_config)
-            except Exception as e:  # noqa: BLE001
-                # A projection bug must NEVER fabricate an included cell (measurement
-                # validity): any error here marks the cell excluded, not silently
-                # half-populated. (tempdoc 675 independent-review hardening.)
-                state.metadata["error"] = f"record_cell failed: {type(e).__name__}: {str(e)[:200]}"
-            break
+                _record_cell(state, capture, condition, disallowed, mcp_config)
+            except Exception as e:  # noqa: BLE001 — a projection bug must never fabricate a cell
+                state.metadata.setdefault(
+                    "error", f"record_cell failed: {type(e).__name__}: {str(e)[:200]}")
         state.metadata["attempts"] = attempt
         if first_error is not None:
             state.metadata["first_error"] = first_error
@@ -288,8 +301,8 @@ def _record_cell(state: TaskState, got: dict, condition: str,
         if servers is None:
             state.metadata["mcp_surface_unverified"] = True
         elif not justsearch_tools:
-            state.metadata["error"] = (
-                f"expected MCP tool surface not offered: mcp_servers={servers}")
+            state.metadata.setdefault(
+                "error", f"expected MCP tool surface not offered: mcp_servers={servers}")
             return
 
     if rmsg is not None:
@@ -304,8 +317,8 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "api_error_status": getattr(rmsg, "api_error_status", None),
                 "errors": getattr(rmsg, "errors", None),
             }
-            state.metadata["error"] = (
-                f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600]
+            state.metadata.setdefault(
+                "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
         usage = getattr(rmsg, "usage", None) or {}
@@ -315,7 +328,8 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             "num_turns": getattr(rmsg, "num_turns", None),
         })
     else:
-        state.metadata["error"] = "no ResultMessage (stream ended without a terminal result)"
+        state.metadata.setdefault(
+            "error", "no ResultMessage (stream ended without a terminal result)")
 
 
 @scorer(metrics=[accuracy()])
@@ -332,7 +346,7 @@ def substring_scorer():
 @task
 def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir: str = "",
                        mcp_config: str | None = None, model: str = "haiku",
-                       max_queries: int | None = None, max_budget: float = 0.50,
+                       max_queries: int | None = None, max_budget: str = "0.50",
                        timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
                        # --- cohort identity (task-args → config-change log segregation, A2) ---
                        cli_version: str | None = None, mcp_tool_surface_hash: str | None = None,
@@ -403,27 +417,33 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
 
     # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
-    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run.
-    staged_corpus_dir = stage_corpus_dir(corpus_dir)
+    # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
+    # re-invoking fails with "log file not associated with a task". It ALSO keys the
+    # stable staged-corpus path below — tempdoc 675 F0 resume fix: a random `mkdtemp`
+    # staged path is part of Inspect's task identity, so a resume must re-stage to the
+    # SAME path (and see claude_agent_solver re: the `max_budget` str — the other half
+    # of the resume fix).
+    eval_set_id = _sha256_canonical({
+        "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
+        "queries": queries_path, "prompt": prompt_template_hash,
+    })[:22]
+    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run, at a
+    # DETERMINISTIC path (keyed by eval_set_id) so a resume re-stages to the same path
+    # and the task identity matches the persisted log.
+    staged_corpus_dir = stage_corpus_dir(corpus_dir, stable_key=eval_set_id)
     try:
         # ONE task over the full condition × query matrix (tempdoc 675 single pool).
         tasks = [
             agent_utility_task(
                 conditions=conditions, queries_path=queries_path, corpus_dir=staged_corpus_dir,
                 mcp_config=mcp_config, model=model,
-                max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
+                max_queries=max_queries, max_budget=str(max_budget), timeout_s=timeout_s,
                 max_turns=max_turns, cli_version=cli_version,
                 mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
             )
         ]
-        # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
-        # re-invoking after a crash fails with "log file not associated with a task".
-        eval_set_id = _sha256_canonical({
-            "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
-            "queries": queries_path, "prompt": prompt_template_hash,
-        })[:22]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths
         # during eval_set's log cleanup; JSON logs are text + portable.
         # ONE task → conditions interleave in ONE `max_samples` pool (tempdoc 675):

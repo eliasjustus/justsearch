@@ -47,7 +47,8 @@ log = logging.getLogger(__name__)
 _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
 
 
-def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-") -> str:
+def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-",
+                     stable_key: str | None = None) -> str:
     """Copy `corpus_dir`'s contents into a fresh, answer-key-free temp directory.
 
     `--add-dir corpus_dir` hands the Claude Code CLI's Read/Glob tools a directory
@@ -66,8 +67,24 @@ def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-") -
     runner (`agent_retrieval_eval.run_agent_eval`) that formerly shared this
     helper was retired in tempdoc 675.
 
+    `stable_key` (tempdoc 675 F0 resume fix): when given, stage to a DETERMINISTIC
+    path keyed by a hash of `stable_key` (idempotent copy) instead of a random
+    `mkdtemp`. The staged path is part of Inspect's `eval_set` task identity, so a
+    resume must re-stage to the SAME path or the recomputed task-id won't match the
+    persisted log (→ `PrerequisiteError`). Default (None) keeps the volatile per-call
+    behavior for the other (Tier-1/2) callers.
+
     Callers own cleanup: `shutil.rmtree(Path(staged_dir).parent, ignore_errors=True)`.
     """
+    if stable_key is not None:
+        import hashlib
+        digest = hashlib.sha256(str(stable_key).encode()).hexdigest()[:16]
+        staging_root = str(Path(tempfile.gettempdir()) / f"{prefix}{digest}")
+        staged_dir = str(Path(staging_root) / "corpus-dir")
+        if not Path(staged_dir).exists():
+            Path(staging_root).mkdir(parents=True, exist_ok=True)
+            shutil.copytree(corpus_dir, staged_dir)
+        return staged_dir
     staging_root = tempfile.mkdtemp(prefix=prefix)
     staged_dir = str(Path(staging_root) / "corpus-dir")
     shutil.copytree(corpus_dir, staged_dir)

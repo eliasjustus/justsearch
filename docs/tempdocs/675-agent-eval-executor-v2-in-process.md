@@ -627,8 +627,11 @@ candidate shapes, not new apparatus.
   `toggle_mcp_server` / `disconnect`.
 
 **Integration details discovered (handle in implementation; none invalidate the design):**
-1. **`max_turns` exhaustion raises an exception** (not a `ResultMessage`) — the executor must catch it
-   and mark the cell errored (parity with today's timeout handling).
+1. **`max_turns` exhaustion returns an errored `ResultMessage`** — subtype `error_max_turns`,
+   `is_error=True`, `errors=["Reached maximum number of turns (N)"]` (CORRECTED 2026-07-08 by the review's
+   live check; the pre-implementation guess that it *raises* was wrong — see §As-built review fixes F1).
+   The executor's `_record_cell` marks the cell errored from that `ResultMessage`; partial tool_calls
+   are preserved (F2).
 2. **`query()`'s `SystemMessage` init does not list the offered tools/mcp_servers** — the offered-MCP-
    surface assertion moves from init-event parsing to `ClaudeSDKClient.get_mcp_status()`.
 3. **The leak assertion must distinguish attempted-but-blocked from executed** — a blocked disallowed
@@ -668,8 +671,9 @@ found one **confirmed** measurement-validity bug that the smoke had missed — f
   (verified-clean isolation) / `permission_mode` set from the sample's condition.
 - **Single concurrency pool**: ONE Inspect task, samples = the flat `condition × query`
   cross-product, `condition` a sample field, `sample.id = "{cond}|q{i}"`; `eval_set` without
-  `max_tasks=1`. Inspect's durable resume, 624's cell-identity seam, and `utility-comparison.v1` are
-  preserved.
+  `max_tasks=1`. 624's cell-identity seam and `utility-comparison.v1` are preserved. (Inspect's
+  durable resume was ASSUMED preserved here but was in fact **broken** — a pre-existing upstream
+  Inspect defect; the review found and FIXED it, see §Review fixes F0 below.)
 - **Object-based assertions**: `tool_calls` (composer-facing) = only tools that ACTUALLY executed
   (non-error result, not in `permission_denials`); blocked attempts stashed separately as forensics;
   offered-surface via `ClaudeSDKClient.get_mcp_status()` with the tri-state (`unverified` never
@@ -696,9 +700,10 @@ found one **confirmed** measurement-validity bug that the smoke had missed — f
   `unreachable-seed-green` false green). Fixed to extract `tool_name` robustly; the cell projection is
   now wrapped so ANY error marks the cell excluded rather than fabricating an included one; the test
   now uses the real dict shape.
-- `max_turns` exhaustion surfaces as an errored `ResultMessage` (or a raised exception) → excluded
-  cell (parity with a timeout). Cross-condition pairing keys stay aligned because all three readers
-  apply the identical prefix-strip.
+- `max_turns` exhaustion surfaces as an errored `ResultMessage` (subtype `error_max_turns`) → excluded
+  cell (parity with a timeout; the earlier "or a raised exception" hedge was disproven by the review's
+  live check — it is always a `ResultMessage`). Cross-condition pairing keys stay aligned because all
+  three readers apply the identical prefix-strip.
 
 **Operational note** (logged to the observations shard): Inspect's rich display crashes with a
 `UnicodeEncodeError` on the braille spinner when stdout is redirected/non-tty on Windows (cp1252) —
@@ -707,3 +712,48 @@ display), but more relevant now that runs are long and non-interactive.
 
 **Not done here** (out of scope, per §Scope boundary): the statistical/cadence reframes (624/673), the
 backend rerank/query-cache ceiling (648). No PR opened yet.
+
+### Review fixes (2026-07-08) — critical review + refute-first pass
+
+A critical review of the 2026-07-07 commit, hardened by a refute-first adversarial subagent (which
+overturned two of my initial conclusions before I could ship the wrong fix), found real issues. All
+fixes are live-verified against the dev stack (`live-verify-out.txt`).
+
+- **F0 — resume was BROKEN, now FIXED.** Re-invoking with the same `log_dir` raised
+  `PrerequisiteError: … not associated with a task passed to eval_set`. Root cause (isolated by a
+  dedicated subagent): `max_budget` was the only **`float`** in the Inspect task/solver IDENTITY, and
+  Inspect's JSON recorder reads persisted floats back via `ijson` without `use_float`
+  (`inspect_ai/log/_recorders/json.py`), so `0.5`→`Decimal('0.5')`; `to_json(Decimal('0.5'))` → `"0.5"`
+  (quoted) ≠ `to_json(0.5)` → `0.5`, so the resumed task-id never matched the persisted one. A random
+  `mkdtemp` staged-corpus path was a SECOND necessary factor. **Both pre-existing** (the old
+  per-condition code + 624 had the same latent bug; my as-built's "resume works" claim was false and is
+  corrected above). Fix: thread `max_budget` as a **str** through the identity args (`float()` at use)
+  + a **deterministic staged path** keyed by `eval_set_id` (`stage_corpus_dir(..., stable_key=)`).
+  `eval_set_id`, answer-key isolation, and cohort identity are all unaffected. **Live-verified:** a
+  real-agent re-run of the same `log_dir` skipped the completed cell in **1.7 s** (vs 161 s cold).
+  Regression test: `test_run_utility_eval_resumes_on_rerun_same_log_dir`. This is a worked-around
+  UPSTREAM Inspect defect — any float task-arg / non-default `GenerateConfig` float would trip it; the
+  solver docstring warns against reintroducing a float into the arg surface.
+- **F2 — timed-out/errored cells now keep their partial tool_calls.** The Context section named
+  "timed-out cells lose their partial evidence" as a problem v2 must fix; the first cut still lost it
+  (locals lost on `wait_for` cancellation). Fix: `_one_attempt` writes into a **shared `capture` dict**;
+  `solve()` always projects it (partial or complete), and `_record_cell` stashes tool_calls
+  unconditionally + `setdefault`s its errors so a timeout error is not clobbered. **Live-verified:** a
+  max_turns-3 cell recorded 3 partial tool_calls alongside its error. Test:
+  `test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error`.
+- **F1 — max_turns raised + exposed + failure-mode corrected.** 40 sat INSIDE the observed useful
+  range (live cells hit 36–39), so it clipped valid cells; raised to **100** (the wall-clock budget
+  stays the primary bound) and exposed as `--max-turns`. The pre-impl guess that exhaustion *raises*
+  was disproven live — it returns an errored `ResultMessage` (subtype `error_max_turns`); the tempdoc's
+  integration-detail #1 is corrected accordingly.
+- **With-tool path oversell — closed.** The original smoke never exercised a real retrieval round-trip
+  (every B cell used file tools). A live **condition-C** cell (file tools disallowed → agent must use
+  justsearch) executed **42 `mcp__justsearch__*` calls** captured through the object path
+  (`mcp_offered=6`, `disallowed=0`, `leak=False`) — the with-tool path is now live-verified, not
+  unit-test-only.
+- **Deviation recorded:** `build_disallowed_tools` was KEPT (not deleted as the §Settled-design orphan
+  list planned) — it is reused to build the SDK's `disallowed_tools` denylist. Stale `run_agent_eval`
+  references in `utility_calibrate.py` docstrings were also cleaned up.
+
+Validation: full jseval unit suite green (1522 passed; only the 2 pre-existing `test_correction_probe`
+reds remain) + the live checks above.

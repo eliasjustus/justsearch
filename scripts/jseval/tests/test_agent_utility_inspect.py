@@ -444,8 +444,8 @@ def test_run_utility_eval_cleans_up_staged_dir_when_task_construction_raises(tmp
     captured = {}
     real_stage = aui.stage_corpus_dir
 
-    def spying_stage_corpus_dir(cdir):
-        staged = real_stage(cdir)
+    def spying_stage_corpus_dir(cdir, **kwargs):
+        staged = real_stage(cdir, **kwargs)
         captured["staged_dir"] = staged
         return staged
 
@@ -598,3 +598,55 @@ def test_run_utility_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
             conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
         )
         MockClient.assert_not_called()
+
+
+def test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error():
+    """F2 (tempdoc 675 review): a timed-out cell — `solve()` pre-set the timeout error and the
+    SDK loop was cancelled so there is NO ResultMessage — must STILL record its partial
+    `tool_calls`, and `_record_cell` must NOT overwrite the timeout error with 'no ResultMessage'.
+    Regression for 'timed-out cells lose their partial evidence', the failure v2 exists to fix."""
+    state = _state()
+    state.metadata["error"] = "per-cell wall-clock budget exhausted"  # solve() set this on timeout
+    capture = {
+        "attempts": {"t1": {"tool": "Grep", "input": {"pattern": "x"}}},
+        "results": {"t1": {"is_error": False}},
+        "texts": [], "rmsg": None, "mcp_servers": None, "justsearch_tools": [],
+    }
+    aui._record_cell(state, capture, "A", build_disallowed_tools("A"), None)
+    assert [tc["tool"] for tc in state.metadata["tool_calls"]] == ["Grep"]  # partial evidence preserved
+    assert state.metadata["error"] == "per-cell wall-clock budget exhausted"  # not clobbered
+
+
+def test_run_utility_eval_resumes_on_rerun_same_log_dir(tmp_path, monkeypatch):
+    """F0 (tempdoc 675 review): re-invoking `run_utility_eval` with the same `log_dir` RESUMES
+    (skips the completed sample) instead of raising Inspect's `PrerequisiteError`. Regression for
+    the task-identity drift (a float `max_budget` read back as Decimal + a random staged-corpus
+    path). Uses a trivial instant solver — no real agent/backend. This test FAILS pre-fix."""
+    from inspect_ai.solver import solver as _solver_dec
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "d.txt").write_text("hello", encoding="utf-8")
+    queries = tmp_path / "q.json"
+    queries.write_text(
+        json.dumps([{"query": "q", "answer": "a", "question_type": "t"}]), encoding="utf-8")
+    log_dir = str(tmp_path / "logs")
+    calls = {"n": 0}
+
+    @_solver_dec
+    def trivial(*a, **k):
+        async def solve(state, generate):
+            calls["n"] += 1
+            state.output.completion = "a"
+            state.metadata.update({"cost_usd": 0.0, "unique_tokens": 0, "num_turns": 1})
+            return state
+        return solve
+
+    monkeypatch.setattr(aui, "claude_agent_solver", trivial)
+    kw = dict(queries_path=str(queries), corpus_dir=str(corpus), mcp_config=None, model="haiku",
+              conditions=("A",), seeds=1, concurrency=1, log_dir=log_dir, max_queries=1,
+              corpus_dataset="d", corpus_signature="s")
+    aui.run_utility_eval(**kw)
+    assert calls["n"] == 1
+    aui.run_utility_eval(**kw)  # RESUME: must not raise, must not re-run the completed cell
+    assert calls["n"] == 1
