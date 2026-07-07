@@ -88,7 +88,7 @@ class RuntimeManifestControllerRedactionTest {
             .readyAt("2026-05-20T20:01:00Z")
             .build();
     RuntimeManifest.AiInfo ai =
-        new RuntimeManifest.AiInfo("READY", true, null, "2026-05-20T20:02:00Z");
+        new RuntimeManifest.AiInfo("READY", true, null, "2026-05-20T20:02:00Z", "b8571", "b8571");
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder()
             .schemaVersion(1)
@@ -107,6 +107,9 @@ class RuntimeManifestControllerRedactionTest {
     assertEquals(9000, publicView.worker().grpcPort());
     assertNotNull(publicView.ai(), "ai sub-record must survive projection");
     assertEquals("READY", publicView.ai().phase());
+    // Tempdoc 682 Item 2: the build-pin pair is not a credential — it must survive projection.
+    assertEquals("b8571", publicView.ai().serverBuildExpected());
+    assertEquals("b8571", publicView.ai().serverBuildActual());
     assertNull(publicView.head().sessionToken());
   }
 

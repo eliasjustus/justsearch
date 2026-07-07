@@ -29,6 +29,11 @@ final class ServerPropsOps {
 
   private final AtomicBoolean hasVisionCapability = new AtomicBoolean(false);
 
+  // ==================== Build Version Pin (tempdoc 682 Item 2) ====================
+
+  private final AtomicReference<String> observedServerBuild = new AtomicReference<>(null);
+  private final AtomicReference<String> lastBuildMismatchWarned = new AtomicReference<>(null);
+
   // ==================== External Server Adoption Diagnostics ====================
 
   private final AtomicBoolean externalServerVerified = new AtomicBoolean(false);
@@ -63,7 +68,61 @@ final class ServerPropsOps {
     applyModelInsightsFromProps(root);
     applyContextInsightsFromProps(root);
     applyVisionCapabilityFromProps(root);
+    applyBuildInsightsFromProps(root);
     applyExternalAdoptionInsightsFromProps(root);
+  }
+
+  /**
+   * Tempdoc 682 Item 2: records the actually-running llama-server build ({@code build_info}
+   * from {@code /props}) and warns LOUDLY when it drifts from the staged expectation (the
+   * {@code runtime-version.txt} marker next to the configured executable). Missing marker or
+   * missing {@code build_info} is a supported unknown — recorded, never warned about. The
+   * warn is de-duplicated per (expected, actual) pair so repeated {@code /props} reads of
+   * the same drifted server do not spam.
+   */
+  private void applyBuildInsightsFromProps(JsonNode root) {
+    String actual = LlamaServerBuildCheck.actualFromProps(root);
+    if (actual != null) {
+      observedServerBuild.set(actual);
+    }
+    LlamaServerBuildCheck.BuildComparison cmp =
+        LlamaServerBuildCheck.compare(expectedServerBuild(), observedServerBuild.get());
+    if (cmp.mismatch()) {
+      String pair = cmp.expected() + "|" + cmp.actual();
+      if (!pair.equals(lastBuildMismatchWarned.getAndSet(pair))) {
+        LOG.warn(
+            "llama-server build drift: expected {} (runtime-version.txt pin next to {}) but the"
+                + " running server reports {}. Behavior differences (flag semantics, /props"
+                + " shape, sampling defaults) may stem from this. Re-stage the pinned runtime"
+                + " or update the pin intentionally.",
+            cmp.expected(),
+            configuredServerExecutable(),
+            cmp.actual());
+      }
+    }
+  }
+
+  /**
+   * Expected llama-server build tag from the staging pin marker adjacent to the configured
+   * executable; null (= unknown) when no config, no marker, or an unparseable marker — the
+   * supported externally-started/adopted-server case.
+   */
+  String expectedServerBuild() {
+    return LlamaServerBuildCheck.readExpectedNextTo(configuredServerExecutable());
+  }
+
+  /** Actually-running llama-server build tag observed from {@code /props}; null until observed. */
+  String actualServerBuild() {
+    return observedServerBuild.get();
+  }
+
+  private Path configuredServerExecutable() {
+    try {
+      InferenceConfig cfg = config.get();
+      return cfg == null ? null : cfg.serverExecutable();
+    } catch (Exception e) {
+      return null;
+    }
   }
 
   private void applyModelInsightsFromProps(JsonNode root) {
@@ -277,6 +336,10 @@ final class ServerPropsOps {
    */
   void resetExternalAdoptionState(boolean verified, String verificationError) {
     hasVisionCapability.set(false);
+    // Tempdoc 682 Item 2: a newly-adopted server is a different process — clear the previous
+    // build observation (and re-arm the drift warn) so stale versions don't survive adoption.
+    observedServerBuild.set(null);
+    lastBuildMismatchWarned.set(null);
     externalServerAdoptedAtMs.set(System.currentTimeMillis());
     externalServerVerified.set(verified);
     externalServerVerificationError.set(verificationError);

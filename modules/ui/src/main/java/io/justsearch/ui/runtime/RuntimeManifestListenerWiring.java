@@ -83,12 +83,18 @@ public final class RuntimeManifestListenerWiring {
         (prev, curr) -> {
           try {
             LifecycleState ls = LifecycleProjection.derive(workCap, infCap);
+            // Tempdoc 682 Item 2: read the llama-server build pin (expected) + the
+            // /props-observed running build (actual) fresh on every publish — by the time
+            // inference reaches READY the /props observation has landed, so the manifest
+            // carries the expected-vs-actual pair (either side null = unknown, supported).
             publisher.publishAi(
                 curr.name(),
                 infCap.required(),
                 infCap.pendingReason(),
                 curr == CapabilityHealth.READY,
-                ls.name());
+                ls.name(),
+                bootstrap.expectedLlamaServerBuild(),
+                bootstrap.actualLlamaServerBuild());
             publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
           } catch (Exception e) {
             log.warn("Runtime manifest publishAi (listener) failed (non-fatal)", e);
@@ -151,7 +157,9 @@ public final class RuntimeManifestListenerWiring {
           infCap.required(),
           infCap.pendingReason(),
           infCap.health() == CapabilityHealth.READY,
-          ls.name());
+          ls.name(),
+          bootstrap.expectedLlamaServerBuild(),
+          bootstrap.actualLlamaServerBuild());
     } catch (Exception e) {
       log.warn("Runtime manifest initial-AI publish failed (non-fatal)", e);
     }
