@@ -21,6 +21,9 @@ import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
 import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape } from '../utils/compose.js';
+// Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
+// Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
+import * as composeModule from '../utils/compose.js';
 import { restoreUnifiedChat, resetUnifiedChatState, getUnifiedChatState } from '../state/unifiedChatState.js';
 import { consumeShapeStream } from '../../api/streams.js';
 // Tempdoc 609 — value imports for the 609 describes (modules are vi.mock'd below; vi.mocked() wraps them).
@@ -44,6 +47,10 @@ import { getSelection, __resetSelectionForTest } from '../state/selectionState.j
 // `host.ui.showInspector`, which in production is the plugin-API's own showInspector — see ui.ts).
 import { setSelected, resetInspectorState, getInspectorState } from '../state/inspectorState.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
+// Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark lives in
+// the REAL userConfig document (not mocked); tests reset it so each case starts as an unseen (first-
+// sighting) cause-set, matching the pre-round-2 always-expanded assertions these tests carry forward.
+import { __resetUserConfigForTest, getUserConfig } from '../state/userConfigState.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
 // against a real api.
@@ -211,6 +218,7 @@ describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
+    __resetUserConfigForTest();
   });
 
   it('renders the disconnected banner with the verdict-SEVERITY tone (unreachable ⇒ error), not a hardcoded warning — matching SearchSurface', async () => {
@@ -241,6 +249,7 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
+    __resetUserConfigForTest();
   });
 
   function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
@@ -275,7 +284,13 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
     const view = mountView();
     await view.updateComplete;
-    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['index.blocked_legacy'] });
+    // Two reindex causes (Round-2 R1a only dedups a SOLE cause bullet against the headline —
+    // see the dedicated dedup test below), so the specific-cause bullet still renders here.
+    setVerdict(view, {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['index.blocked_legacy', 'index.schema_mismatch'],
+    });
     await view.updateComplete;
     const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
     const text = banner?.textContent ?? '';
@@ -293,6 +308,96 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
     const nav = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-nav"]');
     expect(nav).not.toBeNull();
     expect(nav?.textContent).toContain('Open Health');
+  });
+});
+
+// Search Thread Round-2 R1a — a seen notice collapses to one line; a cause-set change (or a fresh
+// profile) re-expands once; the chevron toggles either way; the reindex single-cause bullet dedups.
+describe('UnifiedChatView degradation banner collapse (Search Thread Round-2 R1a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetUserConfigForTest();
+  });
+
+  function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
+    (view as unknown as { aiState: unknown }).aiState = { ...AI_STATE_READY, verdict };
+    view.affordance = 'retrieve';
+    view.requestUpdate();
+  }
+
+  it('a first sighting renders expanded (multi-bullet) and records the cause-set as seen', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).not.toBeNull();
+    expect(getUserConfig().seenDegradationCauseHash).toBe('worker.health.embedding_not_ready');
+  });
+
+  it('re-mounting with the SAME cause-set collapses to one line, still naming the headline + remedy', async () => {
+    const view1 = mountView();
+    await view1.updateComplete;
+    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view1.updateComplete; // first sighting — marks it seen
+
+    const view2 = mountView();
+    await view2.updateComplete;
+    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view2.updateComplete;
+
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    const summary = view2.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]');
+    expect(summary?.textContent).toContain('1 cause');
+    expect(summary?.textContent).toContain('Semantic search degraded');
+    // The strongest remedy stays reachable even collapsed.
+    expect(
+      view2.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
+    ).toBe('core.trigger-offline-processing');
+  });
+
+  it('the expand chevron re-opens a collapsed banner; the collapse chevron re-collapses it', async () => {
+    const view1 = mountView();
+    await view1.updateComplete;
+    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view1.updateComplete;
+
+    const view2 = mountView();
+    await view2.updateComplete;
+    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+
+    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-expand"]') as HTMLButtonElement).click();
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+
+    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+  });
+
+  it('a cause-set CHANGE re-expands even though a different set was already seen', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete; // seen: embedding_not_ready
+
+    setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(getUserConfig().seenDegradationCauseHash).toBe('lambdamart.not_configured');
+  });
+
+  it('drops the single reindex cause bullet (dedup by code) — the headline+body already say it', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['index.blocked_legacy'] });
+    await view.updateComplete;
+    // First sighting is expanded, but the sole redundant bullet is dropped: no <ul> renders.
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('.degradation-banner')?.textContent).toContain('Reindex required');
   });
 });
 
@@ -3364,6 +3469,67 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
     view.remove();
   });
 
+  // Search Thread Round-2 R2 — one gesture, one meaning: the card's Ask AI now sends immediately
+  // (escalateAsk's own path — commit + affordance flip + send), matching the route chip's Enter; a
+  // SHIFT-modified activation keeps the pre-round-2 stage-only behavior (compose(), no commit/flip).
+  it('default (unmodified) card-ask-ai sends immediately: commits the search and flips to documents', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-4' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-ask-ai-send';
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-ask-ai', {
+        detail: { query: 'invoice march', shiftKey: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await view.updateComplete;
+
+    expect(view.affordance).toBe('documents');
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.query).toBe('invoice march');
+  });
+
+  it('a SHIFT-held card-ask-ai activation stages instead of sending (compose(), no commit/no affordance flip)', async () => {
+    const composeSpy = vi.spyOn(composeModule, 'compose');
+    const view = mountView();
+    await view.updateComplete;
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-ask-ai', {
+        detail: { query: 'invoice march', shiftKey: true },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await view.updateComplete;
+
+    expect(composeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'core.ask',
+        userPrompt: 'invoice march',
+        affordance: 'documents',
+      }),
+    );
+    expect(view.affordance).toBe('retrieve'); // staged only — never escalated
+    const committed = (view as unknown as { committedSearches: unknown[] }).committedSearches;
+    expect(committed.length).toBe(0);
+    composeSpy.mockRestore();
+  });
+
   it('plain query iteration (no open/ask) commits nothing, but the superseded query lands on the trail', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-3' }) });
     const view = mountView();
@@ -3519,21 +3685,35 @@ describe('Search Thread S5b — pinned searches (landing strip + pin toggle)', (
     expect(view.shadowRoot?.querySelector('[data-testid="landing-pins"]')).toBeNull();
   });
 
-  it('the bar pin toggle pins the active query and unpins a pinned one (aria-pressed truth)', async () => {
+  // Search Thread Round-2 R4 — the pin toggle is now a `jf-control` composition (skinned via
+  // ::part(control), the RouteChip precedent), so pressed-state truth is carried by the accessible
+  // label + the `data-pressed` presentation attribute (jf-control's internal button has no
+  // aria-pressed passthrough) rather than a plain button's native `aria-pressed`.
+  it('the bar pin toggle (jf-control) pins the active query and unpins a pinned one', async () => {
     const view = mountView();
     await view.updateComplete;
     expect(searchListener).not.toBeNull();
     searchListener!({ ...SEARCH_EMPTY, query: 'tax report' });
     await view.updateComplete;
-    const toggle = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement;
+    const toggle = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement & {
+      updateComplete: Promise<boolean>;
+    };
     expect(toggle).not.toBeNull();
-    expect(toggle.getAttribute('aria-pressed')).toBe('false');
-    toggle.click();
+    expect(toggle.tagName.toLowerCase()).toBe('jf-control');
+    expect(toggle.hasAttribute('data-pressed')).toBe(false);
+    expect(toggle.getAttribute('label')).toBe('Pin this search');
+    await toggle.updateComplete;
+    (toggle.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
     await view.updateComplete;
     expect(pinSearchMock).toHaveBeenCalledWith('tax report');
-    const after = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement;
-    expect(after.getAttribute('aria-pressed')).toBe('true');
-    after.click();
+
+    const after = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement & {
+      updateComplete: Promise<boolean>;
+    };
+    expect(after.hasAttribute('data-pressed')).toBe(true);
+    expect(after.getAttribute('label')).toBe('Unpin this search');
+    await after.updateComplete;
+    (after.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
     await view.updateComplete;
     expect(unpinSearchMock).toHaveBeenCalledWith('pin-tax report');
   });
@@ -3551,6 +3731,68 @@ describe('Search Thread S5b — pinned searches (landing strip + pin toggle)', (
     await view.updateComplete;
     (view as unknown as { commitLiveSearch(r: string): void }).commitLiveSearch('open');
     expect(recordRunMock).toHaveBeenCalledWith('tax report', 3);
+  });
+});
+
+// Search Thread Round-2 R4 — the bar's secondary affordances conform to the `jf-control` atom
+// (composed + skinned via ::part(control)), replacing four bespoke button classes. These tests lock
+// in that the re-skinned controls are still keyboard-operable through the real DOM path (a native
+// `<button>` inside jf-control's shadow root — Enter/Space activation is then a browser guarantee,
+// not something the app has to wire up) and still fire their intended state changes.
+describe('Search Thread Round-2 R4 — bar re-skin (jf-control compositions)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  async function clickJfControl(el: Element | null | undefined): Promise<void> {
+    expect(el).not.toBeNull();
+    expect(el!.tagName.toLowerCase()).toBe('jf-control');
+    await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+    (el!.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+  }
+
+  it('schema-attach (jf-control) attaches the schema and is replaced by schema-detach', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoices' });
+    await view.updateComplete;
+
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="schema-attach"]'));
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(true);
+
+    view.affordance = 'extract';
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="schema-detach"]'));
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(false);
+  });
+
+  it('escalation-delegate (jf-control) is availability-gated: blocked offline, operable when AI is up', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const delegate = view.shadowRoot?.querySelector('[data-testid="escalation-delegate"]') as HTMLElement;
+    expect(delegate).not.toBeNull();
+    expect(delegate.tagName.toLowerCase()).toBe('jf-control');
+    await clickJfControl(delegate);
+    await view.updateComplete;
+    expect(view.affordance).not.toBe('agent'); // blocked — offline
+
+    (view as unknown as { aiState: unknown }).aiState = AI_STATE_READY; // chat: true
+    view.requestUpdate();
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="escalation-delegate"]'));
+    await view.updateComplete;
+    expect(view.affordance).toBe('agent');
   });
 });
 

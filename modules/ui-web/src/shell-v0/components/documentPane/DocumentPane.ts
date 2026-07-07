@@ -46,6 +46,7 @@ import { html, css, nothing, type TemplateResult, type PropertyValues } from 'li
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
+import { formatDisplayPath } from '../searchResults/resultRowPresentation.js';
 import '../ErrorAlert.js';
 import '../Button.js';
 import { icon } from '../Icon.js';
@@ -87,9 +88,23 @@ export interface VisualExtractionEvidence {
 export type DocumentPaneMode = 'rendered' | 'source';
 
 const SCROLL_DEBOUNCE_MS = 150;
+/** Search Thread Round-2 R1b — how long the passage lands with the strong tint before decaying to
+ *  the quiet translucent tint + edge marker (the card's refined-✓ decay idiom, ported here). */
+const HIGHLIGHT_DECAY_MS = 1500;
 
 function isMarkdownPath(path: string): boolean {
   return /\.(md|markdown)$/i.test(path);
+}
+
+/** a11y — honor prefers-reduced-motion (MarkdownBlock's cursor-blink-suppression precedent): an
+ *  infinite/animated emphasis is a strong reduced-motion trigger, so reduced motion skips the loud
+ *  phase entirely and lands quiet. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 }
 
 export class DocumentPane extends JfElement {
@@ -104,6 +119,8 @@ export class DocumentPane extends JfElement {
     evidence: { state: true },
     loading: { state: true },
     error: { state: true },
+    // Search Thread Round-2 R1b — has the current highlightRange decayed to the quiet tier?
+    highlightSettled: { state: true },
   };
 
   declare docPath: string | null;
@@ -116,10 +133,17 @@ export class DocumentPane extends JfElement {
   declare evidence: VisualExtractionEvidence | null;
   declare loading: boolean;
   declare error: string | null;
+  /** Round-2 R1b — false while the landed highlight is in its strong phase; true once decayed
+   *  (or immediately, under prefers-reduced-motion) to the quiet tint + edge marker. */
+  declare highlightSettled: boolean;
 
   private blocksCache: { content: string; blocks: MarkdownBlockDescriptor[] } | null = null;
   private scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
+  private highlightDecayTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Round-2 R1b — the last highlightRange (as a line-span key) the decay was armed for, so a
+   *  no-op re-render (an unrelated property changing) never re-triggers the strong phase. */
+  private armedHighlightKey: string | null = null;
 
   constructor() {
     super();
@@ -133,6 +157,7 @@ export class DocumentPane extends JfElement {
     this.evidence = null;
     this.loading = false;
     this.error = null;
+    this.highlightSettled = false;
   }
 
   static override transientState = {
@@ -145,6 +170,10 @@ export class DocumentPane extends JfElement {
     if (this.scrollDebounceTimer) {
       clearTimeout(this.scrollDebounceTimer);
       this.scrollDebounceTimer = null;
+    }
+    if (this.highlightDecayTimer !== null) {
+      clearTimeout(this.highlightDecayTimer);
+      this.highlightDecayTimer = null;
     }
   }
 
@@ -161,8 +190,62 @@ export class DocumentPane extends JfElement {
       this.evidence = null;
       this.error = null;
       this.blocksCache = null;
+      // A fresh docPath re-arms the highlight decay even for a line-range that happens to match
+      // the previous document's (the passage is a genuinely new landing).
+      this.armedHighlightKey = null;
       if (path) void this.loadContent(path);
     }
+    if (changed.has('highlightRange')) {
+      this.syncHighlightDecay();
+    }
+  }
+
+  /**
+   * Search Thread Round-2 R1b — arm the strong→quiet decay exactly once per distinct highlightRange
+   * (the `armedHighlightKey` guard mirrors ResultsCard's `wasSettling` willUpdate-transition-detection
+   * idiom): a NEW range lands strong and schedules the decay; the SAME range re-observed on an
+   * unrelated re-render is a no-op (never restarts the timer). `chunkRange` never reaches this path —
+   * it renders through the separate `hl-weak` tier in {@link highlightTier} and never gets the strong
+   * phase, by construction (R1b: "the chunkRange tier NEVER gets the strong phase").
+   */
+  private syncHighlightDecay(): void {
+    const hl = this.highlightRange;
+    const key = hl ? `${hl.startLine}:${hl.endLine}` : null;
+    if (key === this.armedHighlightKey) return;
+    this.armedHighlightKey = key;
+    if (this.highlightDecayTimer !== null) {
+      clearTimeout(this.highlightDecayTimer);
+      this.highlightDecayTimer = null;
+    }
+    if (key === null) {
+      this.highlightSettled = false;
+      return;
+    }
+    if (prefersReducedMotion()) {
+      this.highlightSettled = true; // skip the loud phase entirely — land quiet
+      return;
+    }
+    this.highlightSettled = false;
+    this.highlightDecayTimer = setTimeout(() => {
+      this.highlightSettled = true;
+      this.highlightDecayTimer = null;
+    }, HIGHLIGHT_DECAY_MS);
+  }
+
+  /**
+   * The highlight tier for a block/line span: `'strong'` while the CURRENT highlightRange overlaps
+   * and hasn't decayed yet; `'weak'` once it has decayed (folds into the same quiet tint + edge
+   * marker the surrounding chunkRange uses) OR the span is only in the wider chunkRange; `null`
+   * otherwise. chunkRange can never yield `'strong'` — R1b's "never gets the strong phase" rule.
+   */
+  private highlightTier(startLine: number, endLine: number): 'strong' | 'weak' | null {
+    const hl = this.highlightRange;
+    if (hl && this.overlaps(hl, startLine, endLine)) {
+      return this.highlightSettled ? 'weak' : 'strong';
+    }
+    const chunk = this.chunkRange;
+    if (chunk && this.overlaps(chunk, startLine, endLine)) return 'weak';
+    return null;
   }
 
   override updated(changed: PropertyValues): void {
@@ -334,6 +417,8 @@ export class DocumentPane extends JfElement {
       padding: 0.625rem 0.875rem;
       border-bottom: 1px solid var(--border-subtle);
     }
+    /* Round-2 R5c — truncation is the shared formatDisplayPath authority (filename-preserving
+       middle-ellipsis), not CSS end-truncation; overflow stays hidden as a defensive clamp only. */
     .path {
       flex: 1;
       min-width: 0;
@@ -341,7 +426,6 @@ export class DocumentPane extends JfElement {
       font-weight: 600;
       font-family: monospace;
       overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
     }
     .toggle-group {
@@ -429,6 +513,15 @@ export class DocumentPane extends JfElement {
     .blocks .block {
       margin: 0.25em 0;
     }
+    /* Round-2 R1b — the strong→quiet decay: both tiers share the same transitioned properties so
+       swapping hl-strong for hl-weak (the JS class-flip in highlightTier) animates smoothly rather
+       than jumping, via the existing --duration tokens. */
+    .blocks .block.hl-weak,
+    .blocks .block.hl-strong {
+      transition: background var(--duration-slow) var(--ease-standard),
+        color var(--duration-slow) var(--ease-standard),
+        border-color var(--duration-slow) var(--ease-standard);
+    }
     .blocks .block.hl-weak {
       background: var(--accent-tint-08);
       border-left: 2px solid var(--accent-tint-30);
@@ -451,6 +544,12 @@ export class DocumentPane extends JfElement {
       white-space: pre-wrap;
       word-break: break-word;
     }
+    pre.source span.hl-weak,
+    pre.source span.hl-strong {
+      transition: background var(--duration-slow) var(--ease-standard),
+        color var(--duration-slow) var(--ease-standard),
+        border-color var(--duration-slow) var(--ease-standard);
+    }
     pre.source span.hl-weak {
       background: var(--accent-tint-08);
       border-left: 2px solid var(--accent-tint-30);
@@ -459,6 +558,17 @@ export class DocumentPane extends JfElement {
       background: var(--accent-tint);
       color: var(--accent-on-tint);
       border-radius: 2px;
+    }
+    /* a11y — honor prefers-reduced-motion (mirrors MarkdownBlock's cursor-blink suppression): the
+       JS side already skips the loud phase (prefersReducedMotion() in syncHighlightDecay), this is
+       the defensive CSS-only backstop against the decay transition itself. */
+    @media (prefers-reduced-motion: reduce) {
+      .blocks .block.hl-weak,
+      .blocks .block.hl-strong,
+      pre.source span.hl-weak,
+      pre.source span.hl-strong {
+        transition: none;
+      }
     }
   `;
 
@@ -511,15 +621,12 @@ export class DocumentPane extends JfElement {
     if (blocks.length === 0) {
       return html`<div class="empty">No renderable content.</div>`;
     }
-    const hl = this.highlightRange;
-    const chunk = this.chunkRange;
     return html`
       <div class="blocks">
         ${blocks.map((b) => {
-          const strong = hl ? this.overlaps(hl, b.startLine, b.endLine) : false;
-          const weak = !strong && chunk ? this.overlaps(chunk, b.startLine, b.endLine) : false;
+          const tier = this.highlightTier(b.startLine, b.endLine);
           return html`<div
-            class="block ${strong ? 'hl-strong' : ''} ${weak ? 'hl-weak' : ''}"
+            class="block ${tier === 'strong' ? 'hl-strong' : ''} ${tier === 'weak' ? 'hl-weak' : ''}"
             data-line-start=${b.startLine}
             data-line-end=${b.endLine}
           >
@@ -532,15 +639,12 @@ export class DocumentPane extends JfElement {
 
   private renderSourceMode(): TemplateResult {
     const lines = this.content.split('\n');
-    const hl = this.highlightRange;
-    const chunk = this.chunkRange;
     return html`
       <pre class="source">${lines.map((line, i) => {
-        const strong = hl ? this.overlaps(hl, i, i) : false;
-        const weak = !strong && chunk ? this.overlaps(chunk, i, i) : false;
+        const tier = this.highlightTier(i, i);
         return html`<span
           data-line="${i}"
-          class=${strong ? 'hl-strong' : weak ? 'hl-weak' : ''}
+          class=${tier === 'strong' ? 'hl-strong' : tier === 'weak' ? 'hl-weak' : ''}
           >${line}\n</span
         >`;
       })}</pre>
@@ -578,7 +682,9 @@ export class DocumentPane extends JfElement {
     }
     return html`
       <div class="header">
-        <div class="path" title=${this.docPath}>${this.docPath}</div>
+        ${/* Search Thread Round-2 R5c — the shared formatDisplayPath authority (filename-preserving
+              middle truncation), not CSS end-truncation; the full path stays reachable via title. */ ''}
+        <div class="path" title=${this.docPath}>${formatDisplayPath(this.docPath)}</div>
         <jf-button class="icon" variant="ghost" size="icon" label="Close" .onActivate=${this.handleClose}
           >${icon({ name: 'x', size: 14 })}</jf-button
         >

@@ -179,6 +179,142 @@ describe('DocumentPane — highlightRange / chunkRange', () => {
   });
 });
 
+// Search Thread Round-2 R1b — the highlight lands strong then decays to the quiet hl-weak tint +
+// edge marker; chunkRange never gets the strong phase; reduced motion skips the loud phase.
+describe('DocumentPane — highlight decay (Search Thread Round-2 R1b)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function stubReducedMotion(reduce: boolean): void {
+    vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: reduce,
+      media: '(prefers-reduced-motion: reduce)',
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as MediaQueryList);
+  }
+
+  it('lands hl-strong, then decays to hl-weak after ~1.5s', async () => {
+    stubReducedMotion(false);
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'notes/thread.md';
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    el.highlightRange = { startLine: 2, endLine: 2 };
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.block.hl-strong')).not.toBeNull();
+    expect(el.shadowRoot?.querySelector('.block.hl-weak')).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.block.hl-strong')).toBeNull();
+    const settled = el.shadowRoot?.querySelector('.block.hl-weak');
+    expect(settled).not.toBeNull();
+    expect(settled?.getAttribute('data-line-start')).toBe('2');
+  });
+
+  it('honors prefers-reduced-motion: lands quiet immediately, never rendering hl-strong', async () => {
+    stubReducedMotion(true);
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'notes/thread.md';
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    el.highlightRange = { startLine: 2, endLine: 2 };
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.block.hl-strong')).toBeNull();
+    expect(el.shadowRoot?.querySelector('.block.hl-weak')).not.toBeNull();
+  });
+
+  it('a NEW highlightRange re-arms the strong phase even after a prior range decayed', async () => {
+    stubReducedMotion(false);
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'notes/thread.md';
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    el.highlightRange = { startLine: 2, endLine: 2 };
+    await el.updateComplete;
+    await vi.advanceTimersByTimeAsync(1500);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.block.hl-strong')).toBeNull();
+
+    el.highlightRange = { startLine: 0, endLine: 0 }; // the heading block
+    await el.updateComplete;
+    const strong = el.shadowRoot?.querySelector('.block.hl-strong');
+    expect(strong).not.toBeNull();
+    expect(strong?.getAttribute('data-line-start')).toBe('0');
+  });
+
+  it('the chunkRange tier never gets the strong phase, before or after decay', async () => {
+    stubReducedMotion(false);
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'notes/thread.md';
+    el.highlightRange = { startLine: 2, endLine: 2 };
+    el.chunkRange = { startLine: 0, endLine: 5 };
+    await vi.advanceTimersByTimeAsync(0);
+    await el.updateComplete;
+
+    // Before decay: chunk siblings are hl-weak, the exact range is hl-strong.
+    expect(el.shadowRoot?.querySelectorAll('.block.hl-weak').length).toBe(2);
+    expect(el.shadowRoot?.querySelectorAll('.block.hl-strong').length).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1500);
+    await el.updateComplete;
+    // After decay: the exact range folds into the same hl-weak tier — never hl-strong.
+    expect(el.shadowRoot?.querySelectorAll('.block.hl-strong').length).toBe(0);
+    expect(el.shadowRoot?.querySelectorAll('.block.hl-weak').length).toBe(3);
+  });
+});
+
+// Search Thread Round-2 R5c — the reading-pane provenance header truncates through the shared
+// formatDisplayPath authority (filename-preserving), not CSS end-truncation.
+describe('DocumentPane — header path truncation (Search Thread Round-2 R5c)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it('renders a formatDisplayPath-truncated header text with the full path in title', async () => {
+    const longPath =
+      'projects/deeply/nested/folder/structure/that/goes/on/for/a/while/before/reaching/the-actual-filename.md';
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = longPath;
+    await flush(el);
+
+    const pathEl = el.shadowRoot?.querySelector('.path');
+    expect(pathEl?.getAttribute('title')).toBe(longPath);
+    expect(pathEl?.textContent).toContain('the-actual-filename.md');
+    expect(pathEl?.textContent).not.toBe(longPath);
+    expect(pathEl?.textContent).toContain('…');
+  });
+
+  it('renders a short path verbatim (no truncation needed)', async () => {
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'notes/thread.md';
+    await flush(el);
+
+    const pathEl = el.shadowRoot?.querySelector('.path');
+    expect(pathEl?.textContent).toBe('notes/thread.md');
+    expect(pathEl?.getAttribute('title')).toBe('notes/thread.md');
+  });
+});
+
 describe('DocumentPane — zero-content diagnostic (tempdoc 671 parity)', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

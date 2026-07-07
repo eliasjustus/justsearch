@@ -31,6 +31,55 @@ export const unifiedChatBodyStyles = css`
       border-radius: 0.5rem;
       font-size: var(--font-size-sm);
     }
+    /* Search Thread Round-2 R1a — the degradation banner (596 §11.4): the expanded multi-bullet
+       form and the collapsed one-line form share this row/list layout. */
+    .degradation-banner .notice-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4rem;
+    }
+    .degradation-banner .notice-row-collapsed {
+      align-items: center;
+    }
+    .degradation-summary {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .degradation-banner-collapsed .degradation-summary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .degradation-banner .notice-causes {
+      margin: 0.35rem 0 0 1.35rem;
+      padding: 0;
+    }
+    .degradation-banner .notice-remedy {
+      display: inline-flex;
+      flex: 0 0 auto;
+      margin-top: 0.35rem;
+    }
+    .degradation-banner-collapsed .notice-remedy {
+      margin-top: 0;
+    }
+    .degradation-expand,
+    .degradation-collapse {
+      all: unset;
+      flex: 0 0 auto;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.25rem;
+      line-height: 1;
+    }
+    .degradation-expand:hover,
+    .degradation-collapse:hover,
+    .degradation-expand:focus-visible,
+    .degradation-collapse:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
+    }
     .replay-label { flex: 0 0 auto; color: var(--text-secondary); }
     .replay-slider { flex: 1 1 auto; }
     .replay-btn, .replay-exit, .replay-fork {
@@ -1123,24 +1172,6 @@ export const unifiedChatBodyStyles = css`
       text-decoration: underline;
       cursor: pointer;
     }
-    .escalation-delegate {
-      background: none;
-      border: none;
-      padding: 0;
-      font: inherit;
-      font-size: var(--font-size-xs);
-      color: var(--text-tertiary);
-      cursor: pointer;
-      text-decoration: underline dotted;
-    }
-    .escalation-delegate:hover:not([aria-disabled='true']) {
-      color: var(--text-primary);
-    }
-    .escalation-delegate[aria-disabled='true'] {
-      cursor: default;
-      opacity: 0.6;
-      text-decoration: none;
-    }
     .escalation-strip {
       display: flex;
       flex-wrap: wrap;
@@ -1171,8 +1202,7 @@ export const unifiedChatBodyStyles = css`
       gap: 0.5rem;
       margin-top: 0.25rem;
     }
-    .pinned-search-btn,
-    .pin-toggle {
+    .pinned-search-btn {
       background: none;
       border: 1px solid var(--border-subtle);
       border-radius: 0.375rem;
@@ -1181,30 +1211,53 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-secondary);
       cursor: pointer;
     }
-    .pinned-search-btn:hover,
-    .pin-toggle:hover {
+    .pinned-search-btn:hover {
       color: var(--text-primary);
       border-color: var(--border-strong);
     }
-    .pin-toggle[aria-pressed='true'] {
+    /*
+     * Search Thread Round-2 R4 — the composer bar's SECONDARY affordances (pin, schema
+     * attach/detach, the landing's agent-delegate entry) conform to the jf-control atom, skinned
+     * as ONE quiet tier via ::part(control) (the RouteChip precedent) instead of four bespoke
+     * button classes each hand-rolling the same bordered-pill look. jf-route-chip stays the row's
+     * one visually PRIMARY element (its own, unrelated style, untouched here). Orphaned by this
+     * conformance (deleted, not left for a later sweep): the old bespoke .pin-toggle /
+     * .schema-attach / .schema-detach / .escalation-delegate button rules, which also lost the
+     * accent-cascade fight against .composer button (Composer.ts's composerStyles, imported
+     * ahead of this stylesheet) — .composer button is (0,1,1) specificity, a single bespoke class
+     * is (0,1,0), so the imported accent-tint fill silently WON despite each class's own
+     * background: none override. Composing jf-control sidesteps the fight entirely: its button
+     * renders inside jf-control's OWN shadow root, which .composer button (scoped to THIS
+     * shadow root) cannot reach at all — conformance, not a specificity war.
+     */
+    jf-control.pin-toggle::part(control),
+    jf-control.schema-attach::part(control),
+    jf-control.schema-detach::part(control),
+    jf-control.escalation-delegate::part(control) {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.1rem 0.5rem;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      transition: color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+    }
+    jf-control.pin-toggle::part(control):hover,
+    jf-control.schema-attach::part(control):hover,
+    jf-control.schema-detach::part(control):hover,
+    jf-control.escalation-delegate::part(control):hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    /* The pinned state is the one deliberate departure from the shared quiet look (the accent
+       marks the exception being pinned, not a fourth bespoke class). */
+    jf-control.pin-toggle[data-pressed]::part(control) {
       color: var(--accent);
       border-color: var(--accent);
-    }
-    /* S5a (decision 6) — the schema attach/detach affordances: quiet text buttons on the bar. */
-    .schema-attach,
-    .schema-detach {
-      background: none;
-      border: 1px solid var(--border-subtle);
-      border-radius: 0.375rem;
-      padding: 0.1rem 0.45rem;
-      font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      cursor: pointer;
-    }
-    .schema-attach:hover,
-    .schema-detach:hover {
-      color: var(--text-primary);
-      border-color: var(--border-strong);
     }
     .error {
       padding: 0.5rem 0.75rem;

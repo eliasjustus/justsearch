@@ -62,9 +62,11 @@ import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../st
 import { subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
-import { readinessNotice, reasonFor } from '../state/readinessNotice.js';
-import { verdictTone } from '../state/verdict.js';
+import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
+import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
 import { projectAvailability, unavailableBecause } from '../state/availability.js';
+// Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark.
+import { getUserConfig, setSeenDegradationCauseHash } from '../state/userConfigState.js';
 import '../components/SystemNotice.js';
 import '../components/OpButton.js';
 import '../components/Control.js';
@@ -319,6 +321,35 @@ function makeCommittedSearchId(): string {
   return `cs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+/**
+ * Search Thread Round-2 R1a — a stable, order-independent identity for a verdict's cause-set, so a
+ * repeat sighting of the SAME degradation (reasons re-arriving in a different order across polls)
+ * still collapses, while a genuinely different cause-set re-expands. Empty reasons hash to the same
+ * '' identity regardless of verdict kind — intentional: "no specific cause known" is one
+ * undifferentiated situation, not one per verdict kind.
+ */
+function degradationCauseHash(reasons: readonly string[]): string {
+  return [...reasons].sort().join('|');
+}
+
+/**
+ * Search Thread Round-2 R1a — drop a single cause bullet that only restates the headline+body (the
+ * live-audit finding: the "Reindex required." headline already names the rebuild story, so the sole
+ * `index.*_legacy`/`index.schema_mismatch`/`index.embedding_mismatch` cause bullet is a duplicate).
+ * Keyed on the reason CODE via `isReindexCause` — not string-matching the wording — per the round-2
+ * ruling ("dedup by comparing notice code, not string matching"). Any other single- or multi-cause
+ * notice (the generic degraded-capability headlines, which never name a specific code) is unaffected.
+ */
+function dedupDegradationCauses(
+  notice: ReadinessNoticeView,
+  verdict: SystemHealthVerdict,
+): string[] {
+  if (notice.causes.length === 1 && verdict.reasons.length === 1 && isReindexCause(verdict.reasons[0]!)) {
+    return [];
+  }
+  return notice.causes;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -376,6 +407,9 @@ export class UnifiedChatView extends JfElement {
     historyLocked: { state: true },
     // Tempdoc 577 §2.13 #17 — the agent authority-space panel toggle.
     showAbilities: { state: true },
+    // Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. A transient
+    // UI panel (closes in settleTransients), mirroring showAbilities/queryTrailOpen.
+    degradationBannerExpanded: { state: true },
     // Slice 515 FIX-1: docIds carried from askAi navigation, forwarded to
     // RAG dispatch so scoped retrieval actually works. Captured in
     // connectedCallback before unifiedChatState is reset.
@@ -532,6 +566,15 @@ export class UnifiedChatView extends JfElement {
   declare historyLocked: boolean;
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
+  /** Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. */
+  declare degradationBannerExpanded: boolean;
+  /**
+   * Search Thread Round-2 R1a — plain (non-reactive) bridge field: the cause-set hash the
+   * expand/collapse default has already been ARMED for this mount (guards {@link
+   * syncDegradationBannerExpansion} from re-deciding the default on every unrelated re-render — only
+   * a genuinely new cause-set re-arms). Mirrors `ResultsCard.wasSettling`'s willUpdate-bridge shape.
+   */
+  private armedDegradationCauseHash: string | null = null;
   declare pinnedDocIds: string[];
   declare parentFirstMessagePreview: string | null;
   // Tempdoc 565 §12.3.C + multi-turn fix (A) — the run-trace collapse is PER-SEGMENT: a multi-turn
@@ -690,6 +733,7 @@ export class UnifiedChatView extends JfElement {
     this.committedSearches = [];
     this.queryTrail = [];
     this.queryTrailOpen = false;
+    this.degradationBannerExpanded = false;
     this.readingDocPath = null;
     this.readingHighlightRange = null;
     this.readingChunkRange = null;
@@ -941,6 +985,11 @@ export class UnifiedChatView extends JfElement {
     this.reasoning.reset();
     // Close transient panels/editors so they don't reopen on return.
     this.showAbilities = false;
+    // Search Thread Round-2 R1a — the degradation banner's disclosure resets on hide; a return
+    // re-arms the default from the persisted seen-hash (armedDegradationCauseHash reset so the next
+    // update re-decides rather than skipping on a stale guard).
+    this.degradationBannerExpanded = false;
+    this.armedDegradationCauseHash = null;
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
@@ -1517,6 +1566,30 @@ export class UnifiedChatView extends JfElement {
     toggleContextInspector();
   }
 
+  /**
+   * Search Thread Round-2 R1a — arm the degradation banner's default expand state exactly once per
+   * distinct cause-set this mount observes (the `armedDegradationCauseHash` guard stops an unrelated
+   * re-render from re-deciding the default after the user has toggled the chevron). A cause-set never
+   * recorded as seen (a first sighting, or a CHANGED cause-set) defaults to expanded and is
+   * immediately marked seen; an already-seen cause-set defaults to collapsed. Runs pre-render
+   * (willUpdate) so the persistence write sits outside render() proper.
+   */
+  protected override willUpdate(_changed: Map<string, unknown>): void {
+    this.syncDegradationBannerExpansion();
+  }
+
+  private syncDegradationBannerExpansion(): void {
+    const verdict = this.aiState?.verdict;
+    const notice = verdict ? readinessNotice(verdict) : null;
+    if (!verdict || !notice) return;
+    const hash = degradationCauseHash(verdict.reasons);
+    if (hash === this.armedDegradationCauseHash) return;
+    this.armedDegradationCauseHash = hash;
+    const seenBefore = getUserConfig().seenDegradationCauseHash === hash;
+    this.degradationBannerExpanded = !seenBefore;
+    if (!seenBefore) setSeenDegradationCauseHash(hash);
+  }
+
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
   protected override updated(_changed: Map<string, unknown>): void {
     if (isContextInspectorOpen()) {
@@ -2073,6 +2146,10 @@ export class UnifiedChatView extends JfElement {
     if (!verdict) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
+    if (!this.degradationBannerExpanded) {
+      return this.renderCollapsedDegradationBanner(verdict, notice);
+    }
+    const causes = dedupDegradationCauses(notice, verdict);
     return html`<jf-system-notice
       tone=${verdictTone(verdict.severity)}
       live="status"
@@ -2081,28 +2158,91 @@ export class UnifiedChatView extends JfElement {
     >
       <span class="notice-row"
         >${icon({ name: 'alert-triangle', size: 13 })}
-        <span><strong>${notice.headline}</strong> ${notice.body}</span></span
+        <span class="degradation-summary"><strong>${notice.headline}</strong> ${notice.body}</span>
+        ${/* Round-2 R1a — a seen notice defaults collapsed; this chevron lets the user re-collapse
+              an expanded (first-sighting or re-opened) banner without waiting for the next visit. */ ''}
+        <button
+          type="button"
+          class="degradation-collapse"
+          data-testid="chat-degradation-collapse"
+          aria-expanded="true"
+          title="Collapse"
+          @click=${() => {
+            this.degradationBannerExpanded = false;
+          }}
+        >
+          ⌃
+        </button></span
       >
-      ${notice.causes.length > 0
+      ${causes.length > 0
         ? html`<ul class="notice-causes" data-testid="chat-degradation-causes">
-            ${notice.causes.map((c) => html`<li>${c}</li>`)}
+            ${causes.map((c) => html`<li>${c}</li>`)}
           </ul>`
         : nothing}
-      <span class="notice-remedy">
-        ${notice.remedy.kind === 'operation'
-          ? html`<jf-op-button
-              operation-id=${notice.remedy.operationId}
-              api-base=${this.apiBase}
-              data-testid="chat-degradation-remedy-op"
-            ></jf-op-button>`
-          : html`<jf-button
-              variant="secondary"
-              data-testid="chat-degradation-remedy-nav"
-              .onActivate=${() => this.openRemedyTarget((notice.remedy as { target: string }).target)}
-              >${notice.remedy.label}</jf-button
-            >`}
+      ${this.renderDegradationRemedy(notice)}
+    </jf-system-notice>`;
+  }
+
+  /**
+   * Round-2 R1a — the collapsed one-line form: severity icon + "N causes — <headline>" + the
+   * strongest remedy + an expand chevron. Rendered once a cause-set has been seen before (a repeat
+   * degradation the user already read); a genuinely new cause-set never reaches this branch (see
+   * {@link syncDegradationBannerExpansion}).
+   */
+  private renderCollapsedDegradationBanner(
+    verdict: SystemHealthVerdict,
+    notice: ReadinessNoticeView,
+  ): TemplateResult {
+    const causes = dedupDegradationCauses(notice, verdict);
+    const count = causes.length;
+    return html`<jf-system-notice
+      tone=${verdictTone(verdict.severity)}
+      live="status"
+      class="degradation-banner degradation-banner-collapsed"
+      data-testid="chat-degradation"
+    >
+      <span class="notice-row notice-row-collapsed">
+        ${icon({ name: 'alert-triangle', size: 13 })}
+        <span class="degradation-summary" data-testid="chat-degradation-summary">
+          ${count > 0 ? `${count} ${count === 1 ? 'cause' : 'causes'} — ` : ''}${notice.headline}
+        </span>
+        ${this.renderDegradationRemedy(notice)}
+        <button
+          type="button"
+          class="degradation-expand"
+          data-testid="chat-degradation-expand"
+          aria-expanded="false"
+          title="Show details"
+          @click=${() => {
+            this.degradationBannerExpanded = true;
+          }}
+        >
+          ⌄
+        </button>
       </span>
     </jf-system-notice>`;
+  }
+
+  /**
+   * The ONE remedy render shared by the expanded + collapsed banner. `readinessNotice` already picks
+   * a single highest-priority remedy (`pickRemedy`), so "the strongest remedy" needs no further
+   * ranking here — there is only ever one.
+   */
+  private renderDegradationRemedy(notice: ReadinessNoticeView): TemplateResult {
+    return html`<span class="notice-remedy">
+      ${notice.remedy.kind === 'operation'
+        ? html`<jf-op-button
+            operation-id=${notice.remedy.operationId}
+            api-base=${this.apiBase}
+            data-testid="chat-degradation-remedy-op"
+          ></jf-op-button>`
+        : html`<jf-button
+            variant="secondary"
+            data-testid="chat-degradation-remedy-nav"
+            .onActivate=${() => this.openRemedyTarget((notice.remedy as { target: string }).target)}
+            >${notice.remedy.label}</jf-button
+          >`}
+    </span>`;
   }
 
   /** Tempdoc 596 §11.4 — navigate to a notice remedy target (mirrors SearchSurface.openRemedyTarget). */
@@ -2272,20 +2412,18 @@ export class UnifiedChatView extends JfElement {
               ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
                     only carries diagnostics); until delegation folds into ask-turns entirely, the
                     strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
-              <button
-                type="button"
+              <jf-control
                 class="escalation-delegate"
                 data-testid="escalation-delegate"
-                aria-disabled=${this.aiState?.capabilities?.chat ? 'false' : 'true'}
-                title=${this.aiState?.capabilities?.chat
-                  ? 'Delegate a multi-step task to the agent'
-                  : 'The local AI model is offline'}
-                @click=${() => {
-                  if (this.aiState?.capabilities?.chat) this.affordance = 'agent';
+                label="Delegate a multi-step task to the agent"
+                .availability=${this.aiState?.capabilities?.chat
+                  ? undefined
+                  : unavailableBecause('The local AI model is offline')}
+                .onActivate=${() => {
+                  this.affordance = 'agent';
                 }}
+                >Delegate — the agent works multi-step</jf-control
               >
-                Delegate — the agent works multi-step
-              </button>
             </div>`
           : nothing}
       </div>
@@ -2440,17 +2578,23 @@ export class UnifiedChatView extends JfElement {
    * S5b pin-parity — pin/unpin the CURRENT query (pinnedSearchState, the same persisted store
    * the retired SearchSurface's header used). Rendered only when a query is active.
    */
+  /**
+   * Search Thread Round-2 R4 — a `jf-control` composition (the RouteChip precedent: skin the
+   * composed atom via `::part(control)` rather than a bespoke button class). The pinned/unpinned
+   * state is carried by the accessible LABEL + slot text (not `aria-pressed` — `jf-control`'s
+   * internal button has no toggle-state passthrough); `?data-pressed` is a plain presentation
+   * attribute the quiet-tier stylesheet keys its "active" look off of.
+   */
   private renderPinToggle(): TemplateResult | typeof nothing {
     const q = (this.searchSnapshot?.query ?? '').trim();
     if (!q) return nothing;
     const pinned = isPinned(q);
-    return html`<button
-      type="button"
+    return html`<jf-control
       class="pin-toggle"
       data-testid="pin-toggle"
-      aria-pressed=${pinned ? 'true' : 'false'}
-      title=${pinned ? 'Unpin this search' : 'Pin this search'}
-      @click=${() => {
+      ?data-pressed=${pinned}
+      label=${pinned ? 'Unpin this search' : 'Pin this search'}
+      .onActivate=${() => {
         if (pinned) {
           const pin = this.pinnedSearches.find((p) => p.query === q);
           if (pin) unpinSearch(pin.id);
@@ -2458,9 +2602,8 @@ export class UnifiedChatView extends JfElement {
           pinSearch(q);
         }
       }}
-    >
-      ${pinned ? '★ Pinned' : '☆ Pin'}
-    </button>`;
+      >${pinned ? '★ Pinned' : '☆ Pin'}</jf-control
+    >`;
   }
 
   private renderRouteRow(): TemplateResult {
@@ -2472,16 +2615,15 @@ export class UnifiedChatView extends JfElement {
             draft template (if empty) and the tier derives 'extract' while it is held. */ ''}
       ${this.schemaAttached
         ? nothing
-        : html`<button
-            type="button"
+        : html`<jf-control
             class="schema-attach"
-            title="Attach a JSON schema — turns this turn into a structured extraction"
-            @click=${() => {
+            data-testid="schema-attach"
+            label="Attach a JSON schema — turns this turn into a structured extraction"
+            .onActivate=${() => {
               this.schemaAttached = true;
             }}
-          >
-            + Schema
-          </button>`}
+            >+ Schema</jf-control
+          >`}
       <jf-route-chip
         .route=${route}
         .askAvailability=${projectAvailability('documents', this.aiState)}
@@ -3331,7 +3473,8 @@ export class UnifiedChatView extends JfElement {
         @card-selection=${(e: CustomEvent<CardSelectionDetail>) => this.handleRetrieveCardSelection(e.detail)}
         @card-facet-toggle=${(e: CustomEvent<{ field: string; value: string }>) =>
           this.handleRetrieveFacetToggle(e.detail.field, e.detail.value)}
-        @card-ask-ai=${() => this.handleRetrieveAskAi()}
+        @card-ask-ai=${(e: CustomEvent<{ query: string; shiftKey: boolean }>) =>
+          this.handleRetrieveAskAi(e.detail.shiftKey)}
         @card-scope-file=${(e: CustomEvent<{ id: string; path: string; title: string }>) =>
           this.handleCardScopeFile(e.detail)}
       ></jf-results-card>
@@ -3647,17 +3790,27 @@ export class UnifiedChatView extends JfElement {
 
   /**
    * Search Thread S1 — "Ask AI" escalation FROM the default search tier (live-audit finding II.C
-   * D1: the retrieve tier previously had no path from results to AI at all). Routes through the
-   * one compose() seam with the current query, exactly like SearchSurface.handleAskAi; the card's
-   * jf-control is availability-gated, so offline this is reachable-reason, never a silent no-op.
+   * D1: the retrieve tier previously had no path from results to AI at all). The card's jf-control
+   * is availability-gated, so offline this is reachable-reason, never a silent no-op.
+   *
+   * Round-2 R2 (one gesture, one meaning) — the default (unmodified) activation now SENDS
+   * immediately, the exact same path Enter/Ctrl+Enter's 'ask' route takes ({@link escalateAsk}:
+   * commit-on-consequence, the S5a affordance derivation, then `send()`) — the card's Ask AI and
+   * the route chip's Enter used to disagree (stage-only vs send-now), an unforced inconsistency.
+   * A SHIFT-modified activation (the rephrase case) keeps the PRE-round-2 stage-only behavior —
+   * routes through the one compose() seam so the user can edit the prefilled prompt before sending.
    */
-  private handleRetrieveAskAi(): void {
-    compose({
-      operation: 'core.ask',
-      source: 'BUTTON',
-      userPrompt: this.searchSnapshot?.query ?? '',
-      affordance: 'documents',
-    });
+  private handleRetrieveAskAi(shiftKey: boolean): void {
+    if (shiftKey) {
+      compose({
+        operation: 'core.ask',
+        source: 'BUTTON',
+        userPrompt: this.searchSnapshot?.query ?? '',
+        affordance: 'documents',
+      });
+      return;
+    }
+    this.escalateAsk();
   }
 
   /** §3.9a — toggle a facet then re-run through the one searchState seam (picks up selections). */
@@ -4848,15 +5001,15 @@ export class UnifiedChatView extends JfElement {
           ${/* S5a (decision 6) — a derived attachment can be detached; an explicit Structured
                 tab selection toggles off through the tab instead. */ ''}
           ${this.schemaAttached
-            ? html`<button
-                type="button"
+            ? html`<jf-control
                 class="schema-detach"
-                @click=${() => {
+                data-testid="schema-detach"
+                label="Detach schema"
+                .onActivate=${() => {
                   this.schemaAttached = false;
                 }}
-              >
-                Detach schema
-              </button>`
+                >Detach schema</jf-control
+              >`
             : nothing}
         </div>
         <textarea

@@ -312,13 +312,15 @@ describe('ResultsCard — Ask AI (jf-control availability)', () => {
     expect(control!.tagName.toLowerCase()).toBe('jf-control');
   });
 
-  it('activating an available control emits card-ask-ai with the current query', async () => {
+  it('activating an available control emits card-ask-ai with the current query and shiftKey:false', async () => {
     const el = await mount(
       { ...snapshot, query: 'pipeline' },
       { askAvailability: { kind: 'available' } },
     );
-    const events: Array<{ query: string }> = [];
-    el.addEventListener('card-ask-ai', (e) => events.push((e as CustomEvent<{ query: string }>).detail));
+    const events: Array<{ query: string; shiftKey: boolean }> = [];
+    el.addEventListener('card-ask-ai', (e) =>
+      events.push((e as CustomEvent<{ query: string; shiftKey: boolean }>).detail),
+    );
 
     const control = el.shadowRoot?.querySelector('.ask-ai-btn') as
       | (HTMLElement & { updateComplete: Promise<boolean> })
@@ -328,7 +330,33 @@ describe('ResultsCard — Ask AI (jf-control availability)', () => {
     const btn = control!.shadowRoot?.querySelector('button') as HTMLButtonElement;
     btn.click();
 
-    expect(events).toEqual([{ query: 'pipeline' }]);
+    expect(events).toEqual([{ query: 'pipeline', shiftKey: false }]);
+  });
+
+  // Search Thread Round-2 R2 — jf-control's onActivate carries no event, so the modifier is captured
+  // via a CAPTURE-phase click listener on the composed jf-control (fires before its own bubble-phase
+  // click → activate()), the same shift-detection idiom handleRowClick uses for row clicks.
+  it('a shift-held activation emits card-ask-ai with shiftKey:true', async () => {
+    const el = await mount(
+      { ...snapshot, query: 'pipeline' },
+      { askAvailability: { kind: 'available' } },
+    );
+    const events: Array<{ query: string; shiftKey: boolean }> = [];
+    el.addEventListener('card-ask-ai', (e) =>
+      events.push((e as CustomEvent<{ query: string; shiftKey: boolean }>).detail),
+    );
+
+    const control = el.shadowRoot?.querySelector('.ask-ai-btn') as
+      | (HTMLElement & { updateComplete: Promise<boolean> })
+      | null;
+    expect(control).not.toBeNull();
+    await control!.updateComplete;
+    const btn = control!.shadowRoot?.querySelector('button') as HTMLButtonElement;
+    btn.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, shiftKey: true }),
+    );
+
+    expect(events).toEqual([{ query: 'pipeline', shiftKey: true }]);
   });
 });
 

@@ -160,6 +160,14 @@ export class ResultsCard extends JfElement {
   private anchorIndex = -1;
   private refinedStampTimer: ReturnType<typeof setTimeout> | null = null;
   private wasSettling = false;
+  /**
+   * Search Thread Round-2 R2 — `jf-control.onActivate` takes no arguments (it can't forward the
+   * originating MouseEvent), so the Ask AI control's modifier detection happens via a CAPTURE-phase
+   * click listener on the composed `jf-control` (fires BEFORE its own bubble-phase click → activate()
+   * → onActivate, so the flag is set in time) — the same shift-detection idiom `handleRowClick` uses,
+   * ported to a control whose activation signature can't carry the event directly.
+   */
+  private pendingAskShift = false;
   private readonly copyReceipt = new ReceiptController(this);
 
   constructor() {
@@ -370,7 +378,14 @@ export class ResultsCard extends JfElement {
               ? html`<jf-control
                   class="copy-btn ask-ai-btn"
                   .availability=${this.askAvailability}
-                  .onActivate=${() => this.emitCard('card-ask-ai', { query: s.query })}
+                  @click=${{
+                    handleEvent: (e: MouseEvent) => {
+                      this.pendingAskShift = e.shiftKey;
+                    },
+                    capture: true,
+                  }}
+                  .onActivate=${() =>
+                    this.emitCard('card-ask-ai', { query: s.query, shiftKey: this.pendingAskShift })}
                   >Ask AI</jf-control
                 >`
               : nothing}
