@@ -233,12 +233,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] analyze-session `hot_file_concentration`/`rapid_reedit` count the same logical file under different worktree-qualified paths (e.g. UnifiedChatView.ts in 3 worktrees) as separate files, diluting concentration. Consider normalizing worktree-prefixed paths to the logical repo path. (2026-06-20)
 
 ### obs:dev-runner-native-bin-wipe — dev-runner/build staged llama-server mirror could purge Install-AI cuda12 variant (618 §3 era)
-`kind: environment` `anchor: scripts/dev/dev-runner.cjs` `seen: 5` `first: 2026-06-20` `last: 2026-07-06` `status: proposed-retire (superseded by tempdoc 656 GPU-only design: no CPU baseline staging remains)`
+`kind: environment` `anchor: scripts/dev/dev-runner.cjs` `seen: 6` `first: 2026-06-20` `last: 2026-07-07` `status: proposed-retire (superseded by tempdoc 656 GPU-only design: no CPU baseline staging remains)`
 - [ ] dev-runner `cleanDataDir` soft-clean keep-set omits `native-bin` — every `dev_start --clean soft` (the DEFAULT) deletes `{dev-data}/native-bin`, wiping the Install-AI'd cuda12 GPU llama-server variant (~3GB). Models survive (kept) but the runtime doesn't, so GPU-auto-selected activation then fails "Variant not installed: cuda12". Fix: add 'native-bin' to the soft-clean keep set in scripts/dev/dev-runner.cjs (line ~253). (2026-06-20)
 - [ ] CORRECTION to prior entry: the AI-runtime wipe is NOT cleanDataDir — it's tempdoc 618 §3 (IN-PROGRESS, uncommitted on main: build.gradle.kts + 618 tempdoc both modified). 618 added auto-staging of llama-server into modules/ui/native-bin via a Gradle Sync task (stageLlamaToDevNativeBin) AND a dev-runner cpSync at every start (dev-runner.cjs ~L367-396). Source = BUILD stage (CPU baseline only); the cuda12 GPU variant is a separate ~3GB Install-AI runtime download NOT in the build, so the Sync/cpSync overwrites+purges variants/cuda12. Activation auto-selects cuda12 on GPU hosts → 'Variant not installed: cuda12'. Pre-618 nothing touched native-bin on build/start, so the Install-AI'd variant persisted (why AI worked before + this is new). Fix in 618: make the stage additive / preserve variants/ (don't Sync-purge), or exclude variants/cuda12 from the mirror. (2026-06-20)
 - [ ] dev_start with skipBuild:true fails twice in F:/justsearch-public main checkout: backend never emits JUSTSEARCH_API_PORT within the 15s window (dev-runner.cjs:1212), preflight all-green; no run record left to tail. Live-capture legs should use the standard build-first path or investigate the port-emission window. (2026-07-05)
 - [ ] ROOT CAUSE for the dev-runner JDK-8 boot failure (follow-up to prior note): a scoop install/update of temurin8-jdk on 2026-07-04 18:12 rewrote the persisted User JAVA_HOME to F:\scoop\apps\temurin8-jdk\current (manifest env_set stanza does this unconditionally). dev-runner spawns ui.bat inheriting ambient env without setting JAVA_HOME (`scripts/dev/dev-runner.cjs:1056`), and ui.bat prefers JAVA_HOME unconditionally (`modules/ui/build/install/ui/bin/ui.bat:42`), so the JDK-23+-only launcher flag now kills the JVM. A compatible Temurin 25.0.2 exists at F:\scoop\apps\temurin25-jdk\current (toolchain targets 25, `modules/ui/build.gradle.kts:884`). Recommended: dev-runner resolves/pins an explicit JDK-25 JAVA_HOME into the spawn env + preflight runs JAVA_EXE -version so this fails fast instead of a 15s port timeout. NOT fixed here: repointing the User JAVA_HOME is a machine-level change and something deliberately installed temurin8 on 07-04 evening — whoever did that should reconcile. (2026-07-05)
 - [ ] ai_activate on a fresh worktree dev stack fails RUNTIME_VARIANT_NOT_INSTALLED(cuda12) although dev-runner resolveAiDevEnv() set JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (dev-runner.cjs:420-437) — the activation flow consults installedVariants/install-state only, so branch-safety's 'every worktree references that one shared copy with zero per-worktree download' promise doesn't hold for activation. Worktree 683 live-verify hit this. (2026-07-06)
+- [ ] UNOWNED BLOCKER (triage: needs an owner, blocks three streams): worktree AI runtime activation fails RUNTIME_VARIANT_NOT_INSTALLED(cuda12) although dev-runner resolveAiDevEnv() sets JUSTSEARCH_SERVER_EXE to the shared main-checkout binary (dev-runner.cjs:420-437) — the activation flow consults only the data-dir install-state/installedVariants registry. Confirmed OUT of scope for tempdoc 684 (dev-workflow batch: remove-worktree/attribution/prepare-worktree only, implemented 2026-07-07). Gates: AI-run census legs (689 pending-with-reason ledger), AI-chain component witnessing, and part of 688's live verification. Fix shape candidates: activation honors SERVER_EXE as a resolved-variant source, or dev-runner seeds a variant record into the worktree data dir. (2026-07-07)
 
 ### obs:agent-tool-arg-coercion — Agent tool schema rejects string-typed numbers ("limit":"10") — burns an iteration every session; no coercion at tool boundary
 `kind: defect` `anchor: modules/app-services/.../registry/executor/OperationInputSchemaValidator.java` `seen: 2` `first: 2026-05-30` `last: 2026-06-11`
@@ -422,10 +423,12 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing (base HEAD, not 627): `./gradlew build` fails at `:ssotValidateExec` — field-catalog.schema.json requires 'analyzer' but 58/68 fields in SSOT/catalogs/fields.v1.json lack it (mid-flight ADR-0043 analyzer migration). Blocks full-build pre-merge gate for all worktrees off this HEAD. (2026-06-21)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 3` `first: 2026-06-21` `last: 2026-07-07`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 5` `first: 2026-06-21` `last: 2026-07-07`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
 - [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
 - [ ] remove-worktree.cjs record-merge misattribution RE-OBSERVED 2026-07-07 (681 teardown): linked session 20097c0b (neighbour's id in main checkout's current-session-id) to a local merge commit instead of the tearing-down session 06f94413 -> squash f604144; backfilled manually in session-merges.ndjson — `scripts/dev/remove-worktree.cjs` (2026-07-07)
+- [ ] reportHolders (scripts/dev/remove-worktree.cjs, added by 684/#82) still self-matches: its Win32_Process CommandLine -like '*<base>*' filter (excluding only its own powershell $PID) STILL matches the removal script's OWN node process and bash wrapper, because the target worktree path is in THEIR argv (observed live 2026-07-07: 'PID 536: node.exe ... remove-worktree.cjs .claude/worktrees/obs-cleanup'). Cheap fix for a future dev-tooling batch: also exclude the removal process tree (e.g. CommandLine -notlike '*remove-worktree*' and the parent node/bash PIDs). Fundamental cwd-holder limit (Win32_Process has no cwd) remains separate/out-of-scope. — scripts/dev/remove-worktree.cjs:94-113 (2026-07-07)
+- [ ] Process gap: no cleanup path for worktree-* branches on closed-but-unmerged PRs — delete_branch_on_merge only fires on actual merge; scripts/dev/remove-worktree.cjs:158-216 only deletes local branch/worktree, never touches origin (2026-07-07)
 
 ### obs:tikaocrruntime — Pre-existing (untracked, another agent's 607 OCR work): IndexerWorkerGuardrailsTest fails — TikaOcrR
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/extract/TikaOcrRuntime.java` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
@@ -534,8 +537,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] ingest.prepare_corpus skips re-materialization when tmp/eval-corpora/golden/<name> is non-empty, so regenerating+rebuilding a golden corpus silently re-ingests the STALE cache (corpus-fidelity --clean only clears the Lucene index, not this cache) → nDCG 0.0 from qrels/index mismatch. Consider clearing the cache on corpus-build, or a --clean-cache flag — `scripts/jseval/jseval/ingest.py:235` (2026-06-24)
 
 ### obs:backend — jseval `--start-backend` evals collide with concurrent jseval backend workflows (recert/calibrate/ot
-`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
+`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 2` `first: 2026-06-24` `last: 2026-07-07`
 - [ ] jseval `--start-backend` evals collide with concurrent jseval backend workflows (recert/calibrate/other sessions) — all default to port 33221 + `tmp/headless-eval-data` with no mutual-exclusion lock; `--clean` rmtree's the shared dir mid-use; `quick_health` is blind to jseval-managed backends. Symptoms: 120s startup timeout / 503 / 504. Fix: isolate `--base-url <port>` + `JUSTSEARCH_DATA_DIR`. — `scripts/jseval/jseval/backend.py:37,64` (2026-06-24)
+- [ ] jseval --pipeline abort procedure (taskkill the backend PID reported in stderr 'Backend healthy on port...(PID=N)') only kills the head/API process, not the spawned worker child java process — after aborting B2a (691 Phase B) the worker process (Xmx1g, PID 20544) was found still running/consuming GPU alongside the next run's worker (B2b, PID 40120) until manually taskkilled; a recurring-benchmark abort helper should kill the worker child too, or jseval should track+kill it — new friction vs 691 §A-5 — `scripts/jseval/jseval/backend.py` (2026-07-07)
 
 ### obs:gitleaks — gitleaks.toml allowlists `third_party/.*` as 'vendored upstream (llama.cpp etc.)' — that tree was re
 `kind: defect?` `anchor: docs/business/go-to-market/cutover-package/gitleaks.toml` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
@@ -1753,9 +1757,69 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
 
-### obs:unanchored-general-60 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+### obs:unanchored-general-60 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) -
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
+
+### obs:knowledge-pb-d — execution-surface register had stale orphan entry `fe-generated-pb` → `modules/ui-web/src/api/genera
+`kind: environment?` `anchor: modules/ui-web/src/api/generated/knowledge_pb.d.ts` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] execution-surface register had stale orphan entry `fe-generated-pb` → `modules/ui-web/src/api/generated/knowledge_pb.d.ts` (file removed by 683/daa74bd, entry left behind — gate red on main); removed it while adding the 658 mcp-evidence-projection surface — `governance/execution-surfaces.v1.json` (2026-07-07)
+
+### obs:unanchored-error-7 — capture_evidence crashes on Windows with a libuv fail-fast (`Assertion failed: !(handle->flags & UV_
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] capture_evidence crashes on Windows with a libuv fail-fast (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src/win/async.c`) after capturing api-status/api-health — blocks durable EvidenceBundle capture; live verification had to fall back to manual /mcp HTTP calls (tempdoc 658) — `scripts/…/capture-evidence` (MCP dev tool) (2026-07-07)
+
+### obs:unanchored-general-61 — 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distributi
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distribution + judge-ceiling/ce-replay realizable-headroom) already shipped via PR #36 (db62746); the only genuinely-unmerged Part-1 residue was the JUDGE_RANK_LOW sub-cause taxonomy (CE_NOT_SCORED/CE_DEMOTION attribution) + the Part-2 runtime CE-confidence trust gate (shouldTrustCeReorder/trust_gate, default-off Java). Per tempdoc 643 §Merge-reconciliation the trust gate's keep/remove is unresolved pending an unrun CE-margin-discrimination measurement (AUC>=0.65 on enron-qa); it can be rebuilt verbatim from §Long-term design. Branch worktree-643-judge-rung-conformance (tip 7d6dde2, feature b88272a) pruned unshipped. (2026-07-07)
+
+### obs:record-merge — Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare
+`kind: defect?` `anchor: record-merge.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare-worktree.cjs's item-3 gradle-spawn fix was verified only by static path-reasoning (no live run of npm-ci + installDist). 684 added the first test for remove-worktree.cjs (test-remove-worktree.cjs); the sibling lifecycle scripts remain a regression-net gap. Task-shaped, not tempdoc-shaped; a real prepare-worktree integration test is heavy (npm ci + installDist) so weigh unit-level spawn-path assertion vs full integration. — scripts/dev/prepare-worktree.cjs, scripts/agent-analytics/record-merge.mjs (2026-07-07)
+
+### obs:unanchored-general-62 — worker.log: native ORT stderr (ANSI-colored CUDA/BFCArena OOM traces) is captured with NUL-byte-inte
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] worker.log: native ORT stderr (ANSI-colored CUDA/BFCArena OOM traces) is captured with NUL-byte-interleaved wide-char garbling (e.g. ' [ 1 ; 3 1 m 2 0 2 6 - 0 7 - 0 7...'), making the line unparseable by grep/ripgrep (reports 'binary file matches'); root cause looks like a UTF-16-as-UTF-8 decode mismatch on the native-process stderr redirect. Seen during tempdoc-691 pipeline profiling — F:\justsearch-public\tmp\headless-eval-data\logs\worker.log around 2026-07-07T17:26:47 and 17:32:59. (2026-07-07)
+
+### obs:unanchored-general-63 — worker.log floods DEBUG 'Loaded analyzers catalog from repo path' (i.j.a.lucene.analyzers.SsotAnalyz
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] worker.log floods DEBUG 'Loaded analyzers catalog from repo path' (i.j.a.lucene.analyzers.SsotAnalyzerRegistry) at extremely high frequency (multiple times per ms) on grpc-default-executor threads during backfill/enrichment, one load-and-parse per request with no evident in-memory cache — candidate hot-path inefficiency. Seen during tempdoc-691 pipeline profiling, e.g. 2026-07-07T17:32:58-59 in worker.log. (2026-07-07)
+
+### obs:environment-variables — environment-variables.md documents JUSTSEARCH_SPLADE_GPU_MEM_MB default as 2048 but ResolvedConfigBu
+`kind: defect?` `anchor: docs/reference/configuration/environment-variables.md` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] environment-variables.md documents JUSTSEARCH_SPLADE_GPU_MEM_MB default as 2048 but ResolvedConfigBuilder.java:1076 resolves 4096 — doc drift, verify which is intended — `docs/reference/configuration/environment-variables.md:169` (2026-07-07)
+
+### obs:unanchored-general-64 — Benchmarks module's default relative model-dir args (e.g. models/onnx/gte-multilingual-base) resolve
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Benchmarks module's default relative model-dir args (e.g. models/onnx/gte-multilingual-base) resolve against rootProject.projectDir, but a fresh git worktree has only empty scaffold dirs for models/ (the actual .onnx LFS binaries are untracked-in-main-only per repo git status) — any bench run from a worktree needs an explicit absolute --*-model-dir= override pointing at the main checkout — `modules/benchmarks/build.gradle.kts` (encoderBatchSweepBench task) / F:\justsearch-public\models\onnx\gte-multilingual-base (2026-07-07)
+
+### obs:onnxembeddingencoder — Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embed
+`kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
+
+### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal 
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal (batching regressed in item 22 due to padding waste); live 691-B1 measurement (golden/battlefield-en-v1, JUSTSEARCH_NER_GPU_MEM_MB=2048) shows encoderProfiles.ner.ortP50Us=33947us (34ms) and baseline E2 showed 28803us (28.8ms) — both ~15-17x the claimed 2.0ms/call, and batchTiming.totalMs.ner (202.5s/240.1s across 5 macro-cycles) still dominates ~69-75% of enrichment wall despite raising the NER GPU arena — the per-doc call cost itself, not just the OOM/fallback path, deserves re-measurement against the 'item 22' baseline — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:335` (2026-07-07)
+
+### obs:agent-retrieval-eval — util-smoke C-arm cells attempt ReadMcpResourceDirTool (server=filesystem) against the staged corpus-
+`kind: defect?` `anchor: scripts/jseval/jseval/agent_retrieval_eval.py` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] util-smoke C-arm cells attempt ReadMcpResourceDirTool (server=filesystem) against the staged corpus-dir and the harness's disallowed_tool_calls classifier does not flag it — a file-read bypass channel for condition C if such a resource read ever succeeds (failed this run; both cells succeeded via justsearch_search) — `scripts/jseval/jseval/agent_retrieval_eval.py` disallowed classifier (2026-07-07)
+
+### obs:remotedocumentservice — RemoteDocumentService.mapRetrieveContextResponse hardcodes docsUsed=0 on the rich-params retrieve pa
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteDocumentService.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] RemoteDocumentService.mapRetrieveContextResponse hardcodes docsUsed=0 on the rich-params retrieve path, violating ContextResult javadoc (docsUsed = full docs used when chunksUsed==0) — a worker-signaled FULLTEXT_FALLBACK reports docsUsed=0 despite using full documents — `modules/app-services/src/main/java/io/justsearch/app/services/worker/RemoteDocumentService.java:415` (found during tempdoc 655 review; MCP answer hint fixed to use citation parentDocId instead) (2026-07-07)
+
+### obs:unanchored-drift-25 — Stale remote branch worktree-agent-a407b9aff4e450534 — PR #70 closed unmerged 2026-07-03, never clea
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Stale remote branch worktree-agent-a407b9aff4e450534 — PR #70 closed unmerged 2026-07-03, never cleaned up on origin (2026-07-07)
+
+### obs:check-run — main@8cacb20 latest commit shows a cancelled 'License and notices' check-run (others all success) — 
+`kind: defect?` `anchor: check-run` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] main@8cacb20 latest commit shows a cancelled 'License and notices' check-run (others all success) — worth investigating why it was cancelled and re-running (2026-07-07)
+
+### obs:unanchored-general-65 — 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependa
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependabot/docs triage backlog, not a defect (2026-07-07)
 
 ## Parked
 
