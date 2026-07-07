@@ -99,7 +99,6 @@ The `LocalApiServer` exposes REST endpoints that map to controllers:
 *   **UI Ready:** `POST /api/ui/ready`, `GET /api/ui/ready`
 *   **Diagnostics:** `POST /api/diagnostics/export`
 *   **Worker Control:** `POST /api/worker/restart` (restarts the Knowledge Worker for embedding/apply scenarios)
-*   **Offline Processing:** `POST /api/offline/process`
 *   **Debug:** `GET /api/debug/state`, `GET /api/debug/events`, `GET /api/debug/worker-log`, `GET /api/debug/dashboard`, `GET /api/debug/chunks`, `GET /api/debug/effective-config`
 
 ## REST contract boundaries (DTO direction)

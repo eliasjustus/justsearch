@@ -996,9 +996,8 @@ export async function main() {
     { path: '/api/inference/status', methods: ['GET'] },
     { path: '/api/inference/mode', methods: ['POST'] },
     { path: '/api/inference/reload', methods: ['POST'] },
-    // Worker & offline
+    // Worker
     { path: '/api/worker/restart', methods: ['POST'] },
-    { path: '/api/offline/process', methods: ['POST'] },
     // AI install
     { path: '/api/ai/install/status', methods: ['GET'] },
     { path: '/api/ai/install/start', methods: ['POST'] },

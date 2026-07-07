@@ -656,9 +656,11 @@ public final class CoreOperationCatalog implements OperationCatalog {
         Binding.of(EXPORT_DIAGNOSTICS),
         Provenance.core("1.0"),
         Set.of(ExecutorTag.UI),
-        // Slice 481 §7 step 2: bundles potentially-sensitive system state for support;
-        // operator-grade authorization required even though risk tier is LOW.
-        Audience.OPERATOR);
+        // Tempdoc 689 decision: read-only, privacy-redacted, local-only export; a
+        // user self-service support flow, not an admin action. The state-mutating
+        // siblings (clear-failed-jobs, index-gc, restart-worker) deliberately
+        // remain Audience.OPERATOR.
+        Audience.USER);
   }
 
   private static Operation addWatchedRoot() {

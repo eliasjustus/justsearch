@@ -1,7 +1,7 @@
 ---
 title: "Dev-workflow tooling hardening batch: (1) remove-worktree.cjs — fix the broken EPERM long-path delete fallback and let the tearing-down session pass its own session id to the record-merge step (today it attributes the merge to whichever session id happens to sit in the invoking checkout's current-session-id, or skips attribution entirely from a fresh worktree), (2) prepare-worktree.cjs — fix the gradlew spawn so the Gradle half actually runs (spawns bare 'gradlew.bat', which the shell does not resolve; npm-ci + config-seeding halves work). All three defects bit one real publishing session on 2026-07-07; all are on the same maintenance surface (scripts/dev + scripts/agent-analytics)."
 type: tempdocs
-status: "open — scoped, not started (each item carries its reproduction and acceptance)"
+status: "implemented 2026-07-07 (worktree-684-dev-tooling). All three items done + verified: (1) remove-worktree.cjs — fixed long-path fallback (abs+backslash path AND a second bug: PowerShell single-quoted literal, since double-quoted `\\` double-escapes), bounded EPERM/EBUSY retry (5×300ms Atomics.wait), actionable Win32_Process holder report, and a require.main guard + exports with a held-handle regression test (test-remove-worktree.cjs, 5 passed). See §As-built for evidence pointers and the corrected holder-report claim (a self-match bug found + fixed in critical analysis). (2) session attribution — resolveSessionId inverted to ENV-FIRST (CLAUDE_CODE_SESSION_ID → JUSTSEARCH_AGENT_SESSION_ID → marker → hash) in the one shared resolver; record-merge.mjs now imports it (private readSessionId removed) + a --session-id escape hatch; note-observation.test flipped for the right reason + a foreign-pointer-file regression test (12 passed). No remove-worktree forwarding needed — the record-merge child inherits the caller's env. (3) prepare-worktree.cjs — gradle wrapper spawned via absolute path. Full gradlew build -x test green. Not yet a PR."
 created: 2026-07-07
 author: agent session 2026-07-07 (defects hit live during the 682 publish/teardown cycle; inbox-logged same day, batched here)
 category: dx / agent-workflow / tooling
@@ -102,6 +102,89 @@ worktree on this environment; the failure mode "wrapper not found" is impossible
 
 ## Verification map
 
-Item 1: unit/manual repro with a held handle; message names the holder. Item 2: teardown from
-a worktree with a foreign `current-session-id` present writes the caller's id. Item 3: fresh
-worktree, one command, both halves green. Standard pre-merge: `./gradlew.bat build -x test`.
+Item 1: unit/manual repro with a held handle; message names the holder **(see §As-built
+limitation 1 — only holders that name the path in argv, not cwd-only holders)**. Item 2:
+teardown from a worktree with a foreign `current-session-id` present writes the caller's id.
+Item 3: fresh worktree, one command, both halves green. Standard pre-merge:
+`./gradlew.bat build -x test`.
+
+## As-built (2026-07-07, branch `worktree-684-dev-tooling`)
+
+Implemented in this branch (squash-merged to a single public commit). A critical-analysis
+pass then found and fixed a self-match bug in `reportHolders` — it had matched its own
+PowerShell query process, so the "holder" report named the query rather than the real holder.
+
+### What shipped, per item
+
+**Item 1 — `scripts/dev/remove-worktree.cjs`**
+- `deleteTree(p, {attempts=5, retryDelayMs=300})`: bounded retry (synchronous
+  `Atomics.wait` sleep) on `EPERM`/`EBUSY`/`ENOTEMPTY` → fixed long-path fallback →
+  `reportHolders` on final failure.
+- `longPathDelete`: extended-length path built from `path.resolve(p)` with `/`→`\`
+  normalization, passed to PowerShell `[System.IO.Directory]::Delete` as a **single-quoted**
+  literal — a double-quoted literal double-escapes `\`, which was a second latent bug that
+  produced "Illegal characters in path" even after the absolute-path fix.
+- `reportHolders`: best-effort `Win32_Process` command-line match, excluding its own `$PID`.
+- Top-level execution guarded by `if (require.main === module)`; exports
+  `{ deleteTree, longPathDelete, sleepSync, reportHolders, removeJunctions, main }`.
+
+**Item 2 — `scripts/agent-analytics/{note-observation,record-merge}.mjs`**
+- `resolveSessionId` inverted to **env-first**: `CLAUDE_CODE_SESSION_ID` →
+  `JUSTSEARCH_AGENT_SESSION_ID` → `current-session-id` marker file → worktree hash. (The
+  marker file records whatever session last *started* in a checkout, which is a foreign id in
+  the shared main checkout — the misattribution root.)
+- `record-merge.mjs` imports that resolver (private `readSessionId` deleted) and adds a
+  `--session-id <id>` escape hatch for headless/cron contexts with no env vars.
+- `remove-worktree.cjs`'s record-merge call is **unchanged**: the child inherits the caller's
+  env, so env-first attributes correctly by construction (no explicit forwarding needed).
+
+**Item 3 — `scripts/dev/prepare-worktree.cjs`**
+- The Gradle wrapper is spawned via absolute `path.join(repoRoot, 'gradlew.bat'|'gradlew')`
+  instead of a bare, cwd-unresolved `gradlew.bat`.
+
+### Verification evidence (each claim → its pointer)
+
+| Claim | Evidence |
+|---|---|
+| Env-first resolver; a foreign marker file does not override the caller's env | `node scripts/agent-analytics/note-observation.test.mjs` → `note-observation.test: 12 passed` (incl. `resolveSessionId: env wins over the pointer file` and `…foreign pointer file does not override the caller env`) |
+| record-merge uses the shared resolver and the env session id | `node scripts/agent-analytics/record-merge.mjs HEAD` → prints `record-merge: linked session <id> -> <hash>` where `<id>` equals `$CLAUDE_CODE_SESSION_ID` |
+| Held-handle path: no throw, no path-syntax error; retry-after-release succeeds; the `require.main` guard has no import side effects | `node scripts/dev/test-remove-worktree.cjs` → `test-remove-worktree: 5 passed` |
+| `reportHolders` no longer self-matches | after `4c3847c`, the same test prints the honest `no holder found by command line …` line (not its own powershell PID) |
+| Compile / pre-merge | `./gradlew.bat build -x test -PskipWebBuild=true` → `BUILD SUCCESSFUL in 18s` |
+
+### Limitations & unverified assumptions (NOT closed — read before trusting "verified")
+
+1. **Item 1 does not reliably *name the holder* for the scenario that motivated it.**
+   `Win32_Process` exposes `CommandLine` but not a process's working directory, and the live
+   failures were caused by a shell whose **cwd** was inside the worktree (nothing in its argv).
+   So `reportHolders` names only holders that reference the path on their command line (e.g.
+   `node serve-worktree-fe <path>`, an editor opened on it); a cwd-only holder yields
+   "no holder found by command line". The bounded ~1.5 s retry likewise clears only *transient*
+   locks, not a persistent shell. The concrete bug that **is** fixed is the spurious path-syntax
+   throw. Fully naming a cwd holder needs `handle.exe` / Restart-Manager APIs — out of scope.
+2. **Item 2's subagent attribution is assumed, not probed.** Claim: a subagent-spawned shell's
+   `CLAUDE_CODE_SESSION_ID` carries the *parent* session's id (so a subagent's merge/note
+   attributes to the parent). Reasoned from "subagents inherit env"; **not** empirically tested
+   in a live subagent shell (this is the doc's own owed probe (a) above). Low-risk — the flip
+   only changes behavior when an env var is present *and* differs from the marker file. Owed
+   probe (b) (the real setter of `JUSTSEARCH_AGENT_SESSION_ID`) was not chased; putting the
+   harness-native `CLAUDE_CODE_SESSION_ID` first side-steps it.
+3. **record-merge now records `wt-<hash>` where the old code skipped.** With neither env var nor
+   marker file present, `resolveSessionId` returns a checkout-stable `wt-<hash>` (not
+   `unknown`), so the skip guard doesn't fire and a non-session id is logged. Low impact
+   (record-merge runs at merge time with env present), but flagged for any consumer of
+   `session-merges.ndjson` that assumes every `session_id` is a real session.
+4. **`prepare-worktree.cjs` uses `shell:true` with an unquoted path** — would break on a repo
+   path containing spaces (the current checkout has none). Robustness nit, not a live defect.
+5. **The retry loop retries on any error, not only the retryable set** (`lastErr` is always
+   truthy), wasting ≤1.5 s on genuinely unrecoverable errors. Correctness-neutral.
+
+### Follow-up worth not forgetting
+- If cwd-holder naming matters, add an optional `handle.exe`/Restart-Manager probe behind a flag.
+- A live subagent-env probe would convert assumption (2) into a verified fact (or fix the docstring).
+- Sibling batch **685** (fallback-constant conformance) and **686** (real-PDF/Tika corpus)
+  remain open and untouched.
+- **On merge:** resolve the `docs/observations.md` inbox entry that logged these two defects
+  (the record-merge session misattribution + the broken EPERM long-path fallback) — it is now
+  fixed. (The separate "orphaned `597-chat-count` worktree dir on disk" note in the same
+  grouped condition is NOT addressed by this work and should stay.)

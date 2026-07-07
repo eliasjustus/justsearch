@@ -344,7 +344,7 @@
     "version" : "1.0"
   },
   "executors" : [ "UI" ],
-  "audience" : "OPERATOR",
+  "audience" : "USER",
   "consumers" : [ ]
 }, {
   "id" : "core.add-watched-root",

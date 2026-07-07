@@ -1,6 +1,6 @@
 {
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
-  "count": 202,
+  "count": 200,
   "namespace": "meta-routes",
   "routes": [
     {
@@ -870,14 +870,6 @@
     },
     {
       "method": "POST",
-      "path": "/api/offline/process",
-      "cohort": "inference",
-      "owningModule": null,
-      "requiredCapabilities": [],
-      "responseSchema": null
-    },
-    {
-      "method": "POST",
       "path": "/api/worker/restart",
       "cohort": "inference",
       "owningModule": null,
@@ -1509,14 +1501,6 @@
     {
       "method": "GET",
       "path": "/api/intent/stream",
-      "cohort": "resource",
-      "owningModule": "ResourceApiModule",
-      "requiredCapabilities": [],
-      "responseSchema": null
-    },
-    {
-      "method": "GET",
-      "path": "/api/navigation-history",
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],

@@ -37,20 +37,26 @@ function sanitizeId(id) {
 }
 
 /**
- * Resolve the current session id for shard naming. Order mirrors the repo's
- * established resolution (record-merge.mjs:28-34 reads the pointer file):
- *   1. tmp/agent-telemetry/current-session-id  (export-session-env.mjs, cross-platform)
+ * Resolve the current session id for shard naming. ENV-FIRST (tempdoc 684):
+ *   1. $CLAUDE_CODE_SESSION_ID                 (harness-native — safest primary)
  *   2. $JUSTSEARCH_AGENT_SESSION_ID            (repo export)
- *   3. $CLAUDE_CODE_SESSION_ID                 (harness)
+ *   3. tmp/agent-telemetry/current-session-id  (export-session-env.mjs, cross-platform)
  *   4. short hash of the worktree toplevel     (stable per checkout, never empty)
+ *
+ * The pointer file (#3) records whatever session last STARTED in that
+ * checkout — in the shared main checkout that is routinely a FOREIGN
+ * session's id, not the caller's, so it must not win over env. Env vars are
+ * always the calling process's own identity, including in a subagent-spawned
+ * shell: the child inherits the PARENT session's env, and attributing the
+ * note/link to the parent is the desired behavior there too.
  */
 export function resolveSessionId({ root = repoRoot, env = process.env } = {}) {
+  if (env.CLAUDE_CODE_SESSION_ID) return sanitizeId(env.CLAUDE_CODE_SESSION_ID);
+  if (env.JUSTSEARCH_AGENT_SESSION_ID) return sanitizeId(env.JUSTSEARCH_AGENT_SESSION_ID);
   try {
     const fromFile = fs.readFileSync(path.join(root, TELEMETRY_DIR, 'current-session-id'), 'utf8').trim();
     if (fromFile) return sanitizeId(fromFile);
   } catch { /* fall through */ }
-  if (env.JUSTSEARCH_AGENT_SESSION_ID) return sanitizeId(env.JUSTSEARCH_AGENT_SESSION_ID);
-  if (env.CLAUDE_CODE_SESSION_ID) return sanitizeId(env.CLAUDE_CODE_SESSION_ID);
   try {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim();
     return 'wt-' + createHash('sha1').update(top).digest('hex').slice(0, 12);

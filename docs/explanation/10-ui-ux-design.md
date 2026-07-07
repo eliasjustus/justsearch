@@ -156,7 +156,7 @@ The system operates in two mutually exclusive modes to manage GPU VRAM:
 
 **Transition:**
 *   Users can manually toggle via the "Brain" view (Settings).
-*   "Process Now" in Zone E triggers offline processing (VDU + embedding backfill) via `POST /api/offline/process` and reflects progress via `/api/inference/status`.
+*   "Process Now" in Zone E triggers offline processing (VDU + embedding backfill) by dispatching the `core.trigger-offline-processing` Operation (catalog-driven `<jf-operation>`, tempdoc 672) and reflects progress via `/api/inference/status`. (The earlier direct `POST /api/offline/process` endpoint this button previously would have called was orphaned — zero FE consumers — and was torn down; tempdoc 689.)
 
 ## 4. Visual Language & Accessibility
 

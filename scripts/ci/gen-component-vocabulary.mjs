@@ -19,10 +19,17 @@ import {
   existsSync,
   statSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SRC_DIR = 'modules/ui-web/src/shell-v0';
-const OUT = 'modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts';
+// Resolved off this file's own location (not process.cwd()) so the script
+// behaves the same whether invoked from the repo root or via the
+// `check:component-vocabulary` npm script in modules/ui-web (whose cwd is
+// modules/ui-web, not the repo root).
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const OUT_REL = 'modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts';
+const SRC_DIR = join(REPO_ROOT, 'modules/ui-web/src/shell-v0');
+const OUT = join(REPO_ROOT, OUT_REL);
 // Only host `jf-*` elements are admissible authoring targets (560 PresentationVocabulary).
 const DEFINE_RE = /customElements\.define\(\s*['"](jf-[a-z0-9-]*)['"]/g;
 
@@ -104,17 +111,17 @@ if (process.argv.includes('--check')) {
   const current = existsSync(OUT) ? readFileSync(OUT, 'utf8') : '';
   if (current !== body) {
     console.error(
-      `gen-component-vocabulary --check FAIL: ${OUT} is stale (${sorted.length} components). ` +
+      `gen-component-vocabulary --check FAIL: ${OUT_REL} is stale (${sorted.length} components). ` +
         `Run: node scripts/ci/gen-component-vocabulary.mjs`,
     );
     process.exit(1);
   }
   console.log(
-    `gen-component-vocabulary OK — ${OUT} matches (${sorted.length} components).`,
+    `gen-component-vocabulary OK — ${OUT_REL} matches (${sorted.length} components).`,
   );
 } else {
   writeFileSync(OUT, body);
   console.log(
-    `gen-component-vocabulary: wrote ${OUT} (${sorted.length} components).`,
+    `gen-component-vocabulary: wrote ${OUT_REL} (${sorted.length} components).`,
   );
 }
