@@ -23,6 +23,11 @@ import java.util.Objects;
  *     ({@code "watch"|"assist"|"auto"}); null/unknown → ASSIST. The FE supplies the dial so the ONE
  *     backend issuance policy ({@code IntentGateEvaluator.agentGate}) computes the gate and the FE
  *     obeys it, instead of the FE re-deriving auto-approval from risk (the collapsed 2nd authority).
+ * @param docIds tempdoc S7 — the FE's scope-chip selection (document paths); empty/null = unscoped
+ *     (unchanged behavior). When non-empty, every {@code SearchTool} invocation in this run is
+ *     filtered to just these paths, regardless of what the LLM's own tool-call arguments say
+ *     ({@code AgentToolDispatcher.scopeToolCall} merges it into the search call's arguments;
+ *     {@code SearchTool} threads it into {@code KnowledgeSearchRequest.Filters.docIds}).
  */
 public record AgentRequest(
     List<Map<String, Object>> messages,
@@ -32,7 +37,8 @@ public record AgentRequest(
     String initialAgentId,
     Integer maxHandoffs,
     String conversationId,
-    String autonomyLevel) {
+    String autonomyLevel,
+    List<String> docIds) {
 
   public AgentRequest {
     Objects.requireNonNull(messages, "messages");
@@ -41,7 +47,30 @@ public record AgentRequest(
       throw new IllegalArgumentException("maxIterations must be >= 1, got " + maxIterations);
     }
     agentProfiles = agentProfiles == null ? List.of() : List.copyOf(agentProfiles);
+    docIds = docIds == null ? List.of() : List.copyOf(docIds);
     // initialAgentId, maxHandoffs, conversationId, autonomyLevel null are valid — defaulted at runtime
+  }
+
+  /** Back-compat constructor (pre-S7, no docIds) — delegates with docIds empty (unscoped). */
+  public AgentRequest(
+      List<Map<String, Object>> messages,
+      List<String> selectedToolNames,
+      int maxIterations,
+      List<AgentProfile> agentProfiles,
+      String initialAgentId,
+      Integer maxHandoffs,
+      String conversationId,
+      String autonomyLevel) {
+    this(
+        messages,
+        selectedToolNames,
+        maxIterations,
+        agentProfiles,
+        initialAgentId,
+        maxHandoffs,
+        conversationId,
+        autonomyLevel,
+        List.of());
   }
 
   /** Back-compat constructor (561 P-A/P-B, no autonomyLevel) — delegates with autonomyLevel=null. */

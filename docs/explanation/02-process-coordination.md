@@ -75,7 +75,7 @@ We support running on cards with only 8GB VRAM, which creates a conflict between
 2.  **Generative LLM (served by `llama-server.exe`):** Uses most VRAM when Online Mode is active.
 
 **The Protocol:**
-1.  **User** opens "Chat".
+1.  **User** opens "Search" (the unified window; conversation is a state of Search — tempdoc 687).
 2.  **Main** writes `1` to `main_gpu_active` (MMF offset `24`, `MmfWorkerSignalLayoutV1.OFFSET_MAIN_GPU_ACTIVE`).
 3.  **Worker** reads this flag in `IndexingLoop`.
 4.  **Worker** unloads the embedding backend to free VRAM (and skips embedding work while the flag is set).

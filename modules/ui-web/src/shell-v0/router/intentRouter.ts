@@ -23,8 +23,9 @@ export interface RouterConfig {
   /** Recovery policy for resolution failures (default: interactivePolicy). */
   recoveryPolicy?: RecoveryPolicy;
   /**
-   * 548 S4-A: the surface a `query` intent is lowered to (the search surface).
-   * Defaults to `core.search-surface`.
+   * 548 S4-A: the surface a `query` intent is lowered to (the search surface). Search Thread S5b —
+   * the standalone Search rail surface is retired; the retrieve tier folded into the one window.
+   * Defaults to `core.unified-chat-surface`.
    */
   querySurfaceId?: string;
   /**
@@ -51,8 +52,9 @@ export interface RouterConfig {
   onRedirect?: (originalId: string, targetId: string) => void;
 }
 
-/** Default search-surface id a `query` intent activates. */
-const DEFAULT_QUERY_SURFACE_ID = 'core.search-surface';
+/** Default search-surface id a `query` intent activates. Search Thread S5b — the standalone
+ *  Search rail surface is retired; the retrieve tier folded into the one window. */
+const DEFAULT_QUERY_SURFACE_ID = 'core.unified-chat-surface';
 /** Default state key the search surface restores the query text from. */
 const DEFAULT_QUERY_STATE_KEY = 'query';
 /** Default chat-surface id an `answer` intent activates. */

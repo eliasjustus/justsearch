@@ -16,8 +16,13 @@ import {
   setAutonomyLevel,
   listAutonomyLevels,
   subscribeAutonomy,
+  hasAutoConsent,
+  setAutoConsent,
   type AutonomyLevel,
 } from '../substrates/autonomy/index.js';
+// Search Thread S7 (tempdoc decision 6) — the ONE modal primitive (ModalController, composed
+// inside ConfirmDialog); reused via its Promise-based helper rather than authoring a new modal.
+import { confirmAsync } from './ConfirmDialog.js';
 
 const LABELS: Record<AutonomyLevel, string> = {
   watch: 'Watch',
@@ -51,6 +56,14 @@ export class AutonomyDial extends JfElement {
   declare compact: boolean;
 
   private unsub: (() => void) | null = null;
+  /**
+   * Search Thread Round-2 R3 — consent is required for the STANDING 'auto' state, not just the
+   * transition: a profile already at 'auto' with no recorded consent (grandfathered / a pre-release
+   * dev profile) is asked ONCE on the first interaction with the dial, not on every render. This
+   * plain (non-reactive) field guards that "once": set on the first {@link select} call, so a later
+   * click never re-checks even if consent is still somehow missing.
+   */
+  private standingConsentChecked = false;
 
   constructor() {
     super();
@@ -119,7 +132,51 @@ export class AutonomyDial extends JfElement {
     }
   `;
 
-  private select(level: AutonomyLevel): void {
+  /**
+   * Search Thread S7 (tempdoc decision 6) — the FIRST switch to Auto (per browser profile,
+   * `hasAutoConsent`) opens a consent modal naming what Auto may do (mirrors postureChrome(3)'s
+   * honest "confirming irreversible writes" framing); Confirm persists the flag and applies the
+   * level, Cancel applies nothing — the dial simply never optimistically flips, so there is
+   * nothing to revert. Every later switch to Auto is silent.
+   */
+  private async select(level: AutonomyLevel): Promise<void> {
+    // Search Thread Round-2 R3 — the FIRST interaction with the dial checks the STANDING state, not
+    // just this click's transition: a dial already sitting on 'auto' with no recorded consent asks
+    // once, right now, before processing the click that triggered it. Confirm persists the flag
+    // (the dial stays on 'auto', silently); Cancel is a DOWNGRADE ("not consented" must not leave the
+    // profile standing on 'auto') — the maintainer-recommended semantics, distinct from the ordinary
+    // transition-cancel below (which just declines to move OFF a lower level).
+    if (!this.standingConsentChecked) {
+      this.standingConsentChecked = true;
+      if (this.level === 'auto' && !hasAutoConsent()) {
+        const ok = await confirmAsync({
+          title: 'Confirm Auto mode?',
+          message:
+            'This profile is set to Auto mode, which acts without asking for your approval on each step. Irreversible writes still confirm.',
+          confirmLabel: 'Keep Auto',
+          cancelLabel: 'Switch to Assist',
+          variant: 'info',
+        });
+        if (ok) {
+          setAutoConsent();
+        } else {
+          setAutonomyLevel('assist');
+        }
+        return;
+      }
+    }
+    if (level === 'auto' && this.level !== 'auto' && !hasAutoConsent()) {
+      const ok = await confirmAsync({
+        title: 'Turn on Auto mode?',
+        message:
+          'Auto mode acts without asking for your approval on each step. Irreversible writes still confirm.',
+        confirmLabel: 'Turn on Auto',
+        cancelLabel: 'Cancel',
+        variant: 'info',
+      });
+      if (!ok) return;
+      setAutoConsent();
+    }
     setAutonomyLevel(level);
   }
 

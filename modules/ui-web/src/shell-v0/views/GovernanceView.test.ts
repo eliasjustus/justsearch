@@ -47,7 +47,7 @@ function stateBody(efficacy?: Efficacy): unknown {
 }
 
 async function mount(body: unknown): Promise<HTMLElement & { updateComplete: Promise<unknown> }> {
-  global.fetch = vi.fn().mockResolvedValue({
+  globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
     json: async () => body,

@@ -236,13 +236,23 @@ public final class SearchTool {
         }
       }
 
+      // Tempdoc S7 — an optional docIds scope (FE "scope chips"), merged into these arguments
+      // server-side by AgentToolDispatcher.scopeToolCall when the run carries one. Deliberately
+      // NOT part of the LLM-facing PARAMETER_SCHEMA above — the LLM never chooses this key, it
+      // rides along silently so every search call in a scoped run stays confined to those paths.
+      List<String> docIds = extractDocIds(args);
+
       // Build search request
       KnowledgeSearchRequest.Filters filters = null;
-      if (pathPrefix != null && !pathPrefix.isBlank()) {
-        filters =
-            KnowledgeSearchRequestFiltersBuilder.builder()
-                .pathPrefix(pathPrefix)
-                .build();
+      if ((pathPrefix != null && !pathPrefix.isBlank()) || !docIds.isEmpty()) {
+        var filtersBuilder = KnowledgeSearchRequestFiltersBuilder.builder();
+        if (pathPrefix != null && !pathPrefix.isBlank()) {
+          filtersBuilder.pathPrefix(pathPrefix);
+        }
+        if (!docIds.isEmpty()) {
+          filtersBuilder.docIds(docIds);
+        }
+        filters = filtersBuilder.build();
       }
 
       var request =
@@ -268,12 +278,32 @@ public final class SearchTool {
       // render real evidence cards (filename · location · excerpt) instead of a raw monospace dump.
       // NOTE: deliberately NO relevance score — hit.score() is the uncalibrated RANKING score, which
       // 559 §5 / §18 C-6 say must not be surfaced as a "% relevance" (that would fabricate calibration).
-      return OperationResult.success(formatted, buildSearchEvidence(response));
+      return OperationResult.success(formatted, buildSearchEvidence(query, response));
 
     } catch (Exception e) {
       LOG.error("SearchTool execution failed", e);
       return OperationResult.failure("Search error: " + e.getMessage());
     }
+  }
+
+  /**
+   * Tempdoc S7 — the optional {@code docIds} scope (FE "scope chips"), silently accepted alongside
+   * the LLM-facing {@code query}/{@code limit}/{@code mode} args but not documented in {@link
+   * #PARAMETER_SCHEMA}: {@code AgentToolDispatcher.scopeToolCall} merges it into the arguments JSON
+   * server-side for every search call in a scoped run, so the LLM never chooses this key itself.
+   */
+  private static List<String> extractDocIds(JsonNode args) {
+    if (!args.has("docIds") || !args.get("docIds").isArray()) {
+      return List.of();
+    }
+    List<String> out = new ArrayList<>();
+    for (JsonNode n : args.get("docIds")) {
+      String s = n.asText(null);
+      if (s != null && !s.isBlank()) {
+        out.add(s);
+      }
+    }
+    return List.copyOf(out);
   }
 
   /**
@@ -286,9 +316,17 @@ public final class SearchTool {
    * FEEDBACK channel, NOT rendered by the tool card, so it does not surface uncalibrated scores to the
    * UI (the 559 §5 line is about <em>display</em>). app-services captures it into a {@code FeatureSnapshot}
    * from the {@code tool_exec_completed} event so agent CITED/SHOWN dispositions become joinable labels.
-   * Returns {@code {"searchResults": [...], "feedbackFeatures": [...]}}.
+   *
+   * <p>Tempdoc S7: also carries the executed {@code query} text and the {@code resultCount} (the
+   * number of hits in THIS response — mirrors the FE's own {@code resultCount} convention, e.g.
+   * {@code UnifiedChatView.ts}'s user-issued-search provenance), additive top-level keys alongside
+   * {@code searchResults}/{@code feedbackFeatures} — existing consumers that only read {@code
+   * searchResults} (e.g. {@code searchEvidence.ts}) are unaffected.
+   *
+   * <p>Returns {@code {"query": ..., "resultCount": ..., "searchResults": [...], "feedbackFeatures":
+   * [...]}}.
    */
-  private Map<String, Object> buildSearchEvidence(KnowledgeSearchResponse response) {
+  private Map<String, Object> buildSearchEvidence(String query, KnowledgeSearchResponse response) {
     List<Map<String, Object>> out = new ArrayList<>();
     List<Map<String, Object>> feedback = new ArrayList<>();
     int rank = 0;
@@ -328,7 +366,12 @@ public final class SearchTool {
       }
       out.add(Map.copyOf(item));
     }
-    return Map.of("searchResults", List.copyOf(out), "feedbackFeatures", List.copyOf(feedback));
+    var evidence = new LinkedHashMap<String, Object>();
+    evidence.put("query", query);
+    evidence.put("resultCount", out.size());
+    evidence.put("searchResults", List.copyOf(out));
+    evidence.put("feedbackFeatures", List.copyOf(feedback));
+    return Map.copyOf(evidence);
   }
 
   /**

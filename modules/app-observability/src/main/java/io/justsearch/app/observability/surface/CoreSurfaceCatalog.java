@@ -134,10 +134,10 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
 
   public static final String HEALTH_MOUNT_TAG = "jf-health-surface";
 
-  /** Slice 463 — Search HUD surface. */
-  public static final SurfaceRef SEARCH_SURFACE_ID = new SurfaceRef("core.search-surface");
-
-  public static final String SEARCH_MOUNT_TAG = "jf-search-surface";
+  // Search Thread S5b (the great retirement): the standalone `core.search-surface` (jf-search-surface,
+  // Slice 463 Search HUD) Surface entry is RETIRED. Its retrieve tier folded into the one interaction
+  // window (`core.unified-chat-surface`), matching the `core.agent-surface` retirement precedent above
+  // (constants removed, comment left). FE deep-links alias via RETIRED_SURFACE_ALIASES.
 
   /** Slice 3a.2.e — Logs surface (HeadLog DiagnosticChannel consumer). */
   public static final SurfaceRef LOGS_SURFACE_ID = new SurfaceRef("core.logs-surface");
@@ -685,44 +685,12 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
               // Resources (health-events / failed-indexing-jobs) ⟹ DIAGNOSTIC — not declared here. The
               // remediation Operations are affordances, not a second altitude (primary-authority rule).
               RiskTier.LOW),
-          new Surface(
-              SEARCH_SURFACE_ID,
-              Presentation.of(
-                  new I18nKey("registry-surface.search-surface.label"),
-                  new I18nKey("registry-surface.search-surface.description")),
-              Audience.USER,
-              // Tempdoc 577 Goal 3 §3.6 (570 Move A) — the standalone Search window is RETIRED as a
-              // RAIL peer. Pure retrieval is now the unified window's base interaction tier (the
-              // `retrieve` affordance + the ephemeral hit-list reusing searchState; §3.10). DEEPLINK
-              // keeps the rich standalone surface (facets / trace / "why this result?") URL-routable —
-              // nothing is deleted, the rail just loses the peer (578 taxonomy: one fewer rail surface).
-              Placement.DEEPLINK,
-              new SurfaceConsumes(
-                  /* resources */ Set.of(),
-                  /* operations */ Set.of(),
-                  /* prompts */ Set.of(),
-                  /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
-              SEARCH_MOUNT_TAG,
-              Provenance.core("1.0"),
-              // Slice 489 §5 — first URL-addressable surface. Per slice 489 round-7
-              // §F7 (2026-05-12) the JSON Schema source moved out of inline Java
-              // string concatenation into a resource file at
-              // SSOT/schemas/surface/core.search-surface.v1.json. The bindings stay
-              // here because they reference typed StateBinding records with abstract
-              // storeId values the FE resolves at runtime. SurfaceStateSchemaLoader
-              // validates the schema source as well-formed JSON at boot — a
-              // misconfigured resource file fails-fast on the first request rather
-              // than degrading silently.
-              java.util.Optional.of(
-                  SurfaceStateSchemaLoader.require(
-                      SEARCH_SURFACE_ID,
-                      List.of(
-                          new io.justsearch.agent.api.registry.StateBinding(
-                              "/query", "search", "query"),
-                          new io.justsearch.agent.api.registry.StateBinding(
-                              "/modifiedFromMs", "search.filters", "modifiedFromMs"),
-                          new io.justsearch.agent.api.registry.StateBinding(
-                              "/modifiedToMs", "search.filters", "modifiedToMs"))))),
+          // Search Thread S5b (the great retirement): the `core.search-surface` Surface entry
+          // (Placement.DEEPLINK since tempdoc 577 Goal 3 §3.6 / 570 Move A) is REMOVED outright — the
+          // standalone rich surface (facets / trace / "why this result?" / date-filter pane) it kept
+          // URL-routable is retired along with it; the retrieve tier's carry-forward scope is
+          // jf-results-card + route chip + scope chips + landing only. FE deep-links to
+          // core.search-surface alias to core.unified-chat-surface (RETIRED_SURFACE_ALIASES).
           // Slice 3a.2.e — Logs surface. Consumes the core.head-log
           // DiagnosticChannel (slice 448 substrate). OPERATOR audience
           // because raw log tail is operator/dev-mode UX, not end-user.

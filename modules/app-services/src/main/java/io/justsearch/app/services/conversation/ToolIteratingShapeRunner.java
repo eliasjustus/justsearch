@@ -284,6 +284,10 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
     // (caught live: auto + a MEDIUM write still gated as typed_confirm).
     String autonomyLevel =
         body.get("autonomyLevel") == null ? null : body.get("autonomyLevel").toString();
+    // Tempdoc S7 — the FE's scope-chip selection: when present, every SearchTool call in this run
+    // is filtered to just these paths (mirrors RAGContext#extractDocIds's body.get("docIds") shape
+    // for the core.rag-ask path — same wire key, same list-of-strings convention).
+    List<String> docIds = extractDocIds(body);
 
     return new AgentRequest(
         messages,
@@ -293,7 +297,24 @@ public final class ToolIteratingShapeRunner implements ShapeRunner {
         initialAgentId,
         maxHandoffs,
         conversationId,
-        autonomyLevel);
+        autonomyLevel,
+        docIds);
+  }
+
+  /** Tempdoc S7 — parse the body's optional {@code docIds} array; absent/malformed = empty (unscoped). */
+  @SuppressWarnings("unchecked")
+  private static List<String> extractDocIds(Map<String, Object> body) {
+    Object raw = body.get("docIds");
+    if (!(raw instanceof List<?> list)) {
+      return List.of();
+    }
+    List<String> out = new ArrayList<>(list.size());
+    for (Object o : list) {
+      if (o == null) continue;
+      String s = o.toString();
+      if (!s.isBlank()) out.add(s);
+    }
+    return out;
   }
 
   private static int asInt(Object o, int fallback) {

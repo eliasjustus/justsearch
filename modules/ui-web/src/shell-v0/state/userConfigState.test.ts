@@ -19,6 +19,7 @@ import {
   clearSurfaceOverride,
   clearSurfaceVisibility,
   getUserConfig,
+  setRailExpanded,
   setSurfaceOrder,
   setSurfaceOverride,
   setSurfaceVisibility,
@@ -267,4 +268,32 @@ describe('userConfigState — V1.5.1 persistence', () => {
   // re-importing the module, which Vitest doesn't easily support
   // mid-test. The behavior is covered by the equivalent live-smoke
   // (apply Focus Mode → reload page → customizations persist).
+});
+
+describe('userConfigState — rail expand/collapse (Search Thread S5b)', () => {
+  afterEach(() => {
+    __resetUserConfigForTest();
+  });
+
+  it('defaults to undefined (collapsed) until explicitly set', () => {
+    expect(getUserConfig().railExpanded).toBeUndefined();
+  });
+
+  it('setRailExpanded round-trips + notifies subscribers', () => {
+    const seen: (boolean | undefined)[] = [];
+    const unsub = subscribeUserConfig((cfg) => seen.push(cfg.railExpanded));
+
+    setRailExpanded(true);
+    expect(getUserConfig().railExpanded).toBe(true);
+    setRailExpanded(false);
+    expect(getUserConfig().railExpanded).toBe(false);
+
+    expect(seen).toEqual([undefined, true, false]);
+    unsub();
+  });
+
+  it('persists across the same-session store (survives a getUserConfig re-read)', () => {
+    setRailExpanded(true);
+    expect(getUserConfig().railExpanded).toBe(true);
+  });
 });

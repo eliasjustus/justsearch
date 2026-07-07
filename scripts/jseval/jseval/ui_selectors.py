@@ -23,7 +23,10 @@ TID_BRAIN_SWITCH_TO_ADVANCED = "brain-switch-to-advanced"
 # the surface; there are NO per-view `activity-*` testids. Nav clicks therefore target the
 # surface id (Playwright pierces the rail's open shadow root). Repointed from the stale
 # `activity-*` testids that no longer exist on the rail (559/571 rail rework).
-RAIL_SURFACE_SEARCH = "core.search-surface"
+# Search Thread S5b — the standalone `core.search-surface` rail surface is retired; the retrieve
+# tier folded into the one window (`core.unified-chat-surface`), which is the rail button "home"/
+# "search" now click (labeled "Search" post-rename, id unchanged).
+RAIL_SURFACE_SEARCH = "core.unified-chat-surface"
 RAIL_SURFACE_LIBRARY = "core.library-surface"
 RAIL_SURFACE_BRAIN = "core.brain-surface"
 RAIL_SURFACE_HEALTH = "core.health-surface"

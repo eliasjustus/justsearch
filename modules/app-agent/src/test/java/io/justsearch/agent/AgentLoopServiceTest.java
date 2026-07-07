@@ -354,6 +354,89 @@ class AgentLoopServiceTest {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Tempdoc S7 — docIds scope (FE "scope chips") threaded onto the search tool call
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void docIdsScope_mergesIntoSearchToolArguments() {
+    // AgentRequest.docIds() carries the FE's scope-chip selection; when non-empty,
+    // AgentToolDispatcher.scopeToolCall must merge it into the search tool's OWN call
+    // arguments — regardless of what the LLM's tool call itself asked for — so the
+    // dispatched handler receives a "docIds" array alongside the LLM's "query".
+    var searchTool = new StubTool("search_index", RiskTier.LOW, "r");
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search_index", "{\"query\":\"taxes\"}"),
+        ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, searchTool);
+
+    var request = new AgentRequest(
+        userMessage("find taxes"),
+        List.of(),
+        3,
+        List.of(),
+        null,
+        null,
+        null,
+        null,
+        List.of("/docs/taxes.md", "/docs/invoices.md"));
+
+    runWithRequest(service, request);
+
+    assertNotNull(searchTool.lastArgs, "the search tool should have been invoked");
+    assertTrue(
+        searchTool.lastArgs.contains("\"docIds\""),
+        "docIds scope should be merged into the search tool's arguments; got: "
+            + searchTool.lastArgs);
+    assertTrue(searchTool.lastArgs.contains("/docs/taxes.md"));
+    assertTrue(searchTool.lastArgs.contains("/docs/invoices.md"));
+    // The LLM's own argument must survive the merge unchanged.
+    assertTrue(searchTool.lastArgs.contains("\"query\":\"taxes\""));
+  }
+
+  @Test
+  void docIdsScope_absent_leavesSearchToolArgumentsUnscoped() {
+    // Absent-case: no docIds on the request (the default/back-compat AgentRequest shape) means
+    // every search call dispatches with the LLM's own arguments, unmodified — the pre-S7 behavior.
+    var searchTool = new StubTool("search_index", RiskTier.LOW, "r");
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_search_index", "{\"query\":\"taxes\"}"),
+        ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, searchTool);
+
+    runWithRequest(service, new AgentRequest(userMessage("find taxes"), List.of(), 3));
+
+    assertNotNull(searchTool.lastArgs, "the search tool should have been invoked");
+    assertEquals("{\"query\":\"taxes\"}", searchTool.lastArgs, "unscoped run: arguments pass through verbatim");
+  }
+
+  @Test
+  void docIdsScope_doesNotLeakIntoUnrelatedToolCalls() {
+    // The scope is gated on the search operation id — a docIds-scoped run must NOT inject the
+    // filter into a different tool's arguments.
+    var otherTool = new StubTool("other_tool", RiskTier.LOW, "r");
+    var ai = new ScriptedAiService(List.of(
+        ScriptedResponse.toolCall("call_1", "core_other_tool", "{\"x\":1}"),
+        ScriptedResponse.textOnly("done")));
+    var service = buildService(ai, otherTool);
+
+    var request = new AgentRequest(
+        userMessage("do the other thing"),
+        List.of(),
+        3,
+        List.of(),
+        null,
+        null,
+        null,
+        null,
+        List.of("/docs/taxes.md"));
+
+    runWithRequest(service, request);
+
+    assertNotNull(otherTool.lastArgs);
+    assertEquals("{\"x\":1}", otherTool.lastArgs, "docIds scope must not leak into a non-search tool call");
+  }
+
   @Test
   void sessionEnd_unknownTool_emitsTerminateTotalErrored() {
     try (var registry = combinedRegistry()) {
@@ -3049,6 +3132,9 @@ class AgentLoopServiceTest {
     final RiskTier risk;
     final String returnValue;
     final java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger();
+    // Tempdoc S7 — records the raw JSON arguments this stub actually received, so a test can
+    // assert whether AgentToolDispatcher.scopeToolCall merged a docIds scope into them.
+    volatile String lastArgs;
 
     StubTool(String wireName, RiskTier risk, String returnValue) {
       this.wireName = wireName;
@@ -3083,6 +3169,7 @@ class AgentLoopServiceTest {
 
     OperationResult execute(String args) {
       callCount.incrementAndGet();
+      lastArgs = args;
       return OperationResult.success(returnValue);
     }
   }

@@ -217,6 +217,36 @@ export function setSecondaryActiveSurface(surfaceId: string | undefined): void {
   }));
 }
 
+/**
+ * Search Thread S5b — toggle the rail's collapsed/expanded (labels-visible) chrome state.
+ * Mirrors {@link setActiveLayoutId}'s persistence shape (a plain userConfig field, no dedicated
+ * mutator ceremony beyond the shared mutateDocument seam).
+ */
+export function setRailExpanded(expanded: boolean): void {
+  mutateDocument((doc) => ({
+    ...doc,
+    userConfig: {
+      ...doc.userConfig,
+      railExpanded: expanded,
+    },
+  }));
+}
+
+/**
+ * Search Thread Round-2 R1a — persist the degradation banner's "seen" cause-set hash. Mirrors
+ * {@link setRailExpanded}'s persistence shape (a plain userConfig field, no dedicated mutator
+ * ceremony beyond the shared mutateDocument seam).
+ */
+export function setSeenDegradationCauseHash(hash: string): void {
+  mutateDocument((doc) => ({
+    ...doc,
+    userConfig: {
+      ...doc.userConfig,
+      seenDegradationCauseHash: hash,
+    },
+  }));
+}
+
 /** Test-only: reset module state. */
 export function __resetUserConfigForTest(): void {
   __resetUserStateForTest();

@@ -684,10 +684,12 @@ const FIXTURE_SEED = `try {
 /**
  * Navigate to the deterministic fixture state (no backend, route-mocked).
  *
- * Installs the shared route-mock + walkthrough seed, then waits for the search rail
- * button — the app-ready signal present on every surface. This is the e2e twin of
- * `jseval ui-shot --fixtures`, so the e2e a11y audit and the agent loop now read AND
- * capture the one state described by `governance/ui-a11y-baseline.v1.json`.
+ * Installs the shared route-mock + walkthrough seed, then waits for the rail button of the
+ * default landing surface — the app-ready signal present on every surface. This is the e2e twin
+ * of `jseval ui-shot --fixtures`, so the e2e a11y audit and the agent loop now read AND capture
+ * the one state described by `governance/ui-a11y-baseline.v1.json`. Search Thread S5b — the
+ * standalone `core.search-surface` rail button is retired; the default landing surface is now
+ * `core.unified-chat-surface` (its retrieve tier).
  */
 export async function navigateToFixtureMode(page: Page): Promise<void> {
   await page.addInitScript(FIXTURE_SEED);
@@ -706,7 +708,7 @@ export async function navigateToFixtureMode(page: Page): Promise<void> {
   );
   await page.goto('/');
   await page
-    .locator('[data-surface-id="core.search-surface"]')
+    .locator('[data-surface-id="core.unified-chat-surface"]')
     .first()
     .waitFor({ state: 'visible', timeout: 15_000 });
 }

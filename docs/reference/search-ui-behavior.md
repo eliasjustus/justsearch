@@ -26,7 +26,9 @@ For design philosophy and architecture, see `docs/explanation/10-ui-ux-design.md
 > `[n]` citations + a source chip; clicking a citation jumps to Preview and highlights
 > the grounding passage. **Spot-unverified (lower-value nuances):** arrow-key cursor
 > vs `Enter`-to-inspect, multi-select checkboxes, and citation hover-cards — re-check
-> against `shell-v0/views/SearchSurface.ts` if a specific claim matters. (Tracked: tempdoc 579.)
+> against `shell-v0/views/UnifiedChatView.ts` (retrieve tier) + `shell-v0/components/searchResults/ResultsCard.ts`
+> if a specific claim matters (Search Thread S5b: the standalone `SearchSurface.ts` this
+> pointed at is retired). (Tracked: tempdoc 579.)
 
 ---
 
@@ -62,7 +64,7 @@ Focus cycles through zones via Tab / Shift+Tab. Cmd/Ctrl+K always returns focus 
 
 ### Query Correction
 
-The backend returns `correctedQuery` and `correctionApplied` fields when automatic query correction occurs. The search surface (`shell-v0/views/SearchSurface.ts`) renders a correction banner above results when these fields are present. The banner includes a clickable link ("Search instead for [original query]?") that re-runs the search with the uncorrected query.
+The backend returns `correctedQuery` and `correctionApplied` fields when automatic query correction occurs. (Search Thread S5b: the standalone `SearchSurface.ts` this section pointed at is retired — the retrieve tier now lives in `shell-v0/views/UnifiedChatView.ts` + `shell-v0/components/searchResults/ResultsCard.ts`; this correction-banner behavior predates that migration and was not found live in either — pre-existing doc/code drift, logged for a fuller pass.)
 
 ### Zero Results
 
@@ -304,7 +306,7 @@ Three selection concepts coexist, but cursor and selection are synchronized:
 | **Multi-selection** | Checkbox click, Space, Ctrl/Cmd+click | Amber background tint, checked checkbox with glow | Batch operations (AI summarize, ask question) |
 | **Range selection** | Shift+Click | Selects all items between anchor and target | Contiguous multi-select (desktop convention) |
 
-- Arrow keys move cursor AND selection simultaneously — they are kept in sync within the search surface (`shell-v0/views/SearchSurface.ts`). Separate `cursorFileId` and `selectedFileId` state fields are maintained, but in practice they stay in sync.
+- Arrow keys move cursor AND selection simultaneously — they are kept in sync within the search results presentation (Search Thread S5b: `shell-v0/views/SearchSurface.ts` is retired; the retrieve tier lives in `shell-v0/views/UnifiedChatView.ts` + `shell-v0/components/searchResults/ResultsCard.ts`). Separate `cursorFileId` and `selectedFileId` state fields are maintained, but in practice they stay in sync.
 - Clicking a row sets selection (opens Inspector) AND moves cursor
 - Clicking the same row again deselects it and closes the Inspector (toggle behavior)
 - Space toggles multi-selection on the current item

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { agencyPosture, postureChrome } from './agencyPosture.js';
+import { agencyPosture, postureChrome, deriveAffordance } from './agencyPosture.js';
+import type { AffordanceDerivationInput } from './agencyPosture.js';
 
 describe('agencyPosture (561 C-2 — the graded continuum signal)', () => {
   it('answer-plane affordances are posture 0 (oracle), regardless of the dial', () => {
@@ -33,5 +34,53 @@ describe('postureChrome (561 C-2 — graded chrome copy)', () => {
     expect(postureChrome(2).approvalPosture).toContain('confirming writes');
     // Honesty: the AUTO posture reflects the C-4 floor (irreversible writes still confirm).
     expect(postureChrome(3).approvalPosture).toContain('confirming irreversible writes');
+  });
+});
+
+describe('deriveAffordance (Search Thread S5a — the tier derivation authority)', () => {
+  const base: AffordanceDerivationInput = {
+    explicit: null,
+    route: null,
+    hasSchemaAttachment: false,
+  };
+
+  it('defaults to the retrieve floor when nothing is held', () => {
+    expect(deriveAffordance(base)).toBe('retrieve');
+  });
+
+  it('explicit choice wins over everything (sticky tier)', () => {
+    // Every explicit value beats every combination of the derived inputs.
+    for (const explicit of ['none', 'retrieve', 'documents', 'extract', 'agent'] as const) {
+      for (const route of ['search', 'ask', null] as const) {
+        for (const hasSchemaAttachment of [true, false]) {
+          expect(deriveAffordance({ explicit, route, hasSchemaAttachment })).toBe(explicit);
+        }
+      }
+    }
+  });
+
+  it('a held schema attachment derives extract (Structured is an attachment, decision 6)', () => {
+    expect(deriveAffordance({ ...base, hasSchemaAttachment: true })).toBe('extract');
+    // ...and outranks the committed route: the attachment is the stronger held artifact.
+    expect(deriveAffordance({ ...base, hasSchemaAttachment: true, route: 'ask' })).toBe('extract');
+  });
+
+  it("committed route 'ask' derives documents (submit-time input)", () => {
+    expect(deriveAffordance({ ...base, route: 'ask' })).toBe('documents');
+  });
+
+  it("committed route 'search' and the standing view (route null) both stay on the floor", () => {
+    expect(deriveAffordance({ ...base, route: 'search' })).toBe('retrieve');
+    expect(deriveAffordance({ ...base, route: null })).toBe('retrieve');
+  });
+
+  it("never derives 'agent' or 'none' — delegation is always an explicit act (decision B14)", () => {
+    for (const route of ['search', 'ask', null] as const) {
+      for (const hasSchemaAttachment of [true, false]) {
+        const derived = deriveAffordance({ explicit: null, route, hasSchemaAttachment });
+        expect(derived).not.toBe('agent');
+        expect(derived).not.toBe('none');
+      }
+    }
   });
 });

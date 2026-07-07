@@ -20,10 +20,11 @@ final class CoreSurfaceCatalogTest {
 
   @Test
   @DisplayName(
-      "Catalog ships 19 entries — 561 retired the standalone Agent surface; 565 §15.C retired"
+      "Catalog ships 18 entries — 561 retired the standalone Agent surface; 565 §15.C retired"
           + " core.workflow-surface; 569 §19 added the presentation gallery + editor; 576 §15 added"
           + " core.governance-surface; 583 §D.3b added core.api-explorer-surface (the read-only"
-          + " route-manifest dashboard); 629 added core.security-surface (Security & Privacy)")
+          + " route-manifest dashboard); 629 added core.security-surface (Security & Privacy); Search"
+          + " Thread S5b retired the standalone Search surface (folded into core.unified-chat-surface)")
   void surfaceCount() {
     SurfaceCatalog catalog = new CoreSurfaceCatalog();
     // Tempdoc 571 §11 / 578 added core.system-surface (the System hub host): 16 → 17. Tempdoc 578
@@ -31,7 +32,8 @@ final class CoreSurfaceCatalogTest {
     // Tempdoc 576 §15 added core.governance-surface (DEEPLINK governance dashboard): 16 → 17.
     // Tempdoc 583 §D.3b added core.api-explorer-surface (DEEPLINK route-manifest dashboard): 17 → 18.
     // Tempdoc 629 added core.security-surface (RAIL — encryption control + at-rest status): 18 → 19.
-    assertEquals(19, catalog.definitions().size());
+    // Search Thread S5b RETIRED core.search-surface (folded into core.unified-chat-surface): 19 → 18.
+    assertEquals(18, catalog.definitions().size());
   }
 
   @Test

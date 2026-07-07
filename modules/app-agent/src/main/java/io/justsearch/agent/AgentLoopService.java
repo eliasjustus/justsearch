@@ -445,6 +445,10 @@ public final class AgentLoopService implements AgentService {
     // (IntentGateEvaluator.agentGate) reads it so the FE obeys the verdict instead of re-deriving.
     session.setAutonomyLevel(
         io.justsearch.agent.api.registry.AutonomyLevel.fromWire(request.autonomyLevel()));
+    // Tempdoc S7 — the FE's scope-chip selection rides the request; AgentToolDispatcher.scopeToolCall
+    // reads it off the session to filter every search-tool call in this run. Empty = unscoped
+    // (unchanged behavior).
+    session.setDocIdsScope(request.docIds());
     if (Boolean.TRUE.equals(backgroundRun.get())) {
       session.markBackground(); // Tempdoc 561 P-D: safe-by-default safety gate for unwatched runs
     }
@@ -726,6 +730,11 @@ public final class AgentLoopService implements AgentService {
   public List<io.justsearch.agent.api.lifecycle.AgentLifecycle> presenceSince(
       java.time.Instant since) {
     return queries.presenceSince(since);
+  }
+
+  @Override
+  public String appendSearchEvent(String conversationId, Map<String, Object> attributes) {
+    return runStore.appendSearchEvent(conversationId, attributes);
   }
 
   @Override

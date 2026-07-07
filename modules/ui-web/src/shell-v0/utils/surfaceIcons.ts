@@ -9,7 +9,10 @@
 import type { IconName } from '../components/Icon.js';
 
 const SURFACE_ICONS: Record<string, IconName> = {
-  'core.search-surface': 'search',
+  // Search Thread S5b — the standalone `core.search-surface` is retired (folded into
+  // `core.unified-chat-surface` below); a historical NavigationJournal entry recorded with the old
+  // id falls back to the generic 'hard-drive' icon, matching the established pattern for other
+  // retired surface ids (core.agent-surface, core.system-self-view) — none get a dedicated entry.
   'core.library-surface': 'folder-plus',
   'core.browse-surface': 'folder-tree',
   'core.brain-surface': 'cpu',

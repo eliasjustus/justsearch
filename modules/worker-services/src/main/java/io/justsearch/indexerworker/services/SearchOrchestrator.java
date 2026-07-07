@@ -48,6 +48,11 @@ public final class SearchOrchestrator {
   private final SearchPlanner planner;
   private final SearchExecutor executor;
   private final SearchResponseBuilder responseBuilder;
+  // Tempdoc 687 R3d: retained only for the boot-time warmUp() empty-index guard below.
+  private final io.justsearch.adapters.lucene.runtime.IndexCountOps indexCountOps;
+
+  /** Synthetic, non-empty query text for {@link #warmUp()} — never sent to a real user. */
+  private static final String WARMUP_QUERY_TEXT = "warmup";
 
   /** Back-compat ctor — default-constructs an empty EncoderBindings (tests, etc.). */
   public SearchOrchestrator(LuceneRuntime lifecycle, EmbeddingProvider embeddingProvider) {
@@ -90,6 +95,7 @@ public final class SearchOrchestrator {
             lifecycle.textQueryOps(),
             lifecycle.facetingEngine(),
             lifecycle::indexAnalyzerOrNull);
+    this.indexCountOps = lifecycle.indexCountOps();
   }
 
   /** Reads the 6 volatile slots once per request into a SearchInputCapture snapshot. */
@@ -129,6 +135,41 @@ public final class SearchOrchestrator {
     SearchDecision decision = planner.plan(inputs);
     SearchOutcome outcome = executor.execute(decision, inputs);
     return responseBuilder.build(outcome, decision, inputs);
+  }
+
+  /**
+   * Tempdoc 687 R3d: boot-time warm-up. Runs one synthetic, non-blank BM25 query through
+   * capture → plan → execute — the same cold components a real user's first query pays
+   * JIT/class-load cost for (the ICU analyzer via {@code SearchInputCapture.computeQpp},
+   * the Lucene query builder + {@code IndexSearcher} via {@code SearchExecutor}'s sparse-
+   * shortcut path, and the QPP term-stats accessors).
+   *
+   * <p>Deliberately stops before {@link SearchResponseBuilder#build}: that step is where
+   * {@code OperationalMetrics.recordSearch(...)} lives (worker-internal search-count/latency
+   * telemetry surfaced on {@code /api/status}), so calling only capture/plan/execute keeps
+   * this pass invisible to it — a synthetic boot-time call must not appear as the user's
+   * first "real" search. It is also below the gRPC boundary entirely: this method is called
+   * directly by {@code KnowledgeServer} in-process, so it never reaches the Head's
+   * app-services feedback layer (feature snapshots, dispositions, GPL triples), which only
+   * runs against gRPC search responses that actually cross the wire.
+   *
+   * @return {@code true} if the warm-up pass ran, {@code false} if it was skipped because the
+   *     index has zero documents (nothing to search yet)
+   */
+  public boolean warmUp() {
+    if (indexCountOps.docCount() <= 0) {
+      return false;
+    }
+    SearchRequest request =
+        SearchRequest.newBuilder()
+            .setQuery(WARMUP_QUERY_TEXT)
+            .setLimit(1)
+            .setPipeline(io.justsearch.ipc.PipelineConfig.newBuilder().setSparseEnabled(true).build())
+            .build();
+    SearchInputs inputs = capture.capture(request, false, null);
+    SearchDecision decision = planner.plan(inputs);
+    executor.execute(decision, inputs);
+    return true;
   }
 
   // ============================================================

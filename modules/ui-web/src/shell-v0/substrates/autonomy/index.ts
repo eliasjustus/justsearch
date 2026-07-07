@@ -83,6 +83,26 @@ export function setAutonomyLevel(level: AutonomyLevel): void {
   notifyAll(_listeners);
 }
 
+/**
+ * Search Thread S7 (tempdoc decision 6) — the one-time Auto-mode consent flag. Selecting Auto the
+ * FIRST time shows a consent modal (`AutonomyDial.select`); accepting it persists this flag so
+ * every later switch to Auto is silent. Deliberately co-located with `KEY` (not a per-profile
+ * `UserStateDocument` slice): the autonomy LEVEL itself is a single global preference, not
+ * per-profile, so gating it with a per-profile consent flag would split its scope inconsistently.
+ * Same lightweight persisted-flag technique as the level above (not a migration-ladder document).
+ */
+const CONSENT_KEY = 'justsearch.autonomy.autoConsent.v1';
+
+/** True once the user has confirmed the Auto-mode consent modal at least once. */
+export function hasAutoConsent(): boolean {
+  return safeLocalStorage()?.getItem(CONSENT_KEY) === '1';
+}
+
+/** Record that the user confirmed the Auto-mode consent modal. Persists immediately. */
+export function setAutoConsent(): void {
+  safeLocalStorage()?.setItem(CONSENT_KEY, '1');
+}
+
 export function listAutonomyLevels(): readonly AutonomyLevel[] {
   return LEVELS;
 }
@@ -178,4 +198,5 @@ export function __resetAutonomyForTest(): void {
   _level = DEFAULT_LEVEL;
   _listeners.clear();
   safeLocalStorage()?.removeItem(KEY);
+  safeLocalStorage()?.removeItem(CONSENT_KEY);
 }

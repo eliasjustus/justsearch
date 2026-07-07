@@ -31,6 +31,55 @@ export const unifiedChatBodyStyles = css`
       border-radius: 0.5rem;
       font-size: var(--font-size-sm);
     }
+    /* Search Thread Round-2 R1a — the degradation banner (596 §11.4): the expanded multi-bullet
+       form and the collapsed one-line form share this row/list layout. */
+    .degradation-banner .notice-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4rem;
+    }
+    .degradation-banner .notice-row-collapsed {
+      align-items: center;
+    }
+    .degradation-summary {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .degradation-banner-collapsed .degradation-summary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .degradation-banner .notice-causes {
+      margin: 0.35rem 0 0 1.35rem;
+      padding: 0;
+    }
+    .degradation-banner .notice-remedy {
+      display: inline-flex;
+      flex: 0 0 auto;
+      margin-top: 0.35rem;
+    }
+    .degradation-banner-collapsed .notice-remedy {
+      margin-top: 0;
+    }
+    .degradation-expand,
+    .degradation-collapse {
+      all: unset;
+      flex: 0 0 auto;
+      cursor: pointer;
+      color: var(--text-secondary);
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.25rem;
+      line-height: 1;
+    }
+    .degradation-expand:hover,
+    .degradation-collapse:hover,
+    .degradation-expand:focus-visible,
+    .degradation-collapse:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
+    }
     .replay-label { flex: 0 0 auto; color: var(--text-secondary); }
     .replay-slider { flex: 1 1 auto; }
     .replay-btn, .replay-exit, .replay-fork {
@@ -271,6 +320,28 @@ export const unifiedChatBodyStyles = css`
         display: block;
         min-width: 15rem;
         max-width: 20rem;
+      }
+    }
+    /* Search Thread S6 — the reading pane (\`<jf-document-pane>\`, \`.document-pane\` zone col 5). Narrow:
+       no \`grid-column\` override, so default grid auto-placement (one explicit column, \`.conversation\`)
+       drops it into its own implicit row BELOW the conversation — a stacked narrow layout, mirroring
+       the evidence rail's "hide below the wide breakpoint" precedent in spirit (the zone doesn't claim
+       its own column outside \`wideOnly\`'s wide media query) without losing narrow readability (unlike
+       the rail, which has a toggle-drawer fallback the reading pane does not). A fixed-position overlay
+       was considered and rejected: \`position: fixed\` outside the OverlayHost trips the layout-purity gate. */
+    .document-pane {
+      min-width: 0;
+      min-height: 24rem;
+      overflow: hidden;
+    }
+    @media (min-width: 64rem) {
+      .document-pane {
+        /* grid-column:5 is GENERATED (composeGridStyles over CONVERSATION_ZONES), overriding the narrow
+           stacked placement above at this breakpoint. */
+        min-width: 24rem;
+        max-width: 28rem;
+        min-height: 0;
+        height: 100%;
       }
     }
     /* Tempdoc 561 P-B3: the action plane fills the one window's body; the hosted agent view
@@ -575,11 +646,14 @@ export const unifiedChatBodyStyles = css`
       max-width: 60ch;
     }
     /* Tempdoc 577 §2.12 Move 3 — the epistemic answer FRAME line (generalizes the round-1
-       uncited-note): a one-line trust header above an answer that is not fully grounded, so an
-       ungrounded model answer cannot pose as index-grounded. Ambient by default; the ungrounded
-       arm is marked a touch more present (it is the trust-critical case). */
+       uncited-note): a one-line trust note, so an ungrounded model answer cannot pose as
+       index-grounded. Ambient by default; the ungrounded arm is marked a touch more present (it
+       is the trust-critical case). Search Thread S7 (tempdoc decision 6) — this is now also THE
+       quiet per-turn receipt line (grounding verdict + duration + model, see .answer-receipt below):
+       margin moved from -bottom to -top since the non-transform frames now render UNDER the answer
+       block (the transform frame keeps its own pre-content position — see .answer-frame-transform). */
     .answer-frame {
-      margin-bottom: 0.4rem;
+      margin-top: 0.4rem;
       font-size: var(--font-size-xs);
       font-style: italic;
       color: var(--text-secondary);
@@ -588,11 +662,23 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-warning);
       font-style: normal;
     }
+    /* Search Thread S7 (tempdoc decision 6) — a fully grounded answer carries no warning text, only
+       the quiet receipt tail (duration + model); ambient, non-italic (never reads as a caveat). */
+    .answer-frame-grounded {
+      color: var(--text-tertiary);
+      font-style: normal;
+    }
     /* Tempdoc 603 D-4 — the SOURCED frame: the answer drew on retrieved documents but per-sentence
        grounding was not verified (document-level retrieval). Informational, NOT a warning — a calm
        secondary note (provenance is real), distinct from the italic default and the warning ungrounded arm. */
     .answer-frame-sourced {
       color: var(--text-secondary);
+      font-style: normal;
+    }
+    /* Search Thread S7 (tempdoc decision 6) — the receipt tail (duration + model) is always plain
+       tokens, never italicized by the surrounding frame's own styling (e.g. the base italic default,
+       or the grounding-why disclosure it can sit beside). */
+    .answer-receipt {
       font-style: normal;
     }
     /* Tempdoc 603 C3 — an extraction (transform) is the model's own structuring, not retrieved data.
@@ -731,25 +817,23 @@ export const unifiedChatBodyStyles = css`
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .affordance-bar {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding-bottom: 0.25rem;
-    }
-    /* Tempdoc 561 C-2: the supervision dial sits at the trailing edge of the crossing control. */
-    .affordance-dial {
-      margin-left: auto;
-    }
-    /* Tempdoc 561 surface tier: the retrospective "Activity" button sits at the trailing edge. */
-    .affordance-trailing {
-      margin-left: auto;
-    }
     /* Tempdoc 561 C-2: the rail summary names the approval posture (graded by the dial). */
     .activity-rail > summary {
       color: var(--text-secondary);
     }
-    .affordance-btn {
+    /* Search Thread S5b — the affordance TAB ROW (.affordance-bar/.affordance-btn) is retired
+       (the row died with the standalone tabs — the retrieve tier, the route chip, the results
+       card's Ask AI, and the landing escalation strip are the crossing controls now). The two
+       surviving controls that used to reuse .affordance-btn — History (moved to the header,
+       styled via the shared .new-chat-btn) and the agent-only toolbar below — get their own
+       modest classes instead. */
+    .agent-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding-bottom: 0.35rem;
+    }
+    .agent-tool-btn {
       padding: 0.2rem 0.5rem;
       font-size: var(--font-size-xs);
       border-radius: 0.25rem;
@@ -759,14 +843,14 @@ export const unifiedChatBodyStyles = css`
       cursor: pointer;
       transition: all var(--duration-fast) var(--ease-standard);
     }
-    .affordance-btn:hover {
+    .agent-tool-btn:hover {
       border-color: var(--accent-tint);
       color: var(--text-primary);
     }
-    /* Tempdoc 577 Ext III — the retrospective toggle is a panel control, not a posture: a gap
-     * separates it from the autonomy dial so it cannot read as a fourth segment. */
-    .retrospective-toggle {
-      margin-left: 0.75rem;
+    .agent-tool-btn[aria-pressed='true'] {
+      background: var(--accent-tint);
+      color: var(--accent-on-tint);
+      border-color: var(--accent-tint);
     }
     /* Tempdoc 565 §12.3.E — at the wide breakpoint the persistent evidence rail replaces the toggle
        drawer, so the "Sources · N" affordance (which opens that drawer) is redundant and hidden. */
@@ -774,46 +858,6 @@ export const unifiedChatBodyStyles = css`
       .sources-affordance {
         display: none;
       }
-    }
-    .affordance-btn.active {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-color: var(--accent-tint);
-    }
-    .affordance-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    .affordance-btn:disabled:hover {
-      border-color: var(--border-subtle);
-      color: var(--text-secondary);
-    }
-    /* Tempdoc 596 — the capability tabs are jf-control. The visual box is the inner button
-       (::part(control)); the host is a bare wrapper so the base .affordance-btn box doesn't
-       double up. The dimmed unavailable look is owned by jf-control (button[aria-disabled]). */
-    jf-control.affordance-btn {
-      border: none;
-      background: transparent;
-      padding: 0;
-    }
-    jf-control.affordance-btn::part(control) {
-      padding: 0.2rem 0.5rem;
-      font-size: var(--font-size-xs);
-      border-radius: 0.25rem;
-      border: 1px solid var(--border-subtle);
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all var(--duration-fast) var(--ease-standard);
-    }
-    jf-control.affordance-btn:hover::part(control) {
-      border-color: var(--accent-tint);
-      color: var(--text-primary);
-    }
-    jf-control.affordance-btn.active::part(control) {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-color: var(--accent-tint);
     }
     /* Tempdoc 561 P-A/P-B (Slice 3): the secondary Activity rail — demoted agent chrome (budget),
        collapsible so the conversation stays primary. */
@@ -979,6 +1023,168 @@ export const unifiedChatBodyStyles = css`
       gap: 0.5rem;
       align-items: stretch;
     }
+    /*
+     * Search Thread D2/D3 (stage S2, item 5) — jf-composer renders its own div.composer into LIGHT
+     * DOM (Composer.ts createRenderRoot returns "this"), so that inner div lands in THIS shadow root
+     * too, directly under jf-composer, and inherits the .composer{flex-direction:column} override
+     * above meant for the OUTER wrapper — stretching the submit button to the wrapper's full width.
+     * Restore composerStyles' own row layout specifically for the nested instance (the docked
+     * .composer > jf-composer case only — the landing composer wraps in .landing-composer instead,
+     * so it never nests under a .composer-classed ancestor and needs no override).
+     */
+    .composer > jf-composer > .composer {
+      flex-direction: row;
+      align-items: stretch;
+      gap: 0.5rem;
+    }
+    .composer > jf-composer > .composer button {
+      flex: 0 0 auto;
+    }
+    /* Search Thread D2/D3 (stage S2, item 4) — the per-turn route indicator row, right-aligned above
+       the composer, shown only in the retrieve affordance. Search Thread S4-final — also hosts the
+       "⌄ recent" query-trail dropdown alongside the route chip. */
+    .route-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      font-size: var(--font-size-xs);
+    }
+    /* Search Thread S4-final — the recent-query trail dropdown (item 5): mirrors RecentsMenu's
+       native-button + role="menu" convention. */
+    .query-trail {
+      position: relative;
+      display: inline-flex;
+    }
+    .query-trail-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+      background: transparent;
+      border: none;
+      padding: 0.125rem 0.35rem;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary);
+      cursor: pointer;
+      border-radius: 0.25rem;
+    }
+    .query-trail-toggle:hover,
+    .query-trail-toggle:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
+    }
+    .query-trail-menu {
+      position: absolute;
+      top: calc(100% + 0.25rem);
+      right: 0;
+      z-index: var(--z-overlay-float);
+      min-width: 12rem;
+      max-width: 20rem;
+      padding: 0.25rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      box-shadow: var(--shadow-float);
+    }
+    .query-trail-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: var(--font-size-sm);
+      padding: 0.35rem 0.5rem;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .query-trail-item:hover,
+    .query-trail-item:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
+    }
+    /* Search Thread D5 (stage S3) — the pinned scope-chip row, shown above the composer (and above
+       .route-row when present) in every affordance — a scope constrains both search and ask. */
+    .scope-row {
+      display: flex;
+      justify-content: flex-start;
+    }
+    /* Search Thread D5 (stage S3) — the quiet "Ask about these N results" affordance shown above the
+       retrieve card when >1 rows are selected. */
+    .scope-selection-btn {
+      align-self: flex-start;
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      font-size: var(--font-size-sm);
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    /* Search Thread D2/D3 (tempdoc decision 8, stage S2, item 7; stable-slot rev) — the bare-landing
+       intro (title + corpus) sits at the BOTTOM of the conversation column, directly above the
+       CSS-centered composer; the composer itself never re-parents (a re-parented textarea drops
+       keystrokes racing the first render — live-validation finding). */
+    .landing {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      text-align: center;
+      margin-bottom: 0.75rem;
+    }
+    /* The stable bottom slot in landing mode: bounded, centered, lifted off the floor. */
+    .composer.landing-dock {
+      align-self: center;
+      width: min(42rem, 100%);
+      /* 687 R5a — real flex centering in the freed space (the conversation zone collapses to its
+         natural height in landing), replacing the vh-margin approximation whose bands interleaved
+         with the intro at short viewports (the audit-measured overlap). */
+      margin-top: auto;
+      margin-bottom: auto;
+      border-top: none;
+    }
+    .conversation-zone.landing-collapsed {
+      flex: 0 0 auto;
+    }
+    .composer.landing-dock .escalation-strip {
+      margin-top: 0.75rem;
+    }
+    .landing-title {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .landing-corpus {
+      font-size: var(--font-size-sm);
+      color: var(--text-secondary);
+    }
+    .landing-add-folders {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      font-size: var(--font-size-sm);
+      color: var(--accent);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .escalation-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary);
+    }
     /* Schema input textarea: not migrated to jf-composer (no submit). */
     .composer textarea.mono {
       font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
@@ -989,6 +1195,74 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    /* S5b pin-parity — the landing's pinned-search strip + the bar's pin toggle. */
+    .pinned-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+    }
+    .pinned-search-btn {
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      padding: 0.1rem 0.45rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .pinned-search-btn:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    /*
+     * Search Thread Round-2 R4 — the composer bar's SECONDARY affordances (pin, schema
+     * attach/detach, the landing's agent-delegate entry) conform to the jf-control atom, skinned
+     * as ONE quiet tier via ::part(control) (the RouteChip precedent) instead of four bespoke
+     * button classes each hand-rolling the same bordered-pill look. jf-route-chip stays the row's
+     * one visually PRIMARY element (its own, unrelated style, untouched here). Orphaned by this
+     * conformance (deleted, not left for a later sweep): the old bespoke .pin-toggle /
+     * .schema-attach / .schema-detach / .escalation-delegate button rules, which also lost the
+     * accent-cascade fight against .composer button (Composer.ts's composerStyles, imported
+     * ahead of this stylesheet) — .composer button is (0,1,1) specificity, a single bespoke class
+     * is (0,1,0), so the imported accent-tint fill silently WON despite each class's own
+     * background: none override. Composing jf-control sidesteps the fight entirely: its button
+     * renders inside jf-control's OWN shadow root, which .composer button (scoped to THIS
+     * shadow root) cannot reach at all — conformance, not a specificity war.
+     */
+    jf-control.pin-toggle::part(control),
+    jf-control.schema-attach::part(control),
+    jf-control.schema-detach::part(control),
+    jf-control.escalation-delegate::part(control) {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.1rem 0.5rem;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      background: none;
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      transition: color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+    }
+    jf-control.pin-toggle::part(control):hover,
+    jf-control.schema-attach::part(control):hover,
+    jf-control.schema-detach::part(control):hover,
+    jf-control.escalation-delegate::part(control):hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    /* The pinned state is the one deliberate departure from the shared quiet look (the accent
+       marks the exception being pinned, not a fourth bespoke class). */
+    jf-control.pin-toggle[data-pressed]::part(control) {
+      color: var(--accent);
+      border-color: var(--accent);
     }
     .error {
       padding: 0.5rem 0.75rem;

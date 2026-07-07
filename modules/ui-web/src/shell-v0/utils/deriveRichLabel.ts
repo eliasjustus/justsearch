@@ -15,8 +15,9 @@ import { parseUrl } from '../router/parser.js';
 
 const MAX_STATE_CHARS = 30;
 
+// Search Thread S5b — `core.search-surface` is retired (folded into `core.unified-chat-surface`
+// below); a historical NavigationJournal entry with the old id falls back to the bare surface title.
 const STATE_KEY_BY_SURFACE: Record<string, string> = {
-  'core.search-surface': 'query',
   'core.ask-surface': 'query',
   'core.unified-chat-surface': 'query',
 };

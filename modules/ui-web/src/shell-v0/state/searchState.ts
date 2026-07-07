@@ -321,6 +321,9 @@ export function buildSearchIntent(
   // filter, so the backend default-EXCLUDES the reserved agent-history collection; 'agent-history'
   // scopes the query to it (the user searching their own agent history).
   scope: SearchScope = 'documents',
+  // Search-Thread S3 — pinned scope chips (a file / a result set). Explicit parameter (not read
+  // from module state) so this constructor stays pure/testable, mirroring `scope` above.
+  chips: readonly SearchScopeChip[] = [],
 ): SearchRequestBody {
   const body: SearchRequestBody = { query: q, limit: 50 };
   if (stage === 'quick') {
@@ -355,6 +358,15 @@ export function buildSearchIntent(
   // excludes it). The wire key is the camelCase Java record component name (`collection`).
   if (scope === 'agent-history') {
     filterObj.collection = ['agent-history'];
+  }
+  // Search-Thread S3 — scope chips constrain both instant search and AI retrieval to the union of
+  // their pinned docIds (`KnowledgeSearchRequest.Filters.docIds`, applied in QueryFilterBuilder).
+  if (chips.length > 0) {
+    const docIdSet = new Set<string>();
+    for (const c of chips) for (const id of c.docIds) docIdSet.add(id);
+    if (docIdSet.size > 0) {
+      filterObj.docIds = [...docIdSet];
+    }
   }
   if (Object.keys(filterObj).length > 0) {
     body.filters = filterObj;
@@ -425,6 +437,73 @@ export function setSearchScope(scope: SearchScope): void {
   if (state.query.trim()) submitSearch();
 }
 
+// ===== Search-Thread S3 — scope chips (constrain instant search + AI retrieval to a file or a
+// result set) =====
+//
+// A scope chip is a session-ephemeral constraint the user pins onto the search: "just this file"
+// or "just this result set". Distinct from {@link SearchScope}, which toggles the collection
+// (documents vs agent-history) — chips narrow WITHIN the active scope via `filters.docIds`.
+export interface SearchScopeChip {
+  kind: 'file' | 'result-set' | 'path';
+  label: string;
+  docIds: readonly string[];
+}
+
+let scopeChips: SearchScopeChip[] = [];
+const scopeChipListeners = new Set<(chips: SearchScopeChip[]) => void>();
+
+function emitScopeChips(): void {
+  for (const l of scopeChipListeners) l(scopeChips);
+}
+
+/** Snapshot of the active scope chips. */
+export function getScopeChips(): SearchScopeChip[] {
+  return scopeChips;
+}
+
+/** Subscribe to scope-chip changes. Listener fires once with the current value on subscribe,
+ *  then on every mutating call. Returns an unsubscribe handle (mirrors {@link subscribeSearch}). */
+export function subscribeScopeChips(listener: (chips: SearchScopeChip[]) => void): () => void {
+  scopeChipListeners.add(listener);
+  listener(scopeChips);
+  return () => scopeChipListeners.delete(listener);
+}
+
+/** Same kind + same docId set (order-independent) — the dedup key for {@link addScopeChip}. */
+function sameScopeChip(a: SearchScopeChip, b: SearchScopeChip): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.docIds.length !== b.docIds.length) return false;
+  const bSet = new Set(b.docIds);
+  return a.docIds.every((id) => bSet.has(id));
+}
+
+/**
+ * Add a scope chip; a duplicate (same kind + same docId set) is a no-op. Deliberately does NOT
+ * re-run the active search — mirrors the facet-selection precedent (`toggleFacetValue` in
+ * searchFiltersState.ts, which only mutates + notifies; SearchSurface/UnifiedChatView call
+ * `submitSearch()` themselves after toggling). The host does the same here.
+ */
+export function addScopeChip(chip: SearchScopeChip): void {
+  if (scopeChips.some((c) => sameScopeChip(c, chip))) return;
+  scopeChips = [...scopeChips, chip];
+  emitScopeChips();
+}
+
+/** Remove the chip at `index`. Out-of-range indices are a no-op. Does NOT re-run the search
+ *  (same posture as {@link addScopeChip} — the host re-issues). */
+export function removeScopeChip(index: number): void {
+  if (index < 0 || index >= scopeChips.length) return;
+  scopeChips = scopeChips.filter((_, i) => i !== index);
+  emitScopeChips();
+}
+
+/** Clear every scope chip. Does NOT re-run the search (same posture as {@link addScopeChip}). */
+export function clearScopeChips(): void {
+  if (scopeChips.length === 0) return;
+  scopeChips = [];
+  emitScopeChips();
+}
+
 /**
  * Tempdoc 577 Phase 5 — explicit submit (Enter): skip the staging and run the
  * full refined pass immediately. Supersedes any pending quick/refined pass.
@@ -474,7 +553,14 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
   }, SLOW_HINT_MS);
   const t0 = performance.now();
   try {
-    const body = buildSearchIntent(q, getFilters(), stage, getFacetSelections(), _searchScope);
+    const body = buildSearchIntent(
+      q,
+      getFilters(),
+      stage,
+      getFacetSelections(),
+      _searchScope,
+      scopeChips,
+    );
     const res = await fetch((apiBase || '') + '/api/knowledge/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

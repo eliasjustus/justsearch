@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent.api;
 
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -152,6 +153,18 @@ public interface AgentService extends AgentRunQueries {
 
   /** Cancel an active agent session. */
   void cancelSession(String sessionId);
+
+  /**
+   * Tempdoc S4b (Search Thread) — persist a SEARCH interaction event for {@code conversationId}: a
+   * manually-triggered search action performed OUTSIDE the agent loop (not a tool call), so a reload
+   * of {@code GET /api/thread/{id}} still shows the committed search card (POST
+   * {@code /api/thread/{id}/events}). Returns the persisted event's id, or {@code null} if {@code
+   * conversationId} is blank or the capability is unavailable. Default no-op (null) so legacy
+   * {@code AgentService} implementations compile unchanged.
+   */
+  default String appendSearchEvent(String conversationId, Map<String, Object> attributes) {
+    return null;
+  }
 
   // Tempdoc 584 §B.4: the READ-TIME query/projection surface (availableOperations, undoOperation,
   // operationHistory/Detail, lastSessionSnapshot, listSessions, sessionSnapshot, resume*,

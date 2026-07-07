@@ -80,6 +80,40 @@ public final class AgentRunStore {
   }
 
   /**
+   * Tempdoc S4b (Search Thread) — persist a SEARCH interaction event for {@code conversationId}: a
+   * manually-triggered search action performed OUTSIDE the agent loop (not a tool call), so a reload
+   * of {@code GET /api/thread/{id}} still shows the committed search card. Writes a small dedicated
+   * run (its own generated sessionId, {@code shapeId="core.search-event"}) whose ONE event joins the
+   * conversation exactly like a workflow run (§15.C — the run-event store is already multi-shape, so
+   * this is a third shape sharing the same store, not a new persistence substrate). Returns the
+   * persisted event's projected wire id (the same id {@link AgentInteractionMapper#fromRunEvent}
+   * derives for it), or {@code null} if the store is disabled, {@code conversationId} is blank, or the
+   * write failed.
+   */
+  public synchronized String appendSearchEvent(String conversationId, Map<String, Object> attributes) {
+    if (!isEnabled() || conversationId == null || conversationId.isBlank()) {
+      return null;
+    }
+    String sessionId = java.util.UUID.randomUUID().toString();
+    String now = Instant.now().toString();
+    var meta = new LinkedHashMap<String, Object>();
+    meta.put("sessionId", sessionId);
+    meta.put("conversationId", conversationId);
+    meta.put("shapeId", "core.search-event");
+    meta.put("startedAt", now);
+    meta.put("updatedAt", now);
+    meta.put("background", false);
+    events.writeRunMeta(sessionId, meta);
+    Map<String, Object> record =
+        events.appendEvent(sessionId, "core.search-event", "search_executed", attributes);
+    if (record == null) {
+      return null;
+    }
+    Instant at = AgentInteractionMapper.parseTs(record.get("timestamp"));
+    return AgentInteractionMapper.searchEventId(conversationId, at);
+  }
+
+  /**
    * Tempdoc 561 P-A/P-B — register a listener fired (outside the write lock) on every persisted event.
    * The ledger's agent-action rows project from this, so the unified thread and agent History derive
    * from the ONE record and cannot structurally disagree.
