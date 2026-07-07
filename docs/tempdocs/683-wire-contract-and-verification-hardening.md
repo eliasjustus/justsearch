@@ -165,6 +165,44 @@ row).
   facts only, and any external reader should treat the "Why" section above as the
   complete rationale.
 
+## Deferred checks & unverified assumptions (nothing here is silently done)
+
+1. **Settings GET consumers still bypass the validated boundary.** The validated
+   client exists (`domains/settings.ts` GET/POST via `parseWireContract` +
+   generated `settingsV2Schema`), but `LibrarySurface`, `SettingsSurface`,
+   `BrainSurface`, and `themeState` still fetch `/api/settings/v2` directly.
+   Follow-up: migrate those call sites onto `getSettingsV2` (mechanical; the
+   boundary is ready).
+2. **Telemetry button-click E2E is deferred behind the dead-button fossil.** The
+   operation path is verified over the exact wire the FE client sends
+   (`POST /api/operations/core.export-diagnostics/invoke` with `args.feTelemetry`
+   → seeded context found in `justsearch-diagnostics-20260707-034655.zip`), and the
+   FE binding compiles/typechecks — but no user can click the button until the
+   upgrade-gap fix (inbox item) lands, so the full click-to-zip E2E remains to run
+   then.
+3. **`capture_evidence` via MCP works only after merge:** the dev MCP server spawns
+   `modules/ui-web/scripts/capture-evidence-bundle.mjs` from the MAIN checkout, so
+   pre-merge only the direct CLI path is exercisable (which was validated:
+   `EvidenceBundle v1 validation OK`, bundle `683-live-verify-20260706-215520-35120`).
+   Post-merge check: one MCP-tool capture against a live run.
+4. **AI-chain surfaces are live-unverified on this branch** (runtime activation
+   fails on fresh worktrees with `RUNTIME_VARIANT_NOT_INSTALLED` despite the shared
+   cuda12 resolution — inbox item). Strict-schema behavior on chat/summarize streams
+   is covered by unit suites only.
+5. **Leak/utility release sections are mechanism-only until the next recompose:**
+   the gates read `current_release` with `fallback_baselines` preserving prior
+   pinned values byte-identically (pinned by `tests/test_leak_gate.py` /
+   `test_utility_gate.py`); the committed `release.v1.json` carries no leak/utility
+   sections yet — they populate at the next `jseval release` compose from a full
+   eval run.
+6. **`corpus_source.upstream_revision` records null today** — the corpus-identity
+   path doesn't carry an upstream revision yet; the schema field + pass-through
+   exist, the recording waits on fetchers exposing it.
+7. **Ephemeral evidence pointers:** run/bundle artifacts cited in this doc live
+   under `tmp/` (gitignored, retention-pruned). They are dated evidence records, not
+   durable artifacts; the durable trace is `tmp/agent-telemetry/evidence-index.ndjson`
+   (machine-local) and the test suite that re-derives each claim.
+
 ## Process lessons from this branch (for future multi-agent implementation work)
 
 1. **Partitioned parallel implementation needs an item→owner table, diffed at
