@@ -77,6 +77,31 @@ All 6 tools validate their arguments against a declared JSON Schema at the MCP b
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
 
+## Structured retrieval evidence (tempdoc 658)
+
+`justsearch_search` and `justsearch_answer` return a machine-readable `structuredContent` object
+alongside the human-readable `content` text, so an agent can inspect *why* it got these results —
+not just read them. This is a projection of the same canonical records the desktop UI and REST API
+already render (`SearchTrace`, `ContextCitation`); it introduces no new authority
+(`governance/execution-surfaces.v1.json`).
+
+- **`justsearch_search` → `structuredContent`**: the query-level `searchTrace` (effective mode,
+  decision kind, degradation reason codes, and the per-stage list with status/reason/timing) plus a
+  `results` list carrying, per hit, its ranking `trace` (which legs placed it, at what rank/score) and
+  the fused-leg `legScores` (sparse/dense/splade/fused). The structural trace is always present; the
+  numeric per-hit detail tier is included only when the call sets `detail: true`.
+- **`justsearch_answer` → `structuredContent`**: the `citations` list (per-chunk provenance —
+  `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
+  mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
+  chunks considered/included, truncation). Citations are empty on the full-document fallback path.
+
+**Data exposure.** MCP tool responses are **not redacted** — path redaction applies to the diagnostics
+*export* bundle (a shareable artifact), not to live tool output. `citations[].parentDocId` is the
+document's identity (its absolute file path) and `excerpt` is the passage text; both are the user's own
+local data returned to the user's own local agent. This is the same identity `justsearch_search`
+already returns (its `path` field) and the desktop UI already shows. The `/mcp` endpoint is
+loopback-only (binds `127.0.0.1`; Hard Invariant #2), so nothing leaves the machine.
+
 ## Tool Selection
 
 Use `justsearch_answer` first when the user asks a question about
@@ -96,6 +121,14 @@ Use `justsearch_ingest` when the user wants new content indexed.
 Use `justsearch_status` to check index health, enrichment coverage,
 and document count before diagnosing empty results.
 
+This same comparative guidance — when to prefer the index over reading
+files directly — is delivered to the agent at connect time through the
+MCP `initialize` response's optional `instructions` field, which
+compatible clients (e.g. Claude Code) inject into the model's context.
+It is advisory guidance, not a contract, and states honestly that
+ordinary file tools are equally good for a small set of files or an
+exact string/filename lookup.
+
 ## Progressive Disclosure
 
 The MCP surface uses response-level hints instead of schema complexity.
@@ -105,6 +138,11 @@ Tools return contextual guidance at decision time:
 - **Many results** → "use facet values as filters to narrow down"
 - **Low enrichment** → "enrichment in progress — semantic search may be limited"
 - **Facet sidecar** → answer tool includes top sources and entities
+- **Comparative hint** → after an `answer` that drew on more than one
+  document, the response states factually how many distinct documents it
+  assembled evidence from in a single call — surfacing the index's
+  multi-document advantage at the moment the agent sees it worked, not only
+  in the tool description (which agents read once and forget)
 
 Advanced parameters (doc_ids, LUCENE syntax, entity filters) work when
 passed but are NOT in the visible schema. This is intentional — eval

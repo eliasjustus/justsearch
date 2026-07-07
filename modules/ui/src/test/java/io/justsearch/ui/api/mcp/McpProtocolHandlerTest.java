@@ -13,10 +13,19 @@ import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
+import io.justsearch.app.api.DocumentService;
+import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
+import io.justsearch.app.api.knowledge.SearchTrace;
+import io.justsearch.app.api.knowledge.SearchTrace.HitStage;
+import io.justsearch.app.api.knowledge.SearchTrace.StageId;
+import io.justsearch.app.api.knowledge.SearchTrace.StageStatus;
+import io.justsearch.app.api.knowledge.SearchTrace.TraceStage;
 import io.justsearch.app.api.mcp.McpContractVersions;
 import io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
+import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -92,6 +101,71 @@ class McpProtocolHandlerTest {
     Map<String, Object> resourcesCap = (Map<String, Object>) caps.get("resources");
     assertEquals(Boolean.FALSE, resourcesCap.get("listChanged"));
     assertEquals(Boolean.TRUE, resourcesCap.get("subscribe"));
+
+    // Tempdoc 655 (agent-legibility layer): initialize now carries the MCP `instructions` steering
+    // field — the one server-level surface an autonomous agent reads at tool-selection time. It must
+    // be present, non-blank, and COMPARATIVE (state when to prefer the index), not a bare feature list.
+    Object instructions = result.get("instructions");
+    assertNotNull(instructions, "initialize must return the MCP `instructions` steering field");
+    String instr = (String) instructions;
+    assertFalse(instr.isBlank(), "instructions must not be blank");
+    assertTrue(
+        instr.contains("justsearch_answer"),
+        "instructions must steer toward the primary retrieval tool");
+    assertTrue(
+        instr.toLowerCase().contains("prefer"),
+        "instructions must be comparative (when to prefer the index), not a bare feature list");
+  }
+
+  @Test
+  void instructionsAndPromptPath_shareSingleSourcedGuidance() throws Exception {
+    // Tempdoc 655: the connect-time instructions() surface and the user-invoked prompt path
+    // (getStatusContext) must read ONE guidance string — 654 "projection, not fork". A distinctive
+    // phrase that lives only in TOOL_SELECTION_GUIDANCE must appear in both.
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK);
+    String marker = "ordinary file tools are equally good";
+    assertTrue(
+        surface.instructions().contains(marker),
+        "instructions() must carry the single-sourced comparative guidance");
+    String promptJson =
+        MAPPER.writeValueAsString(surface.getPrompt("search_files", Map.of("topic", "x")));
+    assertTrue(
+        promptJson.contains(marker),
+        "the user-invoked prompt path must read the SAME single-sourced guidance (no fork)");
+  }
+
+  @Test
+  void comparativeAnswerHint_countsDistinctDocuments_notChunks() {
+    // Regression (review finding F1): the hint must key on DISTINCT cited documents, not chunksFound
+    // — multiple chunks from ONE document must NOT produce a "spanning multiple documents" claim.
+    assertEquals(
+        "",
+        McpToolSurface.comparativeAnswerHint(List.of(cite("docA"), cite("docA"), cite("docA"))),
+        "multiple chunks from a single document must not claim 'multiple documents'");
+
+    // The fallback-dump path (chunksFound>1 but nothing assembled) yields empty citations → no hint.
+    assertEquals("", McpToolSurface.comparativeAnswerHint(List.of()));
+    assertEquals("", McpToolSurface.comparativeAnswerHint(null));
+
+    // Genuinely multi-document assembly → fires with the honest distinct-document count.
+    String hint =
+        McpToolSurface.comparativeAnswerHint(List.of(cite("docA"), cite("docB"), cite("docC")));
+    assertTrue(hint.contains("3 documents"), "distinct-document count must drive the hint: " + hint);
+    assertTrue(hint.contains("single retrieval call"));
+
+    // Blank parentDocId is not counted as a document (only docA is real → 1 distinct → no claim).
+    assertEquals("", McpToolSurface.comparativeAnswerHint(List.of(cite(""), cite("docA"))));
+  }
+
+  private static DocumentService.ContextCitation cite(String parentDocId) {
+    return new DocumentService.ContextCitation(
+        parentDocId, 0, 1, 0, 0, 1.0f, "excerpt", 0, 0, "", 0);
   }
 
   @Test
@@ -125,6 +199,84 @@ class McpProtocolHandlerTest {
 
     String answerDesc = (String) tools.get(0).get("description");
     assertTrue(answerDesc.contains("primary tool for question-answering"));
+
+    // Tempdoc 658: the opt-in `detail` argument is part of the published search-tool contract.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchInputSchema =
+        (Map<String, Object>) tools.get(1).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchProps =
+        (Map<String, Object>) searchInputSchema.get("properties");
+    assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
+  }
+
+  @Test
+  void toolsCall_search_attachesStructuredEvidence() throws Exception {
+    // Tempdoc 658: end-to-end wiring — the search tool projects the canonical SearchTrace onto the
+    // structuredContent channel (the McpEvidenceProjection mapping itself is unit-tested in
+    // McpEvidenceProjectionTest; this asserts callSearch attaches it and it survives serialization).
+    SearchTrace trace =
+        new SearchTrace(
+            SearchTrace.SCHEMA_VERSION,
+            "HYBRID",
+            "multi_leg",
+            null,
+            null,
+            List.of(new TraceStage(StageId.SPARSE_RETRIEVAL, StageStatus.EXECUTED, null, 5L, null, null)));
+    KnowledgeSearchResponse.Hit hit =
+        new KnowledgeSearchResponse.Hit(
+            "doc-1",
+            0.9d,
+            Map.of("title", "Troubleshooting", "path", "help/troubleshooting.md"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(new HitStage(StageId.SPARSE_RETRIEVAL, 1, 3.3f, null)));
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(canned);
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> ctrl,
+            () -> null,
+            FIXED_CLOCK);
+    var localHandler = new McpProtocolHandler(surface, List.of(), FIXED_CLOCK);
+
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn("s1");
+    when(ctx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":"
+                + "\"justsearch_search\",\"arguments\":{\"query\":\"troubleshoot\"}}}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    localHandler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    assertEquals(Boolean.FALSE, result.get("isError"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> structured = (Map<String, Object>) result.get("structuredContent");
+    assertNotNull(structured, "search tool response carries structuredContent evidence");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchTrace = (Map<String, Object>) structured.get("searchTrace");
+    assertEquals("HYBRID", searchTrace.get("effectiveMode"));
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> results = (List<Map<String, Object>>) structured.get("results");
+    assertEquals(1, results.size());
+    assertEquals("doc-1", results.get(0).get("id"));
+    assertNotNull(results.get(0).get("trace"), "per-hit ranking trace is projected");
   }
 
   @Test

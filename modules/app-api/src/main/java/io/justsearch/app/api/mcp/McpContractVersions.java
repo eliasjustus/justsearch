@@ -29,8 +29,15 @@ public final class McpContractVersions {
   /**
    * JustSearch's own curated-tool-surface version (SemVer). Pre-1.0 by the under-promise stance
    * (tempdoc 654 §D3/D5): the surface may still change while we settle it.
+   *
+   * <p>0.2.0 (tempdocs 655 + 658): the curated surface gained a connect-time {@code instructions}
+   * field (comparative tool-selection guidance) and comparative response hints (655), plus a
+   * machine-readable {@code structuredContent} retrieval-evidence payload on search/answer and an
+   * opt-in {@code detail} argument (658) — material, agent-visible additions to the surface, so the
+   * SemVer minor bumps. Single-sourced here, it projects by construction into MCP
+   * {@code serverInfo.version} and the runtime manifest's {@code mcpToolSurfaceVersion}.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.1.0";
+  public static final String TOOL_SURFACE_VERSION = "0.2.0";
 
   private McpContractVersions() {}
 }
