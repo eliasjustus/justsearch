@@ -3085,9 +3085,17 @@ export class UnifiedChatView extends JfElement {
           This run${agentMode && approvalPosture
             ? html` · <span class="posture-policy">Policy: ${approvalPosture}</span>`
             : nothing}${this.agentCtrl?.budgetGate
-            ? html` · <span class="over-budget">Paused — awaiting budget</span>`
+            ? html` · <span class="over-budget"
+                >${/* Tempdoc 696 (C8) — plain in Simple, technical in Detailed. */ ''}${isAdvancedMode()
+                  ? 'Paused — awaiting budget'
+                  : 'Paused — waiting to continue'}</span
+              >`
             : budget?.overBudget
-              ? html` · <span class="over-budget">Over budget +${budget.overBy} tokens</span>`
+              ? html` · <span class="over-budget"
+                  >${isAdvancedMode()
+                    ? html`Over budget +${budget.overBy} tokens`
+                    : 'Paused — needs more room'}</span
+                >`
               : nothing}
         </summary>
         ${/* Tempdoc 577 Move 2 — the HELD budget gate: the run is genuinely parked and waiting, so
@@ -4387,7 +4395,9 @@ export class UnifiedChatView extends JfElement {
           : `${receipt.durationMs}ms`,
       );
     }
-    if (receipt.modelLabel) parts.push(receipt.modelLabel);
+    // Tempdoc 696 (C7) — the model name is a technical fact; show it only in Detailed mode. The
+    // duration (a plain "how long it took") stays in both.
+    if (receipt.modelLabel && isAdvancedMode()) parts.push(receipt.modelLabel);
     return parts.join(' · ');
   }
 

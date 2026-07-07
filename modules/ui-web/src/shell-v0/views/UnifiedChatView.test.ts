@@ -215,6 +215,10 @@ function mountView(): UnifiedChatView {
   return view;
 }
 
+// Tempdoc 696 — uiMode is a module-level store shared across tests; reset it after every test so a
+// block that sets Detailed mode cannot leak into a later block that expects the Simple default.
+afterEach(() => __resetUiModeForTest());
+
 describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1457,10 +1461,31 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
   afterEach(() => {
     // Restore the shared aiState fixture so other describe blocks see the original shape.
     delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+    __resetUiModeForTest();
+  });
+
+  it('Simple mode (default) omits the model name from the receipt (Tempdoc 696 C7)', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], durationMs: 3200 },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] .answer-frame');
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('3.2s');
+    expect(text).not.toContain('Llama 3 8B');
+    view.remove();
   });
 
   it('a grounded turn with duration + model shows ONLY the quiet receipt tail (no warning text), non-italic', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced');
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1499,6 +1524,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('a partially-grounded turn keeps its warning text and appends the receipt tail on the SAME line', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced'); // Tempdoc 696 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1556,6 +1582,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('omits duration (never fabricates) when the turn carries none — a reloaded turn with no stored durationMs', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced'); // Tempdoc 696 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1951,6 +1978,7 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
   });
 
   it('602 R3 — the retrieve row formats the path + highlights query terms like the Search surface', async () => {
+    setUiMode('advanced'); // Tempdoc 696 (C4) — the middle-ellipsis full path is the Detailed form.
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'retrieve';
