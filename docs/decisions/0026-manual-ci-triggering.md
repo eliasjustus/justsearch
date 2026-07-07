@@ -156,7 +156,10 @@ on this runner's intermittent uptime.
 
 The workflow file, its `workflow-signal-policy.v1.json` entry, and its
 references in `agent-guide.md` and the `ci-triage` skill were removed.
-`docs/how-to/recalibrate-phase3-baseline.md` was retired since its entire
-premise (rebasing a nightly gate's baseline) depended on the workflow
-existing; the underlying `jseval calibrate` / `jseval gate` CLI capability is
-unaffected and remains available for manual use.
+`docs/how-to/recalibrate-phase3-baseline.md` was rewritten in place (rather
+than deleted, since three other how-to docs link to it) to describe a manual
+`jseval calibrate` / `jseval gate` procedure instead of a nightly-gate
+rebase; that doc is now the sole recorded source of truth for the current
+baseline value, since it previously lived only in this workflow's env block.
+The underlying `jseval calibrate` / `jseval run` / `jseval gate` CLI
+capability is unaffected and remains available for manual use.
