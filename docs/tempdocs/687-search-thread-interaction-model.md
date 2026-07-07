@@ -4,6 +4,7 @@ type: tempdoc
 status: implemented
 updated: 2026-07-07
 implemented: 2026-07-07 (branch worktree-search-thread, S1-S8; live-verified end-to-end with the local model)
+round2: 2026-07-07 design settled (post-implementation audit; see §Round 2)
 created: 2026-07-04
 related: [497, 526, 561, 577, 596, 602, 609, 613, 678]
 ---
@@ -56,3 +57,97 @@ Adopt the **Search Thread** model:
 
 - Thread auto-collapse thresholds (tune against real thread lengths).
 - Folder-scope semantics — deliberately deferred to the Browse redesign (recursion/liveness answered there).
+
+
+## Round 2 — attention, trust, and geometry (design settled 2026-07-07)
+
+A post-implementation audit (live, dev environment; measured element geometry) found the
+shipped model correct but its ATTENTION ECONOMY wrong in places, plus a handful of trust-surface
+gaps. The round-2 design below is decision-level; all rulings confirmed by the maintainer.
+
+### R1 — Attention: loud states decay; the exception carries the signal
+- **Degradation banner**: stays inside the one verdict authority, but a notice seen once
+  collapses to a single line (cause count + strongest remedy), expandable. The headline and
+  its first bullet must never restate each other (single-cause dedup). *Supersedes:* the
+  always-expanded multi-bullet rendering. Audit measurement (dev run, 2026-07): the expanded
+  banner consumed more vertical space than the content it sat above.
+- **Citation highlight**: reuses the card's existing decaying-emphasis idiom (the refined-✓
+  stamp): land strong, decay to a quiet tint + edge marker; the surrounding-chunk tier never
+  gets the loud phase. *Supersedes:* the permanent solid-block highlight.
+- **Grounding marks invert**: grounded text renders plain; only spans BELOW the per-sentence
+  support threshold get marked (the per-claim score the RAG path already accumulates is the
+  data source). An indicator that is on almost always carries no information; the rare
+  unsupported sentence is what needs the reader's eye. *Supersedes:* the always-on
+  grounded-span underline.
+- **Active-citation mark** unifies with its sibling notation (see R3) instead of swapping to
+  a filled box.
+
+### R2 — One gesture, one meaning
+The card's "Ask AI" sends immediately, exactly like the route chip's Enter (a modified
+activation stages without sending, for the rephrase case). Two escalation affordances with
+two behaviors was an unforced inconsistency. *Supersedes:* the stage-only card behavior.
+
+### R3 — Trust surfaces are literal
+- **Citation notation**: model-emitted "[n]" normalizes at render into the same superscript
+  citation marks the renderer already draws (only for n that resolve to a real citation on
+  that answer). One notation per answer.
+- **Document count**: the status-bar count must partition cleanly (user corpus vs seeded
+  help collection vs runtime artifacts); an investigation item verifies the interaction-event
+  run store cannot leak into it. A count a user can't reconcile is a trust defect, not a
+  cosmetic one.
+- **Auto consent**: consent is required for the STANDING state, not just the transition — a
+  profile already at 'auto' with no recorded consent is asked once. Grandfathering only ever
+  benefited pre-release dev profiles.
+- **First-query latency**: the instant floor's identity claim is tested hardest on the very
+  first query after boot; a worker-ready warmup pass (one throwaway query through the live
+  path) removes the cold-start penalty rather than decorating it with UI.
+
+### R4 — The bar conforms to its own atom
+The composer row's secondary affordances (pin, schema attach, delegate entry) become
+compositions of the existing `jf-control` atom in a single QUIET tier; the route chip is the
+row's one visually primary element, grouped with its functional siblings instead of floating
+at the viewport edge. *Supersedes (orphans I introduced in round 1):* the bespoke
+`.pin-toggle` / `.schema-attach` / `.escalation-delegate` button styling — deleted with this
+work, not a later sweep.
+### R5 — Layout owns its composition
+- **Landing**: ONE flex column owns title → corpus → bar → strip. *Supersedes:* the split
+  composition (intro in the conversation column + a viewport-margin-positioned bar) whose
+  bands interleave at short viewports — the audit's measured overlap.
+- **Narrow viewport**: below the wide breakpoint the reading pane presents through the
+  shell's existing OverlayHost (the one sanctioned overlay seam), not an implicit grid row —
+  conforming to the same layout rule that forbade a bespoke fixed overlay in the first place.
+  *Supersedes:* the auto-placement stacked row (measured colliding with the composer).
+- **Reading-pane provenance header** truncates through the shared `formatDisplayPath`
+  authority (filename-preserving), not CSS end-truncation.
+
+### Principles recognized (recorded, deliberately NOT built as structure)
+- **P1 — Emphasis is a transient, not a state.** Existing conforming instance: the card's
+  refined-✓ decay. Violations found: citation highlight, degradation banner, active-citation
+  box. Candidate scope: any persistent accent-filled state on any surface. Earns its keep if
+  future audits stop finding "screaming" persistent states and new surfaces adopt the decay
+  idiom unprompted. Retire if measured use shows decayed states get MISSED (findability
+  regressions) — then decay was the wrong tool, not a law.
+- **P2 — Mark the exception, not the rule.** Conforming: route-chip pinning (signals only the
+  pinned exception). Violations: grounded-span underlining, banner headline/bullet
+  duplication. Candidate scope: any per-item quality marking (extraction quality chips, OCR
+  confidence). Earns its keep if exception-marks show real engagement (clicks/hovers) where
+  wall-to-wall marks showed none. Retire if the underlying scorer is too noisy — false-positive
+  exception marks erode more trust than no marks; in that case mark nothing until the scorer
+  improves.
+- **P3 — Trust surfaces are literal.** Counts, consents, provenance lines mean exactly one
+  reconcilable thing. Conforming: the answer receipt. Violations: the unexplained document
+  count; grandfathered consent. Candidate scope: every status-bar figure and every
+  "N sources" line. Earns its keep as a review question that keeps catching drift. Retire
+  (narrow) if it starts forcing raw-number dumps where users need derived summaries — the
+  principle governs reconcilability, not rawness.
+- **P4 — Chrome yields to content (vertical budget).** The audit measured chrome outweighing
+  content ~2.6:1 in a degraded dev state. Candidate structure (NOT built now): a
+  chrome:content ratio assertion in the existing measured ui-shot pass. Build it only if a
+  second independent audit finds a chrome regression this check would have caught; retire the
+  idea if layouts stabilize and manual audits stop finding vertical-budget faults.
+
+Round-2 scope judgment: everything above is refinement INSIDE the shipped model — no new
+surfaces, no new state authorities, no schema changes. The one new mechanism (worker-ready
+warmup) rides an existing lifecycle hook. Size of change follows from that: small, spread
+across existing seams, with four orphaned styling/composition fragments deleted in the same
+work.
