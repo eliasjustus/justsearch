@@ -410,15 +410,15 @@ design's implementing scope absorbs two small adjacent items and explicitly decl
 *Declined, with reasons (so non-takeover isn't read as ignorance of them):* the batched
 stabilization repo-work items (heap measurement, upstream pinning, duplication-cluster collapse) —
 product work, owner opens its tempdoc; contract-strictness / evidence-durability / census /
-frozen-benchmark items — different domains with their own owners-to-be; the sidecar prompt-library
-trim — deliberately parked behind an adherence baseline by its own record; the UI-audit and
+frozen-benchmark items — different domains with their own owners-to-be; a maintainer-private
+prompt-library trim — deliberately parked behind an adherence baseline by its own record; the UI-audit and
 engine-explainer tracks — separately owned and active.
 
 **Reach evidence, one day in:** a same-day closed analysis document explicitly conformed to this
 design's channel contract for its own close-out (treating itself as a burst producer, routing every
 output to an owned destination, statuses living at destinations) — the principle's first
 independent conforming instance, and its stated retirement condition already references this
-design's fold-time routing. Two further candidate-scope instances appeared in the private tier
+design's fold-time routing. Two further candidate-scope instances appeared in maintainer-private notes
 (small per-topic suspicion/open-question files) — recognized, not acted on.
 
 665 (full: findings, theorization, design, kill-list, implementation record — this design keeps its
@@ -470,11 +470,11 @@ that file is over its always-loaded budget and tempdoc 681 owns shrinking it; th
 message self-documents (decision per 681's direction). (c) `.claude/settings.local.json` hook
 wiring is per-checkout (gitignored); other checkouts pick the new hook up at their next
 `gen-agent-hooks-wiring` run — the known regen gap is itself a condition in the store.
-(d) Merge-time steps for whenever this branch is published: FIRST remove the main checkout's
-untracked draft copy of this tempdoc (git refuses to merge a tracked file over an untracked one at
-the same path — diff it against this branch's copy before deleting; this branch's copy is the
-successor); then rebase; then run the fold once — flat entries that accumulated on main fold into
-conditions by construction.
+(d) Merge-time steps for whenever this branch is published: rebase, then run the fold once — flat
+entries that accumulated on main fold into conditions by construction. (An earlier merge blocker —
+the main checkout's untracked draft copy of this tempdoc, which git would refuse to merge over —
+was RESOLVED 2026-07-07: the draft was hash-verified byte-identical to this branch's committed
+baseline `c79c01d` and removed from main's working tree.)
 
 **Validation:** all five suites green (store 13, fold 10, note 11, triage 6, hook 12);
 hook-integrity gate green; live fold + janitor + read-model runs against the real store;
@@ -497,13 +497,45 @@ node scripts/ci/check-tempdoc-numbers.mjs
 ./gradlew.bat build -x test -PskipWebBuild=true
 ```
 
-**Residual verification gaps, stated honestly:** (1) the `known-state-hint` hook's wiring is
-generated into the gitignored per-checkout `.claude/settings.local.json` — it was gate-verified and
-runtime-probed via spawned stdin, but a LIVE session firing it end-to-end requires a session started
-after the wiring regen; first post-merge session should confirm. (2) `docs-validate.mjs` was not
-used to validate the migrated store because it crashes on a pre-existing malformed frontmatter in
-tempdoc 530 (itself a condition in the store). (3) The full `gradlew test` suite was not run — no
-Java changed; `build -x test` plus the node suites were the gate, per plan.
+**Verification evidence (closeout re-run 2026-07-07, from the worktree root — every claim below was
+re-executed on the final branch state, not carried forward from earlier in the work):**
+
+| Claim | Evidence (command → observed result) |
+|---|---|
+| Store lib correct | `node scripts/agent-analytics/lib/observations-store.test.mjs` → `13 passed` |
+| Fold correct (618 properties preserved) | `node scripts/agent-analytics/fold-observations.test.mjs` → `10 passed` |
+| Writer path untouched & green | `node scripts/agent-analytics/note-observation.test.mjs` → `11 passed` |
+| Triage/janitor correct | `node scripts/agent-analytics/observations-triage.test.mjs` → `6 passed` |
+| Hook precision | `node scripts/agent-analytics/hooks/known-state-hint.test.mjs` → `12 passed` |
+| Hook registered/wired/bites | `node scripts/governance/run.mjs --gate hook-integrity --mode gate` → `hook-integrity: pass` |
+| No tempdoc number collision | `node scripts/ci/check-tempdoc-numbers.mjs` → `OK — 392 distinct, 17 worktrees` |
+| Janitor sane on real data | `observations-triage.mjs --probe` → 3 probes ran, 0 false retirements, 3 re-affirmed still-true; 3 expected-state exitProbes checked, 0 fired |
+| Build green | `./gradlew.bat build -x test -PskipWebBuild=true` → `BUILD SUCCESSFUL` (asserted on output text) |
+| Store live state at close | `observations-triage.mjs` → depth 361 (346 open, 9 proposed-retire, 6 parked; 320 kind-confirmations pending) — the As-built's "358" was the count at implementation time; two retrospective lessons + one follow-up were filed through the channel since |
+| CLAUDE.md byte budget | `node scripts/ci/check-always-loaded-budget.mjs` → `ok CLAUDE.md 25050 / 25051 B` (was over on main; branch-safety + hooks-reference remain over — pre-existing, tempdoc 681's scope) |
+
+**Unverified assumptions / deferred checks (each needs an owner-moment, not archaeology):**
+1. **Live-session hook firing** — the `known-state-hint` wiring is generated into the gitignored
+   per-checkout `.claude/settings.local.json`; gate-verified and stdin-probed, but an interactive
+   session started AFTER the regen has not yet observed the advisory. Check: in a fresh session, run
+   `npm run typecheck` and confirm the hint arrives. Other checkouts need their own
+   `node scripts/codegen/gen-agent-hooks-wiring.mjs` run.
+2. **`docs-validate.mjs` never ran against the new store format** — it crashes on a pre-existing
+   malformed frontmatter in tempdoc 530 (itself a condition in the store). Assumption: the store's
+   unchanged frontmatter keeps it valid once 530 is fixed.
+3. **Full `gradlew test` suite not run** — no Java changed; assumption: markdown/scripts/json
+   changes cannot break Java tests. `build -x test` (which includes `verifyGovernanceGates` per this
+   repo's build wiring) was the gate.
+4. **The ~320 singleton conditions carry fold-proposed `?` kinds** — deliberately unconfirmed;
+   assumption: incremental confirmation at triage is sufficient and no routing decision depends on
+   an unconfirmed kind before its triage.
+5. **Expected-state match breadth** — the `gradlew test` regex fires on any gradle test command, so
+   the VDU pin's claim may surface on unrelated test runs; assumption: advisory over-delivery is
+   low-cost. Revisit if the hint reads as noise.
+
+**Follow-ups filed as conditions in the store (not to be forgotten, findable via the read-model):**
+the draft-commit hint hook proposal (rule-of-three met), the PowerShell BOM probe lesson, and the
+frontmatter-essay survey lesson. First-triage-pass actions live in this section and §As-built (d).
 
 **Known unrelated dirty work (do not attribute to this branch):** the MAIN checkout's working tree
 carries other agents' state — untracked `models/*.onnx`, a modified `gradlew.bat`, and untracked

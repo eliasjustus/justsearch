@@ -1593,6 +1593,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: docs/tempdocs/624-agentic-retrieval-eval-rebuild.md` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Tempdoc frontmatter status fields can be multi-thousand-token essays (e.g. tempdoc 624's), which makes any batch frontmatter survey blow up in tokens and defeats cheap staleness checks — evidence for tempdoc 646's derived current-state trigger; surveys should truncate status to ~200 chars — `docs/tempdocs/624-agentic-retrieval-eval-rebuild.md:18` (2026-07-07)
 
+### obs:observation-shard-hint — Follow-up (tempdoc 680 retrospective): a small PostToolUse Write hint for NEW docs/tempdocs/*.md fil
+`kind: lesson?` `anchor: scripts/agent-analytics/hooks/observation-shard-hint.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Follow-up (tempdoc 680 retrospective): a small PostToolUse Write hint for NEW docs/tempdocs/*.md files in the main checkout ('commit the draft — worktrees branch from commits, not working trees') would mechanize the draft-commit lesson; third incident of the class (#446 + two in the 680 cycle) meets the rule-of-three bar — `scripts/agent-analytics/hooks/observation-shard-hint.mjs` is the template (2026-07-07)
+
 ## Parked
 
 ### obs:batch-557-deferred — 557 deferred residuals (Q2 tri-state env-blocked; minor MacroDryRun wording)
