@@ -470,8 +470,11 @@ that file is over its always-loaded budget and tempdoc 681 owns shrinking it; th
 message self-documents (decision per 681's direction). (c) `.claude/settings.local.json` hook
 wiring is per-checkout (gitignored); other checkouts pick the new hook up at their next
 `gen-agent-hooks-wiring` run — the known regen gap is itself a condition in the store.
-(d) Merge-time step for whenever this branch is published: rebase, then run the fold once — flat
-entries that accumulated on main fold into conditions by construction.
+(d) Merge-time steps for whenever this branch is published: FIRST remove the main checkout's
+untracked draft copy of this tempdoc (git refuses to merge a tracked file over an untracked one at
+the same path — diff it against this branch's copy before deleting; this branch's copy is the
+successor); then rebase; then run the fold once — flat entries that accumulated on main fold into
+conditions by construction.
 
 **Validation:** all five suites green (store 13, fold 10, note 11, triage 6, hook 12);
 hook-integrity gate green; live fold + janitor + read-model runs against the real store;
