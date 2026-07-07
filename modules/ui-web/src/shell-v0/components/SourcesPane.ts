@@ -5,8 +5,10 @@
  * The right-drawer that shows the LATEST agent answer's grounding sources — each a verifiable LOCAL
  * passage. Reads the ONE shared `AgentSessionController` (the same `answerSources` the done event
  * carried) and renders clickable cards (filename · line · excerpt). Clicking dispatches the existing
- * `citation-select` event → `Shell.onCitationSelect` → `InspectorPane.highlightCitation`, opening the
- * exact local file at the highlighted line — the differentiator web-grounded tools cannot do. Mirrors
+ * `citation-select` event → `Shell.onCitationSelect` (pushes the passage's line range onto the shared
+ * inspectorState `selected`) → UnifiedChatView's own inspectorState subscription, which opens the doc
+ * in the reading pane (`<jf-document-pane>`, Search Thread S6 — retired InspectorPane's imperative
+ * `highlightCitation` call) at the highlighted line — the differentiator web-grounded tools cannot do. Mirrors
  * the retrospective drawer's mount pattern (slot="right-drawer" + an open-store).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';

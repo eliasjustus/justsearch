@@ -37,6 +37,7 @@ export type ComponentTag =
   | 'jf-command-palette'
   | 'jf-composer'
   | 'jf-confirm-dialog'
+  | 'jf-context-inspector-pane'
   | 'jf-context-menu'
   | 'jf-control'
   | 'jf-conversation-history'
@@ -44,6 +45,7 @@ export type ComponentTag =
   | 'jf-date-control'
   | 'jf-declared-surface'
   | 'jf-dispatch-source'
+  | 'jf-document-pane'
   | 'jf-drag-overlay'
   | 'jf-effect-audit-log'
   | 'jf-effect-line'
@@ -66,7 +68,6 @@ export type ComponentTag =
   | 'jf-hover-preview-host'
   | 'jf-indexing-overlay'
   | 'jf-indexing-overlay-host'
-  | 'jf-inspector-pane'
   | 'jf-interaction-retrospective-panel'
   | 'jf-library-surface'
   | 'jf-list-items'
@@ -95,15 +96,19 @@ export type ComponentTag =
   | 'jf-pulse-dots'
   | 'jf-rail'
   | 'jf-reasoning-block'
+  | 'jf-recents-menu'
   | 'jf-resolution-stats'
   | 'jf-resolution-toast'
   | 'jf-resource'
   | 'jf-resource-view'
+  | 'jf-results-card'
+  | 'jf-route-chip'
   | 'jf-row-actions'
   | 'jf-run-node'
+  | 'jf-scope-chip'
   | 'jf-search-results'
-  | 'jf-search-surface'
   | 'jf-search-trace'
+  | 'jf-security-surface'
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
   | 'jf-settings-view'
@@ -164,6 +169,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-command-palette',
   'jf-composer',
   'jf-confirm-dialog',
+  'jf-context-inspector-pane',
   'jf-context-menu',
   'jf-control',
   'jf-conversation-history',
@@ -171,6 +177,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-date-control',
   'jf-declared-surface',
   'jf-dispatch-source',
+  'jf-document-pane',
   'jf-drag-overlay',
   'jf-effect-audit-log',
   'jf-effect-line',
@@ -193,7 +200,6 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-hover-preview-host',
   'jf-indexing-overlay',
   'jf-indexing-overlay-host',
-  'jf-inspector-pane',
   'jf-interaction-retrospective-panel',
   'jf-library-surface',
   'jf-list-items',
@@ -222,15 +228,19 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-pulse-dots',
   'jf-rail',
   'jf-reasoning-block',
+  'jf-recents-menu',
   'jf-resolution-stats',
   'jf-resolution-toast',
   'jf-resource',
   'jf-resource-view',
+  'jf-results-card',
+  'jf-route-chip',
   'jf-row-actions',
   'jf-run-node',
+  'jf-scope-chip',
   'jf-search-results',
-  'jf-search-surface',
   'jf-search-trace',
+  'jf-security-surface',
   'jf-selection-actions-menu',
   'jf-settings-surface',
   'jf-settings-view',

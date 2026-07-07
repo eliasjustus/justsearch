@@ -40,6 +40,15 @@ import type {
   CardSnapshot,
   SearchProvenance,
 } from '../components/searchResults/ResultsCard.js';
+// Search Thread S6 (the Reading Stage) — the reading surface (`<jf-document-pane>`), mounted as the
+// conversation-zone's 5th column. Replaces the retired `components/InspectorPane.ts` as the visual
+// consumer of inspectorState (see that module's header comment).
+import '../components/documentPane/DocumentPane.js';
+import type { DocumentLineRange } from '../components/documentPane/DocumentPane.js';
+import {
+  subscribeInspector,
+  setOpen as setInspectorOpen,
+} from '../state/inspectorState.js';
 import type { SearchTrace } from '../../api/generated/index.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 import {
@@ -401,6 +410,15 @@ export class UnifiedChatView extends JfElement {
     // Search Thread S4-final — the query-trail dropdown's open/closed toggle. A transient UI panel
     // (closes in settleTransients), mirroring showAbilities/forkEditing.
     queryTrailOpen: { state: true },
+    // Search Thread S6 (the Reading Stage) — the document currently open in the reading pane (+ its
+    // optional highlight/chunk line-ranges). Recoverable task state (like `scopeChips`/`thread`), NOT a
+    // transient — a return to this surface should still show the document the user was reading, so
+    // this is deliberately NOT reset in settleTransients(); the retention gate's transient-name pattern
+    // match (`busy`/`loading`/`*Error`/…) doesn't cover `readingDocPath`, so it carries no settle
+    // obligation, the same way `scopeChips` needs none.
+    readingDocPath: { state: true },
+    readingHighlightRange: { state: true },
+    readingChunkRange: { state: true },
   };
 
   declare apiBase: string;
@@ -498,6 +516,16 @@ export class UnifiedChatView extends JfElement {
   declare queryTrail: string[];
   /** Search Thread S4-final — the query-trail dropdown's open/closed toggle. */
   declare queryTrailOpen: boolean;
+  /** Search Thread S6 — the document open in the reading pane (`<jf-document-pane>`), or null when
+   *  closed. Set by `handleRetrieveCardOpen`/`handleCommittedCardOpen` (via the shared inspectorState
+   *  subscription) and by citation clicks; cleared by the pane's own `pane-close`. */
+  declare readingDocPath: string | null;
+  /** Search Thread S6 — the passage line-range to highlight in the reading pane (citation deep-links
+   *  carry `startLine`/`endLine`; a plain document open carries none). */
+  declare readingHighlightRange: DocumentLineRange | null;
+  /** Search Thread S6 — the wider containing chunk to tint (no current producer carries this — kept
+   *  for parity with DocumentPane's own `chunkRange` prop should a future producer supply it). */
+  declare readingChunkRange: DocumentLineRange | null;
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
@@ -538,6 +566,9 @@ export class UnifiedChatView extends JfElement {
   // Search Thread D5 (stage S3) — the scope-chip store subscription.
   private scopeChipsUnsub: (() => void) | null = null;
   private pinnedSearchesUnsub: (() => void) | null = null;
+  // Search Thread S6 — the shared inspectorState subscription (the "open a document for reading"
+  // signal — see that module's header comment): projects `selected`/`isOpen` onto readingDocPath.
+  private inspectorUnsub: (() => void) | null = null;
   // Tempdoc 561 C-2: re-render the graded chrome when the autonomy dial changes (chrome only).
   private autonomyUnsubscribe: (() => void) | null = null;
   /** Tempdoc 610 §J.3 — re-render when the shared hidden-source set changes (e.g. toggled from the rail). */
@@ -658,6 +689,9 @@ export class UnifiedChatView extends JfElement {
     this.committedSearches = [];
     this.queryTrail = [];
     this.queryTrailOpen = false;
+    this.readingDocPath = null;
+    this.readingHighlightRange = null;
+    this.readingChunkRange = null;
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
     this.parentFirstMessagePreview = null;
@@ -805,6 +839,29 @@ export class UnifiedChatView extends JfElement {
     this.pinnedSearchesUnsub = subscribePinnedSearches((pins) => {
       this.pinnedSearches = pins;
     });
+    // Search Thread S6 — the shared "open a document for reading" signal (inspectorState; fires once
+    // immediately with the current state, mirroring the subscriptions above). Every existing producer
+    // (`host.ui.showInspector` on the plugin API — the internal openRetrieveHit/handleCommittedCardOpen/
+    // republishRetrieveSelection call sites all reach it that way — and citation clicks, reworked in
+    // Shell.onCitationSelect to call `setSelected` with the passage's line range) funnels through this
+    // ONE store, so this ONE subscription is the ONE place readingDocPath is derived from it. An
+    // explicit close (`setOpen(false)` / `resetInspectorState()`) clears the reading pane; a fresh
+    // `selected` while open sets it (and its highlight range, when the producer carried one).
+    this.inspectorUnsub = subscribeInspector((s) => {
+      if (s.selected && s.isOpen) {
+        this.readingDocPath = s.selected.path;
+        this.readingHighlightRange =
+          typeof s.selected.highlightStartLine === 'number' &&
+          typeof s.selected.highlightEndLine === 'number'
+            ? { startLine: s.selected.highlightStartLine, endLine: s.selected.highlightEndLine }
+            : null;
+        this.readingChunkRange = null;
+      } else if (!s.isOpen) {
+        this.readingDocPath = null;
+        this.readingHighlightRange = null;
+        this.readingChunkRange = null;
+      }
+    });
     this.republishRetrieveSelection();
   }
 
@@ -922,6 +979,8 @@ export class UnifiedChatView extends JfElement {
     this.scopeChipsUnsub = null;
     this.pinnedSearchesUnsub?.();
     this.pinnedSearchesUnsub = null;
+    this.inspectorUnsub?.();
+    this.inspectorUnsub = null;
     this.excludedSourcesUnsub?.();
     this.excludedSourcesUnsub = null;
     // §21 — the run-spine's observers + scroll listeners are torn down by NavigationController.hostDisconnected.
@@ -2186,6 +2245,7 @@ export class UnifiedChatView extends JfElement {
                   : nothing}`}`}
         </div>
         ${this.renderEvidenceRail()}
+        ${this.renderDocumentPane()}
       </div>
       ${this.renderActivityRail()}
       ${this.renderContextMeter()}
@@ -2508,6 +2568,37 @@ export class UnifiedChatView extends JfElement {
       api-base=${this.apiBase}
       .host_=${this.host_ ?? undefined}
     ></jf-sources-pane>`;
+  }
+
+  /**
+   * Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`, `.document-pane`
+   * zone col 5), mounted only while `readingDocPath` is set (empty-collapse: an unmounted zone's
+   * `fit-content` track collapses to 0, same mechanism as {@link renderEvidenceRail}). Unlike the
+   * evidence rail, this renders at EVERY viewport width — narrow gets the "stacks" layout
+   * (unifiedChatStyles.ts's `.document-pane` rule), not a viewport gate, because reading a cited/opened
+   * document is a primary action here, not supplementary evidence with a drawer fallback.
+   */
+  private renderDocumentPane(): TemplateResult | typeof nothing {
+    if (this.readingDocPath === null) return nothing;
+    return html`<jf-document-pane
+      class="document-pane"
+      api-base=${this.apiBase}
+      .docPath=${this.readingDocPath}
+      .highlightRange=${this.readingHighlightRange}
+      .chunkRange=${this.readingChunkRange}
+      @pane-close=${() => this.handleDocumentPaneClose()}
+    ></jf-document-pane>`;
+  }
+
+  /** Search Thread S6 — the reading pane's own close action. Clears the local reading state AND
+   *  closes the shared inspectorState (`setOpen(false)`) so a plugin polling `host.getInspectorState()`
+   *  sees the close too (parity with the retired InspectorPane's close button, which called the same
+   *  `setOpen(false)`). */
+  private handleDocumentPaneClose(): void {
+    this.readingDocPath = null;
+    this.readingHighlightRange = null;
+    this.readingChunkRange = null;
+    setInspectorOpen(false);
   }
 
   /**
@@ -3262,12 +3353,16 @@ export class UnifiedChatView extends JfElement {
    * Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses).
    * Search Thread S4-final — opening a hit on the LIVE card is a consequence: it FREEZES the active
    * search into a committed snapshot before navigating (commit-on-consequence, reason 'open').
+   * Search Thread S6 — opening a hit for reading also auto-pins its `file` scope chip (dedup is
+   * `addScopeChip`'s own job — same kind + docId set is a no-op), so a follow-up Ask is scoped to the
+   * document the user is now reading without a separate "Ask about this file" click.
    */
   private handleRetrieveCardOpen(hitId: string): void {
     const hit = (this.searchSnapshot?.results ?? []).find((h) => h.id === hitId);
     if (hit) {
       this.commitLiveSearch('open');
       this.openRetrieveHit(hit);
+      addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
     }
   }
 
@@ -3289,6 +3384,9 @@ export class UnifiedChatView extends JfElement {
         host.ui.showInspector(
           host.search.hitToSelectedItem(hit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
         );
+        // Search Thread S6 — same auto-pin as the live card's own open (handleRetrieveCardOpen):
+        // reading a historical snapshot's hit scopes a follow-up Ask to it too.
+        addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
         return;
       }
     }

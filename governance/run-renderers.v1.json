@@ -39,8 +39,7 @@
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
       "modules/ui-web/src/shell-v0/views/NavigateView.ts",
       "modules/ui-web/src/shell-v0/views/SummarizeView.ts",
-      "modules/ui-web/src/shell-v0/components/chat/ReasoningBlock.ts",
-      "modules/ui-web/src/shell-v0/components/InspectorPane.ts"
+      "modules/ui-web/src/shell-v0/components/chat/ReasoningBlock.ts"
     ],
     "weaveSites": [
       "modules/ui-web/src/shell-v0/components/chat/citationResolve.ts",

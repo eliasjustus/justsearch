@@ -445,9 +445,11 @@ export interface PluginContribution {
     readonly render: () => HTMLElement | string;
   }>;
   /**
-   * Tempdoc 508 §4 — inspector tab contributions. Append tabs to the
-   * InspectorPane's tab list. Core tabs (Preview/Context/Answer/Ask)
-   * remain hardcoded for V1; plugin tabs append.
+   * Tempdoc 508 §4 — inspector tab contributions. Originally: append tabs to the (now-retired)
+   * InspectorPane's Preview/Context/Answer/Ask tab list. Search Thread S6 retired InspectorPane in
+   * favor of the no-tabs `<jf-document-pane>` reading surface — this contribution point (and
+   * `commands/InspectorTabRegistry.ts`, which still registers/lists entries declared here) currently
+   * has no visual consumer; a plugin-declared tab registers but nothing renders it.
    */
   inspectorTabs?: ReadonlyArray<{
     readonly id: string;

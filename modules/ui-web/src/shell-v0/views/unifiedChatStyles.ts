@@ -273,6 +273,28 @@ export const unifiedChatBodyStyles = css`
         max-width: 20rem;
       }
     }
+    /* Search Thread S6 — the reading pane (\`<jf-document-pane>\`, \`.document-pane\` zone col 5). Narrow:
+       no \`grid-column\` override, so default grid auto-placement (one explicit column, \`.conversation\`)
+       drops it into its own implicit row BELOW the conversation — a stacked narrow layout, mirroring
+       the evidence rail's "hide below the wide breakpoint" precedent in spirit (the zone doesn't claim
+       its own column outside \`wideOnly\`'s wide media query) without losing narrow readability (unlike
+       the rail, which has a toggle-drawer fallback the reading pane does not). A fixed-position overlay
+       was considered and rejected: \`position: fixed\` outside the OverlayHost trips the layout-purity gate. */
+    .document-pane {
+      min-width: 0;
+      min-height: 24rem;
+      overflow: hidden;
+    }
+    @media (min-width: 64rem) {
+      .document-pane {
+        /* grid-column:5 is GENERATED (composeGridStyles over CONVERSATION_ZONES), overriding the narrow
+           stacked placement above at this breakpoint. */
+        min-width: 24rem;
+        max-width: 28rem;
+        min-height: 0;
+        height: 100%;
+      }
+    }
     /* Tempdoc 561 P-B3: the action plane fills the one window's body; the hosted agent view
        provides its own scroll + composer below the shared affordance bar. */
     .agent-plane {

@@ -95,7 +95,8 @@ import { bootSearchResultProjector } from '../substrates/evaluationContext/searc
 // real backend AI.
 import '../components/AgentEmitterDemo.js';
 import type { AgentEmitterDemo } from '../components/AgentEmitterDemo.js';
-import '../components/InspectorPane.js';
+// Search Thread S6 — `components/InspectorPane.ts` retired; `<jf-document-pane>` (mounted inside
+// UnifiedChatView's conversation-zone) is now the visual consumer of inspectorState.
 // Tempdoc 541 §4.2: side-effect import registers <jf-boot-phases-panel> — the named
 // production consumer of GET /api/boot/phases.
 import '../components/BootPhasesPanel.js';
@@ -117,13 +118,10 @@ import {
 } from '../components/advisory/AdvisoryStore.js';
 import {
   setSelected,
-  subscribeInspector,
   setOpen as setInspectorOpen,
   getInspectorState as getInspectorStateInternal,
-  type InspectorState,
 } from '../state/inspectorState.js';
 import type { CitationSelectDetail } from '../components/chat/CitationsPanel.js';
-import type { InspectorPane } from '../components/InspectorPane.js';
 import {
   getUserConfig,
   subscribeUserConfig,
@@ -352,7 +350,6 @@ export class Shell extends JfElement {
     activeId: { state: true },
     dragActive: { state: true },
     dragKind: { state: true },
-    inspector: { state: true },
     userConfig: { state: true },
     copyUrlFeedback: { state: true },
     journalCanBack: { state: true },
@@ -365,7 +362,6 @@ export class Shell extends JfElement {
   declare activeId: string | null;
   declare dragActive: boolean;
   declare dragKind: DragKind | null;
-  declare inspector: InspectorState | null;
   declare userConfig: RendererUserConfig;
   /** Slice 489 T1/G1 — transient state for Copy URL button feedback. */
   declare copyUrlFeedback: 'copied' | 'failed' | null;
@@ -376,7 +372,6 @@ export class Shell extends JfElement {
   declare isBookmarked: boolean;
 
   private dragUnsubscribe: (() => void) | null = null;
-  private inspectorUnsubscribe: (() => void) | null = null;
   private userConfigUnsubscribe: (() => void) | null = null;
   private catalogUnsubscribe: (() => void) | null = null;
   // Tempdoc 586 F-2 — Simple/Advanced mode re-filters the rail (see refreshSurfaces).
@@ -522,15 +517,26 @@ export class Shell extends JfElement {
     });
   }
 
-  // 504 A-3: citation-click → open doc in InspectorPane and highlight cited range.
+  // 504 A-3 / Search Thread S6 — citation-click → open the doc for reading + highlight the cited
+  // passage. `citation-select` is produced from several sites (inline [n] marks in MarkdownBlock, the
+  // docked evidence-rail's SourcesPane inside UnifiedChatView, AND the Shell-level drawer SourcesPane
+  // mounted in the OverlayHost right-drawer slot below — a sibling tree UnifiedChatView cannot itself
+  // hear bubble through it) — Shell stays the ONE listener for all of them (a `composed:true` event
+  // reaches here regardless of which subtree dispatched it). Rather than reaching into a specific pane
+  // instance (the retired InspectorPane.highlightCitation imperative call), this pushes the line range
+  // onto the shared inspectorState `selected` (via the new optional highlightStartLine/highlightEndLine
+  // fields) — UnifiedChatView's own inspectorState subscription derives `readingDocPath` +
+  // `readingHighlightRange` from it and DocumentPane renders the highlight declaratively.
   private onCitationSelect = (ev: Event): void => {
     const detail = (ev as CustomEvent<CitationSelectDetail>).detail;
     if (!detail?.parentDocId) return;
     const filename = detail.parentDocId.split(/[/\\]/).pop() ?? detail.parentDocId;
-    setSelected({ id: detail.parentDocId, title: filename, path: detail.parentDocId });
-    requestAnimationFrame(() => {
-      const pane = this.shadowRoot?.querySelector('jf-inspector-pane') as InspectorPane | null;
-      pane?.highlightCitation(detail.startLine, detail.endLine);
+    setSelected({
+      id: detail.parentDocId,
+      title: filename,
+      path: detail.parentDocId,
+      highlightStartLine: detail.startLine,
+      highlightEndLine: detail.endLine,
     });
   };
 
@@ -541,7 +547,6 @@ export class Shell extends JfElement {
     this.activeId = null;
     this.dragActive = false;
     this.dragKind = null;
-    this.inspector = null;
     this.userConfig = getUserConfig();
     this.copyUrlFeedback = null;
   }
@@ -562,24 +567,10 @@ export class Shell extends JfElement {
       font-family: system-ui, -apple-system, sans-serif;
       background: var(--surface-1);
     }
-    :host([data-inspector-open]) {
-      grid-template-columns: 3.25rem 1fr 22rem;
-      grid-template-areas:
-        'topbar topbar    topbar'
-        'rail   stage     inspector'
-        'rail   status    inspector';
-    }
     /* Search Thread S5b — the expanded (labels-visible) rail needs its GRID TRACK widened too:
        the Rail's own :host([expanded]) width is clamped by this column otherwise. */
     :host([data-rail-expanded]) {
       grid-template-columns: 11rem 1fr;
-    }
-    :host([data-rail-expanded][data-inspector-open]) {
-      grid-template-columns: 11rem 1fr 22rem;
-    }
-    jf-inspector-pane {
-      grid-area: inspector;
-      overflow: hidden;
     }
     .topbar {
       grid-area: topbar;
@@ -1296,12 +1287,9 @@ export class Shell extends JfElement {
         void this.handleFolderDrop(paths);
       },
     });
-    this.inspectorUnsubscribe = subscribeInspector((s) => {
-      this.inspector = s;
-      // Sync data attribute used by the host CSS to grow the inspector column.
-      if (s.isOpen) this.setAttribute('data-inspector-open', '');
-      else this.removeAttribute('data-inspector-open');
-    });
+    // Search Thread S6 — the inspectorState subscription (the Shell-level `data-inspector-open` grid
+    // column + `<jf-inspector-pane>` mount) retired; `UnifiedChatView` now subscribes directly and
+    // renders `<jf-document-pane>` in its own conversation-zone column.
     // Slice 471 — userConfig subscribe drives both Stage's override
     // dispatch + the ProvenanceBadge visibility.
     // Slice 472 — also re-filter rail when surfaceVisibility /
@@ -1607,7 +1595,6 @@ export class Shell extends JfElement {
     this.removeEventListener('citation-select', this.onCitationSelect);
     document.removeEventListener(NAVIGATE_TO_SURFACE_EVENT, this.onNavigateToSurface);
     this.dragUnsubscribe?.();
-    this.inspectorUnsubscribe?.();
     this.userConfigUnsubscribe?.();
     this.catalogUnsubscribe?.();
     this.uiModeUnsubscribe?.();
@@ -2178,9 +2165,8 @@ export class Shell extends JfElement {
       ${this.isStatusDeckVisible()
         ? html`<jf-status-deck role=${placementToLandmarkRole('STATUS')} api-base=${this.apiBase}></jf-status-deck>`
         : nothing}
-      ${this.inspector?.isOpen
-        ? html`<jf-inspector-pane role=${placementToLandmarkRole('DRAWER')} aria-label="Inspector" api-base=${this.apiBase}></jf-inspector-pane>`
-        : nothing}
+      <!-- Search Thread S6 — the jf-inspector-pane drawer mount retired; jf-document-pane
+           renders inside UnifiedChatView's own conversation-zone column instead. -->
       <!-- Tempdoc 559 Authority I: viewport-docked chrome overlays dock into the
            OverlayHost's named slots (the slot owns placement). Modals,
            anchored/hover popovers, drawers and toggled panels follow as separate

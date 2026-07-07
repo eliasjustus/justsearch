@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * inspectorState — Lit-side pub-sub for the Inspector pane (slice 462).
+ * inspectorState — Lit-side pub-sub for the "open a document for reading" signal (slice 462; the
+ * VISUAL Inspector Pane it originally fed retired in Search Thread S6 — see below).
  *
- * Owns: currently-selected docId, active tab, AI Q&A streaming state.
- * Surfaces (search results, browse rows) call `setSelected()`; the
- * Inspector subscribes and fetches the preview / context on demand.
+ * Owns: currently-selected docId (+ optional highlight line-range), active tab, AI Q&A streaming
+ * state. Surfaces (search results, browse rows, `host.ui.showInspector` on the plugin API, citation
+ * clicks) call `setSelected()`; this module itself renders nothing — it is a shared store, not a
+ * component.
+ *
+ * Search Thread S6 (the Reading Stage) — `components/InspectorPane.ts` (the store's original, and
+ * until S6 only, visual consumer: Preview/Context/Answer/Ask tabs) is RETIRED. `UnifiedChatView`
+ * subscribes here instead and projects `selected`/`isOpen` onto its own `readingDocPath` @state,
+ * rendering the passage in `<jf-document-pane>` (a no-tabs reading surface mounted in its own
+ * conversation-zone column) — Context/Answer/Ask are superseded by the unified thread itself, the one
+ * place Q&A already happens. `activeTab`/`ai` remain on this store's shape only for plugin-API
+ * (`host.getInspectorState()`/`subscribeInspector()`) back-compat and the `resetInspectorState()`
+ * profile-switch consumer (`main.jsx`); no shipped code still reads them for rendering.
  *
  * Tempdoc 508 §11.2 / §13.2 — the single-item Selected* state here
  * is now a derived view over selectionState (the first-class
@@ -34,6 +45,10 @@ export interface SelectedItem {
   kind?: string;
   size?: number;
   modifiedAt?: number;
+  /** Search Thread S6 — an optional passage line-range (e.g. from a citation deep-link) the reading
+   *  consumer highlights on open. Both-or-neither; a producer that has no line data omits both. */
+  highlightStartLine?: number;
+  highlightEndLine?: number;
 }
 
 export interface AiState {

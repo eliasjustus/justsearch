@@ -38,6 +38,12 @@ import {
   __resetAgentSessionStore,
 } from '../state/agentSessionStore.js';
 import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';
+// Search Thread S6 — the reading-pane wiring tests exercise the REAL (unmocked) inspectorState store
+// (the "open a document for reading" signal every card-open/citation-click flow funnels through) and a
+// mock PluginHostApi (the internal openRetrieveHit/handleCommittedCardOpen call sites route through
+// `host.ui.showInspector`, which in production is the plugin-API's own showInspector — see ui.ts).
+import { setSelected, resetInspectorState, getInspectorState } from '../state/inspectorState.js';
+import { createMockHostApi } from '../plugin-api/testHostApi.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
 // against a real api.
@@ -3358,5 +3364,210 @@ describe('Search Thread S5b — pinned searches (landing strip + pin toggle)', (
     await view.updateComplete;
     (view as unknown as { commitLiveSearch(r: string): void }).commitLiveSearch('open');
     expect(recordRunMock).toHaveBeenCalledWith('tax report', 3);
+  });
+});
+
+// Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`), mounted as the
+// conversation-zone's 5th column, replacing the retired InspectorPane drawer. `readingDocPath` is
+// driven by the shared inspectorState "open a document for reading" signal (the same store
+// `host.ui.showInspector` and Shell's citation-select rework both push to), so these tests exercise
+// the REAL (unmocked) inspectorState module directly rather than re-mocking it.
+describe('Search Thread S6 — the reading pane (DocumentPane mount + open flows)', () => {
+  type ReadingFields = {
+    readingDocPath: string | null;
+    readingHighlightRange: { startLine: number; endLine: number } | null;
+    host_: unknown;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    resetInspectorState();
+    searchListener = null;
+    scopeChipsListener = null;
+    scopeChipsMock.chips = [];
+  });
+
+  afterEach(() => {
+    resetInspectorState();
+  });
+
+  /** Push a fabricated single-hit live-search snapshot (mirrors the S4-final suite's helper above). */
+  function pushSearch(view: UnifiedChatView, query: string): void {
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({
+      query,
+      results: [{ id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' }],
+      matchCount: 1,
+      totalHits: 1,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: { effectiveMode: 'HYBRID' },
+    });
+  }
+
+  /** Wire a minimal PluginHostApi whose `ui.showInspector`/`search.hitToSelectedItem` reach the REAL
+   *  inspectorState store — the same path production's HostApiImpl/ui.ts capability takes. */
+  function stubHost(view: UnifiedChatView): void {
+    (view as unknown as ReadingFields).host_ = createMockHostApi({
+      ui: {
+        showInspector: (item) => setSelected({ id: item.id, title: item.title, path: item.path ?? '' }),
+      },
+      search: {
+        hitToSelectedItem: (hit) => ({ id: hit.id, title: hit.title, path: hit.path }),
+      },
+    });
+  }
+
+  it('is unmounted by default and mounts <jf-document-pane> when readingDocPath is set', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).toBeNull();
+    (view as unknown as ReadingFields).readingDocPath = '/docs/q1.md';
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).not.toBeNull();
+    view.remove();
+  });
+
+  it('card-open on the LIVE retrieve card sets readingDocPath and auto-pins the opened hit\'s file scope chip', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    // The handler calls the shared addScopeChip seam with the opened hit's path — dedup for a repeat
+    // open of the SAME hit is addScopeChip's OWN job (kind+docId-set no-op, unit-tested in
+    // searchState.scope.test.ts), not re-verified here against the module mock's simplified (always-
+    // append) recording.
+    expect(vi.mocked(addScopeChip)).toHaveBeenCalledWith({
+      kind: 'file',
+      label: 'q1.md',
+      docIds: ['/docs/q1.md'],
+    });
+    expect(scopeChipsMock.chips).toContainEqual({ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] });
+    view.remove();
+  });
+
+  it('a committed (historical snapshot) card-open also sets readingDocPath and auto-pins the chip', async () => {
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    (
+      view as unknown as {
+        committedSearches: Array<{
+          id: string;
+          query: string;
+          mode: string;
+          matchCount: number;
+          resultCount: number;
+          docIds: string[];
+          executedAt: string;
+          hits: Array<{ id: string; title: string; path: string; snippet: string }>;
+        }>;
+      }
+    ).committedSearches = [
+      {
+        id: 'cs-1',
+        query: 'q1',
+        mode: 'HYBRID',
+        matchCount: 1,
+        resultCount: 1,
+        docIds: ['/docs/q1.md'],
+        executedAt: new Date().toISOString(),
+        hits: [{ id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' }],
+      },
+    ];
+    (
+      view as unknown as { handleCommittedCardOpen(hitId: string): void }
+    ).handleCommittedCardOpen('h1');
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.remove();
+  });
+
+  it('a citation-select-driven inspectorState.selected (Shell.onCitationSelect) sets readingDocPath + readingHighlightRange', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // Mirrors what Shell.onCitationSelect now does — push the passage line range onto the shared
+    // inspectorState `selected`, rather than reaching into a specific pane instance.
+    setSelected({
+      id: '/docs/report.md',
+      title: 'report.md',
+      path: '/docs/report.md',
+      highlightStartLine: 4,
+      highlightEndLine: 9,
+    });
+    await view.updateComplete;
+    const fields = view as unknown as ReadingFields;
+    expect(fields.readingDocPath).toBe('/docs/report.md');
+    expect(fields.readingHighlightRange).toEqual({ startLine: 4, endLine: 9 });
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).not.toBeNull();
+    view.remove();
+  });
+
+  it("the pane's pane-close clears readingDocPath and closes the shared inspectorState", async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setSelected({ id: '/docs/report.md', title: 'report.md', path: '/docs/report.md' });
+    await view.updateComplete;
+    const pane = view.shadowRoot?.querySelector('jf-document-pane');
+    expect(pane).not.toBeNull();
+    pane!.dispatchEvent(new CustomEvent('pane-close', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBeNull();
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).toBeNull();
+    expect(getInspectorState().isOpen).toBe(false);
+    view.remove();
+  });
+
+  it('the retired jf-inspector-pane never appears in the template', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setSelected({ id: '/docs/report.md', title: 'report.md', path: '/docs/report.md' });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-inspector-pane')).toBeNull();
+    view.remove();
+  });
+
+  it('scoped-ask coherence: card-open sets readingDocPath + pins the chip, and an escalated Ask forwards the opened path in docIds', async () => {
+    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+
+    view.affordance = 'documents';
+    view.inputDraft = 'what does this say about totals?';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalled();
+    const lastCall = streamMock.mock.calls[streamMock.mock.calls.length - 1]!;
+    const body = lastCall[1] as { docIds?: string[] };
+    expect(body.docIds).toContain('/docs/q1.md');
+    view.remove();
   });
 });
