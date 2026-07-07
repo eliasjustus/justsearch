@@ -165,6 +165,73 @@ public final class InteractionThreadController {
     }
   }
 
+  /**
+   * Handles {@code POST /api/thread/{id}/events} — tempdoc S4b (Search Thread). The FE write path for
+   * an interaction-thread event kind that does NOT originate from the agent loop: today only {@code
+   * kind: "SEARCH"} (a manually-triggered search action), persisted so a reload of {@code GET
+   * /api/thread/{id}} still shows the committed search card. Body: {@code {"kind": "SEARCH", "query":
+   * string, "mode": string, "matchCount": number, "resultCount": number, "docIds": string[],
+   * "executedAt"?: ISO-8601}}. Returns {@code {"id": "<eventId>"}} (201) on success.
+   */
+  @SuppressWarnings("unchecked")
+  public void handlePostEvent(Context ctx) {
+    String conversationId = ctx.pathParam("id");
+    if (conversationId == null || conversationId.isBlank()) {
+      ctx.status(400).json(Map.of("error", "conversationId is required"));
+      return;
+    }
+    try {
+      Map<String, Object> body =
+          ctx.body() == null || ctx.body().isEmpty()
+              ? Map.of()
+              : MAPPER.readValue(ctx.body(), Map.class);
+      Object kind = body.get("kind");
+      if (!"SEARCH".equals(kind)) {
+        ctx.status(400).json(Map.of("error", "Unsupported event kind: " + kind));
+        return;
+      }
+      Object query = body.get("query");
+      Object mode = body.get("mode");
+      Object matchCount = body.get("matchCount");
+      Object resultCount = body.get("resultCount");
+      Object docIds = body.get("docIds");
+      if (!(query instanceof String q)
+          || q.isBlank()
+          || !(mode instanceof String m)
+          || m.isBlank()
+          || !(matchCount instanceof Number)
+          || !(resultCount instanceof Number)
+          || !(docIds instanceof List)) {
+        ctx.status(400)
+            .json(
+                Map.of(
+                    "error",
+                    "query, mode, matchCount, resultCount, docIds are required for a SEARCH event"));
+        return;
+      }
+      Object executedAtRaw = body.get("executedAt");
+      String executedAt =
+          executedAtRaw instanceof String s && !s.isBlank() ? s : Instant.now().toString();
+      Map<String, Object> attributes = new LinkedHashMap<>();
+      attributes.put("query", query);
+      attributes.put("mode", mode);
+      attributes.put("matchCount", matchCount);
+      attributes.put("resultCount", resultCount);
+      attributes.put("docIds", docIds);
+      attributes.put("executedAt", executedAt);
+
+      String eventId = agentService.appendSearchEvent(conversationId, attributes);
+      if (eventId == null) {
+        ctx.status(500).json(Map.of("error", "Failed to persist search event"));
+        return;
+      }
+      ctx.status(201).json(Map.of("id", eventId));
+    } catch (Exception e) {
+      log.error("Failed to append thread event for {}", conversationId, e);
+      ctx.status(500).json(Map.of("error", "Failed to append thread event"));
+    }
+  }
+
   private static Instant parseSinceParam(String raw) {
     if (raw == null || raw.isBlank()) {
       return null;

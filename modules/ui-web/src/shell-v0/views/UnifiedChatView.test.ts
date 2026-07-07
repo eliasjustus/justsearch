@@ -16,10 +16,14 @@
  * we need to lock in.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
 import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape } from '../utils/compose.js';
+// Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
+// Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
+import * as composeModule from '../utils/compose.js';
 import { restoreUnifiedChat, resetUnifiedChatState, getUnifiedChatState } from '../state/unifiedChatState.js';
 import { consumeShapeStream } from '../../api/streams.js';
 // Tempdoc 609 — value imports for the 609 describes (modules are vi.mock'd below; vi.mocked() wraps them).
@@ -36,6 +40,17 @@ import {
   getAgentSessionController,
   __resetAgentSessionStore,
 } from '../state/agentSessionStore.js';
+import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';
+// Search Thread S6 — the reading-pane wiring tests exercise the REAL (unmocked) inspectorState store
+// (the "open a document for reading" signal every card-open/citation-click flow funnels through) and a
+// mock PluginHostApi (the internal openRetrieveHit/handleCommittedCardOpen call sites route through
+// `host.ui.showInspector`, which in production is the plugin-API's own showInspector — see ui.ts).
+import { setSelected, resetInspectorState, getInspectorState } from '../state/inspectorState.js';
+import { createMockHostApi } from '../plugin-api/testHostApi.js';
+// Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark lives in
+// the REAL userConfig document (not mocked); tests reset it so each case starts as an unseen (first-
+// sighting) cause-set, matching the pre-round-2 always-expanded assertions these tests carry forward.
+import { __resetUserConfigForTest, getUserConfig } from '../state/userConfigState.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
 // against a real api.
@@ -83,6 +98,55 @@ const SEARCH_EMPTY = {
   error: null,
   searchTrace: null,
 };
+// Search Thread D5 (stage S3) — control the scope-chip store the same way as the search store above:
+// capture the subscribed listener so a test can push fabricated chip snapshots, and stub the mutators
+// so we can assert on how the view calls them without touching the real module-level array.
+let scopeChipsListener: ((chips: unknown) => void) | null = null;
+const scopeChipsMock = {
+  chips: [] as Array<{ kind: string; label: string; docIds: readonly string[] }>,
+};
+// S5b pin-parity — controllable pinned-search store mock (subscribe fires immediately, real-store
+// parity). vi.hoisted: the factory below executes before top-level consts would initialize.
+const pinsCtl = vi.hoisted(() => {
+  const state = {
+    listener: null as ((pins: unknown) => void) | null,
+    pins: [] as Array<{ id: string; query: string; pinnedAt: number; runs: unknown[] }>,
+  };
+  return {
+    state,
+    reset(pins: Array<{ id: string; query: string; pinnedAt: number; runs: unknown[] }>) {
+      state.pins = pins;
+    },
+    pinSearch: (query: string) => {
+      state.pins = [...state.pins, { id: 'pin-' + query, query, pinnedAt: 1, runs: [] }];
+      state.listener?.(state.pins);
+      return state.pins[state.pins.length - 1];
+    },
+    unpinSearch: (id: string) => {
+      state.pins = state.pins.filter((p) => p.id !== id);
+      state.listener?.(state.pins);
+      return true;
+    },
+  };
+});
+const pinSearchMock = vi.fn(pinsCtl.pinSearch);
+const unpinSearchMock = vi.fn(pinsCtl.unpinSearch);
+const recordRunMock = vi.fn();
+vi.mock('../state/pinnedSearchState.js', () => ({
+  subscribePinnedSearches: (listener: (pins: unknown) => void) => {
+    pinsCtl.state.listener = listener;
+    listener(pinsCtl.state.pins);
+    return () => {
+      pinsCtl.state.listener = null;
+    };
+  },
+  getPinnedSearches: () => pinsCtl.state.pins,
+  isPinned: (q: string) => pinsCtl.state.pins.some((p) => p.query === q.trim()),
+  pinSearch: (q: string) => pinSearchMock(q),
+  unpinSearch: (id: string) => unpinSearchMock(id),
+  recordRun: (q: string, t: number) => recordRunMock(q, t),
+}));
+
 vi.mock('../state/searchState.js', () => ({
   subscribeSearch: vi.fn((listener: (s: unknown) => void) => {
     searchListener = listener;
@@ -94,7 +158,25 @@ vi.mock('../state/searchState.js', () => ({
   setQuery: vi.fn(),
   submitSearch: vi.fn(),
   setSearchApiBase: vi.fn(),
+  recordOpenDisposition: vi.fn(),
   getSearchState: vi.fn(() => SEARCH_EMPTY),
+  subscribeScopeChips: vi.fn((listener: (chips: unknown) => void) => {
+    scopeChipsListener = listener;
+    listener(scopeChipsMock.chips);
+    return () => {
+      scopeChipsListener = null;
+    };
+  }),
+  addScopeChip: vi.fn(
+    (chip: { kind: string; label: string; docIds: readonly string[] }) => {
+      scopeChipsMock.chips = [...scopeChipsMock.chips, chip];
+      scopeChipsListener?.(scopeChipsMock.chips);
+    },
+  ),
+  removeScopeChip: vi.fn((index: number) => {
+    scopeChipsMock.chips = scopeChipsMock.chips.filter((_, i) => i !== index);
+    scopeChipsListener?.(scopeChipsMock.chips);
+  }),
 }));
 
 // Mock the network layer so resumeConversation + fetchMessageIds don't
@@ -136,6 +218,7 @@ describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
+    __resetUserConfigForTest();
   });
 
   it('renders the disconnected banner with the verdict-SEVERITY tone (unreachable ⇒ error), not a hardcoded warning — matching SearchSurface', async () => {
@@ -153,6 +236,237 @@ describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
     // The fix: tone tracks verdict severity (error/red), so chat and search cannot disagree.
     expect(banner?.getAttribute('tone')).toBe('error');
     expect(banner?.textContent).toContain('Backend disconnected');
+  });
+});
+
+// Search Thread S5b — SearchSurface (the retired standalone Search rail surface) had its own B3
+// retrieval-degraded banner (testid="search-degradation"), but it read the SAME ONE verdict/
+// readinessNotice authority (aiStateStore → verdict.ts → readinessNotice) the chat banner already
+// renders unconditionally (testid="chat-degradation", every affordance tier — see render()). These
+// port SearchSurface.degradation.test.ts's scenarios onto that one shared banner, proving the
+// retrieve tier gets the identical worded notice with no separate banner needed.
+describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.degradation.test.ts, Search Thread S5b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetUserConfigForTest();
+  });
+
+  function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
+    (view as unknown as { aiState: unknown }).aiState = { ...AI_STATE_READY, verdict };
+    view.affordance = 'retrieve';
+    view.requestUpdate();
+  }
+
+  it('621/595 — an impairing degradation renders "Semantic search degraded" (warn) while on the retrieve tier', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('Semantic search degraded');
+    const op = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]');
+    expect(op?.getAttribute('operation-id')).toBe('core.trigger-offline-processing');
+  });
+
+  it('595 §10.3 — a cosmetic degradation (LambdaMART) renders CALMLY (info), never "keyword results"', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    expect(banner?.textContent).toContain('Reduced search capability');
+    expect(banner?.textContent).not.toContain('keyword results');
+    expect(banner?.getAttribute('tone')).toBe('info');
+  });
+
+  it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // Two reindex causes (Round-2 R1a only dedups a SOLE cause bullet against the headline —
+    // see the dedicated dedup test below), so the specific-cause bullet still renders here.
+    setVerdict(view, {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['index.blocked_legacy', 'index.schema_mismatch'],
+    });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    const text = banner?.textContent ?? '';
+    expect(text).toContain('Reindex required');
+    expect(text).toContain('built before semantic search was available');
+    const op = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]');
+    expect(op?.getAttribute('operation-id')).toBe('core.rebuild-index');
+  });
+
+  it('falls back to the Open Health navigate remedy for an unknown/empty cause', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: [] });
+    await view.updateComplete;
+    const nav = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-nav"]');
+    expect(nav).not.toBeNull();
+    expect(nav?.textContent).toContain('Open Health');
+  });
+});
+
+// Search Thread Round-2 R1a — a seen notice collapses to one line; a cause-set change (or a fresh
+// profile) re-expands once; the chevron toggles either way; the reindex single-cause bullet dedups.
+describe('UnifiedChatView degradation banner collapse (Search Thread Round-2 R1a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetUserConfigForTest();
+  });
+
+  function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
+    (view as unknown as { aiState: unknown }).aiState = { ...AI_STATE_READY, verdict };
+    view.affordance = 'retrieve';
+    view.requestUpdate();
+  }
+
+  it('a first sighting renders expanded (multi-bullet) and records the cause-set as seen', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).not.toBeNull();
+    expect(getUserConfig().seenDegradationCauseHash).toBe('worker.health.embedding_not_ready');
+  });
+
+  it('re-mounting with the SAME cause-set collapses to one line, still naming the headline + remedy', async () => {
+    const view1 = mountView();
+    await view1.updateComplete;
+    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view1.updateComplete; // first sighting — marks it seen
+
+    const view2 = mountView();
+    await view2.updateComplete;
+    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view2.updateComplete;
+
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    const summary = view2.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]');
+    expect(summary?.textContent).toContain('1 cause');
+    expect(summary?.textContent).toContain('Semantic search degraded');
+    // The strongest remedy stays reachable even collapsed.
+    expect(
+      view2.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
+    ).toBe('core.trigger-offline-processing');
+  });
+
+  it('the expand chevron re-opens a collapsed banner; the collapse chevron re-collapses it', async () => {
+    const view1 = mountView();
+    await view1.updateComplete;
+    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view1.updateComplete;
+
+    const view2 = mountView();
+    await view2.updateComplete;
+    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+
+    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-expand"]') as HTMLButtonElement).click();
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+
+    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
+    await view2.updateComplete;
+    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+  });
+
+  it('a cause-set CHANGE re-expands even though a different set was already seen', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete; // seen: embedding_not_ready
+
+    setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(getUserConfig().seenDegradationCauseHash).toBe('lambdamart.not_configured');
+  });
+
+  it('drops the single reindex cause bullet (dedup by code) — the headline+body already say it', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['index.blocked_legacy'] });
+    await view.updateComplete;
+    // First sighting is expanded, but the sole redundant bullet is dropped: no <ul> renders.
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('.degradation-banner')?.textContent).toContain('Reindex required');
+  });
+});
+
+// Search Thread S5b — ports SearchSurface.stateRetention.test.ts's selection-retention scenarios
+// (the standalone Search surface's `applySelection` re-publish/inspector-reopen) onto the retrieve
+// tier's `republishRetrieveSelection` (called from connectedCallback).
+describe('UnifiedChatView retrieve-tier selection retention (ports SearchSurface.stateRetention.test.ts, Search Thread S5b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetSelectionForTest();
+  });
+
+  const HITS = [
+    { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due', kind: 'markdown' },
+    { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()', kind: 'code' },
+  ];
+  function snapshotWith(results: typeof HITS): UnifiedChatView['searchSnapshot'] {
+    return {
+      query: 'invoice',
+      results,
+      totalHits: results.length,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: null,
+    } as unknown as UnifiedChatView['searchSnapshot'];
+  }
+
+  it('re-publishes a retained single-hit selection to the GLOBAL selectionState on reconnect', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    (view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds = new Set(['h2']);
+    // The Shell clears the GLOBAL selection on surface change — simulate that gap before reconnect.
+    __resetSelectionForTest();
+
+    (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection();
+
+    const sel = getSelection();
+    expect(sel.surfaceId).toBe('core.unified-chat-surface');
+    expect(sel.items).toEqual([
+      expect.objectContaining({ kind: 'search-hit', hitId: 'h2', path: '/src/helper.ts' }),
+    ]);
+    view.remove();
+  });
+
+  it('drops a stale id no longer present in the current snapshot instead of republishing garbage', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    (view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds = new Set(['gone']);
+    __resetSelectionForTest();
+
+    (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection();
+
+    expect(getSelection().items).toEqual([]);
+    expect((view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds.size).toBe(0);
+    view.remove();
+  });
+
+  it('is a no-op when there is no held selection', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    __resetSelectionForTest();
+
+    expect(() =>
+      (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection(),
+    ).not.toThrow();
+    expect(getSelection().items).toEqual([]);
+    view.remove();
   });
 });
 
@@ -180,12 +494,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     expect(answerPlane?.hasAttribute('hidden')).toBe(false);
     expect(view.shadowRoot?.querySelector('jf-agent-view')).toBeNull();
     expect(view.shadowRoot?.querySelector('jf-composer')).not.toBeNull();
-    // the Agent affordance toggle is present + active (the crossing control stays visible).
-    const agentBtn = Array.from(
-      view.shadowRoot?.querySelectorAll('.affordance-btn') ?? [],
-    ).find((b) => b.textContent?.trim() === 'Agent');
-    expect(agentBtn).toBeDefined();
-    expect(agentBtn?.classList.contains('active')).toBe(true);
+    // Search Thread S5b — the affordance tab row is retired; the crossing is explicit-affordance-only
+    // now. The shape-indicator still names the active tier (a passive readout, not a clickable tab).
+    const shapeIndicator = view.shadowRoot?.querySelector('.shape-indicator');
+    expect(shapeIndicator?.textContent?.trim()).toBe('Agent');
+    expect(view.shadowRoot?.querySelector('.affordance-bar')).toBeNull();
   });
 
   it('561 C-2 — the supervision dial appears only at the agency crossing, and the chrome grades with it', async () => {
@@ -217,8 +530,13 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAutonomyForTest();
   });
 
-  it('561 #6 — renders search EVIDENCE from the RECORD (live == record, not the raw dump)', async () => {
+  it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       {
@@ -227,7 +545,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
         attributes: {
           callId: 'c1', toolName: 'core_search_index', status: 'completed',
           output: '[1] taxes (score: 0.92)\n    Path: C:/docs/taxes.md',
-          structuredData: { searchResults: [{ title: 'Tax Notes', path: 'C:/docs/taxes.md', excerpt: 'deductible limits', line: 42 }] },
+          structuredData: {
+            query: 'taxes',
+            resultCount: 1,
+            searchResults: [{ title: 'Tax Notes', path: 'C:/docs/taxes.md', excerpt: 'deductible limits', line: 42 }],
+          },
         },
       },
     ];
@@ -235,29 +557,39 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     await view.updateComplete;
     const sr = view.shadowRoot!;
     // Tempdoc 565 §12.3.B — the record's tool activity renders through the SAME <jf-tool-call-card>
-    // the live half uses, so the structured evidence now lives in the CARD's shadow DOM (one tool
-    // renderer; live == record). Pierce into the card to assert the evidence cards still render.
-    const card = sr.querySelector('.tool-activity jf-tool-call-card') as
-      | (Element & { updateComplete: Promise<unknown> })
+    // the live half uses. Search Thread S7 (tempdoc decision 4): the search evidence itself now lives
+    // in the ONE shared `<jf-results-card>` nested inside the tool card's shadow DOM (a THIRD nesting
+    // level to pierce — live == record == user search, one card).
+    const toolCard = sr.querySelector('.tool-activity jf-tool-call-card') as
+      | (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> })
       | null;
-    expect(card).not.toBeNull();
-    await card!.updateComplete;
-    const cardSr = card!.shadowRoot!;
-    const evidence = cardSr.querySelector('[data-testid="tool-search-evidence"]');
-    expect(evidence).not.toBeNull();
-    const text = (evidence?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(toolCard).not.toBeNull();
+    await toolCard!.updateComplete;
+    const resultsCard = toolCard!.shadowRoot.querySelector(
+      '[data-testid="tool-search-card"] jf-results-card',
+    ) as (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> }) | null;
+    expect(resultsCard, 'the shared results card mounts inside the tool card').not.toBeNull();
+    await resultsCard!.updateComplete;
+    // Expand the collapsed excerpt to the row list.
+    (resultsCard!.shadowRoot.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await resultsCard!.updateComplete;
+    const text = (resultsCard!.shadowRoot.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).toContain('Tax Notes');
     expect(text).toContain('deductible limits');
-    expect(text).toContain('line 42');
     // Honesty: no fabricated "% RELEVANCE" badge from the uncalibrated ranking score (559 §5 / C-6).
     expect(text).not.toContain('%');
-    // The raw monospace dump is suppressed in favour of the structured cards (live == record):
-    // the card renders `.tool-output` only when there is NO structured evidence.
-    expect(cardSr.querySelector('.tool-output')).toBeNull();
+    // The raw monospace dump is suppressed in favour of the structured card (live == record):
+    // the tool card renders `.tool-output` only when there is NO structured evidence.
+    expect(toolCard!.shadowRoot.querySelector('.tool-output')).toBeNull();
   });
 
   it('renders the unified interleaved thread (chat + agent tool activity) from the record (Slice 2)', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     // Populate the canonical-record events (as GET /api/thread would return), out of input order to
     // prove the render projects by the authoritative timestamp.
@@ -459,6 +791,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 fix A — a multi-turn record renders one INDEPENDENTLY-collapsible trace per run', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     // Two completed runs in one session: user1 · tool1 · answer1 · user2 · tool2 · answer2.
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'turn one', attributes: {} },
@@ -489,6 +826,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 §12.3.E — renders a source-chip row under a grounded answer + cross-highlights via the store', async () => {
     __resetSelectedSource();
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     const sources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -537,6 +879,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 §13.8 P3 — the source chips collapse behind a "Sources · N" disclosure; clicking toggles it', async () => {
     __resetSelectedSource();
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     const sources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -913,6 +1260,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('renders the projection as the single read-model: reconciled live turns dedupe, in-flight turns overlay (Pillar 2)', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     // The record (GET /api/thread) holds two reconciled turns.
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'recorded question', attributes: {} },
@@ -1075,6 +1427,184 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
     expect(block, 'the reloaded extraction renders an answer block').not.toBeNull();
     expect(block!.getAttribute('frame'), 'reloaded extract uses the verbatim transform frame').toBe('transform');
+  });
+});
+
+// Search Thread S7 (tempdoc decision 6) — the quiet per-turn receipt (grounding verdict + duration +
+// model), EXTENDING the existing answer-frame line (never a second line). Full grounding-classification
+// coverage lives in evidenceProjection.test.ts; these tests assert the render-site wiring only.
+describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decision 6)', () => {
+  function chunkCitation(chunkIndex: number): {
+    parentDocId: string;
+    chunkIndex: number;
+    chunkTotal: number;
+    startChar: number;
+    endChar: number;
+    score: number;
+    excerpt: string;
+    startLine: number;
+    endLine: number;
+    headingText: string;
+    headingLevel: number;
+  } {
+    return {
+      parentDocId: 'doc-1',
+      chunkIndex,
+      chunkTotal: 1,
+      startChar: 0,
+      endChar: 10,
+      score: 0.9,
+      excerpt: 'excerpt',
+      startLine: 1,
+      endLine: 2,
+      headingText: '',
+      headingLevel: 0,
+    };
+  }
+
+  afterEach(() => {
+    // Restore the shared aiState fixture so other describe blocks see the original shape.
+    delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+  });
+
+  it('a grounded turn with duration + model shows ONLY the quiet receipt tail (no warning text), non-italic', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        durationMs: 3200,
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line, 'the receipt line renders even for a fully grounded answer').not.toBeNull();
+    expect(line!.classList.contains('answer-frame-grounded')).toBe(true);
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('3.2s · Llama 3 8B');
+    const receipt = line!.querySelector('.answer-receipt');
+    expect(receipt, 'the duration+model tail is its own non-italic span').not.toBeNull();
+    expect(getComputedStyle(receipt!).fontStyle).toBe('normal');
+    // The receipt sits AFTER the answer block (under it), not before.
+    const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
+    expect(
+      !!(block!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_FOLLOWING),
+      'the receipt line follows the answer block in document order',
+    ).toBe(true);
+    view.remove();
+  });
+
+  it('a partially-grounded turn keeps its warning text and appends the receipt tail on the SAME line', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a. b.',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a.', score: 0.9, sourceRefs: [0] }],
+        durationMs: 500,
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line).not.toBeNull();
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('Partly grounded — some statements are not backed by your documents · 500ms · Llama 3 8B');
+    // Exactly ONE receipt-bearing line — never a second.
+    expect(view.shadowRoot!.querySelectorAll('.message.assistant[data-item-id="a1"] .answer-frame').length).toBe(1);
+    view.remove();
+  });
+
+  it('an extract (transform) turn keeps the unmissable banner BEFORE the answer, extended with the receipt', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.extract', id: 'u1' },
+      { role: 'assistant', content: '{}', shapeId: 'core.extract', id: 'a1', isExtract: true, durationMs: 800 },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame-transform',
+    );
+    expect(line).not.toBeNull();
+    expect((line!.textContent ?? '')).toContain('Model-generated structure');
+    expect((line!.textContent ?? '')).toContain('800ms');
+    const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
+    expect(
+      !!(line!.compareDocumentPosition(block!) & Node.DOCUMENT_POSITION_FOLLOWING),
+      'the transform banner still precedes the answer block',
+    ).toBe(true);
+    view.remove();
+  });
+
+  it('omits duration (never fabricates) when the turn carries none — a reloaded turn with no stored durationMs', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        // no durationMs — the reload case
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line).not.toBeNull();
+    expect((line!.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe('Llama 3 8B');
+    view.remove();
+  });
+
+  it('renders no line at all when neither a warning nor a duration/model receipt applies', async () => {
+    delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)] },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(
+      view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] .answer-frame'),
+    ).toBeNull();
+    view.remove();
   });
 });
 
@@ -1327,18 +1857,23 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
     searchListener = null;
   });
 
-  it('exposes a leading Search affordance that selects the retrieve tier', async () => {
+  it('reaches the retrieve tier via an explicit affordance set, with no tab row rendered (Search Thread S5b)', async () => {
     const view = mountView();
     await view.updateComplete;
-    const searchBtn = Array.from(
-      view.shadowRoot?.querySelectorAll('.affordance-btn') ?? [],
-    ).find((b) => b.textContent?.trim() === 'Search');
-    expect(searchBtn).toBeDefined();
-    (searchBtn as HTMLElement).click();
+    // S5a — boot already derives 'retrieve' (no B14 auto-upgrade to leave from), so start from an
+    // explicit documents pin to exercise the selection transition the (now-retired) tab used to.
+    view.affordance = 'documents';
     await view.updateComplete;
-    expect(searchBtn?.classList.contains('active')).toBe(true);
-    // The chat thread is replaced by the retrieve prompt (ephemeral, no thread history).
-    expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).not.toBeNull();
+    // Search Thread S5b — the affordance tab row is retired; the retrieve tier is reached only via
+    // explicit affordance assignment (programmatic entry — palette/actions/deep-links) now.
+    expect(view.shadowRoot?.querySelector('.affordance-bar')).toBeNull();
+    view.affordance = 'retrieve';
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve');
+    // Search Thread D2/D3 (stage S2) — the chat thread is replaced by the bare LANDING (ephemeral, no
+    // thread history), not the old static retrieve-empty-prompt (retired in favor of the landing bar).
+    expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).not.toBeNull();
   });
 
   it('renders the ephemeral hit-list from the search store, never as thread turns', async () => {
@@ -1361,7 +1896,11 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const rows = view.shadowRoot?.querySelectorAll('[data-testid="retrieve-result-row"]');
+    // Search Thread S1 — the tier renders the ONE results card; rows live in its shadow root.
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
+    const rows = card!.shadowRoot?.querySelectorAll('[data-testid="search-result-row"]');
     expect(rows?.length).toBe(2);
     // The hit-list is NOT a chat message — no assistant/user turn was created.
     expect(view.thread.length).toBe(0);
@@ -1409,10 +1948,14 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       facets: { file_kind: { markdown: 3, pdf: 1 } },
     });
     await view.updateComplete;
+    // Search Thread S1 — facet chips + why disclosures render inside the shared card.
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
     // Facet chips (shared render) appear above the list.
-    expect(view.shadowRoot?.querySelector('[data-testid="facet-row"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="facet-row"]')).not.toBeNull();
     // Per-hit "Why this result?" disclosure (shared render) appears on the row.
-    expect(view.shadowRoot?.querySelector('[data-testid="hit-why"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="hit-why"]')).not.toBeNull();
   });
 
   it('602 R3 — the retrieve row formats the path + highlights query terms like the Search surface', async () => {
@@ -1443,15 +1986,18 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const sr = view.shadowRoot!;
+    // Search Thread S1 — the row presentation lives in the shared card's shadow root.
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const sr = card.shadowRoot!;
     // Path is middle-ellipsis formatted (shared formatDisplayPath) — keeps the filename,
     // drops the middle — not the raw 90-char path; the raw path stays in the title attr.
-    const pathEl = sr.querySelector('.retrieve-row-path')!;
+    const pathEl = sr.querySelector('.row .path')!;
     expect(pathEl.textContent).toContain('…');
     expect(pathEl.textContent).toContain('quarterly-report.md');
     expect(pathEl.getAttribute('title')).toBe(longPath);
     // Query term is wrapped in the shared <mark class="hl"> highlight.
-    const mark = sr.querySelector('.retrieve-row-snippet mark.hl');
+    const mark = sr.querySelector('.row .snippet mark.hl');
     expect(mark, 'snippet highlights the query term').not.toBeNull();
     expect(mark!.textContent?.toLowerCase()).toBe('invoice');
   });
@@ -1483,7 +2029,9 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const meta = view.shadowRoot?.querySelector('.retrieve-meta')?.textContent ?? '';
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const meta = card.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
     expect(meta).toContain('Top 2 of 451 matches');
     expect(meta).not.toContain('110 result'); // the old window-as-count is gone
   });
@@ -1505,7 +2053,9 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       searchTrace: null,
     });
     await view.updateComplete;
-    const meta = view.shadowRoot?.querySelector('.retrieve-meta')?.textContent ?? '';
+    const card = view.shadowRoot!.querySelector('jf-results-card') as LitElement;
+    await card.updateComplete;
+    const meta = card.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
     expect(meta).toContain('3 matches');
     expect(meta).not.toContain('50 result');
   });
@@ -1563,6 +2113,384 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       view.shadowRoot!.querySelector('.resume-prompt'),
       'an active retrieve query hides the resume card',
     ).toBeNull();
+    view.remove();
+  });
+
+  // Search Thread D2/D3 (stage S2) — the floor rule, per-turn ROUTE, and the bare-landing search bar.
+  describe('Search Thread D2/D3 (stage S2) — route + landing', () => {
+    it('the floor rule feeds instant search on every keystroke, even outside retrieve', async () => {
+      const { setQuery } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'documents';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      expect(composer).not.toBeNull();
+      composer!.dispatchEvent(
+        new CustomEvent('composer-input', { detail: { value: 'quarterly report' } }),
+      );
+      expect(setQuery).toHaveBeenCalledWith('quarterly report');
+      view.remove();
+    });
+
+    it('routes an interrogative draft to Ask (escalates), never to submitSearch', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(view.affordance).toBe('documents');
+      expect(submitSearch).not.toHaveBeenCalled();
+      view.remove();
+    });
+
+    it('routes a keyword draft to Search (submitSearch), staying in the retrieve tier', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(submitSearch).toHaveBeenCalled();
+      expect(view.affordance).toBe('retrieve');
+      view.remove();
+    });
+
+    it('composer-submit-alt sends the OPPOSITE route from composer-submit', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march'; // heuristic guesses 'search'
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit-alt'));
+      await view.updateComplete;
+      // Ctrl+Enter sends the OTHER way: the opposite of 'search' is 'ask' — escalates.
+      expect(view.affordance).toBe('documents');
+      expect(submitSearch).not.toHaveBeenCalled();
+      view.remove();
+    });
+
+    it('renders the route chip in retrieve; route-toggle flips the displayed route', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.inputDraft = 'invoice march'; // heuristic guesses 'search'
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string })
+        | null;
+      expect(chip).not.toBeNull();
+      expect(chip!.route).toBe('search');
+      chip!.dispatchEvent(new CustomEvent('route-toggle', { bubbles: true, composed: true }));
+      await view.updateComplete;
+      const chipAfter = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string })
+        | null;
+      expect(chipAfter!.route).toBe('ask');
+      view.remove();
+    });
+
+    it('pins the chip (and the route) to search when Ask is unavailable', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?'; // heuristic would otherwise guess 'ask'
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip).not.toBeNull();
+      expect(chip!.pinned).toBe(true);
+      expect(chip!.route).toBe('search');
+      view.remove();
+    });
+
+    it('never escalates to Ask when pinned — submit runs a search instead', async () => {
+      const { submitSearch } = await import('../state/searchState.js');
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const composer = view.shadowRoot?.querySelector('jf-composer');
+      composer!.dispatchEvent(new CustomEvent('composer-submit'));
+      await view.updateComplete;
+      expect(submitSearch).toHaveBeenCalled();
+      expect(view.affordance).toBe('retrieve');
+      view.remove();
+    });
+
+    it('renders the bare landing when empty, docks when a query is typed — exactly one jf-composer either way', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      await view.updateComplete;
+      expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).not.toBeNull();
+      expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
+      expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+      // Landing mode is a CLASS on the stable bottom slot, not a different mount point.
+      expect(view.shadowRoot?.querySelector('.composer.landing-dock')).not.toBeNull();
+      const textareaBefore = view.shadowRoot?.querySelector('jf-composer textarea');
+
+      expect(searchListener).not.toBeNull();
+      searchListener!({ ...SEARCH_EMPTY, query: 'invoice' });
+      await view.updateComplete;
+      expect(view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')).toBeNull();
+      expect(view.shadowRoot?.querySelectorAll('jf-composer').length).toBe(1);
+      expect(view.shadowRoot?.querySelector('.composer.landing-dock')).toBeNull();
+      // Stable-slot invariant (live-validation finding): the textarea must be the SAME node
+      // across the landing→docked transition — a re-parented textarea drops keystrokes that
+      // race the first render, eating the user's sentence after its first character.
+      const textareaAfter = view.shadowRoot?.querySelector('jf-composer textarea');
+      expect(textareaAfter).toBe(textareaBefore);
+      view.remove();
+    });
+
+    it('the jf-focus-composer window event focuses the composer textarea', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      const textarea = view.shadowRoot?.querySelector('jf-composer textarea') as
+        | HTMLTextAreaElement
+        | null;
+      expect(textarea).not.toBeNull();
+      const focusSpy = vi.spyOn(textarea!, 'focus');
+      window.dispatchEvent(new CustomEvent('jf-focus-composer'));
+      expect(focusSpy).toHaveBeenCalled();
+      view.remove();
+    });
+  });
+});
+
+// Search Thread tempdoc D5 (stage S3) — pinned scope chips (a file / a result set) constrain both
+// instant search and a grounded Ask. searchState's mutators are stubbed above (scopeChipsMock); these
+// tests assert the VIEW's mount/render/handler wiring, not the store itself (covered by
+// searchState.test.ts).
+describe('Search Thread D5 (stage S3) — scope chips', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    scopeChipsMock.chips = [];
+  });
+
+  function pushHits(): void {
+    searchListener!({
+      query: 'invoice',
+      results: [
+        { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due', kind: 'markdown' },
+        { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()', kind: 'code' },
+      ],
+      totalHits: 2,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: null,
+    });
+  }
+
+  it('renders the scope-chip row from the subscribed store', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(scopeChipsListener).not.toBeNull();
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-chip-row"]')).not.toBeNull();
+    view.remove();
+  });
+
+  it('renders no scope-chip row when no chips are pinned', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-chip-row"]')).toBeNull();
+    view.remove();
+  });
+
+  it('card-scope-file ("Ask about this file") adds a file chip carrying the PATH, not the hit id', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    expect(card).not.toBeNull();
+    card.dispatchEvent(
+      new CustomEvent('card-scope-file', {
+        detail: { id: 'h1', path: '/docs/q1.md', title: 'Q1 invoice' },
+      }),
+    );
+    await view.updateComplete;
+    expect(addScopeChip).toHaveBeenCalledWith({
+      kind: 'file',
+      label: 'q1.md',
+      docIds: ['/docs/q1.md'],
+    });
+    // Not pinned (chat capability is available per AI_STATE_READY) — routes to ask-readiness.
+    expect(view.routeOverride).toBe('ask');
+    view.remove();
+  });
+
+  it('card-scope-file does NOT flip routeOverride to ask when Ask is pinned to search', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    view.aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    } as unknown as UnifiedChatView['aiState'];
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    card.dispatchEvent(
+      new CustomEvent('card-scope-file', {
+        detail: { id: 'h1', path: '/docs/q1.md', title: 'Q1 invoice' },
+      }),
+    );
+    await view.updateComplete;
+    expect(view.routeOverride).toBeNull();
+    view.remove();
+  });
+
+  it('shows "Ask about these N results" only when >1 selected, and clicking pins a result-set chip of PATHS', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    // handleRetrieveCardSelection's >1 branch publishes a real 'result-set' SelectionItem
+    // (setInternalSelection, real selectionState module — not mocked); its subscription would
+    // otherwise auto-flip affordance to 'documents' (refreshDocsFromSelection) since the affordance
+    // here was set directly, not via toggleAffordance(). Pin it explicit, as a real click would.
+    (view as unknown as { userToggledAffordance: boolean }).userToggledAffordance = true;
+    await view.updateComplete;
+    pushHits();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="scope-selection-btn"]')).toBeNull();
+    const card = view.shadowRoot?.querySelector('jf-results-card') as LitElement;
+    card.dispatchEvent(
+      new CustomEvent('card-selection', {
+        detail: { ids: ['h1', 'h2'], primaryId: 'h1', primaryIndex: 0 },
+      }),
+    );
+    await view.updateComplete;
+    const btn = view.shadowRoot?.querySelector(
+      '[data-testid="scope-selection-btn"]',
+    ) as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain('2 results');
+    btn!.click();
+    await view.updateComplete;
+    expect(addScopeChip).toHaveBeenCalledWith({
+      kind: 'result-set',
+      label: '2 results',
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+    expect(view.routeOverride).toBe('ask');
+    view.remove();
+  });
+
+  it('Backspace on an empty draft pops the last pinned scope chip', async () => {
+    const { removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    scopeChipsListener!([
+      { kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] },
+      { kind: 'file', label: 'helper.ts', docIds: ['/src/helper.ts'] },
+    ]);
+    view.inputDraft = '';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).toHaveBeenCalledWith(1);
+    view.remove();
+  });
+
+  it('Backspace does NOT pop a chip while the draft has text', async () => {
+    const { removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.inputDraft = 'still typing';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).not.toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('removing a chip via its remove affordance re-runs submitSearch while a retrieve query is active', async () => {
+    const { submitSearch, removeScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    await view.updateComplete;
+    pushHits();
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    const chip = view.shadowRoot?.querySelector('jf-scope-chip');
+    expect(chip).not.toBeNull();
+    chip!.dispatchEvent(new CustomEvent('scope-remove', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect(removeScopeChip).toHaveBeenCalledWith(0);
+    expect(submitSearch).toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('removing a chip outside the retrieve tier does NOT re-run submitSearch', async () => {
+    const { submitSearch } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    scopeChipsListener!([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    await view.updateComplete;
+    const chip = view.shadowRoot?.querySelector('jf-scope-chip');
+    expect(chip).not.toBeNull();
+    chip!.dispatchEvent(new CustomEvent('scope-remove', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect(submitSearch).not.toHaveBeenCalled();
+    view.remove();
+  });
+
+  it('a grounded Ask forwards the union of pinnedDocIds and scope-chip docIds (both PATHS), deduped', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.pinnedDocIds = ['/legacy/pinned.md', '/docs/q1.md'];
+    scopeChipsListener!([
+      { kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }, // overlaps pinnedDocIds — deduped
+      { kind: 'result-set', label: '2 results', docIds: ['/docs/a.md', '/docs/b.md'] },
+    ]);
+    view.affordance = 'documents';
+    view.inputDraft = 'summarize these';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    const body = streamMock.mock.calls[0]![1] as { shapeId?: string; docIds?: string[] };
+    expect(body.shapeId).toBe('core.rag-ask');
+    expect(body.docIds).toEqual(['/legacy/pinned.md', '/docs/q1.md', '/docs/a.md', '/docs/b.md']);
     view.remove();
   });
 });
@@ -2268,6 +3196,11 @@ describe('UnifiedChatView editable compaction summary (610 §E.2)', () => {
   it('renders Edit on the expanded compaction summary and opens an editable textarea', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     view.thread = [
       { role: 'user', content: 'q', id: 'm-1', shapeId: 'core.free-chat' },
       { role: 'assistant', content: 'a', id: 'm-2', shapeId: 'core.free-chat' },
@@ -2299,6 +3232,11 @@ describe('UnifiedChatView per-message exclude (610 §E.3)', () => {
 
   it('toggles a message excluded: persists via the store, tracks the id, and dims the turn', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     (view as unknown as { sessionId: string }).sessionId = 'uc-test-ex';
     view.thread = [
@@ -2407,6 +3345,686 @@ describe('UnifiedChatView per-message exclude (610 §E.3)', () => {
     const atFloor = fp('m-3', 2);
     expect(atFloor.cls).toBe('');
     expect(typeof atFloor.divider).toBe('object'); // a TemplateResult
+    view.remove();
+  });
+});
+
+// Search Thread S4-final — commit-on-consequence (the user's own searches become committed,
+// persisted thread events), the auto-collapse of older commits, restored SEARCH thread events, and
+// the recent-query trail.
+describe('Search Thread S4-final — commit-on-consequence + query trail', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    searchListener = null;
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Push a fabricated refined-pass snapshot with 2 results through the mocked search store. */
+  function pushSearch(view: UnifiedChatView, query: string): void {
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({
+      query,
+      results: [
+        { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' },
+        { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()' },
+      ],
+      matchCount: 2,
+      totalHits: 2,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: { effectiveMode: 'HYBRID' },
+    });
+  }
+
+  it('commit-on-open: freezes the live search into a snapshot card above the live card, and POSTs the event', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-1' }) });
+    const view = mountView();
+    await view.updateComplete;
+    // connectedCallback's incidental `loadConversations()` fetch (unrelated to this test) is not
+    // mocked away by the module-level conversationListStore mock — clear it so the assertions below
+    // isolate the commit's OWN POST.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-open';
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+
+    const liveCardBefore = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCardBefore).not.toBeNull();
+    liveCardBefore!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]).toMatchObject({
+      query: 'invoice audit',
+      mode: 'HYBRID',
+      matchCount: 2,
+      resultCount: 2,
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+
+    // The snapshot card renders ABOVE the live card; the live card is still running (no variant attr).
+    const cards = Array.from(view.shadowRoot?.querySelectorAll('jf-results-card') ?? []);
+    expect(cards.length).toBe(2);
+    expect(cards[0]!.getAttribute('variant')).toBe('snapshot');
+    expect(cards[1]!.hasAttribute('variant')).toBe(false);
+
+    // Filter to the commit's own POST — other view machinery (e.g. the incidental conversations-list
+    // fetch on connect) shares the same mocked global fetch and is not this test's concern.
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(1);
+    expect(eventCalls[0]![0]).toBe('http://localhost:5173/api/thread/uc-commit-open/events');
+    const body = JSON.parse((eventCalls[0]![1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      kind: 'SEARCH',
+      query: 'invoice audit',
+      mode: 'HYBRID',
+      matchCount: 2,
+      resultCount: 2,
+      docIds: ['/docs/q1.md', '/src/helper.ts'],
+    });
+    view.remove();
+  });
+
+  it('commit-on-ask: escalateAsk commits the retrieve-tier query before the affordance flips to documents', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-2' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-ask';
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+    view.inputDraft = 'invoice march'; // heuristic guesses 'search'; alt-submit sends the OPPOSITE (ask)
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new CustomEvent('composer-submit-alt'));
+    await view.updateComplete;
+
+    expect(view.affordance).toBe('documents');
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.query).toBe('invoice march');
+    // Only ONE commit's worth of /events POSTs, regardless of other fetches send() may issue
+    // (e.g. the chat dispatch) — the same commit-isolation rationale as commit-on-open above.
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(1);
+    view.remove();
+  });
+
+  // Search Thread Round-2 R2 — one gesture, one meaning: the card's Ask AI now sends immediately
+  // (escalateAsk's own path — commit + affordance flip + send), matching the route chip's Enter; a
+  // SHIFT-modified activation keeps the pre-round-2 stage-only behavior (compose(), no commit/flip).
+  it('default (unmodified) card-ask-ai sends immediately: commits the search and flips to documents', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-4' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-ask-ai-send';
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-ask-ai', {
+        detail: { query: 'invoice march', shiftKey: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await view.updateComplete;
+
+    expect(view.affordance).toBe('documents');
+    const committed = (
+      view as unknown as { committedSearches: Array<Record<string, unknown>> }
+    ).committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.query).toBe('invoice march');
+  });
+
+  it('a SHIFT-held card-ask-ai activation stages instead of sending (compose(), no commit/no affordance flip)', async () => {
+    const composeSpy = vi.spyOn(composeModule, 'compose');
+    const view = mountView();
+    await view.updateComplete;
+    pushSearch(view, 'invoice march');
+    await view.updateComplete;
+
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-ask-ai', {
+        detail: { query: 'invoice march', shiftKey: true },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await view.updateComplete;
+
+    expect(composeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'core.ask',
+        userPrompt: 'invoice march',
+        affordance: 'documents',
+      }),
+    );
+    expect(view.affordance).toBe('retrieve'); // staged only — never escalated
+    const committed = (view as unknown as { committedSearches: unknown[] }).committedSearches;
+    expect(committed.length).toBe(0);
+    composeSpy.mockRestore();
+  });
+
+  it('plain query iteration (no open/ask) commits nothing, but the superseded query lands on the trail', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-3' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockClear();
+    pushSearch(view, 'first query');
+    await view.updateComplete;
+    pushSearch(view, 'second query');
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: unknown[] }).committedSearches;
+    expect(committed.length).toBe(0);
+    const eventCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+      String(c[0]).includes('/events'),
+    );
+    expect(eventCalls.length).toBe(0);
+    const trail = (view as unknown as { queryTrail: string[] }).queryTrail;
+    expect(trail).toEqual(['first query']);
+    view.remove();
+  });
+
+  it('auto-collapse: only the 3 most recent commits render as full snapshot; older ones collapse to excerpt', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const committedList = Array.from({ length: 4 }, (_, i) => ({
+      id: `cs-${i}`,
+      query: `q${i}`,
+      mode: 'TEXT',
+      matchCount: 1,
+      resultCount: 1,
+      docIds: [`/docs/${i}.md`],
+      executedAt: new Date().toISOString(),
+      hits: [{ id: `h${i}`, title: `T${i}`, path: `/docs/${i}.md` }],
+    }));
+    (view as unknown as { committedSearches: unknown[] }).committedSearches = committedList;
+    pushSearch(view, 'active query'); // an active query is required for the retrieve tier to render at all
+    await view.updateComplete;
+
+    const cards = Array.from(view.shadowRoot?.querySelectorAll('jf-results-card') ?? []);
+    const excerptCount = cards.filter((c) => c.getAttribute('variant') === 'excerpt').length;
+    const snapshotCount = cards.filter((c) => c.getAttribute('variant') === 'snapshot').length;
+    expect(excerptCount).toBe(1);
+    expect(snapshotCount).toBe(3);
+    view.remove();
+  });
+
+  it('a restored SEARCH thread event renders as an excerpt card with a "Search again" affordance', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      {
+        id: 'se1',
+        occurredAt: '2026-01-01T00:00:01Z',
+        kind: 'SEARCH',
+        originator: 'user',
+        content: '',
+        attributes: {
+          query: 'restored query',
+          mode: 'HYBRID',
+          matchCount: 5,
+          resultCount: 5,
+          docIds: ['/docs/a.md'],
+          executedAt: '2026-01-01T00:00:01Z',
+        },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const card = view.shadowRoot?.querySelector('jf-results-card[variant="excerpt"]') as
+      | (Element & { updateComplete: Promise<unknown> })
+      | null;
+    expect(card).not.toBeNull();
+    await card!.updateComplete;
+    expect(card!.shadowRoot?.textContent).toContain('restored query');
+
+    // Expand: no hits were persisted, so the honest empty note shows (not fabricated rows), plus
+    // the fork affordance.
+    (card!.shadowRoot?.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await card!.updateComplete;
+    expect(card!.shadowRoot?.querySelector('[data-testid="snapshot-empty-note"]')).not.toBeNull();
+    expect(card!.shadowRoot?.querySelector('[data-testid="card-fork-btn"]')).not.toBeNull();
+    view.remove();
+  });
+
+  it('the query-trail dropdown lists recent queries newest-first (deduped); clicking one restores the draft + re-issues the query', async () => {
+    const { setQuery } = await import('../state/searchState.js');
+    const view = mountView();
+    await view.updateComplete;
+    pushSearch(view, 'alpha');
+    await view.updateComplete;
+    pushSearch(view, 'beta');
+    await view.updateComplete;
+    pushSearch(view, 'alpha'); // re-search alpha: supersedes beta
+    await view.updateComplete;
+    pushSearch(view, 'beta'); // re-search beta: supersedes alpha — dedup moves alpha to front, no duplicate
+    await view.updateComplete;
+
+    expect((view as unknown as { queryTrail: string[] }).queryTrail).toEqual(['alpha', 'beta']);
+
+    const toggle = view.shadowRoot?.querySelector('[data-testid="query-trail-toggle"]') as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    toggle.click();
+    await view.updateComplete;
+    const items = Array.from(view.shadowRoot?.querySelectorAll('[data-testid="query-trail-item"]') ?? []);
+    expect(items.map((i) => i.textContent)).toEqual(['alpha', 'beta']);
+
+    (items[1] as HTMLButtonElement).click(); // pick 'beta'
+    await view.updateComplete;
+
+    expect(view.inputDraft).toBe('beta');
+    expect(setQuery).toHaveBeenCalledWith('beta');
+    // The dropdown closes after picking an entry.
+    expect(view.shadowRoot?.querySelector('[data-testid="query-trail-menu"]')).toBeNull();
+    view.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S5b pin-parity — pinned searches resurface on the landing + the bar's pin toggle
+// (the retired SearchSurface header's persisted pin store, same authority).
+// ---------------------------------------------------------------------------
+describe('Search Thread S5b — pinned searches (landing strip + pin toggle)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    pinsCtl.reset([]);
+  });
+
+  it('renders the landing pinned strip from the store and one click re-runs the pin', async () => {
+    pinsCtl.reset([{ id: 'p1', query: 'quarterly invoices', pinnedAt: 1, runs: [] }]);
+    const view = mountView();
+    await view.updateComplete;
+    const strip = view.shadowRoot?.querySelector('[data-testid="landing-pins"]');
+    expect(strip).not.toBeNull();
+    const btn = strip?.querySelector('button.pinned-search-btn') as HTMLElement;
+    expect(btn?.textContent?.trim()).toBe('quarterly invoices');
+    btn.click();
+    await view.updateComplete;
+    expect(view.inputDraft).toBe('quarterly invoices');
+    const { setQuery } = await import('../state/searchState.js');
+    expect(vi.mocked(setQuery)).toHaveBeenCalledWith('quarterly invoices');
+  });
+
+  it('hides the strip when nothing is pinned', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="landing-pins"]')).toBeNull();
+  });
+
+  // Search Thread Round-2 R4 — the pin toggle is now a `jf-control` composition (skinned via
+  // ::part(control), the RouteChip precedent), so pressed-state truth is carried by the accessible
+  // label + the `data-pressed` presentation attribute (jf-control's internal button has no
+  // aria-pressed passthrough) rather than a plain button's native `aria-pressed`.
+  it('the bar pin toggle (jf-control) pins the active query and unpins a pinned one', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(searchListener).not.toBeNull();
+    searchListener!({ ...SEARCH_EMPTY, query: 'tax report' });
+    await view.updateComplete;
+    const toggle = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement & {
+      updateComplete: Promise<boolean>;
+    };
+    expect(toggle).not.toBeNull();
+    expect(toggle.tagName.toLowerCase()).toBe('jf-control');
+    expect(toggle.hasAttribute('data-pressed')).toBe(false);
+    expect(toggle.getAttribute('label')).toBe('Pin this search');
+    await toggle.updateComplete;
+    (toggle.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+    await view.updateComplete;
+    expect(pinSearchMock).toHaveBeenCalledWith('tax report');
+
+    const after = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement & {
+      updateComplete: Promise<boolean>;
+    };
+    expect(after.hasAttribute('data-pressed')).toBe(true);
+    expect(after.getAttribute('label')).toBe('Unpin this search');
+    await after.updateComplete;
+    (after.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+    await view.updateComplete;
+    expect(unpinSearchMock).toHaveBeenCalledWith('pin-tax report');
+  });
+
+  it('a committed search records a run against the pin history', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    searchListener!({
+      ...SEARCH_EMPTY,
+      query: 'tax report',
+      results: [{ id: 'h1', title: 'T', path: '/t.md', snippet: '', kind: 'markdown' }],
+      matchCount: 1,
+      totalHits: 3,
+    });
+    await view.updateComplete;
+    (view as unknown as { commitLiveSearch(r: string): void }).commitLiveSearch('open');
+    expect(recordRunMock).toHaveBeenCalledWith('tax report', 3);
+  });
+});
+
+// Search Thread Round-2 R4 — the bar's secondary affordances conform to the `jf-control` atom
+// (composed + skinned via ::part(control)), replacing four bespoke button classes. These tests lock
+// in that the re-skinned controls are still keyboard-operable through the real DOM path (a native
+// `<button>` inside jf-control's shadow root — Enter/Space activation is then a browser guarantee,
+// not something the app has to wire up) and still fire their intended state changes.
+describe('Search Thread Round-2 R4 — bar re-skin (jf-control compositions)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  async function clickJfControl(el: Element | null | undefined): Promise<void> {
+    expect(el).not.toBeNull();
+    expect(el!.tagName.toLowerCase()).toBe('jf-control');
+    await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+    (el!.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+  }
+
+  it('schema-attach (jf-control) attaches the schema and is replaced by schema-detach', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoices' });
+    await view.updateComplete;
+
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="schema-attach"]'));
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(true);
+
+    view.affordance = 'extract';
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="schema-detach"]'));
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(false);
+  });
+
+  it('escalation-delegate (jf-control) is availability-gated: blocked offline, operable when AI is up', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const delegate = view.shadowRoot?.querySelector('[data-testid="escalation-delegate"]') as HTMLElement;
+    expect(delegate).not.toBeNull();
+    expect(delegate.tagName.toLowerCase()).toBe('jf-control');
+    await clickJfControl(delegate);
+    await view.updateComplete;
+    expect(view.affordance).not.toBe('agent'); // blocked — offline
+
+    (view as unknown as { aiState: unknown }).aiState = AI_STATE_READY; // chat: true
+    view.requestUpdate();
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="escalation-delegate"]'));
+    await view.updateComplete;
+    expect(view.affordance).toBe('agent');
+  });
+});
+
+// Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`), mounted as the
+// conversation-zone's 5th column, replacing the retired InspectorPane drawer. `readingDocPath` is
+// driven by the shared inspectorState "open a document for reading" signal (the same store
+// `host.ui.showInspector` and Shell's citation-select rework both push to), so these tests exercise
+// the REAL (unmocked) inspectorState module directly rather than re-mocking it.
+describe('Search Thread S6 — the reading pane (DocumentPane mount + open flows)', () => {
+  type ReadingFields = {
+    readingDocPath: string | null;
+    readingHighlightRange: { startLine: number; endLine: number } | null;
+    host_: unknown;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    resetInspectorState();
+    searchListener = null;
+    scopeChipsListener = null;
+    scopeChipsMock.chips = [];
+  });
+
+  afterEach(() => {
+    resetInspectorState();
+  });
+
+  /** Push a fabricated single-hit live-search snapshot (mirrors the S4-final suite's helper above). */
+  function pushSearch(view: UnifiedChatView, query: string): void {
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({
+      query,
+      results: [{ id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' }],
+      matchCount: 1,
+      totalHits: 1,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: { effectiveMode: 'HYBRID' },
+    });
+  }
+
+  /** Wire a minimal PluginHostApi whose `ui.showInspector`/`search.hitToSelectedItem` reach the REAL
+   *  inspectorState store — the same path production's HostApiImpl/ui.ts capability takes. */
+  function stubHost(view: UnifiedChatView): void {
+    (view as unknown as ReadingFields).host_ = createMockHostApi({
+      ui: {
+        showInspector: (item) => setSelected({ id: item.id, title: item.title, path: item.path ?? '' }),
+      },
+      search: {
+        hitToSelectedItem: (hit) => ({ id: hit.id, title: hit.title, path: hit.path }),
+      },
+    });
+  }
+
+  it('is unmounted by default and mounts <jf-document-pane> when readingDocPath is set', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).toBeNull();
+    (view as unknown as ReadingFields).readingDocPath = '/docs/q1.md';
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).not.toBeNull();
+    view.remove();
+  });
+
+  it('card-open on the LIVE retrieve card sets readingDocPath and auto-pins the opened hit\'s file scope chip', async () => {
+    const { addScopeChip } = await import('../state/searchState.js');
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    expect(liveCard).not.toBeNull();
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    // The handler calls the shared addScopeChip seam with the opened hit's path — dedup for a repeat
+    // open of the SAME hit is addScopeChip's OWN job (kind+docId-set no-op, unit-tested in
+    // searchState.scope.test.ts), not re-verified here against the module mock's simplified (always-
+    // append) recording.
+    expect(vi.mocked(addScopeChip)).toHaveBeenCalledWith({
+      kind: 'file',
+      label: 'q1.md',
+      docIds: ['/docs/q1.md'],
+    });
+    expect(scopeChipsMock.chips).toContainEqual({ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] });
+    view.remove();
+  });
+
+  it('a committed (historical snapshot) card-open also sets readingDocPath and auto-pins the chip', async () => {
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    (
+      view as unknown as {
+        committedSearches: Array<{
+          id: string;
+          query: string;
+          mode: string;
+          matchCount: number;
+          resultCount: number;
+          docIds: string[];
+          executedAt: string;
+          hits: Array<{ id: string; title: string; path: string; snippet: string }>;
+        }>;
+      }
+    ).committedSearches = [
+      {
+        id: 'cs-1',
+        query: 'q1',
+        mode: 'HYBRID',
+        matchCount: 1,
+        resultCount: 1,
+        docIds: ['/docs/q1.md'],
+        executedAt: new Date().toISOString(),
+        hits: [{ id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due' }],
+      },
+    ];
+    (
+      view as unknown as { handleCommittedCardOpen(hitId: string): void }
+    ).handleCommittedCardOpen('h1');
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.remove();
+  });
+
+  // Search Thread S7 (tempdoc decision 4) — a `card-open` bubbling out of the agent-search results
+  // card nested inside `<jf-tool-call-card>` resolves the hit back out of the SAME structuredData
+  // the card rendered from (no independent hit store) and opens through the same reading-pane path.
+  it('a card-open from the agent-search tool card also sets readingDocPath and auto-pins the chip', async () => {
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    const toolCall = {
+      callId: 'c1',
+      toolName: 'core_search_index',
+      arguments: '{"query":"invoice audit"}',
+      risk: 'LOW',
+      status: 'completed',
+      structuredData: {
+        query: 'invoice audit',
+        resultCount: 1,
+        searchResults: [{ title: 'Q1 invoice', path: '/docs/q1.md', excerpt: 'total due', line: 0 }],
+      },
+    } as unknown as import('../controllers/AgentSessionController.js').ToolCall;
+    (
+      view as unknown as { handleToolEvidenceOpen(toolCall: unknown, hitId: string): void }
+    ).handleToolEvidenceOpen(toolCall, '/docs/q1.md');
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.remove();
+  });
+
+  it('a citation-select-driven inspectorState.selected (Shell.onCitationSelect) sets readingDocPath + readingHighlightRange', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // Mirrors what Shell.onCitationSelect now does — push the passage line range onto the shared
+    // inspectorState `selected`, rather than reaching into a specific pane instance.
+    setSelected({
+      id: '/docs/report.md',
+      title: 'report.md',
+      path: '/docs/report.md',
+      highlightStartLine: 4,
+      highlightEndLine: 9,
+    });
+    await view.updateComplete;
+    const fields = view as unknown as ReadingFields;
+    expect(fields.readingDocPath).toBe('/docs/report.md');
+    expect(fields.readingHighlightRange).toEqual({ startLine: 4, endLine: 9 });
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).not.toBeNull();
+    view.remove();
+  });
+
+  it("the pane's pane-close clears readingDocPath and closes the shared inspectorState", async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setSelected({ id: '/docs/report.md', title: 'report.md', path: '/docs/report.md' });
+    await view.updateComplete;
+    const pane = view.shadowRoot?.querySelector('jf-document-pane');
+    expect(pane).not.toBeNull();
+    pane!.dispatchEvent(new CustomEvent('pane-close', { bubbles: true, composed: true }));
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBeNull();
+    expect(view.shadowRoot?.querySelector('jf-document-pane')).toBeNull();
+    expect(getInspectorState().isOpen).toBe(false);
+    view.remove();
+  });
+
+  it('the retired jf-inspector-pane never appears in the template', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setSelected({ id: '/docs/report.md', title: 'report.md', path: '/docs/report.md' });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('jf-inspector-pane')).toBeNull();
+    view.remove();
+  });
+
+  it('scoped-ask coherence: card-open sets readingDocPath + pins the chip, and an escalated Ask forwards the opened path in docIds', async () => {
+    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    pushSearch(view, 'invoice audit');
+    await view.updateComplete;
+    const liveCard = view.shadowRoot?.querySelector('jf-results-card:not([variant])');
+    liveCard!.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }),
+    );
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+
+    view.affordance = 'documents';
+    view.inputDraft = 'what does this say about totals?';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalled();
+    const lastCall = streamMock.mock.calls[streamMock.mock.calls.length - 1]!;
+    const body = lastCall[1] as { docIds?: string[] };
+    expect(body.docIds).toContain('/docs/q1.md');
     view.remove();
   });
 });

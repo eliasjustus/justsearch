@@ -753,6 +753,8 @@ export interface ShellActionDeps {
   readonly navigate: (target: string) => void;
   readonly toggleInspector: () => void;
   readonly togglePalette: () => void;
+  /** Search Thread S2 — focus the one input bar (the unified window's composer). */
+  readonly focusComposer: () => void;
 }
 
 /**
@@ -785,7 +787,10 @@ export function registerShellActions(deps: ShellActionDeps): void {
       return { kind: 'navigate' as const, to: target };
     });
 
-  navigateAction('core.action.shell.go-to-search', 'Go to Search', 'core.search-surface');
+  // Search Thread S5b — the standalone Search rail surface is retired; its retrieve tier folded
+  // into the one window (core.unified-chat-surface). The action + label stay (a distinct palette
+  // entry from "Go to Chat"), only the target repoints.
+  navigateAction('core.action.shell.go-to-search', 'Go to Search', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-library', 'Go to Library', 'core.library-surface');
   navigateAction('core.action.shell.go-to-settings', 'Go to Settings', 'core.settings-surface');
   navigateAction('core.action.shell.go-to-health', 'Go to System Health', 'core.health-surface');
@@ -813,6 +818,18 @@ export function registerShellActions(deps: ShellActionDeps): void {
       return { kind: 'noop' as const };
     },
     { shortcut: 'mod+k' },
+  );
+
+  // Search Thread S2 (tempdoc D2/D13) — focus the bar from anywhere: Ctrl+L always,
+  // '/' when not typing (the dispatcher's editable-target guard covers plain keys).
+  shellAction(
+    'core.action.shell.focus-composer',
+    'Focus the search bar',
+    () => {
+      deps.focusComposer();
+      return { kind: 'noop' as const };
+    },
+    { shortcut: 'mod+l' },
   );
 }
 

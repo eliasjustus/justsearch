@@ -24,7 +24,7 @@
  *   - Collapsed state hides args/output/actions (toggle via expand button).
  */
 
-import { html, css, unsafeCSS, nothing, type TemplateResult } from 'lit';
+import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 // Tempdoc 565 §17 — the ONE run-step node primitive; its `running` glyph is the unified alive-indicator
 // (it replaces the card's bespoke <jf-pulse-dots>, so a running step looks the same here as on the spine).
@@ -33,8 +33,11 @@ import type { ToolCall } from '../../controllers/AgentSessionController.js';
 import type { StepPresentation } from '../../views/runStepPresentation.js';
 // 543-fwd #2 — derive a plain-text "why" line from risk + the current dial level.
 import { becauseLine, getAutonomyLevel } from '../../substrates/autonomy/index.js';
-// Tempdoc 561 #6 — the ONE search-evidence projection (shared with the record render).
-import { renderSearchEvidence, hasSearchEvidence, SEARCH_EVIDENCE_CSS } from './searchEvidence.js';
+// Search Thread S7 (tempdoc decision 4) — an agent search renders through the ONE shared results
+// card (the same card a user-issued search commits to), replacing the retired bespoke
+// searchEvidence.ts evidence-card renderer.
+import '../searchResults/ResultsCard.js';
+import { agentSearchCardData } from './toolSearchCard.js';
 // Tempdoc 577 §2.14 Root III (#18) — the ONE tool-output text-provenance authority.
 import { toolOutputLineage, lineageFrameLabel } from './toolOutputLineage.js';
 // Tempdoc 565 §3.B — the ONE status → semantic-tone → accent-token authority (status-word colour).
@@ -63,6 +66,23 @@ export class ToolCallCard extends JfElement {
 
   /** Tempdoc 565 §3.C — once the user toggles, stop auto-collapsing on status change. */
   private userToggled = false;
+
+  /**
+   * Search Thread S7 — per-callId cache for the search-card's `executedAt`. `ToolCall` carries no
+   * execution timestamp; caching the first-computed instant (rather than stamping `Date.now()` fresh
+   * on every render) keeps the card's relative-time display ("just now" → "2m ago") stable instead of
+   * drifting back to "just now" on every unrelated re-render (e.g. toggling the risk disclosure).
+   */
+  private searchCardExecutedAt = new Map<string, string>();
+
+  private executedAtFor(callId: string): string {
+    let ts = this.searchCardExecutedAt.get(callId);
+    if (ts == null) {
+      ts = new Date().toISOString();
+      this.searchCardExecutedAt.set(callId, ts);
+    }
+    return ts;
+  }
 
   constructor() {
     super();
@@ -200,8 +220,11 @@ export class ToolCallCard extends JfElement {
       margin-bottom: 0.35rem;
       font-style: italic;
     }
-    /* Tempdoc 561 #6 — structured search evidence (shared with the record render). */
-    ${unsafeCSS(SEARCH_EVIDENCE_CSS)}
+    /* Search Thread S7 — the shared results card carries its own shadow-root styles; this host only
+       needs the wrapper's spacing + the collapse-when-not-expanded rule below. */
+    .tool-search-card {
+      margin-top: 0.5rem;
+    }
     .tool-rich-content {
       margin-top: 0.5rem;
       display: flex;
@@ -272,7 +295,7 @@ export class ToolCallCard extends JfElement {
     }
     :host(:not([expanded])) .tool-args,
     :host(:not([expanded])) .tool-output,
-    :host(:not([expanded])) .tool-evidence,
+    :host(:not([expanded])) .tool-search-card,
     :host(:not([expanded])) .tool-actions,
     :host(:not([expanded])) .because,
     :host(:not([expanded])) .rejected-reason {
@@ -295,6 +318,12 @@ export class ToolCallCard extends JfElement {
     const riskClass =
       tc.risk === 'HIGH' ? 'high-risk' : tc.risk === 'MEDIUM' ? 'medium-risk' : '';
     const { label, target } = composeToolLabel(tc.toolName, tc.arguments);
+    // Search Thread S7 (tempdoc decision 4) — the agent search evidence card, projected from
+    // structuredData once per render; null when there is no evidence (or, the honest old-record
+    // edge case, no derivable query) so the raw-output path below renders instead of a fabrication.
+    const searchCard = isCompleted
+      ? agentSearchCardData(tc.structuredData, tc.arguments, this.executedAtFor(tc.callId))
+      : null;
     return html`
       <div class="tool-card ${riskClass}">
         <div class="tool-card-header">
@@ -343,20 +372,18 @@ export class ToolCallCard extends JfElement {
         ${tc.arguments
           ? html`<div class="tool-args">${tc.arguments}</div>`
           : nothing}
-        ${/* Tempdoc 561 #6: structured search evidence replaces the raw monospace dump when present. */ ''}
+        ${/* Search Thread S7: the shared results card replaces the raw monospace dump when present. */ ''}
         ${/* Tempdoc 577 §2.14 Root III (#18): frame raw tool output by its backend-stamped lineage —
             corpus-quoted text is the user's documents quoted back (so injection/citation-shaped text
             inside it cannot read as the agent's own claim); runtime output renders plainly. */ ''}
-        ${isCompleted && tc.output && !hasSearchEvidence(tc.structuredData)
+        ${isCompleted && tc.output && !searchCard
           ? this.renderLineageFramedOutput(tc)
           : nothing}
         ${/* Tempdoc 577 §2.14 Root III (#18): the STRUCTURED search-evidence path is the main corpus
             reader's output — frame it as quoted too (the raw-output frame above only covers non-search
             corpus tools like browse-folders), so a search result reads as the documents' words. */ ''}
-        ${isCompleted && hasSearchEvidence(tc.structuredData)
-          ? this.renderEvidenceLineageHeader(tc)
-          : nothing}
-        ${isCompleted ? renderSearchEvidence(tc.structuredData) : nothing}
+        ${isCompleted && searchCard ? this.renderEvidenceLineageHeader(tc) : nothing}
+        ${searchCard ? this.renderSearchCard(searchCard) : nothing}
         ${isCompleted ? this.renderRichContent(tc) : nothing}
         ${isRejected
           ? html`<div class="rejected-reason">
@@ -395,6 +422,26 @@ export class ToolCallCard extends JfElement {
     return label === null
       ? nothing
       : html`<span class="lineage-frame-label" data-testid="evidence-lineage">${label}</span>`;
+  }
+
+  /**
+   * Search Thread S7 (tempdoc decision 4) — the ONE card for an agent search: the same
+   * `<jf-results-card>` a user-issued search commits to, `variant="excerpt"` (the one-line
+   * collapsed summary that expands in place to the full row list). `card-open` bubbles + composes
+   * out of the card's shadow root through this one's, unhandled here — the mount site
+   * (`UnifiedChatView.renderToolActivity`) listens on the `<jf-tool-call-card>` host element and
+   * resolves the hit back out of the SAME structuredData (no independent hit store).
+   */
+  private renderSearchCard(
+    searchCard: NonNullable<ReturnType<typeof agentSearchCardData>>,
+  ): TemplateResult {
+    return html`<div class="tool-search-card" data-testid="tool-search-card">
+      <jf-results-card
+        variant="excerpt"
+        .snapshot=${searchCard.snapshot}
+        .provenance=${searchCard.provenance}
+      ></jf-results-card>
+    </div>`;
   }
 
   private renderLineageFramedOutput(tc: ToolCall): TemplateResult {

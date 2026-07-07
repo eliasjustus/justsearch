@@ -1,5 +1,5 @@
 {
-  "shell-v0/views/SearchSurface.ts": [
+  "shell-v0/components/searchResults/ResultsCard.ts": [
     "search-results", "command-mode", "zero-results", "input-focus",
     "filters-chips", "search-simple-mode", "search-advanced-mode",
     "multi-select", "row-hover", "snippets-expanded", "selection-preserved",
@@ -8,9 +8,8 @@
   "shell-v0/views/searchResultViewModel.ts": [
     "search-results", "search-results-rich", "snippets-expanded"
   ],
-  "shell-v0/components/InspectorPane.ts": [
-    "inspector-open", "streaming", "summarize-done", "qa-response",
-    "citation-highlight"
+  "shell-v0/components/documentPane/DocumentPane.ts": [
+    "inspector-open", "citation-highlight"
   ],
   "shell-v0/views/SummarizeView.ts": [
     "streaming", "summarize-done", "qa-response"
@@ -26,7 +25,7 @@
   "shell-v0/chrome/Shell.ts": [
     "home", "library", "ai-brain", "health", "settings", "security", "help",
     "home-light", "library-light", "ai-brain-light", "health-light",
-    "settings-light", "security-light", "help-light", "inspector-open"
+    "settings-light", "security-light", "help-light"
   ],
   "shell-v0/plugin-api/CorePlugin.ts": [
     "home", "library", "ai-brain", "health", "settings", "security", "help"

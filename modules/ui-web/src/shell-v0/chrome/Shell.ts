@@ -95,7 +95,8 @@ import { bootSearchResultProjector } from '../substrates/evaluationContext/searc
 // real backend AI.
 import '../components/AgentEmitterDemo.js';
 import type { AgentEmitterDemo } from '../components/AgentEmitterDemo.js';
-import '../components/InspectorPane.js';
+// Search Thread S6 — `components/InspectorPane.ts` retired; `<jf-document-pane>` (mounted inside
+// UnifiedChatView's conversation-zone) is now the visual consumer of inspectorState.
 // Tempdoc 541 §4.2: side-effect import registers <jf-boot-phases-panel> — the named
 // production consumer of GET /api/boot/phases.
 import '../components/BootPhasesPanel.js';
@@ -117,16 +118,20 @@ import {
 } from '../components/advisory/AdvisoryStore.js';
 import {
   setSelected,
-  subscribeInspector,
   setOpen as setInspectorOpen,
   getInspectorState as getInspectorStateInternal,
+  subscribeInspector,
   type InspectorState,
 } from '../state/inspectorState.js';
+import { isWideViewport, subscribeWide } from '../state/responsiveState.js';
+// 687 R5b — the narrow-viewport reading mount: the SAME <jf-document-pane> presents through the
+// OverlayHost right-drawer slot below the breakpoint (UnifiedChatView's grid mount is wide-only).
+import '../components/documentPane/DocumentPane.js';
 import type { CitationSelectDetail } from '../components/chat/CitationsPanel.js';
-import type { InspectorPane } from '../components/InspectorPane.js';
 import {
   getUserConfig,
   subscribeUserConfig,
+  setRailExpanded,
 } from '../state/userConfigState.js';
 import { updateShellContext, subscribeShellContext } from '../state/shellContextState.js';
 // Tempdoc 543 §3.B + §20.7 A0 — Scope substrate. Direct restoreScope
@@ -351,7 +356,6 @@ export class Shell extends JfElement {
     activeId: { state: true },
     dragActive: { state: true },
     dragKind: { state: true },
-    inspector: { state: true },
     userConfig: { state: true },
     copyUrlFeedback: { state: true },
     journalCanBack: { state: true },
@@ -364,7 +368,6 @@ export class Shell extends JfElement {
   declare activeId: string | null;
   declare dragActive: boolean;
   declare dragKind: DragKind | null;
-  declare inspector: InspectorState | null;
   declare userConfig: RendererUserConfig;
   /** Slice 489 T1/G1 — transient state for Copy URL button feedback. */
   declare copyUrlFeedback: 'copied' | 'failed' | null;
@@ -375,7 +378,6 @@ export class Shell extends JfElement {
   declare isBookmarked: boolean;
 
   private dragUnsubscribe: (() => void) | null = null;
-  private inspectorUnsubscribe: (() => void) | null = null;
   private userConfigUnsubscribe: (() => void) | null = null;
   private catalogUnsubscribe: (() => void) | null = null;
   // Tempdoc 586 F-2 — Simple/Advanced mode re-filters the rail (see refreshSurfaces).
@@ -413,7 +415,9 @@ export class Shell extends JfElement {
    * `sourceTeardowns` (where it would never be reached).
    */
   private disconnected = false;
-  /** Slice 496 P6 — previous active surface for "Go back" navigation toast. */
+  /** The previously-active surface, for "Go back" (`goBack`/`navigateBack`). Search Thread S5b —
+   *  set directly by `setActiveSurface`'s own bookkeeping (the navigation toast that used to set
+   *  this as a side effect is retired). */
   private previousActiveId: string | null = null;
   /** Tempdoc 507 §3 — CORE-tier PluginHostApi injected into surfaces at mount. */
   private hostApi_: PluginHostApi | null = null;
@@ -519,15 +523,26 @@ export class Shell extends JfElement {
     });
   }
 
-  // 504 A-3: citation-click → open doc in InspectorPane and highlight cited range.
+  // 504 A-3 / Search Thread S6 — citation-click → open the doc for reading + highlight the cited
+  // passage. `citation-select` is produced from several sites (inline [n] marks in MarkdownBlock, the
+  // docked evidence-rail's SourcesPane inside UnifiedChatView, AND the Shell-level drawer SourcesPane
+  // mounted in the OverlayHost right-drawer slot below — a sibling tree UnifiedChatView cannot itself
+  // hear bubble through it) — Shell stays the ONE listener for all of them (a `composed:true` event
+  // reaches here regardless of which subtree dispatched it). Rather than reaching into a specific pane
+  // instance (the retired InspectorPane.highlightCitation imperative call), this pushes the line range
+  // onto the shared inspectorState `selected` (via the new optional highlightStartLine/highlightEndLine
+  // fields) — UnifiedChatView's own inspectorState subscription derives `readingDocPath` +
+  // `readingHighlightRange` from it and DocumentPane renders the highlight declaratively.
   private onCitationSelect = (ev: Event): void => {
     const detail = (ev as CustomEvent<CitationSelectDetail>).detail;
     if (!detail?.parentDocId) return;
     const filename = detail.parentDocId.split(/[/\\]/).pop() ?? detail.parentDocId;
-    setSelected({ id: detail.parentDocId, title: filename, path: detail.parentDocId });
-    requestAnimationFrame(() => {
-      const pane = this.shadowRoot?.querySelector('jf-inspector-pane') as InspectorPane | null;
-      pane?.highlightCitation(detail.startLine, detail.endLine);
+    setSelected({
+      id: detail.parentDocId,
+      title: filename,
+      path: detail.parentDocId,
+      highlightStartLine: detail.startLine,
+      highlightEndLine: detail.endLine,
     });
   };
 
@@ -538,7 +553,6 @@ export class Shell extends JfElement {
     this.activeId = null;
     this.dragActive = false;
     this.dragKind = null;
-    this.inspector = null;
     this.userConfig = getUserConfig();
     this.copyUrlFeedback = null;
   }
@@ -559,16 +573,10 @@ export class Shell extends JfElement {
       font-family: system-ui, -apple-system, sans-serif;
       background: var(--surface-1);
     }
-    :host([data-inspector-open]) {
-      grid-template-columns: 3.25rem 1fr 22rem;
-      grid-template-areas:
-        'topbar topbar    topbar'
-        'rail   stage     inspector'
-        'rail   status    inspector';
-    }
-    jf-inspector-pane {
-      grid-area: inspector;
-      overflow: hidden;
+    /* Search Thread S5b — the expanded (labels-visible) rail needs its GRID TRACK widened too:
+       the Rail's own :host([expanded]) width is clamped by this column otherwise. */
+    :host([data-rail-expanded]) {
+      grid-template-columns: 11rem 1fr;
     }
     .topbar {
       grid-area: topbar;
@@ -741,6 +749,9 @@ export class Shell extends JfElement {
     // §21.E.
     registerShellActions({
       navigate: (target) => this.activateSurface(target, {}, 'BUTTON'),
+      // Search Thread S2 — focus the one bar: broadcast; the unified window (and
+      // any future bar host) listens and focuses its composer textarea.
+      focusComposer: () => window.dispatchEvent(new CustomEvent('jf-focus-composer')),
       toggleInspector: () => {
         setInspectorOpen(!getInspectorStateInternal().isOpen);
       },
@@ -871,6 +882,21 @@ export class Shell extends JfElement {
     registerKeybindingEntry({
       key: 'mod+k',
       commandId: 'shell.toggle-palette',
+      source: 'default',
+      provenance: CORE_PROVENANCE,
+    });
+    // Search Thread S2 — the bar is reachable from anywhere: Ctrl+L always; '/'
+    // only outside editable targets (the dispatcher's editable-target guard skips
+    // modifier-less bindings when typing).
+    registerKeybindingEntry({
+      key: 'mod+l',
+      commandId: 'shell.focus-composer',
+      source: 'default',
+      provenance: CORE_PROVENANCE,
+    });
+    registerKeybindingEntry({
+      key: '/',
+      commandId: 'shell.focus-composer',
       source: 'default',
       provenance: CORE_PROVENANCE,
     });
@@ -1127,34 +1153,20 @@ export class Shell extends JfElement {
         template: 'related to {primarySelection}',
         onInvoke: (expanded) => {
           const encoded = encodeURIComponent(expanded);
-          location.hash = `#justsearch://surface/core.search-surface?query=${encoded}`;
+          // Search Thread S5b — the standalone Search rail surface is retired; the retrieve tier
+          // folded into the one window.
+          location.hash = `#justsearch://surface/core.unified-chat-surface?query=${encoded}`;
         },
       });
-      // Tempdoc 521 §16.2 deeper — in-tree consumer for the
-      // {compute:<expr>} slot. Demonstrates the Raycast inter-slot
-      // reference form end-to-end: the user picks a week count, the
-      // compute slot projects weeks → days, the resolved literal
-      // becomes a `modifiedFromMs` query the IntentRouter already
-      // plumbs into SearchSurface's filter pane. Closes C-018 for
-      // the compute substrate.
-      registerTemplate({
-        id: 'core.search-recent-weeks',
-        label: 'Search docs from the last N weeks',
-        category: 'Search',
-        source: 'core',
-        provenance: CORE_PROVENANCE,
-        template:
-          'modifiedSinceDays={compute:{n} * 7} (last {argument name="n" default="4"} weeks)',
-        onInvoke: (expanded) => {
-          const match = /modifiedSinceDays=(\d+)/.exec(expanded);
-          if (!match) return;
-          const days = Number.parseInt(match[1]!, 10);
-          if (!Number.isFinite(days) || days <= 0) return;
-          const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
-          location.hash =
-            `#justsearch://surface/core.search-surface?modifiedFromMs=${cutoffMs}`;
-        },
-      });
+      // Tempdoc 521 §16.2 deeper — in-tree consumer for the {compute:<expr>} slot, demonstrating the
+      // Raycast inter-slot reference form: the user picks a week count, the compute slot projects
+      // weeks → days, the resolved literal becomes a `modifiedFromMs` query the IntentRouter plumbed
+      // into SearchSurface's date-filter pane (Before/After inputs). Search Thread S5b — that
+      // filter pane is retired with the standalone Search surface (it was outside the retrieve
+      // tier's declared carry-forward scope: jf-results-card + route chip + scope chips + landing);
+      // `core.unified-chat-surface` has no `modifiedFromMs` consumer, so repointing this template's
+      // hash target would be a silent no-op (Hard Invariant: never a silent no-op) rather than a
+      // working port. Retired outright alongside the feature it demonstrated, not left dangling.
     }).catch(() => { /* swallow */ });
 
     // §11.6 / §13.6 — Raycast-style core fallback contributions for
@@ -1193,8 +1205,10 @@ export class Shell extends JfElement {
             // so URL projection, telemetry, observability listeners
             // (audit, replay-dedup) all see the navigation. The prior
             // `location.hash =` mutation skipped middleware.
+            // Search Thread S5b — the standalone Search rail surface is retired; the retrieve tier
+            // folded into the one window.
             this.activateSurface(
-              'core.search-surface',
+              'core.unified-chat-surface',
               { query: q },
               'BUTTON',
             );
@@ -1279,20 +1293,30 @@ export class Shell extends JfElement {
         void this.handleFolderDrop(paths);
       },
     });
-    this.inspectorUnsubscribe = subscribeInspector((s) => {
-      this.inspector = s;
-      // Sync data attribute used by the host CSS to grow the inspector column.
-      if (s.isOpen) this.setAttribute('data-inspector-open', '');
-      else this.removeAttribute('data-inspector-open');
-    });
+    // Search Thread S6 — the inspectorState subscription (the Shell-level `data-inspector-open` grid
+    // column + `<jf-inspector-pane>` mount) retired; `UnifiedChatView` now subscribes directly and
+    // renders `<jf-document-pane>` in its own conversation-zone column.
     // Slice 471 — userConfig subscribe drives both Stage's override
     // dispatch + the ProvenanceBadge visibility.
     // Slice 472 — also re-filter rail when surfaceVisibility /
     // surfaceOrder change.
+    // 687 R5b — narrow reading mount inputs (viewport + the shared inspector selection).
+    this.narrowReadingUnsubs = [
+      subscribeWide(() => {
+        this.wideForReading = isWideViewport();
+        this.requestUpdate();
+      }),
+      subscribeInspector((st) => {
+        this.inspectorForReading = st;
+        this.requestUpdate();
+      }),
+    ];
     this.userConfigUnsubscribe = subscribeUserConfig((cfg) => {
       this.userConfig = cfg;
+      this.syncRailExpandedAttr();
       this.refreshSurfaces();
     });
+    this.syncRailExpandedAttr();
     // Tempdoc 586 F-2 — re-filter the rail live when the Simple/Advanced mode changes (mirrors the
     // surfaceVisibility re-filter above). subscribeUiMode fires immediately, so this also seeds the
     // initial filtered rail consistently with the persisted mode.
@@ -1395,7 +1419,6 @@ export class Shell extends JfElement {
         // Tauri deep-link, backend-emitted intent) because every navigation
         // path funnels through NavigationHandler.setActiveSurface.
         this.updateDocumentTitle(id);
-        // Slice 496 P1+P6 — show navigation toast when the surface changes.
         if (prev && prev !== id) {
           // Tempdoc 609 §R (T1.1) — animate the surface swap. activeId was set synchronously above, so
           // Lit's update is microtask-pending; this captures the before-snapshot now and awaits the flush.
@@ -1404,11 +1427,12 @@ export class Shell extends JfElement {
           // search hit); close it on a genuine surface change so stale content
           // doesn't persist across surfaces.
           setInspectorOpen(false);
-          const fromName = present({ kind: 'surface', id: prev }).label;
-          const toName = present({ kind: 'surface', id }).label;
-          if (fromName && toName) {
-            this.showNavigationToast(fromName, toName, prev);
-          }
+          // Search Thread S5b — the navigation TOAST is retired (replace-with-nothing: navigation is
+          // already visible in the rail/title, so no push notification rides along). The
+          // `previousActiveId` bookkeeping it used to do as a side effect moves here, in
+          // `setActiveSurface` itself, so `goBack`/`navigateBack` (the host API's back action) keeps
+          // working without the toast that used to be its only caller of this assignment.
+          this.previousActiveId = prev;
         }
       },
       isKnownSurface,
@@ -1431,12 +1455,15 @@ export class Shell extends JfElement {
           requestMemberTab(targetId, originalId);
         }
       },
-      // 548 S4-A: a `query` intent is lowered to a navigation of the search surface.
+      // 548 S4-A: a `query` intent is lowered to a navigation of the search surface. Search Thread
+      // S5b — the standalone Search rail surface is retired; the retrieve tier folded into the one
+      // window (core.unified-chat-surface), so a bare `query` intent now lowers to the SAME surface
+      // an `answer` intent does (below) — only the shape/affordance they land in differs.
       // Wire the binding explicitly here (the router also defaults to these) so the
       // surface id + state key are visible at the construction site rather than a
-      // hidden default — matches the `core.search-surface` / `query` used elsewhere
+      // hidden default — matches the `core.unified-chat-surface` / `query` used elsewhere
       // in this class and by buildSearchAdapter.
-      querySurfaceId: 'core.search-surface',
+      querySurfaceId: 'core.unified-chat-surface',
       queryStateKey: 'query',
       // 548 §4.5: an `answer` intent is lowered to the shape-hosting chat surface.
       answerSurfaceId: 'core.unified-chat-surface',
@@ -1585,7 +1612,8 @@ export class Shell extends JfElement {
     this.removeEventListener('citation-select', this.onCitationSelect);
     document.removeEventListener(NAVIGATE_TO_SURFACE_EVENT, this.onNavigateToSurface);
     this.dragUnsubscribe?.();
-    this.inspectorUnsubscribe?.();
+    for (const u of this.narrowReadingUnsubs) u();
+    this.narrowReadingUnsubs = [];
     this.userConfigUnsubscribe?.();
     this.catalogUnsubscribe?.();
     this.uiModeUnsubscribe?.();
@@ -1714,26 +1742,6 @@ export class Shell extends JfElement {
     const activity = this._aiState?.activity?.state;
     const activityPrefix = activity === 'thinking' ? '⟳ ' : activity === 'streaming' ? '● ' : '';
     document.title = label ? `${activityPrefix}${label} · JustSearch` : 'JustSearch';
-  }
-
-  /**
-   * Slice 496 P1+P6 — show a transient toast when the active surface changes.
-   * Tempdoc 559 Authority III: projected through the one message model
-   * (emitEphemeralToast) instead of bespoke nav-toast state — the surface names
-   * are already humanized via present() at the call site; the "Go back" action
-   * is a local callback on the ephemeral record.
-   */
-  private showNavigationToast(from: string, to: string, previousId: string): void {
-    this.previousActiveId = previousId;
-    emitEphemeralToast({
-      // Tempdoc 613 §5.2 — the `core.navigation` class declares supersede:true (602 R4: only the
-      // latest nav breadcrumb matters) and defaultSeverity:'info'; sourced from the class policy,
-      // not re-stated here.
-      classId: 'core.navigation',
-      message: `Navigated to ${to}`,
-      actionLabel: previousId ? `Go back to ${from}` : undefined,
-      onAction: previousId ? () => this.goBack() : undefined,
-    });
   }
 
   private goBack(): void {
@@ -1982,6 +1990,35 @@ export class Shell extends JfElement {
     }
   }
 
+  private wideForReading = isWideViewport();
+  private inspectorForReading: InspectorState = getInspectorStateInternal();
+  private narrowReadingUnsubs: Array<() => void> = [];
+
+  /** 687 R5b — the OverlayHost right-drawer reading mount (narrow viewports only). */
+  private renderNarrowReadingPane() {
+    const st = this.inspectorForReading;
+    if (this.wideForReading || !st.isOpen || !st.selected?.path) return nothing;
+    const hl =
+      typeof st.selected.highlightStartLine === 'number' &&
+      typeof st.selected.highlightEndLine === 'number'
+        ? { startLine: st.selected.highlightStartLine, endLine: st.selected.highlightEndLine }
+        : null;
+    return html`<jf-document-pane
+      slot="right-drawer"
+      overlay
+      api-base=${this.apiBase}
+      .docPath=${st.selected.path}
+      .highlightRange=${hl}
+      @pane-close=${() => setInspectorOpen(false)}
+    ></jf-document-pane>`;
+  }
+
+  /** S5b — mirror the persisted rail-expanded state onto the host so the grid track widens. */
+  private syncRailExpandedAttr(): void {
+    if (this.userConfig?.railExpanded) this.setAttribute('data-rail-expanded', '');
+    else this.removeAttribute('data-rail-expanded');
+  }
+
   private isRailVisible(): boolean {
     const layoutId = this.userConfig?.activeLayoutId;
     if (!layoutId) return true;
@@ -2142,8 +2179,10 @@ export class Shell extends JfElement {
         .aiActivity=${this._aiState?.activity?.state ?? 'idle'}
         .aiChatAvailable=${this._aiState?.capabilities?.chat ?? true}
         .aiDependentIds=${this._aiDependentIds}
+        .expanded=${this.userConfig?.railExpanded ?? false}
         @rail-select=${(e: CustomEvent<{ id: string }>) =>
           this.handleRailClick(e.detail.id)}
+        @rail-expand-toggle=${() => setRailExpanded(!(this.userConfig?.railExpanded ?? false))}
       >
         <!-- Slice 490 §4.D / Group B3 — rail-mounted badge slotted into
              <jf-rail>'s "bottom-chrome" region, honoring Placement.RAIL.
@@ -2168,9 +2207,8 @@ export class Shell extends JfElement {
       ${this.isStatusDeckVisible()
         ? html`<jf-status-deck role=${placementToLandmarkRole('STATUS')} api-base=${this.apiBase}></jf-status-deck>`
         : nothing}
-      ${this.inspector?.isOpen
-        ? html`<jf-inspector-pane role=${placementToLandmarkRole('DRAWER')} aria-label="Inspector" api-base=${this.apiBase}></jf-inspector-pane>`
-        : nothing}
+      <!-- Search Thread S6 — the jf-inspector-pane drawer mount retired; jf-document-pane
+           renders inside UnifiedChatView's own conversation-zone column instead. -->
       <!-- Tempdoc 559 Authority I: viewport-docked chrome overlays dock into the
            OverlayHost's named slots (the slot owns placement). Modals,
            anchored/hover popovers, drawers and toggled panels follow as separate
@@ -2192,6 +2230,7 @@ export class Shell extends JfElement {
           .operationClient=${this.operationClient}
         ></jf-advisory-toast-host>
         <jf-task-list slot="bottom-left"></jf-task-list>
+        ${this.renderNarrowReadingPane()}
         <jf-pending-effect-queue slot="bottom-right"></jf-pending-effect-queue>
         <!-- center slot: full-screen modals (one shows at a time). -->
         <jf-drag-overlay
@@ -2291,6 +2330,9 @@ export class Rail extends JfElement {
     aiActivity: { attribute: false },
     aiChatAvailable: { type: Boolean, attribute: false },
     aiDependentIds: { attribute: false },
+    // Search Thread S5b — the rail's collapsed (icon-only, default) / expanded (icon + label)
+    // chrome state. `reflect: true` so `:host([expanded])` can widen the rail in CSS.
+    expanded: { type: Boolean, reflect: true },
   };
 
   declare surfaces: SurfaceCatalogEntry[];
@@ -2298,6 +2340,7 @@ export class Rail extends JfElement {
   declare aiActivity: import('../state/aiStateStore.js').ActivityState;
   declare aiChatAvailable: boolean;
   declare aiDependentIds: Set<string>;
+  declare expanded: boolean;
 
   constructor() {
     super();
@@ -2306,6 +2349,7 @@ export class Rail extends JfElement {
     this.aiActivity = 'idle';
     this.aiChatAvailable = true;
     this.aiDependentIds = new Set();
+    this.expanded = false;
   }
 
   static styles = css`
@@ -2318,6 +2362,13 @@ export class Rail extends JfElement {
       padding: 0.5rem 0;
       border-right: 1px solid var(--border-subtle);
       background: var(--surface-1);
+      transition: width var(--duration-fast) var(--ease-standard);
+    }
+    /* Search Thread S5b — expanded (labels-visible) rail: buttons stretch full-width and align
+       their content to the leading edge instead of the collapsed icon-only centering. */
+    :host([expanded]) {
+      align-items: stretch;
+      padding: 0.5rem 0.5rem;
     }
     button {
       width: 2.25rem;
@@ -2331,6 +2382,14 @@ export class Rail extends JfElement {
       align-items: center;
       justify-content: center;
       transition: background var(--duration-fast), color var(--duration-fast);
+    }
+    :host([expanded]) button {
+      width: 100%;
+      height: auto;
+      min-height: 2.25rem;
+      justify-content: flex-start;
+      gap: 0.625rem;
+      padding: 0.35rem 0.6rem;
     }
     button:hover {
       background: var(--surface-secondary);
@@ -2346,6 +2405,18 @@ export class Rail extends JfElement {
     }
     button.ai-dimmed:hover {
       opacity: 0.7;
+    }
+    .rail-label {
+      font-size: var(--font-size-sm);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .expand-toggle {
+      color: var(--text-muted);
+    }
+    :host([expanded]) .expand-toggle .btn-wrap {
+      transform: rotate(180deg);
     }
     .btn-wrap {
       position: relative;
@@ -2424,6 +2495,31 @@ export class Rail extends JfElement {
           ${icon({ name: iconName, size: 18 })}
           ${showDot ? html`<span class="activity-dot"></span>` : nothing}
         </span>
+        ${this.expanded ? html`<span class="rail-label">${railName}</span>` : nothing}
+      </button>
+    `;
+  }
+
+  /**
+   * Search Thread S5b — the rail-foot chevron toggling collapsed (icon-only) ↔ expanded
+   * (icon + label) chrome. Fires `rail-expand-toggle`; Shell owns the persisted userConfig write
+   * (mirrors `rail-select`'s dispatch-up-then-Shell-decides shape).
+   */
+  private renderExpandToggle(): TemplateResult {
+    return html`
+      <button
+        class="expand-toggle"
+        title=${this.expanded ? 'Collapse rail' : 'Expand rail'}
+        aria-label=${this.expanded ? 'Collapse rail' : 'Expand rail'}
+        aria-pressed=${this.expanded ? 'true' : 'false'}
+        data-testid="rail-expand-toggle"
+        @click=${() =>
+          this.dispatchEvent(
+            new CustomEvent('rail-expand-toggle', { bubbles: true, composed: true }),
+          )}
+      >
+        <span class="btn-wrap">${icon({ name: 'chevron-right', size: 16 })}</span>
+        ${this.expanded ? html`<span class="rail-label">Collapse</span>` : nothing}
       </button>
     `;
   }
@@ -2492,6 +2588,8 @@ export class Rail extends JfElement {
       <div class="divider"></div>
       ${this.renderHelpButton()}
       ${bottom.map((s) => this.renderButton(s))}
+      <div class="divider"></div>
+      ${this.renderExpandToggle()}
     `;
   }
 }
@@ -2713,7 +2811,7 @@ export class Stage extends JfElement {
     // On first navigation the custom element isn't defined yet: kick off the
     // dynamic import, show a loading state, and re-render once the element
     // upgrades (whenDefined). See ../views/lazySurfaceRegistry.ts. The default
-    // landing surface (jf-search-surface) is eager, so it never hits this path.
+    // landing surface (jf-unified-chat-view) is eager, so it never hits this path.
     const mountTag = surface.mountTag;
     if (isLazySurface(mountTag) && !customElements.get(mountTag)) {
       void ensureSurfaceLoaded(mountTag);

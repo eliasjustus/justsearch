@@ -14,7 +14,7 @@
  * shape that produced its response.
  */
 
-import { html, unsafeCSS, nothing, type TemplateResult } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 // Tempdoc 621 Phase 1 — the chat window's body styles, extracted to keep this file readable.
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
@@ -31,22 +31,48 @@ import { composeGridStyles } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
-import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun } from '../utils/compose.js';
+import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun, compose } from '../utils/compose.js';
+// Search Thread S1 — the ONE results card (side-effect import registers <jf-results-card>).
+import '../components/searchResults/ResultsCard.js';
+import type {
+  CardSelectionDetail,
+  CardHit,
+  CardSnapshot,
+  SearchProvenance,
+} from '../components/searchResults/ResultsCard.js';
+// Search Thread S6 (the Reading Stage) — the reading surface (`<jf-document-pane>`), mounted as the
+// conversation-zone's 5th column. Replaces the retired `components/InspectorPane.ts` as the visual
+// consumer of inspectorState (see that module's header comment).
+import '../components/documentPane/DocumentPane.js';
+import type { DocumentLineRange } from '../components/documentPane/DocumentPane.js';
+import {
+  subscribeInspector,
+  setOpen as setInspectorOpen,
+} from '../state/inspectorState.js';
+import type { SearchTrace } from '../../api/generated/index.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 import {
   getSelection as getCurrentSelection,
   subscribeSelection,
+  setSelection as setInternalSelection,
+  DEFAULT_CAPABILITIES_BY_KIND,
+  type SelectionItem,
 } from '../state/selectionState.js';
-import { setAiActivity, subscribeAiState, type AiState } from '../state/aiStateStore.js';
+import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../state/aiStateStore.js';
 import { subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
-import { readinessNotice, reasonFor } from '../state/readinessNotice.js';
-import { verdictTone } from '../state/verdict.js';
-import { projectAvailability, unavailableBecause, type Availability } from '../state/availability.js';
+import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
+import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
+import { projectAvailability, unavailableBecause } from '../state/availability.js';
+// Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark.
+import { getUserConfig, setSeenDegradationCauseHash } from '../state/userConfigState.js';
 import '../components/SystemNotice.js';
 import '../components/OpButton.js';
 import '../components/Control.js';
+// Search Thread D2/D3 (stage S2) — the per-turn ROUTE heuristic + its visible chip.
+import { inferRoute, type TurnRoute } from '../state/routeHeuristic.js';
+import '../components/RouteChip.js';
 import {
   projectUnifiedThread,
   projectLiveAgentActivity,
@@ -97,39 +123,44 @@ import {
   submitSearch,
   setSearchApiBase,
   recordOpenDisposition,
+  subscribeScopeChips,
+  addScopeChip,
+  removeScopeChip,
   type SearchState,
   type SearchHit,
+  type SearchScopeChip,
 } from '../state/searchState.js';
-import { projectResultView, type ResultViewInput } from './searchResultViewModel.js';
+import {
+  subscribePinnedSearches,
+  isPinned,
+  pinSearch,
+  unpinSearch,
+  recordRun,
+  type SearchPin,
+} from '../state/pinnedSearchState.js';
+// Search Thread S3 — the shared scope-chip row renderer (mirrors the facet-chip precedent).
+import { renderScopeChips, scopeChipRowStyles } from '../components/scopeChipRow.js';
 import { icon } from '../components/Icon.js';
-import {
-  renderWhyDisclosure,
-  whyThisResultStyles,
-} from '../components/searchResults/whyThisResult.js';
-import {
-  renderFacetChips,
-  facetChipStyles,
-} from '../components/searchResults/facetChips.js';
-import { matchCountLabel } from '../components/searchResults/matchCountLabel.js';
-// Tempdoc 602 R3 — the same path/snippet presentation the dedicated Search surface uses.
-import {
-  formatDisplayPath,
-  highlightTerms,
-  highlightStyles,
-} from '../components/searchResults/resultRowPresentation.js';
+// Search Thread S1 — the why/facet/count/highlight RENDERING moved into the one
+// `jf-results-card`; this view keeps only the shared style sheets its remaining
+// templates still compose (the card carries its own copies for its shadow root).
+import { whyThisResultStyles } from '../components/searchResults/whyThisResult.js';
+import { facetChipStyles } from '../components/searchResults/facetChips.js';
+import { highlightStyles } from '../components/searchResults/resultRowPresentation.js';
 import {
   getFacetSelections,
   subscribeFacetSelections,
   toggleFacetValue,
 } from '../state/searchFiltersState.js';
 // Tempdoc 561 C-2 (graded continuum): chrome grades on the agency posture (affordance × dial).
-import { agencyPosture, postureChrome } from '../state/agencyPosture.js';
+import { agencyPosture, postureChrome, deriveAffordance } from '../state/agencyPosture.js';
 import { getAutonomyLevel, subscribeAutonomy } from '../substrates/autonomy/index.js';
 // Tempdoc 577 §2.14 Root I (#19) — temporal anchoring: relative time on turn boundaries.
 import { formatRelative } from '../utils/relativeTime.js';
 import '../components/AutonomyDial.js';
-// Tempdoc 561 #6: the ONE search-evidence projection (shared with the live tool card).
-import { SEARCH_EVIDENCE_CSS } from '../components/chat/searchEvidence.js';
+// Search Thread S7 (tempdoc decision 4) — the agent search tool card's evidence projection; used
+// here only to resolve a `card-open` hit back out of the SAME structuredData the card rendered from.
+import { findAgentSearchHit } from '../components/chat/toolSearchCard.js';
 // Tempdoc 561 (surface tier): the ONE shared agent controller + the retrospective drawer.
 import { getAgentSessionController, subscribeAgentSession } from '../state/agentSessionStore.js';
 import { toggleRetrospective } from '../state/retrospectiveDrawer.js';
@@ -259,6 +290,66 @@ import { computeSpacedPositions } from '../primitives/adaptiveSpacing.js';
 import { NavigationController } from '../primitives/navigation.js';
 import '../components/chat/RunNode.js';
 
+/**
+ * Search Thread S4-final — a live search FROZEN at the moment of consequence (open/ask/pin). A
+ * view-local capture of the searchState snapshot at commit time, rendered as a `jf-results-card`
+ * `variant='snapshot'`/`'excerpt'` card. NOT a second search authority: every field is copied
+ * verbatim from `SearchState`/`SearchTrace` at the instant of commit, never independently derived
+ * (the projection-not-fork discipline) — and it is APPEND-ONLY: a commit is never mutated or
+ * removed, only added to (see `commitLiveSearch`).
+ */
+interface CommittedSearch {
+  readonly id: string;
+  readonly query: string;
+  readonly mode: string;
+  readonly matchCount: number;
+  readonly resultCount: number;
+  readonly docIds: string[];
+  readonly executedAt: string;
+  /** Up to 20 hits captured at commit time (the card's rows). */
+  readonly hits: CardHit[];
+}
+
+/**
+ * Opaque id for a {@link CommittedSearch}. Prefers `crypto.randomUUID` (happy-dom shims it in
+ * tests, per pinnedSearchState.ts's `makePinId` — the same defensive pattern reused here); falls
+ * back to a timestamp+random hybrid for older environments.
+ */
+function makeCommittedSearchId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return `cs-${c.randomUUID()}`;
+  return `cs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Search Thread Round-2 R1a — a stable, order-independent identity for a verdict's cause-set, so a
+ * repeat sighting of the SAME degradation (reasons re-arriving in a different order across polls)
+ * still collapses, while a genuinely different cause-set re-expands. Empty reasons hash to the same
+ * '' identity regardless of verdict kind — intentional: "no specific cause known" is one
+ * undifferentiated situation, not one per verdict kind.
+ */
+function degradationCauseHash(reasons: readonly string[]): string {
+  return [...reasons].sort().join('|');
+}
+
+/**
+ * Search Thread Round-2 R1a — drop a single cause bullet that only restates the headline+body (the
+ * live-audit finding: the "Reindex required." headline already names the rebuild story, so the sole
+ * `index.*_legacy`/`index.schema_mismatch`/`index.embedding_mismatch` cause bullet is a duplicate).
+ * Keyed on the reason CODE via `isReindexCause` — not string-matching the wording — per the round-2
+ * ruling ("dedup by comparing notice code, not string matching"). Any other single- or multi-cause
+ * notice (the generic degraded-capability headlines, which never name a specific code) is unaffected.
+ */
+function dedupDegradationCauses(
+  notice: ReadinessNoticeView,
+  verdict: SystemHealthVerdict,
+): string[] {
+  if (notice.causes.length === 1 && verdict.reasons.length === 1 && isReindexCause(verdict.reasons[0]!)) {
+    return [];
+  }
+  return notice.causes;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -307,7 +398,8 @@ export class UnifiedChatView extends JfElement {
     isStreaming: { state: true },
     streamingText: { state: true },
     errorMessage: { state: true },
-    affordance: { state: true },
+    explicitAffordance: { state: true },
+    schemaAttached: { state: true },
     thread: { state: true },
     aiState: { state: true },
     showResumePrompt: { state: true },
@@ -315,6 +407,9 @@ export class UnifiedChatView extends JfElement {
     historyLocked: { state: true },
     // Tempdoc 577 §2.13 #17 — the agent authority-space panel toggle.
     showAbilities: { state: true },
+    // Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. A transient
+    // UI panel (closes in settleTransients), mirroring showAbilities/queryTrailOpen.
+    degradationBannerExpanded: { state: true },
     // Slice 515 FIX-1: docIds carried from askAi navigation, forwarded to
     // RAG dispatch so scoped retrieval actually works. Captured in
     // connectedCallback before unifiedChatState is reset.
@@ -330,8 +425,35 @@ export class UnifiedChatView extends JfElement {
     claims: { state: true },
     // Tempdoc 577 Goal 3 — the retrieve base tier's live search snapshot (ephemeral hit-list).
     searchSnapshot: { state: true },
+    retrieveSelectedIds: { state: true },
     // Tempdoc 577 Goal 3 §3.9a — facet selections drive the retrieve tier's chips.
     facetSelections: { state: true },
+    // Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override (chip click /
+    // Ctrl+Enter). null = follow the inferRoute() heuristic guess.
+    routeOverride: { state: true },
+    // Search Thread D5 (stage S3) — the pinned scope chips (mirrored from the searchState module
+    // store). Recoverable task state, not a transient — survives tab switch like selection/facets.
+    scopeChips: { state: true },
+    pinnedSearches: { state: true },
+    // Search Thread S4-final — committed (frozen) searches, oldest first. Recoverable task state
+    // (like `thread`/`scopeChips`): these are part of the visible thread history, not in-flight UI —
+    // NOT reset in settleTransients.
+    committedSearches: { state: true },
+    // Search Thread S4-final — the last 8 distinct committed-or-superseded queries this session,
+    // newest first. Recoverable (a convenience history), not a transient.
+    queryTrail: { state: true },
+    // Search Thread S4-final — the query-trail dropdown's open/closed toggle. A transient UI panel
+    // (closes in settleTransients), mirroring showAbilities/forkEditing.
+    queryTrailOpen: { state: true },
+    // Search Thread S6 (the Reading Stage) — the document currently open in the reading pane (+ its
+    // optional highlight/chunk line-ranges). Recoverable task state (like `scopeChips`/`thread`), NOT a
+    // transient — a return to this surface should still show the document the user was reading, so
+    // this is deliberately NOT reset in settleTransients(); the retention gate's transient-name pattern
+    // match (`busy`/`loading`/`*Error`/…) doesn't cover `readingDocPath`, so it carries no settle
+    // obligation, the same way `scopeChips` needs none.
+    readingDocPath: { state: true },
+    readingHighlightRange: { state: true },
+    readingChunkRange: { state: true },
   };
 
   declare apiBase: string;
@@ -384,7 +506,18 @@ export class UnifiedChatView extends JfElement {
   declare isStreaming: boolean;
   declare streamingText: string;
   declare errorMessage: string;
-  declare affordance: Affordance;
+  /**
+   * Search Thread S5a — the sticky EXPLICIT tier choice (tab click, shape preset, restored
+   * session), or null when the tier is derived. The standing `affordance` is a computed
+   * projection (see the accessor pair below) — never a stored field.
+   */
+  declare explicitAffordance: Affordance | null;
+  /**
+   * S5a (decision 6) — a schema ATTACHMENT is a deliberate act ('+ Schema' on the bar), tracked
+   * separately from `schemaDraft` (whose constructor template is a convenience, not an intent).
+   * Recoverable: an attachment survives tab switches. Attached ⇒ the tier derives 'extract'.
+   */
+  declare schemaAttached: boolean;
   declare thread: ThreadMessage[];
   declare citations: CitationMatch[];
   declare sources: RetrievalCitation[];
@@ -395,12 +528,53 @@ export class UnifiedChatView extends JfElement {
   declare aiState: AiState | null;
   /** Tempdoc 577 Goal 3 — the retrieve base tier's live search snapshot (ephemeral hit-list). */
   declare searchSnapshot: SearchState | null;
+  /**
+   * Search Thread S1 — multi-select set for the retrieve tier's card (mirrors SearchSurface's
+   * selectedHitIds; instance @state so the Stage's element retention preserves it across
+   * navigation — 609). Selection is retained view state by design, not a transient.
+   */
+  declare retrieveSelectedIds: ReadonlySet<string>;
   declare facetSelections: Record<string, string[]>;
+  /** Search Thread D2/D3 (stage S2) — the user's explicit per-turn route override, or null to follow
+   * the {@link inferRoute} heuristic guess. Reset on submit and whenever the draft empties out. */
+  declare routeOverride: TurnRoute | null;
+  /** Search Thread D5 (stage S3) — the pinned scope chips, mirrored from the searchState module
+   *  store (subscribeScopeChips in connectedCallback). Constrains both instant search (via
+   *  buildSearchIntent, already unioned in searchState) and AI retrieval (unioned into docIds at
+   *  send time — see effectiveDocIds()). */
+  declare scopeChips: SearchScopeChip[];
+  /** S5b pin-parity — the persisted pinned searches (UserStateDocument via pinnedSearchState). */
+  declare pinnedSearches: readonly SearchPin[];
+  /** Search Thread S4-final — committed (frozen) searches, oldest first; see {@link CommittedSearch}. */
+  declare committedSearches: CommittedSearch[];
+  /** Search Thread S4-final — recent-query trail, newest first, deduped, capped at 8. */
+  declare queryTrail: string[];
+  /** Search Thread S4-final — the query-trail dropdown's open/closed toggle. */
+  declare queryTrailOpen: boolean;
+  /** Search Thread S6 — the document open in the reading pane (`<jf-document-pane>`), or null when
+   *  closed. Set by `handleRetrieveCardOpen`/`handleCommittedCardOpen` (via the shared inspectorState
+   *  subscription) and by citation clicks; cleared by the pane's own `pane-close`. */
+  declare readingDocPath: string | null;
+  /** Search Thread S6 — the passage line-range to highlight in the reading pane (citation deep-links
+   *  carry `startLine`/`endLine`; a plain document open carries none). */
+  declare readingHighlightRange: DocumentLineRange | null;
+  /** Search Thread S6 — the wider containing chunk to tint (no current producer carries this — kept
+   *  for parity with DocumentPane's own `chunkRange` prop should a future producer supply it). */
+  declare readingChunkRange: DocumentLineRange | null;
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
+  /** Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. */
+  declare degradationBannerExpanded: boolean;
+  /**
+   * Search Thread Round-2 R1a — plain (non-reactive) bridge field: the cause-set hash the
+   * expand/collapse default has already been ARMED for this mount (guards {@link
+   * syncDegradationBannerExpansion} from re-deciding the default on every unrelated re-render — only
+   * a genuinely new cause-set re-arms). Mirrors `ResultsCard.wasSettling`'s willUpdate-bridge shape.
+   */
+  private armedDegradationCauseHash: string | null = null;
   declare pinnedDocIds: string[];
   declare parentFirstMessagePreview: string | null;
   // Tempdoc 565 §12.3.C + multi-turn fix (A) — the run-trace collapse is PER-SEGMENT: a multi-turn
@@ -433,11 +607,16 @@ export class UnifiedChatView extends JfElement {
   // Tempdoc 577 Goal 3 — the retrieve base tier's search-store subscription.
   private searchUnsub: (() => void) | null = null;
   private facetUnsub: (() => void) | null = null;
+  // Search Thread D5 (stage S3) — the scope-chip store subscription.
+  private scopeChipsUnsub: (() => void) | null = null;
+  private pinnedSearchesUnsub: (() => void) | null = null;
+  // Search Thread S6 — the shared inspectorState subscription (the "open a document for reading"
+  // signal — see that module's header comment): projects `selected`/`isOpen` onto readingDocPath.
+  private inspectorUnsub: (() => void) | null = null;
   // Tempdoc 561 C-2: re-render the graded chrome when the autonomy dial changes (chrome only).
   private autonomyUnsubscribe: (() => void) | null = null;
   /** Tempdoc 610 §J.3 — re-render when the shared hidden-source set changes (e.g. toggled from the rail). */
   private excludedSourcesUnsub: (() => void) | null = null;
-  private userToggledAffordance = false;
   // Tempdoc 561 P-A/P-B (Slice 2): the canonical thread record (GET /api/thread/{id}). When present,
   // the conversation renders the unified interleaved thread (chat turns + agent activity) projected
   // from this ONE record; empty -> fall back to the live this.thread render (offline / pre-fetch).
@@ -496,6 +675,9 @@ export class UnifiedChatView extends JfElement {
   // Tempdoc 565 §33 — J/K step-nav is a window-level shortcut (the conversation div is not focusable, so
   // a div-scoped @keydown never fired for a real user). Added on connect, removed on disconnect.
   private boundWindowKeydown = this.onConversationKeydown.bind(this);
+  // Search Thread D2/D3 (stage S2) — Shell dispatches `jf-focus-composer` on Ctrl+L / '/'; focus the
+  // composer textarea. Added on connect, removed on disconnect (mirrors boundWindowKeydown).
+  private boundFocusComposer = this.onFocusComposer.bind(this);
   private hoverCard: CitationHoverCard | null = null;
   // Slice 515 FIX-4 — monotonic token to discard stale syncMessageIds
   // responses. Each invocation bumps the token; only the latest one's
@@ -529,13 +711,12 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
-    // Tempdoc 577 Goal 3 (§3.11) — the window lands in the `retrieve` base tier (the always-available
-    // search entry tier), not free-chat. When a chat model is online the aiState subscription
-    // auto-upgrades to `documents` (§ connectedCallback), so the online landing is unchanged; the only
-    // behavioural delta is the AI-offline cold start, which now opens working search instead of a dead
-    // "AI Offline" composer. `retrieve` is ephemeral (never persisted), so a restored session with a
-    // real affordance still overrides this below.
-    this.affordance = 'retrieve';
+    // Tempdoc 577 Goal 3 (§3.11) / Search Thread S5a — the window lands DERIVED (no explicit pin):
+    // deriveAffordance yields the `retrieve` base tier, the always-available search floor. The old
+    // AI-online auto-upgrade to `documents` is gone (decision B14 — capability appearing must not
+    // move the user); a restored session with a real affordance still pins explicitly below.
+    this.explicitAffordance = null;
+    this.schemaAttached = false;
     this.thread = [];
     this.citations = [];
     this.sources = [];
@@ -544,7 +725,18 @@ export class UnifiedChatView extends JfElement {
     this.claims = [];
     this.aiState = null;
     this.searchSnapshot = null;
+    this.retrieveSelectedIds = new Set<string>();
     this.facetSelections = {};
+    this.routeOverride = null;
+    this.scopeChips = [];
+    this.pinnedSearches = [];
+    this.committedSearches = [];
+    this.queryTrail = [];
+    this.queryTrailOpen = false;
+    this.degradationBannerExpanded = false;
+    this.readingDocPath = null;
+    this.readingHighlightRange = null;
+    this.readingChunkRange = null;
     this.showResumePrompt = false;
     this.pinnedDocIds = [];
     this.parentFirstMessagePreview = null;
@@ -579,8 +771,8 @@ export class UnifiedChatView extends JfElement {
       'core.free-chat': 'none',
     };
     if (this.shapeId && presetByShape[this.shapeId] !== undefined) {
+      // S5a — a deep-linked shape is an explicit tier choice (the setter pins it sticky).
       this.affordance = presetByShape[this.shapeId]!;
-      this.userToggledAffordance = true;
     }
     // Tempdoc 565 §15.C (fix): mounting the workflow shape arms a one-shot RUN affordance instead of
     // auto-running — the user explicitly triggers the run (no surprising re-run on every mount). The
@@ -594,7 +786,6 @@ export class UnifiedChatView extends JfElement {
     if (initial.query) this.inputDraft = initial.query;
     if (initial.affordance !== 'none') {
       this.affordance = initial.affordance;
-      this.userToggledAffordance = true;
     }
     // 548 §4.5: drain the one-shot auto-run flag parked by the IntentRouter's
     // `answer` lowering. maybeAutoRun() fires once the prompt + AI capability
@@ -609,10 +800,9 @@ export class UnifiedChatView extends JfElement {
     const refreshDocsFromSelection = (): void => {
       const cur = getCurrentSelection().items[0];
       if (cur && cur.kind === 'result-set') {
+        // S5a (decision B14) — the selection carries into sends as docIds; it no longer
+        // auto-flips the standing tier out from under the user.
         this.pinnedDocIds = cur.items.map((r) => r.id);
-        if (this.pinnedDocIds.length > 0 && !this.userToggledAffordance) {
-          this.affordance = 'documents';
-        }
       }
     };
     refreshDocsFromSelection();
@@ -625,7 +815,6 @@ export class UnifiedChatView extends JfElement {
       if (s.query) this.inputDraft = s.query;
       if (s.affordance !== 'none') {
         this.affordance = s.affordance;
-        this.userToggledAffordance = true;
       }
       this.maybeAutoRun();
     });
@@ -637,6 +826,8 @@ export class UnifiedChatView extends JfElement {
     this.addEventListener('cite-ref-leave', this.boundCiteRefLeave as EventListener);
     // §33 — window-level J/K step-nav (guarded to the agent run + non-input focus inside the handler).
     window.addEventListener('keydown', this.boundWindowKeydown);
+    // Search Thread D2/D3 (stage S2) — Ctrl+L / '/' (dispatched by Shell) focuses the composer.
+    window.addEventListener('jf-focus-composer', this.boundFocusComposer);
 
     setConversationApiBase(this.apiBase || '');
     // Tempdoc 610 Phase B — track the loaded conversation list so the inline
@@ -658,10 +849,10 @@ export class UnifiedChatView extends JfElement {
       void this.loadConversation(lastViewed, 'core.free-chat');
     }
     this.aiStateUnsubscribe = subscribeAiState((s) => {
+      // S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED:
+      // the user's tier is sticky-explicit or derived from what they hold; a model coming
+      // online changes availability chrome (route chip unpins), never the standing view.
       this.aiState = s;
-      if (!this.userToggledAffordance && s.capabilities.rag) {
-        this.affordance = 'documents';
-      }
       this.maybeAutoRun();
     });
     // Tempdoc 561 C-2: the dial change only re-grades chrome (placeholder / send label / rail
@@ -671,6 +862,11 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 577 Goal 3 — the retrieve base tier reads the one search store. Same apiBase as chat.
     setSearchApiBase(this.apiBase || '');
     this.searchUnsub = subscribeSearch((s) => {
+      // Search Thread S4-final — a query change SUPERSEDES the previous one; remember it on the
+      // trail before it's gone (the "committed-or-superseded" half — commitLiveSearch below covers
+      // the "committed" half at consequence time).
+      const prevQuery = this.searchSnapshot?.query ?? '';
+      if (prevQuery.trim() && prevQuery !== s.query) this.rememberQueryInTrail(prevQuery);
       this.searchSnapshot = s;
     });
     // §3.9a — facet selections drive the retrieve tier's chips; seed + subscribe.
@@ -678,6 +874,73 @@ export class UnifiedChatView extends JfElement {
     this.facetUnsub = subscribeFacetSelections((sel) => {
       this.facetSelections = sel;
     });
+    // Search Thread D5 (stage S3) — mirror the scope-chip store (fires once immediately with the
+    // current chips, mirroring subscribeSearch/subscribeFacetSelections above).
+    this.scopeChipsUnsub = subscribeScopeChips((chips) => {
+      this.scopeChips = chips;
+    });
+    // S5b pin-parity — the pinned-search strip moved from the retired SearchSurface onto the
+    // landing + the bar's pin toggle (plan: "pinned chips land on the card/landing").
+    this.pinnedSearchesUnsub = subscribePinnedSearches((pins) => {
+      this.pinnedSearches = pins;
+    });
+    // Search Thread S6 — the shared "open a document for reading" signal (inspectorState; fires once
+    // immediately with the current state, mirroring the subscriptions above). Every existing producer
+    // (`host.ui.showInspector` on the plugin API — the internal openRetrieveHit/handleCommittedCardOpen/
+    // republishRetrieveSelection call sites all reach it that way — and citation clicks, reworked in
+    // Shell.onCitationSelect to call `setSelected` with the passage's line range) funnels through this
+    // ONE store, so this ONE subscription is the ONE place readingDocPath is derived from it. An
+    // explicit close (`setOpen(false)` / `resetInspectorState()`) clears the reading pane; a fresh
+    // `selected` while open sets it (and its highlight range, when the producer carried one).
+    this.inspectorUnsub = subscribeInspector((s) => {
+      if (s.selected && s.isOpen) {
+        this.readingDocPath = s.selected.path;
+        this.readingHighlightRange =
+          typeof s.selected.highlightStartLine === 'number' &&
+          typeof s.selected.highlightEndLine === 'number'
+            ? { startLine: s.selected.highlightStartLine, endLine: s.selected.highlightEndLine }
+            : null;
+        this.readingChunkRange = null;
+      } else if (!s.isOpen) {
+        this.readingDocPath = null;
+        this.readingHighlightRange = null;
+        this.readingChunkRange = null;
+      }
+    });
+    this.republishRetrieveSelection();
+  }
+
+  /**
+   * Search Thread S5b (state-retention parity with the retired SearchSurface, tempdoc 609
+   * instance-retention) — the retrieve tier's multi-select is instance @state
+   * (`retrieveSelectedIds`), so it survives a disconnect/reconnect cycle; but the GLOBAL
+   * selectionState does not (other rail surfaces clear it on surface change). Re-publish it +
+   * reopen the inspector for the primary hit, mirroring SearchSurface.connectedCallback. Stale ids
+   * (results changed while away) are dropped — only ids still present in the current snapshot count.
+   */
+  private republishRetrieveSelection(): void {
+    if (this.retrieveSelectedIds.size === 0 || (this.searchSnapshot?.results.length ?? 0) === 0) return;
+    const hits = this.searchSnapshot!.results;
+    const primaryIndex = hits.findIndex((h) => this.retrieveSelectedIds.has(h.id));
+    const survivingIds = hits.filter((h) => this.retrieveSelectedIds.has(h.id)).map((h) => h.id);
+    if (survivingIds.length === 0) {
+      this.retrieveSelectedIds = new Set();
+      return;
+    }
+    // Reopen the inspector for the primary hit — a passive preview restore, NOT a fresh "open"
+    // (recordOpenDisposition stays scoped to openRetrieveHit's real user-click path).
+    const primaryHit = primaryIndex >= 0 ? hits[primaryIndex] : hits.find((h) => survivingIds.includes(h.id));
+    this.handleRetrieveCardSelection({
+      ids: survivingIds,
+      primaryId: primaryHit?.id ?? survivingIds[0]!,
+      primaryIndex: primaryIndex >= 0 ? primaryIndex : 0,
+    });
+    const host = this.host_;
+    if (primaryHit && host?.search && host?.ui) {
+      host.ui.showInspector(
+        host.search.hitToSelectedItem(primaryHit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+      );
+    }
   }
 
   /**
@@ -722,9 +985,24 @@ export class UnifiedChatView extends JfElement {
     this.reasoning.reset();
     // Close transient panels/editors so they don't reopen on return.
     this.showAbilities = false;
+    // Search Thread Round-2 R1a — the degradation banner's disclosure resets on hide; a return
+    // re-arms the default from the persisted seen-hash (armedDegradationCauseHash reset so the next
+    // update re-decides rather than skipping on a stale guard).
+    this.degradationBannerExpanded = false;
+    this.armedDegradationCauseHash = null;
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
+    // Search Thread D2/D3 (stage S2) — the per-turn route override is a transient (per-turn) choice,
+    // not recoverable task state; a return should re-run the heuristic guess, not keep a stale flip.
+    this.routeOverride = null;
+    // Search Thread S4-final — the query-trail dropdown is a transient panel (mirrors
+    // showAbilities/forkEditing above); `committedSearches`/`queryTrail` themselves are deliberately
+    // NOT touched here — they are recoverable task state, the same category as `thread`/`scopeChips`.
+    this.queryTrailOpen = false;
+    // S5a — `explicitAffordance` (sticky tier choice) and `schemaAttached` (a held attachment)
+    // are recoverable task state, deliberately NOT settled here: clearing them on navigation
+    // would un-pin the tier / drop the attachment on every tab switch — the churn B14 retired.
   }
 
   override disconnectedCallback(): void {
@@ -747,6 +1025,12 @@ export class UnifiedChatView extends JfElement {
     this.searchUnsub = null;
     this.facetUnsub?.();
     this.facetUnsub = null;
+    this.scopeChipsUnsub?.();
+    this.scopeChipsUnsub = null;
+    this.pinnedSearchesUnsub?.();
+    this.pinnedSearchesUnsub = null;
+    this.inspectorUnsub?.();
+    this.inspectorUnsub = null;
     this.excludedSourcesUnsub?.();
     this.excludedSourcesUnsub = null;
     // §21 — the run-spine's observers + scroll listeners are torn down by NavigationController.hostDisconnected.
@@ -765,6 +1049,7 @@ export class UnifiedChatView extends JfElement {
     this.removeEventListener('cite-ref-hover', this.boundCiteRefHover as EventListener);
     this.removeEventListener('cite-ref-leave', this.boundCiteRefLeave as EventListener);
     window.removeEventListener('keydown', this.boundWindowKeydown);
+    window.removeEventListener('jf-focus-composer', this.boundFocusComposer);
     this.hoverCard?.remove();
   }
 
@@ -1281,11 +1566,37 @@ export class UnifiedChatView extends JfElement {
     toggleContextInspector();
   }
 
+  /**
+   * Search Thread Round-2 R1a — arm the degradation banner's default expand state exactly once per
+   * distinct cause-set this mount observes (the `armedDegradationCauseHash` guard stops an unrelated
+   * re-render from re-deciding the default after the user has toggled the chevron). A cause-set never
+   * recorded as seen (a first sighting, or a CHANGED cause-set) defaults to expanded and is
+   * immediately marked seen; an already-seen cause-set defaults to collapsed. Runs pre-render
+   * (willUpdate) so the persistence write sits outside render() proper.
+   */
+  protected override willUpdate(_changed: Map<string, unknown>): void {
+    this.syncDegradationBannerExpansion();
+  }
+
+  private syncDegradationBannerExpansion(): void {
+    const verdict = this.aiState?.verdict;
+    const notice = verdict ? readinessNotice(verdict) : null;
+    if (!verdict || !notice) return;
+    const hash = degradationCauseHash(verdict.reasons);
+    if (hash === this.armedDegradationCauseHash) return;
+    this.armedDegradationCauseHash = hash;
+    const seenBefore = getUserConfig().seenDegradationCauseHash === hash;
+    this.degradationBannerExpanded = !seenBefore;
+    if (!seenBefore) setSeenDegradationCauseHash(hash);
+  }
+
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
   protected override updated(_changed: Map<string, unknown>): void {
     if (isContextInspectorOpen()) {
       setContextInspectorView(this.buildInspectorView());
     }
+    // (Search Thread S2 note: the landing→docked transition is CSS-only — the composer never
+    // re-parents, so no focus restoration is needed; see the stable-slot rule in renderAnswerPlane.)
   }
 
   /**
@@ -1579,7 +1890,6 @@ export class UnifiedChatView extends JfElement {
     // free-chat thread; viewing it needs no model (only sending a new turn does).
     if (this.affordance === 'retrieve') {
       this.affordance = 'none';
-      this.userToggledAffordance = true;
     }
     void this.loadConversation(sessionId, 'core.free-chat');
   }
@@ -1652,10 +1962,20 @@ export class UnifiedChatView extends JfElement {
     this.ragMeta = null;
     this.rewriteNote = null;
     this.claims = [];
+    // S8 live finding — the previous conversation's unified record (events/lifecycles) must not
+    // survive into the fresh one: stale events kept isLanding() false, so New chat never
+    // returned to the bare landing.
+    this.unifiedEvents = [];
+    this.unifiedLifecycles = [];
+    this.agentBudget = null;
     this.showResumePrompt = false;
     // Slice 515 FIX-1: forget the previous askAi-pinned docIds so a new
     // conversation starts with open-retrieval unless the user re-selects.
     this.pinnedDocIds = [];
+    // S5a — New chat clears the sticky tier pin and any held schema attachment: the fresh
+    // conversation derives back to the retrieve floor.
+    this.explicitAffordance = null;
+    this.schemaAttached = false;
     this.parentFirstMessagePreview = null;
     // Tempdoc 610 Phase B — a fresh conversation is a root: no fork pointers.
     this.branchParentId = null;
@@ -1745,7 +2065,7 @@ export class UnifiedChatView extends JfElement {
     return nothing;
   }
 
-  static styles = [composerStyles, unsafeCSS(SEARCH_EVIDENCE_CSS), whyThisResultStyles, facetChipStyles, highlightStyles, unifiedChatBodyStyles,
+  static styles = [composerStyles, whyThisResultStyles, facetChipStyles, highlightStyles, scopeChipRowStyles, unifiedChatBodyStyles,
     // §13 Pillar B — the GENERATED grid frame for the conversation-zone (replaces the hand-authored
     // grid-template-columns + per-zone placements removed above; faithful per de-risk Probe S2).
     composeGridStyles(CONVERSATION_ZONES, {
@@ -1777,19 +2097,37 @@ export class UnifiedChatView extends JfElement {
     return html`
       <div class="header">
         <div>
-          <strong>Chat</strong> — ask anything
+          <strong>Search</strong> — ask anything
           <jf-conversation-history
             @conversation-select=${(e: CustomEvent) => this.onConversationSelect(e)}
           ></jf-conversation-history>
+          ${/* Search Thread S5b — the affordance-bar row retired; Activity (the retrospective drawer:
+                Sessions/Timeline/History) moves next to New chat/Export so it stays reachable from
+                every tier, not just from within the (now-gone) tab row. */ ''}
+          <button
+            class="new-chat-btn"
+            @click=${() => toggleRetrospective()}
+            title="Activity — past sessions, timeline, tool calls, inbox"
+          >
+            Activity
+          </button>
           ${this.thread.length > 0 && !agentMode
             ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>
                    <button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
         </div>
-        <span class="shape-indicator">${agentMode ? 'Agent' : SHAPE_LABELS[currentShape]}</span>
+        <span class="shape-indicator">${
+          agentMode
+            ? 'Agent'
+            : // Search Thread S5b — resolveShape falls through 'retrieve' to 'core.free-chat'
+              // (SHAPE_LABELS 'Chat'), which read wrong once the header/rail/tab renamed to
+              // "Search": the badge must not call the search-only tier "Chat".
+              this.affordance === 'retrieve'
+              ? 'Search'
+              : SHAPE_LABELS[currentShape]
+        }</span>
       </div>
       ${this.renderDegradationBanner()}
-      ${this.renderAffordanceBar(agentMode)}
       <div class="answer-plane">${this.renderAnswerPlane()}</div>
     `;
   }
@@ -1808,6 +2146,10 @@ export class UnifiedChatView extends JfElement {
     if (!verdict) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
+    if (!this.degradationBannerExpanded) {
+      return this.renderCollapsedDegradationBanner(verdict, notice);
+    }
+    const causes = dedupDegradationCauses(notice, verdict);
     return html`<jf-system-notice
       tone=${verdictTone(verdict.severity)}
       live="status"
@@ -1816,28 +2158,91 @@ export class UnifiedChatView extends JfElement {
     >
       <span class="notice-row"
         >${icon({ name: 'alert-triangle', size: 13 })}
-        <span><strong>${notice.headline}</strong> ${notice.body}</span></span
+        <span class="degradation-summary"><strong>${notice.headline}</strong> ${notice.body}</span>
+        ${/* Round-2 R1a — a seen notice defaults collapsed; this chevron lets the user re-collapse
+              an expanded (first-sighting or re-opened) banner without waiting for the next visit. */ ''}
+        <button
+          type="button"
+          class="degradation-collapse"
+          data-testid="chat-degradation-collapse"
+          aria-expanded="true"
+          title="Collapse"
+          @click=${() => {
+            this.degradationBannerExpanded = false;
+          }}
+        >
+          ⌃
+        </button></span
       >
-      ${notice.causes.length > 0
+      ${causes.length > 0
         ? html`<ul class="notice-causes" data-testid="chat-degradation-causes">
-            ${notice.causes.map((c) => html`<li>${c}</li>`)}
+            ${causes.map((c) => html`<li>${c}</li>`)}
           </ul>`
         : nothing}
-      <span class="notice-remedy">
-        ${notice.remedy.kind === 'operation'
-          ? html`<jf-op-button
-              operation-id=${notice.remedy.operationId}
-              api-base=${this.apiBase}
-              data-testid="chat-degradation-remedy-op"
-            ></jf-op-button>`
-          : html`<jf-button
-              variant="secondary"
-              data-testid="chat-degradation-remedy-nav"
-              .onActivate=${() => this.openRemedyTarget((notice.remedy as { target: string }).target)}
-              >${notice.remedy.label}</jf-button
-            >`}
+      ${this.renderDegradationRemedy(notice)}
+    </jf-system-notice>`;
+  }
+
+  /**
+   * Round-2 R1a — the collapsed one-line form: severity icon + "N causes — <headline>" + the
+   * strongest remedy + an expand chevron. Rendered once a cause-set has been seen before (a repeat
+   * degradation the user already read); a genuinely new cause-set never reaches this branch (see
+   * {@link syncDegradationBannerExpansion}).
+   */
+  private renderCollapsedDegradationBanner(
+    verdict: SystemHealthVerdict,
+    notice: ReadinessNoticeView,
+  ): TemplateResult {
+    const causes = dedupDegradationCauses(notice, verdict);
+    const count = causes.length;
+    return html`<jf-system-notice
+      tone=${verdictTone(verdict.severity)}
+      live="status"
+      class="degradation-banner degradation-banner-collapsed"
+      data-testid="chat-degradation"
+    >
+      <span class="notice-row notice-row-collapsed">
+        ${icon({ name: 'alert-triangle', size: 13 })}
+        <span class="degradation-summary" data-testid="chat-degradation-summary">
+          ${count > 0 ? `${count} ${count === 1 ? 'cause' : 'causes'} — ` : ''}${notice.headline}
+        </span>
+        ${this.renderDegradationRemedy(notice)}
+        <button
+          type="button"
+          class="degradation-expand"
+          data-testid="chat-degradation-expand"
+          aria-expanded="false"
+          title="Show details"
+          @click=${() => {
+            this.degradationBannerExpanded = true;
+          }}
+        >
+          ⌄
+        </button>
       </span>
     </jf-system-notice>`;
+  }
+
+  /**
+   * The ONE remedy render shared by the expanded + collapsed banner. `readinessNotice` already picks
+   * a single highest-priority remedy (`pickRemedy`), so "the strongest remedy" needs no further
+   * ranking here — there is only ever one.
+   */
+  private renderDegradationRemedy(notice: ReadinessNoticeView): TemplateResult {
+    return html`<span class="notice-remedy">
+      ${notice.remedy.kind === 'operation'
+        ? html`<jf-op-button
+            operation-id=${notice.remedy.operationId}
+            api-base=${this.apiBase}
+            data-testid="chat-degradation-remedy-op"
+          ></jf-op-button>`
+        : html`<jf-button
+            variant="secondary"
+            data-testid="chat-degradation-remedy-nav"
+            .onActivate=${() => this.openRemedyTarget((notice.remedy as { target: string }).target)}
+            >${notice.remedy.label}</jf-button
+          >`}
+    </span>`;
   }
 
   /** Tempdoc 596 §11.4 — navigate to a notice remedy target (mirrors SearchSurface.openRemedyTarget). */
@@ -1852,90 +2257,73 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 561 P-B3: the affordance bar — the §2.1 crossing control, shared by both planes so the
-   * user can cross between the answer plane (Documents/Structured) and the action plane (Agent)
-   * from within the one window. 'Agent' replaces the old disabled 'Tools' stub (the un-built
-   * crossing the audit flagged).
+   * Search Thread D2/D3 (stage S2) — Ask is PINNED to `'search'` when the documents affordance is
+   * unavailable/blocked (Hard Invariant: never a silent no-op). Mirrors `RouteChip`'s own pinned
+   * semantics so the chip and the actual Enter-key routing can never disagree.
    */
-  /**
-   * Tempdoc 596 §9/§14 — the availability of a capability tab, projected once from the observed-state
-   * authority. `isStreaming` is a HARD intent gate (can't switch mode mid-stream) → `blocked` (inert);
-   * everything else is a SOFT capability gap → `unavailable{reason}` (reachable reason, non-silent
-   * block). The reason that used to live on a suppressed `title` is now rendered by jf-control.
-   */
-  private tabAvailability(affordance: 'documents' | 'extract' | 'agent'): Availability {
-    if (this.isStreaming) return { kind: 'blocked' };
-    return projectAvailability(affordance, this.aiState);
+  private askPinned(): boolean {
+    const a = projectAvailability('documents', this.aiState);
+    return a.kind === 'unavailable' || a.kind === 'blocked';
   }
 
-  private renderAffordanceBar(agentMode: boolean): TemplateResult {
+  /**
+   * Search Thread D2/D3 (stage S2) — the route Enter (or the submit button) will take for the
+   * current turn: the user's explicit per-turn override when set, else the {@link inferRoute}
+   * heuristic guess — pinned to `'search'` whenever Ask is unavailable.
+   */
+  private currentRoute(): TurnRoute {
+    if (this.askPinned()) return 'search';
+    return this.routeOverride ?? inferRoute(this.inputDraft);
+  }
+
+  /**
+   * Search Thread S5a — the standing tier is a COMPUTED projection (deriveAffordance in
+   * agencyPosture.ts, the one authority): explicit choice > schema attachment > 'retrieve'.
+   * Route is passed null here — a typed question flips the SUBMIT (escalateAsk), never the
+   * standing view (the live search floor must not be yanked mid-keystroke). Reactivity holds
+   * because every derivation input is itself reactive state.
+   */
+  get affordance(): Affordance {
+    return deriveAffordance({
+      explicit: this.explicitAffordance,
+      route: null,
+      hasSchemaAttachment: this.schemaAttached,
+    });
+  }
+
+  /** Assignment IS explicit selection (tab clicks, tests, restores) — it pins the tier sticky. */
+  set affordance(v: Affordance) {
+    this.explicitAffordance = v;
+  }
+
+  /**
+   * Search Thread S5b — the affordance TAB ROW is retired (the escalation affordances that replace
+   * it: the route chip, the results card's Ask AI, and the landing escalation strip). The agent-only
+   * controls the row used to host (the supervision dial, Abilities, Sources) move onto the composer,
+   * rendered ONLY while `affordance === 'agent'` — {@link renderComposerBlock} calls this.
+   */
+  private renderAgentToolbar(): TemplateResult | typeof nothing {
+    if (this.affordance !== 'agent') return nothing;
     return html`
-      <div class="affordance-bar">
-        ${/* Tempdoc 577 Goal 3 (§3.2) — the retrieve base tier: instant search hits, no LLM. The
-              lowest intent rung; "Documents" (Ask) and "Agent" (Delegate) are the escalations. */ ''}
-        <button
-          class="affordance-btn ${this.affordance === 'retrieve' ? 'active' : ''}"
-          @click=${() => this.toggleAffordance('retrieve')}
-          title="Search your files — instant results, no AI"
-        >
-          Search
-        </button>
-        ${/* Tempdoc 596 — the three capability tabs are jf-control with TYPED availability: an
-              unavailable tab is aria-disabled + focusable, its reason reachable, and a blocked
-              activation surfaces the reason (no suppressed title, no swallowed click). */ ''}
-        <jf-control
-          class="affordance-btn ${this.affordance === 'documents' ? 'active' : ''}"
-          .availability=${this.tabAvailability('documents')}
-          .onActivate=${() => this.toggleAffordance('documents')}
-          >Documents</jf-control
-        >
-        <jf-control
-          class="affordance-btn ${this.affordance === 'extract' ? 'active' : ''}"
-          .availability=${this.tabAvailability('extract')}
-          .onActivate=${() => this.toggleAffordance('extract')}
-          >Structured</jf-control
-        >
-        <jf-control
-          class="affordance-btn ${agentMode ? 'active' : ''}"
-          .availability=${this.tabAvailability('agent')}
-          .onActivate=${() => this.toggleAffordance('agent')}
-          >Agent</jf-control
-        >
-        ${/* Tempdoc 561 C-2: the supervision dial appears only at the agency crossing (agent mode),
-              making the answer→action phase transition visible — the chrome grades, not a new mode. */ ''}
-        ${agentMode
-          ? html`<jf-autonomy-dial class="affordance-dial" compact></jf-autonomy-dial>`
-          : nothing}
-        ${/* Tempdoc 561 surface tier: open the retrospective drawer (Sessions/Timeline/History)
-              folded into the one window — replacing the retired standalone agent surface's tabs. */ ''}
-        ${/* Tempdoc 577 Ext III — the retrospective is NOT "Activity" (that read as a fourth posture
-              beside the dial, and collided with the live-run rail + the Activity surface): it is the
-              record looking BACK — "History". Spaced off the dial so it reads as a panel toggle. */ ''}
-        <button
-          class="affordance-btn retrospective-toggle ${agentMode ? '' : 'affordance-trailing'}"
-          @click=${() => toggleRetrospective()}
-          title="History — past sessions, timeline, tool calls, inbox"
-        >
-          History
-        </button>
+      <div class="agent-toolbar">
+        ${/* Tempdoc 561 C-2: the supervision dial makes the answer→action phase transition visible. */ ''}
+        <jf-autonomy-dial compact></jf-autonomy-dial>
         ${/* Tempdoc 577 §2.13 #17 — the authority-space toggle: "what can this agent do, and what
-            will ask first" — calibrate trust by inspection, before delegating (agent mode only). */ ''}
-        ${agentMode
-          ? html`<button
-              class="affordance-btn"
-              aria-pressed=${this.showAbilities ? 'true' : 'false'}
-              @click=${() => {
-                this.showAbilities = !this.showAbilities;
-              }}
-              title="What this agent can do, and what will ask first"
-            >
-              Abilities
-            </button>`
-          : nothing}
+            will ask first" — calibrate trust by inspection, before delegating. */ ''}
+        <button
+          class="agent-tool-btn"
+          aria-pressed=${this.showAbilities ? 'true' : 'false'}
+          @click=${() => {
+            this.showAbilities = !this.showAbilities;
+          }}
+          title="What this agent can do, and what will ask first"
+        >
+          Abilities
+        </button>
         ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages). */ ''}
-        ${agentMode && (this.agentCtrl?.answerSources.length ?? 0) > 0
+        ${(this.agentCtrl?.answerSources.length ?? 0) > 0
           ? html`<button
-              class="affordance-btn sources-affordance"
+              class="agent-tool-btn sources-affordance"
               @click=${() => toggleSources()}
               title="The latest answer's grounding sources"
             >
@@ -1953,7 +2341,7 @@ export class UnifiedChatView extends JfElement {
     const spineShown =
       this.affordance === 'agent' && this.wideViewport;
     return html`
-      <div class="conversation-zone">
+      <div class="conversation-zone ${this.isLanding() ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
         <div
           id="run-conversation"
@@ -1966,6 +2354,9 @@ export class UnifiedChatView extends JfElement {
                 guards it to the bare landing in retrieve, and "Continue" leaves retrieve to show the thread. */ ''}
           ${this.renderResumePrompt()}
           ${this.affordance === 'retrieve' ? this.renderRetrieveTier() : nothing}
+          ${/* Search Thread D2/D3 (stage S2) — the bare landing (empty draft, no history, no active
+                query) renders the centered search-bar landing INSIDE the conversation column, in place
+                of the retired empty prompt (whose own branch now just returns nothing below). */ ''}
           ${this.affordance === 'retrieve'
             ? nothing
             : html`
@@ -2000,43 +2391,326 @@ export class UnifiedChatView extends JfElement {
                   : nothing}`}`}
         </div>
         ${this.renderEvidenceRail()}
+        ${this.renderDocumentPane()}
       </div>
       ${this.renderActivityRail()}
       ${this.renderContextMeter()}
       ${this.renderExcludedSummary()}
-      <div class="composer">
-        ${this.renderSteerInput()}
-        ${this.renderAffordancePreview()}
-        ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
-        <jf-composer
-          cancellable
-          .value=${this.inputDraft}
-          placeholder=${this.getPlaceholder()}
-          ?streaming=${this.isStreaming}
-          ?submit-disabled=${!this.inputDraft.trim() ||
-          this.aiState?.verdict?.kind === 'unreachable' ||
-          (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
-          submit-label=${this.getSubmitLabel()}
-          submit-title=${
-            this.aiState?.verdict?.kind === 'unreachable'
-              ? 'Backend disconnected'
-              : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
-                ? 'AI offline'
-                : ''
-          }
-          cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
-          @composer-input=${(e: CustomEvent<{ value: string }>) => {
-            this.inputDraft = e.detail.value;
-            // Tempdoc 577 Goal 3 — in the retrieve tier the one input drives LIVE search (the staged
-            // quick pass), no LLM dispatch; the hit-list is ephemeral (never a thread turn).
-            if (this.affordance === 'retrieve') setSearchQuery(e.detail.value);
-          }}
-          @composer-submit=${() =>
-            this.affordance === 'retrieve' ? submitSearch() : void this.send()}
-          @composer-cancel=${() => this.abortController?.abort()}
-        ></jf-composer>
+      ${/* Search Thread D2/D3 (stage S2, tempdoc decision 8) — the composer lives in ONE stable DOM
+            slot in every state. Live-validation found that re-parenting it into a landing block drops
+            keystrokes racing the first render (the landing→dock transition detaches the textarea
+            mid-word), so landing centering is pure CSS: the `.landing-dock` class bounds and centers
+            this container while the intro (title/corpus) renders in the conversation column and the
+            escalation strip rides under the bar. */ ''}
+      <div class="composer ${this.isLanding() ? 'landing-dock' : ''}">
+        ${/* 687 R5a — ONE flex column owns title → corpus → bar → strip: the stateless intro
+              renders INSIDE the stable composer container (the composer element itself still never
+              re-parents — the stable-slot invariant holds; only static text moved). */ ''}
+        ${this.isLanding() ? this.renderLanding() : nothing}
+        ${this.renderComposerBlock()}
+        ${this.isLanding()
+          ? html`<div class="escalation-strip">
+              <div>Search instantly · no AI</div>
+              <div>Ask — answers with citations</div>
+              ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
+                    only carries diagnostics); until delegation folds into ask-turns entirely, the
+                    strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
+              <jf-control
+                class="escalation-delegate"
+                data-testid="escalation-delegate"
+                label="Delegate a multi-step task to the agent"
+                .availability=${this.aiState?.capabilities?.chat
+                  ? undefined
+                  : unavailableBecause('The local AI model is offline')}
+                .onActivate=${() => {
+                  this.affordance = 'agent';
+                }}
+                >Delegate — the agent works multi-step</jf-control
+              >
+            </div>`
+          : nothing}
       </div>
     `;
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the composer's inner content (steer input / affordance preview /
+   * schema input / the retrieve-tier route chip / the one `jf-composer`), extracted so both the
+   * docked (bottom) composer and the landing composer render the SAME template — never two mounted
+   * instances.
+   */
+  private renderComposerBlock(): TemplateResult {
+    return html`
+      ${this.renderAgentToolbar()}
+      ${this.renderSteerInput()}
+      ${this.renderAffordancePreview()}
+      ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
+      ${this.renderScopeChipRow()}
+      ${this.affordance === 'retrieve' ? this.renderRouteRow() : nothing}
+      <jf-composer
+        cancellable
+        .value=${this.inputDraft}
+        placeholder=${this.getPlaceholder()}
+        ?streaming=${this.isStreaming}
+        ?submit-disabled=${!this.inputDraft.trim() ||
+        this.aiState?.verdict?.kind === 'unreachable' ||
+        (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
+        submit-label=${this.getSubmitLabel()}
+        submit-title=${
+          this.aiState?.verdict?.kind === 'unreachable'
+            ? 'Backend disconnected'
+            : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
+              ? 'AI offline'
+              : ''
+        }
+        cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
+        @composer-input=${(e: CustomEvent<{ value: string }>) => {
+          this.inputDraft = e.detail.value;
+          // Search Thread D2/D3 (stage S2) — the FLOOR RULE: every keystroke feeds instant search
+          // regardless of route/affordance (the always-on search rail behind Ask/Delegate).
+          setSearchQuery(e.detail.value);
+          // Search Thread D2/D3 (stage S2) — an emptied draft drops any explicit route override so the
+          // NEXT turn starts back at the plain heuristic guess rather than a stale flip.
+          if (!e.detail.value.trim()) this.routeOverride = null;
+        }}
+        @composer-submit=${() => this.handleComposerSubmit()}
+        @composer-submit-alt=${() => this.handleComposerSubmitAlt()}
+        @composer-cancel=${() => this.abortController?.abort()}
+        @keydown=${(e: KeyboardEvent) => this.handleComposerKeydown(e)}
+      ></jf-composer>
+    `;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — the pinned scope-chip row: shown above the composer (and above the
+   * retrieve-only route-chip row when present) in EVERY affordance — a pinned file/result-set scopes
+   * both instant search and a grounded Ask, so it isn't gated to the retrieve tier. Empty when no
+   * chips are pinned (renderScopeChips returns `nothing`).
+   */
+  private renderScopeChipRow(): TemplateResult | typeof nothing {
+    if (this.scopeChips.length === 0) return nothing;
+    return html`<div class="scope-row">
+      ${renderScopeChips(this.scopeChips, { onRemove: (i) => this.handleScopeChipRemove(i) })}
+    </div>`;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — remove a pinned scope chip. Mirrors the facet-toggle re-issue
+   * precedent: the store mutation is pure, the host decides whether to re-run the active search.
+   */
+  private handleScopeChipRemove(index: number): void {
+    removeScopeChip(index);
+    if (this.affordance === 'retrieve' && (this.searchSnapshot?.query ?? '').trim()) {
+      submitSearch();
+    }
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — Backspace on an EMPTY draft pops the last pinned scope chip (the
+   * chip-as-token-in-the-input affordance). The composer renders its textarea in light DOM (own
+   * `createRenderRoot` returns `this`), so a native (uncomposed) keydown bubbles from the textarea up
+   * through `<jf-composer>` without crossing a shadow boundary — this handler on the host element
+   * catches it directly; Composer itself is not edited.
+   */
+  private handleComposerKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Backspace') return;
+    if (this.inputDraft !== '') return;
+    if (this.scopeChips.length === 0) return;
+    this.handleScopeChipRemove(this.scopeChips.length - 1);
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the composer's Enter path. Only the retrieve affordance routes
+   * per-turn (documents/extract/agent keep their existing dispatch, untouched this stage).
+   */
+  private handleComposerSubmit(): void {
+    if (this.affordance !== 'retrieve') {
+      void this.send();
+      return;
+    }
+    this.runRoute(this.currentRoute());
+  }
+
+  /** Search Thread D2/D3 (stage S2) — Ctrl+Enter: the OPPOSITE of whatever Enter would do right now. */
+  private handleComposerSubmitAlt(): void {
+    if (this.affordance !== 'retrieve') return;
+    this.runRoute(this.currentRoute() === 'search' ? 'ask' : 'search');
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — run ONE route for the current turn. Never escalates to `'ask'`
+   * while pinned (Hard Invariant: no silent no-op — the pinned reason is reachable via the chip's own
+   * tooltip, so a forced-search fallback here is a safe default, not a swallowed intent).
+   */
+  private runRoute(route: TurnRoute): void {
+    const effective = route === 'ask' && this.askPinned() ? 'search' : route;
+    if (effective === 'search') {
+      submitSearch();
+      this.routeOverride = null;
+    } else {
+      this.escalateAsk();
+    }
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — escalate the current retrieve turn to a grounded Ask.
+   * Search Thread S4-final — asking is a consequence: commit-on-consequence freezes the active
+   * search BEFORE the affordance flips away from retrieve (reason 'ask') — flipping first would
+   * leave `searchSnapshot` looking the same, but the commit belongs to the query the user was
+   * escalating FROM, so the order is deliberate.
+   */
+  private escalateAsk(): void {
+    this.commitLiveSearch('ask');
+    // S5a — the submit-time derivation: route 'ask' derives the documents tier through the ONE
+    // authority (agencyPosture.deriveAffordance), pinned for the conversation that follows.
+    this.explicitAffordance = deriveAffordance({
+      explicit: null,
+      route: 'ask',
+      hasSchemaAttachment: false,
+    });
+    void this.send();
+    this.routeOverride = null;
+  }
+
+  /**
+   * Search Thread D2/D3 (stage S2) — the visible per-turn route indicator, shown only in the retrieve
+   * affordance (documents/extract/agent have no ambiguous Enter to disambiguate).
+   * Search Thread S4-final — also hosts the "⌄ recent" query-trail dropdown.
+   */
+  /**
+   * S5b pin-parity — pin/unpin the CURRENT query (pinnedSearchState, the same persisted store
+   * the retired SearchSurface's header used). Rendered only when a query is active.
+   */
+  /**
+   * Search Thread Round-2 R4 — a `jf-control` composition (the RouteChip precedent: skin the
+   * composed atom via `::part(control)` rather than a bespoke button class). The pinned/unpinned
+   * state is carried by the accessible LABEL + slot text (not `aria-pressed` — `jf-control`'s
+   * internal button has no toggle-state passthrough); `?data-pressed` is a plain presentation
+   * attribute the quiet-tier stylesheet keys its "active" look off of.
+   */
+  private renderPinToggle(): TemplateResult | typeof nothing {
+    const q = (this.searchSnapshot?.query ?? '').trim();
+    if (!q) return nothing;
+    const pinned = isPinned(q);
+    return html`<jf-control
+      class="pin-toggle"
+      data-testid="pin-toggle"
+      ?data-pressed=${pinned}
+      label=${pinned ? 'Unpin this search' : 'Pin this search'}
+      .onActivate=${() => {
+        if (pinned) {
+          const pin = this.pinnedSearches.find((p) => p.query === q);
+          if (pin) unpinSearch(pin.id);
+        } else {
+          pinSearch(q);
+        }
+      }}
+      >${pinned ? '★ Pinned' : '☆ Pin'}</jf-control
+    >`;
+  }
+
+  private renderRouteRow(): TemplateResult {
+    const route = this.currentRoute();
+    return html`<div class="route-row">
+      ${this.renderPinToggle()}
+      ${this.renderQueryTrail()}
+      ${/* S5a (decision 6) — Structured is an attachment you ADD to the bar: attaching seeds the
+            draft template (if empty) and the tier derives 'extract' while it is held. */ ''}
+      ${this.schemaAttached
+        ? nothing
+        : html`<jf-control
+            class="schema-attach"
+            data-testid="schema-attach"
+            label="Attach a JSON schema — turns this turn into a structured extraction"
+            .onActivate=${() => {
+              this.schemaAttached = true;
+            }}
+            >+ Schema</jf-control
+          >`}
+      <jf-route-chip
+        .route=${route}
+        .askAvailability=${projectAvailability('documents', this.aiState)}
+        ?pinned=${this.askPinned()}
+        @route-toggle=${() => {
+          this.routeOverride = route === 'search' ? 'ask' : 'search';
+        }}
+      ></jf-route-chip>
+    </div>`;
+  }
+
+  /**
+   * Search Thread D2/D3 (tempdoc decision 8, stage S2) — the bare landing: no draft, no history, no
+   * active query, no agent conversation. The search bar is CENTERED in the conversation column rather
+   * than docked at the bottom; it docks the moment any of those conditions stop holding.
+   */
+  private isLanding(): boolean {
+    return (
+      this.affordance === 'retrieve' &&
+      !this.isStreaming &&
+      this.thread.length === 0 &&
+      this.unifiedEvents.length === 0 &&
+      (this.agentCtrl?.conversation.length ?? 0) === 0 &&
+      (this.agentCtrl?.streamingText.length ?? 0) === 0 &&
+      (this.searchSnapshot?.query ?? '').trim() === ''
+    );
+  }
+
+  /**
+   * Search Thread D2/D3 (tempdoc decision 8, stage S2) — the landing INTRO only (title + corpus
+   * line). The composer itself never moves (stable-slot rule above); this block renders at the
+   * bottom of the conversation column so the intro sits directly above the CSS-centered bar.
+   */
+  private renderLanding(): TemplateResult {
+    const docs = this.aiState?.lastSettledIndex;
+    const hasDocs = docs != null && docs.documentCount > 0;
+    return html`
+      <div class="landing">
+        <div class="landing-title">Search your files</div>
+        <div class="landing-corpus" data-testid="landing-corpus">
+          ${hasDocs
+            ? html`Searching ${docs!.documentCount} files`
+            : html`<button
+                type="button"
+                class="landing-add-folders"
+                @click=${() => this.openRemedyTarget('core.library-surface')}
+              >
+                Add folders in Library to start searching
+              </button>`}
+        </div>
+        ${/* S5b pin-parity — pinned searches (persisted, UserStateDocument) resurface on the
+              landing: one click re-runs the saved query through the normal floor. */ ''}
+        ${this.pinnedSearches.length > 0
+          ? html`<div class="pinned-row" data-testid="landing-pins" role="list" aria-label="Pinned searches">
+              ${this.pinnedSearches.map(
+                (pin) => html`<button
+                  type="button"
+                  role="listitem"
+                  class="pinned-search-btn"
+                  title="Run pinned search"
+                  @click=${() => this.runPinnedSearch(pin)}
+                >
+                  ${pin.query}
+                </button>`,
+              )}
+            </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /** S5b pin-parity — re-run a pinned search: restore the draft + fire the floor. */
+  private runPinnedSearch(pin: SearchPin): void {
+    this.explicitAffordance = null;
+    this.routeOverride = null;
+    this.inputDraft = pin.query;
+    setSearchQuery(pin.query);
+    this.onFocusComposer();
+  }
+
+  /** Search Thread D2/D3 (stage S2) — window-level `jf-focus-composer` → focus the textarea. */
+  private onFocusComposer(): void {
+    const textarea = this.shadowRoot?.querySelector('jf-composer textarea');
+    if (textarea instanceof HTMLTextAreaElement) textarea.focus();
   }
 
   /**
@@ -2062,6 +2736,40 @@ export class UnifiedChatView extends JfElement {
       api-base=${this.apiBase}
       .host_=${this.host_ ?? undefined}
     ></jf-sources-pane>`;
+  }
+
+  /**
+   * Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`, `.document-pane`
+   * zone col 5), mounted only while `readingDocPath` is set (empty-collapse: an unmounted zone's
+   * `fit-content` track collapses to 0, same mechanism as {@link renderEvidenceRail}). Unlike the
+   * evidence rail, this renders at EVERY viewport width — narrow gets the "stacks" layout
+   * (unifiedChatStyles.ts's `.document-pane` rule), not a viewport gate, because reading a cited/opened
+   * document is a primary action here, not supplementary evidence with a drawer fallback.
+   */
+  private renderDocumentPane(): TemplateResult | typeof nothing {
+    // 687 R5b — the GRID mount is wide-only; below the breakpoint the SAME component presents
+    // through Shell's OverlayHost right-drawer slot (the one sanctioned overlay seam) instead of
+    // an implicit stacked row (the audit-measured composer collision).
+    if (this.readingDocPath === null || !this.wideViewport) return nothing;
+    return html`<jf-document-pane
+      class="document-pane"
+      api-base=${this.apiBase}
+      .docPath=${this.readingDocPath}
+      .highlightRange=${this.readingHighlightRange}
+      .chunkRange=${this.readingChunkRange}
+      @pane-close=${() => this.handleDocumentPaneClose()}
+    ></jf-document-pane>`;
+  }
+
+  /** Search Thread S6 — the reading pane's own close action. Clears the local reading state AND
+   *  closes the shared inspectorState (`setOpen(false)`) so a plugin polling `host.getInspectorState()`
+   *  sees the close too (parity with the retired InspectorPane's close button, which called the same
+   *  `setOpen(false)`). */
+  private handleDocumentPaneClose(): void {
+    this.readingDocPath = null;
+    this.readingHighlightRange = null;
+    this.readingChunkRange = null;
+    setInspectorOpen(false);
   }
 
   /**
@@ -2729,87 +3437,392 @@ export class UnifiedChatView extends JfElement {
    * grounded) or Agent (Delegate, run) via the affordance bar is what promotes intent to a turn.
    * Rendered in the conversation-zone in place of the chat thread while `affordance === 'retrieve'`.
    */
-  private renderRetrieveTier(): TemplateResult {
+  private renderRetrieveTier(): TemplateResult | typeof nothing {
     const s = this.searchSnapshot;
     const q = (s?.query ?? '').trim();
     if (!q) {
-      return html`<div class="retrieve-tier retrieve-empty" data-testid="retrieve-empty-prompt">
-        <p>
-          Search your files — type above for instant results. Then escalate:
-          <strong>Documents</strong> to ask a grounded question, or <strong>Agent</strong> to
-          delegate a task.
-        </p>
-      </div>`;
+      // Search Thread D2/D3 (tempdoc decision 8, stage S2) — the old static empty prompt is retired;
+      // the bare landing now renders the centered `.landing` search bar instead (see isLanding() /
+      // renderLanding(), inserted by renderAnswerPlane immediately after this call).
+      return nothing;
     }
     if (s?.error) {
       return html`<div class="retrieve-tier">
         <div class="error" data-testid="retrieve-error">${s.error}</div>
       </div>`;
     }
-    const results = s?.results ?? [];
-    // Tempdoc 597 R-1 — project the SAME funnel count label as the dedicated Search surface (the one
-    // shared `matchCountLabel` helper, off the same `searchState`), so the two surfaces can never
-    // report different counts for one query. Was the bounded window-as-count (`totalHits`).
-    const countLabel = matchCountLabel(
-      s?.matchCount ?? 0,
-      results.length,
-      s?.searchTrace?.effectiveMode === 'VECTOR',
-      s?.totalHits ?? 0,
-      s?.facetsTruncated ?? false,
-    );
+    // Search Thread S1 — the retrieve tier renders the ONE results card (`jf-results-card`),
+    // the same component the standalone Search surface mounts: meta line (funnel count via the
+    // shared matchCountLabel + latency + retrieval mode + quick/refining/refined✓), facet chips,
+    // copy actions, Ask AI, and the multi-select row list. The bespoke retrieve-row markup this
+    // replaces was the last presentational fork between the two surfaces.
     return html`<div class="retrieve-tier" data-testid="retrieve-tier">
-      <div class="retrieve-meta">
-        ${results.length === 0 && s?.isSearching
-          ? html`<span>Searching…</span>`
-          : results.length === 0
-            ? html`<span>No matches for "${q}"</span>`
-            : html`<span
-                >${countLabel}${s?.isRefining ? ' · refining…' : nothing}</span
-              >`}
-      </div>
-      ${/* §3.9a — the same shared facet chips the standalone surface renders; toggling re-runs
-            the search through the one searchState seam (buildSearchIntent reads the selections). */ ''}
-      ${renderFacetChips(s?.facets, this.facetSelections, {
-        onToggle: (field, value) => this.handleRetrieveFacetToggle(field, value),
-      })}
-      <div class="retrieve-results" role="list" aria-label="Search results">
-        ${results.map((hit) => this.renderRetrieveRow(hit, q))}
-      </div>
+      ${/* Search Thread S3 live fix — the card's meta line is the ONE empty-state
+            message ("No matches for …"); the view no longer duplicates it. */ ''}
+      ${this.renderCommittedSearches()}
+      ${this.retrieveSelectedIds.size > 1
+        ? html`<button
+            type="button"
+            class="scope-selection-btn"
+            data-testid="scope-selection-btn"
+            @click=${() => this.handleScopeSelectionClick()}
+          >
+            Ask about these ${this.retrieveSelectedIds.size} results
+          </button>`
+        : nothing}
+      <jf-results-card
+        .snapshot=${s}
+        .facetSelections=${this.facetSelections}
+        .selectedIds=${this.retrieveSelectedIds}
+        .askAvailability=${projectAvailability('documents', this.aiState)}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleRetrieveCardOpen(e.detail.id)}
+        @card-selection=${(e: CustomEvent<CardSelectionDetail>) => this.handleRetrieveCardSelection(e.detail)}
+        @card-facet-toggle=${(e: CustomEvent<{ field: string; value: string }>) =>
+          this.handleRetrieveFacetToggle(e.detail.field, e.detail.value)}
+        @card-ask-ai=${(e: CustomEvent<{ query: string; shiftKey: boolean }>) =>
+          this.handleRetrieveAskAi(e.detail.shiftKey)}
+        @card-scope-file=${(e: CustomEvent<{ id: string; path: string; title: string }>) =>
+          this.handleCardScopeFile(e.detail)}
+      ></jf-results-card>
     </div>`;
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — "Ask about this file" (the card's context-menu affordance) pins a
+   * `file` scope chip. `docIds` carries the hit's PATH, not its `id` — the finding from item 5:
+   * `handleRetrieveCardSelection`'s existing result-set publish already sends `{ id: h.path }` down
+   * the rag-ask docIds path (below, §2964), and the backend's `filters.docIds` term-filter matches
+   * against `SchemaFields.PATH` (QueryFilterBuilder.java:187/260) — so a chip's docIds must be paths
+   * to be consistent with BOTH consumers, never the SearchHit `id`.
+   */
+  private handleCardScopeFile(detail: { id: string; path: string; title: string }): void {
+    addScopeChip({ kind: 'file', label: filenameOf(detail.path), docIds: [detail.path] });
+    if ((this.searchSnapshot?.query ?? '').trim()) submitSearch();
+    // Route the user to ask-readiness — the natural next intent after scoping to a file is asking
+    // about it — unless Ask is pinned to search (Hard Invariant: never a silent no-op).
+    if (!this.askPinned()) this.routeOverride = 'ask';
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — the quiet "Ask about these N results" affordance shown above the
+   * card when >1 rows are selected. Does NOT auto-add on selection (526 §17 T1B publishes the
+   * `result-set` SelectionItem for the existing ask path already); this is a SEPARATE, explicit pin
+   * of the same selection as a scope chip. `docIds` carries paths (same reconciliation as
+   * {@link handleCardScopeFile}).
+   */
+  private handleScopeSelectionClick(): void {
+    const hits = this.searchSnapshot?.results ?? [];
+    const paths: string[] = [];
+    for (const h of hits) {
+      if (this.retrieveSelectedIds.has(h.id)) paths.push(h.path);
+    }
+    if (paths.length === 0) return;
+    addScopeChip({ kind: 'result-set', label: `${paths.length} results`, docIds: paths });
+    if (!this.askPinned()) this.routeOverride = 'ask';
+  }
+
+  /**
+   * Search Thread S1 — card open → the shared host inspector seam (same path SearchSurface uses).
+   * Search Thread S4-final — opening a hit on the LIVE card is a consequence: it FREEZES the active
+   * search into a committed snapshot before navigating (commit-on-consequence, reason 'open').
+   * Search Thread S6 — opening a hit for reading also auto-pins its `file` scope chip (dedup is
+   * `addScopeChip`'s own job — same kind + docId set is a no-op), so a follow-up Ask is scoped to the
+   * document the user is now reading without a separate "Ask about this file" click.
+   */
+  private handleRetrieveCardOpen(hitId: string): void {
+    const hit = (this.searchSnapshot?.results ?? []).find((h) => h.id === hitId);
+    if (hit) {
+      this.commitLiveSearch('open');
+      this.openRetrieveHit(hit);
+      addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
+    }
+  }
+
+  /**
+   * Search Thread S4-final — a `card-open` from an already-committed snapshot/excerpt card
+   * navigates to the document but commits nothing new: the snapshot already froze that search;
+   * only the LIVE card's own open ({@link handleRetrieveCardOpen}) creates a fresh commit
+   * (commit-on-consequence is about the ACTIVE query, not re-interacting with history). Deliberately
+   * does not reuse `openRetrieveHit` verbatim — that helper also calls `recordOpenDisposition`,
+   * which would misattribute a historical open to whatever interactionId the CURRENT live search
+   * happens to hold.
+   */
+  private handleCommittedCardOpen(hitId: string): void {
+    const host = this.host_;
+    if (!host?.search || !host?.ui) return;
+    for (const cs of this.committedSearches) {
+      const hit = cs.hits.find((h) => h.id === hitId);
+      if (hit) {
+        host.ui.showInspector(
+          host.search.hitToSelectedItem(hit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+        );
+        // Search Thread S6 — same auto-pin as the live card's own open (handleRetrieveCardOpen):
+        // reading a historical snapshot's hit scopes a follow-up Ask to it too.
+        addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
+        return;
+      }
+    }
+  }
+
+  /**
+   * Search Thread S4-final — "Search again" (a snapshot/excerpt card's provenance-header fork
+   * affordance, `card-fork`): re-issue the frozen query as a NEW live search. Append-only — the
+   * commit the affordance was clicked from is never mutated, only a fresh search starts.
+   */
+  private handleCardFork(query: string): void {
+    // S5a — forking back to a live search UNPINS the tier (derived → 'retrieve'); with the B14
+    // auto-upgrade deleted, nothing snaps it back when aiState next emits.
+    this.explicitAffordance = null;
+    this.routeOverride = null;
+    this.inputDraft = query;
+    setSearchQuery(query);
+    this.onFocusComposer();
+  }
+
+  /**
+   * Search Thread S4-final — remember `query` on the recent-query trail: newest-first, deduped
+   * (an existing entry moves to the front rather than duplicating), capped at 8.
+   */
+  private rememberQueryInTrail(query: string): void {
+    const q = query.trim();
+    if (!q) return;
+    this.queryTrail = [q, ...this.queryTrail.filter((existing) => existing !== q)].slice(0, 8);
+  }
+
+  /** Search Thread S4-final — the query-trail dropdown's entry click: restore the draft + re-issue. */
+  private pickTrailQuery(query: string): void {
+    this.queryTrailOpen = false;
+    this.inputDraft = query;
+    setSearchQuery(query);
+    this.onFocusComposer();
+  }
+
+  /**
+   * Search Thread S4-final — commit-on-consequence: the user OPENED a hit, ASKED (escalated), or
+   * PINNED the active retrieve-tier search. Captures the live search into an append-only
+   * {@link CommittedSearch} snapshot (rendered above the live card, oldest first —
+   * {@link renderCommittedSearches}) and persists it once `this.sessionId` exists. A no-op when
+   * there is no active query or it carries no results (nothing to freeze). The live search is left
+   * running — the commit is a frozen COPY, never a replacement (the live card keeps updating).
+   *
+   * `reason` is accepted (not read) — it documents WHICH consequence triggered the commit at each
+   * call site (handleRetrieveCardOpen / escalateAsk); there is no per-reason branching today.
+   */
+  private commitLiveSearch(reason: 'open' | 'ask' | 'pin'): void {
+    void reason;
+    const s = this.searchSnapshot;
+    const query = (s?.query ?? '').trim();
+    if (!s || !query || s.results.length === 0) return;
+    const mode = (s.searchTrace as SearchTrace | null | undefined)?.effectiveMode ?? 'TEXT';
+    const committed: CommittedSearch = {
+      id: makeCommittedSearchId(),
+      query,
+      mode,
+      matchCount: s.matchCount,
+      resultCount: s.results.length,
+      docIds: s.results.map((h) => h.path),
+      executedAt: new Date().toISOString(),
+      hits: s.results.slice(0, 20),
+    };
+    this.committedSearches = [...this.committedSearches, committed];
+    this.rememberQueryInTrail(query);
+    // S5b pin-parity — a committed search is a real run: feed the pin's run history (no-op
+    // unless this query is pinned; pinnedSearchState gates re-records within MIN_RUN_GAP_MS).
+    recordRun(query, s.totalHits);
+    // Search Thread S4-final — `this.sessionId` (constructor: `createConversationId()`) is a
+    // client-generated id present from the moment this view mounts, and the backend's write path
+    // (`AgentRunStore.appendSearchEvent`) keys/creates the event's home purely off this string with
+    // NO precondition that a "conversation" already exists server-side (verified against
+    // unifiedThreadClient.ts's GET path + InteractionThreadController/AgentRunStore.java) — so there
+    // is no FE-observable "conversationId absent" state to special-case here: the id is always
+    // present, and the POST always fires immediately. The guard stays explicit (not a dead
+    // assumption) so a future change making sessionId nullable degrades to FE-local-only rather than
+    // posting an empty path segment.
+    if (this.sessionId) void this.postSearchEvent(committed);
+  }
+
+  /** Search Thread S4-final — POST the committed search as a durable SEARCH thread event
+   *  (fire-and-forget: a failure is warned, never surfaced to the user — the live/FE-local
+   *  snapshot already rendered and stays correct either way). */
+  private async postSearchEvent(committed: CommittedSearch): Promise<void> {
+    try {
+      const res = await fetch(
+        `${this.apiBase || ''}/api/thread/${encodeURIComponent(this.sessionId)}/events`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'SEARCH',
+            query: committed.query,
+            mode: committed.mode,
+            matchCount: committed.matchCount,
+            resultCount: committed.resultCount,
+            docIds: committed.docIds,
+            executedAt: committed.executedAt,
+          }),
+        },
+      );
+      if (!res.ok) {
+        console.warn(`commitLiveSearch: failed to persist SEARCH event (HTTP ${res.status})`);
+      }
+    } catch (err) {
+      console.warn('commitLiveSearch: failed to persist SEARCH event', err);
+    }
+  }
+
+  /**
+   * Search Thread S4-final — the committed searches, rendered ABOVE the live card, oldest first.
+   * Auto-collapse (item 4): only the 3 most recent render as the full `variant='snapshot'`; older
+   * ones collapse to the one-line `variant='excerpt'`.
+   */
+  private renderCommittedSearches(): TemplateResult | typeof nothing {
+    if (this.committedSearches.length === 0) return nothing;
+    const total = this.committedSearches.length;
+    return html`${this.committedSearches.map((cs, i) => {
+      const variant: 'snapshot' | 'excerpt' = total - i <= 3 ? 'snapshot' : 'excerpt';
+      const snapshot: CardSnapshot = {
+        query: cs.query,
+        results: cs.hits,
+        matchCount: cs.matchCount,
+        totalHits: cs.resultCount,
+        facetsTruncated: false,
+        isSearching: false,
+        processingTimeMs: null,
+        error: null,
+      };
+      const provenance: SearchProvenance = {
+        actor: 'user',
+        query: cs.query,
+        mode: cs.mode,
+        matchCount: cs.matchCount,
+        resultCount: cs.resultCount,
+        executedAt: cs.executedAt,
+      };
+      return html`<jf-results-card
+        variant=${variant}
+        .snapshot=${snapshot}
+        .provenance=${provenance}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleCommittedCardOpen(e.detail.id)}
+        @card-fork=${(e: CustomEvent<{ query: string }>) => this.handleCardFork(e.detail.query)}
+      ></jf-results-card>`;
+    })}`;
+  }
+
+  /**
+   * Search Thread S4-final — the "⌄ recent" query-trail dropdown, rendered beside the route chip.
+   * Mirrors `RecentsMenu`'s native-button + `role="menu"`/`role="menuitem"` convention (keyboard-
+   * operable by construction; Escape closes from any descendant via the wrapper's bubbling keydown).
+   */
+  private renderQueryTrail(): TemplateResult | typeof nothing {
+    if (this.queryTrail.length === 0) return nothing;
+    return html`<div
+      class="query-trail"
+      @keydown=${(e: KeyboardEvent) => {
+        if (e.key === 'Escape') this.queryTrailOpen = false;
+      }}
+    >
+      <button
+        type="button"
+        class="query-trail-toggle"
+        data-testid="query-trail-toggle"
+        aria-haspopup="menu"
+        aria-expanded=${this.queryTrailOpen ? 'true' : 'false'}
+        aria-label="Recent searches"
+        title="Recent searches"
+        @click=${() => {
+          this.queryTrailOpen = !this.queryTrailOpen;
+        }}
+      >⌄ recent</button>
+      ${this.queryTrailOpen
+        ? html`<div class="query-trail-menu" role="menu" data-testid="query-trail-menu">
+            ${this.queryTrail.map(
+              (q) => html`<button
+                type="button"
+                class="query-trail-item"
+                role="menuitem"
+                data-testid="query-trail-item"
+                @click=${() => this.pickTrailQuery(q)}
+              >${q}</button>`,
+            )}
+          </div>`
+        : nothing}
+    </div>`;
+  }
+
+  /**
+   * Search Thread S1 — the retrieve tier gains the same multi-select publish the standalone
+   * surface has (526 §17 T1B): >1 selected docs publish ONE `result-set` SelectionItem (the
+   * substrate the S3 scope chips consume); single select keeps the per-hit publish shape.
+   */
+  private handleRetrieveCardSelection(detail: CardSelectionDetail): void {
+    this.retrieveSelectedIds = new Set(detail.ids);
+    const hits = this.searchSnapshot?.results ?? [];
+    const ids = new Set(detail.ids);
+    if (ids.size > 1) {
+      const refs: Array<{ id: string; kind: 'doc' }> = [];
+      for (const h of hits) {
+        if (ids.has(h.id)) refs.push({ id: h.path, kind: 'doc' });
+      }
+      setInternalSelection({
+        items: [
+          {
+            kind: 'result-set',
+            items: refs,
+            query: this.searchSnapshot?.query || undefined,
+            capabilities: DEFAULT_CAPABILITIES_BY_KIND['result-set'],
+          },
+        ],
+        primaryIndex: 0,
+        surfaceId: 'core.unified-chat-surface',
+      });
+      return;
+    }
+    const items: SelectionItem[] = [];
+    let normalizedPrimary = 0;
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i]!;
+      if (!ids.has(h.id)) continue;
+      if (i === detail.primaryIndex) normalizedPrimary = items.length;
+      items.push({
+        kind: 'search-hit',
+        hitId: h.id,
+        title: h.title,
+        path: h.path,
+        capabilities: DEFAULT_CAPABILITIES_BY_KIND['search-hit'],
+      });
+    }
+    setInternalSelection({ items, primaryIndex: normalizedPrimary, surfaceId: 'core.unified-chat-surface' });
+  }
+
+  /**
+   * Search Thread S1 — "Ask AI" escalation FROM the default search tier (live-audit finding II.C
+   * D1: the retrieve tier previously had no path from results to AI at all). The card's jf-control
+   * is availability-gated, so offline this is reachable-reason, never a silent no-op.
+   *
+   * Round-2 R2 (one gesture, one meaning) — the default (unmodified) activation now SENDS
+   * immediately, the exact same path Enter/Ctrl+Enter's 'ask' route takes ({@link escalateAsk}:
+   * commit-on-consequence, the S5a affordance derivation, then `send()`) — the card's Ask AI and
+   * the route chip's Enter used to disagree (stage-only vs send-now), an unforced inconsistency.
+   * A SHIFT-modified activation (the rephrase case) keeps the PRE-round-2 stage-only behavior —
+   * routes through the one compose() seam so the user can edit the prefilled prompt before sending.
+   */
+  private handleRetrieveAskAi(shiftKey: boolean): void {
+    if (shiftKey) {
+      compose({
+        operation: 'core.ask',
+        source: 'BUTTON',
+        userPrompt: this.searchSnapshot?.query ?? '',
+        affordance: 'documents',
+      });
+      return;
+    }
+    this.escalateAsk();
   }
 
   /** §3.9a — toggle a facet then re-run through the one searchState seam (picks up selections). */
   private handleRetrieveFacetToggle(field: string, value: string): void {
     toggleFacetValue(field, value);
     if ((this.searchSnapshot?.query ?? '').trim().length > 0) submitSearch();
-  }
-
-  /**
-   * One ephemeral hit row — typed via the shared `projectResultView` (Goal 1 Move B), with the
-   * shared per-hit "Why this result?" disclosure (§3.9a). The row is a container `<div>` (not a
-   * `<button>`) so the disclosure's own buttons are valid siblings, not nested interactives; the
-   * open action is a keyboard-operable button over the title/path/snippet.
-   */
-  private renderRetrieveRow(hit: SearchHit, query: string): TemplateResult {
-    const view = projectResultView(hit as unknown as ResultViewInput);
-    return html`<div class="retrieve-row" role="listitem" data-testid="retrieve-result-row" data-kind=${view.kind}>
-      <button type="button" class="retrieve-row-open" @click=${() => this.openRetrieveHit(hit)}>
-        <span class="retrieve-row-title">
-          <span class="kind-icon" aria-hidden="true">${icon({ name: view.icon, size: 13 })}</span>
-          <span class="title-text">${view.title}</span>
-          ${view.kind === 'code' && view.approxLine != null
-            ? html`<span class="line-anchor">:L${view.approxLine}</span>`
-            : nothing}
-        </span>
-        ${/* Tempdoc 602 R3 — same formatted path (middle-ellipsis) the Search surface shows;
-              raw path stays in the title attribute for hover. */ ''}
-        <span class="retrieve-row-path" title=${view.path}>${formatDisplayPath(view.path)}</span>
-        ${view.snippet
-          ? html`<span class="retrieve-row-snippet">${highlightTerms(view.snippet, query)}</span>`
-          : nothing}
-      </button>
-      ${renderWhyDisclosure(hit)}
-    </div>`;
   }
 
   /** Open a hit through the shared host inspector seam (same path SearchSurface uses). */
@@ -3206,6 +4219,10 @@ export class UnifiedChatView extends JfElement {
   private renderTimelineItems(items: readonly UnifiedTurnItem[]): TemplateResult {
     const out: TemplateResult[] = [];
     let trace: UnifiedTurnItem[] = [];
+    // Search Thread S7 (tempdoc decision 6) — the agent turn's receipt duration, best-effort: the
+    // nearest PRECEDING user item's timestamp (no new instrumentation — `ts` already exists on every
+    // UnifiedTurnItem). Omitted (never fabricated) when no preceding user item is in view.
+    let lastUserTs: number | null = null;
     const flush = (isTrailing: boolean): void => {
       if (trace.length > 0) {
         out.push(this.renderRunTrace(trace, isTrailing));
@@ -3213,6 +4230,7 @@ export class UnifiedChatView extends JfElement {
       }
     };
     for (const it of items) {
+      if (it.kind === 'user') lastUserTs = it.ts;
       // Tempdoc 577 §2.14 Root I (#19) — the run/session boundary seam, rendered before the first
       // live item that follows restored history so a resumed thread reads as two exchanges, not one.
       if (this.resumeSeamId !== null && it.id === this.resumeSeamId) {
@@ -3225,7 +4243,7 @@ export class UnifiedChatView extends JfElement {
       }
       if (it.prominence === 'primary') {
         flush(false); // a primary item follows this segment → its run answered → collapsed
-        out.push(this.renderUnifiedItem(it));
+        out.push(this.renderUnifiedItem(it, lastUserTs));
       } else {
         trace.push(it);
       }
@@ -3377,21 +4395,49 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 577 Move 3 — the answer's epistemic header line (or nothing for grounded/transform).
-   * §2.16 — `degraded` refines the `ungrounded` wording: a shape that SEARCHED but found nothing to
-   * cite reads distinct from a mode that never searches (computed via groundingDegraded at the call
-   * site, where shapeId × sourceCount are known).
+   * Search Thread S7 (tempdoc decision 6) — the quiet per-turn receipt tail: duration + model name,
+   * plain tokens (never a fabricated value — each part is omitted when unavailable). Read once here
+   * so `renderAnswerFrameLine`'s two call sites (and its own frame-authority) share the one format,
+   * rather than each re-deriving the "Xs · model" string.
+   */
+  private formatReceiptTail(receipt?: { durationMs?: number; modelLabel?: string | null }): string {
+    if (!receipt) return '';
+    const parts: string[] = [];
+    if (typeof receipt.durationMs === 'number' && receipt.durationMs >= 0) {
+      parts.push(
+        receipt.durationMs >= 1000
+          ? `${(receipt.durationMs / 1000).toFixed(1)}s`
+          : `${receipt.durationMs}ms`,
+      );
+    }
+    if (receipt.modelLabel) parts.push(receipt.modelLabel);
+    return parts.join(' · ');
+  }
+
+  /**
+   * Tempdoc 577 Move 3 — the answer's epistemic header line (`null` grounding label for
+   * grounded/transform). Search Thread S7 (tempdoc decision 6) — this is now ALSO the ONE quiet
+   * per-turn receipt: EXTENDED (not forked) with an optional duration+model tail, so a completed
+   * ask/agent turn gets ONE line, never a second. §2.16 — `degraded` refines the `ungrounded`
+   * wording: a shape that SEARCHED but found nothing to cite reads distinct from a mode that never
+   * searches (computed via groundingDegraded at the call site, where shapeId × sourceCount are known).
    */
   private renderAnswerFrameLine(
     frame: AnswerFrame,
     degraded = false,
+    receipt?: { durationMs?: number; modelLabel?: string | null },
   ): TemplateResult | typeof nothing {
     const label = answerFrameLabel(frame, degraded);
-    if (label === null) return nothing;
-    return html`<div class="answer-frame answer-frame-${frame}" role="note">${label}</div>`;
+    const receiptText = this.formatReceiptTail(receipt);
+    if (label === null && !receiptText) return nothing;
+    return html`<div class="answer-frame answer-frame-${frame}" role="note">
+      ${label ?? nothing}${label && receiptText ? ' · ' : nothing}${receiptText
+        ? html`<span class="answer-receipt">${receiptText}</span>`
+        : nothing}
+    </div>`;
   }
 
-  private renderUnifiedItem(it: UnifiedTurnItem): TemplateResult {
+  private renderUnifiedItem(it: UnifiedTurnItem, turnStartedAtMs: number | null = null): TemplateResult {
     switch (it.kind) {
       case 'user': {
         // Tempdoc 610 — the transcript controls (edit-in-place, the per-turn ⋯ menu, the version pager,
@@ -3445,13 +4491,29 @@ export class UnifiedChatView extends JfElement {
             it.content,
             sourcesAreChunkPrecise(agentSources),
           );
+          const degraded = groundingDegraded(this.currentShapeId(), it.attributes.sources.length);
           const partsA = this.recordFloorParts(it.id);
+          // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration best-effort from the
+          // nearest preceding user item's ts (no persisted per-turn timing yet); model name read live
+          // from aiState (the current session's active model — the best available fact for a just-
+          // completed run; a reloaded past turn may show a since-changed model, so this is omitted
+          // only when aiState carries none, never fabricated).
+          const receipt = {
+            durationMs:
+              turnStartedAtMs != null && it.ts > turnStartedAtMs
+                ? it.ts - turnStartedAtMs
+                : undefined,
+            modelLabel: getAiState().runtime?.modelLabel ?? null,
+          };
           return html`${partsA.divider}<div class="message assistant${partsA.cls}" data-item-id=${it.id}>
-            ${this.renderAnswerFrameLine(
-              frame,
-              groundingDegraded(this.currentShapeId(), it.attributes.sources.length),
-            )}
+            ${/* Search Thread S7 — the transform-shaped "unmissable" warning stays PRE-content (its
+                established position: an unmissable strip that abuts the extracted result — see
+                `.answer-frame-transform`); every other frame's line is now the quiet receipt UNDER the
+                answer. Exactly one of the two ever renders for a given turn — the ONE authority, split
+                by call site, never a second simultaneous line. */ ''}
+            ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
+            ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
               it.content,
               it.attributes.sources as AgentSource[],
@@ -3516,6 +4578,14 @@ export class UnifiedChatView extends JfElement {
         return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>`;
       }
       case 'progress':
+        // Search Thread S4-final (item 3) — a restored SEARCH event. `unifiedThreadProjection.ts`
+        // (read-only to this consumer) rides SEARCH on the existing 'progress' UnifiedTurnKind —
+        // UnifiedTurnKind is a closed union owned by that file, so branching on the `searchEvent`
+        // marker attribute HERE (rather than adding a new UnifiedTurnKind literal there) is the only
+        // option available to this consumer; see `renderRestoredSearchItem` for the render.
+        if (it.attributes?.searchEvent === true) {
+          return this.renderRestoredSearchItem(it);
+        }
         // Tempdoc 565 §30 — a human STEERING directive (the DIRECTION authority's interject) renders as
         // a distinct human-origin chip, not an ambient agent step, so the user sees their direction land.
         if (it.attributes?.steer === true) {
@@ -3544,6 +4614,40 @@ export class UnifiedChatView extends JfElement {
         ></jf-handoff-card>`;
       }
     }
+  }
+
+  /**
+   * Search Thread S4-final (item 3) — a restored SEARCH thread event, rendered `variant='excerpt'`
+   * (collapsed by default, matching a reloaded thread's ambient posture). The backend persists only
+   * the search's IDENTITY (`query`/`mode`/`matchCount`/`resultCount`/`docIds`/`executedAt`) — never
+   * the full hit objects — so `snapshot.results` is deliberately empty here: expanding shows the
+   * provenance header + the "Search again" fork affordance + `renderSnapshotRows`'s honest
+   * "results not stored — run again to see them" note, never a fabricated row list.
+   */
+  private renderRestoredSearchItem(it: UnifiedTurnItem): TemplateResult {
+    const a = it.attributes;
+    const query = typeof a.query === 'string' ? a.query : '';
+    const mode = typeof a.mode === 'string' ? a.mode : 'TEXT';
+    const matchCount = typeof a.matchCount === 'number' ? a.matchCount : 0;
+    const resultCount = typeof a.resultCount === 'number' ? a.resultCount : 0;
+    const executedAt = typeof a.executedAt === 'string' ? a.executedAt : new Date(it.ts).toISOString();
+    const snapshot: CardSnapshot = {
+      query,
+      results: [],
+      matchCount,
+      totalHits: resultCount,
+      facetsTruncated: false,
+      isSearching: false,
+      processingTimeMs: null,
+      error: null,
+    };
+    const provenance: SearchProvenance = { actor: 'user', query, mode, matchCount, resultCount, executedAt };
+    return html`<jf-results-card
+      variant="excerpt"
+      .snapshot=${snapshot}
+      .provenance=${provenance}
+      @card-fork=${(e: CustomEvent<{ query: string }>) => this.handleCardFork(e.detail.query)}
+    ></jf-results-card>`;
   }
 
   /**
@@ -3631,8 +4735,27 @@ export class UnifiedChatView extends JfElement {
       <jf-tool-call-card
         .toolCall=${toolCall}
         .stepPresentation=${stepPresentation(it)}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleToolEvidenceOpen(toolCall, e.detail.id)}
       ></jf-tool-call-card>
     </div>`;
+  }
+
+  /**
+   * Search Thread S7 (tempdoc decision 4) — a `card-open` from the agent-search tool card nested
+   * inside `<jf-tool-call-card>` (its `card-open` bubbles + composes through the results-card's OWN
+   * shadow boundary, then through ToolCallCard's, arriving here). Mirrors `handleCommittedCardOpen`:
+   * looks the hit back up by id (== path) in the tool call's OWN structuredData — the card carries no
+   * independent hit store — and opens it through the same reading-pane path.
+   */
+  private handleToolEvidenceOpen(toolCall: ToolCall, hitId: string): void {
+    const host = this.host_;
+    if (!host?.search || !host?.ui) return;
+    const hit = findAgentSearchHit(toolCall.structuredData, hitId);
+    if (!hit) return;
+    host.ui.showInspector(
+      host.search.hitToSelectedItem(hit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+    );
+    addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
   }
 
   private renderMessage(m: ThreadMessage, idx: number): TemplateResult {
@@ -3693,6 +4816,11 @@ export class UnifiedChatView extends JfElement {
           m.content,
           sourcesAreChunkPrecise(m.sources ?? []),
         );
+    const degraded = m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount);
+    // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration from the message's own
+    // captured `durationMs` (set at `send()`'s onDone; absent on a reloaded/record turn — omitted,
+    // never fabricated), model name read live from aiState.
+    const receipt = { durationMs: m.durationMs, modelLabel: getAiState().runtime?.modelLabel ?? null };
     return html`
       ${floorDivider}
       <div class="message assistant${inheritedClass}" data-item-id=${m.id ?? nothing} data-msg-idx=${idx}>
@@ -3702,10 +4830,10 @@ export class UnifiedChatView extends JfElement {
               Interpreted as: <em>${m.standaloneQuestion}</em>
             </div>`
           : nothing}
-        ${this.renderAnswerFrameLine(
-          frame,
-          m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount),
-        )}
+        ${/* Search Thread S7 — the transform-shaped "unmissable" warning stays PRE-content (its
+            established position abutting the extracted result); every other frame's line is now the
+            quiet receipt UNDER the answer. Exactly one of the two ever renders per turn. */ ''}
+        ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
         ${m.isExtract
           ? // Tempdoc 565 §15.B — extract is verbatim text: the ONE renderer in `plain` format.
             html`<jf-markdown-block format="plain" .text=${m.content} frame=${frame}></jf-markdown-block>`
@@ -3721,6 +4849,7 @@ export class UnifiedChatView extends JfElement {
               ></jf-markdown-block>`
             : // Tempdoc 565 §15.B — the canonical answer block for every other mode (agent/chat).
               html`<jf-markdown-block .text=${m.content} frame=${frame}></jf-markdown-block>`}
+        ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
         ${(m.sources?.length ?? 0) > 0 || (m.citations?.length ?? 0) > 0
           ? html`<jf-citations-panel
               .sources=${m.sources ?? []}
@@ -3873,7 +5002,22 @@ export class UnifiedChatView extends JfElement {
   private renderSchemaInput(): TemplateResult {
     return html`
       <div>
-        <div class="schema-label">JSON Schema</div>
+        <div class="schema-label">
+          JSON Schema
+          ${/* S5a (decision 6) — a derived attachment can be detached; an explicit Structured
+                tab selection toggles off through the tab instead. */ ''}
+          ${this.schemaAttached
+            ? html`<jf-control
+                class="schema-detach"
+                data-testid="schema-detach"
+                label="Detach schema"
+                .onActivate=${() => {
+                  this.schemaAttached = false;
+                }}
+                >Detach schema</jf-control
+              >`
+            : nothing}
+        </div>
         <textarea
           class="mono"
           rows="4"
@@ -3884,14 +5028,6 @@ export class UnifiedChatView extends JfElement {
         ></textarea>
       </div>
     `;
-  }
-
-  private toggleAffordance(target: Affordance): void {
-    this.affordance = this.affordance === target ? 'none' : target;
-    this.userToggledAffordance = true;
-    // Tempdoc 561 P-A/P-B (Slice 2): crossing planes (esp. agent -> answer) may have added turns to
-    // the record (an agent run); refresh so the unified thread reflects both planes.
-    void this.refreshUnifiedThread();
   }
 
   private getPlaceholder(): string {
@@ -3913,14 +5049,30 @@ export class UnifiedChatView extends JfElement {
 
   /** Tempdoc 561 C-2: the send-button label grades with the agency posture (agent mode only). */
   private getSubmitLabel(): string {
-    // Tempdoc 577 Goal 3 — the retrieve base tier is pure search (no LLM); its submit runs the
-    // search, so it reads "Search" whether or not a chat model is online (it never says "AI Offline").
-    if (this.affordance === 'retrieve') return 'Search';
+    // Tempdoc 577 Goal 3 / Search Thread D2/D3 (stage S2) — the retrieve base tier is pure search
+    // (no LLM dispatch by default); its submit runs the search, so it reads "Search" whether or not a
+    // chat model is online (it never says "AI Offline") — UNLESS the current turn's route reads as
+    // 'ask' (a '?', a starter word, …), in which case the button names what Enter will actually do.
+    if (this.affordance === 'retrieve') return this.currentRoute() === 'ask' ? 'Ask' : 'Search';
     if (!this.aiState?.capabilities?.chat) return 'AI Offline';
     if (this.affordance === 'agent') {
       return postureChrome(agencyPosture(this.affordance, getAutonomyLevel())).sendLabel;
     }
     return 'Send';
+  }
+
+  /**
+   * Search Thread D5 (stage S3) — the docIds a grounded Ask forwards: the union of `pinnedDocIds`
+   * (the existing selectionState-sourced result-set pin, Slice 515 FIX-1) and every pinned scope
+   * chip's docIds, deduped. Both sources carry PATHS (not the SearchHit `id` — see the reconciliation
+   * note on {@link handleCardScopeFile}), so the union is a plain string-set merge.
+   */
+  private effectiveDocIds(): string[] {
+    const ids = new Set<string>(this.pinnedDocIds);
+    for (const chip of this.scopeChips) {
+      for (const id of chip.docIds) ids.add(id);
+    }
+    return [...ids];
   }
 
   private async send(): Promise<void> {
@@ -3975,7 +5127,7 @@ export class UnifiedChatView extends JfElement {
       text,
       this.sessionId,
       this.schemaDraft,
-      this.pinnedDocIds,
+      this.effectiveDocIds(),
       selection,
     );
 
@@ -4081,6 +5233,11 @@ export class UnifiedChatView extends JfElement {
           shapeId,
           isExtract: shapeId === 'core.extract',
         };
+        // Search Thread S7 (tempdoc decision 6) — the receipt's duration, read BEFORE the activity
+        // reset below clears `startedAtMs`. Omitted (never fabricated) if the activity state was
+        // somehow already cleared (defensive; `startedAtMs` is set at the top of `send()`).
+        const turnStartedAtMs = getAiState().activity.startedAtMs;
+        if (turnStartedAtMs != null) msg.durationMs = Date.now() - turnStartedAtMs;
         if (this.citations.length > 0) msg.citations = [...this.citations];
         if (this.sources.length > 0) msg.sources = [...this.sources];
         if (this.claims.length > 0) msg.claims = [...this.claims];

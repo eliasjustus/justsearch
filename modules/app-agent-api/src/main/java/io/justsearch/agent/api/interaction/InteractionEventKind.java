@@ -21,5 +21,12 @@ public enum InteractionEventKind {
   /** An error surfaced on either plane. */
   ERROR,
   /** A multi-agent handoff on the agent plane. */
-  HANDOFF
+  HANDOFF,
+  /**
+   * Tempdoc S4b (Search Thread) — a manually-triggered search action, performed OUTSIDE the agent
+   * loop (not a tool call), so a committed search card survives a thread reload. Carries {@code
+   * query}/{@code mode}/{@code matchCount}/{@code resultCount}/{@code docIds}/{@code executedAt} on
+   * {@link InteractionEvent#attributes()}.
+   */
+  SEARCH
 }

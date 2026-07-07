@@ -299,14 +299,19 @@ export class MarkdownBlock extends JfElement {
     /* Tempdoc 565 §15.B — the cited sentence body, tier-colored (the union with StreamingTextBlock's
        per-sentence grounding coloring). A subtle bottom-border keyed to the grounding tier reads in
        flowing markdown prose where a left-border would not. */
+    /* Tempdoc 687 R1c (principle P2 — mark the exception, not the rule): well-grounded prose
+       renders PLAIN; only below-high tiers carry a mark. An indicator that is on for nearly every
+       sentence carries no information — the reader's eye belongs on the rare weak/unsupported span.
+       (Uncited prose is deliberately unmarked pending live score-distribution sampling — marking it
+       without evidence risks P2's own retirement condition: noisy exception marks erode trust.) */
     .cite-sentence.grounding-grounded {
-      border-bottom: 1px solid var(--accent-tint);
+      border-bottom: none;
     }
     .cite-sentence.grounding-weak {
       border-bottom: 1px dotted var(--text-secondary);
     }
     .cite-sentence.grounding-ungrounded {
-      border-bottom: none;
+      border-bottom: 1px dotted var(--accent-warning);
     }
     .md-content p {
       margin: 0.25em 0;
@@ -468,7 +473,13 @@ export class MarkdownBlock extends JfElement {
       seen.add(endIndex);
       inserts.push({ startIndex: m.index, endIndex, cite });
     }
-    if (inserts.length === 0) return;
+    // Tempdoc 687 R3a — labels that get a real rendered marker below; the literal-token
+    // normalizer strips duplicates of these and upgrades the rest.
+    const insertedLabels = new Set<number>(inserts.map((i) => Number(i.cite.label)));
+    if (inserts.length === 0) {
+      this.normalizeLiteralCitationTokens(root, insertedLabels);
+      return;
+    }
 
     // Insert LAST→FIRST so earlier node offsets stay valid across splitText.
     inserts.sort((a, b) => b.endIndex - a.endIndex);
@@ -499,7 +510,44 @@ export class MarkdownBlock extends JfElement {
         wrap.appendChild(seg);
       }
     }
+    this.normalizeLiteralCitationTokens(root, insertedLabels);
   }
+  /**
+   * Tempdoc 687 R3a (trust surfaces are literal — one citation notation per answer): local models
+   * often write literal "[n]" tokens in prose ALONGSIDE the renderer's superscript marks. Any
+   * literal [n] whose n matches a real citation label is normalized: stripped when that citation
+   * already carries a rendered marker (dedupe), upgraded to the same marker span otherwise.
+   * Tokens inside code/pre are untouched (verbatim content), as are numbers with no matching
+   * citation (e.g. "[3]" in quoted document text with 2 sources).
+   */
+  private normalizeLiteralCitationTokens(root: HTMLElement, insertedLabels: Set<number>): void {
+    const byLabel = new Map<number, Citation>(this.citations.map((c) => [Number(c.label), c]));
+    if (byLabel.size === 0) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let n: Node | null;
+    while ((n = walker.nextNode())) nodes.push(n as Text);
+    const re = /\s?\[(\d+)\]/g;
+    for (const node of nodes) {
+      if ((node.parentElement)?.closest('pre, code, .cite-ref')) continue;
+      const matches = [...node.data.matchAll(re)].filter((m) => byLabel.has(Number(m[1])));
+      // Right-to-left so earlier offsets stay valid across splits.
+      for (const m of matches.reverse()) {
+        const label = Number(m[1]);
+        const start = m.index ?? 0;
+        const token = node.splitText(start);
+        token.splitText(m[0].length);
+        if (insertedLabels.has(label)) {
+          token.remove();
+        } else {
+          const marker = this.makeMarker(byLabel.get(label)!);
+          token.parentNode?.replaceChild(marker, token);
+          insertedLabels.add(label);
+        }
+      }
+    }
+  }
+
 
   private makeMarker(cite: Citation): HTMLElement {
     const span = document.createElement('span');

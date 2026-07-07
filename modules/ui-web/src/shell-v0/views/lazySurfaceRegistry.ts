@@ -14,9 +14,10 @@
  * into its own async chunk, loaded on first navigation. A navigated view
  * legitimately shows a brief loading state, so there is no UX regression.
  *
- * NOT lazy (kept eager in `index.ts`): `jf-search-surface` — the default
- * landing view, so first paint never flashes a loader — plus the always-present
- * chrome (`UnifiedChatView`, `Shell`) and shared components.
+ * NOT lazy: the always-present chrome (`UnifiedChatView` — the default landing view via its
+ * retrieve tier, so first paint never flashes a loader — plus `Shell`) and shared components,
+ * imported eagerly via `chrome/Shell.ts` → `index.ts`. (Search Thread S5b — the standalone
+ * `jf-search-surface` that used to hold this "kept eager in index.ts" exception is retired.)
  */
 
 /** mount tag → dynamic import of the module that defines that custom element.

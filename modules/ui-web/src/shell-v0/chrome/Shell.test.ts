@@ -38,6 +38,7 @@ import {
   restoreSearch,
   serializeSearch,
 } from '../state/searchState.js';
+import { getInspectorState, resetInspectorState } from '../state/inspectorState.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 import type { StateSnapshot } from '../router/types.js';
 import type { TransportTag } from '../router/transports.js';
@@ -222,5 +223,78 @@ describe('Shell — slice 492 substrate integration', () => {
       await new Promise((r) => setTimeout(r, 10));
       expect(shell.activeId).toBe('core.search-surface');
     });
+  });
+});
+
+// Search Thread S6 — InspectorPane (`<jf-inspector-pane>`, the Preview/Context/Answer/Ask drawer)
+// retired: `<jf-document-pane>` now renders inside UnifiedChatView's own conversation-zone column, and
+// Shell.onCitationSelect no longer reaches into a specific pane instance — it pushes the passage line
+// range onto the shared inspectorState `selected` (the new optional highlightStartLine/highlightEndLine
+// fields) for UnifiedChatView's own inspectorState subscription to project.
+describe('Shell — Search Thread S6 citation-select rework', () => {
+  beforeEach(() => {
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    seedTwoSurfaces();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    resetInspectorState();
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-shell').forEach((el) => el.remove());
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    vi.unstubAllGlobals();
+    resetInspectorState();
+  });
+
+  it('a citation-select event pushes the doc path + highlight range onto inspectorState (no jf-inspector-pane lookup)', async () => {
+    const shell = await renderShell();
+    shell.dispatchEvent(
+      new CustomEvent('citation-select', {
+        detail: {
+          parentDocId: '/docs/report.md',
+          startLine: 4,
+          endLine: 9,
+          startChar: 0,
+          endChar: 120,
+          excerpt: 'excerpt text',
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    const s = getInspectorState();
+    expect(s.selected).toMatchObject({
+      id: '/docs/report.md',
+      path: '/docs/report.md',
+      title: 'report.md',
+      highlightStartLine: 4,
+      highlightEndLine: 9,
+    });
+    expect(s.isOpen).toBe(true);
+  });
+
+  it('never mounts the retired jf-inspector-pane', async () => {
+    const shell = await renderShell();
+    expect(shell.shadowRoot?.querySelector('jf-inspector-pane')).toBeNull();
   });
 });

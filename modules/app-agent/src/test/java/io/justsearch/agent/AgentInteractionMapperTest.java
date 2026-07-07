@@ -129,6 +129,33 @@ final class AgentInteractionMapperTest {
   }
 
   @Test
+  @DisplayName("search_executed -> SEARCH carrying query/mode/matchCount/resultCount/docIds/executedAt (S4b)")
+  void searchExecutedToSearch() {
+    InteractionEvent e =
+        mapped(
+            "search_executed",
+            Map.of(
+                "query", "invoices",
+                "mode", "hybrid",
+                "matchCount", 42,
+                "resultCount", 10,
+                "docIds", List.of("a.pdf", "b.pdf"),
+                "executedAt", "2026-07-06T00:00:00Z"));
+    assertEquals(InteractionEventKind.SEARCH, e.kind());
+    assertEquals("user", e.originator());
+    assertEquals("", e.content());
+    assertEquals("invoices", e.attributes().get("query"));
+    assertEquals("hybrid", e.attributes().get("mode"));
+    assertEquals(42, e.attributes().get("matchCount"));
+    assertEquals(10, e.attributes().get("resultCount"));
+    assertEquals(List.of("a.pdf", "b.pdf"), e.attributes().get("docIds"));
+    assertEquals("2026-07-06T00:00:00Z", e.attributes().get("executedAt"));
+    // The id is the shared searchEventId derivation (conversationId:search:<epochMilli>), the same one
+    // AgentRunStore.appendSearchEvent hands back to the write-path caller.
+    assertEquals("conv-1:search:1767225601000", e.id());
+  }
+
+  @Test
   @DisplayName("node_started/node_completed -> PROGRESS boundary events carrying the node identity (565 §26.A)")
   void nodeBoundariesProjected() {
     InteractionEvent start =

@@ -97,6 +97,54 @@ class AgentRunStoreTest {
     assertTrue(runIds.contains("wf-1"));
   }
 
+  /**
+   * Tempdoc S4b (Search Thread) — {@code appendSearchEvent} writes a THIRD shape (alongside
+   * {@code core.agent-run} / {@code core.workflow-run}) that must ALSO join the conversation via
+   * {@code listRunIdsByConversation} and round-trip through the durable events.ndjson exactly like any
+   * other run's events, without polluting the agent-only Sessions/presence views.
+   */
+  @Test
+  void appendSearchEventJoinsConversationAndRoundTripsEvent() {
+    var store = new AgentRunStore(tempDir.resolve("agent-runs"));
+
+    String eventId =
+        store.appendSearchEvent(
+            "conv-search",
+            Map.of(
+                "query", "invoices",
+                "mode", "hybrid",
+                "matchCount", 42,
+                "resultCount", 10,
+                "docIds", List.of("a.pdf", "b.pdf"),
+                "executedAt", "2026-07-06T00:00:00Z"));
+
+    assertNotNull(eventId, "a persisted search event returns its projected wire id");
+    assertTrue(eventId.startsWith("conv-search:search:"), eventId);
+
+    List<String> runIds = store.listRunIdsByConversation("conv-search");
+    assertEquals(1, runIds.size(), "the search event's dedicated run joins the conversation");
+    String runId = runIds.get(0);
+
+    List<Map<String, Object>> events = store.readEvents(runId);
+    assertEquals(1, events.size());
+    assertEquals("search_executed", events.get(0).get("eventType"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> payload = (Map<String, Object>) events.get(0).get("payload");
+    assertEquals("invoices", payload.get("query"));
+    assertEquals("hybrid", payload.get("mode"));
+
+    // Not an agent run: excluded from the agent-only Sessions/presence views.
+    assertTrue(store.listSessions(10).isEmpty());
+    assertTrue(store.presenceRunsSince(null).isEmpty());
+  }
+
+  @Test
+  void appendSearchEventReturnsNullForBlankConversationId() {
+    var store = new AgentRunStore(tempDir.resolve("agent-runs"));
+    assertEquals(null, store.appendSearchEvent("", Map.of("query", "x")));
+    assertEquals(null, store.appendSearchEvent(null, Map.of("query", "x")));
+  }
+
   @Test
   void persistsTraceEnvelopeWhenPresent() {
     var store = new AgentRunStore(tempDir.resolve("agent-runs"));

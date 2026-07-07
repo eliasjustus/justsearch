@@ -22,7 +22,7 @@ function sseStream(...chunks: string[]): ReadableStream<Uint8Array> {
 
 /** Helper: mock fetch to return an SSE response with the given body stream. */
 function mockFetchSse(body: ReadableStream<Uint8Array>) {
-  global.fetch = vi.fn().mockResolvedValue({
+  globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
     headers: new Headers({ 'content-type': 'text/event-stream' }),
@@ -34,12 +34,12 @@ describe('streams.ts terminal event handling', () => {
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
     vi.resetModules();
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.clearAllMocks();
   });
 

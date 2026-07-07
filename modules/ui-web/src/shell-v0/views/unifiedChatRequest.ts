@@ -50,6 +50,10 @@ export interface ThreadMessage {
   // and suppress the "Branch here" button (you can only branch from your
   // own session's messages, not a re-resolved prefix).
   inheritedFromParent?: boolean;
+  // Search Thread S7 (tempdoc decision 6) — the completed turn's wall-clock duration, captured at
+  // `send()`'s onDone from `aiState.activity.startedAtMs` (never persisted server-side, so a
+  // reloaded/record turn simply lacks it — the receipt line omits duration rather than fabricate it).
+  durationMs?: number;
 }
 
 export const SHAPE_LABELS: Record<ShapeId, string> = {
@@ -113,10 +117,22 @@ export function buildRequestBody(
  * sits fuller-width with bounded gutter instead of stranded in centre-margin on wide screens. The reading
  * measure is zone CONTENTS (on the answer block), not the frame — outside the generator (the 559 §8 cut).
  */
+// Search Thread S6 (the Reading Stage) — a FIFTH zone, `.document-pane` (col 5), for the
+// `<jf-document-pane>` reading surface (opened from a search-result/citation "open"). Wide viewport
+// reads [conversation | evidence-rail | document-pane] (evidence-rail is usually empty outside agent
+// mode, so in practice this is [conversation | document-pane]); the trailing margin track shifts from
+// col 5 to col 6. At narrow the zone stays wideOnly (excluded from the narrow track list, mirroring
+// `.evidence-rail`'s precedent), but — UNLIKE the evidence rail, which simply disappears below the
+// wide breakpoint — the pane keeps rendering: with only ONE explicit narrow column (`.conversation`)
+// and no `grid-column` override, default grid auto-placement puts an unmounted-from-the-wide-track
+// `.document-pane` into its own implicit row below `.conversation` (a "stacks" narrow layout, not an
+// overlay — `position:fixed` here would trip the layout-purity gate's OverlayHost-only rule for free-
+// floating overlays; see unifiedChatStyles.ts).
 export const CONVERSATION_ZONES: readonly ZoneDecl[] = [
   { track: 'minmax(0, 8rem)', wideOnly: true },
   { selector: '.run-spine', track: 'auto', col: 2, wideOnly: true },
   { selector: '.conversation', track: 'minmax(0, 50rem)', col: 3 },
   { selector: '.evidence-rail', track: 'fit-content(20rem)', col: 4, wideOnly: true },
+  { selector: '.document-pane', track: 'fit-content(28rem)', col: 5, wideOnly: true },
   { track: 'minmax(0, 8rem)', wideOnly: true },
 ];

@@ -156,9 +156,19 @@ export function attachKeybindingDispatcher(invoke: (commandId: string) => void):
     // §11.1 / §13.1 — evaluate `when` against the live ShellContext.
     // A binding without `when` always fires (V1 behavior preserved).
     const ctx = getShellContext() as unknown as Record<string, unknown>;
+    // Search Thread S2 — modifier-less bindings (e.g. '/') must not hijack typing:
+    // when the event originates in an editable control, only modified chords fire.
+    // (The listener is capture-phase on window, so without this guard a plain-key
+    // binding would steal characters from every input in the app.)
+    const path = e.composedPath();
+    const origin = (path.length > 0 ? path[0] : e.target) as HTMLElement | null;
+    const tag = origin?.tagName;
+    const inEditable =
+      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || origin?.isContentEditable === true;
     for (const entry of entries) {
       const parsed = parseKey(entry.key);
       if (!matchesEvent(parsed, e)) continue;
+      if (inEditable && !parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt) continue;
       if (!evaluateWhen(entry.when, ctx)) continue;
       e.preventDefault();
       invokeHandler(entry.commandId);

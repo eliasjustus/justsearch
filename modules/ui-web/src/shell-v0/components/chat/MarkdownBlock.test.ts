@@ -234,3 +234,60 @@ describe('MarkdownBlock ungrounded frame — citation-shaped text is neutralized
     el.remove();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tempdoc 687 R3a — literal "[n]" token normalization (one citation notation)
+// + R1c grounding-mark inversion (P2: mark the exception, not the rule).
+// ---------------------------------------------------------------------------
+describe('MarkdownBlock 687 R3a — literal [n] normalization', () => {
+  async function mounted(text: string, cites = [mark('The kernel is a shared substrate.')]) {
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = text;
+    el.citations = cites;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    return el;
+  }
+
+  it('strips a literal [n] whose citation already carries a rendered marker', async () => {
+    const el = await mounted('The kernel is a shared substrate. [1] More prose.');
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1); // the woven marker only
+    expect(content.textContent).not.toContain('[1]');
+    el.remove();
+  });
+
+  it('upgrades a literal [n] to a marker when the sentence match failed', async () => {
+    // sentenceText will not match, so no woven marker — the literal token becomes the marker.
+    const el = await mounted('Unmatched prose with a bare token [1] inline.', [
+      mark('A sentence that does not appear at all.'),
+    ]);
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelectorAll('.cite-ref').length).toBe(1);
+    expect(content.textContent).not.toContain('[1]');
+    el.remove();
+  });
+
+  it('leaves [n] untouched inside code and when no citation matches the number', async () => {
+    const el = await mounted('Use `arr[1]` in code. A quote says [7] here. The kernel is a shared substrate.');
+    const content = el.renderRoot.querySelector('.md-content')!;
+    expect(content.querySelector('code')!.textContent).toContain('arr[1]');
+    expect(content.textContent).toContain('[7]'); // only 1 citation exists — [7] is not a citation
+    el.remove();
+  });
+});
+
+describe('MarkdownBlock 687 R1c — grounding-mark inversion', () => {
+  it('a high-similarity sentence gets the grounded class (whose CSS is now unmarked)', async () => {
+    const el = document.createElement('jf-markdown-block') as MarkdownBlock;
+    el.text = 'The kernel is a shared substrate.';
+    el.citations = [mark('The kernel is a shared substrate.', 0.9)];
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise((r) => setTimeout(r, 0));
+    const span = el.renderRoot.querySelector('.cite-sentence');
+    expect(span?.className).toContain('grounding-grounded');
+    el.remove();
+  });
+});

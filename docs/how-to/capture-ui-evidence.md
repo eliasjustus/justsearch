@@ -32,7 +32,7 @@ python -m jseval ui-shot search-results
 python -m jseval ui-shot --list
 
 # Capture steps affected by a file edit (live shell-v0 paths)
-python -m jseval ui-shot --affected modules/ui-web/src/shell-v0/views/SearchSurface.ts
+python -m jseval ui-shot --affected modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts
 ```
 
 Output: PNG path + the measurement fact summary to stdout; `<step>.measure.json` next to the PNG. Read the

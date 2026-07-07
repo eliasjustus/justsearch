@@ -786,12 +786,17 @@ final class AgentStepRunner {
           // is the precedent for sink-aware special tool handling.
           io.justsearch.agent.api.registry.WorkflowToolRunner wfRunner = this.workflowToolRunner;
           OperationResult toolResult;
+          // Tempdoc S7 — when this run carries a docIds scope (FE scope chips), scopeToolCall
+          // merges it into the search tool's own arguments; a no-op copy of `call` for any other
+          // operation or an unscoped run. `call` itself (used below for loop-guard/history) stays
+          // the LLM's original, unscoped arguments.
+          ToolCallRequest scopedCall = toolDispatcher.scopeToolCall(op, call, session);
           if (wfRunner != null && wfRunner.handles(op.id())) {
-            toolResult = wfRunner.run(op.id(), call.arguments(), sink);
+            toolResult = wfRunner.run(op.id(), scopedCall.arguments(), sink);
           } else {
             // Tempdoc 561 P-A1: thread the agent sessionId so the dispatched call stamps it as the
             // ledger correlationId (the History join key).
-            toolResult = toolDispatcher.executeOperationWithPolicy(op, call, sessionId);
+            toolResult = toolDispatcher.executeOperationWithPolicy(op, scopedCall, sessionId);
           }
           // Tempdoc 415: tool_failure_total counts post-policy-retry failures of executed calls.
           if (!toolResult.success()) {

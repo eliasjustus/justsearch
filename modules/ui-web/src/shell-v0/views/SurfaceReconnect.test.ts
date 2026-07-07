@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import './BrowseSurface.ts';
+import './BrowseSurface.js';
 import { BrowseSurface } from './BrowseSurface.js';
 import { createMockHostApi } from '../plugin-api/testHostApi.js';
 

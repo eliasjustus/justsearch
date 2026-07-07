@@ -138,6 +138,24 @@ final class AgentSession {
   }
 
   /**
+   * Tempdoc S7 — the FE's scope-chip selection for this run (document paths). Mirrors {@code
+   * autonomyLevel}: a per-run control input the request supplies, threaded onto the session by
+   * {@code AgentLoopService.runAgent} right after construction. Empty (the default) means unscoped
+   * — every SearchTool call behaves exactly as before this feature; {@code
+   * AgentToolDispatcher.scopeToolCall} reads this to filter every search-tool invocation in the
+   * run to just these paths, regardless of what the LLM's own tool-call arguments say.
+   */
+  private volatile List<String> docIdsScope = List.of();
+
+  List<String> docIdsScope() {
+    return docIdsScope;
+  }
+
+  void setDocIdsScope(List<String> docIds) {
+    this.docIdsScope = docIds == null ? List.of() : List.copyOf(docIds);
+  }
+
+  /**
    * Tempdoc 565 §30 — the human's mid-run STEERING directive (the DIRECTION authority's
    * {@code interject} value). An external {@code POST /api/chat/agent/steer} queues it; the loop
    * DRAINS it (read-and-clear, exactly-once) at the next step boundary and folds the text into the

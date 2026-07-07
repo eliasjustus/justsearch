@@ -232,9 +232,11 @@ describe('IntentRouter — Query intents (548 S4-A)', () => {
     });
 
     expect(navSpy).toHaveBeenCalledTimes(1);
+    // Search Thread S5b — the standalone Search rail surface is retired; the default query surface
+    // is now the one window (core.unified-chat-surface), which owns the retrieve tier.
     expect(navSpy.mock.calls[0]![0]).toEqual({
       kind: 'navigate',
-      target: 'core.search-surface',
+      target: 'core.unified-chat-surface',
       state: { query: 'rust ownership' },
     });
   });

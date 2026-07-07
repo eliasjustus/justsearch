@@ -19,7 +19,7 @@ describe('http module', () => {
   let originalWindow: typeof window | undefined;
 
   beforeEach(() => {
-    originalFetch = global.fetch;
+    originalFetch = globalThis.fetch;
     originalWindow = (globalThis as { window?: typeof window }).window;
     mocks.isTauriRuntime.mockReturnValue(false);
     mocks.invoke.mockReset();
@@ -28,7 +28,7 @@ describe('http module', () => {
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     if (originalWindow === undefined) {
       delete (globalThis as { window?: typeof window }).window;
     } else {
@@ -54,7 +54,7 @@ describe('http module', () => {
   describe('request function', () => {
     it('does not include token header on GET requests', async () => {
       let capturedInit: RequestInit | undefined;
-      global.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         capturedInit = init;
         return Promise.resolve({
           ok: true,
@@ -73,7 +73,7 @@ describe('http module', () => {
 
     it('includes Content-Type header when body is provided', async () => {
       let capturedInit: RequestInit | undefined;
-      global.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         capturedInit = init;
         return Promise.resolve({
           ok: true,
@@ -94,7 +94,7 @@ describe('http module', () => {
 
     it('serializes body as JSON', async () => {
       let capturedInit: RequestInit | undefined;
-      global.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         capturedInit = init;
         return Promise.resolve({
           ok: true,
@@ -113,7 +113,7 @@ describe('http module', () => {
 
     it('passes AbortSignal when provided', async () => {
       let capturedInit: RequestInit | undefined;
-      global.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
         capturedInit = init;
         return Promise.resolve({
           ok: true,
@@ -133,7 +133,7 @@ describe('http module', () => {
 
     it('retries on server errors', async () => {
       let callCount = 0;
-      global.fetch = vi.fn().mockImplementation(() => {
+      globalThis.fetch = vi.fn().mockImplementation(() => {
         callCount++;
         if (callCount < 3) {
           return Promise.resolve({
@@ -167,7 +167,7 @@ describe('http module', () => {
 
     it('does not retry on 4xx errors', async () => {
       let callCount = 0;
-      global.fetch = vi.fn().mockImplementation(() => {
+      globalThis.fetch = vi.fn().mockImplementation(() => {
         callCount++;
         return Promise.resolve({
           ok: false,
@@ -227,7 +227,7 @@ describe('http module', () => {
       (globalThis as { window?: Pick<typeof window, 'location'> }).window = {
         location: { search: '', origin: 'http://tauri.localhost' } as Location,
       };
-      global.fetch = vi.fn().mockRejectedValue(new Error('manifest unavailable'));
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('manifest unavailable'));
 
       const { resolveApiEndpoint } = await import('./http');
 
@@ -237,7 +237,7 @@ describe('http module', () => {
         source: 'tauri',
       });
       expect(mocks.invoke).toHaveBeenCalledWith('api_port');
-      expect(global.fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/api/runtime/manifest', {});
+      expect(globalThis.fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/api/runtime/manifest', {});
     });
   });
 });
