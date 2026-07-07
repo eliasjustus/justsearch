@@ -386,7 +386,8 @@ describe('ResultsCard — variant="snapshot" (Search Thread S4-final)', () => {
     expect(header!.textContent).toContain('You');
     expect(header!.textContent).toContain('searched');
     expect(header!.textContent).toContain('"pipeline"');
-    expect(header!.textContent).toContain('Semantic + keyword');
+    // Tempdoc 696 (C2) — Simple mode (default) shows the plain retrieval-mode label.
+    expect(header!.textContent).toContain('meaning + words');
     expect(el.shadowRoot?.querySelector('[data-testid="card-meta"]')).toBeNull();
   });
 

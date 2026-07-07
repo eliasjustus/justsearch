@@ -8,7 +8,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render, html } from 'lit';
-import { formatDisplayPath, PATH_DISPLAY_MAX, highlightTerms } from './resultRowPresentation.js';
+import {
+  formatDisplayPath,
+  formatLocationBreadcrumb,
+  PATH_DISPLAY_MAX,
+  highlightTerms,
+} from './resultRowPresentation.js';
 
 describe('formatDisplayPath (602 R3)', () => {
   it('passes short paths through unchanged', () => {
@@ -36,6 +41,27 @@ describe('formatDisplayPath (602 R3)', () => {
     const out = formatDisplayPath(long);
     expect(out).toContain('…');
     expect(out.endsWith('\\report.md')).toBe(true);
+  });
+});
+
+describe('formatLocationBreadcrumb (Tempdoc 696 C4)', () => {
+  it('drops the drive letter and filename, showing the folder chain', () => {
+    expect(formatLocationBreadcrumb('f:\\justsearch-public\\ssot\\docs\\help\\getting-started.md')).toBe(
+      'ssot › docs › help',
+    );
+  });
+
+  it('handles forward-slash paths', () => {
+    expect(formatLocationBreadcrumb('/Users/alex/notes/todo.md')).toBe('Users › alex › notes');
+  });
+
+  it('keeps only the last three folder segments', () => {
+    expect(formatLocationBreadcrumb('/a/b/c/d/e/file.md')).toBe('c › d › e');
+  });
+
+  it('returns empty for a bare filename (no folders to show)', () => {
+    expect(formatLocationBreadcrumb('file.md')).toBe('');
+    expect(formatLocationBreadcrumb('')).toBe('');
   });
 });
 

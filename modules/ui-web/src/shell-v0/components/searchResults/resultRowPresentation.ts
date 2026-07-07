@@ -39,6 +39,21 @@ export function formatDisplayPath(p: string): string {
 }
 
 /**
+ * Tempdoc 696 (C4) — a humanized location breadcrumb for Simple mode: drop the drive letter and the
+ * filename (the filename is already the row title), and render the containing folder chain (last 3
+ * segments) with " › " separators instead of the raw drive-lettered, backslashed full path. Detailed
+ * mode still shows {@link formatDisplayPath}. Path-derived only — the card's `CardHit` carries no
+ * collection metadata, so this humanizes the folders it has rather than inventing friendly names.
+ */
+export function formatLocationBreadcrumb(p: string): string {
+  if (!p) return '';
+  const parts = p.split(/[/\\]+/).filter(Boolean);
+  if (parts.length > 0 && /^[a-zA-Z]:$/.test(parts[0])) parts.shift(); // drop a drive letter ("f:")
+  parts.pop(); // drop the filename (already the row title); a root file yields no folders → ''
+  return parts.slice(-3).join(' › ');
+}
+
+/**
  * Q11: wrap occurrences of the query's terms in `<mark>` so the snippet shows
  * WHY a result matched. Lit auto-escapes both the plain segments and the marked
  * text, so this is XSS-safe (no unsafeHTML). An empty / sub-2-char query yields

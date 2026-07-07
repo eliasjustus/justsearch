@@ -33,10 +33,12 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { icon } from '../Icon.js';
 import {
   formatDisplayPath,
+  formatLocationBreadcrumb,
   highlightTerms,
   highlightStyles,
 } from './resultRowPresentation.js';
 import { matchCountLabel } from './matchCountLabel.js';
+import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { renderFacetChips, facetChipStyles } from './facetChips.js';
 import {
   renderWhyDisclosure,
@@ -123,6 +125,17 @@ function retrievalModeLabel(mode: string | null | undefined): string | null {
   return mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
 }
 
+/** Tempdoc 696 (C2) — the plain-language retrieval-mode label shown in Simple mode. */
+function plainRetrievalModeLabel(mode: string | null | undefined): string | null {
+  return mode === 'HYBRID'
+    ? 'meaning + words'
+    : mode === 'VECTOR'
+      ? 'meaning-based'
+      : mode === 'TEXT'
+        ? 'exact-word search'
+        : null;
+}
+
 export class ResultsCard extends JfElement {
   static properties = {
     snapshot: { attribute: false },
@@ -186,8 +199,18 @@ export class ResultsCard extends JfElement {
     this.copyText = (text: string) => copyToClipboard(text);
   }
 
+  /** Tempdoc 696 — re-render the disclosure-gated meta line + result locations on Simple/Detailed change. */
+  private uiModeUnsubscribe: (() => void) | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.uiModeUnsubscribe?.();
+    this.uiModeUnsubscribe = null;
     if (this.refinedStampTimer !== null) {
       clearTimeout(this.refinedStampTimer);
       this.refinedStampTimer = null;
@@ -314,15 +337,25 @@ export class ResultsCard extends JfElement {
 
   // ---------------------------------------------------------------- render
 
+  /** Tempdoc 696 (C2) — the retrieval-mode label: plain in Simple, technical in Detailed. */
+  private modeLabel(mode: string | null | undefined): string | null {
+    return isAdvancedMode() ? retrievalModeLabel(mode) : plainRetrievalModeLabel(mode);
+  }
+
   private renderRetrievalMode(): unknown {
     const mode = (this.snapshot?.searchTrace as SearchTrace | null | undefined)?.effectiveMode;
-    const label = retrievalModeLabel(mode);
+    const label = this.modeLabel(mode);
     if (label == null) return nothing;
     return html` <span class="retrieval-mode" data-testid="retrieval-mode" data-mode=${mode}>· ${label}</span>`;
   }
 
   private static formatLatency(ms: number): string {
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+  }
+
+  /** Tempdoc 696 (C2) — plain latency for Simple mode ("found in 0.02s"), hiding the raw ms timing. */
+  private static formatLatencyPlain(ms: number): string {
+    return `${(ms / 1000).toFixed(2)}s`;
   }
 
   private renderMeta(): TemplateResult {
@@ -357,7 +390,9 @@ export class ResultsCard extends JfElement {
                 s.totalHits,
                 s.facetsTruncated,
               )}${s.processingTimeMs != null
-                ? html` · ${ResultsCard.formatLatency(s.processingTimeMs)}`
+                ? isAdvancedMode()
+                  ? html` · ${ResultsCard.formatLatency(s.processingTimeMs)}`
+                  : html` · found in ${ResultsCard.formatLatencyPlain(s.processingTimeMs)}`
                 : nothing}${this.renderRetrievalMode()}${s.isRefining
                 ? html` <span class="meta-refining" data-testid="meta-refining"
                     >${icon({ name: 'loader-2', size: 10, spin: true })} refining…</span
@@ -452,7 +487,11 @@ export class ResultsCard extends JfElement {
               >⋯</button>`
             : nothing}
         </div>
-        <div class="path" title=${hit.path}>${formatDisplayPath(hit.path)}</div>
+        <div class="path" title=${hit.path}>
+          ${isAdvancedMode()
+            ? formatDisplayPath(hit.path)
+            : formatLocationBreadcrumb(hit.path) || formatDisplayPath(hit.path)}
+        </div>
         ${view.snippet
           ? html`<div class="snippet" data-snippet-source=${view.snippetSource}>
               ${highlightTerms(view.snippet, query)}
@@ -473,7 +512,7 @@ export class ResultsCard extends JfElement {
     if (!p) return nothing;
     const actorLabel = p.actor === 'agent' ? 'Agent' : 'You';
     const countLabel = matchCountLabel(p.matchCount, p.resultCount, p.mode === 'VECTOR', p.matchCount, false);
-    const mLabel = retrievalModeLabel(p.mode);
+    const mLabel = this.modeLabel(p.mode);
     const when = formatRelative(new Date(p.executedAt).getTime());
     return html`<div class="provenance" data-testid="card-provenance">
       <span class="provenance-text">
