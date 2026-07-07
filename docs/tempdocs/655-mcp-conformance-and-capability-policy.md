@@ -1742,3 +1742,86 @@ not a code-reading hypothesis. A live re-probe of the corrected hint was deferre
 held by another active session and taking it over was declined per branch-safety); the deterministic helper
 test is the authoritative check for the corrected logic, and the hint delivery *mechanism* was already
 proven live end to end earlier in this session.
+
+## Practicality + improvement research pass (2026-07-07) — evidence-gated, documentation-only
+
+A research pass asking "now that the agent-legibility layer is shipped, what — if anything — is worth
+doing with it?" Discipline: every *recommendation* names concrete evidence of need (a session
+observation, a code fact, a measurement, or external best practice used adversarially); ideas without
+evidence are quarantined in the speculative list. The app is public alpha with **no real users yet**, so
+"user friction" evidence is unavailable by construction — this pass leans on first-hand session
+observations, the shipped code, and external token-efficiency guidance. "Little here is worth doing" is a
+legitimate result and is roughly where this lands.
+
+### Recommendation with real evidence of need
+
+**R1 — Tighten or drop the per-search comparative hint (`callSearch`, the `resp.totalHits() > 0` branch).**
+Evidence, three independent strands:
+- **Local-pattern inconsistency (code fact):** every other response hint in `McpToolSurface` is *earned by
+  the result* — zero-results, >100-results, incomplete-enrichment, zero-chunks, and the answer hint
+  (gated on distinct-doc count). The per-search hint is the **only one that fires unconditionally** on any
+  productive search, including when the agent is correctly using search for exploration (its documented
+  purpose).
+- **Redundancy (code fact):** the search-vs-answer steering it carries duplicates the connect-time
+  `instructions` field, which already states when to prefer `answer` over `search`. It re-sends that on
+  every search response.
+- **External, measured (adversarial best-practice check):** current MCP token-efficiency guidance treats
+  *response* bloat as a first-order cost (tool outputs can be 30–50% of total token consumption and
+  "compound across multi-step workflows"; the "lost in the middle" effect degrades attention to
+  mid-context text), and the highest-leverage practice is "return only what the agent needs." Appending
+  boilerplate steering to every response is the opposite move. (Sources: [MindStudio — reduce MCP token
+  usage](https://www.mindstudio.ai/blog/reduce-token-usage-ai-agents-mcp-optimization), [StackOne — MCP
+  token optimization](https://www.stackone.com/blog/mcp-token-optimization/), MCP
+  [SEP-1576 token-bloat](https://github.com/modelcontextprotocol/modelcontextprotocol/issues/1576).)
+- **Counter-weight (kept honest):** tempdoc 366's own eval found guidance-in-responses *works* because
+  agents forget descriptions by turn 5, and general guidance endorses "soft steering… for operational
+  rules where the agent can adapt." The reconciliation is not "never steer in responses" — it is *steer
+  only when the hint is earned by that specific result*. That reconciliation is exactly what makes the
+  per-search hint the odd one out: it is unearned boilerplate, while the answer hint (distinct-doc-gated)
+  is earned. **Suggested fix:** drop the per-search hint, or gate it on a real signal (e.g. only the first
+  search of a session, or only when the query reads as a natural-language question rather than keywords).
+  This is the one change with standalone value — it does not depend on the unmeasured adoption outcome.
+
+### Lower-confidence notes (worth recording, not pitched as recommendations)
+
+- **N1 — Trim the answer hint's editorial clause.** The distinct-doc hint currently adds "…for a question
+  spanning multiple documents this is fewer steps than locating and reading each file." The *number* ("N
+  documents in a single call") already carries the comparative signal; the trailing clause is
+  editorializing. Evidence: the same "precise, not exhaustive" token-efficiency guidance — but weak,
+  because the hint is short and only fires when earned.
+- **N2 — `justsearch_answer`'s required param is `query`, but its description reads "The question to
+  answer."** A minor name/description inconsistency. Evidence caveat, stated plainly: my own failed manual
+  call this session (I passed `question`) is **not** good evidence — a real MCP client reads the
+  `inputSchema` and uses the declared key, so it would not guess. The only real signal is the internal
+  inconsistency, which is minor and would be a versioned surface change to fix (654) — likely not worth it
+  alone.
+- **N3 — The `instructions` field is static and index-state-blind.** A fresh install with an empty index
+  is still told to "prefer justsearch_answer." Evidence: static-by-design (a deliberate choice to keep the
+  connect handshake free of a worker call) + public-alpha fresh installs are the common case. Mostly
+  self-mitigated (the guidance already points at `justsearch_status` for live size, and the zero-result
+  response hints fire), so this is a scenario worth remembering, not a defect to fix now.
+
+### Speculative — ideas with NO current evidence of need (do not action without a trigger)
+
+- Client-conditional `instructions` (tailor per `clientInfo.name`) — earlier decided display-only; no
+  evidence any client population needs different guidance.
+- MCP elicitation as the primary mutation-confirmation path — deferred earlier; host support still uneven;
+  no evidence the local dialog is insufficient.
+- Telemetry on agent tool-choice ("did the agent reach for JustSearch, and did it help") — there are no
+  users to observe, and the eval harness already measures this in the controlled setting.
+- A shorter/longer `instructions`-field variant — this is a *measurement* question the deferred adoption
+  pilot answers, not a standalone edit.
+- A governance check binding the `instructions` field's content to the tool descriptions so they can't
+  drift — no observed drift; premature until a second editor touches them.
+
+### Meta-conclusion (the honest headline)
+
+The shipped change is small, correct, and about as minimal as it should be; the review already removed the
+one real defect. Of everything considered, **only R1 has evidence independent of the unmeasured adoption
+question** — and even it is minor (a token-efficiency tidy, not a feature). Every "improve the copy" idea
+runs into the same wall: *the value of the instructions and hints is precisely what the deferred 624
+adoption pilot is meant to measure.* Tuning adoption-oriented copy before that measurement would be the
+proxy-optimization trap this tempdoc warned about from the start. So the disciplined answer to "what should
+we do with this?" is: optionally apply R1 (it stands on token-efficiency grounds alone), and otherwise
+**wait for the adoption measurement before investing further in the surface** — there is no evidence-backed
+feature or UX extension to build here yet, and that is an acceptable outcome.
