@@ -293,6 +293,50 @@ primitives needing a schema fixture (form controls, metric-card, table). Disposi
 are journey-coverable or recorded-dormant; none is dead code. `jf-surface-tabs` was
 witnessed (census-list error, corrected).
 
+## State for a continuing session (no chat context needed)
+
+- **Branch:** `worktree-689-liveness-reconciliation`, working tree clean; the feat
+  commit is `96be868`, followed by observation-shard and review-record commits.
+  Base includes the merged 683 (`daa74bd`). No PR yet (owner gates it).
+- **Validation set (all green as of 2026-07-07):** `./gradlew.bat test` ·
+  `cd modules/ui-web && npm run typecheck && npm run test:unit:run` (3,508) ·
+  `node scripts/ci/gen-component-vocabulary.mjs --check` ·
+  `node scripts/ci/check-premerge-table.mjs` · `./gradlew.bat docsApiDriftCheck` ·
+  targeted: `:modules:app-services:test` (catalog + wire-conformance +
+  audience-pin tests), FE `JfOperation.test.ts` (args through-chain).
+- **Ephemeral evidence pointers:** screenshots/zips/bundles cited in this doc live
+  under `tmp/` paths (gitignored, retention-pruned) — dated evidence records; the
+  durable re-derivations are the test suite plus the census method described here.
+- **Dev-loop notes:** direct-CLI `dev-runner start` MUST carry `--session-id` (see
+  the de-risk lease-reclaim note); a JDK-25 `JAVA_HOME` is needed if the shell
+  default resolves older Java; Lit static styles do not reliably hot-swap under
+  Vite HMR — verify CSS changes on a fresh page load.
+
+## Unverified assumptions & deferred checks (nothing here is silently done)
+
+1. **AI-run census legs** (tool-call/reasoning/handoff/citation cards) —
+   pending-with-reason: worktree runtime activation fails
+   (`RUNTIME_VARIANT_NOT_INSTALLED`; inbox-logged, dev-tooling stream owns it).
+2. **MCP `capture_evidence` post-merge check** (a 688 item) — still blocked: the
+   long-running MCP server is stale (predates the 683 merge) and its spawn of the
+   capture script died with a libuv assertion (exit 3221226505); inbox-logged with
+   reproduction. The direct CLI path is verified working (bundle
+   `689-review-evidence-20260707-060424-37656`, validator OK, session-stamped).
+3. **Declaration/schema-fixture census legs** (form-control primitives,
+   metric-card, table renderers) — adjudicated fixture-needed; witnessing them
+   requires a resource/schema fixture journey no harness step provides yet.
+4. **Built-ahead routes kept dormant** (`POST /api/document/{id}/resolve-address`,
+   `GET /api/operations/{id}/preview`) — conservative default applied; the
+   keep-or-drop roadmap call remains the owner's.
+5. **Pre-existing staleness in `scripts/ci/url-probe-system-prompt.md`**
+   (rebuild-index still shows `audience=OPERATOR` from an earlier
+   reclassification) — pre-existing, untouched, inbox-logged; regenerating needs a
+   live backend.
+6. **Operator-mode axe measurement:** the measured UX audit covered USER-mode
+   renders; operator mode was structurally verified live (all six ops render,
+   widths 90–165) but not axe-measured — cosmetic-risk-only gap, noted for the
+   next presentation-authority pass.
+
 ## Acceptance
 
 The button work is presentation-authority: closure requires the independent, measured
