@@ -41,8 +41,6 @@
     "check:wire-type-single-authority": "node ../../scripts/ci/check-wire-type-single-authority.mjs"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.12.1",
-    "@bufbuild/protovalidate": "^1.2.0",
     "@endo/module-source": "^1.4.1",
     "@jsonforms/core": "^3.8.0",
     "@juggle/resize-observer": "^3.4.0",

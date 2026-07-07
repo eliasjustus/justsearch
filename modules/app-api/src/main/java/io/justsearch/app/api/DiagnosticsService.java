@@ -26,4 +26,16 @@ public interface DiagnosticsService {
    */
   Path exportDiagnostics() throws Exception;
 
+  /**
+   * Variant carrying an optional frontend-supplied telemetry section (opaque JSON, e.g. the
+   * wire-drift ring summary) to be embedded in the export. {@code null} or blank means "no
+   * frontend section". Default delegates to {@link #exportDiagnostics()} so existing
+   * implementations and the registry-operation path are unaffected.
+   *
+   * @param feTelemetryJson frontend telemetry as a JSON object string, or {@code null}
+   * @return absolute path to the produced ZIP
+   */
+  default Path exportDiagnostics(String feTelemetryJson) throws Exception {
+    return exportDiagnostics();
+  }
 }

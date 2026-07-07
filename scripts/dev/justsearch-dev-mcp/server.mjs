@@ -1510,9 +1510,12 @@ export async function main() {
         timeoutMs,
       });
 
+      const captureSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
       const args = [
         '--scenario',
         scenario,
+        '--run-id',
+        runId,
         '--api-base-url',
         apiBaseUrl,
         ...(uiUrl ? ['--ui-url', uiUrl] : []),
@@ -1526,6 +1529,7 @@ export async function main() {
         '--attach-label',
         'dev-runner',
         ...attachFiles.flatMap((p) => ['--attach-file', p]),
+        ...(captureSessionId ? ['--session-id', captureSessionId] : []),
       ];
 
       // External timeout should exceed the internal budget by a little, but still remain bounded.
@@ -1556,7 +1560,7 @@ export async function main() {
       }
 
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_capture_evidence_result', tool: 'justsearch.dev.capture_evidence', runId, ok: out.ok, exitCode });
-      return toToolResult(await withStaleness(out, { mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId: input.sessionId || resolveAgentSessionIdForMcp(repoRoot) }));
+      return toToolResult(await withStaleness(out, { mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId: captureSessionId }));
     },
   );
 

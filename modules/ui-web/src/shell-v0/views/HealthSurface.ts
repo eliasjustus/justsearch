@@ -25,6 +25,7 @@ import '../components/Button.js';
 import '../components/ErrorAlert.js';
 import '../components/CapabilityMap.js';
 import { parseSseBuffer } from '../../api/sse.js';
+import { summarizeWireDrift } from '../../api/wireDriftTelemetry.js';
 import { icon } from '../components/Icon.js';
 import { renderAtRestCard } from './security/atRestCard.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
@@ -1407,6 +1408,7 @@ export class HealthSurface extends JfElement {
             operation-id="core.export-diagnostics"
             context="button"
             api-base=${this.apiBase}
+            .args=${{ feTelemetry: { wireDrift: summarizeWireDrift() } }}
           ></jf-operation>
           <jf-operation
             operation-id="core.index-gc"

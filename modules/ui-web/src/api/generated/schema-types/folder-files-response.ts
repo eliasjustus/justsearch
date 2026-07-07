@@ -18,8 +18,8 @@ export interface FolderFilesResponse {
   tookMs?: number;
   totalCount?: number;
 }
-export const folderFilesResponseSchema = z.object({
-  "files": z.array(z.object({
+export const folderFilesResponseSchema = z.strictObject({
+  "files": z.array(z.strictObject({
     "docId": z.string().nullable().optional(),
     "fields": z.record(z.string(), z.string()).nullable().optional(),
   })).nullable().optional(),

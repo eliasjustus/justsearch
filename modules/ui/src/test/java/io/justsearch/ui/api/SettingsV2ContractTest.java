@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.justsearch.ui.api.dto.LlmSettingsV2;
-import io.justsearch.ui.api.dto.SettingsV2;
-import io.justsearch.ui.api.dto.UiSettingsV2;
+import io.justsearch.app.api.settings.LlmSettingsV2;
+import io.justsearch.app.api.settings.SettingsV2;
+import io.justsearch.app.api.settings.UiSettingsV2;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;

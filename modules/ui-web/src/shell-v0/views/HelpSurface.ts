@@ -22,6 +22,7 @@ import '../aggregate-substrate/components/JfOperation.js';
 // 569 §15 — render the Help reference content through the projection engine (the 3rd real surface).
 import { activeBodyFor, subscribePresentation } from '../state/presentationRuntime.js';
 import { HELP_REFERENCE_REGION } from '../themes/builtinPresentations.js';
+import { summarizeWireDrift } from '../../api/wireDriftTelemetry.js';
 import '../components/DeclaredSurface.js';
 import type {
   OpSuccessEventDetail,
@@ -412,6 +413,7 @@ export class HelpSurface extends JfElement {
             operation-id="core.export-diagnostics"
             context="button"
             api-base=${this.apiBase}
+            .args=${{ feTelemetry: { wireDrift: summarizeWireDrift() } }}
           ></jf-operation>
           ${this.exportPath !== null
             ? html`<div class="export-status">

@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { LIFECYCLE } from './lifecycleState';
-import { LifecycleState } from './generated/status_pb';
+import { lifecycleStateNullableSchema } from './generated/schema-types/status-response';
 
 /**
- * 548 S5 (§4.1): pins the FE lifecycle-state constants to the exact proto-canonical wire strings the
- * backend emits via `LifecycleState.wireName()`. If protobuf-es ever stops stripping the
- * `LIFECYCLE_STATE_` prefix (or the proto enum is renamed), these break here rather than silently
- * mis-comparing `/api/status` states in StatusDeck / HealthSurface.
+ * 548 S5 (§4.1): pins the FE lifecycle-state constants to the exact wire strings the backend
+ * emits via `LifecycleState.wireName()`. If the wire vocabulary ever changes (or the enum is
+ * renamed), these break here rather than silently mis-comparing `/api/status` states in
+ * StatusDeck / HealthSurface.
+ *
+ * Tempdoc 683 (FE proto teardown): the authority cross-check is now the generated
+ * record→JSON-Schema→Zod enum (`lifecycleStateNullableSchema`) — the same projection the
+ * runtime `lifecycleState.ts` derives its types from — not the retired `status_pb` proto enum.
  */
-describe('LIFECYCLE constants (derived from the proto enum authority)', () => {
+describe('LIFECYCLE constants (derived from the generated wire-enum authority)', () => {
   it('equal the short wire strings the backend serializes', () => {
     expect(LIFECYCLE.STARTING).toBe('LIFECYCLE_STATE_STARTING');
     expect(LIFECYCLE.READY).toBe('LIFECYCLE_STATE_READY');
@@ -18,8 +22,10 @@ describe('LIFECYCLE constants (derived from the proto enum authority)', () => {
     expect(LIFECYCLE.STOPPED).toBe('LIFECYCLE_STATE_STOPPED');
   });
 
-  it('are sourced from the generated proto enum reverse-mapping', () => {
-    expect(LIFECYCLE.READY).toBe('LIFECYCLE_STATE_' + LifecycleState[LifecycleState.READY]);
-    expect(LIFECYCLE.STARTING).toBe('LIFECYCLE_STATE_' + LifecycleState[LifecycleState.STARTING]);
+  it('are members of the generated wire-enum runtime authority', () => {
+    const wireEnumValues = lifecycleStateNullableSchema.unwrap().options;
+    for (const constant of Object.values(LIFECYCLE)) {
+      expect(wireEnumValues).toContain(constant);
+    }
   });
 });

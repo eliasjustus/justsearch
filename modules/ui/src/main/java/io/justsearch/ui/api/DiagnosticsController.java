@@ -42,9 +42,12 @@ public final class DiagnosticsController {
     this.telemetry = telemetry;
   }
 
+  /** Cap on the optional FE-telemetry request body; larger payloads are ignored, not errors. */
+  private static final int MAX_FE_TELEMETRY_BODY_CHARS = 32_768;
+
   public void handleExport(Context ctx) {
     try {
-      Path outZip = diagnosticsService.exportDiagnostics();
+      Path outZip = diagnosticsService.exportDiagnostics(extractFeTelemetry(ctx));
       ctx.json(Map.of("success", true, "path", outZip.toAbsolutePath().toString()));
     } catch (Exception e) {
       log.error("Diagnostics export failed", e);
@@ -55,6 +58,28 @@ public final class DiagnosticsController {
                   "Diagnostics export failed",
                   telemetry,
                   ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
+  /**
+   * Optional {@code feTelemetry} object from the POST body (e.g. the FE wire-drift ring
+   * summary), serialized back to JSON for verbatim embedding. A missing, oversized, or
+   * malformed body must never fail the export — this is telemetry, not input.
+   */
+  private static String extractFeTelemetry(Context ctx) {
+    try {
+      String body = ctx.body();
+      if (body == null || body.isBlank() || body.length() > MAX_FE_TELEMETRY_BODY_CHARS) {
+        return null;
+      }
+      var node = MAPPER.readTree(body).get("feTelemetry");
+      if (node == null || !node.isObject()) {
+        return null;
+      }
+      return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+    } catch (Exception e) {
+      log.debug("Ignoring unparseable feTelemetry body on diagnostics export", e);
+      return null;
     }
   }
 

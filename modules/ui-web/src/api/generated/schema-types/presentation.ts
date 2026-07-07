@@ -19,7 +19,7 @@ export interface PresentationWire {
   iconHint: string | null;
   labelKey: I18nKey;
 }
-export const presentationWireSchema = z.object({
+export const presentationWireSchema = z.strictObject({
   "category": z.string().nullable(),
   "descriptionKey": i18nKeySchema,
   "iconHint": z.string().nullable(),

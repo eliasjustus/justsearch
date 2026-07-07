@@ -10,6 +10,8 @@ import java.util.Objects;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Handler for {@code core.export-diagnostics}.
@@ -25,6 +27,7 @@ import org.slf4j.LoggerFactory;
 public final class ExportDiagnosticsHandler implements OperationHandler {
 
   private static final Logger log = LoggerFactory.getLogger(ExportDiagnosticsHandler.class);
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final Supplier<DiagnosticsService> diagnosticsSupplier;
 
@@ -45,7 +48,7 @@ public final class ExportDiagnosticsHandler implements OperationHandler {
       return OperationResult.failure("Diagnostics service unavailable");
     }
     try {
-      Path outZip = diagnostics.exportDiagnostics();
+      Path outZip = diagnostics.exportDiagnostics(extractFeTelemetry(argumentsJson));
       return OperationResult.success(
           "Diagnostics exported to " + outZip.toAbsolutePath(),
           Map.of("path", outZip.toAbsolutePath().toString()));
@@ -54,6 +57,27 @@ public final class ExportDiagnosticsHandler implements OperationHandler {
       return OperationResult.failure(
           "Diagnostics export failed: "
               + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+    }
+  }
+
+  /**
+   * Optional {@code feTelemetry} object from the invocation args (the FE wire-drift ring
+   * summary, bound on the export {@code jf-operation} — tempdoc 683 X1). Absent, malformed,
+   * or non-object input must never fail the export: this is telemetry, not input.
+   */
+  private static String extractFeTelemetry(String argumentsJson) {
+    if (argumentsJson == null || argumentsJson.isBlank()) {
+      return null;
+    }
+    try {
+      JsonNode node = MAPPER.readTree(argumentsJson).get("feTelemetry");
+      if (node == null || !node.isObject()) {
+        return null;
+      }
+      return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+    } catch (Exception e) {
+      log.debug("Ignoring unparseable feTelemetry in export-diagnostics args", e);
+      return null;
     }
   }
 }

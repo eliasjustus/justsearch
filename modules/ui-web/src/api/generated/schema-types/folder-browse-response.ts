@@ -21,8 +21,8 @@ export interface FolderBrowseResponse {
   tookMs?: number;
   truncated?: boolean;
 }
-export const folderBrowseResponseSchema = z.object({
-  "folders": z.array(z.object({
+export const folderBrowseResponseSchema = z.strictObject({
+  "folders": z.array(z.strictObject({
     "fileCount": z.number().int().optional(),
     "lastIndexedAt": z.number().int().optional(),
     "name": z.string().nullable().optional(),

@@ -48,8 +48,8 @@ export interface AiRuntimeStatusResponse {
     status?: string | null;
   })[] | null;
 }
-export const aiRuntimeStatusResponseSchema = z.object({
-  "activation": z.object({
+export const aiRuntimeStatusResponseSchema = z.strictObject({
+  "activation": z.strictObject({
     "errorCode": z.string().nullable().optional(),
     "message": z.string().nullable().optional(),
     "phase": z.string().nullable().optional(),
@@ -63,7 +63,7 @@ export const aiRuntimeStatusResponseSchema = z.object({
     "vramUsedBeforeBytes": z.number().int().nullable().optional(),
     "vramUsedDeltaBytes": z.number().int().nullable().optional(),
   }).nullable().optional(),
-  "active": z.object({
+  "active": z.strictObject({
     "activeVariantId": z.string().nullable().optional(),
     "effectiveVramFlags": z.array(z.string()).nullable().optional(),
     "gpuLayers": z.number().int().nullable().optional(),
@@ -73,11 +73,11 @@ export const aiRuntimeStatusResponseSchema = z.object({
     "vramTierDetected": z.string().nullable().optional(),
     "vramTotalBytes": z.number().int().nullable().optional(),
   }).nullable().optional(),
-  "installedVariants": z.array(z.object({
+  "installedVariants": z.array(z.strictObject({
     "exePath": z.string().nullable().optional(),
     "variantId": z.string().nullable().optional(),
   })).nullable().optional(),
-  "onnxFeatures": z.array(z.object({
+  "onnxFeatures": z.array(z.strictObject({
     "id": z.string().nullable().optional(),
     "label": z.string().nullable().optional(),
     "modelActive": z.boolean().optional(),

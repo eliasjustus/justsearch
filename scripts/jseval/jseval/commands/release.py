@@ -45,6 +45,13 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
     from .. import release as _release
     from .. import bisection as _bisection
 
+    # tempdoc 683: a release without a conformant release_id is un-citable (outward docs
+    # cite the id; the outward-number lint keys on it) — refuse before any work.
+    _id_error = _release.validate_release_id(release_id)
+    if _id_error:
+        click.echo(f"Error: {_id_error}", err=True)
+        sys.exit(2)
+
     run_dirs: list[Path] = [Path(r) for r in runs]
     if latest_per_dataset:
         idx_root = Path(data_dir) / "eval-results"
@@ -93,6 +100,26 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             sys.exit(2)
         summaries.append(json.loads(sp.read_text(encoding="utf-8")))
 
+    # tempdoc 683: source the optional per-corpus leak section from the runs'
+    # staged_recall_accounting projections (compose() only sees summaries; the run
+    # dirs — and thus projections/ — are only known here). Best-effort: a run
+    # without an ok projection simply contributes no leak row.
+    leak_by_dataset: dict[str, float] = {}
+    for rd, s in zip(run_dirs, summaries):
+        pp = rd / "projections" / "staged_recall_accounting.json"
+        if not pp.is_file():
+            continue
+        try:
+            proj = json.loads(pp.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if proj.get("status") != "ok":
+            continue
+        rate = (proj.get("aggregate") or {}).get("leak_rate")
+        ds = _release.canonical_dataset_slug(s.get("dataset"))
+        if ds and isinstance(rate, (int, float)):
+            leak_by_dataset[ds] = float(rate)
+
     ext = None
     if external_baselines:
         ext_doc = json.loads(Path(external_baselines).read_text(encoding="utf-8"))
@@ -106,6 +133,7 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             release_id=release_id,
             external_baselines=ext,
             require_comparable=not allow_incomparable,
+            leak_by_dataset=leak_by_dataset or None,
         )
     except _release.ComposeError as e:
         click.echo(f"compose refused: {e}", err=True)
@@ -121,10 +149,8 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
     from .. import baseline_shift as _bshift
     from .. import metric_families as _mf
     lower_is_better = {k: v for fam in _mf.REGISTRY for k, v in fam.lower_is_better.items()}
-    old_measured = (
-        json.loads(out.read_text(encoding="utf-8")).get("measured") or {}
-        if out.is_file() else {}
-    )
+    old_doc = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {}
+    old_measured = old_doc.get("measured") or {}
     changesets_dir = out.resolve().parent / ".changesets"
     try:
         for ds, entry in release_doc.get("measured", {}).items():
@@ -156,6 +182,20 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
                     gate="release", dataset=f"{ds}:{metric}",
                     changesets_dir=changesets_dir,
                 )
+        # tempdoc 683: the leak section is a projected ratchet source too (leak-gate's
+        # current_release pointer) — a recompose raising a corpus's leak_rate is a
+        # relaxation (leak is lower-is-better) and needs the same justified changeset.
+        old_leak = old_doc.get("leak") or {}
+        for ds, entry in (release_doc.get("leak") or {}).items():
+            old_value = (old_leak.get(ds) or {}).get("leak_rate")
+            new_value = entry.get("leak_rate")
+            if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+                continue
+            _bshift.assert_baseline_not_relaxed(
+                old_value, new_value, lower_is_better=True,
+                gate="release", dataset=f"{ds}:leak_rate",
+                changesets_dir=changesets_dir,
+            )
     except _bshift.BaselineRelaxedWithoutJustificationError as e:
         click.echo(f"release refused: {e}", err=True)
         sys.exit(1)
