@@ -4237,3 +4237,50 @@ calibration rather than trusting the old stamp; (d) **scorer case/whitespace sem
 (`_score_answer`) — one fixture pass to pin exact-match behavior against plausible answer
 formattings; (e) **qrels vs `evidence_ids` consistency** was verified by the replay agent for these
 corpora — keep it as a standing generation-time check rather than a one-off.
+
+---
+
+# Step-1 adoption pilot (2026-07-07, twenty-fifth pass) — adoption_rate 0.0; pre-registered STOP fires; route to 655
+
+> Step 0 landed first (PR #85, squash 4321ac8): neutral prompt (pre-registered text) in both runners,
+> per-call `is_error`/`error_snippet` capture, `ReadMcpResource*` disallowed for C, per-cell
+> `mcp_tools_deferred` + cohort `tool_surfacing_mode`, pre-registered adoption metrics on the record,
+> `executor` provenance stamp, `_score_answer` fixture, §M.8 items 2b/2c applied + item 4 rewritten
+> outcome-neutral. Suite 1557 green.
+
+## Run facts
+
+- Clean stack (data dir hard-cleaned), battlefield-en-v1 ingested fresh (391 = 390+sentinel asserted),
+  enrichment 100% (embedding/SPLADE/chunk-vectors) before any spend.
+- Fresh `utility-calibrate` (B-only, pilot-n 3): readiness PASS, closed-book filter retained 26/26
+  (0 dropped — the memory gate holds at CLI 2.1.202, discharging pass-24 §6(c) at pilot scale),
+  timeout 273s / concurrency 8, `config_cohort_key=528aa2f9…`. Artifacts:
+  `scripts/jseval/624-run-2026-07-07-pilot/`.
+- Pilot: 10 B cells × 1 seed, haiku, neutral prompt, working `"type":"http"` config. All completed;
+  substring accuracy 0.9; `comparable=True`; executor=inspect-ai.
+- **Surface verification (item 2b machinery, live): 10/10 cells verified offered** — all six
+  `mcp__justsearch__*` tools in each cell's init event; `mcp_tools_deferred=False` on every cell
+  (cohort surfacing mode: **eager** at CLI 2.1.202 — the 2026-07-07 smoke's ToolSearch flailing was
+  agent behavior, not CLI deferral).
+- **Adoption (item 2c, the pilot's sole target): `adoption_rate` 0.0, `first_mcp_call_index` null,
+  `mcp_call_share` 0.0.** Zero `mcp__justsearch*` calls across 10 cells / 174 tool calls. Every cell
+  ran pure Bash/Grep/Read (8–31 calls each), 9/10 correct — consistent with the certified A-arm
+  envelope (0.815 ± seed noise).
+- Operator-config recording (§M.8 item 2): user-scope MCP servers (context7, claude.ai
+  Drive/Gmail/Calendar) appear as *pending* servers in cells even from isolated cwd; none corpus-capable;
+  battlefield facts are fabricated so external channels cannot contain answers. Recorded, not blocking.
+
+## Interpretation (pre-registered tree, twenty-fourth pass §5)
+
+**"Null with low adoption: not a utility finding at all — an adoption finding; route to 655."**
+With the tools *offered, verified, eagerly surfaced,* and a neutral prompt, a haiku agent holding
+file tools never once chose retrieval. The Step-2 $90 run is NOT authorized by this outcome — it
+would compare A against A-with-ignored-tools. The next spend is 655's discoverability/steering
+surface (tool naming/descriptions reaching the model at decision time, onboarding prompt/resource
+surface), after which the pilot re-runs; the before/after adoption delta is itself a publishable,
+product-relevant result. Per-protocol view: undefined (no adopters) — ITT-only by construction,
+stated per item 2c.
+
+## Cost
+
+~$1.9 pilot + ~$0.6 calibrate + ~$0.2 probes/smoke ≈ **$2.7** (within the ~$3 Step-1 envelope).
