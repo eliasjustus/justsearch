@@ -682,10 +682,18 @@ Handed forward so nothing is silently lost:
    (`UV_HANDLE_CLOSING` in `src/win/async.c`) — a known MCP-capture-path blocker; it captured
    `api-status`/`api-health` before aborting. Live `/mcp` verification was done by manual HTTP calls
    instead. Follow-up: produce a durable bundle once the capture path is fixed.
-2. **`detail=true` numeric per-hit tier — live-unconfirmed.** Unit-tested (a `HitStage` carrying a
-   `detail` map projects it), but not *live*-observed with a non-empty map: the verification corpus was
-   a degraded, single-leg TEXT index that never produced fusion numeric detail. Confirm on a healthy
-   hybrid index with `detail:true`.
+2. **~~`detail=true` numeric per-hit tier — live-unconfirmed.~~ RESOLVED 2026-07-07.** Re-run on a
+   *healthy hybrid* index (clean start → fresh embeddings → `FINGERPRINT_MATCH`, 100% coverage): live
+   `justsearch_search {mode:hybrid, detail:true}` returned `effectiveMode: HYBRID`,
+   `decisionKind: multi_leg`, with `sparse-retrieval`+`dense-retrieval`+`fusion`+`branch-fusion`+
+   `cross-encoder` stages **executed**, a per-hit `legScores` with **non-zero dense** (`{sparse:4.06,
+   dense:0.56, splade:0, fused:0.72}`), and **non-empty numeric `detail` maps** on every hit stage
+   (e.g. dense `{vector:0.56, vector_rank:1}`, the full branch-fusion weight map). `justsearch_answer`
+   returned `retrievalMode: CHUNK_HYBRID` (`HYBRID_AVAILABLE`) with all ten `quality` fields carrying
+   real values (`scoreGap:-0.0038`, `chunksConsidered:9`, `chunksIncluded:3`). The response JSON was
+   valid with **no `NaN`/`Infinity`** tokens — the fusion-normalization non-finite-float
+   serialization risk did not materialize (division-adjacent values like `chunk_branch_norm` serialized
+   as clean `0`). Both the degraded (BM25 fallback) and healthy (hybrid) paths are now live-verified.
 3. **MCP conformance suite not re-run.** `scripts/ci/check-mcp-conformance.mjs` (manual, not in public
    CI) was not run against the new `structuredContent`. Assumption: `structuredContent` **without** an
    `outputSchema` is accepted — consistent with the pre-existing `justsearch_runtime_manifest` tool,
