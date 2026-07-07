@@ -141,6 +141,13 @@ const TARGETS = [
   // DiagnosticChannel slice (tempdoc 560 §4c): the Logs surface's registry primitive — the
   // UIDiagnosticChannelView record's projection, retiring the hand-mirrored types/diagnostic.ts.
   { schema: 'SSOT/schemas/diagnostic-channel.v1.json', outFile: 'diagnostic-channel.ts', rootName: 'DiagnosticChannelWire' },
+  // Tempdoc 683 — the /api/settings/v2 surface: retires the fail-open `.loose()` hand-Zod
+  // (SettingsV2Schema in api/schemas.ts) for the generated record→JSON-Schema→Zod projection.
+  {
+    schema: 'SSOT/schemas/settings-v2.v1.json',
+    outFile: 'settings-v2.ts',
+    rootName: 'SettingsV2',
+  },
 ];
 
 function parseArgs(argv) {
@@ -391,7 +398,7 @@ function zodObject(schema, depth) {
     if (!required.has(k)) e += '.optional()';
     return pad + JSON.stringify(k) + ': ' + e + ',';
   });
-  return 'z.object({\n' + lines.join('\n') + '\n' + closePad + '})';
+  return 'z.strictObject({\n' + lines.join('\n') + '\n' + closePad + '})';
 }
 
 function renderZodDeclaration(typeName, schema) {

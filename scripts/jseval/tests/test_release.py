@@ -322,13 +322,13 @@ def test_cmd_release_refuses_run_metrics_relaxation_without_changeset(tmp_path):
     out = tmp_path / "release.v1.json"
     run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
     runner = CliRunner()
-    r1 = runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out)])
+    r1 = runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
     assert r1.exit_code == 0, r1.output
 
     # Second compose: throughput drops 100 -> 50 (a relaxation; primary_docs_s is
     # lower_is_better=False, so a decrease is worse) with no changeset present.
     run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 50.0}))
-    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out)])
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
     assert r2.exit_code == 1
     assert "release refused" in r2.output
     # The out file must NOT have been overwritten with the unjustified relaxation.
@@ -339,7 +339,7 @@ def test_cmd_release_allows_run_metrics_relaxation_with_justified_changeset(tmp_
     out = tmp_path / "release.v1.json"
     run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
     runner = CliRunner()
-    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out)]).exit_code == 0
+    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"]).exit_code == 0
 
     changesets_dir = out.resolve().parent / ".changesets"
     changesets_dir.mkdir(parents=True, exist_ok=True)
@@ -350,7 +350,7 @@ def test_cmd_release_allows_run_metrics_relaxation_with_justified_changeset(tmp_
     )
 
     run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 50.0}))
-    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out)])
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
     assert r2.exit_code == 0, r2.output
     assert json.loads(out.read_text())["measured"]["beir/scifact"]["run_metrics"]["primary_docs_s"] == 50.0
 
@@ -359,8 +359,104 @@ def test_cmd_release_allows_run_metrics_improvement_without_changeset(tmp_path):
     out = tmp_path / "release.v1.json"
     run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
     runner = CliRunner()
-    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out)]).exit_code == 0
+    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"]).exit_code == 0
 
     run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 150.0}))
-    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out)])
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
     assert r2.exit_code == 0, r2.output
+
+
+# --- tempdoc 683: release_id contract (required + pattern) -------------------
+
+def test_validate_release_id_accepts_conformant_ids():
+    assert release.validate_release_id("667-external-baselines-2026-07-01") is None
+    assert release.validate_release_id("rel-test-2026-01-01") is None
+
+
+@pytest.mark.parametrize("bad", [
+    None, "", "no-date-suffix", "Upper-Case-2026-07-01", "-leading-dash-2026-07-01",
+    "spaces here-2026-07-01", "rel_underscore-2026-07-01", "rel-2026-7-1",
+])
+def test_validate_release_id_rejects_missing_or_malformed(bad):
+    assert release.validate_release_id(bad) is not None
+
+
+def test_cmd_release_refuses_missing_release_id(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary())
+    r = CliRunner().invoke(cmd_release, ["--run", str(run1), "--out", str(out)])
+    assert r.exit_code == 2
+    assert "release_id is required" in r.output
+    assert not out.is_file()
+
+
+def test_cmd_release_refuses_malformed_release_id(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary())
+    r = CliRunner().invoke(
+        cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "NoPattern"])
+    assert r.exit_code == 2
+    assert "does not match" in r.output
+    assert not out.is_file()
+
+
+# --- tempdoc 683: optional leak section + corpus_source.upstream_revision ----
+
+def test_compose_writes_leak_section_from_measured_rates():
+    s = _summary(dataset="scifact")
+    r = release.compose([s], default_mode="hybrid", composed_at=_AT,
+                        leak_by_dataset={"scifact": 0.0133})
+    assert r["leak"] == {
+        "beir/scifact": {"leak_rate": 0.0133, "src": "staged_recall_accounting projection"},
+    }
+
+
+def test_compose_omits_leak_section_when_unsourced():
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    assert "leak" not in r
+
+
+def test_corpus_source_upstream_revision_passthrough_null():
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    src = r["measured"]["beir/scifact"]["corpus_source"]
+    assert "upstream_revision" in src
+    assert src["upstream_revision"] is None  # corpus_identity carries no revision today
+
+
+def test_cmd_release_sources_leak_from_run_projection(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(dataset="scifact"))
+    proj_dir = run1 / "projections"
+    proj_dir.mkdir()
+    (proj_dir / "staged_recall_accounting.json").write_text(
+        json.dumps({"status": "ok", "aggregate": {"leak_rate": 0.021}}), encoding="utf-8")
+    r = CliRunner().invoke(
+        cmd_release,
+        ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r.exit_code == 0, r.output
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["release_id"] == "rel-test-2026-01-01"
+    assert doc["leak"]["beir/scifact"]["leak_rate"] == 0.021
+
+
+def test_cmd_release_refuses_leak_relaxation_without_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+
+    def _run_with_leak(name, rate):
+        rd = _write_run(tmp_path / name, _summary(dataset="scifact"))
+        proj_dir = rd / "projections"
+        proj_dir.mkdir()
+        (proj_dir / "staged_recall_accounting.json").write_text(
+            json.dumps({"status": "ok", "aggregate": {"leak_rate": rate}}), encoding="utf-8")
+        return rd
+
+    runner = CliRunner()
+    r1 = runner.invoke(cmd_release, ["--run", str(_run_with_leak("run1", 0.02)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r1.exit_code == 0, r1.output
+    # Second compose measures a HIGHER leak rate (a relaxation of the projected ceiling).
+    r2 = runner.invoke(cmd_release, ["--run", str(_run_with_leak("run2", 0.30)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 1
+    assert "release refused" in r2.output
+    assert json.loads(out.read_text())["leak"]["beir/scifact"]["leak_rate"] == 0.02

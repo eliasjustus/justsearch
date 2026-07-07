@@ -14,6 +14,7 @@ import io.justsearch.app.api.indexing.FailedJobsResponse;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
 import io.justsearch.app.api.knowledge.FolderFilesResponse;
 import io.justsearch.app.api.knowledge.SearchTrace;
+import io.justsearch.app.api.settings.SettingsV2;
 import io.justsearch.app.api.status.InferenceStatusResponse;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -133,6 +134,15 @@ final class WireRecordSchemaGenTest {
   @DisplayName("InferenceStatusResponse")
   void inferenceStatus() throws IOException {
     captureOrVerify(InferenceStatusResponse.class, "inference-status-response.v1.json");
+  }
+
+  // Tempdoc 683 — the /api/settings/v2 contract record (moved to app-api from modules/ui). Nulls
+  // are semantically meaningful ("absent from request"), so SettingsV2 intentionally does NOT
+  // implement PreciseWire; UiSettingsV2 / LlmSettingsV2 emit as $defs.
+  @Test
+  @DisplayName("SettingsV2")
+  void settingsV2() throws IOException {
+    captureOrVerify(SettingsV2.class, "settings-v2.v1.json");
   }
 
   private static void captureOrVerify(Class<?> type, String fileName) throws IOException {

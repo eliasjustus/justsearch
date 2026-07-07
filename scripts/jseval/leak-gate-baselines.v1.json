@@ -1,5 +1,17 @@
 {
-  "baselines": {
+  "schema": "leak-gate-baseline.v1",
+  "tempdoc": 683,
+  "note": "POINTER + fallback (mirrors relevance-ratchet-baselines.v1.json / tempdoc 623 T-5). Per-corpus leak-rate CEILINGS are PROJECTED from `current_release` when the release carries a per-corpus `leak` section (composed by `jseval release` from runs with staged_recall_accounting projections). Until a release carries leak sections, `fallback_baselines` — the previously pinned measured values, moved here verbatim — governs, so gate behavior is unchanged. `jseval leak-gate` loads this via ratchet_kernel.load_baselines_doc + leak_gate.project_release_to_baselines; `leak-gate-derive` re-pins into `fallback_baselines`.",
+  "current_release": "release.v1.json",
+  "tolerance_default_abs": 0.05,
+  "per_corpus_tolerance": {
+    "golden/needle-burial-v1": 0.05,
+    "mixed/enron-qa": 0.05,
+    "beir/scifact": 0.05,
+    "mixed/legal-clerc-200": 0.05
+  },
+  "derived_from_runs": true,
+  "fallback_baselines": {
     "golden/needle-burial-v1": {
       "leak_rate_max": 0.1,
       "src": "measured from staged_recall_accounting projection",
@@ -20,8 +32,5 @@
       "src": "measured from staged_recall_accounting projection",
       "tolerance_abs": 0.05
     }
-  },
-  "derived_from_runs": true,
-  "schema": "leak-gate-baseline.v1",
-  "tolerance_default_abs": 0.05
+  }
 }

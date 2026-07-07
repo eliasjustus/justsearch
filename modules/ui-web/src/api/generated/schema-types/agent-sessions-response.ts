@@ -29,8 +29,8 @@ export interface AgentSessionsResponse {
     updatedAt?: string | null;
   })[] | null;
 }
-export const agentSessionsResponseSchema = z.object({
-  "sessions": z.array(z.object({
+export const agentSessionsResponseSchema = z.strictObject({
+  "sessions": z.array(z.strictObject({
     "activeAgentId": z.string().nullable().optional(),
     "iterationsUsed": z.number().int().nullable().optional(),
     "preview": z.string().nullable().optional(),
@@ -38,7 +38,7 @@ export const agentSessionsResponseSchema = z.object({
     "sessionId": z.string().nullable().optional(),
     "startedAt": z.string().nullable().optional(),
     "state": z.string().nullable().optional(),
-    "terminationReason": z.object({
+    "terminationReason": z.strictObject({
       "cancelTrigger": z.string().nullable().optional(),
       "disposition": z.string().nullable().optional(),
       "errorCode": z.string().nullable().optional(),

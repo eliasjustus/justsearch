@@ -11,8 +11,9 @@
  * 3. If the fixture shape changed unintentionally, fix the backend
  */
 import { describe, it, expect } from 'vitest';
-import { SettingsV2Schema, SearchResponseSchema } from './schemas';
+import { settingsV2Schema } from './generated/schema-types/settings-v2';
 import { statusResponseSchema } from './generated/schema-types/status-response';
+import { knowledgeSearchResponseSchema } from './generated/schema-types/knowledge-search-response';
 import { mapKnowledgeSearchResponse } from './domains/search';
 import type { KnowledgeSearchResponse } from './domains/search';
 import statusFixture from './__fixtures__/status-response-live.json';
@@ -74,8 +75,11 @@ describe('Cross-language contract: StatusResponse vs generated statusResponseSch
 });
 
 describe('Cross-language contract: SettingsV2 round-trip', () => {
-  it('Java-serialized SettingsV2 passes Zod validation', () => {
-    const result = SettingsV2Schema.safeParse(settingsFixture);
+  // Tempdoc 683 (X3): validates against the GENERATED strict `settingsV2Schema`
+  // (record → JSON Schema → Zod), not the retired fail-open `.loose()` hand schema —
+  // an unknown wire key now fails here instead of passing silently.
+  it('Java-serialized SettingsV2 passes generated Zod validation', () => {
+    const result = settingsV2Schema.safeParse(settingsFixture);
     if (!result.success) {
       const issues = result.error.issues.map(
         (i) => `  ${i.path.join('.')}: ${i.message} (expected ${i.code})`,
@@ -107,21 +111,23 @@ describe('Cross-language contract: SettingsV2 round-trip', () => {
   });
 });
 
-describe('Cross-language contract: KnowledgeSearchResponse → SearchResponseSchema', () => {
-  it('Java-serialized search response maps and passes Zod validation', () => {
-    // The frontend maps the raw wire format before Zod validation.
-    // This tests the actual production flow: raw → mapKnowledgeSearchResponse → validate.
-    const mapped = mapKnowledgeSearchResponse(searchFixture as unknown as KnowledgeSearchResponse);
-    const result = SearchResponseSchema.safeParse(mapped);
+describe('Cross-language contract: KnowledgeSearchResponse → generated knowledgeSearchResponseSchema', () => {
+  it('Java-serialized search response passes generated Zod validation, then maps', () => {
+    // Tempdoc 683: the hand SearchResponseSchema (fail-open post-map check) is deleted. This
+    // tests the actual production flow: raw → parseWireContract(generated) → map. The raw
+    // fixture must pass the generated strict schema, and the mapper must accept the parsed data.
+    const result = knowledgeSearchResponseSchema.safeParse(searchFixture);
     if (!result.success) {
       const issues = result.error.issues.map(
         (i) => `  ${i.path.join('.')}: ${i.message} (expected ${i.code})`,
       );
       throw new Error(
-        `Mapped search response failed Zod validation:\n${issues.join('\n')}`,
+        `Raw search response fixture failed generated Zod validation:\n${issues.join('\n')}`,
       );
     }
     expect(result.success).toBe(true);
+    const mapped = mapKnowledgeSearchResponse(result.data as KnowledgeSearchResponse);
+    expect(mapped.hits.length).toBeGreaterThan(0);
   });
 
   it('mapped response preserves hit data', () => {

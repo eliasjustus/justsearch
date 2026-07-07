@@ -2,13 +2,9 @@
   "name": "wire-contract-tooling",
   "private": true,
   "version": "0.0.0",
-  "description": "Pinned tooling for the JustSearch wire-Category contract substrate. Used by `:wireGenerate` (TS emission via `buf generate`).",
+  "description": "Pinned buf CLI for the JustSearch wire-Category contract. Used only by the `wire` governance gate (`buf breaking`).",
   "type": "module",
-  "scripts": {
-    "generate": "buf generate --template ../../contracts/wire/buf.gen.yaml ../../contracts/wire"
-  },
   "devDependencies": {
-    "@bufbuild/buf": "1.69.0",
-    "@bufbuild/protoc-gen-es": "2.12.0"
+    "@bufbuild/buf": "1.69.0"
   }
 }

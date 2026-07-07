@@ -49,6 +49,34 @@ function catalogOf(...entries: Operation[]): OperationCatalog {
   };
 }
 
+// The RAW WIRE shape served by RegistryController — what the boot-fetch path parses through the
+// generated `operationWireSchema` (strict since tempdoc 683). It carries the discriminator
+// `type` and the present-as-null `policy.inverseOperationId`; the wire's optional string keys
+// (`presentation.iconHint`/`category`) are OMITTED, not null. Mirrors the wire-faithful builder
+// in DiagnosticChannelCatalogClient.test.ts — a drifting mock would now throw at the boundary.
+function opWireEntry(id: string): unknown {
+  const fe = op(id);
+  return {
+    ...fe,
+    type: 'operation',
+    presentation: {
+      labelKey: fe.presentation.labelKey,
+      descriptionKey: fe.presentation.descriptionKey,
+    },
+    policy: { ...fe.policy, inverseOperationId: null },
+  };
+}
+
+function wireCatalogOf(...entries: unknown[]): unknown {
+  return {
+    schemaVersion: '1.0',
+    catalogVersion: 1,
+    namespace: 'core',
+    primitive: 'Operation',
+    entries,
+  };
+}
+
 describe('OperationCatalogClient', () => {
   beforeEach(() => {
     __resetForTest();
@@ -68,7 +96,7 @@ describe('OperationCatalogClient', () => {
   });
 
   it('boot fetches with ETag awareness', async () => {
-    const catalog = catalogOf(op('core.x'));
+    const catalog = wireCatalogOf(opWireEntry('core.x'));
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,

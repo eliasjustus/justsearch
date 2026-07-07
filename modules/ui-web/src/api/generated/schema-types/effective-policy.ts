@@ -28,11 +28,11 @@ export type PolicySourceNullable = {
   path?: string | null;
   present?: boolean;
 } | null;
-export const policySourceNullableSchema = z.object({
+export const policySourceNullableSchema = z.strictObject({
   "error": z.string().nullable().optional(),
   "loaded": z.boolean().optional(),
-  "parsed": z.object({
-    "allowlists": z.object({
+  "parsed": z.strictObject({
+    "allowlists": z.strictObject({
       "modelSha256": z.array(z.string()).nullable().optional(),
       "packManifestSha256": z.array(z.string()).nullable().optional(),
     }).nullable().optional(),
@@ -60,7 +60,7 @@ export interface EffectivePolicy {
   packAllowlistSource?: string | null;
   user?: PolicySourceNullable;
 }
-export const effectivePolicySchema = z.object({
+export const effectivePolicySchema = z.strictObject({
   "aiDisabledOverride": z.boolean().optional(),
   "allowlistedModelSha256": z.array(z.string()).nullable().optional(),
   "allowlistedPackManifestSha256": z.array(z.string()).nullable().optional(),

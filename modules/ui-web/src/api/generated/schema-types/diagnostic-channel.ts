@@ -49,9 +49,9 @@ export interface DiagnosticChannelWire {
   };
   type: string;
 }
-export const diagnosticChannelWireSchema = z.object({
+export const diagnosticChannelWireSchema = z.strictObject({
   "consumerPermission": z.enum(["CORE", "TRUSTED_PLUGIN", "OPERATOR_OVERRIDE"]),
-  "consumers": z.array(z.object({
+  "consumers": z.array(z.strictObject({
     "audience": z.enum(["USER", "AGENT", "OPERATOR", "DEVELOPER"]),
     "consumerId": z.string(),
   })),
@@ -59,23 +59,23 @@ export const diagnosticChannelWireSchema = z.object({
   "deliveryMode": z.literal("SSE_STREAM"),
   "endpoint": z.string(),
   "id": z.string(),
-  "presentation": z.object({
+  "presentation": z.strictObject({
     "category": z.string().nullable(),
     "descriptionKey": i18nKeySchema,
     "iconHint": z.string().nullable(),
     "labelKey": i18nKeySchema,
   }),
   "producer": z.enum(["IN_PROCESS_LOGBACK", "WORKER_GRPC_STREAM", "EXTERNAL_OBSERVER"]),
-  "provenance": z.object({
+  "provenance": z.strictObject({
     "contributorId": z.string(),
-    "identity": z.object({
+    "identity": z.strictObject({
       "signature": z.string().nullable(),
       "verified": z.boolean(),
     }).nullable(),
     "tier": z.enum(["CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN"]),
     "version": z.string(),
   }),
-  "selector": z.object({
+  "selector": z.strictObject({
     "defaultSubCategory": subCategorySchema,
     "overrides": z.record(z.string(), subCategorySchema),
     "prefixMappings": z.record(z.string(), subCategorySchema),

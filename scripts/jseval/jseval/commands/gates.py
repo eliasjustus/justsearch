@@ -278,11 +278,17 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
     # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
     _rk.assert_cohort_engines(
         _rk.resolve_run_dir(run_dir, data_dir), baselines, allow_mismatch=allow_engine_mismatch)
-    # Tempdoc 640 K: leak is the SIMPLE case (no current_release, no extra guards) — it uses the
-    # kernel's `run_gate` convenience directly; only its source reader differs (projection vs summary).
+    # Tempdoc 683: leak now uses the same `current_release` pointer as relevance/perf — ceilings
+    # project from the release's optional per-corpus `leak` section, with `fallback_baselines`
+    # (the previously pinned measured values) governing any corpus the release doesn't carry.
     _rk.run_gate(
         baselines_path=baselines, data_dir=data_dir, run_dir=run_dir, dataset=dataset,
         read_inputs=_read_projection, evaluate=_lgate.evaluate,
+        project_release=lambda rel, base: _lgate.project_release_to_baselines(
+            rel,
+            tolerance_default_abs=base.get("tolerance_default_abs", _lgate.DEFAULT_TOLERANCE_ABS),
+            per_corpus_tolerance=base.get("per_corpus_tolerance"),
+        ),
         report_out=report_out, summary_fields=("current", "baseline", "floor"),
     )
 
@@ -381,10 +387,10 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
     # lower-is-better/ceiling-comparator) — refuse to derive over a prior pin without a
     # classified, justified changeset.
     from .. import baseline_shift as _bshift
-    old_baselines = (
-        json.loads(out_path.read_text(encoding="utf-8")).get("baselines") or {}
-        if out_path.is_file() else {}
-    )
+    old_doc = json.loads(out_path.read_text(encoding="utf-8")) if out_path.is_file() else {}
+    # tempdoc 683: with the pointer pattern the previously pinned values live in
+    # `fallback_baselines`; inline `baselines` (pre-migration files) still wins if present.
+    old_baselines = {**(old_doc.get("fallback_baselines") or {}), **(old_doc.get("baselines") or {})}
     changesets_dir = out_path.resolve().parent / ".changesets"
     try:
         for slug, entry in derived.get("baselines", {}).items():
@@ -401,8 +407,18 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
         sys.exit(1)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # tempdoc 683: when the existing file is a pointer file (`current_release`), the derived
+    # measured values are its FALLBACK layer — preserve the pointer + top-level metadata so a
+    # derive never silently strips the release projection.
+    if old_doc.get("current_release"):
+        merged_doc = {**old_doc,
+                      "tolerance_default_abs": derived["tolerance_default_abs"],
+                      "fallback_baselines": derived["baselines"]}
+        merged_doc.pop("baselines", None)
+    else:
+        merged_doc = derived
     out_path.write_text(
-        json.dumps(derived, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        json.dumps(merged_doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     click.echo(json.dumps(
         {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
 
@@ -460,7 +476,11 @@ def cmd_utility_gate(ctx, record, corpus, model, baselines, report_out, update_b
             json.loads(Path(baselines).read_text(encoding="utf-8")) if Path(baselines).is_file() else {}
         )
         proj = _ugate.derive_baselines({"record": record_doc}, allow_realistic_corpus=allow_realistic_corpus)
-        old_floor = ((baselines_doc.get("baselines") or {}).get(corpus) or {}).get("c_floor_min")
+        # tempdoc 683: with the pointer pattern the previously pinned floor lives in
+        # `fallback_baselines`; inline `baselines` (pre-migration files) still wins if present.
+        _old_pins = {**(baselines_doc.get("fallback_baselines") or {}),
+                     **(baselines_doc.get("baselines") or {})}
+        old_floor = (_old_pins.get(corpus) or {}).get("c_floor_min")
         new_floor = (proj.get("baselines") or {}).get(corpus, {}).get("c_floor_min")
         if new_floor is None:
             click.echo(json.dumps(
@@ -483,12 +503,15 @@ def cmd_utility_gate(ctx, record, corpus, model, baselines, report_out, update_b
         # legitimately measure multiple corpora), but only `corpus` has passed the relaxation guard
         # above; merging the whole `proj["baselines"]` would silently re-pin every other corpus in
         # the record with NO justification check at all (post-implementation review finding #1).
-        merged_baselines = dict(baselines_doc.get("baselines") or {})
+        # tempdoc 683: on a pointer file the pin lands in `fallback_baselines` (the release
+        # projection, when a release carries a `utility` section, still wins at load time).
+        target_key = "fallback_baselines" if baselines_doc.get("current_release") else "baselines"
+        merged_baselines = dict(baselines_doc.get(target_key) or {})
         merged_baselines[corpus] = proj["baselines"][corpus]
         # Preserve the file's own top-level metadata (note/tempdoc/tolerance_default_abs) on an
         # existing file — only seed it from `proj`'s defaults the first time the file is created.
         top_level = baselines_doc if baselines_doc else {k: v for k, v in proj.items() if k != "baselines"}
-        baselines_doc = {**top_level, "baselines": merged_baselines}
+        baselines_doc = {**top_level, target_key: merged_baselines}
         Path(baselines).write_text(
             json.dumps(baselines_doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
             encoding="utf-8")
@@ -497,9 +520,18 @@ def cmd_utility_gate(ctx, record, corpus, model, baselines, report_out, update_b
             indent=2), err=True)
         sys.exit(0)
 
-    baselines_doc = json.loads(Path(baselines).read_text(encoding="utf-8"))
-    report = _ugate.evaluate(baselines_doc, record_doc, corpus, model)
+    # Tempdoc 683: same `current_release` pointer pattern as relevance/perf/leak — floors project
+    # from the release's optional `utility` section; `fallback_baselines` governs otherwise.
     from .. import ratchet_kernel as _rk
+    baselines_doc = _rk.load_baselines_doc(
+        baselines,
+        project_release=lambda rel, base: _ugate.project_release_to_baselines(
+            rel,
+            tolerance_default_abs=base.get("tolerance_default_abs", _ugate.DEFAULT_TOLERANCE_ABS),
+            per_corpus_tolerance=base.get("per_corpus_tolerance"),
+        ),
+    )
+    report = _ugate.evaluate(baselines_doc, record_doc, corpus, model)
     _rk.finalize_report(
         report, run_dir=Path(record), baselines_path=baselines,
         report_out=report_out, summary_fields=("current", "baseline", "floor", "verdict"),
@@ -544,10 +576,10 @@ def cmd_utility_gate_derive(ctx, records, out, tolerance, allow_realistic_corpus
     out_path = Path(out) if out else (Path(__file__).resolve().parents[2] / "utility-ratchet-baselines.v1.json")
 
     from .. import baseline_shift as _bshift
-    old_baselines = (
-        json.loads(out_path.read_text(encoding="utf-8")).get("baselines") or {}
-        if out_path.is_file() else {}
-    )
+    old_doc = json.loads(out_path.read_text(encoding="utf-8")) if out_path.is_file() else {}
+    # tempdoc 683: with the pointer pattern the previously pinned floors live in
+    # `fallback_baselines`; inline `baselines` (pre-migration files) still wins if present.
+    old_baselines = {**(old_doc.get("fallback_baselines") or {}), **(old_doc.get("baselines") or {})}
     changesets_dir = out_path.resolve().parent / ".changesets"
     try:
         for corpus, entry in derived.get("baselines", {}).items():
@@ -564,8 +596,17 @@ def cmd_utility_gate_derive(ctx, records, out, tolerance, allow_realistic_corpus
         sys.exit(1)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # tempdoc 683: preserve a pointer file's `current_release` + metadata — the derived measured
+    # values are its FALLBACK layer (mirrors leak-gate-derive).
+    if old_doc.get("current_release"):
+        merged_doc = {**old_doc,
+                      "tolerance_default_abs": derived["tolerance_default_abs"],
+                      "fallback_baselines": derived["baselines"]}
+        merged_doc.pop("baselines", None)
+    else:
+        merged_doc = derived
     out_path.write_text(
-        json.dumps(derived, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        json.dumps(merged_doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     click.echo(json.dumps(
         {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
 
