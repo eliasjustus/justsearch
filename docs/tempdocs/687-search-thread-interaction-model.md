@@ -151,3 +151,30 @@ surfaces, no new state authorities, no schema changes. The one new mechanism (wo
 warmup) rides an existing lifecycle hook. Size of change follows from that: small, spread
 across existing seams, with four orphaned styling/composition fragments deleted in the same
 work.
+
+
+## Round-2 research annex (external landscape check, 2026-07-07)
+
+Targeted pass over the three actively-moving areas the round-2 design bets on. Design
+references only — no external code/text/assets copied or adapted (nothing to attribute
+beyond the citations below).
+
+- **Grounding/attribution UX**: current research converges on the exact failure mode P2
+  addresses — users treat citation PRESENCE as verification while models emit unsupported
+  sentences at high rates (ALCE-line benchmarks; industry writeups). Research interfaces
+  grade evidence by RELATION (supports/contradicts), and "attribution gradients" work argues
+  for graduated unfolding (mark → excerpt → source) — which the card → reading-pane pipeline
+  already implements. Refinement recorded for P2's candidate scope: CONTRADICTED spans are a
+  distinct tier from unsupported ones; the per-claim scorer only supports the latter today —
+  do not build the contradiction tier until the scorer can carry it honestly.
+- **Unified search/answer interfaces**: the converged commercial pattern (answer engines)
+  routes EVERY query through model synthesis. The floor rule is therefore a genuine
+  differentiator, not a lag — instant, model-free results as the primary loop, with visible
+  user-correctable routing (the route chip) where competitors route silently. No design
+  change; raises the floor rule's standing from "decision 2" to the model's identity claim.
+- **Agent autonomy consent**: 2026 practice has standardized on the same three-tier shape as
+  Watch/Assist/Auto (suggest / co-pilot / autopilot) and names the "autonomy dial +
+  progressive authorization" pattern this tempdoc shipped. The published approval-flow
+  architecture for high-stakes actions (action + reasoning + impact + rollback + expiry)
+  exceeds our Assist ceremony by two fields (impact estimate, expiry); the undo ledger
+  already covers rollback. Recorded as candidate scope, not built.
