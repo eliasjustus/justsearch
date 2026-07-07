@@ -14,10 +14,18 @@ import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.api.DocumentService;
+import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
+import io.justsearch.app.api.knowledge.SearchTrace;
+import io.justsearch.app.api.knowledge.SearchTrace.HitStage;
+import io.justsearch.app.api.knowledge.SearchTrace.StageId;
+import io.justsearch.app.api.knowledge.SearchTrace.StageStatus;
+import io.justsearch.app.api.knowledge.SearchTrace.TraceStage;
 import io.justsearch.app.api.mcp.McpContractVersions;
 import io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
+import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
+import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -191,6 +199,84 @@ class McpProtocolHandlerTest {
 
     String answerDesc = (String) tools.get(0).get("description");
     assertTrue(answerDesc.contains("primary tool for question-answering"));
+
+    // Tempdoc 658: the opt-in `detail` argument is part of the published search-tool contract.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchInputSchema =
+        (Map<String, Object>) tools.get(1).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchProps =
+        (Map<String, Object>) searchInputSchema.get("properties");
+    assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
+  }
+
+  @Test
+  void toolsCall_search_attachesStructuredEvidence() throws Exception {
+    // Tempdoc 658: end-to-end wiring — the search tool projects the canonical SearchTrace onto the
+    // structuredContent channel (the McpEvidenceProjection mapping itself is unit-tested in
+    // McpEvidenceProjectionTest; this asserts callSearch attaches it and it survives serialization).
+    SearchTrace trace =
+        new SearchTrace(
+            SearchTrace.SCHEMA_VERSION,
+            "HYBRID",
+            "multi_leg",
+            null,
+            null,
+            List.of(new TraceStage(StageId.SPARSE_RETRIEVAL, StageStatus.EXECUTED, null, 5L, null, null)));
+    KnowledgeSearchResponse.Hit hit =
+        new KnowledgeSearchResponse.Hit(
+            "doc-1",
+            0.9d,
+            Map.of("title", "Troubleshooting", "path", "help/troubleshooting.md"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(new HitStage(StageId.SPARSE_RETRIEVAL, 1, 3.3f, null)));
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(canned);
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> ctrl,
+            () -> null,
+            FIXED_CLOCK);
+    var localHandler = new McpProtocolHandler(surface, List.of(), FIXED_CLOCK);
+
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn("s1");
+    when(ctx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":"
+                + "\"justsearch_search\",\"arguments\":{\"query\":\"troubleshoot\"}}}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    localHandler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    assertEquals(Boolean.FALSE, result.get("isError"));
+    @SuppressWarnings("unchecked")
+    Map<String, Object> structured = (Map<String, Object>) result.get("structuredContent");
+    assertNotNull(structured, "search tool response carries structuredContent evidence");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchTrace = (Map<String, Object>) structured.get("searchTrace");
+    assertEquals("HYBRID", searchTrace.get("effectiveMode"));
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> results = (List<Map<String, Object>>) structured.get("results");
+    assertEquals(1, results.size());
+    assertEquals("doc-1", results.get(0).get("id"));
+    assertNotNull(results.get(0).get("trace"), "per-hit ranking trace is projected");
   }
 
   @Test

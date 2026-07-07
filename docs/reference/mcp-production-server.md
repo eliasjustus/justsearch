@@ -77,6 +77,31 @@ All 6 tools validate their arguments against a declared JSON Schema at the MCP b
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
 
+## Structured retrieval evidence (tempdoc 658)
+
+`justsearch_search` and `justsearch_answer` return a machine-readable `structuredContent` object
+alongside the human-readable `content` text, so an agent can inspect *why* it got these results —
+not just read them. This is a projection of the same canonical records the desktop UI and REST API
+already render (`SearchTrace`, `ContextCitation`); it introduces no new authority
+(`governance/execution-surfaces.v1.json`).
+
+- **`justsearch_search` → `structuredContent`**: the query-level `searchTrace` (effective mode,
+  decision kind, degradation reason codes, and the per-stage list with status/reason/timing) plus a
+  `results` list carrying, per hit, its ranking `trace` (which legs placed it, at what rank/score) and
+  the fused-leg `legScores` (sparse/dense/splade/fused). The structural trace is always present; the
+  numeric per-hit detail tier is included only when the call sets `detail: true`.
+- **`justsearch_answer` → `structuredContent`**: the `citations` list (per-chunk provenance —
+  `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
+  mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
+  chunks considered/included, truncation). Citations are empty on the full-document fallback path.
+
+**Data exposure.** MCP tool responses are **not redacted** — path redaction applies to the diagnostics
+*export* bundle (a shareable artifact), not to live tool output. `citations[].parentDocId` is the
+document's identity (its absolute file path) and `excerpt` is the passage text; both are the user's own
+local data returned to the user's own local agent. This is the same identity `justsearch_search`
+already returns (its `path` field) and the desktop UI already shows. The `/mcp` endpoint is
+loopback-only (binds `127.0.0.1`; Hard Invariant #2), so nothing leaves the machine.
+
 ## Tool Selection
 
 Use `justsearch_answer` first when the user asks a question about
