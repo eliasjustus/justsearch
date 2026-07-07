@@ -379,8 +379,11 @@ gate:
 - `codeql.yml` when you need semantic code scanning outside GitHub's managed
   security surfaces.
 - `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
-- `phase-3-observability-nightly.yml` after changes to query orchestration,
-  fusion weights, reranking, or anything that could shift σ(nDCG@10).
+
+After changes to query orchestration, fusion weights, reranking, or anything
+that could shift σ(nDCG@10), run the drift gate manually (no workflow
+wraps it): `docs/how-to/recalibrate-phase3-baseline.md` has the
+`jseval calibrate` / `jseval gate` sequence.
 
 The `agent-live-eval-nightly.yml`, `rr219-resilience-governance-nightly.yml`,
 `rr219-resilience-soak-weekly.yml`, `track-g-report-win.yml`, and
@@ -388,7 +391,9 @@ The `agent-live-eval-nightly.yml`, `rr219-resilience-governance-nightly.yml`,
 (2026-05-12). Their underlying DAG runners and bench infrastructure were
 deleted by commit `a9c484f59` (2026-03-16); jseval covers the substance
 (`scripts/jseval/` — `agent-eval`, `retrieval-eval`, `rag-eval`,
-`bench-concurrency`, etc.).
+`bench-concurrency`, etc.). `phase-3-observability-nightly.yml` was likewise
+retired (2026-07-07) — it never ran automatically in its history (ADR-0026);
+its manual `jseval calibrate`/`jseval gate` capability is unaffected.
 
 **How to trigger and inspect:**
 
@@ -397,7 +402,6 @@ gh workflow run ci.yml                              # re-run public hosted fact 
 gh workflow run docs-lint.yml                       # manual docs verification
 gh workflow run codeql.yml                          # semantic code scanning
 gh workflow run build-installer.yml --ref <vX.Y.Z>  # installer/release attach
-gh workflow run phase-3-observability-nightly.yml   # σ(nDCG@10) drift gate
 gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```

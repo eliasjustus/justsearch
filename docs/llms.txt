@@ -59,7 +59,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Developing the UI](how-to/develop-ui.md): Demo mode (no backend), real backend mode, and frontend verification.
 - [Cohort Envelope Staleness Policy (LR1-b)](how-to/envelope-staleness-policy.md): When a cohort envelope (non-determinism σ per metric) should be rotated, and what triggers automatic vs manual invalidation.
 - [Interpret `jseval bisect` Output (LR5-d)](how-to/interpret-bisect-output.md): Reading the manifest-hash bisection report — single-axis, multi-axis, MULTI_AXIS_INTERACTION, no-cached-run, and identical-cohort paths.
-- [Recalibrate the Phase 3 Nightly Observability Baseline](how-to/recalibrate-phase3-baseline.md): Procedure for accepting genuine infrastructure drift by rebasing the nightly workflow's σ(nDCG@10) guard.
+- [Rebase the Phase 3 Drift-Gate Baseline](how-to/recalibrate-phase3-baseline.md): Procedure for accepting genuine infrastructure drift by rebasing the manual jseval gate's σ(nDCG@10) baseline.
 - [Spawn an Isolated Test Backend](how-to/spawn-isolated-test-backend.md): Lite mode env flag (JUSTSEARCH_LITE_MODE) and the per-class IsolatedBackendFixture pattern for integration tests that need a clean backend per test class without paying the 3-8s cost of loading the AI stack.
 - [Test GPU Inference Locally](how-to/test-gpu-locally.md): How to run llama-server with GPU offload for local development and testing.
 - [Triage PSI Drift on Encoder Distributions (LR4-g)](how-to/triage-psi-drift.md): Investigation checklist when encoder_drift flags PSI > 0.2 on an encoder.ort_run duration distribution.

@@ -818,19 +818,23 @@ export + adding its filename to `_PROJECTION_MODULE_NAMES` in
   regression window to in-cohort runs when the kwarg is supplied
   (§26.6 Decision 3).
 
-**Nightly drift workflow.** `.github/workflows/phase-3-observability-
-nightly.yml` runs a 5-run calibration + single `jseval run` daily at
-03:00 UTC; `jseval gate` asserts σ(nDCG@10) within ±10% of the B2
-baseline (0.00108) and auto-opens an issue on drift. (Phase 6 / 6.13:
-relocated from `scripts/ci/phase3_observability_gate.py` into the
-jseval package.)
+**Drift gate (manual).** `jseval calibrate` (5-run calibration) + `jseval run`
++ `jseval gate` asserts σ(nDCG@10) within ±10% of the B2 baseline (0.00108).
+(Phase 6 / 6.13: relocated from `scripts/ci/phase3_observability_gate.py`
+into the jseval package.) This was previously wrapped by
+`.github/workflows/phase-3-observability-nightly.yml`, a scheduled-cron
+workflow; per ADR-0026 (self-hosted runner-availability policy) the cron
+trigger was removed before it ever fired, and the workflow was deleted
+2026-07-07 having never run automatically in its history. The gate remains
+available as a manual CLI sequence; no automated wrapper currently invokes
+it.
 
 **Files:** `scripts/jseval/jseval/manifest.py` (cohort identity),
 `scripts/jseval/jseval/calibrate.py` (envelope calibration),
 `scripts/jseval/jseval/cohort_baselines.py` (facet registry),
 `scripts/jseval/jseval/history.py` (schema + check_trend),
 `scripts/jseval/jseval/projections/` (Layer-4 projections),
-`scripts/jseval/jseval/gate.py` (nightly gate), CLI entries
+`scripts/jseval/jseval/gate.py` (drift gate), CLI entries
 `jseval calibrate` + `jseval gate`.
 
 **Layer-5 experiment runners (Phase 4).** Four runner subcommands

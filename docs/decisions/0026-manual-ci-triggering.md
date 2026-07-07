@@ -139,3 +139,24 @@ lane, which may run on `pull_request`, `push`, and `workflow_dispatch`. The
 mechanical guard is now `scripts/ci/check-workflow-triggers.mjs`, which fails
 when actual workflow triggers do not match
 `scripts/ci/workflow-signal-policy.v1.json`.
+
+## Amendment 2026-07-07: `phase-3-observability-nightly.yml` deleted
+
+The workflow never ran automatically at any point in its history — the
+2026-04-26 amendment above removed its `schedule:` trigger before the
+workflow ever fired on that cron, leaving only `workflow_dispatch`, which
+nobody had exercised. Its header comment still described the pre-amendment
+cron/auto-issue behavior, creating a live risk that an agent would read the
+comment, conclude the trigger was a bug, and "fix" it by reinstating a
+schedule — reopening the exact unattended-boot-execution failure mode this
+ADR exists to prevent. The self-hosted runner is still the operator's
+workstation, online only when in use; going public (ADR-0044) resolved the
+GitHub Actions-minutes constraint for the hosted `CI` lane but has no bearing
+on this runner's intermittent uptime.
+
+The workflow file, its `workflow-signal-policy.v1.json` entry, and its
+references in `agent-guide.md` and the `ci-triage` skill were removed.
+`docs/how-to/recalibrate-phase3-baseline.md` was retired since its entire
+premise (rebasing a nightly gate's baseline) depended on the workflow
+existing; the underlying `jseval calibrate` / `jseval gate` CLI capability is
+unaffected and remains available for manual use.

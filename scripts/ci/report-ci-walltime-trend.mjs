@@ -8,7 +8,7 @@
  * wall-clock drifting up / are we at the floor" — by taking the MEDIAN over N runs
  * and flagging only SUSTAINED drift (median above the advisory ceiling). Warn-only:
  * it never fails anything; its workflow may open a single de-duped issue on drift.
- * Tempdoc 668 (conforms to the phase-3-observability-nightly post-hoc pattern).
+ * Tempdoc 668 (post-hoc analyzer + actions:read + issues:write + var gate pattern).
  *
  * Input: --runs-json <file> = array of per-run summaries
  *   [{ runId, createdAt, jobs: [{ name, wallSeconds }] }, ...]
