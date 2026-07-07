@@ -1581,9 +1581,17 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
 
-### obs:unanchored-general-50 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+### obs:unanchored-general-50 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) -
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
+
+### obs:hook-base — Agent-harness pitfall: PowerShell 5.1 pipes prepend a UTF-8 BOM to native stdin, so piping crafted J
+`kind: lesson?` `anchor: hook-base.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Agent-harness pitfall: PowerShell 5.1 pipes prepend a UTF-8 BOM to native stdin, so piping crafted JSON into a hook script for a runtime probe silently fails JSON.parse (hook reads null, stays silent) — probe hooks via node spawnSync with the input option (the hook-integrity bite mechanism) instead — `scripts/agent-analytics/lib/hook-base.mjs:readJsonStdin` (2026-07-07)
+
+### obs:624-agentic-retrieval-eval-rebuild — Tempdoc frontmatter status fields can be multi-thousand-token essays (e.g. tempdoc 624's), which mak
+`kind: defect?` `anchor: docs/tempdocs/624-agentic-retrieval-eval-rebuild.md` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Tempdoc frontmatter status fields can be multi-thousand-token essays (e.g. tempdoc 624's), which makes any batch frontmatter survey blow up in tokens and defeats cheap staleness checks — evidence for tempdoc 646's derived current-state trigger; surveys should truncate status to ~200 chars — `docs/tempdocs/624-agentic-retrieval-eval-rebuild.md:18` (2026-07-07)
 
 ## Parked
 

@@ -476,3 +476,53 @@ entries that accumulated on main fold into conditions by construction.
 **Validation:** all five suites green (store 13, fold 10, note 11, triage 6, hook 12);
 hook-integrity gate green; live fold + janitor + read-model runs against the real store;
 `check-tempdoc-numbers` green; full `gradlew build -x test` at close (see final commit).
+
+## Session retrospective (2026-07-07 — future-agent-relevant residue; this doc stands without any private transcript)
+
+**Where the work lives.** Branch `worktree-680-observations-channel` (worktree
+`.claude/worktrees/680-observations-channel`), 8 commits on top of main `2ef7396`; no PR opened yet.
+Exact validation battery, re-runnable from the worktree root:
+
+```
+node scripts/agent-analytics/lib/observations-store.test.mjs
+node scripts/agent-analytics/fold-observations.test.mjs
+node scripts/agent-analytics/note-observation.test.mjs
+node scripts/agent-analytics/observations-triage.test.mjs
+node scripts/agent-analytics/hooks/known-state-hint.test.mjs
+node scripts/governance/run.mjs --gate hook-integrity --mode gate
+node scripts/ci/check-tempdoc-numbers.mjs
+./gradlew.bat build -x test -PskipWebBuild=true
+```
+
+**Residual verification gaps, stated honestly:** (1) the `known-state-hint` hook's wiring is
+generated into the gitignored per-checkout `.claude/settings.local.json` — it was gate-verified and
+runtime-probed via spawned stdin, but a LIVE session firing it end-to-end requires a session started
+after the wiring regen; first post-merge session should confirm. (2) `docs-validate.mjs` was not
+used to validate the migrated store because it crashes on a pre-existing malformed frontmatter in
+tempdoc 530 (itself a condition in the store). (3) The full `gradlew test` suite was not run — no
+Java changed; `build -x test` plus the node suites were the gate, per plan.
+
+**Known unrelated dirty work (do not attribute to this branch):** the MAIN checkout's working tree
+carries other agents' state — untracked `models/*.onnx`, a modified `gradlew.bat`, and untracked
+tempdoc drafts (681, 682). None of it is on this branch.
+
+**CLAUDE.md byte discipline:** this branch's migration made four CLAUDE.md references to the old
+`## Inbox` stale; they were fixed here at net-negative bytes (CLAUDE.md ends 1 B under its
+always-loaded ceiling, vs over on main). Any wording change to always-loaded files must be
+byte-budgeted (`node scripts/ci/check-always-loaded-budget.mjs`) and coordinated with tempdoc 681,
+which owns that layer (rebase-second protocol per §Coordination).
+
+**Lessons filed as conditions in the store** (via the channel itself): PowerShell 5.1 pipes prepend
+a UTF-8 BOM to native stdin — probe hooks via `spawnSync` with the `input` option, never a PS pipe;
+tempdoc frontmatter `status:` essays (e.g. 624's) make batch frontmatter surveys token-explosive —
+truncate status fields when surveying (evidence toward 646's derived-current-state trigger).
+
+**Process residue worth preserving** (what made this cycle cheap): the falsifier-driven confidence
+pass before implementation — both design falsifiers were tested against live data for the cost of
+one throwaway script and seven probes, and the implementation then hit zero design surprises; the
+dry-run script became the migration tool (investigation artifacts reused as implementation); and
+cross-tempdoc coordination via explicit coupling notes + a rebase-second protocol (§Coordination)
+prevented collisions with two concurrently-opened tempdocs at zero merge cost. One trap to avoid:
+tempdoc drafts left uncommitted on main are invisible to new worktrees (branch-from-HEAD covers
+commits, not working-tree files) and can only be cross-referenced by editing an untracked file —
+commit drafts early; they are dated working history and ride along per the publication convention.
