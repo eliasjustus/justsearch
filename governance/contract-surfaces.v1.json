@@ -103,7 +103,7 @@
       "name": "AgentSessionsResponse",
       "schema": "SSOT/schemas/agent-sessions-response.v1.json",
       "outFile": "agent-sessions-response.ts",
-      "consumers": ["modules/ui-web/src/api/domains/agent.ts"]
+      "consumers": ["modules/ui-web/src/api/domains/agent.ts", "modules/ui-web/src/api/schemas.ts"]
     },
     {
       "name": "AgentHistoryResponse",
@@ -152,6 +152,18 @@
       "schema": "SSOT/schemas/operation-wire.v1.json",
       "outFile": "operation.ts",
       "consumers": ["modules/ui-web/src/api/types/registry.ts"]
+    },
+    {
+      "name": "InferenceStatusResponse",
+      "schema": "SSOT/schemas/inference-status-response.v1.json",
+      "outFile": "inference-status-response.ts",
+      "consumers": []
+    },
+    {
+      "name": "SettingsV2",
+      "schema": "SSOT/schemas/settings-v2.v1.json",
+      "outFile": "settings-v2.ts",
+      "consumers": ["modules/ui-web/src/api/domains/settings.ts", "modules/ui-web/src/api/schemas.ts"]
     }
   ]
 }
