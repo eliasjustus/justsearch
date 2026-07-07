@@ -249,6 +249,21 @@ probing; `stop-report.json` shows `disposition: normal_stop`).
   screenshot not framing the button — superseded by the scrolled capture above (the
   zip content was always the primary evidence).
 
+**Post-commit delta review (2026-07-07, second independent refute pass):** all
+claims HOLD, no refutation — the gap-fix CSS is structurally incapable of hiding a
+rendered operation (light-DOM `:has()` keys on the inner button's presence), the
+single EOL rider (`gradlew.bat`) is attribute-correct and cures its long-standing
+phantom-dirty state, FE 3508/3508 re-executed green, evidence bundle
+`689-review-evidence-20260707-060424-37656` validates with session stamp. Two
+awareness notes for future readers: (1) the `:has()` selector in HealthSurface is
+the codebase's first — fine for the Chromium/WebView2 target, but a precedent a
+reviewer should know exists; (2) process lesson — the implementation was committed
+AFTER the first refute pass ran, so the exact reviewed tree isn't git-addressable;
+future sessions should commit before dispatching independent reviews so the
+reviewed state is pinned. The post-merge MCP capture_evidence check (688) remains
+blocked by a stale MCP server + a libuv spawn assertion (inbox-logged with
+reproduction).
+
 ## Adjudication ledger (implementation pass, 2026-07-07)
 
 Every 683-census residue item ends in exactly one disposition. Sources: the de-risk
