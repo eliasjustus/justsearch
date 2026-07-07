@@ -1,7 +1,7 @@
 ---
 title: "Dev-tooling hardening: dev-runner JDK resolution + schema-writer line-ending normalization"
 type: tempdocs
-status: open — investigation complete, canonical JDK determined (25), scope proposed; NOT yet implemented
+status: open — IMPLEMENTED + verified (Issue 1 JDK resolver + Issue 3 LF normalization; branch worktree-td696-dev-jdk-eol, no PR yet). Discovered follow-up: an always-true `updateSchemas` gate in build.gradle.kts (pre-existing; logged, not fixed). See "Implementation (2026-07-07)" at end
 created: 2026-07-07
 updated: 2026-07-07
 category: dev-tooling / build / windows
@@ -232,3 +232,46 @@ squarely mechanical. Issue 1's cross-machine JDK-discovery heuristic is the one 
 matters — it's well-specified by obs 240 + T2 above, so a strong brief lets Sonnet handle it, but **escalate
 just the resolver design to Opus if the heuristic proves shaky**. Not max effort: no architectural
 ambiguity remains. Suggested sequencing — do Issue 3 first (fast, high-confidence win), then Issue 1.
+
+## Implementation (2026-07-07) — both issues done, verified; NOT yet a PR
+
+Backend/dev-tooling only (no UI — nothing to browser-check). Committed on branch
+`worktree-td696-dev-jdk-eol` (no PR opened yet, per owner instruction).
+
+**Issue 1 — shared JDK resolver.**
+- New `scripts/dev/lib/resolve-jdk.cjs` — resolves a JDK whose `java` is >=24 (target Temurin 25):
+  ambient `JAVA_HOME` if good → `JUSTSEARCH_DEV_JDK_HOME` → `~/.gradle/jdks/*` → scoop/Adoptium/OS roots →
+  fail-fast with an actionable message. Pure `parseJavaMajor`/`selectFromCandidates` exported under
+  `__test`.
+- Wired (inject `JAVA_HOME: resolveJdkHome()` into the spawn env) at: `dev-runner.cjs` gradle `assemble`
+  + head launch (Worker + inference inherit the head env — confirmed `WorkerSpawner` uses
+  `pb.environment().put(...)`, no `.clear()`); `justsearch-dev-mcp/server.mjs` hot-swap (`resolveJavaExe()`
+  for the `--source 25` java + `JAVA_HOME` env on the gradle compile, reusing the existing `_ownReq` CJS
+  interop); `prepare-worktree.cjs` `installDist` (lazy — a `--no-dist` run needs no JDK).
+- New unit test `scripts/dev/test-resolve-jdk.mjs` + `package.json` `"test:resolve-jdk"`.
+- **Verified:** `npm run test:resolve-jdk` (11/11); `npm run test:dev-runner` still green (my dev-runner
+  edits didn't break its `__test` export); node `--check` on all edited files; **non-stack probe** — with
+  the ambient JDK-8 `JAVA_HOME`, `resolveJdkHome()` correctly returned the Temurin-25 home, not JDK 8.
+  Not live-verified this session: the `server.mjs` hot-swap path (stale dev-MCP server) and full
+  `dev_start`-under-JDK-8 E2E (shared stack contended) — both use the unit-tested resolver.
+
+**Issue 3 — schema-writer LF normalization** (delegated to a sonnet subagent; verified by the main loop).
+- 13 test classes that write committed JSON via `writerWithDefaultPrettyPrinter()` now force LF on both
+  the JSON body AND the trailing terminator (the terminator was the real churn — `System.lineSeparator()`
+  is CRLF on Windows). The subagent's repo-wide sweep found one beyond the 8-site estimate
+  (`SearchPlannerApprovalCorpusTest`, worker-services). String-replace approach (not the indenter swap),
+  per the risk register.
+- **Verified:** combined full build `./gradlew.bat build -PskipWebBuild=true` (JAVA_HOME=25) **BUILD
+  SUCCESSFUL**, and `git status` shows **ZERO** churn under `SSOT/**`, `**/resources/**/schemas/**`,
+  `__fixtures__/**`, `errors.en.json` after the build — only the 13 intended test-file edits.
+
+**Teardown (rode along):** the four observation entries this work closes (JDK-8 dev-runner: obs 182, 240;
+CRLF churn: obs 1114, 1540) are annotated RESOLVED-by-696 in `docs/observations.md`.
+
+**Discovered follow-up (out of 696's scope — logged to the observations inbox, NOT fixed):** the churn's
+deeper root cause is a pre-existing `build.gradle.kts` bug — `if (project.hasProperty("updateSchemas"))`
+is **always true** because a Gradle task named `updateSchemas` is exposed as a project property, so every
+plain `./gradlew test` takes the "regenerate baseline" branch instead of comparing. The LF fix neutralizes
+the churn symptom and is forward-compatible if that gate is later corrected, but the always-true gate
+(which also defeats the schema-drift guard the comparison was meant to provide) is a separate defect worth
+its own fix. This is the strongest candidate for a 696 follow-up.
