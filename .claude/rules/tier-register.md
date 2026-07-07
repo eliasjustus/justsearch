@@ -42,7 +42,7 @@ why prose-tier is intentionally the right choice).
 | # | Slug | Rule | Tier | Resolves to | Catches violations via |
 |---|---|---|---|---|---|
 | 5 | `explore-before-implementing` | Explore Before Implementing — check for existing infrastructure | `prose-only` | — | Agent discipline; investigator-judgment, no mechanical check |
-| 6 | `fix-root-causes-not-symptoms` | Fix Root Causes, Not Symptoms (the 6 named anti-patterns) | `prose-only` | — | Code review for the semantic forms (weakened assertion, broadened catch, deleted code). The `@Disabled` + `// noinspection` subset is now ratcheted by `scripts/ci/check-suppression-ratchet.mjs` (620 Part V) — a NEW one beyond baseline fails the lint; the rest stay prose |
+| 6 | `fix-root-causes-not-symptoms` | Fix Root Causes, Not Symptoms (never make the failure invisible instead of impossible) | `prose-only` | — | Code review for the semantic forms (weakened assertion, broadened catch, deleted code). The `@Disabled` + `// noinspection` subset is now ratcheted by `scripts/ci/check-suppression-ratchet.mjs` (620 Part V) — a NEW one beyond baseline fails the lint; the rest stay prose |
 | 7 | `verify-your-work` | Verify Your Work — run `./gradlew.bat build -x test` + module tests | `prose-only` | — | Agent discipline; CI catches but locally is honor-system |
 | 8 | `use-every-verification-tier` | Use every verification tier available, including the LLM | `prose-only` | — | Agent discipline; `ai_activate` exists but is opt-in |
 | 9 | `audit-driven-fixes-need-test` | Audit-driven fixes need a runnable test | `prose-only` | — | Code-review catch; structural test coverage couldn't enforce |
@@ -53,7 +53,6 @@ why prose-tier is intentionally the right choice).
 | 14 | `stay-focused-on-assigned-work` | Stay Focused on Your Assigned Work | `prose-only` | — | Reviewer catches scope creep at PR time |
 | 15 | `log-pre-existing-issues` | Log Pre-Existing Issues, Don't Fix Them — append to `docs/observations.md` | `prose-only` | — | Agent discipline |
 | 16 | `before-appending-to-rules` | Before Appending to CLAUDE.md or `.claude/rules/` — run the gate | `gate` | `gate:prose-tier-register` | `prose-tier-register` discipline gate enforces this register's completeness (tempdoc 530 §Meta-loop) |
-| 17 | `ask-when-uncertain` | Ask When Uncertain | `prose-only` | — | Agent judgment |
 | 18 | `delegating-to-subagents` | Delegating to Subagents — brief inline, no destructive git delegation | `prose-only` | — | Cannot mechanically inspect subagent prompts; agent discipline. (`bash-guard` gives **no** subagent coverage — parent hooks don't fire in subagents, so the inline brief is the only control there) |
 | 32 | `tempdocs-are-dated-history` | Tempdocs Are Dated History, Not Current Truth — check highest-numbered tempdoc + frontmatter, verify against `main` before trusting | `hook-hint` | `hook:tempdoc-age-hint.mjs` | `tempdoc-age-hint.mjs` (PostToolUse Read, 620 Part V) age-stamps every `docs/tempdocs/**` Read with date/status + newer-count — a non-blocking delivery assist (~85%); staleness is surfaced but acting on it stays judgment |
 

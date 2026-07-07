@@ -1,9 +1,9 @@
 ---
-title: "Instruction-layer re-baseline: take the always-loaded set back under its ceiling and re-fit it to the current model generation — relocate region-specific payloads to moment-of-relevance delivery, compress evasion-enumerations into reason-bearing principles, and delete generation-obsolete rules in measured tranches. Triggered by (a) the always-loaded-budget gate being RED on main (measured 2026-07-06: 86,094 B ≈ 21.5K tokens vs 83,187 B ceiling, three files over) and (b) the Claude 5 model generation (2026-06-09), whose official guidance says instructions tuned for prior models are often too prescriptive and can degrade output quality. Continues tempdoc 620's residence→delivery line. Scoped, not implemented."
+title: "Instruction-layer re-baseline: take the always-loaded set back under its ceiling and re-fit it to the current model generation — relocate region-specific payloads to moment-of-relevance delivery, compress evasion-enumerations into reason-bearing principles, and delete generation-obsolete rules in measured tranches. Triggered by (a) the always-loaded-budget gate being RED on main (measured 2026-07-06: 86,094 B ≈ 21.5K tokens vs 83,187 B ceiling, three files over) and (b) the Claude 5 model generation (2026-06-09), whose official guidance says instructions tuned for prior models are often too prescriptive and can degrade output quality. Continues tempdoc 620's residence→delivery line. IMPLEMENTED 2026-07-07: 87,381 → 66,493 B (~21,845 → ~16,623 tok, −24%), all files green, ceilings re-pinned; see §Implementation record."
 type: tempdocs
-status: "open — SCOPED AND TAKEN OVER, NOT IMPLEMENTED (workflow-review session 2026-07-06). This tempdoc claims ownership of the instruction-layer subtraction direction so it stops being unowned; design is at move/boundary level, not per-line edit level. Implementing session must start with the two runtime probes in §Preconditions."
+status: "open — IMPLEMENTED (2026-07-07, worktree 681-instruction-layer), WATCH WINDOW ACTIVE for the Move 2/3 tranche (restore-on-recurrence; terms in §Implementation record). All three moves + the de-risk guard rails shipped and validated; the 2c912ae bump re-ratchet obligation (§Owner-directed addition) is honored — ceilings re-pinned at 66,493 B total. Remaining: the watch window, and future tranches only if evidence earns them."
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 author: agent workflow-review pass (live repo measurement: check-always-loaded-budget.mjs run 2026-07-06; official-source research pass over Anthropic docs/publications 2026-05-06..2026-07-06)
 category: agent-workflow / instruction-layer / context-efficiency
 related:
@@ -277,3 +277,75 @@ computes cost-per-shipped-merge. After ~2 months under this routing, that ratio 
 improve with no rise in post-merge fix rate (the §12 rework measure). If cost doesn't move, the
 routing is ceremony — delete the paragraph. If cost improves but rework rises, the Sonnet floor is
 too low for this repo's work — raise the floor, keep the structure.
+
+## Implementation record (2026-07-07, worktree `681-instruction-layer`)
+
+**Headline, measured:** always-loaded total **87,381 B (~21,845 tok) → 66,493 B (~16,623 tok), −24%**;
+every file green; ceilings re-pinned via `--rebalance` (5 lowered; total ceiling now 66,493 B) —
+which also discharges the §Owner-directed-addition obligation to re-ratchet the 2c912ae bumps.
+
+**Move 1 — relocations (all delivery-verified, not just deleted):**
+- `hooks-reference.md` 17,446 → 2,740 B. Rewritten as a behavioral contract (adapt-don't-retry,
+  kill switch, blocking-guard summaries, one-line hint index); per-hook catalog bodies deleted
+  after verifying each hook's fire-time message carries its guidance (sampled texts: pipe-mask,
+  lockfile, docs-regen, bash-guard block messages, search-engine full recipe).
+- ui-web gate table (3 rows) → `ui-web-gates` recipe row in `governance/consult-register.v1.json`;
+  CLAUDE.md keeps a one-line pointer row. Delivery probe: crafted-stdin `consult-doc-hint` on a
+  `modules/ui-web/src/` edit pushes the full 5-step recipe. `check-premerge-table.mjs` extended to
+  scan register recipe strings; mutation check confirmed it FAILS on a broken recipe ref.
+- `branch-safety.md` 12,285 → 10,204 B (under its 10,654 ceiling): worktree creation mechanics
+  (config seeding, cuda12/shared-models resolution, outside-dev-runner env vars) →
+  `docs/reference/contributing/common-workflows.md` §Worktree mechanics; compact recipe + pointer
+  stays. Collision zones (Merge Workflow, bash-guard tables — touched by `worktree-664` /
+  history-policy branches) deliberately untouched.
+- CLAUDE.md Common Pitfalls: ssot + schema-drift rows compressed to hook/skill pointers.
+- Budget checker hardened (fail-closed): globs `.claude/rules/*.md` and FAILS on any on-disk file
+  absent from the baseline (`UNLISTED`) unless `paths:`-frontmatter-scoped or `compaction-state.md`;
+  `--bump` extended to be the declared-ADDITION path (new file from ceiling 0). Closes the
+  §De-risk blind spot where a new rules file was always-loaded AND unmeasured.
+
+**Move 2 — compressions (anchors + tiers unchanged; no changesets owed, confirmed by gate run):**
+`fix-root-causes-not-symptoms` (6 bullets → "failure invisible instead of impossible" + compact
+clause; register row 6 wording updated), `structural-defects-no-repeat` (alias bullets → one
+parenthetical), `tempdoc-is-your-contract`, `before-appending-to-rules`,
+`delegating-to-subagents` (model-routing paragraph preserved verbatim). CLAUDE.md 26,094 → 22,053 B.
+
+**Move 3 — tranche 1: one deletion.** `ask-when-uncertain` (register row 17, prose-only) retired —
+anchor + section removed, row removed, changeset
+`gates/prose-tier-register/.changesets/688-retire-ask-when-uncertain.md` (`tempdoc: 681`;
+filename renumbered 681→688 by the cross-worktree number guard — 687 was claimed in-flight).
+Evidence: zero inbox entries for failure-to-ask; harness-level guidance now governs ask-vs-proceed;
+operator prompts steer against over-asking. **Watch window:** through ~2026-08-07, a failure-to-ask
+incident in the inbox/retros restores the rule verbatim and records it as having earned its text.
+Candidates evaluated and NOT deleted: `verify-your-work` (carries project-specific commands),
+`one-branch-per-worktree` (structurally enforced but sits in a collision-zone list; churn > gain).
+
+**Guard rails added:** `scripts/agent-analytics/lib/hard-invariants.test.mjs` pins the
+`hardInvariants()` parse contract (section heading, numbered items, anchor stripping, content
+needles) — green; crafted-stdin `subagent-guide` probe confirms all invariants project post-edit.
+
+**Validation (all green, this worktree, 2026-07-07):** always-loaded-budget (pass, re-pinned);
+prose-tier-register gate (pass; `declared-row-removal` note covered by the changeset);
+hook-integrity gate (pass); check-premerge-table (pass + mutation-bite verified);
+all `scripts/agent-analytics/**/*.test.mjs` (0 failures); check-tempdoc-numbers (OK, 16 worktrees);
+`./gradlew.bat build -x test -PskipWebBuild=true` (BUILD SUCCESSFUL asserted on output text);
+docs regen (`llmstxt-generate`, `skills-sync`) after the common-workflows.md edit. No user-visible
+product surface was touched — browser validation not applicable.
+
+**Unverified assumptions & deferred checks (honest ledger for the continuing agent):**
+1. *Behavioral effect of Moves 2–3 is unverified by design* — only the watch window measures it
+   (§Design). Sensor: observations inbox + session retros; restore-on-recurrence is the remedy.
+2. *Fire-time-message sufficiency was verified verbatim for 5 hooks* (pipe-mask, lockfile,
+   docs-regen, bash-guard, search-engine) *and by guidance-string density survey for the rest* —
+   a hook whose message is thinner than its deleted catalog entry could exist. If a session is
+   confused by a hook firing, enrich that hook's message (do not regrow the catalog).
+3. *The budget checker's new `paths:`-frontmatter exemption branch has no automated test and no
+   live exercicer yet* (no path-scoped rule file exists in-repo; the branch was reviewed, and the
+   fail-closed UNLISTED path is exercised by every check run's green result). First real
+   path-scoped rule file should confirm it is skipped, not flagged.
+4. *Consult recipe delivery was verified by crafted-stdin invocation of `consult-doc-hint`, not by
+   a harness-originated Edit event* — the hook's wiring itself was already live pre-681 (only its
+   register data changed), and `hook-integrity` (green) covers wiring, so residual risk is low.
+5. *Coordination debt:* `worktree-664-publish-gate` and the history-policy branch touch
+   branch-safety.md/tier-register.md; 681 avoided their hunks, but whichever merges second may
+   need a trivial rebase. The `worktree-624` branch (stale, no worktree) also touches these files.

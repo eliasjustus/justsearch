@@ -31,7 +31,7 @@
  * stabilizes (see the baseline `$comment`).
  */
 
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,6 +62,41 @@ function sizeOf(rel) {
 const baseline = JSON.parse(readFileSync(BASELINE, 'utf8'));
 const ceilings = baseline.ceilings ?? {};
 const tok = (b) => Math.round(b / 4);
+
+/**
+ * Always-loaded files on disk that the baseline doesn't cover (tempdoc 681).
+ * The ceilings map is hardcoded, so before this check a NEW .claude/rules/*.md
+ * file was invisible to the ratchet — always-loaded AND unmeasured. Fail-closed:
+ * every on-disk rules file must either carry a ceiling or be non-always-loaded
+ * (`paths:` frontmatter scopes a rule to matching files — it loads on demand,
+ * not at launch). `compaction-state.md` is session-ephemeral (compact-restore
+ * writes and deletes it) and exempt.
+ */
+function unlistedAlwaysLoaded() {
+  const EXEMPT = new Set(['compaction-state.md']);
+  let names;
+  try {
+    names = readdirSync(resolve(REPO_ROOT, '.claude/rules')).filter((n) => n.endsWith('.md'));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    if (EXEMPT.has(n)) continue;
+    const rel = `.claude/rules/${n}`;
+    if (rel in ceilings) continue;
+    let head = '';
+    try {
+      head = readFileSync(resolve(REPO_ROOT, rel), 'utf8').slice(0, 500);
+    } catch {
+      continue;
+    }
+    const fm = head.startsWith('---') ? (head.split('---')[1] ?? '') : '';
+    if (/^\s*paths\s*:/m.test(fm)) continue; // path-scoped rule: loads on demand, not always
+    out.push(rel);
+  }
+  return out;
+}
 
 const rows = Object.keys(ceilings).map((rel) => {
   const ceiling = ceilings[rel];
@@ -97,14 +132,20 @@ if (mode === 'bump') {
     console.error('--bump requires a file: --bump <path> [--reason "<why the growth is justified>"]');
     process.exit(2);
   }
-  if (!(file in ceilings)) {
-    console.error(`--bump: "${file}" is not an always-loaded file in the baseline.`);
+  const isBaselineable = file === 'CLAUDE.md' || /^\.claude\/rules\/[^/]+\.md$/.test(file);
+  if (!(file in ceilings) && !isBaselineable) {
+    console.error(`--bump: "${file}" is not an always-loaded file (CLAUDE.md or .claude/rules/*.md).`);
     process.exit(2);
   }
   const actual = sizeOf(file);
   if (actual == null) {
     console.error(`--bump: "${file}" not found on disk.`);
     process.exit(2);
+  }
+  if (!(file in ceilings)) {
+    // New always-loaded file (tempdoc 681): --bump is also the declared-ADDITION
+    // path, so the fail-closed unlisted check has an auditable remedy.
+    ceilings[file] = 0;
   }
   if (actual <= ceilings[file]) {
     console.log(`[always-loaded-budget] "${file}" (${actual} B) already within its ceiling ${ceilings[file]} B — no bump needed (use --rebalance to shrink).`);
@@ -127,6 +168,11 @@ if (mode === 'bump') {
 // check mode
 const over = [];
 let total = 0;
+for (const rel of unlistedAlwaysLoaded()) {
+  over.push(
+    `  UNLISTED ${rel}: always-loaded on disk but not in the baseline — declare it (node scripts/ci/check-always-loaded-budget.mjs --bump "${rel}" --reason "<why>") or scope it with paths: frontmatter`,
+  );
+}
 for (const r of rows) {
   if (r.actual == null) {
     over.push(`  MISSING  ${r.rel} (in baseline, not on disk)`);

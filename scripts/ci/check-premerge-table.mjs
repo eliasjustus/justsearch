@@ -74,6 +74,21 @@ function checkCells() {
   return cells;
 }
 
+/**
+ * Recipe strings from consult-register rows (tempdoc 681): the ui-web gate rows
+ * were relocated from the CLAUDE.md table into the `ui-web-gates` recipe in
+ * governance/consult-register.v1.json, so this validator scans recipe text too —
+ * otherwise the relocation would move those refs out of validation reach.
+ */
+function registerRecipeStrings() {
+  try {
+    const reg = JSON.parse(readFileSync(resolve(REPO_ROOT, 'governance/consult-register.v1.json'), 'utf8'));
+    return (reg.regions ?? []).flatMap((r) => r.recipe ?? []);
+  } catch {
+    return [];
+  }
+}
+
 const scripts = allScriptBasenames();
 const gates = gateIds();
 const cells = checkCells();
@@ -110,15 +125,32 @@ for (const cell of cells) {
   }
 }
 
-console.log(`[premerge-table] scanned ${cells.length} rows: ${scriptRefs} script refs, ${gateRefs} gate refs.`);
+const recipeStrings = registerRecipeStrings();
+for (const s of recipeStrings) {
+  for (const gm of s.matchAll(/--gate\s+([a-z0-9,\-]+)/gi)) {
+    for (const id of gm[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+      gateRefs++;
+      if (!gates.has(id)) missingGates.add(id);
+    }
+  }
+  for (const m of s.matchAll(/\b((?:check|gen|strip)-[a-z0-9-]+)\b/gi)) {
+    scriptRefs++;
+    if (!scripts.has(m[1])) missingScripts.add(m[1]);
+  }
+}
+
+console.log(
+  `[premerge-table] scanned ${cells.length} rows + ${recipeStrings.length} register recipe strings: ${scriptRefs} script refs, ${gateRefs} gate refs.`,
+);
 
 const fail = missingScripts.size || missingGates.size;
 if (fail) {
   console.error('\n[premerge-table] FAIL — the Pre-merge table references that no longer resolve:');
   if (missingScripts.size) console.error(`  missing scripts (no scripts/**/<name>.{mjs,cjs,js}): ${[...missingScripts].join(', ')}`);
   if (missingGates.size) console.error(`  missing gate ids (not in governance/registry.v1.json): ${[...missingGates].join(', ')}`);
-  console.error('\nA check was renamed/removed, or the table has a typo. Fix the CLAUDE.md table (or restore the');
-  console.error('check). The table is hand-maintained because the ui-web checks are not registry gates (620 Move 1).');
+  console.error('\nA check was renamed/removed, or the table has a typo. Fix the CLAUDE.md table or the');
+  console.error('governance/consult-register.v1.json recipe (ui-web rows live there — tempdoc 681), or restore the');
+  console.error('check. The table is hand-maintained because the ui-web checks are not registry gates (620 Move 1).');
   process.exit(1);
 }
 console.log('[premerge-table] pass — every referenced check script and gate id resolves.');
