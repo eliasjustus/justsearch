@@ -60,5 +60,5 @@ that executes it).
 
 ## Out of scope
 
-Liveness/census work (tempdoc 687); any new validation states or review tooling
+Liveness/census work (tempdoc 689); any new validation states or review tooling
 beyond the derived `evidenceFact`.

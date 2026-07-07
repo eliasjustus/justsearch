@@ -10,7 +10,7 @@ related:
   - 638-dead-code-identification-sweep             # named the dead-but-reachable class; the census is its runtime-witness counterpart
 ---
 
-# 687 — Liveness reconciliation (census round 2)
+# 689 — Liveness reconciliation (census round 2)
 
 ## Why
 
