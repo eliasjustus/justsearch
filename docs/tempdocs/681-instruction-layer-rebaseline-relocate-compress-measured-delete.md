@@ -331,3 +331,21 @@ all `scripts/agent-analytics/**/*.test.mjs` (0 failures); check-tempdoc-numbers 
 `./gradlew.bat build -x test -PskipWebBuild=true` (BUILD SUCCESSFUL asserted on output text);
 docs regen (`llmstxt-generate`, `skills-sync`) after the common-workflows.md edit. No user-visible
 product surface was touched — browser validation not applicable.
+
+**Unverified assumptions & deferred checks (honest ledger for the continuing agent):**
+1. *Behavioral effect of Moves 2–3 is unverified by design* — only the watch window measures it
+   (§Design). Sensor: observations inbox + session retros; restore-on-recurrence is the remedy.
+2. *Fire-time-message sufficiency was verified verbatim for 5 hooks* (pipe-mask, lockfile,
+   docs-regen, bash-guard, search-engine) *and by guidance-string density survey for the rest* —
+   a hook whose message is thinner than its deleted catalog entry could exist. If a session is
+   confused by a hook firing, enrich that hook's message (do not regrow the catalog).
+3. *The budget checker's new `paths:`-frontmatter exemption branch has no automated test and no
+   live exercicer yet* (no path-scoped rule file exists in-repo; the branch was reviewed, and the
+   fail-closed UNLISTED path is exercised by every check run's green result). First real
+   path-scoped rule file should confirm it is skipped, not flagged.
+4. *Consult recipe delivery was verified by crafted-stdin invocation of `consult-doc-hint`, not by
+   a harness-originated Edit event* — the hook's wiring itself was already live pre-681 (only its
+   register data changed), and `hook-integrity` (green) covers wiring, so residual risk is low.
+5. *Coordination debt:* `worktree-664-publish-gate` and the history-policy branch touch
+   branch-safety.md/tier-register.md; 681 avoided their hunks, but whichever merges second may
+   need a trivial rebase. The `worktree-624` branch (stale, no worktree) also touches these files.
