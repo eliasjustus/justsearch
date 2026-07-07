@@ -9,54 +9,18 @@ The main checkout (`F:\JustSearch`) stays on `main` and is never switched.
 
 ### Creating a worktree
 
-**Within a session** — use the `EnterWorktree` tool:
-```
-EnterWorktree { name: "feature-name" }
-```
-This creates a worktree at `.claude/worktrees/<name>/` with a branch
-`worktree-<name>` based on local `HEAD` — the project `.claude/settings.json`
-sets `worktree.baseRef: "head"`, so worktrees (and `isolation:"worktree"`
-subagents) carry your unpushed/just-merged commits instead of branching from a
-stale `origin` (tempdoc 618 §1). Config files (`.claude/settings.local.json`,
-`.mcp.json`) are gitignored (maintainer-local — they carry a GitHub PAT / a
-permissive local security posture), **not** git-tracked. Whether a new
-worktree starts with them depends on whether your base checkout already had
-them at creation time — don't rely on it. `prepare-worktree.cjs` (next step
-below) seeds any missing one from its committed `.example` file (never
-overwriting an existing copy), so it's always safe to run. See
-`MAINTAINING.md` for details.
-
-**Make a worktree dev-ready** — from inside the worktree run:
-```
-node scripts/dev/prepare-worktree.cjs          # npm ci + installDist + seeds .mcp.json/settings.local.json
-node scripts/dev/prepare-worktree.cjs --no-dist # FE-only (skip the Java dists)
-```
-
-**Shared models / runtime**: the dev-runner resolves `JUSTSEARCH_MODELS_DIR`
-from the **main** checkout automatically (tempdoc 618 §2). Runtime resolution
-is **GPU-only by design as of tempdoc 656** (Move 1 + Move 2 — this supersedes
-618 §3's CPU-baseline auto-stage, which no longer happens): the dev-runner
-resolves a **shared cuda12** llama-server — the worktree's own
-`native-bin/llama-server/variants/cuda12/` if deliberately Install-AI'd there,
-else the **main checkout's** shared cuda12 — and provisions the main checkout's
-copy once from the Gradle cuda stage if absent
-(`./gradlew :modules:ui:stageLlamaCudaVariant`, a one-time ~600 MB download).
-Every worktree then references that one shared copy with zero per-worktree
-download. Dev does not stage or fall back to a CPU llama-server baseline —
-a CPU 9B fallback runs ~10x slower and saturates every core, DOSing concurrent
-worktrees (tempdoc 381, 656) — so with no cuda12 resolvable, inference fails
-CLOSED (truthful "unavailable" via the runtime manifest's reason codes)
-instead of silently degrading onto CPU. See `resolveCuda12ServerExe` /
-`stageSharedCuda12` in `scripts/dev/dev-runner.cjs` and the regression test
-`scripts/dev/test-dev-runner-runtime-resolution.mjs`. This resolution only
-applies to backends launched **through the dev-runner** (`justsearch_dev_start`
-/ MCP tools); a backend started outside it (e.g. a bare `gradlew
-runHeadlessEval`) gets neither `JUSTSEARCH_MODELS_DIR` nor
-`JUSTSEARCH_SERVER_EXE` set automatically and needs to export both itself:
-```
-JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
-JUSTSEARCH_SERVER_EXE=F:\JustSearch\modules\ui\native-bin\llama-server\variants\cuda12\llama-server.exe
-```
+**Within a session** — `EnterWorktree { name: "feature-name" }` creates
+`.claude/worktrees/<name>/` on branch `worktree-<name>` based on local `HEAD`
+(`worktree.baseRef: "head"` — carries your unpushed/just-merged commits,
+tempdoc 618 §1). Make it dev-ready from inside:
+`node scripts/dev/prepare-worktree.cjs` (`--no-dist` for FE-only) — it also
+seeds the gitignored `.mcp.json` / `settings.local.json` from their `.example`
+files. Shared models and the shared cuda12 llama-server resolve from the
+**main** checkout automatically (GPU-only by design — no CPU fallback;
+inference fails CLOSED without cuda12). Full mechanics — config-seeding
+caveats, cuda staging, env vars for backends started OUTSIDE the dev-runner —
+in `docs/reference/contributing/common-workflows.md` §Worktree mechanics
+(relocated, tempdoc 681).
 
 **New terminal session** — launch Claude with the `--worktree` flag:
 ```bash

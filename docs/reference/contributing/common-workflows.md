@@ -131,3 +131,38 @@ Load `/docs-maintenance` for the full regeneration checklist and doc quality rul
 - Sync skills from canonical docs: `node scripts/docs/skills-sync.mjs`
 - After module changes: `node scripts/architecture/module-deps.mjs --update-canonical`
 - After config changes: `node scripts/docs/generate-runtime-config-matrix.mjs --write-doc docs/reference/configuration/runtime-config-ownership-matrix.md`
+
+## Worktree mechanics (relocated from `.claude/rules/branch-safety.md` — tempdoc 681)
+
+The always-loaded rule file keeps the hard rules and a compact creation recipe; the full
+mechanics live here.
+
+**Config-file seeding.** `.claude/settings.local.json` and `.mcp.json` are gitignored
+(maintainer-local — they carry a GitHub PAT / a permissive local security posture), **not**
+git-tracked. Whether a new worktree starts with them depends on whether your base checkout had
+them at creation time — don't rely on it. `node scripts/dev/prepare-worktree.cjs` seeds any
+missing one from its committed `.example` file (never overwriting an existing copy), so it is
+always safe to run. `--no-dist` skips the Java dists (FE-only prep). See `MAINTAINING.md`.
+
+**Shared models / runtime resolution.** The dev-runner resolves `JUSTSEARCH_MODELS_DIR` from the
+**main** checkout automatically (tempdoc 618 §2). Runtime resolution is **GPU-only by design as
+of tempdoc 656** (supersedes 618 §3's CPU-baseline auto-stage): the dev-runner resolves a
+**shared cuda12** llama-server — the worktree's own `native-bin/llama-server/variants/cuda12/`
+if deliberately Install-AI'd there, else the **main checkout's** shared cuda12 — and provisions
+the main checkout's copy once from the Gradle cuda stage if absent
+(`./gradlew :modules:ui:stageLlamaCudaVariant`, a one-time ~600 MB download). Every worktree then
+references that one shared copy with zero per-worktree download. Dev does not stage or fall back
+to a CPU llama-server baseline — a CPU 9B fallback runs ~10x slower and saturates every core,
+DOSing concurrent worktrees (tempdoc 381, 656) — so with no cuda12 resolvable, inference fails
+CLOSED (truthful "unavailable" via the runtime manifest's reason codes) instead of silently
+degrading onto CPU. See `resolveCuda12ServerExe` / `stageSharedCuda12` in
+`scripts/dev/dev-runner.cjs` and the regression test
+`scripts/dev/test-dev-runner-runtime-resolution.mjs`.
+
+**Backends started outside the dev-runner** (e.g. a bare `gradlew runHeadlessEval`) get neither
+`JUSTSEARCH_MODELS_DIR` nor `JUSTSEARCH_SERVER_EXE` set automatically and must export both:
+
+```text
+JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
+JUSTSEARCH_SERVER_EXE=F:\JustSearch\modules\ui\native-bin\llama-server\variants\cuda12\llama-server.exe
+```
