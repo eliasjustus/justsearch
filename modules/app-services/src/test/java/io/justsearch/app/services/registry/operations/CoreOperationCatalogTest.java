@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.agent.api.registry.AuditPolicy;
 import io.justsearch.agent.api.registry.ConfirmStrategy;
 import io.justsearch.agent.api.registry.ExecutorTag;
@@ -181,6 +182,27 @@ final class CoreOperationCatalogTest {
     assertEquals(RiskTier.LOW, op.policy().risk());
     assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
     assertEquals(Set.of(ExecutorTag.UI), op.executors());
+  }
+
+  @Test
+  void exportDiagnosticsIsUserAudienceWhileStateMutatingSiblingsStayOperator() {
+    // Tempdoc 689 decision: core.export-diagnostics is a read-only, privacy-redacted,
+    // local-only export — a user self-service support flow, not an admin action. Pin
+    // this deliberately asymmetric to its state-mutating siblings (clear-failed-jobs,
+    // index-gc, restart-worker), which remain Audience.OPERATOR, so a future blanket
+    // audience change fails loudly instead of silently widening operator-only actions
+    // to end users.
+    Operation exportDiagnostics =
+        catalog.findById(CoreOperationCatalog.EXPORT_DIAGNOSTICS).orElseThrow();
+    Operation clearFailedJobs =
+        catalog.findById(CoreOperationCatalog.CLEAR_FAILED_JOBS).orElseThrow();
+    Operation indexGc = catalog.findById(CoreOperationCatalog.INDEX_GC).orElseThrow();
+    Operation restartWorker = catalog.findById(CoreOperationCatalog.RESTART_WORKER).orElseThrow();
+
+    assertEquals(Audience.USER, exportDiagnostics.audience());
+    assertEquals(Audience.OPERATOR, clearFailedJobs.audience());
+    assertEquals(Audience.OPERATOR, indexGc.audience());
+    assertEquals(Audience.OPERATOR, restartWorker.audience());
   }
 
   @Test

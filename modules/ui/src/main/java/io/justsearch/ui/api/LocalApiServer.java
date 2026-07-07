@@ -542,7 +542,6 @@ public class LocalApiServer {
         inferenceHandlers::handleSetInferenceMode,
         inferenceHandlers::handleReloadInferenceConfig,
         inferenceHandlers::handleDetachExternalInferenceServer,
-        inferenceHandlers::handleTriggerOfflineProcessing,
         inferenceHandlers::handleRestartWorker,
         core.encoderRuntimeController()::handle,
         inferenceHandlers::handleInferenceFailures,
@@ -906,7 +905,6 @@ public class LocalApiServer {
     final Path indexBasePath;
     KnowledgeServerBootstrap knowledgeServer;
     tools.jackson.databind.JsonNode configRoot;
-    Runnable offlineProcessingTrigger;
     String knowledgeServerStartError;
     private Telemetry telemetry;
     private String sessionToken;
@@ -993,11 +991,6 @@ public class LocalApiServer {
 
     public Builder configRoot(tools.jackson.databind.JsonNode configRoot) {
       this.configRoot = configRoot;
-      return this;
-    }
-
-    public Builder offlineProcessingTrigger(Runnable offlineProcessingTrigger) {
-      this.offlineProcessingTrigger = offlineProcessingTrigger;
       return this;
     }
 

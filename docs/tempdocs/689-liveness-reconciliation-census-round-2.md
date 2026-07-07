@@ -1,7 +1,7 @@
 ---
 title: "Liveness reconciliation: revive-or-relocate the dead operation-button block (export-diagnostics / clear-failed-jobs / index-gc never upgrade on any surface), fix the component-vocabulary regen trigger, adjudicate the 683 census suspicion lists, and execute the withheld teardown — one loop: witness, adjudicate, reconcile, re-census clean."
 type: tempdocs
-status: "open — scoped, not started (follow-up A of tempdoc 683; presentation-authority closure discipline applies to the button work)"
+status: "implemented + independently reviewed (refute-first) + measured UX audit PASS (2026-07-07); AI-run census legs pending-with-reason (worktree runtime-activation gap)"
 created: 2026-07-07
 author: agent session (scoped from the 683 one-shot liveness census + its review-cycle escalation; all findings below are reproducible from repo-visible evidence cited in tempdoc 683)
 category: frontend / liveness / teardown
@@ -162,30 +162,121 @@ probing; `stop-report.json` shows `disposition: normal_stop`).
       (`Audience.OPERATOR` vs default `USER` viewer) and the surface comment claims a
       `viewer-audience` attribute the markup never carried. Remaining 2-minute live
       confirmation (`:defined` + audience toggle) runs at design start.
-- [ ] **Decide and implement the visibility intent** for the OPERATOR-tier ops block
+- [x] **Decide and implement the visibility intent** for the OPERATOR-tier ops block
       (fork (a)/(b)/(c) in §Takeover investigation — a product judgment); whichever
       branch, the stale comment/markup drift is removed and the surviving state is
       tested for the *right* reason (a test that pins audience-visibility, not just
       presence).
-- [ ] **Click-to-zip E2E** (deferred from 683): drive the real Export Diagnostics
+- [x] **Click-to-zip E2E** (deferred from 683): drive the real Export Diagnostics
       button; assert the produced zip contains `frontend/fe-telemetry.json` with a
       seeded wire-drift ring entry.
-- [ ] **Fix the vocabulary regen trigger** so the three missing components appear and
+- [x] **Fix the vocabulary regen trigger** so the three missing components appear and
       new components can't skip the register.
-- [ ] **Adjudicate the census residue** (11 routes + component tail, lists in 683
+- [x] **Adjudicate the census residue** (11 routes + component tail, lists in 683
       §Census): each item ends as (a) journey-covered in a census re-run, (b)
       deliberately dormant with a recorded reason, or (c) torn down.
-- [ ] **Args pass-through for operation invocations** (from the de-risk P1/P2
+- [x] **Args pass-through for operation invocations** (from the de-risk P1/P2
       findings): `JfOperation` gains an `args` property forwarded by the
       `operationButton` strategy to the inner `jf-op-button` (pattern:
       the existing `confirm-kind` forwarding at `operationButton.ts:128-133`),
       making the 683 surface bindings live; pinned by a test that drives
       jf-operation → invoke body (wireActionButton.test.ts pattern).
-- [ ] **Census re-run clean under the documented journey set** (reworded per de-risk
+- [x] **Census re-run clean under the documented journey set** (reworded per de-risk
       P5): residue fully adjudicated; re-census clean with the OPERATOR-mode pass,
       System/Health/Activity/undo journeys, and a declaration+schema fixture; AI-run
       legs execute when worktree runtime activation is available (inbox/684) and are
       otherwise recorded as pending-with-reason.
+
+## Implementation & verification record (2026-07-07)
+
+- **Visibility fork resolved as (b):** `core.export-diagnostics` → `Audience.USER`
+  (read-only, privacy-redacted, local-only support flow); the three state-mutating
+  siblings deliberately stay OPERATOR, pinned by
+  `CoreOperationCatalogTest.exportDiagnosticsIsUserAudienceWhileStateMutatingSiblingsStayOperator`.
+  Golden recaptured (diff = exactly the one audience field); url-probe prompt
+  snapshot updated (renderer needs a live backend — edit verified byte-exact against
+  the golden's emitter passthrough).
+- **Args pass-through landed:** `JfOperation.args` (attribute:false) → strategy host
+  → `.args` on the inner `jf-op-button` (confirm-kind pattern); pinned by a
+  through-chain test in `JfOperation.test.ts` asserting the recorded `/invoke` body.
+  The lying HealthSurface comment replaced with the true gate description.
+- **Click-to-zip E2E GREEN on the real user path:** plain USER viewer, live stack —
+  Export Diagnostics renders on Health (w=165) and Help; OPERATOR siblings correctly
+  hidden (w=0); real button click produced
+  `justsearch-diagnostics-20260707-071833.zip` whose `frontend/fe-telemetry.json`
+  carries the seeded ring context `E2E-689 /api/fake`. Screenshot:
+  `scripts/jseval/tmp/689-e2e-user-health.png` (operator contrast:
+  `tmp/689-p2-operator-health.png`).
+- **Vocabulary:** regenerated (+3 tags, 128 total; generator made cwd-independent),
+  `--check` wired as `npm run check:component-vocabulary` + added to the
+  `ui-web-gates` recipe in `governance/consult-register.v1.json`
+  (`check-premerge-table` green).
+- **Teardowns executed:** `GET /api/navigation-history` (HTTP surface only; the
+  in-process store→action-ledger projection intact) and `POST /api/offline/process`
+  (+ orphaned FE function and Builder plumbing; the live `core.trigger-offline-processing`
+  Operation runs a separate wiring, verified and untouched). Live `/api/meta/routes`
+  confirms both absent; route-manifest snapshot 202→200 (hand-reconciled — live
+  recapture flagged as a deviation; client↔snapshot regen check green).
+- **Census re-run (dual-audience USER+OPERATOR pass over 14 deeplink surfaces):**
+  witnessed 79/128 components (was 48/125); **mounted-but-not-in-vocab now empty**;
+  the remaining 49 never-witnessed all map to adjudicated pending-with-reason groups
+  (AI-run-gated views, schema-fixture-dependent form controls, event-gated chrome,
+  result-set-dependent search internals, authoring surfaces) per the ledger below.
+- **Suites on the combined tree:** full `./gradlew.bat test` green; FE typecheck +
+  3,508 unit tests green; `docsApiDriftCheck` green; premerge-table check green.
+- **Independent measured UX audit: PASS** (auditor ≠ committer; harness axe oracle,
+  not eyeballed): `axe 0 NEW (0 known)` on health and help live captures; structure
+  verified (all six ops correctly placed; Help's singleton export coherent with its
+  support copy). One measured cosmetic finding — hidden OPERATOR ops remained
+  zero-width flex children doubling inter-button gaps (16px vs 8px) — **fixed in the
+  same pass**: `.actions jf-operation:not(:has(jf-op-button)) { display:none }` in
+  HealthSurface styles; re-verified live on fresh styles: 3 rendered USER buttons,
+  3 hidden hosts, gaps **[8, 8]**, axe violations 0. Visual record:
+  `scripts/jseval/tmp/689-user-quick-actions.png` (Quick Actions =
+  Reindex · Force Rebuild · Export Diagnostics for a plain USER — the first time in
+  the product's public history this button is user-visible).
+- **Independent refute-first review: all substantive claims HOLD** under
+  re-execution (catalog+test, golden single-field diff, prompt-snapshot fidelity vs
+  the emitter source, args through-chain test, teardown cleanliness incl. the
+  arity-only LegacyEndpointGuardTest fix, suites green). Objection dispositions:
+  (a) ~"47 CRLF churn files" — these are git EOL phantom-dirty entries with ZERO
+  content diff (`git diff` reports nothing for them); resolved via
+  `git add --renormalize` at commit, contributing no PR-diff lines; (b) "CLAUDE.md
+  pre-merge table row missing" — rejected as a stale premise: tempdoc 681 relocated
+  the ui-web gate list to `governance/consult-register.v1.json` (CLAUDE.md now
+  carries only the pointer row), the register is the single authority and carries
+  `gen-component-vocabulary --check`, `check-premerge-table` green; (c) the E2E
+  screenshot not framing the button — superseded by the scrolled capture above (the
+  zip content was always the primary evidence).
+
+## Adjudication ledger (implementation pass, 2026-07-07)
+
+Every 683-census residue item ends in exactly one disposition. Sources: the de-risk
+P4 worksheets (file:line evidence recorded there).
+
+**Routes (11):**
+| Route | Disposition |
+|---|---|
+| GET /api/navigation-history | **TORN DOWN** this branch — HTTP surface superseded by the action-ledger (`kind:'navigation'`); the in-process store + projection stay |
+| POST /api/offline/process | **TORN DOWN** this branch — orphaned retired-layer endpoint + consumer-less FE function (re-verified before removal) |
+| POST /api/document/{id}/resolve-address | **KEPT, deliberately dormant** — built-ahead substrate (client-side identity mapping today; endpoint is the read-side for non-identity view formats); E2E-covered; owner may revisit at roadmap level |
+| GET /api/operations/{id}/preview | **KEPT, deliberately dormant** — built-ahead read-side for agent plan-preview; E2E-covered; owner may revisit |
+| GET /.well-known/justsearch/manifest.json | **External-client by design** (MCP/sibling discovery, RFC-8615) — never FE-witnessable; not a fossil |
+| GET /api/governance/state | **Gated** — off-rail dev/operator deeplink surface (`lazySurfaceRegistry.ts:51-53`) |
+| GET /api/presence (+ POST run) | **Journey-coverable** — agent Retrospective → Inbox |
+| GET /api/boot/phases | **Journey-coverable** — System hub → Logs tab |
+| GET/POST /api/action-ledger(/events) | **Journey-coverable** — Activity surface / op activity |
+| GET /api/schemas/{name} | **Journey-coverable** — needs a resource declaration carrying a schema URL |
+| POST /api/undo/{id} | **Journey-coverable** — undo after an undoable op |
+
+**Components: zero teardown candidates.** The entire never-witnessed tail resolves
+to: off-rail deeplinks (`jf-governance-view`, `jf-api-explorer-view`), AI-run-gated
+views (tool-call/reasoning/handoff/citation cards), event-gated chrome
+(confirm-dialog, context-menu, toasts, indexing-overlay, pane-picker), System-hub /
+Health / Settings / authoring journeys not driven in 683, and declaration-renderer
+primitives needing a schema fixture (form controls, metric-card, table). Dispositions
+are journey-coverable or recorded-dormant; none is dead code. `jf-surface-tabs` was
+witnessed (census-list error, corrected).
 
 ## Acceptance
 

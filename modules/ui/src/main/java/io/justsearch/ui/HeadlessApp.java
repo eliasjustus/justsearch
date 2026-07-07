@@ -350,9 +350,6 @@ public class HeadlessApp {
     log.info("HeadAssembly started (degraded — Worker connecting in background).");
 
     var headInfra = bootstrap.headInfraRegistry();
-    io.justsearch.app.services.vdu.OfflineCoordinator coordinator = headInfra.offlineCoordinator();
-    Runnable offlineTrigger =
-        coordinator != null ? coordinator::startOfflineProcessing : null;
     GplStatusProvider gplCoordinator = headInfra.gplJobCoordinator();
     tools.jackson.databind.JsonNode configRoot =
         io.justsearch.configuration.JustSearchConfigurationLoader.loadYamlRoot().orElse(null);
@@ -369,7 +366,6 @@ public class HeadlessApp {
             .HeadAssembly(bootstrap)
             .knowledgeServer(null)
             .configRoot(configRoot)
-            .offlineProcessingTrigger(offlineTrigger)
             .knowledgeServerStartError(null)
             .telemetry(telemetry)
             .sessionToken(sessionToken)

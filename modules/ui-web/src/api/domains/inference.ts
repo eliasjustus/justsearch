@@ -217,18 +217,6 @@ export async function reloadInference(baseUrl: string, signal?: AbortSignal): Pr
 }
 
 /**
- * Triggers offline processing (re-runs pending embedding/VDU jobs).
- */
-export async function triggerOfflineProcess(baseUrl: string, signal?: AbortSignal): Promise<void> {
-  await request(baseUrl, '/api/offline/process', {
-    method: 'POST',
-    body: {},
-    signal,
-    retries: 1,
-  });
-}
-
-/**
  * Restarts the Worker process (for runtime reload or recovery).
  */
 export async function restartWorker(baseUrl: string, signal?: AbortSignal): Promise<void> {

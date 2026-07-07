@@ -37,6 +37,7 @@ export type ComponentTag =
   | 'jf-command-palette'
   | 'jf-composer'
   | 'jf-confirm-dialog'
+  | 'jf-context-inspector-pane'
   | 'jf-context-menu'
   | 'jf-control'
   | 'jf-conversation-history'
@@ -95,6 +96,7 @@ export type ComponentTag =
   | 'jf-pulse-dots'
   | 'jf-rail'
   | 'jf-reasoning-block'
+  | 'jf-recents-menu'
   | 'jf-resolution-stats'
   | 'jf-resolution-toast'
   | 'jf-resource'
@@ -104,6 +106,7 @@ export type ComponentTag =
   | 'jf-search-results'
   | 'jf-search-surface'
   | 'jf-search-trace'
+  | 'jf-security-surface'
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
   | 'jf-settings-view'
@@ -164,6 +167,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-command-palette',
   'jf-composer',
   'jf-confirm-dialog',
+  'jf-context-inspector-pane',
   'jf-context-menu',
   'jf-control',
   'jf-conversation-history',
@@ -222,6 +226,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-pulse-dots',
   'jf-rail',
   'jf-reasoning-block',
+  'jf-recents-menu',
   'jf-resolution-stats',
   'jf-resolution-toast',
   'jf-resource',
@@ -231,6 +236,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-search-results',
   'jf-search-surface',
   'jf-search-trace',
+  'jf-security-surface',
   'jf-selection-actions-menu',
   'jf-settings-surface',
   'jf-settings-view',

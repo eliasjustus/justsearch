@@ -427,6 +427,14 @@ export class HealthSurface extends JfElement {
       flex-wrap: wrap;
       gap: 0.5rem;
     }
+    /* Audience-gated <jf-operation> hosts render no content for viewers the
+       operation is not visible to (tempdoc 689); without this, the empty
+       light-DOM hosts stay zero-width flex children and each reserves a
+       phantom flex gap (measured 16px inter-button gaps + trailing dead
+       space in the 689 UX audit). */
+    .actions jf-operation:not(:has(jf-op-button)) {
+      display: none;
+    }
     .events-list {
       display: flex;
       flex-direction: column;
@@ -1371,10 +1379,13 @@ export class HealthSurface extends JfElement {
     // driven via `<jf-operation context="button">`. The strategy
     // resolves label, risk, and confirm-strategy from the wire's
     // OperationCatalog, so adding / removing / renaming an operation
-    // does not require touching this surface. HealthSurface is an
-    // operator-tier surface, so we pass viewer-audience="OPERATOR"
-    // to clear the OPERATOR audience gate on operations like
-    // restart-worker; user-tier ops (audience=USER) pass through.
+    // does not require touching this surface. No `viewer-audience`
+    // override is passed here — the block renders per the ambient
+    // audience gate (`viewerAudienceState`): USER-tier ops
+    // (core.reindex, core.rebuild-index, core.export-diagnostics —
+    // USER-tier as of tempdoc 689) are always visible; OPERATOR-tier
+    // ops (core.restart-worker, core.clear-failed-jobs, core.index-gc)
+    // only appear when the viewer is in operator viewing mode.
     //
     // Pre-migration UX: confirmAsync modal for bulk-reindex.
     // Post-migration UX: ActionButton inline confirm (matches the

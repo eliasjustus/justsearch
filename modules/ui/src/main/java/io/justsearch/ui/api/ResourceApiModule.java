@@ -49,7 +49,6 @@ final class ResourceApiModule implements ApiModule {
   private final IndexingJobsStreamController indexingJobsStreamController;
   private final RuntimeContextController runtimeContextController;
   private final OperationHistoryController operationHistoryController;
-  private final NavigationHistoryController navigationHistoryController;
   private final AuthorizationController authorizationController;
   private final OperationPreviewController operationPreviewController;
   private final ActionLedgerController actionLedgerController;
@@ -193,10 +192,6 @@ final class ResourceApiModule implements ApiModule {
         new OperationHistoryController(
             headAssembly.substrate().conversation().operationHistoryStore(),
             headAssembly.substrate().conversation().operationHistoryChanges());
-    // Tempdoc 550 Slice F1 (Outcome face): Navigation history ledger REST endpoint.
-    this.navigationHistoryController =
-        new NavigationHistoryController(
-            headAssembly.substrate().conversation().navigationHistoryStore());
     // Tempdoc 550 C3 / 655: shared pending-authorization registry — the backend records a
     // gated dispatch here and the FE approves by its id, so a capsule can only be minted
     // against an op the backend actually gated (WA-5). Shared between the invoke
@@ -403,9 +398,6 @@ final class ResourceApiModule implements ApiModule {
     // Slice 447-followup-tier3-tooling §A: synthetic condition-trip primitives (eval-mode gated).
     app.post("/api/debug/trip-condition", debugConditionController::handleTrip);
     app.post("/api/debug/clear-condition", debugConditionController::handleClear);
-
-    // Tempdoc 550 Slice F1 (Outcome face): Navigation history ledger snapshot.
-    app.get("/api/navigation-history", navigationHistoryController::handleGet);
 
     // Tempdoc 550 Slice A1 (Authorize face): mint a consent capsule on user approval.
     app.post("/api/authorizations/approve", authorizationController::handleApprove);
