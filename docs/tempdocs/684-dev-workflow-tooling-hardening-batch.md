@@ -81,8 +81,9 @@ Item 3: fresh worktree, one command, both halves green. Standard pre-merge:
 
 ## As-built (2026-07-07, branch `worktree-684-dev-tooling`)
 
-Two commits: `02cc45f` (the three fixes + tests) and `4c3847c` (a critical-analysis fix —
-`reportHolders` had self-matched its own query process). Not yet a PR.
+Implemented in this branch (squash-merged to a single public commit). A critical-analysis
+pass then found and fixed a self-match bug in `reportHolders` — it had matched its own
+PowerShell query process, so the "holder" report named the query rather than the real holder.
 
 ### What shipped, per item
 
