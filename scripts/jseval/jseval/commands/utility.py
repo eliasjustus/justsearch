@@ -64,8 +64,13 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
     _attach_revision(None, supersedes, revision_reason)  # fail fast before reading run files
 
     corpus = {"dataset": dataset, "signature": corpus_signature or dataset}
+    # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1) -- kept in
+    # sync with agent_utility_inspect._PROMPT / agent_retrieval_eval's inline
+    # prompt (same wording, placeholder tokens instead of an f-string/`.format`
+    # site since this copy only feeds prompt_template_hash, not a live argv).
     prompt_template = (
-        "Answer the following question using only the documents in <corpus>. "
+        "Answer the following question about the document collection at <corpus>. "
+        "You may use any tools available to you. "
         "Do not use prior knowledge. Be concise. Question: <query>"
     )
     cli_version = aur.claude_cli_version()

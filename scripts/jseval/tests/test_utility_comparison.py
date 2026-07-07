@@ -293,7 +293,8 @@ def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
 # a config-trust assumption, and this is the record-level rollup of it.
 
 def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls=None,
-              leak_suspect=None, mcp_tools_offered=None, mcp_surface_unverified=None):
+              leak_suspect=None, mcp_tools_offered=None, mcp_surface_unverified=None,
+              mcp_tools_deferred=None):
     entry = {"correct": correct, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
     if tool_calls is not None or disallowed is not None or leak_tool_calls is not None:
         entry["tool_calls"] = tool_calls
@@ -305,6 +306,8 @@ def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls
         entry["mcp_tools_offered"] = mcp_tools_offered
     if mcp_surface_unverified is not None:
         entry["mcp_surface_unverified"] = mcp_surface_unverified
+    if mcp_tools_deferred is not None:
+        entry["mcp_tools_deferred"] = mcp_tools_deferred
     return entry
 
 
@@ -436,6 +439,186 @@ def test_tool_call_assertions_counts_mcp_surface_verified_and_unverified():
     a = rec["tool_call_assertions"]["A"]
     assert a["cells_with_mcp_surface_verified"] == 0
     assert a["cells_mcp_surface_unverified"] == 0
+
+
+# --- tool_surfacing_mode cohort stamp (tempdoc 624 §M.8 amendment, Step 0
+# item 4): eager vs. deferred MCP tool exposure is CLI-version-dependent and
+# mediates adoption, so it must be cohort identity, not per-cell metadata.
+
+def test_tool_surfacing_mode_eager_when_no_cell_deferred():
+    c_pq = {f"q{i}": _pq_entry(mcp_tools_deferred=False) for i in range(4)}
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["tool_surfacing_mode"] == "eager"
+
+
+def test_tool_surfacing_mode_deferred_when_every_cell_deferred():
+    c_pq = {f"q{i}": _pq_entry(mcp_tools_deferred=True) for i in range(4)}
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["tool_surfacing_mode"] == "deferred"
+
+
+def test_tool_surfacing_mode_mixed_when_cells_disagree():
+    c_pq = {
+        "q0": _pq_entry(mcp_tools_deferred=True),
+        "q1": _pq_entry(mcp_tools_deferred=False),
+        "q2": _pq_entry(mcp_tools_deferred=True),
+        "q3": _pq_entry(mcp_tools_deferred=False),
+    }
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["tool_surfacing_mode"] == "mixed"
+
+
+def test_tool_surfacing_mode_none_when_no_cell_carries_the_field():
+    """An older summary shape (pre-Step-0) with no mcp_tools_deferred key at all
+    must read as unknown, never a fabricated default."""
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    c_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["tool_surfacing_mode"] is None
+
+
+def test_tool_surfacing_mode_ignores_condition_a_cells():
+    """Condition A never carries a real mcp_config, so any mcp_tools_deferred
+    value on an A cell must not participate in the with-tool-only vote."""
+    a_pq = {f"q{i}": _pq_entry(mcp_tools_deferred=True) for i in range(4)}  # should be ignored
+    c_pq = {f"q{i}": _pq_entry(mcp_tools_deferred=False) for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["tool_surfacing_mode"] == "eager"
+
+
+# --- executor provenance stamp (tempdoc 624 §M.8 amendment, Step 0 item 6) --
+
+def test_executor_stamped_when_all_summaries_agree_legacy():
+    a_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    c_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    summaries = [
+        {**_summary("A", a_pq), "executor": "legacy-agent-eval"},
+        {**_summary("C", c_pq, search_key="s"), "executor": "legacy-agent-eval"},
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["executor"] == "legacy-agent-eval"
+
+
+def test_executor_stamped_when_all_summaries_agree_inspect():
+    a_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    c_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    summaries = [
+        {**_summary("A", a_pq), "executor": "inspect-ai"},
+        {**_summary("C", c_pq, search_key="s"), "executor": "inspect-ai"},
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["cohort"]["executor"] == "inspect-ai"
+
+
+def test_executor_null_when_summaries_disagree_or_unmarked():
+    """Cannot tell them apart -> honest null, never a guessed majority."""
+    a_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    c_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    mixed = [
+        {**_summary("A", a_pq), "executor": "legacy-agent-eval"},
+        {**_summary("C", c_pq, search_key="s"), "executor": "inspect-ai"},
+    ]
+    rec = utility_comparison.compose_utility(mixed, composed_at="t")
+    assert rec["cohort"]["executor"] is None
+
+    unmarked = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]  # no executor key
+    rec2 = utility_comparison.compose_utility(unmarked, composed_at="t")
+    assert rec2["cohort"]["executor"] is None
+
+
+# --- Adoption metrics (tempdoc 624 §M.8 amendment, Step 0 item 5) -----------
+#
+# Pre-registered per-arm adoption metrics derived purely from the existing
+# per-cell tool_calls capture -- adoption_rate, first_mcp_call_index (a
+# call-index, not a turn), and mcp_call_share. Baseline (arm A) is always null
+# by construction: it never carries an MCP config.
+
+def _adoption_pq(tool_calls_list):
+    """Build a per_query dict of length N from a list of per-cell tool_calls
+    (each entry a list of {"tool":...} dicts, or None for 'no capture')."""
+    return {
+        f"q{i}": _pq_entry(tool_calls=tc, disallowed=[], leak_tool_calls=[])
+        if tc is not None else {"correct": True, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
+        for i, tc in enumerate(tool_calls_list)
+    }
+
+
+def test_adoption_rate_counts_cells_with_at_least_one_mcp_justsearch_call():
+    c_pq = _adoption_pq([
+        [{"tool": "mcp__justsearch__search_query", "input": {}}],
+        [{"tool": "Read", "input": {}}],
+        [{"tool": "mcp__justsearch__ingest", "input": {}}, {"tool": "Read", "input": {}}],
+        [],
+    ])
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["adoption"]["with_tool"]["adoption_rate"] == 0.5  # 2 of 4 cells adopted
+    assert cell["adoption"]["baseline"] == {
+        "adoption_rate": None, "first_mcp_call_index": None, "mcp_call_share": None,
+    }
+
+
+def test_adoption_first_mcp_call_index_is_median_call_index():
+    c_pq = _adoption_pq([
+        [{"tool": "mcp__justsearch__search_query", "input": {}}],  # index 1
+        [{"tool": "Read", "input": {}}, {"tool": "mcp__justsearch__search_query", "input": {}}],  # index 2
+        [{"tool": "Read", "input": {}}, {"tool": "Grep", "input": {}},
+         {"tool": "mcp__justsearch__search_query", "input": {}}],  # index 3
+        [{"tool": "Read", "input": {}}],  # no mcp call
+    ])
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["adoption"]["with_tool"]["first_mcp_call_index"] == 2  # median of [1, 2, 3]
+
+
+def test_adoption_mcp_call_share_pools_calls_across_cells():
+    c_pq = _adoption_pq([
+        [{"tool": "mcp__justsearch__search_query", "input": {}}, {"tool": "Read", "input": {}}],
+        [{"tool": "mcp__justsearch__search_query", "input": {}}],
+    ])
+    a_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["adoption"]["with_tool"]["mcp_call_share"] == round(2 / 3, 4)
+
+
+def test_adoption_none_tool_calls_excluded_from_denominator():
+    """A cell with no tool_calls capture (None) must not count as a 'checked,
+    zero adoption' cell -- same tri-state discipline as tool_call_assertions."""
+    c_pq = _adoption_pq([
+        [{"tool": "mcp__justsearch__search_query", "input": {}}],
+        None,
+        None,
+    ])
+    a_pq = {f"q{i}": _pq_entry() for i in range(3)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["adoption"]["with_tool"]["adoption_rate"] == 1.0  # 1 of 1 CHECKED cell
+
+
+def test_adoption_all_none_yields_null_metrics_not_zero():
+    c_pq = _adoption_pq([None, None])
+    a_pq = {f"q{i}": _pq_entry() for i in range(2)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["adoption"]["with_tool"] == {
+        "adoption_rate": None, "first_mcp_call_index": None, "mcp_call_share": None,
+    }
 
 
 # --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
