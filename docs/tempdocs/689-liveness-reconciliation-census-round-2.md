@@ -37,15 +37,70 @@ kinds of unreconciled disagreement between the tree and the live app:
    primitives, demo/editor surfaces) listed in 683 §Census. 683 deliberately deleted
    nothing; the adjudication and any resulting teardown belong here.
 
+## Takeover investigation (2026-07-07) — the premise of item 1 is corrected
+
+A static root-cause pass resolved the "upgrade gap" before any design work, and the
+mechanism is NOT what §Why assumed:
+
+- **There is no scoped-registry or upgrade defect.** No scoped `CustomElementRegistry`
+  exists in production (`JfElement` uses Lit's default `attachShadow({mode:'open'})`,
+  `JfElement.ts:20-85`; the `PluginCapabilityBundle` proxy only namespace-guards
+  plugin `define()` calls against the global registry,
+  `PluginCapabilityBundle.ts:186-233`, and never touches core surfaces).
+- **The elements upgrade and run.** `JfOperation.createRenderRoot()` returns `this` —
+  it is a light-DOM element (`JfOperation.ts:114-122`), so `shadowRoot === null` and
+  width 0 are what a working-but-empty instance looks like; the census probe misread
+  them as non-upgrade.
+- **The real mechanism is the audience gate doing its job.** The `(Operation,button)`
+  strategy renders `nothing` when `operationVisibleTo(op, viewerAudience)` is false
+  (`operationButton.ts:110-112`; `queryPrimitives.ts:31-42`); the viewer audience
+  defaults to `USER` (`viewerAudienceState.ts:63`); and exactly the invisible ops are
+  `Audience.OPERATOR` in the catalog (`CoreOperationCatalog.java`:
+  export-diagnostics :637, clear-failed-jobs :459, index-gc :483, restart-worker :343)
+  while the siblings that DO render (reindex, rebuild-index) are USER-tier. The
+  selectivity is the proof: a registry failure could not spare the USER-tier siblings.
+- **The proximate defect is comment-vs-code drift.** `HealthSurface.ts:1374-1377`
+  says "we pass viewer-audience=\"OPERATOR\" to clear the OPERATOR audience gate" —
+  but no element in the repo sets `viewer-audience` (the comment is the only match),
+  so the block has been reachable-but-empty for USER viewers for its entire public
+  history. HelpSurface's export button (:412-417) has the same gap.
+- **Discriminating live check (2 minutes, run at design start):** on a live page,
+  `matches(':defined')` on the element → true; flip the viewer audience to OPERATOR
+  (existing Settings toggle) → the buttons appear.
+- **Vocabulary item confirmed but reframed:** `scripts/ci/gen-component-vocabulary.mjs`
+  exists with a `--check` mode that **nothing invokes** (no CI step, no npm script) —
+  the file is simply stale (the three missing components' `define()` sites are inside
+  the walked tree and would be captured on regen: `SecuritySurface.ts:596`,
+  `ContextInspectorPane.ts:283`, `RecentsMenu.ts:151`). Staleness has zero runtime
+  effect; it only breaks declaration authoring for those tags. Fix = regen + wire the
+  existing `--check` into the ui-web gate set.
+- **Adjudication lesson for item 5:** the census's biggest "fossil" was actually an
+  *audience-gated false positive*. The residue adjudication must check
+  state/audience/capability gates before any deletion verdict — "never witnessed
+  under USER-tier journeys" is not "dead".
+
+**The design fork this leaves (product judgment, not plumbing):** either (a) honor
+the comment — set `viewer-audience="OPERATOR"` on the ops block so it renders for
+everyone (which reduces the audience gate to decoration on these surfaces); (b)
+reclassify `core.export-diagnostics` to `Audience.USER` in the catalog ("send
+diagnostics to support" is arguably an end-user action) while the destructive
+siblings stay OPERATOR-gated; or (c) keep the gating as-is and delete the dead block
++ comment, accepting that these actions live behind the operator viewing mode. The
+683 telemetry chain lights up under any of (a)/(b); under (c) it lights up only for
+operator-mode viewers.
+
 ## Work items
 
-- [ ] **Diagnose the upgrade gap** (probe the render path of the HealthSurface ops
-      block; determine why connected `jf-*` children don't upgrade; check whether the
-      same mechanism explains other never-witnessed components). Fix at the
-      mechanism, not per-button.
-- [ ] **Revive or relocate the three operations** — either the block renders and
-      upgrades, or the actions move to the declaration-driven surface path; a dead
-      template block does not stay in the tree.
+- [x] **Diagnose the upgrade gap** — RESOLVED at takeover (see §Takeover
+      investigation): no upgrade gap exists; the block is audience-gated
+      (`Audience.OPERATOR` vs default `USER` viewer) and the surface comment claims a
+      `viewer-audience` attribute the markup never carried. Remaining 2-minute live
+      confirmation (`:defined` + audience toggle) runs at design start.
+- [ ] **Decide and implement the visibility intent** for the OPERATOR-tier ops block
+      (fork (a)/(b)/(c) in §Takeover investigation — a product judgment); whichever
+      branch, the stale comment/markup drift is removed and the surviving state is
+      tested for the *right* reason (a test that pins audience-visibility, not just
+      presence).
 - [ ] **Click-to-zip E2E** (deferred from 683): drive the real Export Diagnostics
       button; assert the produced zip contains `frontend/fe-telemetry.json` with a
       seeded wire-drift ring entry.
