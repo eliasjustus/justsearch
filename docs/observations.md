@@ -1622,7 +1622,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:prepare-worktree — prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which
 `kind: defect?` `anchor: prepare-worktree.cjs` `seen: 2` `first: 2026-07-06` `last: 2026-07-06`
-- [ ] prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which cmd does not resolve ('is not recognized...'), while .\gradlew.bat from the same cwd works and JAVA_HOME is a valid JDK 25 — the spawn likely needs an explicit .\\ / cwd-qualified path (scripts/dev/prepare-worktree.cjs). npm-ci + config-seeding halves complete fine. (2026-07-06)
+- [ ] prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which cmd does not resolve ('is not recognized...'), while .\gradlew.bat from the same cwd works and JAVA_HOME is a valid JDK 25 — the spawn likely needs an explicit .\\ / cwd-qualified path (scripts/dev/prepare-worktree.cjs). npm-ci + config-seeding halves complete fine. — RESOLVED (already fixed): `scripts/dev/prepare-worktree.cjs:43` now uses an absolute `path.join(repoRoot,'gradlew.bat')` (per tempdoc 684); confirmed during the tempdoc 696 follow-up (2026-07-08). (2026-07-06)
 - [ ] prepare-worktree.cjs installDist step fails in a fresh worktree: spawns 'gradlew.bat' bare (not './gradlew.bat' / absolute), 'not recognized' on Windows cmd spawn — npm ci half works, dist half never ran. scripts/dev/prepare-worktree.cjs (2026-07-06)
 
 ### obs:parser-conformance-test — modules/ui-web `npm run typecheck` fails on the untouched base: TypeScript 6.0.3 (package.json ^6.0.

@@ -412,3 +412,41 @@ external reader) can continue/audit without the private session.
 machine paths like `F:\scoop\apps\temurin25-jdk\current` are this dev's install — the resolver finds an
 equivalent JDK 25 on any machine via its candidate chain (`JAVA_HOME` → `JUSTSEARCH_DEV_JDK_HOME` →
 `~/.gradle/jdks` → scoop/Adoptium/OS roots).
+
+## Follow-ups implemented (2026-07-08)
+
+Three of the four logged follow-ups landed in this branch (LambdaMart deliberately left out — see below).
+
+**F1 — the `updateSchemas`-always-true gate is fixed (the Issue-3 root cause).**
+`app-api/build.gradle.kts:66` and `app-observability/build.gradle.kts:91` gated on
+`project.hasProperty("updateSchemas")`, which is always true because each module registers a task literally
+named `updateSchemas` that shadows the property name — so the `-PupdateSchemas` bridge fired on *every* test
+run and the schema tests always *regenerated* instead of *comparing*, silently defeating the drift guard.
+Both sites now check `gradle.startParameter.projectProperties.containsKey("updateSchemas")` (the `-P` map
+only, immune to task-name shadowing). The `updateSchemas` tasks are kept (the documented regenerate entry
+points). **Correction to the earlier note: `app-agent-api` was NOT affected** — it registers
+`updateRegistryEnums`, not `updateSchemas`.
+- **Verified (decisive, not just "still green"):** with the fix, appending a byte to a committed
+  `SSOT/messages/errors.en.json` made `ErrorCatalogJsonArtifactTest` **FAIL** at the compare
+  (`…Test.java:90`) and left the drift in place (proving compare mode, not silent overwrite);
+  `:modules:app-api:test :modules:app-observability:test --rerun-tasks` green with zero churn; and
+  `-PupdateSchemas` still writes (overwrote a perturbation) with the `updateSchemas` task intact.
+- Both fixes are dependency-free `.kts` edits (no lockfile impact). This composes with the shipped Issue-3
+  LF fix, which stays relevant for the `-PupdateSchemas` *write* path.
+
+**F2 — obs-1625 (prepare-worktree bare-`gradlew`) was already fixed** (absolute `path.join(repoRoot,'gradlew.bat')`,
+per tempdoc 684). No code change; the observation entry is annotated RESOLVED.
+
+**F3 — CONTRIBUTING JDK clarification.** Added one line clarifying that "recent JDK" means 17+/24+ and that
+an old ambient `JAVA_HOME`/PATH (e.g. JDK 8) must be pointed at a JDK 25 for *direct* `./gradlew` calls (the
+dev-runner already resolves this for the dev stack).
+
+**LambdaMart benchmark — intentionally NOT changed (observation-only).** `LambdaMartBenchmarkTest` (a 5ms-p50
+latency assertion) failed twice during *concurrent* full builds on this machine (6.2ms / 5.8ms) but passes
+in isolation and on CI's Windows-native lane; it is unrelated to any file changed here (app-services ML
+inference, not build/JDK/schema). The "right" fix (widen the threshold or exclude benchmarks from the gating
+build) is the ML/search owner's convention call. Logged, not fixed.
+
+**Verification caveat for this pass:** the full `build -PskipWebBuild=true` was red *only* on the unrelated
+LambdaMart flake (confirmed via the JUnit XML: it was the sole failure); the F1/F3 changes themselves are
+verified by the targeted runs above and a zero-churn tree.
