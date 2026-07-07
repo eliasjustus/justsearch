@@ -17,6 +17,48 @@ related:
 
 # 696 — Dev-tooling hardening: dev-runner JDK resolution + schema-writer line-ending normalization
 
+## Handoff status (read this first) — 2026-07-08
+
+Both issues IMPLEMENTED, reviewed (incl. an independent refute-first pass that found + fixed one bug),
+and verified. Branch `worktree-td696-dev-jdk-eol`; commits `740ecb1` (risk register), `f8ac602` (feat),
+`86f2bf4` (Worker `java.home` fix), `5ba05ad` (lessons). **No PR opened yet** — awaiting owner go-ahead.
+
+**Verified (each with an evidence pointer):**
+- Resolver selects a >=24 JDK, rejecting an ambient JDK 8 — `npm run test:resolve-jdk` → "11 checks
+  passed"; plus a probe: `JAVA_HOME=<jdk8> node -e "require('./scripts/dev/lib/resolve-jdk.cjs').resolveJdkHome()"`
+  → returned a JDK-25 home.
+- Head leg works end-to-end (live) — with ambient JDK-8 `JAVA_HOME`, the resolved JDK boots Gradle:
+  spawn `gradlew -version` with `env:{...,JAVA_HOME:resolved}` → "Gradle 9.6.1 | JVM: 25.0.2 | exit=0", no
+  "JVM 17 required".
+- Worker leg works end-to-end (live, decisive) — started the dev stack under an ambient JDK-8-first PATH;
+  `Get-CimInstance Win32_Process` showed the Worker java binary = a JDK-25 `bin\java.exe` (not bare
+  `java`), and `/api/health` → `worker: LIFECYCLE_STATE_READY`. Unit guard: `WorkerSpawnerJavaBinaryTest`.
+- Issue 3 no-churn — forced `./gradlew.bat :modules:{app-api,ui,app-observability,app-services,worker-services}:test
+  --rerun-tasks` (95 tasks executed, no cache) → BUILD SUCCESSFUL and `git status` shows **zero** churn
+  under `SSOT/**`, `**/schemas/**`, `__fixtures__/**`, `errors.en.json`.
+
+**Unverified assumptions / deferred checks (NOT verified — do not treat as proven):**
+- The `justsearch-dev-mcp/server.mjs` **hot-swap** change (`resolveJavaExe()` + `JAVA_HOME`) was NOT
+  exercised end-to-end: the dev-MCP server runs stale code within a session (tempdoc 637), so a live
+  hot-swap couldn't run the edited path. It is code-reviewed and reuses the same resolver that is
+  unit-tested and live-proven for the assemble/head legs — low risk, but its own flow is unrun.
+- A cold `dev_start` from a fresh session under a deliberately-broken `JAVA_HOME` was not run start-to-finish
+  (the Worker-launch + READY was verified within this session's stack).
+
+**Follow-ups that must not be forgotten (logged to the observations inbox; out of 696's scope):**
+- **`updateSchemas`-always-true gate** in several `build.gradle.kts` — a task named `updateSchemas` is
+  exposed as a project property, so `hasProperty(...)` is always true → schema tests regenerate instead of
+  comparing, defeating the schema-drift guard. Strongest 696 follow-up.
+- **Direct-`gradlew` JDK gap** — 696 fixes dev-runner/hot-swap/prepare-worktree, but an agent/human running
+  `./gradlew.bat` directly still inherits the ambient `JAVA_HOME`; on a JDK-8-fronting machine that needs a
+  manual `JAVA_HOME=<jdk25>` every call. Consider a documented note or a `.gradle` init-script.
+- `LambdaMartBenchmarkTest` load-flake (5ms-p50 latency assertion); `prepare-worktree.cjs` gradlew-path bug
+  (obs 1625, unrelated to JDK).
+
+**Known unrelated dirty state (leave untouched):** the shared main checkout currently holds ANOTHER
+session's in-progress work (tempdoc `691`, a session shard) plus pre-existing untracked `models/**/*.onnx`
+(LFS) — none belong to this tempdoc.
+
 ## Purpose
 
 Two Windows dev-environment defects recur across agent sessions, cost real time each time, and are
