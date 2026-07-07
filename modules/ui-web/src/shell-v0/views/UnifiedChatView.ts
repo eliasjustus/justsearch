@@ -2341,7 +2341,7 @@ export class UnifiedChatView extends JfElement {
     const spineShown =
       this.affordance === 'agent' && this.wideViewport;
     return html`
-      <div class="conversation-zone">
+      <div class="conversation-zone ${this.isLanding() ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
         <div
           id="run-conversation"
@@ -2357,7 +2357,6 @@ export class UnifiedChatView extends JfElement {
           ${/* Search Thread D2/D3 (stage S2) — the bare landing (empty draft, no history, no active
                 query) renders the centered search-bar landing INSIDE the conversation column, in place
                 of the retired empty prompt (whose own branch now just returns nothing below). */ ''}
-          ${this.isLanding() ? this.renderLanding() : nothing}
           ${this.affordance === 'retrieve'
             ? nothing
             : html`
@@ -2404,6 +2403,10 @@ export class UnifiedChatView extends JfElement {
             this container while the intro (title/corpus) renders in the conversation column and the
             escalation strip rides under the bar. */ ''}
       <div class="composer ${this.isLanding() ? 'landing-dock' : ''}">
+        ${/* 687 R5a — ONE flex column owns title → corpus → bar → strip: the stateless intro
+              renders INSIDE the stable composer container (the composer element itself still never
+              re-parents — the stable-slot invariant holds; only static text moved). */ ''}
+        ${this.isLanding() ? this.renderLanding() : nothing}
         ${this.renderComposerBlock()}
         ${this.isLanding()
           ? html`<div class="escalation-strip">
@@ -2744,7 +2747,10 @@ export class UnifiedChatView extends JfElement {
    * document is a primary action here, not supplementary evidence with a drawer fallback.
    */
   private renderDocumentPane(): TemplateResult | typeof nothing {
-    if (this.readingDocPath === null) return nothing;
+    // 687 R5b — the GRID mount is wide-only; below the breakpoint the SAME component presents
+    // through Shell's OverlayHost right-drawer slot (the one sanctioned overlay seam) instead of
+    // an implicit stacked row (the audit-measured composer collision).
+    if (this.readingDocPath === null || !this.wideViewport) return nothing;
     return html`<jf-document-pane
       class="document-pane"
       api-base=${this.apiBase}

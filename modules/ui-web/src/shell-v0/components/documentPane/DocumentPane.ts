@@ -400,6 +400,15 @@ export class DocumentPane extends JfElement {
   }
 
   static styles = css`
+    :host([overlay]) {
+      /* 687 R5b — sized for the OverlayHost right-drawer slot (narrow viewports). */
+      width: min(28rem, 92vw);
+      height: calc(100vh - 7.5rem);
+      box-shadow: var(--shadow-float);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.5rem;
+      background: var(--surface-1);
+    }
     :host {
       display: flex;
       flex-direction: column;

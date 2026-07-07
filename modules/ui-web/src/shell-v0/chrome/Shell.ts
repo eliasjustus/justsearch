@@ -120,7 +120,13 @@ import {
   setSelected,
   setOpen as setInspectorOpen,
   getInspectorState as getInspectorStateInternal,
+  subscribeInspector,
+  type InspectorState,
 } from '../state/inspectorState.js';
+import { isWideViewport, subscribeWide } from '../state/responsiveState.js';
+// 687 R5b — the narrow-viewport reading mount: the SAME <jf-document-pane> presents through the
+// OverlayHost right-drawer slot below the breakpoint (UnifiedChatView's grid mount is wide-only).
+import '../components/documentPane/DocumentPane.js';
 import type { CitationSelectDetail } from '../components/chat/CitationsPanel.js';
 import {
   getUserConfig,
@@ -1294,6 +1300,17 @@ export class Shell extends JfElement {
     // dispatch + the ProvenanceBadge visibility.
     // Slice 472 — also re-filter rail when surfaceVisibility /
     // surfaceOrder change.
+    // 687 R5b — narrow reading mount inputs (viewport + the shared inspector selection).
+    this.narrowReadingUnsubs = [
+      subscribeWide(() => {
+        this.wideForReading = isWideViewport();
+        this.requestUpdate();
+      }),
+      subscribeInspector((st) => {
+        this.inspectorForReading = st;
+        this.requestUpdate();
+      }),
+    ];
     this.userConfigUnsubscribe = subscribeUserConfig((cfg) => {
       this.userConfig = cfg;
       this.syncRailExpandedAttr();
@@ -1595,6 +1612,8 @@ export class Shell extends JfElement {
     this.removeEventListener('citation-select', this.onCitationSelect);
     document.removeEventListener(NAVIGATE_TO_SURFACE_EVENT, this.onNavigateToSurface);
     this.dragUnsubscribe?.();
+    for (const u of this.narrowReadingUnsubs) u();
+    this.narrowReadingUnsubs = [];
     this.userConfigUnsubscribe?.();
     this.catalogUnsubscribe?.();
     this.uiModeUnsubscribe?.();
@@ -1971,6 +1990,29 @@ export class Shell extends JfElement {
     }
   }
 
+  private wideForReading = isWideViewport();
+  private inspectorForReading: InspectorState = getInspectorStateInternal();
+  private narrowReadingUnsubs: Array<() => void> = [];
+
+  /** 687 R5b — the OverlayHost right-drawer reading mount (narrow viewports only). */
+  private renderNarrowReadingPane() {
+    const st = this.inspectorForReading;
+    if (this.wideForReading || !st.isOpen || !st.selected?.path) return nothing;
+    const hl =
+      typeof st.selected.highlightStartLine === 'number' &&
+      typeof st.selected.highlightEndLine === 'number'
+        ? { startLine: st.selected.highlightStartLine, endLine: st.selected.highlightEndLine }
+        : null;
+    return html`<jf-document-pane
+      slot="right-drawer"
+      overlay
+      api-base=${this.apiBase}
+      .docPath=${st.selected.path}
+      .highlightRange=${hl}
+      @pane-close=${() => setInspectorOpen(false)}
+    ></jf-document-pane>`;
+  }
+
   /** S5b — mirror the persisted rail-expanded state onto the host so the grid track widens. */
   private syncRailExpandedAttr(): void {
     if (this.userConfig?.railExpanded) this.setAttribute('data-rail-expanded', '');
@@ -2188,6 +2230,7 @@ export class Shell extends JfElement {
           .operationClient=${this.operationClient}
         ></jf-advisory-toast-host>
         <jf-task-list slot="bottom-left"></jf-task-list>
+        ${this.renderNarrowReadingPane()}
         <jf-pending-effect-queue slot="bottom-right"></jf-pending-effect-queue>
         <!-- center slot: full-screen modals (one shows at a time). -->
         <jf-drag-overlay

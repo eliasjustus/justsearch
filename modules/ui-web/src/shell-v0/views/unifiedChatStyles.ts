@@ -1137,18 +1137,23 @@ export const unifiedChatBodyStyles = css`
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-end;
-      gap: 0.75rem;
-      min-height: 32vh;
+      gap: 0.4rem;
       text-align: center;
-      padding-bottom: 1rem;
+      margin-bottom: 0.75rem;
     }
     /* The stable bottom slot in landing mode: bounded, centered, lifted off the floor. */
     .composer.landing-dock {
       align-self: center;
       width: min(42rem, 100%);
-      margin-bottom: 26vh;
+      /* 687 R5a — real flex centering in the freed space (the conversation zone collapses to its
+         natural height in landing), replacing the vh-margin approximation whose bands interleaved
+         with the intro at short viewports (the audit-measured overlap). */
+      margin-top: auto;
+      margin-bottom: auto;
       border-top: none;
+    }
+    .conversation-zone.landing-collapsed {
+      flex: 0 0 auto;
     }
     .composer.landing-dock .escalation-strip {
       margin-top: 0.75rem;
