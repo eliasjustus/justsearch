@@ -136,7 +136,59 @@ always-loaded instruction-layer work (tempdoc 681); typed error-envelope record
 (portfolio row); real-both-ends gRPC in default tests (module isolation — portfolio
 row).
 
-## Census (one-shot run, 2026-07-06, worktree stack)
+## State for a continuing session (no chat context needed)
+
+- **Branch:** `worktree-683-contract-verification-hardening` (worktree under
+  `.claude/worktrees/`), 5 commits on top of `2ef7396`, working tree clean. No PR yet
+  (owner gates publication).
+- **Full validation set (all green as of 2026-07-07):** `./gradlew.bat test` ·
+  `cd modules/ui-web && npm run typecheck && npm run test:unit:run` (360 files /
+  3,506 tests) · `node scripts/codegen/gen-wire-schema-types.mjs --check` ·
+  `node scripts/ci/check-wire-schema-types-regen.mjs` ·
+  `node scripts/governance/run.mjs --gate wire --mode gate` · the ui-web check-script
+  battery + the six ui-web governance gates · `cd scripts/jseval && python -m pytest -q`
+  (2 pre-existing `test_correction_probe` failures, inbox-logged, unrelated).
+- **Known-failing checks NOT from this branch** (pre-existing on base, inbox-logged):
+  `check-theme-token-closure`, `check-accent-as-text`, `gen-token-names --check`,
+  `strip-token-fallbacks --check` — all trace to `RecentsMenu.ts`/`ActionLedgerView.ts`,
+  untouched here.
+- **Windows dev-loop notes a continuing session needs:** run Gradle with
+  `JAVA_HOME=F:/scoop/apps/temurin25-jdk/current` (shell default resolves Java 8);
+  run `./gradlew.bat :modules:ui:installDist` explicitly before starting the dev stack
+  after Java edits (the runner's assemble step can report up-to-date on a stale dist);
+  a lingering ui-shot Vite server can hold native-module file locks and break
+  `npm ci` (stop it first); the two heavy suites (Gradle `test`, FE vitest) should not
+  run concurrently on one machine — the whole-program dead-code test can time out
+  under combined load and read as a false red.
+- **Do not treat as canonical:** design provenance for this batch lives in
+  maintainer-private working notes; this tempdoc deliberately stands on repo-visible
+  facts only, and any external reader should treat the "Why" section above as the
+  complete rationale.
+
+## Process lessons from this branch (for future multi-agent implementation work)
+
+1. **Partitioned parallel implementation needs an item→owner table, diffed at
+   integration.** Two FE work-halves fell between two parallel implementation briefs
+   (each side assumed the other owned them) and the gap survived a green build, a
+   green FE suite, and a confident completion report — it was caught only by a
+   refute-first review re-deriving delivery from `git diff` rather than from reports.
+   Rule that would have prevented it: every parallel brief lists item IDs it owns;
+   integration verifies each claimed item against the actual diff (`git diff --stat`
+   per agent), not against prose.
+2. **Verify the user-reachable path, not the nearest endpoint.** The drift-telemetry
+   wiring was first "live-verified" by driving a REST function that no UI code calls;
+   the real UI uses the operation-invoke path. The correction habit: before wiring or
+   verifying anything, grep the consumers of the exact function you're touching, and
+   make the live check drive the surface a user would.
+3. **A live check that refuses to pass is data, not friction.** Insisting that the
+   verification click the real button (instead of curling the endpoint) surfaced that
+   the Export Diagnostics button never upgrades on any surface — a shipped,
+   user-facing dead feature that every static tier and the full test suite rated
+   green. This is the strongest argument this branch produced for keeping
+   live-behavior anchors in every review.
+4. **Golden/regen gates did their job exactly once each** — the golden-wire test
+   caught the deliberate operation-schema change, and the regen gate caught nothing
+   because regen was run; both behaved as designed and neither was softened.
 
 **Method.** Live 3-process stack from this worktree's dist
 (`JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`), driven by the full `jseval ui-check
