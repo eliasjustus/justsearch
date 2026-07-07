@@ -36,9 +36,9 @@ export interface SearchTrace {
   })[];
   version?: number;
 }
-export const searchTraceSchema = z.object({
+export const searchTraceSchema = z.strictObject({
   "decisionKind": z.string().optional(),
-  "degradation": z.object({
+  "degradation": z.strictObject({
     "hybridFallback": z.boolean().optional(),
     "hybridFallbackReason": z.string().optional(),
     "spladeExecuted": z.boolean().optional(),
@@ -47,12 +47,12 @@ export const searchTraceSchema = z.object({
     "vectorBlockedReason": z.string().optional(),
   }).optional(),
   "effectiveMode": z.string().optional(),
-  "qpp": z.object({
+  "qpp": z.strictObject({
     "avgIctf": z.number().optional(),
     "maxIdf": z.number().optional(),
     "queryScope": z.number().optional(),
   }).optional(),
-  "stages": z.array(z.object({
+  "stages": z.array(z.strictObject({
     "cardinality": z.number().int().optional(),
     "detail": z.string().optional(),
     "id": z.enum(["query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness"]).optional(),

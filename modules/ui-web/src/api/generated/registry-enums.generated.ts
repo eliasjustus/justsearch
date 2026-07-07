@@ -1,6 +1,6 @@
 /* eslint-disable */
 // GENERATED — do not edit by hand.
-// Single authority: the Java enums in io.justsearch.agent.api.registry (TrustTier / Audience / RiskTier / Altitude / ExecutorTag / SourceTier / GateBehavior).
+// Single authority: the Java enums in io.justsearch.agent.api.registry / io.justsearch.agent.api.conversation (see RegistryEnumsTsGenerationTest.sharedEnums()).
 // Regenerate: ./gradlew.bat :modules:app-agent-api:test -PupdateSchemas --tests '*RegistryEnumsTsGenerationTest'
 // Drift-checked by RegistryEnumsTsGenerationTest (tempdoc 560 §4.1/§4.3 anti-drift).
 
@@ -11,3 +11,12 @@ export type Altitude = 'PRODUCT' | 'DIAGNOSTIC' | 'TRUST' | 'TOOL';
 export type ExecutorTag = 'UI' | 'AGENT' | 'CLI';
 export type SourceTier = 'TRUSTED' | 'MEDIUM' | 'UNTRUSTED';
 export type GateBehavior = 'AUTO' | 'INLINE_CONFIRM' | 'TYPED_CONFIRM' | 'DENY';
+export type SubscriptionMode = 'ONE_SHOT' | 'SSE_STREAM' | 'POLLING';
+export type PathPolicy = 'NO_PATHS' | 'RAW' | 'HASHED_REQUIRES_RESOLVER';
+export type OnOverflow = 'EVICT_OLDEST' | 'BACKPRESSURE' | 'DROP_NEWEST';
+export type AuditPolicy = 'NONE' | 'METADATA_ONLY' | 'FULL_PAYLOAD';
+export type RenderHint = 'EPHEMERAL' | 'PERSISTED' | 'REQUIRES_ACK';
+export type HistoryMode = 'RING_BUFFER' | 'DURABLE' | 'EXTERNAL';
+export type IterationMode = 'ONE_SHOT' | 'WITHIN_TURN_ITERATION';
+export type PersistenceMode = 'EPHEMERAL' | 'PERSISTENT';
+export type ExecutionMode = 'SUBSTRATE_DRIVEN' | 'SHAPE_DRIVEN';

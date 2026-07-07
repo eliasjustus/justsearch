@@ -4,6 +4,8 @@
  */
 
 import { request } from '../http';
+import { parseWireContract } from '../schemas';
+import { settingsV2Schema } from '../generated/schema-types/settings-v2';
 
 // ============================================
 // Types
@@ -49,16 +51,33 @@ export interface AppSettings {
 // ============================================
 
 /**
- * Updates settings (canonical v2 endpoint).
+ * Fetches settings (canonical v2 endpoint), validated against the generated
+ * `settingsV2Schema` at the parse boundary (tempdoc 683).
+ */
+export async function getSettingsV2(
+  baseUrl: string,
+  signal?: AbortSignal
+): Promise<AppSettings> {
+  const raw = await request<unknown>(baseUrl, '/api/settings/v2', { signal });
+  // The AppSettings view narrows the wire's plain strings to the FE literal unions —
+  // the same narrowing the previous unchecked `request<AppSettings>` cast performed,
+  // now behind a validated wire shape.
+  return parseWireContract(settingsV2Schema, raw, 'GET /api/settings/v2') as AppSettings;
+}
+
+/**
+ * Updates settings (canonical v2 endpoint). The response echo is validated
+ * against the generated `settingsV2Schema` at the parse boundary (tempdoc 683).
  */
 export async function updateSettingsV2(
   baseUrl: string,
   settings: Partial<AppSettings>,
   signal?: AbortSignal
 ): Promise<AppSettings> {
-  return request<AppSettings>(baseUrl, '/api/settings/v2', {
+  const raw = await request<unknown>(baseUrl, '/api/settings/v2', {
     method: 'POST',
     body: settings,
     signal,
   });
+  return parseWireContract(settingsV2Schema, raw, 'POST /api/settings/v2') as AppSettings;
 }

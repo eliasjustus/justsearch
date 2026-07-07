@@ -17,7 +17,7 @@ export type ComponentNullable = {
   reason_code?: string | null;
   state?: LifecycleStateNullable;
 } | null;
-export const componentNullableSchema = z.object({
+export const componentNullableSchema = z.strictObject({
   "reason_code": z.string().nullable().optional(),
   "state": lifecycleStateNullableSchema.optional(),
 }).nullable();
@@ -33,7 +33,7 @@ export type MigrationEnumeratorViewNullable = {
   running?: boolean;
   startedAtMs?: number;
 } | null;
-export const migrationEnumeratorViewNullableSchema = z.object({
+export const migrationEnumeratorViewNullableSchema = z.strictObject({
   "done": z.boolean().optional(),
   "filesEnqueued": z.number().int().optional(),
   "filesSeen": z.number().int().optional(),
@@ -54,7 +54,7 @@ export type OrtCudaViewNullable = {
   nativePath?: string | null;
   variantId?: string | null;
 } | null;
-export const ortCudaViewNullableSchema = z.object({
+export const ortCudaViewNullableSchema = z.strictObject({
   "attempted": z.boolean().optional(),
   "available": z.boolean().optional(),
   "configured": z.boolean().optional(),
@@ -378,24 +378,25 @@ export interface StatusResponse {
       ocrEngine?: string;
       ocrEngineAvailable?: boolean;
       vduBlockedReason?: string;
+      vduProcessing?: boolean;
       visualEnrichmentNeededCount?: number;
       visualTextNeededCount?: number;
     };
   };
 }
-export const statusResponseSchema = z.object({
-  "agentSessions": z.object({
+export const statusResponseSchema = z.strictObject({
+  "agentSessions": z.strictObject({
     "activeCount": z.number().int().optional(),
   }).optional(),
   "aiReady": z.boolean().optional(),
-  "atRestProtection": z.object({
+  "atRestProtection": z.strictObject({
     "confidence": z.string().optional(),
     "diskEncryption": z.string().optional(),
     "qualityKnown": z.boolean().optional(),
     "source": z.string().optional(),
   }).optional(),
   "catchingUp": z.boolean().optional(),
-  "chunkCoverage": z.object({
+  "chunkCoverage": z.strictObject({
     "completedCount": z.number().int().optional(),
     "coveragePercent": z.number().optional(),
     "docCount": z.number().int().optional(),
@@ -404,16 +405,16 @@ export const statusResponseSchema = z.object({
     "pendingCount": z.number().int().optional(),
     "ready": z.boolean().optional(),
   }).optional(),
-  "components": z.object({
+  "components": z.strictObject({
     "head": componentNullableSchema.optional(),
     "inference": componentNullableSchema.optional(),
     "worker": componentNullableSchema.optional(),
   }).optional(),
-  "conversationProtection": z.object({
+  "conversationProtection": z.strictObject({
     "state": z.string().optional(),
   }).optional(),
   "diskPressure": z.string().optional(),
-  "embedding": z.object({
+  "embedding": z.strictObject({
     "compatReason": z.string().nullable().optional(),
     "compatState": z.string().nullable().optional(),
     "completedCount": z.number().int().optional(),
@@ -427,7 +428,7 @@ export const statusResponseSchema = z.object({
     "ready": z.boolean().optional(),
   }).optional(),
   "embeddingReady": z.boolean().optional(),
-  "gpu": z.object({
+  "gpu": z.strictObject({
     "available": z.boolean().optional(),
     "confidence": z.string().optional(),
     "cudaFunctional": z.boolean().optional(),
@@ -445,19 +446,19 @@ export const statusResponseSchema = z.object({
   "indexAvailable": z.boolean().optional(),
   "indexBasePath": z.string().optional(),
   "indexStatusReason": z.string().optional(),
-  "inference": z.object({
-    "counters": z.object({
+  "inference": z.strictObject({
+    "counters": z.strictObject({
       "hardRestarts": z.number().int().optional(),
       "softRestarts": z.number().int().optional(),
       "transitionsTotal": z.number().int().optional(),
     }).optional(),
-    "identity": z.object({
+    "identity": z.strictObject({
       "generationId": z.number().int().optional(),
       "loadedAtEpochMs": z.number().int().optional(),
       "modelId": z.string().nullable().optional(),
       "port": z.number().int().optional(),
     }).optional(),
-    "lastFailure": z.object({
+    "lastFailure": z.strictObject({
       "code": z.string().optional(),
       "detail": z.string().optional(),
     }).optional(),
@@ -465,7 +466,7 @@ export const statusResponseSchema = z.object({
     "usingExternal": z.boolean().optional(),
   }).optional(),
   "knowledgeServerStartError": z.string().optional(),
-  "lifecycle": z.object({
+  "lifecycle": z.strictObject({
     "message": z.string().nullable().optional(),
     "reason_code": z.string().nullable().optional(),
     "state": lifecycleStateNullableSchema.optional(),
@@ -473,11 +474,11 @@ export const statusResponseSchema = z.object({
   "memoryMaxBytes": z.number().int().optional(),
   "memoryTotalBytes": z.number().int().optional(),
   "memoryUsedBytes": z.number().int().optional(),
-  "meta": z.object({
+  "meta": z.strictObject({
     "workerRpcAtMs": z.number().int().optional(),
     "workerRpcStale": z.boolean().optional(),
   }).optional(),
-  "migration": z.object({
+  "migration": z.strictObject({
     "buildingGenerationId": z.string().nullable().optional(),
     "enumerator": migrationEnumeratorViewNullableSchema.optional(),
     "migrationSource": z.string().nullable().optional(),
@@ -489,9 +490,9 @@ export const statusResponseSchema = z.object({
     "switchingAgeMs": z.number().int().optional(),
     "switchingMaxDurationMs": z.number().int().optional(),
   }).optional(),
-  "modelDistribution": z.object({
+  "modelDistribution": z.strictObject({
     "installProfile": z.string().optional(),
-    "modelVariants": z.record(z.string(), z.object({
+    "modelVariants": z.record(z.string(), z.strictObject({
       "degradationReason": z.string().optional(),
       "degraded": z.boolean().optional(),
       "executionProvider": z.string().optional(),
@@ -503,11 +504,11 @@ export const statusResponseSchema = z.object({
     "upgradeGuidance": z.string().optional(),
   }).optional(),
   "observed_at": z.string().optional(),
-  "power": z.object({
+  "power": z.strictObject({
     "energyReduced": z.boolean().optional(),
     "source": z.string().optional(),
   }).optional(),
-  "queueHealth": z.object({
+  "queueHealth": z.strictObject({
     "healthy": z.boolean().optional(),
     "lastBackupAtMs": z.number().int().optional(),
     "lastErrorAtMs": z.number().int().optional(),
@@ -515,8 +516,8 @@ export const statusResponseSchema = z.object({
     "lastQuickCheckOk": z.boolean().optional(),
     "observedAtMs": z.number().int().optional(),
   }).optional(),
-  "readiness": z.object({
-    "components": z.record(z.string(), z.object({
+  "readiness": z.strictObject({
+    "components": z.record(z.string(), z.strictObject({
       "observedAt": z.string().optional(),
       "reasonCode": z.string().optional(),
       "source": z.string().optional(),
@@ -524,14 +525,14 @@ export const statusResponseSchema = z.object({
       "stalenessMs": z.number().int().optional(),
       "state": z.string().optional(),
     })).nullable().optional(),
-    "composites": z.record(z.string(), z.object({
+    "composites": z.record(z.string(), z.strictObject({
       "reasonCodes": z.array(z.string()).nullable().optional(),
       "state": z.string().nullable().optional(),
     })).nullable().optional(),
     "observedAt": z.string().nullable().optional(),
     "schemaVersion": z.number().int().optional(),
   }).optional(),
-  "schema": z.object({
+  "schema": z.strictObject({
     "compatState": z.string().nullable().optional(),
     "fpCurrent": z.string().nullable().optional(),
     "fpStored": z.string().nullable().optional(),
@@ -542,14 +543,14 @@ export const statusResponseSchema = z.object({
   "schema_version": z.number().int().optional(),
   "service": z.string().optional(),
   "status": z.string().optional(),
-  "telemetryHealth": z.object({
+  "telemetryHealth": z.strictObject({
     "flushFailureCount": z.number().int().optional(),
     "gaugeCallbackFailureCount": z.number().int().optional(),
   }).optional(),
   "uptimeMs": z.number().int().optional(),
-  "worker": z.object({
+  "worker": z.strictObject({
     "buildStamp": z.string().optional(),
-    "compatibility": z.object({
+    "compatibility": z.strictObject({
       "embeddingCompatReason": z.string().nullable().optional(),
       "embeddingCompatState": z.string().nullable().optional(),
       "embeddingFingerprintCurrent": z.string().nullable().optional(),
@@ -560,7 +561,7 @@ export const statusResponseSchema = z.object({
       "reindexRequired": z.boolean().optional(),
       "reindexRequiredReason": z.string().nullable().optional(),
     }).optional(),
-    "core": z.object({
+    "core": z.strictObject({
       "commitCount": z.number().int().optional(),
       "indexHealthy": z.boolean().optional(),
       "indexSizeBytes": z.number().int().optional(),
@@ -574,12 +575,12 @@ export const statusResponseSchema = z.object({
       "writerPendingDocs": z.number().int().optional(),
       "writerQueueDepth": z.number().int().optional(),
     }).optional(),
-    "enrichment": z.object({
-      "batchTiming": z.object({
+    "enrichment": z.strictObject({
+      "batchTiming": z.strictObject({
         "batchCount": z.record(z.string(), z.number().int()).nullable().optional(),
         "totalMs": z.record(z.string(), z.number().int()).nullable().optional(),
       }).nullable().optional(),
-      "chunk": z.object({
+      "chunk": z.strictObject({
         "chunkDocCount": z.number().int().optional(),
         "chunkEmbeddingCompletedCount": z.number().int().optional(),
         "chunkEmbeddingFailedCount": z.number().int().optional(),
@@ -594,7 +595,7 @@ export const statusResponseSchema = z.object({
       "embeddingEnabled": z.boolean().optional(),
       "embeddingFailedCount": z.number().int().optional(),
       "embeddingPendingCount": z.number().int().optional(),
-      "encoderProfiles": z.record(z.string(), z.object({
+      "encoderProfiles": z.record(z.string(), z.strictObject({
         "calls": z.number().int().optional(),
         "ortMaxUs": z.number().int().optional(),
         "ortMinUs": z.number().int().optional(),
@@ -613,7 +614,7 @@ export const statusResponseSchema = z.object({
       "spladeFailedCount": z.number().int().optional(),
       "spladePendingCount": z.number().int().optional(),
     }).optional(),
-    "failure": z.object({
+    "failure": z.strictObject({
       "failedByFileKind": z.record(z.string(), z.number().int()).nullable().optional(),
       "failedJobs": z.number().int().optional(),
       "lastFailedAtMs": z.number().int().optional(),
@@ -622,7 +623,7 @@ export const statusResponseSchema = z.object({
       "nextRetryAtMs": z.number().int().optional(),
       "searchesZeroResultCount": z.number().int().optional(),
     }).optional(),
-    "gpu": z.object({
+    "gpu": z.strictObject({
       "bgeM3OrtCuda": ortCudaViewNullableSchema.optional(),
       "citationOrtCuda": ortCudaViewNullableSchema.optional(),
       "embedBackend": z.string().nullable().optional(),
@@ -636,7 +637,7 @@ export const statusResponseSchema = z.object({
       "spladeModelPath": z.string().nullable().optional(),
       "spladeOrtCuda": ortCudaViewNullableSchema.optional(),
     }).optional(),
-    "migration": z.object({
+    "migration": z.strictObject({
       "activeGenerationId": z.string().nullable().optional(),
       "activeIndexedDocuments": z.number().int().optional(),
       "buildingGenerationId": z.string().nullable().optional(),
@@ -658,14 +659,14 @@ export const statusResponseSchema = z.object({
       "servingSearchGenerationId": z.string().nullable().optional(),
       "switchBufferDepth": z.number().int().optional(),
     }).optional(),
-    "queueDb": z.object({
+    "queueDb": z.strictObject({
       "queueDbHealthy": z.boolean().optional(),
       "queueDbLastBackupAtMs": z.number().int().optional(),
       "queueDbLastErrorAtMs": z.number().int().optional(),
       "queueDbLastQuickCheckAtMs": z.number().int().optional(),
       "queueDbLastQuickCheckOk": z.boolean().optional(),
     }).optional(),
-    "searchConfig": z.object({
+    "searchConfig": z.strictObject({
       "branchCcWeightChunk": z.number().optional(),
       "branchCcWeightWhole": z.number().optional(),
       "branchChunkMinWeightMultiplier": z.number().optional(),
@@ -677,26 +678,27 @@ export const statusResponseSchema = z.object({
       "queryClassificationEnabled": z.boolean().optional(),
       "titleBoost": z.number().optional(),
     }).optional(),
-    "telemetry": z.object({
+    "telemetry": z.strictObject({
       "contentLengthAvgChars": z.number().optional(),
       "contentLengthMaxChars": z.number().int().optional(),
       "contentLengthMinChars": z.number().int().optional(),
       "throughputDocsPerSec": z.number().optional(),
       "throughputWindowState": z.string().nullable().optional(),
     }).optional(),
-    "vectorFormat": z.object({
+    "vectorFormat": z.strictObject({
       "vectorFormatActual": z.string().nullable().optional(),
       "vectorFormatConfig": z.string().nullable().optional(),
       "vectorFormatStored": z.string().nullable().optional(),
       "vectorSegmentsFloat32": z.number().int().optional(),
       "vectorSegmentsQuantized": z.number().int().optional(),
     }).optional(),
-    "visualExtraction": z.object({
+    "visualExtraction": z.strictObject({
       "ocrBlockedReason": z.string().optional(),
       "ocrEnabled": z.boolean().optional(),
       "ocrEngine": z.string().optional(),
       "ocrEngineAvailable": z.boolean().optional(),
       "vduBlockedReason": z.string().optional(),
+      "vduProcessing": z.boolean().optional(),
       "visualEnrichmentNeededCount": z.number().int().optional(),
       "visualTextNeededCount": z.number().int().optional(),
     }).optional(),

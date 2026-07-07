@@ -1,0 +1,76 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "indexPaths" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "llm" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "contextWindow" : {
+          "type" : [ "integer", "null" ]
+        },
+        "gpuLayers" : {
+          "type" : [ "integer", "null" ]
+        },
+        "llamaLibPath" : {
+          "type" : [ "string", "null" ]
+        },
+        "maxTokens" : {
+          "type" : [ "integer", "null" ]
+        },
+        "modelPath" : {
+          "type" : [ "string", "null" ]
+        },
+        "serverExecutable" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
+    "settingsMode" : {
+      "type" : [ "string", "null" ]
+    },
+    "ui" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "defaultAction" : {
+          "type" : [ "string", "null" ]
+        },
+        "density" : {
+          "type" : [ "string", "null" ]
+        },
+        "excludePatterns" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "hasSeenTrustLoopNudge" : {
+          "type" : [ "boolean", "null" ]
+        },
+        "highContrast" : {
+          "type" : [ "boolean", "null" ]
+        },
+        "inspectorWidth" : {
+          "type" : [ "integer", "null" ]
+        },
+        "mode" : {
+          "type" : [ "string", "null" ]
+        },
+        "pauseIndexingDuringAi" : {
+          "type" : [ "boolean", "null" ]
+        },
+        "theme" : {
+          "type" : [ "string", "null" ]
+        },
+        "vimMode" : {
+          "type" : [ "boolean", "null" ]
+        }
+      }
+    }
+  }
+}

@@ -16,7 +16,7 @@ export interface MatchSpan {
   startChar?: number;
   term?: string | null;
 }
-export const matchSpanSchema = z.object({
+export const matchSpanSchema = z.strictObject({
   "endChar": z.number().int().optional(),
   "field": z.string().nullable().optional(),
   "startChar": z.number().int().optional(),
@@ -102,21 +102,21 @@ export interface KnowledgeSearchResponse {
   tookMs?: number;
   totalHits?: number;
 }
-export const knowledgeSearchResponseSchema = z.object({
-  "entityFacetVariants": z.record(z.string(), z.array(z.object({
+export const knowledgeSearchResponseSchema = z.strictObject({
+  "entityFacetVariants": z.record(z.string(), z.array(z.strictObject({
     "canonicalForm": z.string().nullable().optional(),
     "totalCount": z.number().int().optional(),
     "variants": z.record(z.string(), z.number().int()).nullable().optional(),
   }))).nullable().optional(),
   "facets": z.record(z.string(), z.record(z.string(), z.number().int())).nullable().optional(),
   "facetsTruncated": z.boolean().nullable().optional(),
-  "filterNormalization": z.object({
+  "filterNormalization": z.strictObject({
     "latencyMs": z.number().int().optional(),
     "normalized": z.record(z.string(), z.array(z.string())).optional(),
     "original": z.record(z.string(), z.array(z.string())).optional(),
     "source": z.string().optional(),
   }).nullable().optional(),
-  "indexCapabilities": z.object({
+  "indexCapabilities": z.strictObject({
     "chunkEmbeddingCoverage": z.number().optional(),
     "crossEncoderAvailable": z.boolean().optional(),
     "embeddingCoverage": z.number().optional(),
@@ -124,13 +124,13 @@ export const knowledgeSearchResponseSchema = z.object({
   }).nullable().optional(),
   "matchCount": z.number().int().optional(),
   "nextCursor": z.string().nullable().optional(),
-  "queryUnderstanding": z.object({
+  "queryUnderstanding": z.strictObject({
     "appliedBoosts": z.record(z.string(), z.array(z.string())).optional(),
     "expectedAnswerType": z.string().optional(),
     "latencyMs": z.number().int().optional(),
   }).nullable().optional(),
-  "results": z.array(z.object({
-    "excerptRegions": z.array(z.object({
+  "results": z.array(z.strictObject({
+    "excerptRegions": z.array(z.strictObject({
       "approxLine": z.number().int().optional(),
       "endChar": z.number().int().optional(),
       "matchSpans": z.array(matchSpanSchema).nullable().optional(),
@@ -142,16 +142,16 @@ export const knowledgeSearchResponseSchema = z.object({
     "matchSpans": z.array(matchSpanSchema).optional(),
     "matchedFields": z.array(z.string()).optional(),
     "score": z.number().optional(),
-    "trace": z.array(z.object({
+    "trace": z.array(z.strictObject({
       "detail": z.record(z.string(), z.number()).optional(),
       "id": stageIdSchema.optional(),
       "rank": z.number().int().optional(),
       "score": z.number().optional(),
     })).optional(),
   })).nullable().optional(),
-  "searchTrace": z.object({
+  "searchTrace": z.strictObject({
     "decisionKind": z.string().optional(),
-    "degradation": z.object({
+    "degradation": z.strictObject({
       "hybridFallback": z.boolean().optional(),
       "hybridFallbackReason": z.string().optional(),
       "spladeExecuted": z.boolean().optional(),
@@ -160,12 +160,12 @@ export const knowledgeSearchResponseSchema = z.object({
       "vectorBlockedReason": z.string().optional(),
     }).optional(),
     "effectiveMode": z.string().optional(),
-    "qpp": z.object({
+    "qpp": z.strictObject({
       "avgIctf": z.number().optional(),
       "maxIdf": z.number().optional(),
       "queryScope": z.number().optional(),
     }).optional(),
-    "stages": z.array(z.object({
+    "stages": z.array(z.strictObject({
       "cardinality": z.number().int().optional(),
       "detail": z.string().optional(),
       "id": stageIdSchema.optional(),

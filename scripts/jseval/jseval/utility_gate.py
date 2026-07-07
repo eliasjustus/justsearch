@@ -261,6 +261,46 @@ def evaluate(baselines: dict, record: dict, corpus: str, model: str | None = Non
     return report
 
 
+def project_release_to_baselines(
+    release: dict,
+    *,
+    tolerance_default_abs: float = DEFAULT_TOLERANCE_ABS,
+    per_corpus_tolerance: dict | None = None,
+) -> dict:
+    """Project a ``release.v1`` object's optional ``utility`` section into baseline floors.
+
+    The utility-gate twin of :func:`relevance_gate.project_release_to_baselines`
+    (tempdoc 683): when the canonical release carries per-corpus condition-C floors
+    (``{"utility": {<corpus>: {c_floor_min, agent_model, cli_version}}}``), the floor
+    projects live from the release; a corpus absent from the section is not projected,
+    so the pointer file's ``fallback_baselines`` governs via
+    :func:`ratchet_kernel.load_baselines_doc`'s merge. No release currently carries the
+    section (utility records come from the agent-eval pipeline, not run summaries), so
+    today this projects nothing — the pointer mechanism only.
+    """
+    per_corpus_tolerance = per_corpus_tolerance or {}
+    cohort = release.get("cohort") or {}
+    src_tag = release.get("release_id") or (cohort.get("git_sha") or "")[:10]
+    baselines: dict[str, dict] = {}
+    for corpus, entry in (release.get("utility") or {}).items():
+        floor = (entry or {}).get("c_floor_min")
+        if not isinstance(floor, (int, float)):
+            continue
+        baselines[corpus] = {
+            "c_floor_min": float(floor),
+            "agent_model": entry.get("agent_model"),
+            "cli_version": entry.get("cli_version"),
+            "tolerance_abs": per_corpus_tolerance.get(corpus, tolerance_default_abs),
+            "src": f"projected from release {src_tag}".strip(),
+        }
+    return {
+        "schema": "utility-ratchet-baseline.v1",
+        "tolerance_default_abs": tolerance_default_abs,
+        "projected_from_release": True,
+        "baselines": baselines,
+    }
+
+
 def derive_baselines(
     records: dict[str, dict],
     *,

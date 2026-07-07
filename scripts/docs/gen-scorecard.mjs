@@ -73,8 +73,14 @@ function build(release, relBase, leakBase) {
       }
       L.push(`| ${a.axis} | ${a.metric} | ${a.fmt(v)} | ${guard} | ${status} |`);
     }
-    // Leak (cross-mode projection metric; ceiling from leak-gate-baselines, not the release).
-    const leak = leakBase && leakBase.baselines && leakBase.baselines[corpus];
+    // Leak (cross-mode projection metric). Since tempdoc 683 the baselines file is a POINTER:
+    // prefer the release's own per-corpus `leak` section, then the file's fallback layer, then a
+    // pre-migration inline `baselines` entry.
+    const relLeak = release.leak && release.leak[corpus];
+    const leak =
+      (relLeak && typeof relLeak.leak_rate === "number" ? { leak_rate_max: relLeak.leak_rate } : null) ||
+      (leakBase && leakBase.baselines && leakBase.baselines[corpus]) ||
+      (leakBase && leakBase.fallback_baselines && leakBase.fallback_baselines[corpus]);
     if (leak && typeof leak.leak_rate_max === "number") {
       L.push(`| leak | leak_rate | ≤ ${num(leak.leak_rate_max, 3)} | ≤ ceiling+tol | ✅ |`);
     }

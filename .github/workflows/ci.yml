@@ -62,6 +62,9 @@ jobs:
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 
+      - name: Outward benchmark numbers cite the canonical release
+        run: node scripts/ci/check-outward-number-citations.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 

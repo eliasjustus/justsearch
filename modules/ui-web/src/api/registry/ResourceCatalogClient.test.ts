@@ -58,6 +58,31 @@ function catalogOf(...entries: Resource[]): ResourceCatalog {
   };
 }
 
+// The RAW WIRE shape served by RegistryController — what the boot-fetch path parses through the
+// generated `resourceWireSchema` (strict since tempdoc 683). It carries the discriminator
+// `type`, the present-as-null `emissionPolicy`, and the present-as-null `provenance.identity`
+// that the precise wire requires; the FE `Resource` omits them. Mirrors the wire-faithful
+// builder in DiagnosticChannelCatalogClient.test.ts — a drifting mock would now throw.
+function resourceWireEntry(id: string): unknown {
+  const fe = tabularEntry(id);
+  return {
+    ...fe,
+    type: 'resource',
+    emissionPolicy: null,
+    provenance: { ...fe.provenance, identity: null },
+  };
+}
+
+function wireCatalogOf(...entries: unknown[]): unknown {
+  return {
+    schemaVersion: '1.0',
+    catalogVersion: 1,
+    namespace: 'core',
+    primitive: 'Resource',
+    entries,
+  };
+}
+
 describe('ResourceCatalogClient', () => {
   beforeEach(() => {
     __resetForTest();
@@ -94,7 +119,7 @@ describe('ResourceCatalogClient', () => {
 
   describe('boot fetch', () => {
     it('populates the catalog on 200', async () => {
-      const catalog = catalogOf(tabularEntry('core.indexing-jobs'));
+      const catalog = wireCatalogOf(resourceWireEntry('core.indexing-jobs'));
       const fetchImpl = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,

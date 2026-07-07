@@ -23,7 +23,7 @@ export interface IndexedRootView {
   deleteDetectionUnverified?: boolean;
   lastVerifiedIsoTime?: string;
 }
-export const indexedRootViewSchema = z.object({
+export const indexedRootViewSchema = z.strictObject({
   "pathHash": z.string().optional(),
   "collection": z.string().optional(),
   "fileCount": z.number().int().optional(),

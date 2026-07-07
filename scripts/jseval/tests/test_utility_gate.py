@@ -410,3 +410,88 @@ def test_derive_baselines_captures_cli_version():
     record = _record_with(version="2.1.183 (Claude Code)")
     derived = utility_gate.derive_baselines({"r": record})
     assert derived["baselines"]["golden/util-smoke"]["cli_version"] == "2.1.183 (Claude Code)"
+
+
+# --- tempdoc 683: current_release pointer + fallback_baselines ---------------
+
+def test_project_release_to_baselines_projects_utility_section():
+    rel = {
+        "schema": "release.v1", "release_id": "rel-test-2026-01-01",
+        "utility": {"golden/util-smoke": {
+            "c_floor_min": 0.9, "agent_model": "haiku", "cli_version": "9.9.9"}},
+    }
+    out = utility_gate.project_release_to_baselines(rel, tolerance_default_abs=0.15)
+    row = out["baselines"]["golden/util-smoke"]
+    assert row["c_floor_min"] == 0.9
+    assert row["agent_model"] == "haiku"
+    assert row["cli_version"] == "9.9.9"
+    assert row["tolerance_abs"] == 0.15
+    assert row["src"] == "projected from release rel-test-2026-01-01"
+    assert out["projected_from_release"] is True
+
+
+def test_project_release_to_baselines_projects_nothing_without_section():
+    out = utility_gate.project_release_to_baselines({"schema": "release.v1"})
+    assert out["baselines"] == {}
+
+
+def test_committed_pointer_file_projects_to_prior_pinned_values():
+    """Pins the tempdoc 683 migration on the REAL committed files: the current
+    release.v1.json carries no `utility` section, so the loaded baselines must equal
+    the file's fallback_baselines verbatim (the pre-migration pinned values).
+    When a future release adds a `utility` section, update this pin deliberately."""
+    from jseval.ratchet_kernel import load_baselines_doc
+
+    root = Path(__file__).resolve().parents[1]
+    bp = root / "utility-ratchet-baselines.v1.json"
+    raw = json.loads(bp.read_text(encoding="utf-8"))
+    release = json.loads((root / "release.v1.json").read_text(encoding="utf-8"))
+    assert "utility" not in release, "release now carries a utility section — update this pin"
+    doc = load_baselines_doc(bp, project_release=lambda rel, base:
+                             utility_gate.project_release_to_baselines(
+                                 rel,
+                                 tolerance_default_abs=base.get(
+                                     "tolerance_default_abs", utility_gate.DEFAULT_TOLERANCE_ABS),
+                                 per_corpus_tolerance=base.get("per_corpus_tolerance")))
+    assert doc["baselines"] == raw["fallback_baselines"]
+    assert doc["baselines"]["golden/util-smoke"]["c_floor_min"] == 1.0
+    # And evaluate over the loaded doc yields the same PASS the inline shape gave
+    # (the synthetic record carries no cli_version -> the D9 check skips).
+    rep = utility_gate.evaluate(doc, _RECORD_2COND, "golden/util-smoke")
+    assert rep["exit_code"] == 0
+    assert rep["verdict"] == "PASS"
+
+
+def test_update_baseline_cli_writes_fallback_layer_on_pointer_file(tmp_path):
+    """On a tempdoc-683 pointer file, --update-baseline must re-pin into
+    `fallback_baselines` (preserving `current_release`), and the gate must read the
+    new pin back through load_baselines_doc's merge."""
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    record_path = tmp_path / "record.json"
+    record_path.write_text(json.dumps(_RECORD_2COND), encoding="utf-8")
+
+    (tmp_path / "release.v1.json").write_text(
+        json.dumps({"schema": "release.v1", "measured": {}}), encoding="utf-8")
+    baselines_path = tmp_path / "utility-ratchet-baselines.v1.json"
+    baselines_path.write_text(json.dumps({
+        "schema": "utility-ratchet-baseline.v1",
+        "current_release": "release.v1.json",
+        "tolerance_default_abs": 0.15,
+        "fallback_baselines": {
+            "golden/util-smoke": {"c_floor_min": 0.5, "tolerance_abs": 0.15},
+        },
+    }), encoding="utf-8")
+
+    result = CliRunner().invoke(main, [
+        "utility-gate", "--record", str(record_path), "--corpus", "golden/util-smoke",
+        "--baselines", str(baselines_path), "--update-baseline",
+    ])
+    assert result.exit_code == 0, result.output
+
+    written = json.loads(baselines_path.read_text(encoding="utf-8"))
+    assert written["current_release"] == "release.v1.json"  # pointer preserved
+    assert "baselines" not in written  # no stray inline layer
+    assert written["fallback_baselines"]["golden/util-smoke"]["c_floor_min"] == 1.0

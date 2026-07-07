@@ -307,7 +307,11 @@
   "intf" : {
     "inputs" : {
       "type" : "object",
-      "properties" : { }
+      "properties" : {
+        "feTelemetry" : {
+          "type" : "object"
+        }
+      }
     },
     "result" : {
       "type" : "object",

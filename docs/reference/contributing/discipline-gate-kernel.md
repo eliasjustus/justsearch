@@ -198,9 +198,37 @@ Gates that don't conform fail-fast before they run.
   substrate-consumer audits). The kernel catches *recurring gross failures*;
   the human still calibrates edges.
 
+## Deliberate softness portfolio
+
+Some verification seams are **intentionally fail-open, opt-in, or advisory**. Each such
+choice is locally reasonable, but unrecorded softness silently accumulates: nobody ever
+re-examines the *set*. This register makes every deliberate softness visible with its
+reason and the condition under which it should flip to strict. It is a record of
+decisions, not a to-do list — a row leaves this table by being flipped (with its
+enforcement moved to a gate/check) or by its subject being deleted.
+
+Rules for the table: a new deliberately-soft seam gets a row in the same change that
+creates it; flipping a row requires meeting its flip condition, not just wanting to;
+a row with a met flip condition should be flipped or its condition honestly revised.
+
+| Seam | Softness | Reason | Flip condition |
+|---|---|---|---|
+| Governance kernel + Gradle `check` in hosted CI | Not run on hosted PR lanes (unit-test subset only) | ADR-0026: self-hosted runner not guaranteed online; kernel gates need local artifacts | A hosted-runnable subset of kernel gates is identified and proves stable for ~a month in warn mode |
+| `modules/system-tests` (spawned-process Head↔Worker suite) | Opt-in (`includeSystemTests`), never CI-scheduled (tempdoc 627) | Spawns multiple JVMs; slow/flaky on shared infra; unsuitable for agent sessions | A scheduled runner (nightly self-hosted or hosted with dist caching) demonstrates 5 consecutive green runs |
+| `test-efficacy` PIT mutation ratchet | `workflow_dispatch`-only | ADR-0026 runner availability; PIT wall-time | Same as kernel row; or PIT scoped to changed-seams-only proves < ~10 min |
+| Wire validation in **production** | Degrades + logs + records drift instead of throwing (dev/CI throw — this branch) | Crashing the user's UI on a field mismatch punishes the user for a developer mistake; FE/BE co-ship so prod skew is rare | Wire-drift telemetry (diagnostics export `feTelemetry.wireDrift`) shows sustained zero drift across releases — then reconsider; or a user-facing error boundary makes throwing safe |
+| REST error envelope | Untyped (hand-assembled maps at emit sites; no FE runtime schema) | Zero FE runtime consumers parse it today; typing it means authoring a record + repointing dozens of emit sites for no current reader | A FE feature starts *reading* error-envelope fields programmatically |
+| Agent-session snapshot (`/api/chat/sessions/{id}`) | Deliberately loose schema (free-form message/profile maps) | The snapshot intentionally carries evolving free-form shapes; pinning them would freeze exploration | The message/profile shapes stabilize (no schema-affecting change for ~a quarter) |
+| Retrieval quality/perf/leak ratchets | Advisory (hook-nudged, not CI-required) | Full eval runs cost real wall-time + GPU; change-filtered nudges match the edit surface | Hosted or scheduled eval infrastructure makes a scoped ratchet run affordable per PR |
+| Real-both-ends gRPC search test in default `test` | Only an in-process stub round-trip runs by default (this branch); real `GrpcSearchService` needs worker-services + adapters-lucene on the classpath | Module isolation: app-services cannot see worker classes; a shared-test-fixtures module is not justified by one test | A second cross-process test wants the same fixture module |
+| Worker OS priority, `NoCFSRatio`, XXH3 content-hash dedup, tokenizer-parity test, JaCoCo thresholds, zero-spinner rule | Early-project rules that faded without a recorded decision | Superseded in fact by later architecture (locale-invariant analysis, different dedup path, different coverage posture) but never formally retired | Any of them turns out to still matter — then re-derive from measurement, don't restore from memory |
+| GPU-only dev inference (no CPU fallback) | Fails closed instead of degrading to CPU | A CPU 9B fallback runs ~10× slower and saturates every core, DOSing concurrent worktrees (tempdoc 656) | Not expected to flip; recorded for visibility |
+| `-PskipWebBuild` backend-only builds | FE build skipped in memory-constrained runs | Windows memory pressure on full builds | Not expected to flip; recorded for visibility |
+
 ## See also
 
 - tempdoc 530 (class-size ratchet automation) — design tempdoc
 - Current gate registry entries describe the active enforcement surfaces.
 - `scripts/governance/gates/wire/` — the wire-Category gate (formerly `scripts/contract-governance/`, retired Pass-7 Phase F)
 - `.claude/rules/tier-register.md` — prose-rule enforcement-tier register
+- tempdoc 683 — the hardening batch that introduced the softness portfolio
