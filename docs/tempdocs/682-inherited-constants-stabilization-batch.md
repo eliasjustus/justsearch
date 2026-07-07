@@ -188,11 +188,13 @@ recipe once a real PDF/office corpus exists locally, to close the Tika-pressure 
 
 Written so a continuing agent needs nothing beyond this document and the branch.
 
-**Branch state:** `worktree-682-constants`, clean tree, commits `adfb1d1` (item 3), `267b094`
-(item 2), `09b1f19` (item 1 + as-built), `4d108cc` (status), plus the close-out commit carrying
-this section and the `environment-variables.md` default correction. (Commit hashes are
-pre-squash branch references — they identify work until merge; the durable evidence pointers
-are the test names, commands, and numbers recorded per item above.)
+**Branch state:** `worktree-682-constants`, clean tree, rebased onto `origin/main` before
+publication (five work commits: item 3, item 2, item 1 + as-built, status, close-out + the
+`environment-variables.md` default correction). Commit hashes are deliberately not listed —
+the branch is squash-merged, so per-commit hashes are ephemeral; the durable evidence pointers
+are the test names, commands, and numbers recorded per item above. (Hash references to
+`adfb1d1`/`267b094`/`09b1f19` in the §As-built headers refer to the pre-rebase working
+lineage; the content is identical.)
 
 **Verified claims — every claim above carries its pointer**; the pointer classes used:
 named unit tests (`LlamaServerBuildCheckTest` 11/11, `InferenceLifecycleManagerPropsInsightsTest`
