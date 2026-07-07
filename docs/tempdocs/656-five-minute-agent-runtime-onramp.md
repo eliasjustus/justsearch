@@ -2215,11 +2215,16 @@ item (already is).
 No feature code, no design, no CI edit — the proof-lane fix (§C) and any tempdoc-status change were
 left for explicit go-ahead. This section is investigation history (dated), not current-truth canon.
 
-### G. §C proof-lane fix applied (2026-07-08, on user go-ahead)
-On the user's "run it," applied the §C fix: `onramp-smoke.yml` now runs
-`./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist` **before** the smoke, so
-`dev-runner start`'s later `assemble` check is UP-TO-DATE and the 240 s stack-start budget is no longer
-consumed by a cold from-scratch build. Minimal change; no timeout bump needed (pre-build removes the
-cold-build path entirely). `check-workflow-triggers` still green (triggers unchanged); YAML well-formed.
-Validated by a real `workflow_dispatch` run against the branch (result recorded at commit/PR time).
+### G. §C proof-lane fix applied + iterated to green (2026-07-08, on user go-ahead)
+On the user's "run it," applied the §C fix and validated it with real `workflow_dispatch` runs against
+the branch — which usefully corrected a wrong first guess (interrogate-results discipline):
+- **Attempt 1** (`installDist` of ui+worker only) → **still timed out** (run `28905787720`). The log
+  showed dev-runner recompiling `benchmarks`/`test-support` — because `dev-runner start`'s up-to-date
+  gate is `assemble -PskipWebBuild=true` (whole project, `dev-runner.cjs:1010-1013`), which installDist
+  of two modules does not satisfy. Lesson: match dev-runner's *exact* task+flag, not a subset.
+- **Attempt 2** (corrected): pre-run `./gradlew.bat assemble :modules:ui:installDist
+  :modules:indexer-worker:installDist -PskipWebBuild=true` — the whole-project `assemble` (same
+  task+flag dev-runner runs, so its later check is UP-TO-DATE ~seconds) plus installDist for the launch
+  dir. No `startTimeoutMs` bump needed. `check-workflow-triggers` green; YAML well-formed.
+  Result recorded below once the run completes.
 
