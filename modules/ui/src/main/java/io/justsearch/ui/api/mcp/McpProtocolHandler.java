@@ -144,7 +144,13 @@ public final class McpProtocolHandler {
             "tools", Map.of("listChanged", false),
             "resources", Map.of("subscribe", true, "listChanged", false),
             "prompts", Map.of("listChanged", false)),
-        "serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION));
+        "serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION),
+        // Tempdoc 655 (agent-legibility layer): the MCP spec's optional connect-time steering slot.
+        // Clients (confirmed: Claude Code) inject it into the model's system context, so it is the
+        // one server-level surface that reaches an autonomous agent at tool-selection time. Content
+        // is the comparative tool-selection guidance owned by Layer 2 (McpToolSurface) — Layer 1
+        // holds no tool knowledge, so it asks the surface for the string rather than authoring it.
+        "instructions", surface.instructions());
   }
 
   @SuppressWarnings("unchecked")
