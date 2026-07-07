@@ -354,6 +354,34 @@ cycle is now the agent-cell matrix (~3 h, tempdocs 624/675), not corpus
 build — after E-3, further build optimization is third-order vs 675's
 in-process executor.
 
+## Phase E-5 (2026-07-07): E-3 CORRECTED — batches are nearly full; the 2× is DUPLICATE WORK
+
+A verify-first implementation pass (required to reproduce E-3's arithmetic
+before coding) refuted E-3: `OnnxEmbeddingEncoder.embedBatchWithChunking`
+(385-448) already flattens ALL documents' chunks into one stream and
+`embedPreTokenizedBatch` (269-280) sub-batches the whole stream at 8 —
+cross-document batch fill exists exactly where E-3 proposed adding it.
+
+The arithmetic that actually closes: parents' internal chunks (391 × ~11 ≈
+4,300, embedded for pooling then **discarded** — `EmbeddingService.
+embedDocumentBatch:340-395` keeps only the pooled `vector()`) + ~4,290
+chunk-doc embeddings recomputed independently from `CHUNK_CONTENT`
+(`CombinedEnrichmentBackfillOps.java:210-226`) ≈ 8,600 chunk inferences ÷
+1,235 calls = **avg batch ~7 of 8**, and 54 s / 8,600 ≈ 6.3 ms/chunk ≈ the
+bench's isolated 6.75 ms. Embed is dispatching efficiently — **long
+documents are chunk-embedded twice** (with different window boundaries).
+
+**The remaining embed lever is therefore deduplication** (~46% of embed
+inferences ≈ ~20% of total build): either (a) pool the parent vector from
+its chunk-doc vectors (skip the parent-pass internal chunking), or (b) align
+chunk-doc boundaries with encoder chunking and reuse the parent-pass chunk
+vectors. Both are **retrieval-semantics-affecting** (the parent doc vector
+and/or chunk vectors change) — unlike Phases A-E this crosses into
+/search-quality territory: requires the search-quality register, a relevance
+ratchet check (nDCG on the pinned corpora), and a live A/B before shipping.
+Not implemented; decision point recorded. (The duplicate-embedding
+observation is also logged in the observations shard.)
+
 ## Remaining implementation items (Phase B/C follow-through)
 
 1. **Durable arena default:** `justsearch.ner.gpu_mem_mb` 512 → 2048
