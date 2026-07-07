@@ -153,7 +153,7 @@ row).
   `strip-token-fallbacks --check` — all trace to `RecentsMenu.ts`/`ActionLedgerView.ts`,
   untouched here.
 - **Windows dev-loop notes a continuing session needs:** run Gradle with
-  `JAVA_HOME=F:/scoop/apps/temurin25-jdk/current` (shell default resolves Java 8);
+  a JDK 25 `JAVA_HOME` explicitly if the shell default resolves an older Java;
   run `./gradlew.bat :modules:ui:installDist` explicitly before starting the dev stack
   after Java edits (the runner's assemble step can report up-to-date on a stale dist);
   a lingering ui-shot Vite server can hold native-module file locks and break
