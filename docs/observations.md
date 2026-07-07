@@ -1644,9 +1644,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
 
-### obs:unanchored-general-56 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+### obs:unanchored-general-56 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) -
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
+
+### obs:llamaserveropscrashtelemetrytest — LlamaServerOpsCrashTelemetryTest ('Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes
+`kind: environment?` `anchor: modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] LlamaServerOpsCrashTelemetryTest ('Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes') failed once on PR #76 CI (run 28836376358) but passes locally on identical merged code (--rerun) and passed main's own CI an hour earlier — timing-sensitive crash-telemetry flake under CI load, same class as the NdjsonInferenceTransitionLog retention flake — `modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java` (2026-07-07)
 
 ## Parked
 
