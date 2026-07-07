@@ -154,3 +154,7 @@ Two commits: `02cc45f` (the three fixes + tests) and `4c3847c` (a critical-analy
 - A live subagent-env probe would convert assumption (2) into a verified fact (or fix the docstring).
 - Sibling batch **685** (fallback-constant conformance) and **686** (real-PDF/Tika corpus)
   remain open and untouched.
+- **On merge:** resolve the `docs/observations.md` inbox entry that logged these two defects
+  (the record-merge session misattribution + the broken EPERM long-path fallback) — it is now
+  fixed. (The separate "orphaned `597-chat-count` worktree dir on disk" note in the same
+  grouped condition is NOT addressed by this work and should stay.)
