@@ -484,6 +484,31 @@ on purpose.
   principle carried without a retirement test tends to become self-justifying apparatus; this is its
   off-switch.
 
+### Where this goes next — follow-up routing (2026-07-07)
+
+The follow-ups this work surfaces are deliberately **not** bundled into one "evidence phase 2"
+tempdoc — that would recreate this doc's original over-broad framing (the exact sin the investigation
+above narrowed away). They route to existing owners, and the one genuinely-new piece stays deferred
+and dependency-gated. The relationship among them is a dependency graph, not a bundle:
+
+- **Agent utility — does the evidence earn its keep?** → a measurement item under **624** (agentic
+  retrieval eval): does an agent given `structuredContent` re-query less / cite better than one given
+  text only? This is the *earning-its-keep* signal for the reverse-coverage principle above. Not a new
+  tempdoc — a 624 eval condition.
+- **Second coverage instance** → the skipped-file / OCR ingestion-evidence read surface, under **671**
+  (owns the `OcrSkipReason` / ingestion-outcome-journal source-of-truth). This is the second real
+  instance the principle predicts. Rides 671, not a new tempdoc.
+- **`outputSchema` for the structured evidence** → a backlog line for **655** (owns the MCP
+  output-schema machinery, which does not exist yet; the evidence rides as free-form `structuredContent`
+  per the `runtime_manifest` precedent until then). Not a new tempdoc.
+- **`capture_evidence` Windows libuv crash** (`UV_HANDLE_CLOSING`) → dev-tooling (684-family) / an
+  issue; logged in the observations inbox. Orthogonal to the evidence theme; do not group.
+
+The reverse-coverage `subjectCarriers` gate itself is the **only** genuinely-new tempdoc worth opening,
+and it is **contingent**: open it only once *either* the 624 utility signal is positive *or* the 671
+surface lands (a second violation for the gate to catch). If neither fires within the retirement window
+above, retire the principle instead — do not build the gate speculatively.
+
 ---
 
 ## Pre-implementation confidence pass (2026-07-07)
