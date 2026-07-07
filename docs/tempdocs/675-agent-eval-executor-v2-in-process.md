@@ -319,3 +319,148 @@ bank a caching win in the lever ranking.
 **License note (for the implementing session):** any Agent SDK example code adapted into the
 executor must clear the repo's license-and-notices CI check — `anthropics/claude-agent-sdk-python`
 is MIT; attribute the source if code is lifted. (This research pass copied nothing.)
+
+---
+
+## Theorization & open directions (2026-07-07) — options to weigh before the design settles
+
+> **Status: exploratory, not decided.** The Design pass above is a settled *engineering* answer to
+> the wall-clock objective the owner named. This section deliberately steps back and asks whether the
+> objective, the measurement, and the run shape are framed the right way. Nothing here supersedes the
+> lever ranking; it records directions, tradeoffs, and hidden assumptions worth examining before an
+> implementation locks the design in. Several ideas conflict with each other on purpose.
+
+### A. Reframe the objective before optimizing it
+
+The Design pass minimizes **wall-clock of a fixed 520-cell run**. Three prior framings coexist in the
+lineage and pull different ways; naming the objective explicitly is itself a contribution:
+
+- **What is actually being minimized?** Dollars (624's "wall-clock is free overnight; money is
+  not"), wall-clock (this doc's owner framing), *blocked-development-hours* (the motivating pain), or
+  *information gained per unit cost*? These rank the levers differently. Cost-per-run favours fewer
+  cells; blocked-dev-hours favours a non-blocking run shape (§B) over a faster one; information-per-cost
+  favours spending samples only where they change the conclusion (§C). A one-line objective statement
+  at the top of the eventual design would prevent optimizing the wrong quantity.
+- **Attribute *signal*, not only cost.** 691's method is "attribution → allocation → optimization."
+  675 adds a corollary the Design pass hints at but doesn't foreground: a companion tempdoc (673)
+  found the accuracy-delta metric is **noise-dominated even at full n**. If that holds, making the
+  520-cell run faster is polishing an instrument that cannot conclude — the binding constraint is the
+  *metric's sensitivity*, not the runtime. Before investing in executor throughput, confirm the
+  measurement can resolve the effect it exists to measure. "Attribute cost AND signal" may be the
+  more general principle than "attribute cost."
+
+### B. Cadence reframes — dissolving the "run regularly vs. blocks development" tension
+
+The Design pass answers this with a progress/certify **tier split**. Two stronger reframes:
+
+- **Continuous trickle instead of a monolith.** The tension only exists because a run is a *batch* that
+  holds the stack for hours. If instead a handful of cells run per merge (or per idle window) and
+  accumulate into a **running estimate**, the batch never exists — blocking becomes negligible per
+  increment, and "regularly" becomes "continuously." This reframes the agent-utility number as a slow
+  CI signal rather than an event. The cost is real and must be designed around: increments taken across
+  different engine versions mix versions in the estimate, so the accumulator needs to **window or reset
+  on an engine change** (a fingerprint boundary, reusing the cohort-identity machinery 624 already
+  built), and each increment still pays a fixed calibration overhead unless calibration is amortized.
+- **Sequential / optional-stopping designs.** The 520 cells run regardless of what they show. For the
+  *common* case where the effect is clearly present or clearly absent, a fraction would settle the sign.
+  Anytime-valid inference (confidence sequences / always-valid p-values) lets a run **stop early when
+  the estimate is conclusive** without the false-positive inflation that naive peeking causes. This is
+  the natural partner to the continuous-trickle shape (a confidence sequence *is* an always-readable
+  running estimate) and directly serves "cut wall-clock" for the majority of runs where the answer is
+  not on the knife's edge.
+
+### C. Structural reuse — spend fewer agent-cells for the same conclusion
+
+- **Memoize the invariant arm.** The paired design has one arm (condition A — the agent working over the
+  fixed corpus with *no* JustSearch tool) whose result does not depend on the search engine at all.
+  Across a *regression* cadence (engine vN → vN+1 on the same corpora/queries), A is invariant modulo
+  API drift, so in principle only the with-tool arm needs re-running. Tempting ~2× for regression runs —
+  **but in direct tension with the paired design's contemporaneity requirement**: pairing A and B within
+  one run/seed is exactly what controls for shared variance and API drift (the same thing the
+  `max_tasks=1` removal restores). Caching A across runs reintroduces a temporal confound between arms.
+  Recorded as a real tradeoff, not a free win; it may be acceptable for the *progress* tier and not the
+  *certification* tier. The general shape — "in a comparison, factor out and reuse the arm independent of
+  the thing under test" — is worth naming regardless of whether it's adopted here.
+- **Differential / incremental eval.** Re-run only the cells whose *inputs* changed since the last run —
+  i.e., cells where the engine's results on the agent's queries actually differ. Requires recording
+  backend responses per cell (which the forensic executor will capture anyway) and a diff over them.
+  Bounded by the fact that a changed result can change the agent's whole trajectory, so the "unchanged"
+  set is smaller than it looks — but non-trivial for small, targeted engine changes.
+- **Variance-driven allocation.** Seeds and queries are currently uniform. If a few queries/corpora carry
+  most of the variance in the utility delta, concentrating seeds there (stratified / importance
+  allocation) buys the same power for fewer cells. Cheap to explore: the variance decomposition is
+  computable from the logs already collected, before any executor change.
+- **Control variates / covariate adjustment.** Use a cheap per-cell retrieval-quality signal (e.g. nDCG
+  on that cell's queries) as a covariate to shrink the variance of the utility estimate at fixed n
+  (a CUPED-style adjustment). Orthogonal to all the above; needs the proxy to correlate at all.
+- **Cheap surrogate as a leading indicator.** If a static retrieval-quality metric *tracks* the
+  agent-utility delta, it could be the continuous signal with the expensive agent run only calibrating it
+  periodically. This is in **direct tension with 624's founding thesis** (agent-utility ≠ retrieval
+  quality — the agent may not exploit a better engine). That tension is the point: a correlation study is
+  cheap, and a *negative* result (proxy does not track utility) is itself a valuable, publishable
+  confirmation of why the expensive measurement is necessary.
+
+### D. The latent backend ceiling (know it before optimizing toward it)
+
+The bench found the search backend saturates at ~6.7 qps, GPU-bound on the cross-encoder reranker
+serialized through a per-model `Semaphore(1)`. It is **not** today's wall — but it is the ceiling every
+client-side parallelism lever eventually hits (the eval's Amdahl limit). Consequences worth holding:
+raising the semaphore permit count buys nothing while the GPU is already saturated; the only ways to lift
+the ceiling are to **reduce rerank work per query** (fewer candidates / a lighter cross-encoder — this is
+retrieval-semantics-affecting, /search-quality-register territory, and belongs to the query-latency
+sibling 648, not here) or to **avoid repeat queries** (the eval fires a small fixed qrels set plus
+free-form agent queries against a static corpus; a per-run, per-corpus query-result cache could collapse
+much of the load — but must be *per-run scoped* to avoid the answer-key/cross-cell contamination class
+624 repeatedly hit, and free-form agent queries cache poorly). None of this is needed while the agent loop
+dominates; it becomes the next attribution question the moment the other levers push concurrency up.
+
+### E. Hidden assumptions this doc has been carrying
+
+1. That the full certified run must recur regularly (§B: it may not — a trend needs less precision than a
+   run-level CI, and a continuous signal may replace the batch).
+2. That the 520-cell design is fixed (§B/§C: sequential stopping and variance allocation can shrink it).
+3. That both arms must be re-run every time (§C: one arm is engine-independent).
+4. That agent-utility must be measured by running agents (§C: a calibrated proxy *might* track it — or
+   provably might not).
+5. That runtime is the binding constraint (§A: the metric's noise floor may be).
+6. That the backend is not a bottleneck (§D: true now, latent ceiling always).
+
+### F. Risks to carry into the design
+
+- **Optimizing a measurement that cannot conclude** (§A) — the highest-order risk; guard it by confirming
+  metric sensitivity before executor investment.
+- **Stale/cross-time comparability bugs** from arm caching or continuous accumulation (§B/§C) — the
+  stale-baseline class; any reuse across engine versions needs a fingerprint boundary and an explicit
+  drift re-baseline, or the green is unreachable-seed-green.
+- **Naive optional stopping inflates false positives** (§B) — only anytime-valid methods are safe.
+- **Leak-control regressions in the Agent SDK migration** (Design pass: denylist→allowlist, cwd vs
+  `--add-dir` corpus isolation) — silent contamination is the exact failure 624 kept hitting; treat the
+  offered-tool allowlist and corpus isolation as assertions the executor checks per cell, not
+  assumptions.
+- **Phantom caching savings** (§ Design pass 2-D) — a prompt cache that silently never fires (haiku's
+  4096-token floor, cold concurrent batches) reads as a win that isn't there; measure `cache_read` before
+  claiming it.
+
+### G. Candidate broader principle / recurring system shape (not yet a design)
+
+675 looks like one instance of a shape that recurs across every quality axis this system measures:
+
+> **Two-tier (or continuous) measurement.** Each quality axis needs a *cheap, continuous* signal that can
+> run at the cadence decisions are actually made, plus an *expensive, high-rigor certification* that runs
+> rarely and never sits on the critical path of routine work. The relevance ratchet, the performance gate
+> (640), the leak scan, and the cheap agent-utility gate (673) are siblings; 675 is the agent-utility
+> instance, and its "make the expensive run cheaper" problem is really "make sure the expensive tier is
+> never what blocks the cheap cadence."
+
+Two narrower shapes fall out, each potentially reusable beyond this eval:
+
+- **Memoize-the-invariant-arm** (§C): in any comparison measurement, the arm that does not depend on the
+  variable under test is a caching opportunity — bounded by whether the design needs the arms
+  contemporaneous.
+- **Amdahl ceiling of a shared serial resource** (§D): a saturated shared resource (here a GPU inference
+  semaphore) caps throughput no matter how much client parallelism you add; identifying that ceiling is a
+  prerequisite to knowing when a parallelism lever has stopped paying.
+
+And a method refinement worth promoting if it survives scrutiny: **attribute signal, not only cost** —
+extend 691's "attribution before allocation" so a measurement's *runtime* is optimized only after its
+*sensitivity* is confirmed sufficient to conclude.
