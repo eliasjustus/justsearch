@@ -1,8 +1,9 @@
 ---
 title: "696 — Simple/Detailed disclosure coverage: bring user-facing technical strings under the one uiMode authority"
 type: tempdoc
-status: in-progress
+status: implemented (pending independent review + merge)
 created: 2026-07-08
+updated: 2026-07-08
 related:
   - 557 (uiMode / Simple-Advanced authority origin, Q8)
   - 586 (uiMode rail-trim consumer, F-2)
@@ -83,6 +84,45 @@ leaks are where it isn't. It earns its keep if future UI review surfaces fewer "
 Simple-mode user" findings; it should be retired if the product ever collapses Simple/Advanced into a
 single always-plain mode. The generalized structure is deliberately not built now — the present
 problem only needs the specific sites wired.
+
+## Implementation status (2026-07-08)
+
+Shipped in four commits on `worktree-ui-audit-density-review` (unit suite green throughout — 3719):
+
+- **Toggle (Shell topbar).** A `Simple | Detailed` segmented control renders from the live
+  `getUiMode()`; selecting a mode calls `setUiMode` + a best-effort `POST /api/settings/v2 {ui:{mode}}`
+  (mirrors Settings' persist shape, independent of SettingsSurface being mounted).
+- **Degradation banner.** Defaults to the collapsed pill; raw `causes` render only in Detailed / via
+  the local "See details" expand; a `severity:error` verdict opens expanded even in Simple. Tempdoc
+  687's seen-hash machinery (`syncDegradationBannerExpansion`, `degradationCauseHash`,
+  `armedDegradationCauseHash`, `setSeenDegradationCauseHash` + the `seenDegradationCauseHash` userConfig
+  field) is removed — **the teardown rode along in the same commit.**
+- **Search results.** `ResultsCard` projects the mode label and latency plainly in Simple
+  ("exact-word search", "found in 0.06s") vs technically in Detailed ("Keyword", "62ms"); the result
+  location is a folder breadcrumb ("ssot › docs › help") in Simple vs the full path in Detailed
+  (new path-derived `formatLocationBreadcrumb`).
+- **Agent surface.** The per-turn receipt's model name is Detailed-only (C7); the run's budget state
+  is plain in Simple ("Paused — waiting to continue") vs technical in Detailed (C8). C6 (raw model
+  reasoning) needed no new gating — `ReasoningBlock` and terminal `ToolCallCard`s already collapse by
+  default, and gating tool args further would hide approval context.
+
+**Live browser validation (worktree FE on a real backend, both modes):** the toggle, the banner
+(Simple pill ↔ Detailed expanded causes), the meta line, the breadcrumb, and the Q&A receipt model
+name all round-trip correctly. Live validation additionally surfaced and fixed a boot desync — the
+topbar toggle initially lagged the async settings seed when `ui.mode='advanced'` was persisted; fixed
+by rendering the toggle from the live authority.
+
+**Deferred / not done (intentional):**
+- **Plain-copy pass on `readinessNotice` headlines** (e.g. "Reduced search capability" → a plainer
+  phrase). The C1 leak (the raw LambdaMART *cause* string) is fixed structurally by the collapsed-pill
+  default; rewriting the shared headline/body copy risks diverging from the Health header and is an
+  owner-tunable product-copy decision, left as a follow-up.
+- **C10 (stacked banners)** — largely subsumed: the Simple-mode banner is now a slim pill rather than a
+  full-height block, so it no longer stacks as a competing banner with the top-center recap digest. A
+  dedicated cross-component arbitration was not built (would be structure for a case the slim pill
+  already resolves); revisit only if a real collision recurs.
+- **C8 budget-gate live check** — the plain/technical budget string is unit-tested; a live budget-gate
+  is hard to trigger deterministically and was not exercised in-browser.
 
 ## Rollout / verification
 
