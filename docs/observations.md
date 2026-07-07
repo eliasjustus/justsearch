@@ -714,8 +714,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] independent-review gate stale: slice 550-thesis-i-iii-federated-projection coversThrough febcf65c7 is behind ActionLedgerView.ts/TaskList.ts (changed in the 557/main merges, pre-559-gap-closure) — needs a fresh independent review of the 550 action-ledger substrate tip; out of 559 scope (2026-05-30)
 
 ### obs:enforcer — dead-code gate still inert after vite.config __dirname fix (2026-05-30): knip now RUNS (was crashing
-`kind: defect?` `anchor: scripts/governance/gates/dead-code/enforcer.mjs` `seen: 1`
+`kind: defect?` `anchor: scripts/governance/gates/dead-code/enforcer.mjs` `seen: 2` `first: 2026-07-06` `last: 2026-07-06`
 - [ ] dead-code gate still inert after vite.config __dirname fix (2026-05-30): knip now RUNS (was crashing on ESM __dirname; fixed) and reports real findings (~246 unused exports + 368 unused types across 173 files), BUT `scripts/governance/gates/dead-code/enforcer.mjs` (lines ~63-76) cannot parse knip v5's `--reporter json` shape (`{files: string[], issues: [{file,exports,types,...}]}`) — it expects `files:[{file,...}]` or `issues:{category:{file:[]}}`, so it counts 0 and the gate passes vacuously. To genuinely enforce: (a) fix the enforcer parser to walk knip v5 `issues[]` summing exports+types(+ns) per `file`; (b) trim the bloated `modules/ui-web/knip.config.ts` ignore[] if needed; (c) seed `gates/dead-code/baseline.txt` with the resulting per-file counts (or a declared-growth changeset). This is a tempdoc-530 governance-kernel change → needs independent review (not self-validated in a CI-unblock pass). — `scripts/governance/gates/dead-code/enforcer.mjs` ($(date +%Y-%m-%d))
+- [ ] tier-register.md §meta-loop documents orphaned register rows as FAILING prose-tier-register (orphan-register-row), but the live enforcer classifies a newly-orphaned slug (anchor removed from CLAUDE.md, row still present) as orphan-grandfathered at note level and the gate PASSES — doc-vs-enforcer drift, found via 681 de-risk dry-run 2026-07-06 — `scripts/governance/gates/prose-tier-register/enforcer.mjs` (2026-07-06)
 
 ### obs:verify-canonical-doc-links — Pre-existing canonical-doc-link violations: `write-a-plugin.md:291-293` + several `docs/decisions/*.
 `kind: environment?` `anchor: verify-canonical-doc-links.mjs` `seen: 1` `first: 2026-05-31` `last: 2026-05-31`
@@ -1610,6 +1611,42 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-51 — downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
 - [ ] downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large file') — the cuda12 zip is version-pinned by URL but not content-pinned — `modules/ui/build.gradle.kts:566-570` (2026-07-06)
+
+### obs:unanchored-general-52 — downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large file') — the cuda12 zip is version-pinned by URL but not content-pinned — `modules/ui/build.gradle.kts:566-570` (2026-07-06)
+
+### obs:cost-session — cost-session analytics tool defect (develocity audit 2026-07-05): per-turn cost attribution falls ba
+`kind: defect?` `anchor: scripts/agent-analytics/cost-session.mjs` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] cost-session analytics tool defect (develocity audit 2026-07-05): per-turn cost attribution falls back to a wrong model price for ~all turns (measured -18%/-41% undercount patterns), and its batch mode reads a directory that does not exist — `scripts/agent-analytics/cost-session.mjs`. Fix or retire before trusting any cost read. (2026-07-06)
+
+### obs:unanchored-general-53 — ui-web typecheck is RED on main since the Dependabot npm-frontend bump (`b406e72`, TS -> 6.0.3): tsc
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] ui-web typecheck is RED on main since the Dependabot npm-frontend bump (`b406e72`, TS -> 6.0.3): tsc hard-errors TS5101 on the deprecated baseUrl in `modules/ui-web/tsconfig.json:28`. The `@/*` path alias it serves is used nowhere (no src imports, no vite config refs) — fix is deleting baseUrl+paths (done in worktree-search-thread, will land with that PR; cherry-pick earlier if main needs green typecheck sooner). (2026-07-06)
+
+### obs:unanchored-drift-16 — Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-critical and no longer named by any invariant — SqliteJobQueue lives in modules/indexer-worker and no Head main code touches SQLite today, yet nothing (invariant text or ArchUnit rule) forbids a future Head-side SQLite reader. Consider re-affirming the SQLite half of the ownership invariant. (2026-07-06)
+
+### obs:unanchored-general-54 — synth-scan-v1 corpus-dir is polluted with agent-authored OCR-processing artifacts (aggressive_thresh
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
+- [ ] synth-scan-v1 corpus-dir is polluted with agent-authored OCR-processing artifacts (aggressive_threshold, all_text, binary, brel_processed, *_proc/*_enhanced files) from a pre-isolated-staging run — must be cleaned (like battlefield-de-v1's connections.txt was) before the post-672 fidelity re-verify or any scan-corpus spend. — `datasets/golden/synth-scan-v1/corpus-dir` (2026-07-03)
+
+### obs:unanchored-general-55 — 624 §T.2 scan-battlefield premise empirically resolved NEGATIVE at the shipped degradation band: the
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
+- [ ] 624 §T.2 scan-battlefield premise empirically resolved NEGATIVE at the shipped degradation band: the band tuned to defeat Claude Code's multimodal Read ALSO defeats the product's own extraction stack (local Qwen VLM hallucinates; tesseract path yields empty) — live fidelity nDCG@10=0.0000 on a clean fully-extracted scan-only index. The structural-advantage window requires extraction >= agent vision, but the local extractor is weaker than frontier vision; a viable band (readable-by-pipeline, unreadable-by-agent) may not exist and would need adversarial-to-frontier-vision-but-OCR-friendly degradations — a research question, not a parameter tweak. — `datasets/golden/synth-scan-v1` (2026-07-03)
+
+### obs:agent-utility-inspect-missing-2 — CRITICAL 624 finding: conditions B and C of every battlefield-era agent-utility run (July 2 + the ce
+`kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
+- [ ] CRITICAL 624 finding: conditions B and C of every battlefield-era agent-utility run (July 2 + the certified 2026-07-03 EN/DE records) ran with a DEAD MCP config — mcp.json used {"url":...} without "type":"http", which Claude CLI silently drops (proven by A/B probe: url-only -> mcp_servers=[] and 0 tools offered; type:http -> connected, 6 justsearch tools). Zero MCP invocations in all 260 certified B cells (verified 3 ways + independent repro-log check). B was behaviorally A-with-dead-config (explains the null + sign-flip noise); C was NO-TOOLS-AT-ALL (reinterprets 'C significantly harmful'). Missing guard: the harness asserts disallowed tools empirically but never asserts the EXPECTED tool surface was offered — the init event carries mcp_servers status + tool list and must be captured+asserted per cell. The true U0 question is REOPENED, not answered-null. — `scripts/jseval/jseval/agent_utility_inspect.py` (2026-07-03)
+
+### obs:unanchored-drift-17 — package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pr
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
+
+### obs:unanchored-general-56 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
 
 ## Parked
 
