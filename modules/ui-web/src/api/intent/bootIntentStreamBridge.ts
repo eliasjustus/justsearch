@@ -40,7 +40,13 @@ import type { MultiplexedStream } from '../../shell-v0/streaming/MultiplexedStre
 import type { SseEnvelope } from '../../shell-v0/streaming/envelope-types.js';
 import { SHELL_EVENT_STREAM_IDS } from '../../shell-v0/streaming/shellEventStreamIds.js';
 
-/** Bounded LRU of seen envelope ids, sized to match the server ring buffer (9000). */
+/**
+ * Bounded LRU of seen envelope ids, sized to match the server ring buffer. Value-coupled to
+ * `DEFAULT_CAPACITY` in
+ * `modules/app-observability/.../stream/FrameHistoryRingBuffer.java`; drift is caught by the
+ * cross-language check in `bootIntentStreamBridge.test.ts` ("BE/FE capacity drift",
+ * tempdoc 682 Item 3).
+ */
 const DEDUP_LRU_SIZE = 9000;
 
 interface IntentEnvelopePayload {

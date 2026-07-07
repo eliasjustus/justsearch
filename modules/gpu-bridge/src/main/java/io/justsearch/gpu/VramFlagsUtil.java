@@ -81,10 +81,10 @@ public final class VramFlagsUtil {
   // Default VRAM thresholds - use ~95% of nominal to handle GPUs that report slightly less
   // (e.g., 12GB GPU reports 12878610432 bytes = 11.99 GiB due to reserved memory).
   // Configurable via JUSTSEARCH_VRAM_THRESHOLD_{12GB,8GB,4GB} env vars or system properties.
-  // Note: VramDetector has its own parallel thresholds for llama-server flag selection.
   // Overriding these thresholds affects tier classification (UI display) but not VramDetector's
-  // GPU flag recommendations.
-  private static final long DEFAULT_TWELVE_GB = 11_500_000_000L; // ~10.7 GiB
+  // GPU flag recommendations. The 12GB default's authority is
+  // VramRequirements.COMFORTABLE_VRAM_BYTES (tempdoc 682 Item 3).
+  private static final long DEFAULT_TWELVE_GB = VramRequirements.COMFORTABLE_VRAM_BYTES;
   private static final long DEFAULT_EIGHT_GB = 7_500_000_000L; // ~7.0 GiB
   private static final long DEFAULT_FOUR_GB = 3_500_000_000L; // ~3.3 GiB
 

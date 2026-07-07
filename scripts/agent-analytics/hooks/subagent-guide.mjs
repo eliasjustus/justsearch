@@ -70,7 +70,7 @@ function buildGuidance(input = {}) {
 
   sections.push(
     '### Observations protocol',
-    'If you notice a pre-existing issue outside your task scope (bug, dead code, stale comment, config drift): log one line to the inbox and keep working. Do not investigate. Do not fix.',
+    'If you notice a pre-existing issue outside your task scope (bug, dead code, stale comment, config drift): log one line and keep working. Do not investigate. Do not fix. Do NOT read the store first or check for duplicates — re-observation is welcome signal (it bumps the matching condition\'s seen-count at the next fold; tempdoc 680).',
     'Log via: `node scripts/agent-analytics/note-observation.mjs "<description> — \\`<file:line>\\`"` — it writes to your own per-session shard under `docs/observations.d/` (618 Seam C), so a parallel agent\'s commit can\'t wipe your note; it resolves your session id and stamps the date.',
   );
 

@@ -105,6 +105,44 @@ class RuntimeManifestSchemaCompatibilityTest {
   }
 
   @Test
+  void aiServerBuildFieldsRoundTripAndStayOptional() throws Exception {
+    // Tempdoc 682 Item 2: serverBuildExpected/serverBuildActual are new OPTIONAL AiInfo fields.
+    // A body carrying them must round-trip; a body with an ai sub-record omitting them must
+    // still parse (fields == null), so the schema version stays 1.
+    String withBuilds =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-00000000682a\",\n"
+            + "  \"pid\": 682,\n"
+            + "  \"startedAt\": \"2026-07-06T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/682\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40682,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40682\",\n"
+            + "    \"readyAt\": \"2026-07-06T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"ai\": {\"phase\": \"READY\", \"required\": true,\n"
+            + "    \"serverBuildExpected\": \"b8571\", \"serverBuildActual\": \"b8600\"}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withBuilds, RuntimeManifest.class);
+    assertNotNull(parsed.ai());
+    assertEquals("b8571", parsed.ai().serverBuildExpected());
+    assertEquals("b8600", parsed.ai().serverBuildActual());
+
+    // Omitted fields stay null and are omitted on write (NON_NULL) — older readers unaffected.
+    RuntimeManifest.AiInfo bare =
+        new RuntimeManifest.AiInfo("OFFLINE", false, "Inference not configured", null, null, null);
+    String written = TOLERANT.writeValueAsString(bare);
+    assertTrue(
+        !written.contains("serverBuild"),
+        "absent build fields must be omitted (NON_NULL): " + written);
+    RuntimeManifest.AiInfo reparsed = TOLERANT.readValue(written, RuntimeManifest.AiInfo.class);
+    assertEquals(null, reparsed.serverBuildExpected());
+    assertEquals(null, reparsed.serverBuildActual());
+  }
+
+  @Test
   void futureFieldsAreToleratedByForwardCompatibleReader() throws Exception {
     // Same producer body BUT with a hypothetical future field at the top level + nested.
     // The §12.3 rule: a tolerant reader must accept these without error so older consumers

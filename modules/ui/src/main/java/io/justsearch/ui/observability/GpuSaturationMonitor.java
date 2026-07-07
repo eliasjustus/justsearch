@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ui.observability;
 
+import io.justsearch.telemetry.RollingMonitorWindow;
 import java.util.ArrayDeque;
 import java.util.function.LongSupplier;
 
 /**
  * Tempdoc 419 C3 V2 P3 — head-side rolling-window GPU saturation detector.
  *
- * <p>Mirrors {@code OperationalMetrics.ThroughputMonitor} (worker-core) — same constants and
- * shape — but classifies "GPU pinned high while no workload is active" as SATURATED. The
+ * <p>Mirrors {@code OperationalMetrics.ThroughputMonitor} (worker-core) — the shared window
+ * trio lives in {@link RollingMonitorWindow}, same shape — but classifies "GPU pinned high
+ * while no workload is active" as SATURATED. The
  * activity gate is the inverse of throughput's: throughput fires STALLED when work is queued
  * but rate is low; saturation fires when nothing is queued but GPU is busy anyway (idle leak,
  * stuck inference session, lingering background job).
@@ -20,13 +22,13 @@ import java.util.function.LongSupplier;
 public final class GpuSaturationMonitor {
 
   /** Window size in milliseconds — must accumulate sustained saturation before firing. */
-  private static final long WINDOW_MS = 180_000;
+  private static final long WINDOW_MS = RollingMonitorWindow.WINDOW_MS;
 
   /** If samples are sparser than this, the monitor resets and reports UNKNOWN. */
-  private static final long MAX_GAP_MS = 600_000;
+  private static final long MAX_GAP_MS = RollingMonitorWindow.MAX_GAP_MS;
 
   /** Cap on retained samples; > WINDOW_MS / sampler-period + slack. */
-  private static final int MAX_SAMPLES = 100;
+  private static final int MAX_SAMPLES = RollingMonitorWindow.MAX_SAMPLES;
 
   /** Average GPU utilization above this percentage triggers SATURATED. */
   private static final double SATURATION_THRESHOLD_PERCENT = 80.0;

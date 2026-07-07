@@ -491,13 +491,19 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
    * §12.1: projects from the capability's {@code health()} / {@code required()} /
    * {@code pendingReason()} surface. The lifecycle field is recomputed by the caller via
    * {@code LifecycleProjection.derive} (because inference health feeds the projection).
+   *
+   * <p>Tempdoc 682 Item 2: {@code serverBuildExpected} / {@code serverBuildActual} carry the
+   * staged llama-server build pin vs the {@code /props}-reported running build; either may be
+   * null (unknown — a supported state, e.g. externally-adopted servers carry no pin).
    */
   public synchronized RuntimeManifest publishAi(
       String phase,
       boolean required,
       String pendingReason,
       boolean readyNow,
-      String lifecycle)
+      String lifecycle,
+      String serverBuildExpected,
+      String serverBuildActual)
       throws IOException {
     RuntimeManifest previous = current.get();
     if (previous == null) {
@@ -508,7 +514,8 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
             ? Instant.now().toString()
             : previous.ai() == null ? null : previous.ai().readyAt();
     RuntimeManifest.AiInfo aiInfo =
-        new RuntimeManifest.AiInfo(phase, required, pendingReason, readyAt);
+        new RuntimeManifest.AiInfo(
+            phase, required, pendingReason, readyAt, serverBuildExpected, serverBuildActual);
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder(previous)
             .ai(aiInfo)

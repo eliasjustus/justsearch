@@ -922,6 +922,16 @@ final class LlamaServerOps {
     return propsOps.hasVisionCapability();
   }
 
+  /** Tempdoc 682 Item 2: expected build tag from the staging pin marker; null = unknown. */
+  String expectedServerBuild() {
+    return propsOps.expectedServerBuild();
+  }
+
+  /** Tempdoc 682 Item 2: actually-running build tag observed via /props; null = unknown. */
+  String actualServerBuild() {
+    return propsOps.actualServerBuild();
+  }
+
   // ==================== Lifecycle ====================
 
   void shutdown() {
