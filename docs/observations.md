@@ -1797,7 +1797,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
 
-### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal 
+### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal
 `kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal (batching regressed in item 22 due to padding waste); live 691-B1 measurement (golden/battlefield-en-v1, JUSTSEARCH_NER_GPU_MEM_MB=2048) shows encoderProfiles.ner.ortP50Us=33947us (34ms) and baseline E2 showed 28803us (28.8ms) — both ~15-17x the claimed 2.0ms/call, and batchTiming.totalMs.ner (202.5s/240.1s across 5 macro-cycles) still dominates ~69-75% of enrichment wall despite raising the NER GPU arena — the per-doc call cost itself, not just the OOM/fallback path, deserves re-measurement against the 'item 22' baseline — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:335` (2026-07-07)
 
@@ -1813,13 +1813,41 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Stale remote branch worktree-agent-a407b9aff4e450534 — PR #70 closed unmerged 2026-07-03, never cleaned up on origin (2026-07-07)
 
-### obs:check-run — main@8cacb20 latest commit shows a cancelled 'License and notices' check-run (others all success) — 
+### obs:check-run — main@8cacb20 latest commit shows a cancelled 'License and notices' check-run (others all success) —
 `kind: defect?` `anchor: check-run` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] main@8cacb20 latest commit shows a cancelled 'License and notices' check-run (others all success) — worth investigating why it was cancelled and re-running (2026-07-07)
 
 ### obs:unanchored-general-65 — 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependa
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependabot/docs triage backlog, not a defect (2026-07-07)
+
+### obs:inference-status-response — contract-surfaces: registered InferenceStatusResponse with EMPTY consumers — its generated FE Zod ty
+`kind: follow-up?` `anchor: inference-status-response.ts` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] contract-surfaces: registered InferenceStatusResponse with EMPTY consumers — its generated FE Zod type (`inference-status-response.ts`, 683-onboarded) has no parse-boundary consumer; 663 Stage-4 typed FE consumption unfinished (`inferencePoll.ts:13` untyped `mode: string`). Follow-up for 663/688: wire the FE via `inferenceStatusResponseSchema` or drop the codegen target. (2026-07-07)
+
+### obs:unanchored-general-66 — 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distributi
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distribution + judge-ceiling/ce-replay realizable-headroom) already shipped via PR #36 (db62746); the only genuinely-unmerged Part-1 residue was the JUDGE_RANK_LOW sub-cause taxonomy (CE_NOT_SCORED/CE_DEMOTION attribution) + the Part-2 runtime CE-confidence trust gate (shouldTrustCeReorder/trust_gate, default-off Java). Per tempdoc 643 §Merge-reconciliation the trust gate's keep/remove is unresolved pending an unrun CE-margin-discrimination measurement (AUC>=0.65 on enron-qa); it can be rebuilt verbatim from §Long-term design. Branch worktree-643-judge-rung-conformance (tip 7d6dde2, feature b88272a) pruned unshipped. (2026-07-07)
+
+### obs:unanchored-error-8 — Dependabot Updates run 28888923884 fails inside GitHub's updater infra ('Failed to parse GITHUB_REGI
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Dependabot Updates run 28888923884 fails inside GitHub's updater infra ('Failed to parse GITHUB_REGISTRIES_PROXY environment variable', then record_update_job_error) while refreshing gradle-deps PR #61 — not a repo-code failure; recheck whether subsequent Dependabot runs recover or PR #61 is stuck (2026-07-07)
+
+### obs:unanchored-error-9 — Search results can surface a raw internal file with a GUID-shaped name and no title/summary/context 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Search results can surface a raw internal file with a GUID-shaped name and no title/summary/context (e.g. `ba54e809-7654-4c3d-bd8a-ffa51f223c16.md`) — likely eval/test tooling residue leaking into the live index; needs investigation into why it's indexed and surfaced unlabeled — noticed during a UI design-comparison pass, not yet root-caused. (2026-07-07)
+
+### obs:unanchored-drift-26 — Stale remote branch worktree-agent-a407b9aff4e450534 — PR #70 closed unmerged 2026-07-03, never clea
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Stale remote branch worktree-agent-a407b9aff4e450534 — PR #70 closed unmerged 2026-07-03, never cleaned up on origin (2026-07-07)
+
+### obs:unanchored-general-67 — 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependa
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] 6 open PRs (#21, #24, #42, #59, #60, #61) idle 5-7+ days on eliasjustus/justsearch — routine dependabot/docs triage backlog, not a defect (2026-07-07)
+
+### obs:unanchored-general-68 — Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) i
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) in .claude/skills/ci-triage/SKILL.md — `.claude/skills/ci-triage/SKILL.md:45-101`, predates the phase-3-observability-nightly deletion work (2026-07-07)
 
 ## Parked
 
