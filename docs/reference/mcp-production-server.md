@@ -113,11 +113,11 @@ Tools return contextual guidance at decision time:
 - **Many results** → "use facet values as filters to narrow down"
 - **Low enrichment** → "enrichment in progress — semantic search may be limited"
 - **Facet sidecar** → answer tool includes top sources and entities
-- **Comparative hint** → after a productive `answer`/`search` the response
-  states, factually, that it assembled evidence from N sources in one
-  call — surfacing the index's multi-document advantage at the moment the
-  agent sees it worked, not only in the tool description (which agents
-  read once and forget)
+- **Comparative hint** → after an `answer` that drew on more than one
+  document, the response states factually how many distinct documents it
+  assembled evidence from in a single call — surfacing the index's
+  multi-document advantage at the moment the agent sees it worked, not only
+  in the tool description (which agents read once and forget)
 
 Advanced parameters (doc_ids, LUCENE syntax, entity filters) work when
 passed but are NOT in the visible schema. This is intentional — eval
