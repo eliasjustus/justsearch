@@ -184,6 +184,67 @@ is an explicit `"256m"` parameter, unaffected).
 **Follow-up worth one future measurement (not this tempdoc):** re-run the same instrumented
 recipe once a real PDF/office corpus exists locally, to close the Tika-pressure scope gap.
 
+## Session close-out: handoff state (2026-07-07)
+
+Written so a continuing agent needs nothing beyond this document and the branch.
+
+**Branch state:** `worktree-682-constants`, clean tree, commits `adfb1d1` (item 3), `267b094`
+(item 2), `09b1f19` (item 1 + as-built), `4d108cc` (status), plus the close-out commit carrying
+this section and the `environment-variables.md` default correction. (Commit hashes are
+pre-squash branch references — they identify work until merge; the durable evidence pointers
+are the test names, commands, and numbers recorded per item above.)
+
+**Verified claims — every claim above carries its pointer**; the pointer classes used:
+named unit tests (`LlamaServerBuildCheckTest` 11/11, `InferenceLifecycleManagerPropsInsightsTest`
+4/4, `RuntimeManifestSchemaCompatibilityTest` 6/6, redaction 4/4, the FE drift test inside
+`bootIntentStreamBridge.test.ts` incl. its 9001-mutation check), named commands with outcomes
+(`spotlessApply`, `build -x test`, module `:test` tasks, `check-runtime-manifest-closure` = 0
+violations, `updateSchemas` = content no-op, FE `test:unit:run` 3510 green), and the GC-log
+numbers quoted verbatim in §Item 1. Set-site verification for item 2 (wrong-gate check),
+re-done independently of the implementing pass: `applyBuildInsightsFromProps` is called from
+`updateFromPropsBestEffort` (`ServerPropsOps.java:71`), which fires from both probe paths
+(`LlamaServerOps.java:493` and `:677`).
+
+**Unverified assumptions (explicitly NOT verified in this session):**
+1. That the real `stageLlamaCudaVariant` execution produces the `runtime-version.txt` marker —
+   the write lives in `doLast` and was verified by dry-run/config inspection only (~600 MB
+   download not executed).
+2. That llama-server b8571's live `/props` actually carries `build_info` in the parsed shape —
+   code is defensive (absence ⇒ expected/actual = unknown, never an error), but the positive
+   path has not been observed against a live server; the "mismatch drill" acceptance is
+   likewise pending.
+3. That `1g` is *sufficient* — the measurement proves 512m lacked margin (evacuation failures
+   at ~74% enrichment, no PDF pressure); it does not prove 1g absorbs a full run plus Tika-PDF
+   load. Lower-bound reasoning says it is a strict improvement; the §Item 1 follow-up
+   measurement closes this.
+4. The full `gradlew test` suite was last run green at item-2 completion; item 1 afterwards
+   changed one constant + javadoc and re-ran `build -x test` + `:modules:app-services:test`
+   only. Pre-merge must re-run the full suite (see below).
+
+**Pre-merge checklist for whoever publishes this branch:**
+- Full `./gradlew.bat test` on the final branch state (subset-isnt-the-suite).
+- The ui-web pre-merge gate set for the two touched FE files
+  (`bootIntentStreamBridge.ts/.test.ts` — `modules/ui-web/src/**` row of the CLAUDE.md table).
+- Known pre-existing red, NOT from this branch: `npm run typecheck` fails at the branch base
+  (TS5101 deprecated `baseUrl`, `modules/ui-web/tsconfig.json`) — already in the observations
+  inbox; do not "fix" it by weakening this branch.
+- `docs/reference/configuration/environment-variables.md` was corrected here (default `1g`);
+  regen sequence (`llmstxt-generate`, `skills-sync`) already run — no output drift.
+
+**Environmental note for future measurement runs on this machine:** both long-running
+background measurement runs in this session were stopped by an external signal (not a crash —
+`jseval`'s monitor died while the backend survived). If this recurs, prefer letting the backend
+run detached and polling `/api/status` from short-lived commands; also note the second kill
+left a half-dead stack (Head alive with dead HTTP, Worker alive but idle) that needed manual
+`taskkill` — check for orphaned `HeadlessApp`/`indexer-worker` processes after any aborted run.
+Related tooling observation (in the inbox): `prepare-worktree.cjs` fails at its gradlew spawn
+step on this environment; run the two `installDist` tasks directly instead.
+
+**Not forgotten (routed, no action here):** the fusion-fallback drift defect (10/0.3 vs 3/0.25)
+stays an inbox item for triage; the cuda12 zip lacking a SHA-256 pin (unlike the CPU zip) is in
+the inbox; the "reverse doc-audit" observation that enforcement sometimes outlives
+documentation is tracked outside this tempdoc.
+
 ## Verification map
 
 Item 1: the measurement run itself + the citation landing at the constant site.
