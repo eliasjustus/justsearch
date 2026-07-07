@@ -770,10 +770,17 @@ reproducible via `jseval utility-run --conditions C --seeds 1 --max-queries 1` a
 Recorded so a later agent need not reconstruct them from the working session:
 
 - **The end-to-end throughput win is UNMEASURED.** v2's whole point — cutting the ~3 h matrix
-  wall-clock via the single concurrency pool — has NOT been measured with a full certified run; only a
-  5-cell smoke + the targeted live checks above ran. The wall-clock number is a design *expectation*
-  until the next certified run (this tempdoc's own trigger) produces it. **Biggest open item; do not
-  claim a speedup as measured until then.**
+  wall-clock via the single concurrency pool — has NOT been measured; only a 5-cell (essentially
+  uncontended) smoke + the targeted live checks above ran, and per-cell time at 1 agent is the *best
+  case* (the backend has a measured ~6.7 qps ceiling, so cells slow under load). **You do NOT need the
+  full 520-cell run to estimate the time** — a contention-matched pilot at the target concurrency does
+  it: `projected ≈ ceil(n_cells / concurrency) × per-cell-p95-under-contention`, and jseval's
+  `utility-calibrate` already measures that contended-p95. A pilot of ~1 seed × both conditions × both
+  corpora (~50–100 cells) gives a defensible estimate (±~25%; the pilot under-samples the straggler/
+  timeout tail and may not fully saturate). The FULL certified run is needed for the statistical A/B/C
+  result and the exact number with real variance — it produces the wall-clock as a byproduct. **Open
+  item: run the calibration pilot for a projected number; do not claim a measured speedup until a
+  contended pilot or the certified run exists.**
 - **Upstream Inspect float-drift is worked around, not fixed.** The guard against reintroducing a float
   into the task/solver arg surface is a docstring comment (prose-tier, ~70% adherence), not a test or
   gate. Follow-up: a cheap unit test asserting no float in the resolved `task_args`/solver params, or an
