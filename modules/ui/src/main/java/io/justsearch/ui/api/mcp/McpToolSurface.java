@@ -256,7 +256,12 @@ public final class McpToolSurface {
               "query", prop("string", "Search text"),
               "limit", prop("integer", "Max results (default 10, max 50)"),
               "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
-              "filters", FILTERS_SCHEMA),
+              "filters", FILTERS_SCHEMA,
+              // Tempdoc 658: opt-in numeric detail tier. Structured retrieval evidence (the search
+              // trace + per-hit ranking provenance) is always returned in structuredContent; when
+              // detail=true the per-hit numeric fusion-leg detail scores are included too.
+              "detail",
+                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence")),
           List.of("query"));
 
   private static final Map<String, Object> STATUS_SCHEMA = schema(Map.of(), List.of());
@@ -433,6 +438,11 @@ public final class McpToolSurface {
               .toCompletableFuture()
               .get(RETRIEVE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
+      // Tempdoc 658: project the canonical RAG evidence (ContextCitation provenance + quality
+      // signals) once; both the human summary line below and the structuredContent channel derive
+      // from this single object.
+      Map<String, Object> evidence = McpEvidenceProjection.answerEvidence(result);
+
       var sb = new StringBuilder();
       if (result.context() != null && !result.context().isBlank()) {
         sb.append(result.context());
@@ -440,12 +450,21 @@ public final class McpToolSurface {
         sb.append("No relevant passages found for: ").append(query);
       }
 
-      // Quality signals
-      var q = result.quality();
+      // One human-readable quality line derived from the structured evidence object (single
+      // derivation — replaces the former hand-built multi-line "--- Quality ---" block, now
+      // redundant with the structured `quality` payload; tempdoc 658 orphan teardown).
+      @SuppressWarnings("unchecked")
+      Map<String, Object> quality = (Map<String, Object>) evidence.get("quality");
       sb.append("\n\n--- Quality ---\n");
-      sb.append("Sources found: ").append(result.chunksFound()).append("\n");
-      sb.append("Coverage: ").append(String.format("%.2f", q.retrievalCoverage())).append("\n");
-      sb.append("Retrieval mode: ").append(result.retrievalMode()).append("\n");
+      sb.append("Sources found: ")
+          .append(quality.get("chunksFound"))
+          .append(", coverage ")
+          .append(
+              String.format(
+                  "%.2f", ((Number) quality.get("retrievalCoverage")).doubleValue()))
+          .append(", mode ")
+          .append(quality.get("retrievalMode"))
+          .append("\n");
       if (result.contextTruncated()) sb.append("Note: context was truncated to fit token budget.\n");
 
       // Facet sidecar (parallel discovery)
@@ -459,8 +478,14 @@ public final class McpToolSurface {
         sb.append("\nHint: No results. Try different terms or check justsearch_status.");
       }
 
+      // Tempdoc 658: the citation provenance + quality signals ride the structuredContent channel.
       return Map.of(
-          "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
+          "content",
+          List.of(Map.of("type", "text", "text", sb.toString())),
+          "structuredContent",
+          evidence,
+          "isError",
+          false);
     } catch (Exception e) {
       log.warn("MCP answer failed", e);
       return errorContent("Answer retrieval failed: " + e.getMessage());
@@ -480,6 +505,9 @@ public final class McpToolSurface {
       String query = (String) args.getOrDefault("query", "");
       int limit = ((Number) args.getOrDefault("limit", 10)).intValue();
       String mode = (String) args.getOrDefault("mode", "hybrid");
+      // Tempdoc 658: the opt-in `detail` arg maps to the request `debug` flag (→ include_detail),
+      // which gates the per-hit numeric detail tier surfaced in the structured ranking evidence.
+      Boolean detail = (args.get("detail") instanceof Boolean b) ? b : null;
 
       KnowledgeSearchRequest.Filters filters =
           parseFilters((Map<String, Object>) args.get("filters"));
@@ -497,7 +525,7 @@ public final class McpToolSurface {
       KnowledgeSearchRequest req =
           new KnowledgeSearchRequest(
               query, Math.min(limit, 50), mode, null, null, null, filters, null, facets, null,
-              null, null, null);
+              null, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
       var sb = new StringBuilder();
@@ -560,8 +588,15 @@ public final class McpToolSurface {
         for (String hint : hints) sb.append("- ").append(hint).append("\n");
       }
 
+      // Tempdoc 658: project the canonical search-execution evidence (SearchTrace + per-hit trace)
+      // onto the agent-facing structuredContent channel, alongside the human-readable text block.
       return Map.of(
-          "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
+          "content",
+          List.of(Map.of("type", "text", "text", sb.toString())),
+          "structuredContent",
+          McpEvidenceProjection.searchEvidence(resp),
+          "isError",
+          false);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
       return errorContent("Search failed: " + e.getMessage());

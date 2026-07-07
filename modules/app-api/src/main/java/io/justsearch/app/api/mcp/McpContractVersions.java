@@ -30,7 +30,7 @@ public final class McpContractVersions {
    * JustSearch's own curated-tool-surface version (SemVer). Pre-1.0 by the under-promise stance
    * (tempdoc 654 §D3/D5): the surface may still change while we settle it.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.1.0";
+  public static final String TOOL_SURFACE_VERSION = "0.2.0";
 
   private McpContractVersions() {}
 }
