@@ -1,9 +1,9 @@
 ---
 title: "Public CI evidence read-model and build attribution"
 type: tempdoc
-status: "implemented - advisory CI digest and build attribution remotely validated"
+status: "implemented — advisory CI digest and build attribution; prior remote validation ran on the pre-668 Windows Build lane. Reconciled onto main's 668 Linux Build lane 2026-07-07 (merge-forward, PR #12); the build-attribution wrapper now runs the Linux `./gradlew assemble` under runner-label ubuntu-latest. Local build green; awaiting a fresh PR #12 CI green post-reconciliation before merge."
 created: 2026-06-27
-updated: 2026-06-29
+updated: 2026-07-07
 related:
   - 632-go-public-licensing-legal
   - 633-go-public-launch-content
