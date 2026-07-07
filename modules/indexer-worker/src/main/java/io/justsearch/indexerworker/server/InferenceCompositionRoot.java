@@ -459,14 +459,23 @@ public final class InferenceCompositionRoot {
       Path modelsDir,
       Path configModelPath,
       boolean gpuEnabled) {
+    VariantSelection selection;
     if (contract != null) {
       // Tempdoc 374 alpha.18 Bug I: forward gpuEnabled to VariantSelector so CPU-only
       // roles (citation) don't get promoted to CUDA when the host has CUDA. Pre-alpha.18
       // this parameter was dropped on the floor in the contract branch — the dev-mode
       // branch below already honored it via DevModeVariantProbe.probe.
-      return VariantSelector.select(packageId, contract, hardware, modelsDir, gpuEnabled);
+      selection = VariantSelector.select(packageId, contract, hardware, modelsDir, gpuEnabled);
+    } else {
+      selection = DevModeVariantProbe.probe(configModelPath, gpuEnabled);
     }
-    return DevModeVariantProbe.probe(configModelPath, gpuEnabled);
+    if (selection != null && selection.degraded()) {
+      // Tempdoc 691 B-5: a silent degraded selection (INT8 CPU variant on CUDA for NER) cost
+      // ~10× per-call for a week with no log line — surface every degraded selection at the
+      // single resolution site so worker.log names the encoder and the reason.
+      log.warn("{}: degraded model variant selected — {}", packageId, selection.degradationReason());
+    }
+    return selection;
   }
 
   /**

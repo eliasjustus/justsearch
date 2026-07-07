@@ -139,8 +139,9 @@ class ModelSessionPolicyResolverTest {
     void arenaCapFromResolvedConfig() {
       var policy =
           ModelSessionPolicyResolver.resolve(EncoderRole.NER, CFG, HW, fp16OnCuda());
-      // ResolvedConfigBuilder defaults NER gpu_mem_mb to 512
-      assertEquals(512L * BYTES_PER_MB, policy.gpu().arenaCapBytes());
+      // ResolvedConfigBuilder defaults NER gpu_mem_mb to 2048 (tempdoc 691: 512 OOMed the
+      // fp16 variant's attention intermediates, degrading batched NER to per-doc fallback)
+      assertEquals(2048L * BYTES_PER_MB, policy.gpu().arenaCapBytes());
     }
   }
 
@@ -237,19 +238,21 @@ class ModelSessionPolicyResolverTest {
             .arenaCapBytes();
 
     // Defaults from ResolvedConfigBuilder's per-encoder builders:
-    //   embed 3072, splade 4096, ner 512, reranker 2048 MB; citation CPU-only → 0.
+    //   embed 3072, splade 4096, ner 2048 (tempdoc 691, was 512), reranker 2048 MB;
+    //   citation CPU-only → 0.
     assertEquals(3072L * BYTES_PER_MB, embed);
     assertEquals(4096L * BYTES_PER_MB, splade);
-    assertEquals(512L * BYTES_PER_MB, ner);
+    assertEquals(2048L * BYTES_PER_MB, ner);
     assertEquals(2048L * BYTES_PER_MB, reranker);
     assertEquals(0L, citation);
 
-    // Sanity: no two non-citation roles collide on a default.
-    // (If they ever do, the test surfaces the collision.)
+    // The former all-distinct tripwire (copy-paste guard) retired in tempdoc 691:
+    // NER == reranker == 2048 MB is an intentional, independently-measured pairing
+    // (each cap is an independent per-session budget, not a shared allocation).
     assertEquals(
-        4,
-        java.util.Set.of(embed, splade, ner, reranker).size(),
-        "All four GPU encoder defaults should be distinct");
+        3,
+        new java.util.HashSet<>(java.util.List.of(embed, splade, ner, reranker)).size(),
+        "GPU encoder defaults: embed/splade distinct; ner == reranker intentionally");
   }
 
   @Test

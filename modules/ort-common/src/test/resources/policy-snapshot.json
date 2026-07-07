@@ -107,7 +107,7 @@
         "degradationReason" : null
       },
       "gpu" : {
-        "arenaCapBytes" : 536870912,
+        "arenaCapBytes" : 2147483648,
         "cudaDeviceId" : 0,
         "arenaExtendStrategyOverride" : null
       },

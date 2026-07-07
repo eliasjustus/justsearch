@@ -1089,7 +1089,11 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.ner.confidence_threshold", 0.7),
         resolveModelGpuEnabled("justsearch.ner.gpu_enabled"),
         resolveInt("justsearch.ner.gpu_device_id", 0),
-        resolveInt("justsearch.ner.gpu_mem_mb", 512));
+        // 2048 (was 512): the fp16 NER variant OOMs a 512MB BFC arena — attention
+        // intermediates are O(batch × heads × seq²), not the tiny output tensor — forcing a
+        // continuous batched→per-doc fallback that made NER ~75% of enrichment backfill wall
+        // (tempdoc 691 Phases A-C; at 2048MB: zero OOM, total VRAM peak 7.7GB of 12GB).
+        resolveInt("justsearch.ner.gpu_mem_mb", 2048));
   }
 
   // Fallback values below are dead code — EnvRegistry declares defaults for all reranker keys,

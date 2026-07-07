@@ -30,7 +30,9 @@ import java.nio.file.Path;
  *   <li>Prefers the GPU file when {@code gpuEnabled} and it exists; falls back to CPU file
  *       with {@link ExecutionProvider#CUDA} when only CPU file is present and GPU is enabled
  *       (the {@link NativeSessionHandle} will attempt a GPU session from the CPU file and
- *       retry-to-CPU on failure); otherwise CPU file with {@link ExecutionProvider#CPU}.
+ *       retry-to-CPU on failure) — reported as a <em>degraded</em> selection since tempdoc 691,
+ *       mirroring {@code VariantSelector}'s CPU-on-CUDA branch; otherwise CPU file with
+ *       {@link ExecutionProvider#CPU}.
  *   <li>Precision detection uses a substring check for {@code "fp16"} in the filename.
  * </ul>
  */
@@ -73,13 +75,25 @@ public final class DevModeVariantProbe {
     }
     if (cpuFileExists) {
       boolean isFp16 = cpuModelFile.getFileName().toString().contains("fp16");
-      // No dedicated GPU model file — use CPU model with GPU if enabled.
-      // NativeSessionHandle attempts a GPU session from the CPU model file and retries to CPU
-      // on failure.
-      return VariantSelection.optimal(
-          cpuModelFile,
-          isFp16 ? ModelPrecision.FP16 : ModelPrecision.FP32,
-          gpuEnabled ? ExecutionProvider.CUDA : ExecutionProvider.CPU);
+      ModelPrecision precision = isFp16 ? ModelPrecision.FP16 : ModelPrecision.FP32;
+      if (gpuEnabled) {
+        // No dedicated GPU model file — use CPU model with CUDA. NativeSessionHandle attempts
+        // a GPU session from the CPU model file and retries to CPU on failure. This is a
+        // DEGRADED selection, mirroring the contract path (VariantSelector's CPU-on-CUDA
+        // branch): the CPU variant may be quantized (INT8), whose QOperator nodes lack CUDA
+        // kernels and run at ~10× per-call cost via per-node CPU fallback. Reporting it as
+        // optimal hid exactly that for the NER encoder (tempdoc 691 B-5).
+        return VariantSelection.degraded(
+            cpuModelFile,
+            precision,
+            ExecutionProvider.CUDA,
+            "GPU variant ("
+                + gpuModelFile.getFileName()
+                + ") not present — running CPU-variant file "
+                + cpuModelFile.getFileName()
+                + " on CUDA");
+      }
+      return VariantSelection.optimal(cpuModelFile, precision, ExecutionProvider.CPU);
     }
     return null;
   }

@@ -274,8 +274,12 @@ public final class BertNerInference implements Closeable {
   }
 
   /**
-   * Maximum NER batch size for GPU inference. NER output is tiny (batch × seqLen × 9 labels × 4
-   * bytes = 288 KB at batch=16/seq=512), so batch size is not VRAM-limited like SPLADE.
+   * Maximum NER batch size for GPU inference. The output tensor is tiny (batch × seqLen × 9
+   * labels × 4 bytes = 288 KB at batch=16/seq=512), but the attention intermediates are not:
+   * they scale O(batch × heads × seq²) — ~200 MB at batch=16/seq=512 in fp16 — so batched NER
+   * IS arena-limited. At the old 512 MB arena default this OOMed continuously and silently
+   * degraded every batch to the per-doc fallback (~10× per-item cost); the arena default is
+   * 2048 MB since tempdoc 691 (measured: zero OOM, 7.7 GB total VRAM peak on a 12 GB GPU).
    */
   private static final int MAX_NER_BATCH_SIZE = 16;
 
@@ -387,8 +391,13 @@ public final class BertNerInference implements Closeable {
                 ORT_TRACER, "ner", batchSize, padLen);
             ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
             try {
+              // Tempdoc 691 B-5: mirror the single-doc path's encoder-profile recording —
+              // without it, batched-healthy runs report ortP50 from a handful of stray
+              // batch=1 calls, silently corrupting NER attribution.
+              long ortStart = System.nanoTime();
               try (Scope _ = ortSpan.makeCurrent();
                    OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
+                profiler.recordOrtCall(System.nanoTime() - ortStart);
                 float[][][] output3d = (float[][][]) result.get(0).getValue();
                 for (int j = 0; j < batchSize; j++) {
                   int origIdx = sortedIndices[batchStart + j];

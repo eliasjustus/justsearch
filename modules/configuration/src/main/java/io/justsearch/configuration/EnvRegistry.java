@@ -519,7 +519,7 @@ public enum EnvRegistry {
     /** CUDA device index for NER GPU inference (default 0). */
     NER_GPU_DEVICE_ID("justsearch.ner.gpu_device_id", "JUSTSEARCH_NER_GPU_DEVICE_ID"),
 
-    /** GPU memory arena limit in MB for NER inference (default 512). */
+    /** GPU memory arena limit in MB for NER inference (default 2048 — tempdoc 691). */
     NER_GPU_MEM_MB("justsearch.ner.gpu_mem_mb", "JUSTSEARCH_NER_GPU_MEM_MB"),
 
     // ==================== Extraction Sandbox Configuration ====================

@@ -225,6 +225,9 @@ final class ResolvedConfigBuilderTest {
       // 391/E-J-N8: embed GPU mem default raised from 2048 → 3072 to
       // accommodate gte-multilingual-base FP16 activations (post-358).
       assertEquals(3072, config.ai().embedding().gpuMemMb());
+      // 691: NER GPU mem default raised from 512 → 2048 — the fp16 NER variant's attention
+      // intermediates OOM a 512MB arena, silently degrading batched NER to per-doc fallback.
+      assertEquals(2048, config.ai().ner().gpuMemMb());
     }
 
     @Test
