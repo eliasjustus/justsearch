@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "open — DESIGN SETTLED (2026-07-07), no implementation yet. Read §Settled design first (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED (2026-07-07) on branch worktree-675-executor-v2 — live-smoke validated end-to-end; see §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
 updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
@@ -649,3 +649,61 @@ all confirmed. The residual is well-understood *integration*: the single-pool re
 exercised end-to-end (only the SDK cell in isolation); the assertion-porting and max-turns-exception
 handling are new-but-bounded; and the orphan deletion touches a grab-bag file with unrelated Tier-1/2
 consumers (relocate-first mitigates). None of these is an unknown that risks the shape.
+
+---
+
+## As-built (2026-07-07) — implemented on `worktree-675-executor-v2`, live-validated
+
+Delivered the settled design. The full unit suite is green (1503 tests; the only REDs are the two
+pre-existing `test_correction_probe` cases, missing data file, unrelated). A live end-to-end smoke
+(A+B × 3 queries × 1 seed, real haiku agents against a live JustSearch `/mcp` backend) produced a
+valid `utility-comparison.v1` record. An independent second-agent review (reviewer ≠ implementer)
+found one **confirmed** measurement-validity bug that the smoke had missed — fixed and regression-tested.
+
+**What shipped**
+- **Cell interior → in-process `ClaudeSDKClient`** (`agent_utility_inspect.py`): tool calls, tool
+  *results*, usage/cost, and the offered MCP surface come back as objects; no stdout parsing.
+  Per-cell **`asyncio.wait_for` wall-clock budget** wraps the whole cell incl. the disclosed retry;
+  a generous **`max_turns`** cap; `disallowed_tools` / `add_dirs` / `setting_sources=None`
+  (verified-clean isolation) / `permission_mode` set from the sample's condition.
+- **Single concurrency pool**: ONE Inspect task, samples = the flat `condition × query`
+  cross-product, `condition` a sample field, `sample.id = "{cond}|q{i}"`; `eval_set` without
+  `max_tasks=1`. Inspect's durable resume, 624's cell-identity seam, and `utility-comparison.v1` are
+  preserved.
+- **Object-based assertions**: `tool_calls` (composer-facing) = only tools that ACTUALLY executed
+  (non-error result, not in `permission_denials`); blocked attempts stashed separately as forensics;
+  offered-surface via `ClaudeSDKClient.get_mcp_status()` with the tri-state (`unverified` never
+  conflated with healthy) preserved.
+- **Readers** (`agent_utility_run.eval_logs_to_summaries` + `scan_leaked_cells`,
+  `utility_judge._iter_eval_records`): read `condition` from sample metadata + strip the `sample.id`
+  prefix; exclude on either `metadata.error` OR Inspect's own `s.error`.
+- **Teardown (same PR)**: deleted the classic runner (`run_agent_eval`, `_get_reflection`,
+  `_build_agent_cmd`), the subprocess argv/stdout parsers (`_build_argv`, `parse_claude_stream_json`,
+  `parse_claude_init_event`) and the `--disallowedTools` CLI formatting, `cmd_agent_eval` (+ its
+  tests), and regenerated `inventory.generated.json`. `cmd_utility_compose` (compose-from-classic-
+  result-files) is **tombstoned** (deprecation note → `utility-run`), not deleted, as a format-coupled
+  utility beyond the executor's scope. `claude-agent-sdk>=0.2.111` added to the `[agent]` extra.
+
+**Load-bearing implementation findings (empirically verified, worth recording)**
+- Under `permission_mode="bypassPermissions"`, a disallowed tool is **removed from the agent's
+  toolset** — it usually never appears as an attempt at all; `permission_denials` is empirically
+  **empty**. A tool that runs and fails has `is_error=True`; a successful tool has `is_error=None` (not
+  `False`). The executed-vs-blocked split therefore rests on the tool_result's `is_error`, with
+  `permission_denials` a belt-and-suspenders cross-check.
+- **Review-caught bug (fixed):** `ResultMessage.permission_denials` is a raw pass-through of
+  **dicts** (`{"tool_name", ...}`); the first cut did `set(permission_denials)` → a latent
+  `TypeError: unhashable type: 'dict'` in the measurement path, and its unit test used bare strings (an
+  `unreachable-seed-green` false green). Fixed to extract `tool_name` robustly; the cell projection is
+  now wrapped so ANY error marks the cell excluded rather than fabricating an included one; the test
+  now uses the real dict shape.
+- `max_turns` exhaustion surfaces as an errored `ResultMessage` (or a raised exception) → excluded
+  cell (parity with a timeout). Cross-condition pairing keys stay aligned because all three readers
+  apply the identical prefix-strip.
+
+**Operational note** (logged to the observations shard): Inspect's rich display crashes with a
+`UnicodeEncodeError` on the braille spinner when stdout is redirected/non-tty on Windows (cp1252) —
+set `INSPECT_DISPLAY=none` (and/or `PYTHONUTF8=1`) for backgrounded eval runs. Pre-existing (default
+display), but more relevant now that runs are long and non-interactive.
+
+**Not done here** (out of scope, per §Scope boundary): the statistical/cadence reframes (624/673), the
+backend rerank/query-cache ceiling (648). No PR opened yet.

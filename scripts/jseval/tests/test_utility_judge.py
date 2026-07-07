@@ -399,16 +399,18 @@ def _calibration_dry_run_logs(tmp_path):
     @solver
     def fixed():
         async def solve(state, generate):
-            state.output.completion = answers[str(state.sample_id)]
+            qid = str(state.sample_id).split("|", 1)[-1]
+            state.output.completion = answers[qid]
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
             return state
         return solve
 
     @task
     def ct():
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}") for i in range(8)]
+        samples = [Sample(id=f"C|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": "C"}) for i in range(8)]
         return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
-                    metadata={"condition": "C", "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "d", "signature": "s"}, "cohort": _COHORT})
 
     log = (tmp_path / "j").as_posix()

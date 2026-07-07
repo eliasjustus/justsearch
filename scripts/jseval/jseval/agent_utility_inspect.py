@@ -1,27 +1,36 @@
-"""Agent-utility execution THROUGH Inspect AI (tempdoc 624 execution design).
+"""Agent-utility execution THROUGH Inspect AI (tempdoc 624 execution design; v2 executor tempdoc 675).
 
 Runs the cell matrix `{corpus × model × condition × seed × query}` as an Inspect
-eval rather than a bespoke fan-out: **condition = task, seed = `epochs`,
-query = `sample.id`, cohort identity = task-args**. Inspect's `eval_set` gives
-durable resume (skip completed samples), bounded/adaptive concurrency, and a
-schema-valid EvalLog — the parts a bespoke executor would re-implement (and
-fork). Verified against `inspect-ai 0.3.240` in tempdoc 624 §Confidence-pass #2.
+eval rather than a bespoke fan-out. **Executor v2 (tempdoc 675):** the cell is an
+in-process Claude Agent SDK session (`ClaudeSDKClient`), not a `claude -p`
+subprocess — tool calls, tool *results*, the offered MCP surface, and usage/cost
+come back as objects (no stdout parsing). The matrix is ONE Inspect task whose
+samples are the flat `condition × query` cross-product (**condition = a sample
+field**, seed = `epochs`, query id carried in `sample.id`), run in ONE bounded
+concurrency pool at `max_samples` — the per-condition-task serialization
+(`max_tasks=1`) that doubled the wall-clock is gone.
 
-This is an **opt-in** path: `pip install jseval[agent]` (the `inspect-ai` extra).
-The composer (`utility_comparison.compose_utility`) projects the per-cell results
-(read back from the EvalLogs via `agent_utility_run.eval_logs_to_summaries`) into
-`utility-comparison.v1`, including the `tool_call_assertions` coverage block
-(tempdoc 624 §As-built #5 residual-gap close).
+Inspect's `eval_set` still gives durable resume (skip completed samples),
+bounded/adaptive concurrency, and a schema-valid EvalLog. The composer
+(`utility_comparison.compose_utility`) projects the per-cell results (read back
+via `agent_utility_run.eval_logs_to_summaries`) into `utility-comparison.v1`,
+including the `tool_call_assertions` coverage block.
 
 Identity carried, not forked (the "one identity, three roles" principle):
-- `sample.id` = the stable query id  → resume key,
+- `sample.id` = `"{condition}|q{i}"`  → resume key (unique across conditions in one task),
 - task-args = the cohort identity (model / cli-version / mcp-surface / judge /
   prompt / decoding) → a config change segregates logs (no stale reuse),
 - `epoch` = the seed → the seed envelope.
 
-A4 wrinkle (verified): Inspect does NOT auto-capture a shell-out solver's usage,
-so the solver stashes claude's cost / unique-tokens / turns into `state.metadata`
-(round-trips to `EvalSample.metadata`).
+Executed-vs-blocked (tempdoc 675 §Pre-implementation verification finding 3): the
+SDK reports a *blocked* disallowed-tool attempt in the message stream too (unlike
+the CLI stdout), so the leak/disallowed assertions scan only tools that ACTUALLY
+executed — a tool_use with a non-error `ToolResultBlock` and not in
+`ResultMessage.permission_denials`. The blocked attempts are stashed separately as
+forensics. This preserves the "did a disallowed tool actually run" semantics.
+
+A4 wrinkle (unchanged): Inspect does NOT auto-capture the cell's usage, so the
+solver stashes cost / unique-tokens / turns into `state.metadata`.
 """
 
 from __future__ import annotations
@@ -29,7 +38,6 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -38,13 +46,22 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Score, Target, accuracy, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ResultMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
+
 from jseval.agent_retrieval_eval import (
     _score_answer,
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
-    parse_claude_init_event,
-    parse_claude_stream_json,
     stage_corpus_dir,
 )
 from jseval.utility_calibrate import (
@@ -57,13 +74,17 @@ from jseval.utility_calibrate import (
 # B = file + JustSearch, C = JustSearch only (substitution).
 _WITH_TOOL = {"B", "C"}
 
+# Generous default per-cell turn cap (tempdoc 675 lever 3): clips the pathological
+# many-turn tail that inflates the per-cell mean, set well ABOVE the useful range so
+# it does not bias the measured tool-use. The calibrated wall-clock budget
+# (`timeout_s`) is the primary bound.
+_DEFAULT_MAX_TURNS = 40
+
 # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1): the prior
 # "using only the documents in {corpus_dir}" wording primed the agent toward
 # filesystem tools before it ever saw its actual tool surface -- an experimental
-# confound the with/without-tool comparison cannot tolerate (an agent nudged
-# toward Read/Grep in the prompt itself is not choosing file tools over MCP on
-# the merits). This wording was pre-registered BEFORE the next paid run and must
-# not be edited post-hoc without a new pre-registration.
+# confound the with/without-tool comparison cannot tolerate. Pre-registered BEFORE
+# the next paid run; must not be edited post-hoc without a new pre-registration.
 _PROMPT = (
     "Answer the following question about the document collection at {corpus_dir}. "
     "You may use any tools available to you. "
@@ -71,173 +92,230 @@ _PROMPT = (
 )
 
 
-def _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, empty_mcp, max_budget):
-    """The condition-appropriate `claude -p` argv (mirrors
-    agent_retrieval_eval._build_agent_cmd's exact argv pattern, byte-for-byte on
-    the flags that matter for stream parsing).
+def _mcp_servers_from_config(mcp_config: str | None) -> dict:
+    """The Agent SDK `mcp_servers` dict for a with-tool cell.
 
-    ``--output-format stream-json`` (with mandatory ``--verbose`` — the CLI
-    requires it for stream-json under `-p`) instead of the single-shot ``json``
-    format: gives the solver real per-tool-call data (name + args), which
-    `claude_agent_solver` needs for an EMPIRICAL --disallowedTools check and the
-    answer-key-leak backstop (tempdoc 624 §As-built #5 residual-gap close — the
-    prior `json` format captured only the final result text, so neither check
-    had any tool-call data to scan for an Inspect-executed cell)."""
-    cmd = [
-        claude_bin, "-p", prompt,
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",
-        "--max-budget-usd", str(max_budget),
-        "--permission-mode", "bypassPermissions",
-        "--add-dir", corpus_dir,
-    ]
-    if condition == "A":
-        cmd += ["--strict-mcp-config", "--mcp-config", empty_mcp]
-    elif condition in _WITH_TOOL:
-        if mcp_config:
-            cmd += ["--strict-mcp-config", "--mcp-config", mcp_config]
-    cmd += ["--disallowedTools", ",".join(build_disallowed_tools(condition))]
-    return cmd
+    The harness passes `mcp_config` as a `--mcp-config`-style FILE path whose body
+    is `{"mcpServers": {"justsearch": {"type":"http","url": ...}}}`; the SDK wants
+    the inner `mcpServers` dict directly. Empty for condition A (no config)."""
+    if not mcp_config:
+        return {}
+    cfg = json.loads(Path(mcp_config).read_text(encoding="utf-8"))
+    return cfg.get("mcpServers") or {}
+
+
+async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str]]:
+    """Return `(mcp_servers, justsearch_tool_names)` from the SDK's own MCP status.
+
+    Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
+    `SystemMessage` init does not list the offered tools). Defensive across the
+    `McpStatusResponse` shape: returns `(None, [])` if status is unavailable so the
+    caller can flag "unverified" rather than conflate unknown with healthy."""
+    try:
+        status = await client.get_mcp_status()
+    except Exception:
+        return None, []
+    if not isinstance(status, dict):
+        return None, []
+    servers = status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")
+    if servers is None:
+        return None, []
+    js_tools: list[str] = []
+    for srv in servers:
+        if srv.get("name") != "justsearch":
+            continue
+        for t in (srv.get("tools") or []):
+            tn = t.get("name") if isinstance(t, dict) else str(t)
+            js_tools.append(tn if str(tn).startswith("mcp__") else f"mcp__justsearch__{tn}")
+    return servers, js_tools
 
 
 @solver
-def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None = None,
-                        model: str = "haiku", max_budget: float = 0.50, timeout_s: int = 180):
-    """Per-sample solver: spawn a `claude -p` coding-agent subprocess for one query.
+def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
+                        model: str = "haiku", max_budget: float = 0.50,
+                        timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS):
+    """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
-    Runs the blocking subprocess via ``asyncio.to_thread`` so Inspect's
-    ``max_samples`` concurrency (asyncio) is not blocked. Stashes claude's
-    cost / unique-tokens / turns in ``state.metadata`` (A4 — Inspect can't see a
-    subprocess's usage). An errored cell sets ``metadata.error`` so the projection
-    can exclude it (parity with the bespoke harness's valid-only aggregation).
-    """
-    claude_bin = shutil.which("claude")
+    `condition` is read from `state.metadata["condition"]` (the single-pool sample
+    field), NOT a closure arg — so ONE solver serves all conditions in one task.
+    The whole cell (including the disclosed transient retry) runs under a single
+    `asyncio.wait_for(timeout_s)` wall-clock budget, so a retry can never hold a
+    concurrency slot for 2× the budget (tempdoc 675 per-cell budget). Stashes cost /
+    unique-tokens / turns in `state.metadata` (A4). An errored cell sets
+    `metadata.error` so the projection excludes it (valid-only parity)."""
+    mcp_servers = _mcp_servers_from_config(mcp_config)
+
+    async def _one_attempt(condition: str, prompt: str, disallowed: list[str]) -> dict:
+        """Run one SDK session; return a dict of the captured objects (or raise)."""
+        query_cwd = tempfile.mkdtemp(prefix="jseval-cell-")  # isolate from any ambient CLAUDE.md
+        opts = ClaudeAgentOptions(
+            model=model,
+            permission_mode="bypassPermissions",
+            max_turns=max_turns,
+            max_budget_usd=max_budget,
+            cwd=query_cwd,
+            add_dirs=[corpus_dir],
+            setting_sources=None,  # tempdoc 675 finding: zero ambient-context leakage
+            disallowed_tools=disallowed,
+            mcp_servers=(mcp_servers if condition in _WITH_TOOL else {}),
+            strict_mcp_config=True,
+        )
+        attempts: dict[str, dict] = {}   # tool_use_id -> {"tool","input"}
+        results: dict[str, dict] = {}    # tool_use_id -> {"is_error"}
+        texts: list[str] = []
+        rmsg: ResultMessage | None = None
+        servers_seen: list | None = None
+        justsearch_tools: list[str] = []
+        try:
+            async with ClaudeSDKClient(options=opts) as client:
+                await client.query(prompt)
+                async for msg in client.receive_response():
+                    if isinstance(msg, AssistantMessage):
+                        for b in (msg.content or []):
+                            if isinstance(b, ToolUseBlock):
+                                attempts[b.id] = {"tool": b.name, "input": b.input}
+                            elif isinstance(b, TextBlock):
+                                texts.append(b.text)
+                    elif isinstance(msg, UserMessage):
+                        for b in (getattr(msg, "content", None) or []):
+                            if isinstance(b, ToolResultBlock):
+                                results[b.tool_use_id] = {"is_error": bool(b.is_error)}
+                    elif isinstance(msg, ResultMessage):
+                        rmsg = msg
+                servers_seen, justsearch_tools = await _mcp_surface(client)
+        finally:
+            shutil.rmtree(query_cwd, ignore_errors=True)
+        return {
+            "attempts": attempts, "results": results, "texts": texts,
+            "rmsg": rmsg, "mcp_servers": servers_seen, "justsearch_tools": justsearch_tools,
+        }
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        if not claude_bin:
-            state.metadata["error"] = "claude CLI not found in PATH"
-            return state
-        query_cwd = tempfile.mkdtemp(prefix="jseval-inspect-")  # isolate from repo CLAUDE.md
-        empty_mcp = str(Path(query_cwd) / "_empty_mcp.json")
-        if condition == "A":
-            Path(empty_mcp).write_text('{"mcpServers":{}}', encoding="utf-8")
+        condition = state.metadata.get("condition")
+        disallowed = build_disallowed_tools(condition)
         prompt = _PROMPT.format(corpus_dir=corpus_dir, query=state.input_text)
-        cmd = _build_argv(claude_bin, prompt, model, corpus_dir, condition, mcp_config, empty_mcp, max_budget)
-        # Bounded per-cell retry (max 2 attempts) for TRANSIENT infra failures —
-        # a silent `claude` CLI death (rc!=0, empty stderr) was measured at a
-        # ~5%/cell background rate under sustained 8-way load (2026-07-03 probe:
-        # 38/40 ok), and one such rate compounds into comparability-breaking
-        # per-arm exclusion. The retry is symmetric across conditions and
-        # DISCLOSED per cell (`attempts`, `first_error`) so the record shows
-        # exactly which cells needed it; a cell failing both attempts is still
-        # excluded via `error` as before.
+        # Bounded 2-attempt DISCLOSED retry for transient infra failures, all under
+        # ONE shared wall-clock budget (tempdoc 675). `attempts`/`first_error` make
+        # the retry visible per cell; a cell failing both is excluded via `error`.
         first_error: str | None = None
+        attempt = 0
+        deadline = asyncio.get_event_loop().time() + timeout_s
         for attempt in (1, 2):
-            try:
-                proc = await asyncio.to_thread(
-                    subprocess.run, cmd,
-                    capture_output=True, text=True, timeout=timeout_s,
-                    cwd=query_cwd, encoding="utf-8", errors="replace",
-                    stdin=subprocess.DEVNULL,  # never inherit the harness console
-                )
-                stdout = (proc.stdout or "").strip()
-                # Same event-stream shape + parser as the classic runner (both call
-                # agent_retrieval_eval.parse_claude_stream_json) — no forked logic.
-                tool_calls, data, _session_id = parse_claude_stream_json(stdout)
-                disallowed = build_disallowed_tools(condition)
-                # Stash the tool-call capture + derived assertions UNCONDITIONALLY
-                # (before the error check) so a cell that erred out mid-run still
-                # carries whatever tool calls it made before failing — the
-                # credibility bar (tempdoc 624 §M.8 item 2) is "every cell actually
-                # run", not just the successful ones.
-                state.metadata["tool_calls"] = tool_calls
-                state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(tool_calls, disallowed)
-                state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(tool_calls)
-                # Offered MCP tool-surface capture + assertion (tempdoc 624 battlefield
-                # retrospective): parse_claude_init_event reads the CLI's own disclosure of
-                # what it actually connected/offered for THIS invocation -- the signal a
-                # dead mcp_config (missing "type":"http", silently dropped by the CLI) does
-                # NOT show up in (the process still exits 0 and answers from file tools).
-                # Stashed unconditionally like tool_calls above; the ASSERTION below only
-                # fires for a real with-tool config (B/C with mcp_config set) -- condition A
-                # is exempt by construction (its argv always uses the empty config).
-                init_event = parse_claude_init_event(stdout)
-                mcp_servers = init_event["mcp_servers"] if init_event else None
-                mcp_tools_offered = (
-                    sum(1 for t in init_event["tools"] if t.startswith("mcp__"))
-                    if init_event else None
-                )
-                state.metadata["mcp_servers"] = mcp_servers
-                state.metadata["mcp_tools_offered"] = mcp_tools_offered
-                # Tool-surfacing-mode stamp (tempdoc 624 §M.8 amendment, Step 0 item
-                # 4): whether the justsearch MCP server actually CONNECTED but its
-                # tools are reachable only via ToolSearch (deferred behind a
-                # tool-search layer, not listed directly in the init event's `tools`)
-                # rather than genuinely absent (dead config) -- a CLI-version-
-                # dependent surfacing behavior that mediates adoption, so it must be
-                # visible as cohort identity (utility_comparison._tool_surfacing_mode),
-                # not buried per-cell. Computed unconditionally, for ANY condition,
-                # whenever an init event parsed -- deliberately BEFORE the assertion
-                # below, so the signal survives even on a cell that assertion is
-                # about to flag as errored (distinguishing "dead config" from
-                # "merely deferred" needs this recorded pre-break, not just for
-                # cells that pass).
-                justsearch_connected = bool(init_event) and any(
-                    srv.get("name") == "justsearch" and srv.get("status") == "connected"
-                    for srv in (mcp_servers or [])
-                )
-                justsearch_tools_offered = (
-                    [t for t in init_event["tools"] if t.startswith("mcp__justsearch")]
-                    if init_event else []
-                )
-                state.metadata["mcp_tools_deferred"] = (
-                    bool(justsearch_connected and not justsearch_tools_offered)
-                    if init_event else None
-                )
-                if condition in _WITH_TOOL and mcp_config:
-                    if init_event is None:
-                        # Stream never reached/emitted an init event (crash/timeout
-                        # before the CLI got that far) -- not proof the surface was
-                        # missing, so this must not error; flag unverified instead so
-                        # "unknown" is never conflated with "verified healthy".
-                        state.metadata["mcp_surface_unverified"] = True
-                    else:
-                        if not justsearch_tools_offered:
-                            state.metadata["error"] = (
-                                f"expected MCP tool surface not offered: mcp_servers={mcp_servers}"
-                            )
-                            break
-                if data is None or data.get("is_error") or proc.returncode != 0:
-                    # Forensics INTO the record: a bare "exit 1" with no stderr was
-                    # unactionable across two failed runs — keep the evidence.
-                    err = (data.get("result") if data else None) or (proc.stderr or "").strip() or f"exit {proc.returncode}"
-                    err = (f"exit {proc.returncode}: {str(err)[:200]} | stderr: {(proc.stderr or '')[:150]!r}"
-                           f" | stdout_tail: {stdout[-200:]!r}")
-                    if attempt == 1:
-                        first_error = err
-                        continue
-                    state.metadata["error"] = err[:600]
-                    break
-                state.output.completion = data.get("result", "")
-                usage = data.get("usage") or {}
-                state.metadata.update({
-                    "cost_usd": data.get("total_cost_usd"),
-                    "unique_tokens": usage.get("cache_creation_input_tokens"),
-                    "num_turns": data.get("num_turns"),
-                })
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                state.metadata.setdefault("error", "per-cell wall-clock budget exhausted")
                 break
-            except Exception as e:  # timeout / json / subprocess failure
+            try:
+                got = await asyncio.wait_for(
+                    _one_attempt(condition, prompt, disallowed), timeout=remaining)
+            except asyncio.TimeoutError:
+                state.metadata["error"] = "per-cell wall-clock budget exhausted"
+                break
+            except Exception as e:  # noqa: BLE001 — max_turns/budget/SDK/connection failure
+                err = f"{type(e).__name__}: {str(e)[:250]}"
                 if attempt == 1:
-                    first_error = f"{type(e).__name__}: {str(e)[:250]}"
+                    first_error = err
                     continue
-                state.metadata["error"] = f"{type(e).__name__}: {str(e)[:250]}"
+                state.metadata["error"] = err
+                break
+            try:
+                _record_cell(state, got, condition, disallowed, mcp_config)
+            except Exception as e:  # noqa: BLE001
+                # A projection bug must NEVER fabricate an included cell (measurement
+                # validity): any error here marks the cell excluded, not silently
+                # half-populated. (tempdoc 675 independent-review hardening.)
+                state.metadata["error"] = f"record_cell failed: {type(e).__name__}: {str(e)[:200]}"
+            break
         state.metadata["attempts"] = attempt
         if first_error is not None:
             state.metadata["first_error"] = first_error
         return state
 
     return solve
+
+
+def _record_cell(state: TaskState, got: dict, condition: str,
+                 disallowed: list[str], mcp_config: str | None) -> None:
+    """Project the captured SDK objects into `state.metadata` (the composer contract).
+
+    `tool_calls` (composer-facing) = tools that ACTUALLY EXECUTED — a tool_use with a
+    non-error result and not in `permission_denials`. Blocked attempts are recorded
+    separately as forensics. Stashed UNCONDITIONALLY (before the surface assertion)
+    so a cell erroring on the assertion still carries what it ran (credibility bar:
+    "every cell actually run")."""
+    attempts, results = got["attempts"], got["results"]
+    rmsg: ResultMessage | None = got["rmsg"]
+    # `ResultMessage.permission_denials` is a raw JSON pass-through — dicts on the
+    # real SDK (`{"tool_name", "tool_use_id", "tool_input"}`), possibly bare strings
+    # on other builds. Extract the tool name robustly and NEVER `set()` a list of
+    # dicts (unhashable -> a TypeError in the measurement path). Empirically this is
+    # usually empty under bypassPermissions (a disallowed tool is removed from the
+    # toolset, so it never appears as an attempt); the executed-vs-blocked signal
+    # below rests on the tool_result, this is a belt-and-suspenders cross-check.
+    denied: set = set()
+    for _d in (getattr(rmsg, "permission_denials", None) or []):
+        _n = (_d.get("tool_name") or _d.get("tool") or _d.get("name")) if isinstance(_d, dict) else _d
+        if _n:
+            denied.add(_n)
+
+    def _blocked(tid: str, entry: dict) -> bool:
+        r = results.get(tid)
+        return (r is None) or r["is_error"] or (entry["tool"] in denied)
+
+    executed = [e for tid, e in attempts.items() if not _blocked(tid, e)]
+    blocked = [e for tid, e in attempts.items() if _blocked(tid, e)]
+    state.metadata["tool_calls"] = executed
+    state.metadata["tool_calls_blocked"] = blocked  # tempdoc 675 forensic bonus (objects)
+    state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(executed, disallowed)
+    state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(executed)
+
+    # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
+    servers = got["mcp_servers"]
+    justsearch_tools = got["justsearch_tools"]
+    state.metadata["mcp_servers"] = servers
+    state.metadata["mcp_tools_offered"] = (
+        len(justsearch_tools) if servers is not None else None)
+    justsearch_connected = bool(servers) and any(
+        (s.get("name") == "justsearch"
+         and str(s.get("status", "")).lower() in ("connected", "ready", "ok"))
+        for s in (servers or []))
+    state.metadata["mcp_tools_deferred"] = (
+        bool(justsearch_connected and not justsearch_tools) if servers is not None else None)
+
+    # With-tool surface assertion (condition A exempt by construction). Preserve the
+    # tri-state: status unavailable -> "unverified" (never conflated with healthy).
+    if condition in _WITH_TOOL and mcp_config:
+        if servers is None:
+            state.metadata["mcp_surface_unverified"] = True
+        elif not justsearch_tools:
+            state.metadata["error"] = (
+                f"expected MCP tool surface not offered: mcp_servers={servers}")
+            return
+
+    if rmsg is not None:
+        if getattr(rmsg, "is_error", False):
+            # Forensically complete (tempdoc 675): a bare "result error: None" is
+            # unactionable — carry the SDK's own error signals (subtype/stop_reason
+            # distinguish e.g. a max-turns/​budget exhaustion from an API error).
+            err_bits = {
+                "subtype": getattr(rmsg, "subtype", None),
+                "stop_reason": getattr(rmsg, "stop_reason", None),
+                "num_turns": getattr(rmsg, "num_turns", None),
+                "api_error_status": getattr(rmsg, "api_error_status", None),
+                "errors": getattr(rmsg, "errors", None),
+            }
+            state.metadata["error"] = (
+                f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600]
+            return
+        state.output.completion = getattr(rmsg, "result", "") or ""
+        usage = getattr(rmsg, "usage", None) or {}
+        state.metadata.update({
+            "cost_usd": getattr(rmsg, "total_cost_usd", None),
+            "unique_tokens": usage.get("cache_creation_input_tokens"),
+            "num_turns": getattr(rmsg, "num_turns", None),
+        })
+    else:
+        state.metadata["error"] = "no ResultMessage (stream ended without a terminal result)"
 
 
 @scorer(metrics=[accuracy()])
@@ -252,34 +330,35 @@ def substring_scorer():
 
 
 @task
-def agent_utility_task(condition: str = "A", queries_path: str = "", corpus_dir: str = "",
+def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir: str = "",
                        mcp_config: str | None = None, model: str = "haiku",
                        max_queries: int | None = None, max_budget: float = 0.50,
-                       timeout_s: int = 180,
+                       timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
                        # --- cohort identity (task-args → config-change log segregation, A2) ---
                        cli_version: str | None = None, mcp_tool_surface_hash: str | None = None,
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
                        corpus_dataset: str = "", corpus_signature: str = "") -> Task:
-    """One Inspect task = one condition over the corpus×query dataset.
+    """ONE Inspect task over the whole matrix (tempdoc 675 single pool).
 
-    The cohort-identity args are what `eval_set` segregates logs by, so a model /
-    CLI / MCP-surface / judge / prompt change creates a new log instead of reusing
-    a stale completed sample.
-    """
+    Samples are the flat `condition × query` cross-product; `condition` is a sample
+    field (`Sample.metadata`), `sample.id = "{c}|q{i}"` (unique across conditions so
+    Inspect resume stays keyed on the cell). The cohort-identity args are what
+    `eval_set` segregates logs by."""
     rows = json.load(open(queries_path, encoding="utf-8"))
     if max_queries:
         rows = rows[:max_queries]
     samples = [
-        Sample(id=f"q{i}", input=r["query"], target=r["answer"],
-               metadata={"question_type": r.get("question_type")})
+        Sample(id=f"{c}|q{i}", input=r["query"], target=r["answer"],
+               metadata={"condition": c, "question_type": r.get("question_type")})
+        for c in conditions
         for i, r in enumerate(rows)
     ]
     return Task(
         dataset=samples,
-        solver=claude_agent_solver(condition, corpus_dir, mcp_config, model, max_budget, timeout_s),
+        solver=claude_agent_solver(corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns),
         scorer=substring_scorer(),
         metadata={
-            "condition": condition, "model": model,
+            "model": model,
             "corpus": {"dataset": corpus_dataset, "signature": corpus_signature or corpus_dataset},
             "cohort": {
                 "model": model, "cli_version": cli_version,
@@ -294,20 +373,20 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      model: str = "haiku", conditions=("A", "C"), seeds: int = 3,
                      concurrency: int = 6, log_dir: str, max_queries: int | None = None,
                      max_budget: float = 0.50, timeout_s: int = 180,
+                     max_turns: int = _DEFAULT_MAX_TURNS,
                      cli_version: str | None = None,
                      mcp_tool_surface_hash: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "") -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
-    samples). condition A passes no mcp_config; B/C pass the JustSearch one.
-    """
+    samples). condition A uses no MCP; B/C use the JustSearch one. Executor v2
+    (tempdoc 675): ONE task, one concurrency pool at `max_samples` (no `max_tasks=1`
+    condition serialization)."""
     # Dead-config fail-fast (tempdoc 624 battlefield retrospective): a `url`-only
-    # `mcpServers` entry (no `"type":"http"`) is silently DROPPED by the `claude`
-    # CLI — the run would otherwise complete "successfully" with zero MCP tool
-    # calls per cell (proven: all 260 certified condition-B battlefield cells hit
-    # exactly this). Checked before anything else in this function so a dead
-    # config aborts before any staging/subprocess work happens.
+    # `mcpServers` entry (no `"type":"http"`) is silently DROPPED — the run would
+    # otherwise complete "successfully" with zero MCP tool calls per cell. Checked
+    # before any staging so a dead config aborts early.
     if mcp_config:
         assert_mcp_config_http_typed(mcp_config)
 
@@ -315,62 +394,43 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
 
     from jseval.manifest import _sha256_canonical
 
-    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): this is the actual
-    # eval-executing path, so — unlike the optional `utility-calibrate` CLI — a stray/
-    # broader watched root must abort the run, not just get reported. Only meaningful
-    # when a search backend is actually in play (mcp_config given); condition-A-only
-    # runs never touch the backend.
+    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): the eval-executing
+    # path aborts on a stray/broader watched root. Only when a backend is in play.
     if mcp_config:
         watched_roots_base_url = base_url_from_mcp_config(mcp_config)
         if watched_roots_base_url:
             assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
 
-    # The prompt template is identical across conditions → its hash is a cohort
-    # field (so A and C share an agent_cohort_key, but a prompt change segregates).
+    # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
-    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run
-    # (reused across every condition/seed/sample this call touches — the matrix is
-    # resumable across process restarts, but corpus_dir isn't part of eval_set_id
-    # identity below, so a fresh staged path per invocation is safe). See
-    # stage_corpus_dir's docstring for why `--add-dir corpus_dir` cannot pass the
-    # persistent, gold-answer-key-sibling `corpus-dir/` directly.
+    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run.
     staged_corpus_dir = stage_corpus_dir(corpus_dir)
     try:
-        # `tasks` construction (agent_utility_task -> json.load on queries_path)
-        # can raise on a bad/missing/corrupted queries file — kept inside this
-        # try so a task-construction failure still hits the staged-dir cleanup
-        # below, not just an eval_set failure.
+        # ONE task over the full condition × query matrix (tempdoc 675 single pool).
         tasks = [
             agent_utility_task(
-                condition=c, queries_path=queries_path, corpus_dir=staged_corpus_dir,
-                mcp_config=(mcp_config if c in _WITH_TOOL else None), model=model,
+                conditions=conditions, queries_path=queries_path, corpus_dir=staged_corpus_dir,
+                mcp_config=mcp_config, model=model,
                 max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
-                cli_version=cli_version,
+                max_turns=max_turns, cli_version=cli_version,
                 mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
             )
-            for c in conditions
         ]
         # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
-        # re-invoking after a crash fails with "log file not associated with a task"
-        # because the set identity differs across processes. Derived from the run
-        # config so the same run resumes and a different run gets a fresh set.
+        # re-invoking after a crash fails with "log file not associated with a task".
         eval_set_id = _sha256_canonical({
             "log_dir": log_dir, "conditions": sorted(conditions), "model": model,
             "queries": queries_path, "prompt": prompt_template_hash,
         })[:22]
-        # log_format="json": the .eval (zip) recorder breaks on Windows fsspec
-        # paths during eval_set's log cleanup; JSON logs are text + portable.
-        # max_tasks=1: run condition-tasks SEQUENTIALLY so the effective agent
-        # concurrency equals max_samples — the concurrency the calibration pilot
-        # sized the timeout at. Concurrent condition-tasks multiply the in-flight
-        # `claude -p` cells (~n_conditions x max_samples), inflating contended
-        # latency past the calibrated timeout (observed live 2026-07-03: 40%
-        # arm-B timeout exclusions at ~16 effective concurrency vs 0% at the
-        # calibrated 8-way in an otherwise-identical isolation repro).
+        # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths
+        # during eval_set's log cleanup; JSON logs are text + portable.
+        # ONE task → conditions interleave in ONE `max_samples` pool (tempdoc 675):
+        # the `max_tasks=1` per-condition serialization (a 2× wall-clock cost) is gone,
+        # and the arms are contemporaneous (temporal-confound fix).
         eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
-                 max_samples=concurrency, max_tasks=1, log_format="json",
+                 max_samples=concurrency, log_format="json",
                  eval_set_id=eval_set_id)
     finally:
         shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)

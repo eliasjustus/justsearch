@@ -55,6 +55,12 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
     Attaches a cohort identity to each run (agent_manifest), pairs the with/without
     -tool arms on condition, aggregates seeds, and emits the canonical record plus
     an Inspect-EvalLog projection. Pure composition over existing run artifacts.
+
+    DEPRECATION NOTE (tempdoc 675): this command composes result files produced by
+    the now-retired classic `claude -p` shell-out runner (`agent_retrieval_eval.
+    run_agent_eval`, no longer callable via the CLI). The record-grade path is now
+    `utility-run` (`cmd_utility_run`), which drives the in-process SDK executor
+    directly. Kept working for any pre-existing run artifacts still on disk.
     """
     import datetime as _dt
 

@@ -1,9 +1,5 @@
 [
   {
-    "name": "agent-eval",
-    "group": "eval"
-  },
-  {
     "name": "bench-concurrency",
     "group": "bench"
   },
