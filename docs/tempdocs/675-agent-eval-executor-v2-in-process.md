@@ -591,3 +591,61 @@ candidate shapes, not new apparatus.
   contemporaneous. **Applies:** any A/B with a fixed reference arm. **Earns its keep when:** a
   regression-tier run measurably shrinks by reusing the engine-independent arm with no comparability
   loss. **Retire when:** the temporal-drift re-baseline cost approaches the savings.
+
+---
+
+## Pre-implementation verification (2026-07-07) — live-probed, design de-risked
+
+> Throwaway probes of the Claude Agent SDK (`claude-agent-sdk` 0.2.111, Python 3.14) against a live
+> local JustSearch backend (battlefield-en-v1). No harness code was touched. Purpose: verify the
+> feasibility claims that §External research established from *docs*, before implementation. The three
+> risks that could have *invalidated* the design are all resolved live; the doc-research had two
+> "migration gaps" that turned out not to exist.
+
+**Resolved live (the design-invalidating risks):**
+- **SDK ↔ `/mcp` ↔ search — WORKS.** A single retrieval cell called `mcp__justsearch__justsearch_answer`
+  and returned the correct answer as **objects** (`AssistantMessage` tool_use + `ToolResultBlock`
+  results + a `ResultMessage` with `total_cost_usd`/`usage`/`num_turns`). No stdout parsing. The
+  forensic goal (tool RESULTS in the record) is delivered by the substrate itself.
+- **Leak-control ENFORCES.** With `disallowed_tools` set (condition-C analog) and a prompt actively
+  tempting a file read, the agent's `Read` call was **blocked from executing** ("I don't have access
+  to the Read or Bash tools in this context") — the file was never read. Measurement validity holds.
+- **Isolation via `setting_sources=None` — clean.** With an isolated `cwd` and `setting_sources=None`,
+  the agent reported **"NO AMBIENT CONTEXT"** — no repo `CLAUDE.md`, no global `~/.claude` config
+  leaked in. Cleaner than the CLI's isolated-tempdir trick.
+- **Concurrency — real.** 8 concurrent SDK cells: **7/8 clean**, total **39.3 s** vs **129.3 s** serial
+  (**~3.3×**); the 1 error was a max-turns straggler (handled as an excluded cell, parity with today).
+  No races/crashes. (Reproduce: `$CLAUDE_JOB_DIR`-local probe; backend `battlefield-en-v1`.)
+
+**Doc-research corrections (verified against the installed SDK, authoritative over §External research):**
+- `ClaudeAgentOptions` HAS **`disallowed_tools`** (1:1 with `--disallowedTools` — no allowlist rewrite
+  needed) AND **`add_dirs`** distinct from `cwd` (isolated-cwd + corpus-via-`add_dirs` maps 1:1) AND
+  `strict_mcp_config`, `max_turns`, `max_budget_usd`, `permission_mode`, `system_prompt`,
+  **`setting_sources`**. The two "migration gaps" §External research flagged do not exist.
+- Build the cell on **`ClaudeSDKClient`** (not the one-shot `query()`): it exposes `get_mcp_status()` /
+  `get_server_info()` (for the offered-surface assertion) plus `set_model` / `set_permission_mode` /
+  `toggle_mcp_server` / `disconnect`.
+
+**Integration details discovered (handle in implementation; none invalidate the design):**
+1. **`max_turns` exhaustion raises an exception** (not a `ResultMessage`) — the executor must catch it
+   and mark the cell errored (parity with today's timeout handling).
+2. **`query()`'s `SystemMessage` init does not list the offered tools/mcp_servers** — the offered-MCP-
+   surface assertion moves from init-event parsing to `ClaudeSDKClient.get_mcp_status()`.
+3. **The leak assertion must distinguish attempted-but-blocked from executed** — a blocked disallowed
+   tool still appears as a tool_use block; key the assertion on the tool_result (now an object), not
+   the mere presence of the call.
+4. **The default toolset is richer than the CLI's** (includes `ToolSearch`, and the agent reaches for
+   `Bash` / `Agent` / `Task` — the subagent-bypass vector 624 flagged) — the disallowed set must be
+   comprehensive.
+5. **Packaging:** add `claude-agent-sdk` to the jseval Python deps (installed clean on 3.14; not yet in
+   requirements).
+6. **Convergence tuning (non-blocking):** haiku floundered a few turns (tried `Bash`/`ToolSearch`/`Agent`
+   before the MCP tool) — a tighter `system_prompt`/tool-guidance would cut turns/cost; a calibration
+   item, not a correctness one.
+
+**Confidence for the remaining implementation: 8/10.** The design cannot be invalidated by what's left
+— feasibility, API parity, concurrency, isolation, leak-enforcement, and the composer field-mapping are
+all confirmed. The residual is well-understood *integration*: the single-pool restructure has not been
+exercised end-to-end (only the SDK cell in isolation); the assertion-porting and max-turns-exception
+handling are new-but-bounded; and the orphan deletion touches a grab-bag file with unrelated Tier-1/2
+consumers (relocate-first mitigates). None of these is an unknown that risks the shape.
