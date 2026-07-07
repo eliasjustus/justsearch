@@ -9,7 +9,7 @@ description: "Issue tracking tiers, observation workflow, and documentation upda
 
 This project follows **organic development**: issues and rough edges are captured as they're noticed, not as separate investigation tasks.
 
-**`docs/observations.md`** is the store for this — a channel of grouped **conditions**, not a flat inbox (tempdoc 680). During any task, if you notice a behavioral issue -- something that affects users, causes bugs, or creates friction -- log ONE flat line via `node scripts/agent-analytics/note-observation.mjs "<description> — \`file:line\`"`. **Do not read the store first and do not check for duplicates**: re-observation is signal — at the next fold it bumps the matching condition's `seen` count, which is the triage ranking. Skip structural commentary (large files, naming style) unless it directly caused a problem. Don't stop to investigate unless explicitly asked. Just record and continue.
+**`docs/observations.md`** is the store for this — a channel of grouped **conditions**, not a flat inbox (tempdoc 680). During any task, if you notice a behavioral issue -- something that affects users, causes bugs, or creates friction -- log ONE flat line via `node scripts/agent-analytics/note-observation.mjs "<description> — file:line"`. **Do not read the store first and do not check for duplicates**: re-observation is signal — at the next fold it bumps the matching condition's `seen` count, which is the triage ranking. Skip structural commentary (large files, naming style) unless it directly caused a problem. Don't stop to investigate unless explicitly asked. Just record and continue.
 
 ## Two tiers of issue tracking
 
