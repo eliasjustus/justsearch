@@ -149,7 +149,9 @@ final class ErrorCatalogJsonArtifactTest {
     envelope.put("namespace", NAMESPACE);
     envelope.put("messages", messages);
 
-    return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(envelope) + "\n";
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(envelope).replace("\r\n", "\n")
+        + "\n";
   }
 
   /**

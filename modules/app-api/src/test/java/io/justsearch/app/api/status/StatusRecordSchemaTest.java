@@ -597,9 +597,11 @@ final class StatusRecordSchemaTest {
     }
 
     private void writeFixture(Path fixturePath, Object sample) throws Exception {
+      // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
       String pretty =
           CONTRACT_MAPPER.writerWithDefaultPrettyPrinter()
-              .writeValueAsString(CONTRACT_MAPPER.valueToTree(sample));
+              .writeValueAsString(CONTRACT_MAPPER.valueToTree(sample))
+              .replace("\r\n", "\n");
       Files.createDirectories(fixturePath.getParent());
       Files.writeString(fixturePath, pretty + "\n", StandardCharsets.UTF_8);
     }
@@ -720,7 +722,9 @@ final class StatusRecordSchemaTest {
 
   private void writeSchema(Class<?> recordType, Path target) throws IOException {
     JsonNode schema = schemaGenerator.generateSchema(recordType);
-    String pretty = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(schema);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    String pretty =
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(schema).replace("\r\n", "\n");
     Files.writeString(target, pretty + "\n", StandardCharsets.UTF_8);
   }
 
