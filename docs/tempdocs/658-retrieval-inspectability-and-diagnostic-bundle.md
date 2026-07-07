@@ -677,6 +677,14 @@ Anyone can re-run these against `main` + this branch:
   with `citations` (full span/heading provenance) and a 10-key `quality` object incl. `scoreGap`,
   `chunksConsidered`, `chunksIncluded`. (Verified 2026-07-07 against a real degraded-index corpus.)
 
+> **On the specific live figures.** The concrete numbers quoted in this doc (leg scores like
+> `dense:0.56`, `scoreGap:-0.0038`, the `11/11` conformance count) are **dated observations from
+> 2026-07-07 runs**, not committed artifacts — they reproduce via the commands listed here (the
+> corpus/query determine exact values), but no durable `EvidenceBundle` was saved because
+> `capture_evidence` is blocked by a Windows libuv fail-fast (deferred-check #1, logged to the
+> observations inbox). Treat the numbers as illustrative of the shapes the checks assert, not as
+> fixed facts — the reproducible pointer is the command, per *tempdocs-are-dated-history*.
+
 ## Deferred checks, unverified assumptions & follow-ups
 
 Handed forward so nothing is silently lost:

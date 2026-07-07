@@ -125,6 +125,7 @@ final class McpEvidenceProjectionTest {
   void searchProjectsPerHitTraceAndLegScores() {
     HitStage sparse = new HitStage(StageId.SPARSE_RETRIEVAL, 1, 3.3f, null);
     HitStage fused = new HitStage(StageId.FUSION, 1, 0.9f, Map.of("cc_weight_sparse", 0.6f));
+    HitStage splade = new HitStage(StageId.SPLADE_RETRIEVAL, 2, 1.7f, null);
     KnowledgeSearchResponse.Hit hit =
         new KnowledgeSearchResponse.Hit(
             "doc-1",
@@ -133,7 +134,7 @@ final class McpEvidenceProjectionTest {
             List.of(),
             List.of(),
             List.of(),
-            List.of(sparse, fused));
+            List.of(sparse, fused, splade));
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
             1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, null);
@@ -148,7 +149,7 @@ final class McpEvidenceProjectionTest {
     assertEquals(0.9d, h.get("score"));
 
     List<Object> hitStages = asList(h.get("trace"));
-    assertEquals(2, hitStages.size());
+    assertEquals(3, hitStages.size());
     Map<String, Object> hsSparse = asMap(hitStages.get(0));
     assertEquals("sparse-retrieval", hsSparse.get("id"));
     assertEquals(1, hsSparse.get("rank"));
@@ -160,6 +161,8 @@ final class McpEvidenceProjectionTest {
     Map<String, Object> legs = asMap(h.get("legScores"));
     assertEquals(3.3f, legs.get("sparse"));
     assertEquals(0f, legs.get("dense"));
+    // splade must be projected + carry the SPLADE leg score (previously never asserted anywhere).
+    assertEquals(1.7f, legs.get("splade"));
     assertEquals(0.9f, legs.get("fused"));
   }
 
@@ -257,6 +260,10 @@ final class McpEvidenceProjectionTest {
     assertCovers(TraceStage.class, asMap(asList(traceMap.get("stages")).get(0)), Set.of());
     Map<String, Object> hitMap = asMap(asList(searchEvidence.get("results")).get(0));
     assertCovers(HitStage.class, asMap(asList(hitMap.get("trace")).get(0)), Set.of());
+    // LegScores is a canonical record projected into the per-hit `legScores` map — the exact 4-field
+    // hand-mapping shape that caused Defect 2, so it is guarded reflectively too (all four legs incl.
+    // splade must be a key).
+    assertCovers(SearchTrace.LegScores.class, asMap(hitMap.get("legScores")), Set.of());
 
     ContextCitation cite =
         new ContextCitation("doc-42", 2, 5, 100, 260, 0.87f, "excerpt", 12, 18, "Overview", 2);
