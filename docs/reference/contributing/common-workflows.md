@@ -162,7 +162,7 @@ degrading onto CPU. See `resolveCuda12ServerExe` / `stageSharedCuda12` in
 **Backends started outside the dev-runner** (e.g. a bare `gradlew runHeadlessEval`) get neither
 `JUSTSEARCH_MODELS_DIR` nor `JUSTSEARCH_SERVER_EXE` set automatically and must export both:
 
-```
+```text
 JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
 JUSTSEARCH_SERVER_EXE=F:\JustSearch\modules\ui\native-bin\llama-server\variants\cuda12\llama-server.exe
 ```
