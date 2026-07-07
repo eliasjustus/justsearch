@@ -1105,6 +1105,27 @@ public final class KnowledgeServer implements Closeable {
         }
       }
 
+      // Tempdoc 687 R3d: warm the SEARCH path itself (ICU analyzer, Lucene query builder, QPP
+      // term-stats, IndexSearcher) so the first real user query after boot doesn't pay the
+      // Lucene/ICU JIT + class-load cold-start penalty (measured ~870ms cold vs ~12ms warm).
+      // Runs after all encoders above are wired, so the synthetic pass exercises the same
+      // production search stack a real query would. Calls GrpcSearchService.warmUpSearchPath()
+      // directly (in-process, below the gRPC boundary) — see its Javadoc + SearchOrchestrator
+      // .warmUp()'s Javadoc for why this can't leak into /api/status search telemetry or the
+      // Head's app-services feedback layer (feature snapshots / dispositions / GPL triples).
+      try {
+        long searchWarmStart = System.nanoTime();
+        boolean searchWarmed = appServices.grpcSearchService().warmUpSearchPath();
+        long searchWarmMs = (System.nanoTime() - searchWarmStart) / 1_000_000;
+        if (searchWarmed) {
+          log.info("Search path ready (warm-up={}ms)", searchWarmMs);
+        } else {
+          log.info("Search path warm-up skipped (empty index)");
+        }
+      } catch (Exception searchWarmE) {
+        log.info("Search path warm-up failed: {}", searchWarmE.getMessage());
+      }
+
       // Citation scorer (CPU-only). Tempdoc 397 §14.26 T2-E1: eager-wire — construct the full
       // CitationScorer from the surface assembly and pass it to appServices. CitationMatchOps is
       // now a pure consumer with no lazy construction path.

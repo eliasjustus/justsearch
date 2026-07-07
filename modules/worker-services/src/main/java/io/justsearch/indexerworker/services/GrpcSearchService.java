@@ -394,6 +394,22 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
     return MdcContext.request(traceId, RequestMetadataInterceptor.currentRequestId());
   }
 
+  /**
+   * Tempdoc 687 R3d: boot-time search-path warm-up. Called in-process by {@code
+   * KnowledgeServer} once all encoders are wired (the same lifecycle point as the existing
+   * search-reranker warm-up), so the first real user query doesn't pay the Lucene/ICU
+   * analyzer + query-builder + {@code IndexSearcher} JIT/class-load cold-start cost. Does
+   * NOT go through the {@link #search} RPC method (no {@code awaitModelsReady} gate needed —
+   * this runs before the model-ready latch is released — and no gRPC framing). Delegates to
+   * {@link SearchOrchestrator#warmUp()}; see its Javadoc for exactly what is (and is
+   * deliberately not) exercised.
+   *
+   * @return {@code true} if the warm-up pass ran, {@code false} if skipped (empty index)
+   */
+  public boolean warmUpSearchPath() {
+    return searchOrchestrator.warmUp();
+  }
+
   @Override
   public void search(SearchRequest request, StreamObserver<SearchResponse> responseObserver) {
     awaitModelsReady("search");
