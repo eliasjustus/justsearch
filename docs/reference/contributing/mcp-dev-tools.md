@@ -96,7 +96,7 @@ Important allowlisted areas include:
 | Index roots and indexing | `GET/POST/DELETE /api/indexing/roots`, `POST /api/indexing/reindex`, `POST /api/indexing/excludes/apply` |
 | Index migration and GC | `POST /api/indexing/migration/start`, `cutover`, `rollback`, `pause`, `resume`, `POST /api/indexing/gc` |
 | Inference runtime | `GET /api/inference/status`, `POST /api/inference/mode`, `POST /api/inference/reload` |
-| Worker/offline control | `POST /api/worker/restart`, `POST /api/offline/process` |
+| Worker control | `POST /api/worker/restart` |
 | AI install/runtime/packs | `GET/POST /api/ai/install/*`, `GET/POST /api/ai/runtime/*`, `GET/POST /api/ai/packs/*` |
 | Policy and diagnostics | `GET /api/policy/validate`, policy user allowlist calls, `POST /api/diagnostics/export` |
 | Knowledge/debug/telemetry | `GET /api/knowledge/status`, `GET /api/debug/events`, `GET /api/debug/worker-log`, `GET /api/telemetry/health` |

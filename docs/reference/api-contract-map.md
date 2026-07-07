@@ -222,7 +222,7 @@ The five faces of one agent action — Authorize, Outcome, Preview — over one 
 - `modules/ui/src/main/java/io/justsearch/ui/api/OperationPreviewController.java` (Preview face)
 - `modules/ui/src/main/java/io/justsearch/ui/api/AuthorizationController.java` (Authorize face: capsule mint + durable allow-always grant)
 - `modules/ui/src/main/java/io/justsearch/ui/api/HardStopController.java` (Global Hard Stop operator control)
-- `modules/ui/src/main/java/io/justsearch/ui/api/{NavigationHistoryController,OperationHistoryController}.java` (per-kind Outcome read-views)
+- `modules/ui/src/main/java/io/justsearch/ui/api/OperationHistoryController.java` (per-kind Outcome read-view; the sibling `GET /api/navigation-history` snapshot endpoint was torn down — tempdoc 689 — superseded by `GET /api/action-ledger` kind:'navigation', which reads the same `NavigationHistoryStore` in-process via `ActionLedgerProjection`)
 - `modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/{ActionEvent,ActionEventStore,ActionLedgerProjection}.java` (the one log + projection)
 - `modules/app-services/src/main/java/io/justsearch/app/services/intent/{IntentGateEvaluator,ConsentCapsuleService,DurableGrantStore,Grant}.java` (one verdict + one grant model)
 
@@ -237,8 +237,9 @@ Endpoints:
 - `GET /api/authorizations/pending/{id}` — Tempdoc 655 fix pass. Point-to-point fetch of a pending's decision content (`operationId`, `argsSummary`, `sourceTier`, `riskTier`, `gateBehavior`, `rationale`, and — tempdoc 655's long-term design pass — an optional `requestedBy`: the calling MCP client's self-reported `clientInfo.name`, present only when the gate fired via MCP and the client supplied it; display-only, never a trust input per ADR-0030's hint-vs-enforced-policy line) by id, non-mutating (`peek`, not `consume`). Exists because the pending-authorization SSE broadcast (below) deliberately carries none of this content — a privacy boundary (tempdoc 444b): args-derived content is scoped to a point-to-point response to the one human deciding that one action, never to a multicast channel. 404 for an unknown/expired/already-consumed id.
 - `GET /api/agent/hard-stop` — Global Hard Stop state (E2). <!-- drift-allow:/api/agent -->
 - `POST /api/agent/hard-stop` — Engage/disengage the Global Hard Stop. Engaging is a global revocation over all NON-USER (UNTRUSTED) grants — it revokes non-user capsules + durable grants and makes the lattice deny-all-non-user; a user-mediated approval (MEDIUM/TRUSTED) survives an emergency stop, matching the gate's hard-stop scope. <!-- drift-allow:/api/agent -->
-- `GET /api/navigation-history` — Navigation Outcome read-view snapshot (Slice F1).
 - `GET /api/operation-history` + `GET /api/operation-history/stream` (SSE) — Operation Outcome read-view snapshot + append stream (Slice 444b).
+
+`GET /api/navigation-history` (Slice F1) was removed (tempdoc 689 teardown): superseded by `GET /api/action-ledger` kind:'navigation' — the FE reads Navigation entries there now, and the backend `ActionLedgerProjection` still consumes `NavigationHistoryStore` in-process (the store itself is unchanged, only the standalone REST snapshot was torn down for having zero consumers).
 
 ### Agent API
 

@@ -8,8 +8,15 @@
  * tempdoc numbers, not session ids).
  *
  * Run at merge time (documented in .claude/rules/branch-safety.md merge step):
- *   node scripts/agent-analytics/record-merge.mjs            # links HEAD merge
- *   node scripts/agent-analytics/record-merge.mjs <commit>   # links a specific commit
+ *   node scripts/agent-analytics/record-merge.mjs                       # links HEAD merge
+ *   node scripts/agent-analytics/record-merge.mjs <commit>              # links a specific commit
+ *   node scripts/agent-analytics/record-merge.mjs <commit> --session-id <id>  # escape hatch
+ *
+ * Session id resolution is shared with note-observation.mjs's resolveSessionId
+ * (tempdoc 684): env-first (CLAUDE_CODE_SESSION_ID / JUSTSEARCH_AGENT_SESSION_ID),
+ * falling back to the current-session-id pointer file, then a worktree hash.
+ * `--session-id` is an escape hatch for headless/cron contexts where neither
+ * env var is set.
  *
  * Read-only w.r.t. git (rev-parse + log); append-only telemetry. bash-guard safe.
  */
@@ -18,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { TELEMETRY_DIR, repoRoot } from './lib/telemetry-io.mjs';
+import { resolveSessionId } from './note-observation.mjs';
 
 const MERGES_FILE = 'session-merges.ndjson';
 
@@ -25,16 +33,25 @@ function git(args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-function readSessionId() {
-  try {
-    return fs.readFileSync(path.join(repoRoot, TELEMETRY_DIR, 'current-session-id'), 'utf8').trim();
-  } catch {
-    return null;
+function parseArgs(argv) {
+  let commitArg = null;
+  let sessionIdArg = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--session-id') {
+      sessionIdArg = argv[i + 1];
+      i += 1;
+    } else if (arg.startsWith('--session-id=')) {
+      sessionIdArg = arg.slice('--session-id='.length);
+    } else if (commitArg === null) {
+      commitArg = arg;
+    }
   }
+  return { commitArg: commitArg || 'HEAD', sessionIdArg };
 }
 
 function main() {
-  const commitArg = process.argv[2] || 'HEAD';
+  const { commitArg, sessionIdArg } = parseArgs(process.argv.slice(2));
   let hash, subject;
   try {
     hash = git(['rev-parse', commitArg]);
@@ -44,9 +61,9 @@ function main() {
     process.exit(1);
   }
 
-  const sessionId = readSessionId();
-  if (!sessionId) {
-    console.error('record-merge: no current-session-id; link skipped (merge not attributed).');
+  const sessionId = sessionIdArg ? sessionIdArg.trim() : resolveSessionId({ root: repoRoot });
+  if (!sessionId || sessionId === 'unknown') {
+    console.error('record-merge: no session id resolvable; link skipped (merge not attributed).');
     process.exit(0); // non-fatal: never block a merge over telemetry
   }
 

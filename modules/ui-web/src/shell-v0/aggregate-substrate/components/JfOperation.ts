@@ -16,6 +16,10 @@
  *     Surfaces only set this when they need to force a tier (e.g., a
  *     debug surface forcing 'DEVELOPER' to show everything).
  *   - api-base (string): forwarded to inner ActionButton, used for invocation.
+ *   - args (Record<string, unknown>): property-only (not an attribute).
+ *     Forwarded to the inner `<jf-op-button>` (and from there to
+ *     `OperationClient.invoke`) as the invocation's `args` payload.
+ *     Mirrors OpButton's own `args` declaration (attribute: false).
  *
  * Pass-through events: `action-invoke` from the inner button bubbles
  * naturally. The component does not invoke the operation; the
@@ -57,12 +61,14 @@ export class JfOperation extends SignalWatcher(JfElement) {
      */
     viewerAudience: { type: String, attribute: 'viewer-audience' },
     apiBase: { type: String, attribute: 'api-base' },
+    args: { attribute: false },
   } as const;
 
   declare operationId: string;
   declare context: SurfaceContextKind;
   declare viewerAudience: Audience | null;
   declare apiBase: string;
+  declare args: Record<string, unknown>;
 
   private catalogUnsubscribe: (() => void) | null = null;
 
@@ -72,6 +78,7 @@ export class JfOperation extends SignalWatcher(JfElement) {
     this.context = 'button';
     this.viewerAudience = null;
     this.apiBase = '';
+    this.args = {};
   }
 
   override connectedCallback(): void {
@@ -125,9 +132,13 @@ export class JfOperation extends SignalWatcher(JfElement) {
     if (!this.operationId) return nothing;
     const op = getOperation(this.operationId);
     if (!op) return nothing;
-    const host: StrategyHost & { viewerAudience?: Audience } = {
+    const host: StrategyHost & {
+      viewerAudience?: Audience;
+      args?: Record<string, unknown>;
+    } = {
       apiBase: this.apiBase,
       viewerAudience: this.effectiveViewerAudience(),
+      args: this.args,
     };
     // Tempdoc 543 §20.7 B2 — route through renderAggregateMulti
     // (Slice 6 substrate). For all current Operation contexts the

@@ -9,7 +9,7 @@
  * OperationClient layer.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetForTest,
   __seedForTest,
@@ -109,5 +109,57 @@ describe('<jf-operation>', () => {
     __seedForTest(catalogOf(op('core.dev-only', { audience: 'DEVELOPER' })));
     const el = await mountOperation('core.dev-only');
     expect(el.querySelector('jf-op-button')).toBeNull();
+  });
+
+  it('forwards .args through jf-op-button into the /invoke request body (tempdoc 689)', async () => {
+    // Pins the through-chain that tempdoc 689 revived: <jf-operation .args=...>
+    // was previously dead because neither JfOperation nor the (Operation,
+    // button) strategy read or forwarded it. Drives jf-operation (the
+    // aggregate host) — not jf-op-button directly — so the whole pass-through
+    // is exercised, matching HealthSurface/HelpSurface's real usage.
+    __seedForTest(catalogOf(op('core.export-diagnostics')));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, message: 'ok' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+      const el = document.createElement('jf-operation') as HTMLElement & {
+        args: Record<string, unknown>;
+      };
+      el.setAttribute('operation-id', 'core.export-diagnostics');
+      el.setAttribute('context', 'button');
+      el.setAttribute('api-base', 'http://localhost');
+      el.args = { feTelemetry: { wireDrift: { total: 1 } } };
+      document.body.appendChild(el);
+      await (el as unknown as { updateComplete: Promise<void> }).updateComplete;
+
+      const opButton = el.querySelector('jf-op-button');
+      expect(opButton).not.toBeNull();
+      await (opButton as unknown as { updateComplete: Promise<void> }).updateComplete;
+      const actionButton = opButton!.shadowRoot?.querySelector('jf-action-button');
+      expect(actionButton).toBeTruthy();
+
+      actionButton!.dispatchEvent(
+        new CustomEvent('action-invoke', {
+          detail: { operationId: 'core.export-diagnostics', risk: 'LOW' },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const invokeCall = fetchImpl.mock.calls.find((c) => String(c[0]).includes('/invoke'));
+      expect(invokeCall).toBeTruthy();
+      const body = JSON.parse((invokeCall![1] as RequestInit).body as string) as {
+        args: { feTelemetry: { wireDrift: { total: number } } };
+      };
+      expect(body.args.feTelemetry.wireDrift.total).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
