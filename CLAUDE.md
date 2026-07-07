@@ -150,9 +150,11 @@ Subagents do **NOT** inherit this file, `.claude/rules/*.md`, or any of the pare
 - **No PostToolUse hints.** A subagent editing `SSOT/catalogs/fields.v1.json` will not be reminded about the dual-copy sync. If a subagent edits anything in `SSOT/catalogs/`, `docs/{explanation,reference,how-to,decisions}/`, `build.gradle.kts`, or `modules/ui-web/src/`, follow up after its return with the relevant regen step yourself.
 - **`isolation: "worktree"`** branches from `origin/main`, not the parent's HEAD ([claude-code#50850](https://github.com/anthropics/claude-code/issues/50850)). A subagent verifying against an isolated worktree may pass while the parent's view fails. Prefer non-isolated subagents unless the work genuinely needs an independent worktree.
 
-Good subagent tasks: open-ended research, parallel codebase exploration, second-opinion code review, batch read-only audits.
+Good subagent tasks: open-ended research, parallel codebase exploration, second-opinion code review, batch read-only audits, and bounded, verifiable implementation chunks (see routing below).
 
 Risky subagent tasks: anything that writes shared state, runs migrations, edits `.gitignore`, modifies CI config, or could leave the worktree in an inconsistent state.
+
+**Model routing (delegation economics; owner decision 2026-07-07).** Orchestration — decomposition, briefs, design, judging returned evidence — is the main loop's job; implementation is token-heavy, so delegate bounded, verifiable chunks. **Set `model: "sonnet"` explicitly on implementation subagents** — an unset `model` inherits the parent, silently billing orchestrator-tier for worker-grade work. Sonnet is the floor for findings you'll rely on; haiku only where wrong output is self-evident. Never delegate: brief-writing and evidence judgment, shared resources (dev stack, main checkout, merge/publish), irreversible actions, trivial edits. Chunk long refactors into bounded delegations. If a worker's output misses the bar, redo it with a stronger model without asking — judge the output, not the price tag. Falsifier: cost-per-shipped-merge should improve within ~2 months without rework rising; flat → delete this paragraph; rework up → raise the floor.
 
 ## Architecture
 
