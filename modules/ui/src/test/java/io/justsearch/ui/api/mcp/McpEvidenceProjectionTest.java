@@ -17,8 +17,10 @@ import io.justsearch.app.api.knowledge.SearchTrace.Qpp;
 import io.justsearch.app.api.knowledge.SearchTrace.StageId;
 import io.justsearch.app.api.knowledge.SearchTrace.StageStatus;
 import io.justsearch.app.api.knowledge.SearchTrace.TraceStage;
+import java.lang.reflect.RecordComponent;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +43,30 @@ final class McpEvidenceProjectionTest {
   @SuppressWarnings("unchecked")
   private static List<Object> asList(Object o) {
     return (List<Object>) o;
+  }
+
+  /**
+   * Reflective totality guard — the Java analogue of the FE's {@code assertFieldRoles} pattern
+   * (evidenceProjection.ts). Asserts every record component of {@code type} is a key in
+   * {@code projectedSlice} unless it is declared intentionally {@code elided}. This makes the
+   * silent-field-drop class unrepresentable: adding a field to a canonical evidence record both breaks
+   * the maximal-fixture constructor arity below (forcing a fixture update) AND trips this guard until
+   * the projection actually surfaces the field (tempdoc 658 post-review hardening).
+   */
+  private static void assertCovers(
+      Class<? extends Record> type, Map<String, Object> projectedSlice, Set<String> elided) {
+    for (RecordComponent rc : type.getRecordComponents()) {
+      if (elided.contains(rc.getName())) {
+        continue;
+      }
+      assertTrue(
+          projectedSlice.containsKey(rc.getName()),
+          type.getSimpleName()
+              + " field '"
+              + rc.getName()
+              + "' is not projected into the MCP evidence — either project it or add it to the"
+              + " declared elided set with a reason.");
+    }
   }
 
   @Test
@@ -196,5 +222,57 @@ final class McpEvidenceProjectionTest {
     Map<String, Object> evidence = McpEvidenceProjection.answerEvidence(fallback);
     assertTrue(asList(evidence.get("citations")).isEmpty());
     assertEquals("FULLTEXT_FALLBACK", asMap(evidence.get("quality")).get("retrievalMode"));
+  }
+
+  @Test
+  @DisplayName("totality: every field of every canonical evidence record is projected (reflective guard)")
+  void projectionCoversEveryEvidenceField() {
+    // Maximal fixtures — EVERY field non-null / non-empty, so the projection's null-omission never
+    // hides a component from the reflective check below.
+    TraceStage stage =
+        new TraceStage(StageId.FUSION, StageStatus.EXECUTED, "reason", 5L, "fusion-detail", 12L);
+    SearchTrace trace =
+        new SearchTrace(
+            SearchTrace.SCHEMA_VERSION,
+            "HYBRID",
+            "multi_leg",
+            new Qpp(1.5f, 2.0f, 3.0f),
+            new Degradation(true, "R1", true, "R2", true, "R3"),
+            List.of(stage));
+    HitStage hitStage = new HitStage(StageId.FUSION, 1, 0.9f, Map.of("cc", 0.9f));
+    KnowledgeSearchResponse.Hit hit =
+        new KnowledgeSearchResponse.Hit(
+            "doc-1", 0.9d, Map.of("title", "T", "path", "P"),
+            List.of(), List.of(), List.of(), List.of(hitStage));
+    KnowledgeSearchResponse resp =
+        new KnowledgeSearchResponse(
+            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+    Map<String, Object> searchEvidence = McpEvidenceProjection.searchEvidence(resp);
+
+    Map<String, Object> traceMap = asMap(searchEvidence.get("searchTrace"));
+    // `version` is the structural-compat hint the FE explain panel also elides (searchTraceExplain.ts).
+    assertCovers(SearchTrace.class, traceMap, Set.of("version"));
+    assertCovers(Qpp.class, asMap(traceMap.get("qpp")), Set.of());
+    assertCovers(Degradation.class, asMap(traceMap.get("degradation")), Set.of());
+    assertCovers(TraceStage.class, asMap(asList(traceMap.get("stages")).get(0)), Set.of());
+    Map<String, Object> hitMap = asMap(asList(searchEvidence.get("results")).get(0));
+    assertCovers(HitStage.class, asMap(asList(hitMap.get("trace")).get(0)), Set.of());
+
+    ContextCitation cite =
+        new ContextCitation("doc-42", 2, 5, 100, 260, 0.87f, "excerpt", 12, 18, "Overview", 2);
+    ContextResult result =
+        new ContextResult(
+            "ctx", 3, 7, 0, List.of(cite), "HYBRID", "HYBRID_AVAILABLE", false, List.of(),
+            new QualitySignals(0.87f, 0.1f, 0.42f, 7, 3));
+    Map<String, Object> answerEvidence = McpEvidenceProjection.answerEvidence(result);
+    assertCovers(ContextCitation.class, asMap(asList(answerEvidence.get("citations")).get(0)), Set.of());
+    // The `quality` map is a SUPERSET (QualitySignals fields + ContextResult counts) — assert it covers
+    // every QualitySignals component.
+    assertCovers(QualitySignals.class, asMap(answerEvidence.get("quality")), Set.of());
+
+    // Intentionally NOT reflectively guarded: KnowledgeSearchResponse.Hit and ContextResult are
+    // selective carriers (they surface identity + the nested evidence records above, not every field —
+    // e.g. Hit.matchSpans / ContextResult.sections are not ranking-evidence). Their evidence-bearing
+    // content is the nested records this test already covers.
   }
 }

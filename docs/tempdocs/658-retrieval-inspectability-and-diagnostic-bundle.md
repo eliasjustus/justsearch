@@ -659,12 +659,15 @@ both fixed:
 Anyone can re-run these against `main` + this branch:
 
 - **Compiles / lints:** `./gradlew build -x test` → BUILD SUCCESSFUL (compile + PMD + Spotless + ArchUnit).
-- **Projection conformance:** `./gradlew :modules:ui:test --tests "*McpEvidenceProjectionTest*"` — 4/4
-  green; asserts enum wire-ids, every `SearchTrace`/`ContextCitation`/`QualitySignals` field, detail-tier
-  gating, and the empty-fallback citation list.
+- **Projection conformance:** `./gradlew :modules:ui:test --tests "*McpEvidenceProjectionTest*"` — 5/5
+  green; asserts enum wire-ids, every `SearchTrace`/`ContextCitation`/`QualitySignals` field (incl. a
+  reflective totality guard), detail-tier gating, and the empty-fallback citation list.
 - **Protocol round-trip:** `McpProtocolHandlerTest` — 14/14 green, incl.
   `toolsCall_search_attachesStructuredEvidence` (drives the real handler+surface over JSON-RPC through
   the real serializer) and the `tools/list` assertion that `detail` is published.
+- **MCP protocol conformance:** `node scripts/ci/check-mcp-conformance.mjs --url …/mcp` against the live
+  endpoint → all 11 protocol scenarios pass (no regression from the schema/version/structuredContent
+  changes).
 - **Register guard:** `node scripts/governance/run.mjs --gate execution-surface --mode gate` → pass;
   verified to *bite* (mismatch the `mcp-evidence-projection` surface path → `undeclared-surface` fires
   on `McpEvidenceProjection.java`).
@@ -694,24 +697,32 @@ Handed forward so nothing is silently lost:
    valid with **no `NaN`/`Infinity`** tokens — the fusion-normalization non-finite-float
    serialization risk did not materialize (division-adjacent values like `chunk_branch_norm` serialized
    as clean `0`). Both the degraded (BM25 fallback) and healthy (hybrid) paths are now live-verified.
-3. **MCP conformance suite not re-run.** `scripts/ci/check-mcp-conformance.mjs` (manual, not in public
-   CI) was not run against the new `structuredContent`. Assumption: `structuredContent` **without** an
-   `outputSchema` is accepted — consistent with the pre-existing `justsearch_runtime_manifest` tool,
-   which already does exactly this. Worth one confirming run.
+3. **~~MCP conformance suite not re-run.~~ RESOLVED 2026-07-07.** Ran
+   `node scripts/ci/check-mcp-conformance.mjs --url http://127.0.0.1:<port>/mcp` against the live
+   endpoint → **all 11 protocol-conformance scenarios pass**. The `detail` schema addition, the
+   `TOOL_SURFACE_VERSION` 0.1.0→0.2.0 bump, and the `structuredContent` additions do not regress
+   protocol conformance. (Confirms the assumption that `structuredContent` without an `outputSchema` is
+   accepted — consistent with the pre-existing `justsearch_runtime_manifest` tool.)
 4. **No `outputSchema` for the evidence — deliberate.** MCP output-schema machinery does not exist in
    this repo yet; declaring one belongs to tempdoc **655** (MCP conformance). The evidence rides as
    free-form `structuredContent` per the `runtime_manifest` precedent. If 655 adds `outputSchema`
    support, the search/answer evidence shapes should get schemas then.
-5. **Conformance test is field-complete but not *mechanically* exhaustive.** `McpEvidenceProjectionTest`
-   asserts every field that exists today, but there is no reflective field-count guard (unlike the FE
-   `assertFieldRoles` pattern). A new field added to `SearchTrace`/`ContextCitation`/`QualitySignals`
-   would be silently dropped until the projection + test are updated. Optional hardening: a reflective
-   totality check.
+5. **~~Conformance test is field-complete but not *mechanically* exhaustive.~~ RESOLVED 2026-07-07.**
+   Added a reflective totality guard (`projectionCoversEveryEvidenceField`, the Java analogue of the FE
+   `assertFieldRoles` pattern): maximal fixtures + `assertCovers(RecordType, projectedSlice, elided)`
+   iterate each record's `getRecordComponents()` and fail if any is not projected (unless declared
+   elided — only `SearchTrace.version`). Covers `SearchTrace`/`Qpp`/`Degradation`/`TraceStage`/`HitStage`
+   /`ContextCitation`/`QualitySignals`. Bite-verified: dropping `quality.scoreGap` fails with
+   *"QualitySignals field 'scoreGap' is not projected into the MCP evidence"*. This makes the Defect-2
+   silent-drop class unrepresentable (adding a field also breaks the fixture arity — two forcing
+   functions). `Hit`/`ContextResult` are intentionally excluded (selective carriers; their evidence-bearing
+   content is the nested records the guard covers).
 6. **Stale register row fixed in passing (not 658's own work).** The execution-surface register carried
    a dead `fe-generated-pb` → `knowledge_pb.d.ts` row (the file was deleted by tempdoc **683**; absent
    on `main`), which had the `execution-surface` gate red on `main`. Removed here to unblock; logged to
-   the observations inbox for the fold step. A 683 follow-up should confirm no other 683 teardown residue
-   remains.
+   the observations inbox for the fold step. A 658-scoped audit (2026-07-07) confirmed **all 43 remaining
+   surface paths in the register exist** — no other orphan in this register. Any broader 683
+   teardown-residue audit (other registers/artifacts) remains a **683** follow-up, not 658's.
 
 **Remaining work in 658's own scope: none** — the MCP evidence projection is complete. The named
 non-scope items (skipped-file/OCR read surface, diagnostics-bundle content-body redaction, the 647
