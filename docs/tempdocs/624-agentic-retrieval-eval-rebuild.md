@@ -1786,12 +1786,21 @@ The record stays internal until **all** of the following hold:
    dropped from any published number entirely, kept diagnostic-only); the run's operator-level Claude Code
    config (skills/plugins) is confirmed minimal or explicitly recorded, since "isolated" only verifiably means
    repo-level `CLAUDE.md`-free, not global-config-free (§Confidence-pass finding).
+2b. **Offered surface (applied 2026-07-07, Step 0, per pass-24 §3):** every with-tool cell's init event
+   shows the expected MCP server connected and its tools offered (`cells_with_mcp_surface_verified ==
+   cells_total` for B/C, from the record's own `tool_call_assertions`); cells failing this are excluded
+   AND their count reported.
+2c. **Adoption (applied 2026-07-07, Step 0, per pass-24 §3):** adoption metrics (pass-24 §2:
+   `adoption_rate`, `first_mcp_call_turn`, `mcp_call_share`) reported per arm; the claim text states the
+   intention-to-treat number and, where they diverge, the per-protocol number with its caveat.
 3. **Judge:** the human-calibration kappa/alpha (§M.4/§T.3, dual-rater, reported with its own CI) is computed
    and reported — whatever the value; no minimum kappa/alpha threshold is proposed here (that is itself a
    founder call, §M.9).
-4. **Statistics:** ≥5 seeds and n≥100 paired queries *actually completed* (not merely planned); token-
-   efficiency CI excludes 0; accuracy reported with its real McNemar p, never reworded to imply significance
-   it does not have.
+4. **Statistics (rewritten outcome-neutral 2026-07-07, Step 0, per pass-24 §3 — the old text presumed a
+   token-efficiency win; twice the data declined the presumption):** ≥5 seeds and n≥100 paired completed;
+   every headline metric reported with its own uncertainty (McNemar p for accuracy, bootstrap CI for
+   continuous metrics); the claim text's emphasis follows the measured significances — no metric is
+   promoted because it was hoped for nor demoted because it disappointed.
 5. **Reproducibility:** the record is cohort-identified (`agent_cohort_key`/`pairing_key` populated),
    `paired_comparability` returns `comparable=True` (no asymmetric-exclusion flag), and is rerunnable via
    `jseval utility-run --calibration` against the committed corpus at a stated CLI/model version.

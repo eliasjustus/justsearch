@@ -25,6 +25,7 @@ from pathlib import Path
 from jseval.agent_retrieval_eval import (
     AgentResult,
     _build_agent_cmd,
+    _score_answer,
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
@@ -33,6 +34,42 @@ from jseval.agent_retrieval_eval import (
     run_agent_eval,
     stage_corpus_dir,
 )
+
+
+# --- _score_answer scorer semantics fixture (tempdoc 624 §M.8 amendment, Step 0
+# item 6): pins the exact-match scorer's case/whitespace/punctuation behavior so
+# a future refactor can't silently loosen or tighten what counts as "correct"
+# without a test noticing. ---
+
+class TestScoreAnswerSemantics:
+    def test_exact_case_different_match(self):
+        assert _score_answer("Paris", "the capital is paris") is True
+
+    def test_leading_and_trailing_whitespace_in_answer_still_matches(self):
+        assert _score_answer("Paris", "   paris   ") is True
+
+    def test_answer_embedded_in_longer_sentence_matches(self):
+        assert _score_answer(
+            "3.5 million", "According to the article, the population is 3.5 million people.",
+        ) is True
+
+    def test_wrong_sibling_near_miss_does_not_match(self):
+        """A similar-but-different value must NOT match via substring luck --
+        '3.4 million' is not a substring of an answer only containing '3.5
+        million', unlike e.g. 'Paris'/'Parisian' where substring containment
+        would accidentally succeed."""
+        assert _score_answer("3.4 million", "the population is 3.5 million people") is False
+
+    def test_ground_truth_trailing_period_is_stripped(self):
+        assert _score_answer("Paris.", "the capital is paris") is True
+
+    def test_abstention_phrase_accepted_for_insufficient_information(self):
+        assert _score_answer(
+            "Insufficient information.", "I cannot find any relevant articles in the corpus.",
+        ) is True
+
+    def test_non_abstaining_answer_rejected_for_insufficient_information(self):
+        assert _score_answer("Insufficient information.", "The answer is Paris.") is False
 
 
 def test_build_disallowed_tools_condition_a_blocks_web_and_subagent():
@@ -49,8 +86,24 @@ def test_build_disallowed_tools_condition_c_also_blocks_file_and_shell_tools():
     disallowed = build_disallowed_tools("C")
     assert set(disallowed) == {
         "Read", "Grep", "Glob", "Bash",
+        "ReadMcpResourceTool", "ReadMcpResourceDirTool", "ListMcpResourcesTool",
         "WebFetch", "WebSearch", "Agent", "Task", "Skill",
     }
+
+
+def test_build_disallowed_tools_condition_c_blocks_mcp_resource_read_channel():
+    """tempdoc 624 §M.8 amendment (Step 0 item 3): a condition-C cell attempted a
+    resource-read tool (an MCP corpus-file-access channel outside the retrieval
+    surface, distinct from Read/Grep/Glob/Bash) on 2026-07-07 and it went
+    unflagged. A/B keep these allowed -- only C's "no native file access" premise
+    is violated by them."""
+    disallowed_c = build_disallowed_tools("C")
+    for tool in ("ReadMcpResourceTool", "ReadMcpResourceDirTool", "ListMcpResourcesTool"):
+        assert tool in disallowed_c
+    for cond in ("A", "B"):
+        disallowed = build_disallowed_tools(cond)
+        for tool in ("ReadMcpResourceTool", "ReadMcpResourceDirTool", "ListMcpResourcesTool"):
+            assert tool not in disallowed
 
 
 def test_find_disallowed_tool_calls_empty_when_clean():
@@ -548,6 +601,47 @@ class TestParseClaudeStreamJson:
         )
         tool_calls, _data, _sid = parse_claude_stream_json(stdout)
         assert tool_calls[0]["response_preview"] == "file body preview"
+
+    def test_attaches_is_error_false_and_no_error_snippet_on_healthy_call(self):
+        """tempdoc 624 §M.8 amendment (Step 0 item 2): the per-call outcome must
+        come from the tool_result block's own `is_error` flag -- not the agent's
+        self-reported reflection."""
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+                {"type": "tool_result", "is_error": False,
+                 "content": [{"type": "text", "text": "file body preview"}]},
+            ]}},
+            {"type": "result", "is_error": False, "result": "ok"},
+        )
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        assert tool_calls[0]["is_error"] is False
+        assert "error_snippet" not in tool_calls[0]
+
+    def test_attaches_is_error_true_and_error_snippet_on_failed_call(self):
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/nope.txt"}},
+                {"type": "tool_result", "is_error": True,
+                 "content": [{"type": "text", "text": "ENOENT: no such file or directory"}]},
+            ]}},
+            {"type": "result", "is_error": False, "result": "could not find it"},
+        )
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        assert tool_calls[0]["is_error"] is True
+        assert tool_calls[0]["error_snippet"] == "ENOENT: no such file or directory"
+
+    def test_error_snippet_truncated_to_200_chars(self):
+        long_error = "E" * 500
+        stdout = _stream_json(
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "boom"}},
+                {"type": "tool_result", "is_error": True,
+                 "content": [{"type": "text", "text": long_error}]},
+            ]}},
+        )
+        tool_calls, _data, _sid = parse_claude_stream_json(stdout)
+        assert len(tool_calls[0]["error_snippet"]) <= 200
 
     def test_summarizes_long_string_and_nonscalar_params(self):
         long_val = "x" * 250

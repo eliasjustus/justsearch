@@ -57,8 +57,16 @@ from jseval.utility_calibrate import (
 # B = file + JustSearch, C = JustSearch only (substitution).
 _WITH_TOOL = {"B", "C"}
 
+# Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1): the prior
+# "using only the documents in {corpus_dir}" wording primed the agent toward
+# filesystem tools before it ever saw its actual tool surface -- an experimental
+# confound the with/without-tool comparison cannot tolerate (an agent nudged
+# toward Read/Grep in the prompt itself is not choosing file tools over MCP on
+# the merits). This wording was pre-registered BEFORE the next paid run and must
+# not be edited post-hoc without a new pre-registration.
 _PROMPT = (
-    "Answer the following question using only the documents in {corpus_dir}. "
+    "Answer the following question about the document collection at {corpus_dir}. "
+    "You may use any tools available to you. "
     "Do not use prior knowledge. Be concise. Question: {query}"
 )
 
@@ -162,6 +170,31 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
                 )
                 state.metadata["mcp_servers"] = mcp_servers
                 state.metadata["mcp_tools_offered"] = mcp_tools_offered
+                # Tool-surfacing-mode stamp (tempdoc 624 §M.8 amendment, Step 0 item
+                # 4): whether the justsearch MCP server actually CONNECTED but its
+                # tools are reachable only via ToolSearch (deferred behind a
+                # tool-search layer, not listed directly in the init event's `tools`)
+                # rather than genuinely absent (dead config) -- a CLI-version-
+                # dependent surfacing behavior that mediates adoption, so it must be
+                # visible as cohort identity (utility_comparison._tool_surfacing_mode),
+                # not buried per-cell. Computed unconditionally, for ANY condition,
+                # whenever an init event parsed -- deliberately BEFORE the assertion
+                # below, so the signal survives even on a cell that assertion is
+                # about to flag as errored (distinguishing "dead config" from
+                # "merely deferred" needs this recorded pre-break, not just for
+                # cells that pass).
+                justsearch_connected = bool(init_event) and any(
+                    srv.get("name") == "justsearch" and srv.get("status") == "connected"
+                    for srv in (mcp_servers or [])
+                )
+                justsearch_tools_offered = (
+                    [t for t in init_event["tools"] if t.startswith("mcp__justsearch")]
+                    if init_event else []
+                )
+                state.metadata["mcp_tools_deferred"] = (
+                    bool(justsearch_connected and not justsearch_tools_offered)
+                    if init_event else None
+                )
                 if condition in _WITH_TOOL and mcp_config:
                     if init_event is None:
                         # Stream never reached/emitted an init event (crash/timeout
@@ -170,10 +203,7 @@ def claude_agent_solver(condition: str, corpus_dir: str, mcp_config: str | None 
                         # "unknown" is never conflated with "verified healthy".
                         state.metadata["mcp_surface_unverified"] = True
                     else:
-                        justsearch_tools = [
-                            t for t in init_event["tools"] if t.startswith("mcp__justsearch")
-                        ]
-                        if not justsearch_tools:
+                        if not justsearch_tools_offered:
                             state.metadata["error"] = (
                                 f"expected MCP tool surface not offered: mcp_servers={mcp_servers}"
                             )

@@ -8,6 +8,14 @@ Phase 2: Agent comparison (requires Claude Code CLI, costs API tokens).
   Runs Claude Code with/without JustSearch MCP tools, scores answers against
   ground truth. Three conditions: A (file tools only), B (file + JustSearch),
   C (JustSearch only).
+
+``run_agent_eval`` (this module's Phase-2 shell-out runner) is SMOKE-ONLY /
+NON-RECORD-GRADE (tempdoc 624 §M.8 amendment, Step 0 item 6): it predates the
+cohort-identity + composer substrate and has no resumable/durable-log story.
+Records intended for publication come from the Inspect-AI path
+(``jseval.agent_utility_inspect`` / ``jseval.agent_utility_run.eval_logs_to_summaries``)
+-- this module stays useful for a quick manual sanity check, not for a
+composed ``utility-comparison.v1`` record.
 """
 
 from __future__ import annotations
@@ -935,8 +943,15 @@ _ALWAYS_DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Agent", "Task", "Skill"]
 
 # Additionally disallowed for condition C ("JustSearch-only"): its own premise
 # is no native file access, but Bash was left open as a shell-based file-read
-# backdoor around the original Read/Grep/Glob-only list.
-_CONDITION_C_EXTRA_DISALLOWED_TOOLS = ["Read", "Grep", "Glob", "Bash"]
+# backdoor around the original Read/Grep/Glob-only list. ReadMcpResourceTool /
+# ReadMcpResourceDirTool / ListMcpResourcesTool are a THIRD corpus-file-access
+# channel outside the retrieval surface -- a condition-C cell was observed
+# attempting exactly this on 2026-07-07 (tempdoc 624 §M.8 amendment, Step 0
+# item 3) and it was not flagged by any existing check.
+_CONDITION_C_EXTRA_DISALLOWED_TOOLS = [
+    "Read", "Grep", "Glob", "Bash",
+    "ReadMcpResourceTool", "ReadMcpResourceDirTool", "ListMcpResourcesTool",
+]
 
 
 def build_disallowed_tools(condition: str) -> list[str]:
@@ -1092,7 +1107,20 @@ def parse_claude_stream_json(stdout: str) -> tuple[list[dict], dict | None, str]
                             )
                         elif isinstance(content, str):
                             content = content[:200]
-                        tool_calls[-1]["response_preview"] = str(content)[:200]
+                        preview = str(content)[:200]
+                        tool_calls[-1]["response_preview"] = preview
+                        # Per-call outcome capture (tempdoc 624 §M.8 amendment, Step
+                        # 0 item 2): bypass verification must never rest on the
+                        # agent's self-reported reflection (the classic runner's
+                        # `_get_reflection` asks the agent itself whether it used
+                        # its tools correctly -- a self-report, not evidence). The
+                        # `tool_result` block's own `is_error` flag is the CLI's
+                        # empirical verdict on THIS call, independent of anything
+                        # the agent says afterward.
+                        is_error = bool(block.get("is_error"))
+                        tool_calls[-1]["is_error"] = is_error
+                        if is_error:
+                            tool_calls[-1]["error_snippet"] = preview
         elif etype == "result":
             data = event
             session_id = event.get("session_id", "")
@@ -1193,8 +1221,14 @@ def run_agent_eval(
         """Run a single eval query — self-contained, safe for concurrent execution."""
         query_cwd = tempfile.mkdtemp(prefix=f"jseval-agent-{i}-") if isolated else corpus_dir
 
+        # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1) --
+        # kept byte-identical to agent_utility_inspect._PROMPT's wording (same
+        # confound rationale documented there); the two runners format it
+        # differently ({corpus_dir}/{query} vs. an f-string) but the TEXT must
+        # not drift between them, since prompt_template_hash is a cohort field.
         prompt = (
-            f"Answer the following question using only the documents in {corpus_dir}. "
+            f"Answer the following question about the document collection at {corpus_dir}. "
+            f"You may use any tools available to you. "
             f"Do not use prior knowledge. Be concise. "
             f"Question: {q['query']}"
         )

@@ -256,6 +256,8 @@ def compose_utility(
         "eval_limits": ref.get("eval_limits"),
         "search_config_cohort_key": search_config,
         "hardware": ref.get("hardware"),
+        "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
+        "executor": _executor_stamp(run_summaries),
     }
 
     # 3. Group by (corpus slug, agent_model) -> per-cell paired comparison.
@@ -404,6 +406,60 @@ def _default_coverage(contamination_class: str) -> dict:
     }
 
 
+def _tool_surfacing_mode(run_summaries: list[dict]) -> str | None:
+    """Cohort-level rollup of `mcp_tools_deferred` (tempdoc 624 §M.8 amendment,
+    Step 0 item 4): whether the `claude` CLI surfaced `mcp__justsearch*` tools
+    directly in the init event ("eager"), or the justsearch server connected but
+    its tools were reachable only via ToolSearch ("deferred") -- a CLI-version-
+    dependent behavior that mediates tool adoption, so it must be recorded as
+    COHORT identity (next to cli_version), not a per-cell curiosity buried in
+    per_query metadata that a consumer would have to rediscover by hand.
+
+    Reads `mcp_tools_deferred` off every per_query entry of every with-tool
+    (B/C) run summary in the record. `None` (absent key -- an older summary
+    shape, condition A, or a cell whose init event never parsed) is excluded
+    from the vote. Returns ``None`` if no cell in the record carries the field
+    at all (unknown -- never defaults to "eager"), ``"mixed"`` if both surfacing
+    behaviors were observed within the same record (e.g. a mid-record CLI
+    upgrade), else the single observed mode.
+    """
+    flags = []
+    for s in run_summaries:
+        if s.get("condition") not in _WITH_TOOL:
+            continue
+        for entry in (s.get("per_query") or {}).values():
+            v = entry.get("mcp_tools_deferred")
+            if v is not None:
+                flags.append(bool(v))
+    if not flags:
+        return None
+    if all(flags):
+        return "deferred"
+    if not any(flags):
+        return "eager"
+    return "mixed"
+
+
+def _executor_stamp(run_summaries: list[dict]) -> str | None:
+    """Cohort-level ``executor`` provenance (tempdoc 624 §M.8 amendment, Step 0
+    item 6): ``"legacy-agent-eval"`` when every summary in the record was
+    produced by the classic (smoke-only, non-record-grade) shell-out runner,
+    ``"inspect-ai"`` when every summary came from the Inspect-AI executor.
+
+    A summary without an ``executor`` key at all is a PRE-Step-0 summary shape
+    (composed before this stamp existed) -- rather than guess which runner
+    produced it, this returns ``None`` for the whole record the moment even one
+    summary is unmarked or the marks disagree. "Can't tell them apart" must
+    read as an honest unknown, not a fabricated majority vote.
+    """
+    executors = {s.get("executor") for s in run_summaries}
+    if len(executors) == 1:
+        only = executors.pop()
+        if only in ("legacy-agent-eval", "inspect-ai"):
+            return only
+    return None
+
+
 def _index_by_seed(arm: list[dict]) -> dict:
     by_seed: dict = {}
     for s in arm:
@@ -428,8 +484,10 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
 
     :returns: ``(pairs, leak_suspect_cells)`` where ``pairs`` is
         ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
-        "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":}}``
-        and ``leak_suspect_cells`` is ``[{"seed":, "qid":,
+        "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":,
+        "a_tool_calls":, "c_tool_calls":}}`` (the last two feed the adoption
+        metrics, tempdoc 624 §M.8 amendment Step 0 item 5) and
+        ``leak_suspect_cells`` is ``[{"seed":, "qid":,
         "baseline_leak_suspect":, "with_tool_leak_suspect":}, ...]``.
     """
     a_by_seed = _index_by_seed(baseline)
@@ -464,8 +522,65 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
                 "c_tok": cc.get("unique_tokens"),
                 "a_turns": ca.get("num_turns"),
                 "c_turns": cc.get("num_turns"),
+                "a_tool_calls": ca.get("tool_calls"),
+                "c_tool_calls": cc.get("tool_calls"),
             }
     return pairs, leak_suspect_cells
+
+
+_MCP_JUSTSEARCH_PREFIX = "mcp__justsearch"
+
+
+def _mcp_call_count(tool_calls: list[dict] | None) -> int:
+    return sum(1 for tc in (tool_calls or []) if str(tc.get("tool", "")).startswith(_MCP_JUSTSEARCH_PREFIX))
+
+
+def _first_mcp_call_index(tool_calls: list[dict] | None) -> int | None:
+    """1-based index (a call-index, not a conversation turn) of the first
+    ``mcp__justsearch*`` call within one cell's ``tool_calls`` list, or ``None``
+    if no such call was made."""
+    for i, tc in enumerate(tool_calls or [], start=1):
+        if str(tc.get("tool", "")).startswith(_MCP_JUSTSEARCH_PREFIX):
+            return i
+    return None
+
+
+def _adoption_metrics(tool_calls_per_cell: list[list[dict] | None]) -> dict:
+    """Pre-registered adoption metrics (tempdoc 624 §M.8 amendment, Step 0 item
+    5), derived purely from each cell's already-captured ``tool_calls`` list:
+
+    - ``adoption_rate``: fraction of CHECKED cells with >=1 ``mcp__justsearch*``
+      call.
+    - ``first_mcp_call_index``: median 1-based call-index of the first such
+      call across checked cells with at least one (``None`` if none did).
+    - ``mcp_call_share``: total ``mcp__justsearch*`` calls / total tool calls,
+      pooled across checked cells.
+
+    A ``None`` entry in ``tool_calls_per_cell`` (no capture for that cell) is
+    excluded from every denominator here -- the same tri-state discipline as
+    ``_tool_call_assertions``: "no tool data" must never read as "checked and
+    zero calls."
+    """
+    checked = [tc for tc in tool_calls_per_cell if tc is not None]
+    if not checked:
+        return {"adoption_rate": None, "first_mcp_call_index": None, "mcp_call_share": None}
+    adopted_n = sum(1 for tc in checked if _mcp_call_count(tc) > 0)
+    first_indices = [idx for tc in checked if (idx := _first_mcp_call_index(tc)) is not None]
+    total_mcp_calls = sum(_mcp_call_count(tc) for tc in checked)
+    total_calls = sum(len(tc) for tc in checked)
+    return {
+        "adoption_rate": round(adopted_n / len(checked), 4),
+        "first_mcp_call_index": (
+            round(_percentile([float(i) for i in first_indices], 0.5), 2)
+            if first_indices else None
+        ),
+        "mcp_call_share": round(total_mcp_calls / total_calls, 4) if total_calls > 0 else None,
+    }
+
+
+# Arm A (baseline) never carries an MCP config -- its adoption metrics are
+# always null by construction, not computed from its (always-zero) tool_calls.
+_NULL_ADOPTION = {"adoption_rate": None, "first_mcp_call_index": None, "mcp_call_share": None}
 
 
 def _stats_from_pairs(pairs: dict) -> dict | None:
@@ -560,6 +675,14 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
             "baseline": _distribution(a_turns),
             "with_tool": _distribution(c_turns),
             "delta_mean": cont["num_turns"]["delta"],
+        },
+        # Pre-registered adoption metrics (tempdoc 624 §M.8 amendment, Step 0
+        # item 5): only meaningful for the with-tool arm -- arm A never carries
+        # an MCP config, so its adoption is null by construction, not computed
+        # from its (always mcp__justsearch-free) tool_calls.
+        "adoption": {
+            "baseline": dict(_NULL_ADOPTION),
+            "with_tool": _adoption_metrics([p["c_tool_calls"] for p in pairs.values()]),
         },
         "n_paired_observations": mc["n_paired"],
     }
@@ -811,6 +934,8 @@ def compose_utility_cross_corpus(
         "eval_limits": ref.get("eval_limits"),
         "search_config_cohort_key": search_config,
         "hardware": ref.get("hardware"),
+        "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
+        "executor": _executor_stamp(run_summaries),
     }
 
     # 3. Pool by agent_model only (NOT by corpus) — every model's cell spans
