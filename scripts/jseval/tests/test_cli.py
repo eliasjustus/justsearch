@@ -58,7 +58,7 @@ def test_compare_help():
 
 def test_compare_by_decision_kind_buckets_metrics():
     """Tempdoc 525: --bucket-by decision_kind aggregates by SearchIntrospection.decision.kind."""
-    from jseval.cli import _compare_by_decision_kind
+    from jseval.commands.analysis import _compare_by_decision_kind
 
     a_data = {
         "per_query_entries": [
@@ -104,7 +104,7 @@ def test_compare_by_decision_kind_buckets_metrics():
 
 def test_compare_by_decision_kind_empty_when_no_per_query_entries():
     """No per-query entries → no bucketing (graceful fallback)."""
-    from jseval.cli import _compare_by_decision_kind
+    from jseval.commands.analysis import _compare_by_decision_kind
     assert _compare_by_decision_kind({}, {}, {}) == {}
     assert _compare_by_decision_kind(
         {"per_query_entries": []}, {"per_query_entries": []}, {}

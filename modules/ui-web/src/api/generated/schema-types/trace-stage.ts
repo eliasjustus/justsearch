@@ -18,7 +18,7 @@ export interface TraceStage {
   reason?: string;
   status?: "executed" | "skipped" | "disabled" | "failed";
 }
-export const traceStageSchema = z.object({
+export const traceStageSchema = z.strictObject({
   "cardinality": z.number().int().optional(),
   "detail": z.string().optional(),
   "id": z.enum(["query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness"]).optional(),

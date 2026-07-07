@@ -19,6 +19,7 @@ import io.justsearch.app.observability.advisory.AdvisoryLog;
 import io.justsearch.app.observability.advisory.AdvisoryResourceCatalog;
 import io.justsearch.app.observability.advisory.HealthRecoveryProjector;
 import io.justsearch.app.observability.advisory.OperationCompletionProjector;
+import io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector;
 import io.justsearch.app.observability.intent.IntentEnvelopeChangeRegistry;
 import io.justsearch.app.observability.operations.OperationHistoryChangeRegistry;
 import io.justsearch.app.observability.operations.OperationHistoryResourceCatalog;
@@ -83,7 +84,15 @@ public final class OperationSubstrateInit {
       // Tempdoc 550 thesis III: the ONE intent-gate evaluator, shared with the Preview endpoint.
       io.justsearch.app.services.intent.IntentGateEvaluator intentGateEvaluator,
       // Tempdoc 550 thesis IV: durable allow-always grants, exposed for the approve endpoint.
-      io.justsearch.app.services.intent.DurableGrantStore durableGrantStore) {}
+      io.justsearch.app.services.intent.DurableGrantStore durableGrantStore,
+      // Tempdoc 655: shared across REST (OperationsController/AuthorizationController) and MCP
+      // (McpToolSurface) so a gate fired from either transport creates a pending record either
+      // caller's approve endpoint can consume — one store, not two independently-wired copies.
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore,
+      // Tempdoc 655: live announcement of new pending records, so the always-on shell can react
+      // to an MCP-originated gate it had no in-flight request for.
+      io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+          pendingAuthorizationChangeRegistry) {}
 
   /**
    * Initializes the operation substrate and registers the navigate-to-surface handler.
@@ -115,10 +124,16 @@ public final class OperationSubstrateInit {
         new OperationHistoryChangeRegistry();
     OperationCompletionProjector operationCompletionProjector = new OperationCompletionProjector();
     HealthRecoveryProjector healthRecoveryProjector = new HealthRecoveryProjector();
+    // Tempdoc 655 long-term design pass: the "a pending approval is waiting" advisory class —
+    // REQUIRES_ACK, so it lands in the inbox/badge as a passive, discoverable complement to the
+    // direct approval-ceremony dialog (see PendingAuthorizationAdvisoryProjector's doc comment).
+    PendingAuthorizationAdvisoryProjector pendingAuthorizationAdvisoryProjector =
+        new PendingAuthorizationAdvisoryProjector();
     AdvisoryClassRegistry advisoryClassRegistry =
         AdvisoryClassRegistry.builder()
             .register(operationCompletionProjector)
             .register(healthRecoveryProjector)
+            .register(pendingAuthorizationAdvisoryProjector)
             .build();
     AdvisoryChangeRegistry advisoryChangeRegistry =
         new AdvisoryChangeRegistry(advisoryClassRegistry, Clock.systemUTC());
@@ -128,6 +143,8 @@ public final class OperationSubstrateInit {
             OperationCompletionProjector.CLASS_ID,
             new AdvisoryLog(),
             HealthRecoveryProjector.CLASS_ID,
+            new AdvisoryLog(),
+            PendingAuthorizationAdvisoryProjector.CLASS_ID,
             new AdvisoryLog());
     PromptCatalog promptCatalog = PromptCatalog.of("core", List.of());
     IntentSourceCatalog intentSourceCatalog = CoreIntentSourceCatalog.catalog();
@@ -152,6 +169,28 @@ public final class OperationSubstrateInit {
     // member. `persistent()` survives restarts (mode-aware: IN_MEMORY under prod/CI isolation).
     io.justsearch.app.services.intent.DurableGrantStore durableGrantStore =
         io.justsearch.app.services.intent.DurableGrantStore.persistent();
+    // Tempdoc 655: one PendingAuthorizationStore + one broadcast registry, shared by the REST
+    // gate path (OperationsController/AuthorizationController) and the MCP gate path
+    // (McpToolSurface) — mirrors the capsule/grant sharing above, closing the gap where MCP had
+    // no way to surface a gate firing for human approval at all.
+    io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore =
+        new io.justsearch.app.services.intent.PendingAuthorizationStore();
+    io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+        pendingAuthorizationChangeRegistry =
+            new io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry();
+    // Tempdoc 655 long-term design pass: one bootstrap-time subscription onto the registry both
+    // transports already broadcast into — mirrors HealthRecoveryProjector's wiring shape below.
+    // Both MCP and browser-originated gates get advisory coverage for free; no edits needed at
+    // either call site (McpToolSurface / OperationsController).
+    pendingAuthorizationChangeRegistry.subscribeTyped(
+        event ->
+            advisoryChangeRegistry
+                .project(pendingAuthorizationAdvisoryProjector, event)
+                .ifPresent(
+                    record ->
+                        advisoryLogs
+                            .get(pendingAuthorizationAdvisoryProjector.classId())
+                            .append(record)));
     // One audit: capsule + durable grants record their lifecycle into the one action-event log.
     consentCapsuleService.setGrantEventSink(actionLedgerChangeRegistry::broadcastActionEvent);
     durableGrantStore.setGrantEventSink(actionLedgerChangeRegistry::broadcastActionEvent);
@@ -257,6 +296,8 @@ public final class OperationSubstrateInit {
         actionLedgerChangeRegistry,
         globalHardStop,
         intentGateEvaluator,
-        durableGrantStore);
+        durableGrantStore,
+        pendingAuthorizationStore,
+        pendingAuthorizationChangeRegistry);
   }
 }

@@ -29,6 +29,10 @@ import java.util.List;
  *     {@code "AFL-3.0"}, {@code "LicenseRef-NVIDIA-CUDA-EULA"}). Single-sources model attribution so
  *     the generated NOTICE projects from the registry rather than a hand-maintained fork (tempdoc 632).
  *     Nullable for backward-compatibility (registries predating the field).
+ * @param tier capability tier this package serves (tempdoc 657) — the axis an {@link InstallIntent}
+ *     selects over, orthogonal to the hardware {@link DownloadProfile}. Nullable for
+ *     backward-compatibility (registries predating the field); an untagged package is treated as
+ *     always-wanted by every intent.
  */
 public record ModelPackage(
     String id,
@@ -40,7 +44,8 @@ public record ModelPackage(
     long minVramBytes,
     String termsUrl,
     String installRoot,
-    String license) {
+    String license,
+    CapabilityTier tier) {
 
   /** Compact constructor — normalize nulls to empty lists. */
   public ModelPackage {
@@ -75,6 +80,23 @@ public record ModelPackage(
     this(
         id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
         installRoot, null);
+  }
+
+  /** Backwards-compat constructor — installRoot + license but no tier (predates tempdoc 657). */
+  public ModelPackage(
+      String id,
+      String label,
+      String description,
+      String targetDir,
+      List<ModelVariant> variants,
+      List<SupportingFile> supportingFiles,
+      long minVramBytes,
+      String termsUrl,
+      String installRoot,
+      String license) {
+    this(
+        id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
+        installRoot, license, null);
   }
 
   /** Returns true if this package requires a minimum VRAM threshold to be useful. */

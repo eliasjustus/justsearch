@@ -29,6 +29,13 @@ public interface AiInstallService {
   AiInstallStatus getStatus();
 
   /**
+   * Compute a side-effect-free preview of the download plan grouped by capability tier (tempdoc
+   * 657), for the current hardware + install intent. Runs no downloads; drives the pre-install
+   * honest weight breakdown in the UI.
+   */
+  InstallPlanPreview previewInstallPlan();
+
+  /**
    * Start the install flow. Idempotent if already running. Throws {@link AiInstallException}
    * on validation failures (e.g., terms not accepted, policy disallows).
    */

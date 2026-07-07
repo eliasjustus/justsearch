@@ -169,6 +169,11 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     private final WatchedRootsStore rootsStore;
     private final WatchedRootsState watchedRootsState;
 
+    // Test seam (683): when set via connectForTesting(Channel), the search-RPC path uses the
+    // injected stub as-is — no ensureConnected() channel check, no reconnect() port re-discovery.
+    // Always false in production.
+    private volatile boolean testChannelPinned;
+
     private volatile SearchServiceGrpc.SearchServiceBlockingStub searchStub;
     private volatile IngestServiceGrpc.IngestServiceBlockingStub ingestStub;
     // Slice 445: async stub for the long-lived SubscribeIndexingJobs server-streaming
@@ -336,6 +341,16 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         log.info("Connected to Knowledge Server at {}:{}", HOST, port);
     }
 
+    /**
+     * Test seam (683): wires a prebuilt channel (e.g. in-process) into the search path so
+     * {@link #search(io.justsearch.core.dto.Query)} runs without {@link ManagedChannelBuilder}
+     * and without signal-bus port re-discovery. Production callers use {@link #connect(int)}.
+     */
+    void connectForTesting(Channel channel) {
+        searchStub = SearchServiceGrpc.newBlockingStub(channel);
+        testChannelPinned = true;
+    }
+
     private static Map<String, Object> buildGrpcRetryServiceConfig(int maxRetries) {
         GrpcRetryServiceConfig.RetryPolicyProfile profile =
             GrpcRetryServiceConfig.profile(
@@ -458,8 +473,10 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             String operation,
             RpcDeadlineCategory category,
             java.util.function.Function<SearchServiceGrpc.SearchServiceBlockingStub, T> rpc) {
-        ensureConnected();
-        reconnect();
+        if (!testChannelPinned) {
+            ensureConnected();
+            reconnect();
+        }
         return executeWithCircuitBreaker(operation, () -> rpc.apply(searchStubWithDeadline(category)));
     }
 

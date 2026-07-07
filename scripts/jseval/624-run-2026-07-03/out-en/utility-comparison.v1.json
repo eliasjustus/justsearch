@@ -1,0 +1,288 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-07-03T01:02:33.119660+00:00",
+  "cohort": {
+    "agent_cohort_key": "4b41b5169e1e6fb3eae708b8520160961dedb8739b5a8e9a1978e16e147c14c0",
+    "git_sha": "3f9f57fc8762c9b0c19fd66108b4a5f18b6e048a",
+    "cli_version": "2.1.199 (Claude Code)",
+    "mcp_tool_surface_hash": "a676c7a5927091c5f5c6b5b100248d2fcdb250539083c321b3a080ced8a9b377",
+    "judge": {
+      "kind": "substring-em"
+    },
+    "prompt_template_hash": "d325302666dd71eb432033c1ac4ba7a614ba0ae3813926dc39d25bea9d0dd4ff",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "dee244d24e678f41568944f33c94a3250b03eb4713ee6d9d6389c21e1c526115",
+    "hardware": null
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "golden/battlefield-en-v1": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.8154,
+          "with_tool": 0.7462,
+          "delta": -0.0692,
+          "mcnemar_p": 0.200185,
+          "mcnemar_test": "chi2-continuity",
+          "n_with_tool_fixes": 15,
+          "n_with_tool_breaks": 24,
+          "seed_envelope_baseline": {
+            "mean": 0.8154,
+            "stdev": 0.0615,
+            "n": 5
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.7462,
+            "stdev": 0.0392,
+            "n": 5
+          }
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 130,
+            "median": 46478.0,
+            "p95": 74351.3,
+            "mean": 48086.207692
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 48182.0,
+            "p95": 76334.55,
+            "mean": 49511.246154
+          },
+          "delta_mean": 1425.0384615384614,
+          "delta_ci95": [
+            -1712.6575,
+            4513.119423
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 130,
+            "median": 0.216494,
+            "p95": 0.386949,
+            "mean": 0.225684
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 0.228579,
+            "p95": 0.422127,
+            "mean": 0.237417
+          },
+          "delta_mean": 0.011733210769230768,
+          "delta_ci95": [
+            -0.004505,
+            0.027957
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 130,
+            "median": 22.0,
+            "p95": 40.55,
+            "mean": 22.876923
+          },
+          "with_tool": {
+            "n": 130,
+            "median": 24.0,
+            "p95": 44.0,
+            "mean": 24.215385
+          },
+          "delta_mean": 1.3384615384615384
+        },
+        "n_paired_observations": 130,
+        "leak_suspect_cells": [],
+        "arms": {
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.8154,
+              "with_tool": 0.7462,
+              "delta": -0.0692,
+              "mcnemar_p": 0.200185,
+              "mcnemar_test": "chi2-continuity",
+              "n_with_tool_fixes": 15,
+              "n_with_tool_breaks": 24,
+              "seed_envelope_baseline": {
+                "mean": 0.8154,
+                "stdev": 0.0615,
+                "n": 5
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.7462,
+                "stdev": 0.0392,
+                "n": 5
+              }
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 130,
+                "median": 46478.0,
+                "p95": 74351.3,
+                "mean": 48086.207692
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 48182.0,
+                "p95": 76334.55,
+                "mean": 49511.246154
+              },
+              "delta_mean": 1425.0384615384614,
+              "delta_ci95": [
+                -1712.6575,
+                4513.119423
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 130,
+                "median": 0.216494,
+                "p95": 0.386949,
+                "mean": 0.225684
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 0.228579,
+                "p95": 0.422127,
+                "mean": 0.237417
+              },
+              "delta_mean": 0.011733210769230768,
+              "delta_ci95": [
+                -0.004505,
+                0.027957
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 130,
+                "median": 22.0,
+                "p95": 40.55,
+                "mean": 22.876923
+              },
+              "with_tool": {
+                "n": 130,
+                "median": 24.0,
+                "p95": 44.0,
+                "mean": 24.215385
+              },
+              "delta_mean": 1.3384615384615384
+            },
+            "n_paired_observations": 130,
+            "leak_suspect_cells": []
+          }
+        },
+        "primary_arm": "addition_b"
+      }
+    }
+  },
+  "seed_count": 5,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": true,
+    "reasons": [],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.0,
+        "B": 0.0
+      },
+      "excluded_jaccard": 1.0,
+      "paired_n_retention": 1.0
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_attempted": 130,
+        "n_completed": 130,
+        "n_excluded": 0,
+        "exclusion_rate": 0.0
+      },
+      "B": {
+        "n_attempted": 130,
+        "n_completed": 130,
+        "n_excluded": 0,
+        "exclusion_rate": 0.0
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "private-synthetic"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  },
+  "tool_call_assertions": {
+    "A": {
+      "cells_total": 130,
+      "cells_with_tool_data": 130,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0
+    },
+    "B": {
+      "cells_total": 130,
+      "cells_with_tool_data": 130,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0
+    }
+  },
+  "arm_invalidation": {
+    "date": "2026-07-03",
+    "finding": "ARM-INVALIDATED: zero MCP tool invocations occurred in any with-tool cell of this record -- the run's mcp.json lacked \"type\":\"http\" and the Claude CLI silently dropped the server entry, so the JustSearch tools were never offered to the model. Condition B was behaviorally identical to condition A. This record remains valid as a governed A-vs-A noise-floor measurement of the methodology; NO agent-utility conclusion may be drawn from it. A future genuine with-tool record should supersede this one via revision.reason=arm_invalidation.",
+    "evidence": "tempdoc 624 twenty-third pass (2026-07-03): five-way verification incl. per-cell tool-call trace census and a live config A/B probe",
+    "affected_arms": [
+      "B"
+    ]
+  }
+}

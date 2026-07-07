@@ -21,6 +21,9 @@ ranx = ["ranx>=0.3.20", "pandas<3"]
 ui = ["playwright>=1.40"]
 config = ["pyyaml>=6.0"]
 ner = ["onnxruntime>=1.17", "tokenizers>=0.15"]
+# Degraded-scan corpus renderer (tempdoc 624 §T.2, axis="scan"). Opt-in so core
+# jseval stays lean -- only lands for `pip install jseval[scan]`.
+scan = ["Pillow>=10.1"]
 # Agent-utility eval (tempdoc 624): runs the cell matrix THROUGH Inspect AI
 # (claude -p solver, condition-as-task, seed-as-epoch). Opt-in so core jseval
 # stays lean — the ~80 transitive deps only land for `pip install jseval[agent]`.

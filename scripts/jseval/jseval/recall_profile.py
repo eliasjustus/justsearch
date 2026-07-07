@@ -19,13 +19,26 @@ from .projections.staged_recall_accounting import FP_MAPPING
 # Dominant *failure* bucket → candidate lever. A **candidate, not a verdict**: the mapping is
 # a judgment (leg-miss could be encoder / SPLADE / extraction), so the profile names the
 # regime and the engineer picks the lever — it does not prescribe a fix.
+#
+# Tempdoc 643 correction (2026-07-01): the FP labels were backwards (FP2 "Missed the Top Ranked"
+# is verbatim "didn't rank highly enough to be RETURNED" — that's CASCADE_LEAK, not
+# JUDGE_RANK_LOW; JUDGE_RANK_LOW has no canonical FP match). Also corrected JUDGE_RANK_LOW's
+# recommendation: the 643 investigation found "a sharper reranker" / "a judge-guided recall loop"
+# are, respectively, measurement-rejected (F-006: CE model swaps move nDCG ~0 when retrieval is
+# strong) or harmful/mis-targeted (F-002/F-008: CE hurts email; judge-guided recall targets
+# LEG_MISS/CASCADE_LEAK recall, not an already-in-window rank). The surviving lever is a
+# confidence-bounded judge floor (gated on real-corpus headroom) — see tempdoc 643.
 _RECOMMENDATION = {
     "LEG_MISS": "leg-recall bound (FP1) — the doc never enters the pool. Candidate levers: component/"
                 "representation quality (encoder / SPLADE / extraction, register F-009) — NOT a fusion or judge fix.",
-    "CASCADE_LEAK": "cascade-leak bound (FP3) — a leg finds it but a pre-judge stage drops it. Candidate lever: "
-                    "the recall-complete rerank pool (v3, shipped) / widen the rerank window.",
-    "JUDGE_RANK_LOW": "judge-rank bound (FP2) — it reaches the judge but ranks low. Candidate levers: a sharper "
-                      "reranker / a judge-guided recall loop; quantify the headroom with the §5 judge-ceiling probe.",
+    "CASCADE_LEAK": "cascade-leak bound (FP2) — a leg finds it but a pre-judge stage drops it before the "
+                    "returned cutoff. Candidate lever: the recall-complete rerank pool (v3, shipped) / widen "
+                    "the rerank window.",
+    "JUDGE_RANK_LOW": "judge-rank bound (no canonical FP match — finer than FP2: reaches the RETURNED list "
+                      "but ranks > 1) — NOT a sharper/LLM judge (tempdoc 643: dead/harmful on the corpora "
+                      "where this bucket dominates). Candidate lever: a relative-confidence-gated judge "
+                      "floor (blend toward fusion when the judge is uncertain), gated on a real-corpus "
+                      "headroom probe (§5 judge-ceiling) — see tempdoc 643.",
 }
 
 

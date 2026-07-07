@@ -662,6 +662,11 @@ val stageLlamaCudaVariant by tasks.registering(Sync::class) {
   enabled = usePrebuiltLlamaRuntime && includeCudaVariant
   val cudaZipFile = llamaCudaZip.get().asFile
   val cudartZipFile = llamaCudartZip.get().asFile
+  // Tempdoc 682 Item 2: the staged build's ASSERTED version pin (single authority:
+  // llamaPrebuiltVersion above). Written as the machine-readable runtime-version.txt marker
+  // next to the staged exe — same convention as stageLlamaServerFromPrebuilt's CPU stamp —
+  // so the inference lifecycle can compare it against the running server's /props build_info.
+  val cudaRuntimeStamp = "llama.cpp $llamaPrebuiltVersion win-cuda-12.4-x64\n"
   val variantDir = llamaStageDir.get().asFile.resolve("variants").resolve("cuda12")
   outputs.dir(variantDir)
   outputs.upToDateWhen { false }
@@ -694,6 +699,11 @@ val stageLlamaCudaVariant by tasks.registering(Sync::class) {
       logger.warn("CUDA variant staging failed - llama-server.exe not found")
       return@doLast
     }
+
+    // Tempdoc 682 Item 2: stamp the pinned build version next to the staged exe (written as
+    // soon as the exe is verified present — the exe's build is what it is regardless of
+    // whether the cudart DLL check below passes).
+    variantDir.resolve("runtime-version.txt").writeText(cudaRuntimeStamp, Charsets.UTF_8)
 
     // Verify CUDA redistributable DLLs were extracted before writing NOTICE
     val requiredCudaDlls = listOf("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")
@@ -1397,6 +1407,11 @@ val bundleSidecarResources by tasks.registering(Sync::class) {
     include("ui-headless.jar")
     include("lib/**")
   }
+  // Tempdoc 657 — the Headless Runtime launcher: runs the co-located ui-headless.jar as a local,
+  // loopback-only service (no desktop shell) in a chosen mode. See docs/how-to/headless-runtime.md.
+  from(rootProject.layout.projectDirectory.dir("packaging/headless")) {
+    include("justsearch-headless.cmd", "justsearch-headless.ps1")
+  }
   // Worker distribution lib/ directory — staged under lib/worker/ so Head's -cp lib/* does not pick it up.
   from(workerInstallDist.map { it.destinationDir.resolve("lib") }) {
     into("lib/worker")
@@ -1802,7 +1817,9 @@ tasks.withType<CreateStartScripts>().configureEach {
       windowsScript.writeText(collapsed)
     } else {
       val unixText = unixScript.readText()
-      val collapsed = unixText.replace(Regex("(?m)^CLASSPATH=.*$"), "CLASSPATH=\"\$APP_HOME/lib/*\"")
+      // Lambda form: the string-replacement overload treats '$' as a group reference, so
+      // "$APP_HOME" -> "$A" throws "Illegal group reference" when building on Linux (tempdoc 668).
+      val collapsed = Regex("(?m)^CLASSPATH=.*$").replace(unixText) { "CLASSPATH=\"\$APP_HOME/lib/*\"" }
       unixScript.writeText(collapsed)
     }
   }
@@ -2065,6 +2082,14 @@ tasks.register<JavaExec>("runHeadless") {
   val apiPortProvider = providers.environmentVariable("JUSTSEARCH_API_PORT").orElse("33221")
   jvmArgs("-Djustsearch.api.port=${apiPortProvider.get()}")
   jvmArgs("-Djustsearch.data.dir=${dataDirProvider.get()}")
+
+  // Tempdoc 657 — install/runtime mode passthrough for dev: `-Pmode=mcp-lite` (or `headless`)
+  // sets -Djustsearch.mode so the runtime manifest reports mode.intent and the planner would skip
+  // the LLM tier. Unset ⇒ full-desktop (unchanged).
+  val modeProp = project.findProperty("mode")?.toString()
+  if (!modeProp.isNullOrBlank()) {
+    jvmArgs("-Djustsearch.mode=$modeProp")
+  }
 
   // Logback config is shipped on the ui-headless.jar classpath via
   // src/main/resources/logback.xml; no -Dlogback.configurationFile needed.

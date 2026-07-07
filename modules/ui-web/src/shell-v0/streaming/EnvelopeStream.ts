@@ -27,6 +27,8 @@
 
 import type { SseEnvelope } from './envelope-types.js';
 import { STREAM_WATCHDOG_STALE_MS } from '../../api/generated/stream-liveness-constants.js';
+import { bumpOriginContact } from '../state/originContact.js';
+import { bumpChannelClosed, bumpChannelOpened } from '../state/liveChannelBudget.js';
 
 /**
  * `EventSource.readyState === CLOSED`. The spec value is a stable `2`; using the literal (not the
@@ -78,6 +80,17 @@ export interface EnvelopeStreamConfig<T> {
   reconnectBaseMs?: number;
   /** Optional override for the reconnect-backoff cap (ms). Default 10_000. */
   reconnectCapMs?: number;
+  /**
+   * Tempdoc 662 — optional override for the `?since=` value used on every (re)connect. When
+   * set, this REPLACES the single auto-tracked `resumeToken` for URL construction (a `null`
+   * return omits `?since=` entirely); the single-token field is still updated from incoming
+   * frames as before (harmless — just unused for the URL). The sole consumer is
+   * `MultiplexedStream`, which needs the resume value to be a comma-joined BUNDLE of several
+   * logical streams' tokens (one per demuxed `streamId`), not the single last-seen token a
+   * one-channel-per-connection stream tracks. Single-channel consumers never set this — their
+   * `urlWithResumeToken()` behavior is unchanged.
+   */
+  resumeTokenProvider?: () => string | null;
 }
 
 /**
@@ -102,6 +115,7 @@ export class EnvelopeStream<T> {
   private readonly watchdogStaleMs: number;
   private readonly reconnectBaseMs: number;
   private readonly reconnectCapMs: number;
+  private readonly resumeTokenProvider: (() => string | null) | undefined;
   /** True between an intentional stop() and the next start() — suppresses auto-reconnect. */
   private closedByUs: boolean = false;
   /** Pending reconnect timer, or null when none is scheduled. */
@@ -126,6 +140,7 @@ export class EnvelopeStream<T> {
     this.watchdogStaleMs = config.watchdogStaleMs ?? STREAM_WATCHDOG_STALE_MS;
     this.reconnectBaseMs = config.reconnectBaseMs ?? 500;
     this.reconnectCapMs = config.reconnectCapMs ?? 10_000;
+    this.resumeTokenProvider = config.resumeTokenProvider;
   }
 
   /**
@@ -141,6 +156,9 @@ export class EnvelopeStream<T> {
     const url = this.urlWithResumeToken();
     const es = this.factory(url);
     this.source = es;
+    // Tempdoc 662 — the exact instant a physical long-lived connection opens (paired with
+    // bumpChannelClosed() at the exact instant detachSource() actually closes one).
+    bumpChannelOpened();
     es.addEventListener('frame', this.handleFrameBound as EventListener);
     es.addEventListener('open', this.handleOpenBound);
     es.addEventListener('error', this.handleErrorBound);
@@ -200,11 +218,12 @@ export class EnvelopeStream<T> {
    * Tolerates an existing query string in the URL.
    */
   private urlWithResumeToken(): string {
-    if (!this.resumeToken) {
+    const token = this.resumeTokenProvider ? this.resumeTokenProvider() : this.resumeToken;
+    if (!token) {
       return this.url;
     }
     const sep = this.url.includes('?') ? '&' : '?';
-    return `${this.url}${sep}since=${encodeURIComponent(this.resumeToken)}`;
+    return `${this.url}${sep}since=${encodeURIComponent(token)}`;
   }
 
   private handleFrame(event: MessageEvent): void {
@@ -236,6 +255,11 @@ export class EnvelopeStream<T> {
     this.resumeToken = envelope.resumeToken ?? this.resumeToken;
     // A frame (incl. a heartbeat) is proof of life: the channel is healthy, so reset both the
     // watchdog and the reconnect backoff.
+    // Tempdoc 649: a received frame is also positive contact with the backend origin — feed the ONE
+    // reachability authority so a poll starved behind the connection-pool limit can't read as
+    // "Backend disconnected" while this stream is provably alive. Pure stamp bump, no listener notify
+    // (the strict subscriber-order test must stay [0,1,2,2]).
+    bumpOriginContact();
     this.reconnectAttempt = 0;
     this.armWatchdog();
     if (!this.isConnected) {
@@ -246,6 +270,8 @@ export class EnvelopeStream<T> {
 
   private handleOpen(): void {
     // A clean open means the transport is healthy again — reset the backoff and re-arm the watchdog.
+    // Tempdoc 649: a clean open is positive contact with the origin — feed the reachability authority.
+    bumpOriginContact();
     this.reconnectAttempt = 0;
     this.armWatchdog();
     if (!this.isConnected) {
@@ -278,6 +304,10 @@ export class EnvelopeStream<T> {
     es.removeEventListener('error', this.handleErrorBound);
     es.close();
     this.source = null;
+    // Tempdoc 662 — the exact instant a physical long-lived connection closes (paired with
+    // bumpChannelOpened() in start()). Covers both an intentional stop() and a 604 reconnect's
+    // teardown-before-reopen (scheduleReconnect() also calls this).
+    bumpChannelClosed();
   }
 
   /**

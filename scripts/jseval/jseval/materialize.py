@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import urllib.parse
 from pathlib import Path
@@ -24,7 +25,13 @@ def materialize(
         corpus_iter: iterable of objects with `doc_id`, `text`, and optionally
             `title` attributes (e.g., from ir-datasets ``docs_iter()``).
             Also accepts dicts with ``_id`` and ``text`` keys (BEIR JSONL format).
-        output_dir: directory to write .txt files into.
+            A dict may also carry ``image_b64`` (base64 PNG bytes) -- tempdoc 624
+            §T.2's `axis="scan"` corpus member -- in which case the image is
+            written as the on-disk artifact instead of a `.txt` of `text`; `text`
+            still flows through untouched wherever a caller reads it directly
+            (retrieval scoring / the agent's evidence view), only the
+            *materialized file* differs.
+        output_dir: directory to write files into.
         skip_existing: if True, skip files that already exist.
 
     Returns:
@@ -34,15 +41,21 @@ def materialize(
     written = 0
 
     for doc in corpus_iter:
-        doc_id, text, title = _extract_doc_fields(doc)
-        filename = doc_id_to_filename(doc_id)
-        filepath = output_dir / filename
+        doc_id, text, title, image_b64 = _extract_doc_fields(doc)
 
-        if skip_existing and filepath.exists():
-            continue
-
-        content = f"{title}\n\n{text}" if title else text
-        filepath.write_text(content, encoding="utf-8")
+        if image_b64:
+            filename = doc_id_to_filename(doc_id, ext="png")
+            filepath = output_dir / filename
+            if skip_existing and filepath.exists():
+                continue
+            filepath.write_bytes(base64.b64decode(image_b64))
+        else:
+            filename = doc_id_to_filename(doc_id)
+            filepath = output_dir / filename
+            if skip_existing and filepath.exists():
+                continue
+            content = f"{title}\n\n{text}" if title else text
+            filepath.write_text(content, encoding="utf-8")
         written += 1
 
         if written % 1000 == 0:
@@ -57,14 +70,15 @@ def materialize(
     return written
 
 
-def doc_id_to_filename(doc_id: str) -> str:
+def doc_id_to_filename(doc_id: str, *, ext: str = "txt") -> str:
     """Convert a BEIR document ID to a filename for JustSearch ingestion.
 
-    Applies URL-encoding (percent-encoding) to the doc ID and appends .txt.
-    This is reversed by ``retriever.resolve_doc_id()``.
+    Applies URL-encoding (percent-encoding) to the doc ID and appends ``.<ext>``
+    (``txt`` by default; the ``axis="scan"`` corpus member materializes as
+    ``png``). This is reversed by ``retriever.resolve_doc_id()``.
     """
     safe = urllib.parse.quote(doc_id, safe="")
-    return f"{safe}.txt"
+    return f"{safe}.{ext}"
 
 
 def verify_sentinel(docs_dir: Path) -> bool:
@@ -73,12 +87,19 @@ def verify_sentinel(docs_dir: Path) -> bool:
     return sentinel_path.is_file()
 
 
-def _extract_doc_fields(doc) -> tuple[str, str, str | None]:
-    """Extract (doc_id, text, title) from an ir-datasets doc or a dict."""
+def _extract_doc_fields(doc) -> tuple[str, str, str | None, str | None]:
+    """Extract (doc_id, text, title, image_b64) from an ir-datasets doc or a dict."""
     if isinstance(doc, dict):
-        return str(doc["_id"]), doc.get("text", ""), doc.get("title")
-    # ir-datasets namedtuple (BeirTitleDoc has doc_id, text, title)
+        return str(doc["_id"]), doc.get("text", ""), doc.get("title"), doc.get("image_b64")
+    # ir-datasets namedtuple (BeirTitleDoc has doc_id, text, title). Real namedtuples
+    # either declare `image_b64` with a str value or don't have the attribute at all
+    # (default None); the isinstance guard exists because test doubles like
+    # `unittest.mock.MagicMock` auto-vivify ANY attribute access into a truthy Mock,
+    # which would otherwise be (incorrectly) treated as a present image.
     doc_id = getattr(doc, "doc_id", None) or str(getattr(doc, "_id", ""))
     text = getattr(doc, "text", "")
     title = getattr(doc, "title", None)
-    return doc_id, text, title
+    image_b64 = getattr(doc, "image_b64", None)
+    if not isinstance(image_b64, str):
+        image_b64 = None
+    return doc_id, text, title, image_b64

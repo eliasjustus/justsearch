@@ -67,16 +67,26 @@ public final class AdvisoryStreamController {
 
   public void handle(SseClient sseClient) {
     SseEnvelopeWriter.attach(
-        sseClient,
-        changes.channel(classId),
-        () -> {
-          Map<String, Object> extras = new LinkedHashMap<>();
-          extras.put("advisories", log.recent());
-          return extras;
-        },
-        clock,
-        heartbeatScheduler,
-        HEARTBEAT_SECONDS);
+        sseClient, channel(), this::snapshotExtras, clock, heartbeatScheduler, HEARTBEAT_SECONDS);
+  }
+
+  /**
+   * This controller's channel. Package-visible (tempdoc 662) so {@link
+   * ShellEventsStreamController} can subscribe this class's channel onto the multiplexed
+   * connection without re-deriving the {@code classId} lookup.
+   */
+  io.justsearch.app.observability.stream.SseStreamChannel channel() {
+    return changes.channel(classId);
+  }
+
+  /**
+   * This stream's snapshot-on-subscribe payload. Package-visible (tempdoc 662) so {@link
+   * ShellEventsStreamController} can reuse the exact extraction logic instead of forking it.
+   */
+  Map<String, Object> snapshotExtras() {
+    Map<String, Object> extras = new LinkedHashMap<>();
+    extras.put("advisories", log.recent());
+    return extras;
   }
 
   public void shutdown() {

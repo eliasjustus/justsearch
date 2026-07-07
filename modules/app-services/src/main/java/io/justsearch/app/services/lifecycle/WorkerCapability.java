@@ -5,6 +5,7 @@ import io.justsearch.app.api.lifecycle.Capability;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.services.worker.RecoveryContext;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
@@ -65,15 +66,22 @@ public final class WorkerCapability implements Capability {
    */
   public CapabilityHealth transition(CapabilityHealth newHealth, String newReason) {
     CapabilityHealth prev = this.health;
+    String prevReason = this.reason;
     this.reason = newReason;
     this.health = newHealth;
-    if (prev != newHealth) {
+    boolean healthChanged = prev != newHealth;
+    if (healthChanged) {
       if (prev == CapabilityHealth.PENDING) {
         generation.set(1);
       } else if (newHealth == CapabilityHealth.READY
           && (prev == CapabilityHealth.RECOVERING || prev == CapabilityHealth.DEGRADED)) {
         generation.incrementAndGet();
       }
+    }
+    // Tempdoc 656 Task 0: fire listeners on a reason-only change too, not just a health transition —
+    // see InferenceCapability.transition() for the shared rationale. Generation-counter side effects
+    // above stay gated on healthChanged only; this widening only affects listener notification.
+    if (healthChanged || !Objects.equals(prevReason, newReason)) {
       for (BiConsumer<CapabilityHealth, CapabilityHealth> listener : listeners) {
         listener.accept(prev, newHealth);
       }

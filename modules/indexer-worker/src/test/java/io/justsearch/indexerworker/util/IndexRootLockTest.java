@@ -77,8 +77,15 @@ class IndexRootLockTest {
     Path indexBase = indexDir.resolve("default");
     Files.createDirectories(indexBase);
 
-    // Spawn a real process and wait for it to exit
-    Process p = new ProcessBuilder("cmd.exe", "/c", "exit", "0").start();
+    // Spawn a real process and wait for it to exit (OS-appropriate throwaway so this runs on
+    // Linux CI too — IndexRootLock itself is ProcessHandle-based/cross-platform; tempdoc 668).
+    boolean isWindows =
+        System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).startsWith("windows");
+    Process p =
+        (isWindows
+                ? new ProcessBuilder("cmd.exe", "/c", "exit", "0")
+                : new ProcessBuilder("sh", "-c", "exit 0"))
+            .start();
     p.waitFor();
     long deadPid = p.pid();
 

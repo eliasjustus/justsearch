@@ -6,9 +6,13 @@ Pure-function tests over summary.json-shaped dicts (mirrors the
 
 from __future__ import annotations
 
+import json
+
 import pytest
+from click.testing import CliRunner
 
 from jseval import release
+from jseval.commands.release import cmd_release
 
 
 # --- fixtures ---------------------------------------------------------------
@@ -36,7 +40,8 @@ _MIXED_CORPUS_FPS = {
 
 
 def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
-              envelope=None, dataset="beir/scifact"):
+              envelope=None, dataset="beir/scifact", reranker_gpu=True,
+              realized_engines=("dense", "reranker", "splade"), gpu_name="RTX 4070"):
     cm = dict(_CONFIG_GLOBAL)
     cm.update(corpus_fps or _SCIFACT_CORPUS_FPS)
     return {
@@ -50,9 +55,13 @@ def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
             "splade_model_path": "/models/splade",
             "embed_gpu": embed_gpu,      # execution flag — must NOT affect key
             "splade_gpu": embed_gpu,
+            "reranker_gpu": reranker_gpu,  # tempdoc 644: execution flag — must NOT affect key
+            # tempdoc 644: the realized engine SET — startup-stable identity; CE-on vs CE-off
+            # must form distinct cohorts so a degraded run can't be averaged with a CE-on baseline.
+            "realized_engines": list(realized_engines),
         },
         "non_determinism_envelope": envelope,
-        "env_fingerprint": {"gpu": {"name": "RTX 4070"}},
+        "env_fingerprint": {"gpu": {"name": gpu_name}},
         "inference_status_snapshot": {
             "tier": "gpu_12gb_plus",
             "gpu": {
@@ -70,7 +79,8 @@ def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
 
 
 def _summary(*, dataset="beir/scifact", git_sha="commitAAA", corpus_fps=None,
-             modes=None, query_count=300, embed_gpu=True, envelope=None):
+             modes=None, query_count=300, embed_gpu=True, envelope=None, gpu_name="RTX 4070",
+             run_metrics=None):
     """modes = {mode_name: {metric: value, ...}}"""
     modes = modes or {"hybrid": {"nDCG@10": 0.758, "P@1": 0.62, "R@10": 0.89}}
     per_mode = {
@@ -88,9 +98,10 @@ def _summary(*, dataset="beir/scifact", git_sha="commitAAA", corpus_fps=None,
         "qrels_summary": {"relevance_mode": "binary", "query_count": query_count},
         "corpus_identity": {"signature": None},
         "per_mode": per_mode,
+        "run_metrics": run_metrics or {},
         "manifest": _manifest(
             git_sha=git_sha, corpus_fps=corpus_fps, embed_gpu=embed_gpu,
-            envelope=envelope, dataset=dataset,
+            envelope=envelope, dataset=dataset, gpu_name=gpu_name,
         ),
     }
 
@@ -114,6 +125,24 @@ def test_config_key_ignores_gpu_execution_flags():
     gpu = _manifest(embed_gpu=True)
     cpu = _manifest(embed_gpu=False)
     assert release.config_cohort_key(gpu) == release.config_cohort_key(cpu)
+
+
+def test_config_key_ignores_reranker_gpu_execution_flag():
+    """tempdoc 644: the reranker DEVICE bit is execution-context (flaky pre-query) and is
+    stripped from the key, exactly like embed_gpu/splade_gpu — a GPU reranker run and a CPU
+    reranker run of the same config share the key."""
+    gpu = _manifest(reranker_gpu=True)
+    cpu = _manifest(reranker_gpu=False)
+    assert release.config_cohort_key(gpu) == release.config_cohort_key(cpu)
+
+
+def test_config_key_changes_on_realized_engine_set():
+    """tempdoc 644: the realized engine SET (presence) IS cohort identity — a CE-on run and a
+    CE-off (cross-encoder silently absent) run of the same commit MUST form distinct cohorts so
+    the degraded run cannot be averaged with a CE-on baseline."""
+    ce_on = _manifest(realized_engines=("dense", "reranker", "splade"))
+    ce_off = _manifest(realized_engines=("dense", "splade"))
+    assert release.config_cohort_key(ce_on) != release.config_cohort_key(ce_off)
 
 
 def test_config_key_changes_on_real_config_change():
@@ -211,6 +240,33 @@ def test_compose_hardware_projection():
     assert hw["gpu_driver_version"] == "610.47"
 
 
+def test_compose_hardware_homogeneous_true_when_all_members_match():
+    """tempdoc 664: all members ran on the same GPU -> homogeneous."""
+    runs = [
+        _summary(dataset="beir/scifact", corpus_fps=_SCIFACT_CORPUS_FPS),
+        _summary(dataset="mixed/courtlistener-200", corpus_fps=_MIXED_CORPUS_FPS, query_count=200),
+    ]
+    r = release.compose(runs, default_mode="hybrid", composed_at=_AT)
+    assert r["cohort"]["hardware_homogeneous"] is True
+
+
+def test_compose_hardware_homogeneous_false_when_gpu_differs():
+    """tempdoc 664: a release composed from mixed-GPU runs is flagged, not silently mixed —
+    `config_cohort_key` itself must stay unaffected (still one cohort; hardware is
+    deliberately excluded from that key, guarded by
+    `test_config_key_ignores_gpu_execution_flags`), but the additive `hardware_homogeneous`
+    flag lets a hardware-SENSITIVE consumer (perf_gate.py) refuse to trust the composed release."""
+    runs = [
+        _summary(dataset="beir/scifact", corpus_fps=_SCIFACT_CORPUS_FPS, gpu_name="RTX 4070"),
+        _summary(dataset="mixed/courtlistener-200", corpus_fps=_MIXED_CORPUS_FPS,
+                 query_count=200, gpu_name="RTX 3090"),
+    ]
+    r = release.compose(runs, default_mode="hybrid", composed_at=_AT)
+    assert r["cohort"]["hardware_homogeneous"] is False
+    # config_cohort_key is untouched by the hardware difference — still one cohort.
+    assert len({release.config_cohort_key(s["manifest"]) for s in runs}) == 1
+
+
 def test_compose_empty_raises():
     with pytest.raises(release.ComposeError):
         release.compose([], default_mode="hybrid", composed_at=_AT)
@@ -251,3 +307,156 @@ def test_compose_normalizes_short_beir_name_to_slug():
     r = release.compose([s], default_mode="hybrid", composed_at=_AT)
     assert "beir/scifact" in r["measured"]
     assert "scifact" not in r["measured"]
+
+
+# --- tempdoc 664 (post-review fix): cmd_release's baseline-shift guard must also cover
+# `run_metrics` (throughput/footprint), not just the per-mode `metrics` family ---
+
+def _write_run(run_dir, summary):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    return run_dir
+
+
+def test_cmd_release_refuses_run_metrics_relaxation_without_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
+    runner = CliRunner()
+    r1 = runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r1.exit_code == 0, r1.output
+
+    # Second compose: throughput drops 100 -> 50 (a relaxation; primary_docs_s is
+    # lower_is_better=False, so a decrease is worse) with no changeset present.
+    run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 50.0}))
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 1
+    assert "release refused" in r2.output
+    # The out file must NOT have been overwritten with the unjustified relaxation.
+    assert json.loads(out.read_text())["measured"]["beir/scifact"]["run_metrics"]["primary_docs_s"] == 100.0
+
+
+def test_cmd_release_allows_run_metrics_relaxation_with_justified_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
+    runner = CliRunner()
+    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"]).exit_code == 0
+
+    changesets_dir = out.resolve().parent / ".changesets"
+    changesets_dir.mkdir(parents=True, exist_ok=True)
+    (changesets_dir / "accept.md").write_text(
+        '---\nclassification: "baseline-relaxation"\ngate: "release"\n'
+        'dataset: "beir/scifact:primary_docs_s"\ntempdoc: "664"\n---\naccepted\n',
+        encoding="utf-8",
+    )
+
+    run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 50.0}))
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 0, r2.output
+    assert json.loads(out.read_text())["measured"]["beir/scifact"]["run_metrics"]["primary_docs_s"] == 50.0
+
+
+def test_cmd_release_allows_run_metrics_improvement_without_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(run_metrics={"primary_docs_s": 100.0}))
+    runner = CliRunner()
+    assert runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"]).exit_code == 0
+
+    run2 = _write_run(tmp_path / "run2", _summary(run_metrics={"primary_docs_s": 150.0}))
+    r2 = runner.invoke(cmd_release, ["--run", str(run2), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 0, r2.output
+
+
+# --- tempdoc 683: release_id contract (required + pattern) -------------------
+
+def test_validate_release_id_accepts_conformant_ids():
+    assert release.validate_release_id("667-external-baselines-2026-07-01") is None
+    assert release.validate_release_id("rel-test-2026-01-01") is None
+
+
+@pytest.mark.parametrize("bad", [
+    None, "", "no-date-suffix", "Upper-Case-2026-07-01", "-leading-dash-2026-07-01",
+    "spaces here-2026-07-01", "rel_underscore-2026-07-01", "rel-2026-7-1",
+])
+def test_validate_release_id_rejects_missing_or_malformed(bad):
+    assert release.validate_release_id(bad) is not None
+
+
+def test_cmd_release_refuses_missing_release_id(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary())
+    r = CliRunner().invoke(cmd_release, ["--run", str(run1), "--out", str(out)])
+    assert r.exit_code == 2
+    assert "release_id is required" in r.output
+    assert not out.is_file()
+
+
+def test_cmd_release_refuses_malformed_release_id(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary())
+    r = CliRunner().invoke(
+        cmd_release, ["--run", str(run1), "--out", str(out), "--release-id", "NoPattern"])
+    assert r.exit_code == 2
+    assert "does not match" in r.output
+    assert not out.is_file()
+
+
+# --- tempdoc 683: optional leak section + corpus_source.upstream_revision ----
+
+def test_compose_writes_leak_section_from_measured_rates():
+    s = _summary(dataset="scifact")
+    r = release.compose([s], default_mode="hybrid", composed_at=_AT,
+                        leak_by_dataset={"scifact": 0.0133})
+    assert r["leak"] == {
+        "beir/scifact": {"leak_rate": 0.0133, "src": "staged_recall_accounting projection"},
+    }
+
+
+def test_compose_omits_leak_section_when_unsourced():
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    assert "leak" not in r
+
+
+def test_corpus_source_upstream_revision_passthrough_null():
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    src = r["measured"]["beir/scifact"]["corpus_source"]
+    assert "upstream_revision" in src
+    assert src["upstream_revision"] is None  # corpus_identity carries no revision today
+
+
+def test_cmd_release_sources_leak_from_run_projection(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(dataset="scifact"))
+    proj_dir = run1 / "projections"
+    proj_dir.mkdir()
+    (proj_dir / "staged_recall_accounting.json").write_text(
+        json.dumps({"status": "ok", "aggregate": {"leak_rate": 0.021}}), encoding="utf-8")
+    r = CliRunner().invoke(
+        cmd_release,
+        ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r.exit_code == 0, r.output
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["release_id"] == "rel-test-2026-01-01"
+    assert doc["leak"]["beir/scifact"]["leak_rate"] == 0.021
+
+
+def test_cmd_release_refuses_leak_relaxation_without_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+
+    def _run_with_leak(name, rate):
+        rd = _write_run(tmp_path / name, _summary(dataset="scifact"))
+        proj_dir = rd / "projections"
+        proj_dir.mkdir()
+        (proj_dir / "staged_recall_accounting.json").write_text(
+            json.dumps({"status": "ok", "aggregate": {"leak_rate": rate}}), encoding="utf-8")
+        return rd
+
+    runner = CliRunner()
+    r1 = runner.invoke(cmd_release, ["--run", str(_run_with_leak("run1", 0.02)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r1.exit_code == 0, r1.output
+    # Second compose measures a HIGHER leak rate (a relaxation of the projected ceiling).
+    r2 = runner.invoke(cmd_release, ["--run", str(_run_with_leak("run2", 0.30)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 1
+    assert "release refused" in r2.output
+    assert json.loads(out.read_text())["leak"]["beir/scifact"]["leak_rate"] == 0.02

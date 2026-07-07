@@ -13,13 +13,21 @@ import io.justsearch.gpu.GpuCapabilitiesService;
 import io.justsearch.telemetry.LocalTelemetry;
 import io.justsearch.telemetry.Telemetry;
 import java.nio.file.Path;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 519 §7 / Step 7: VDU OfflineCoordinator builder extracted from
- * {@code HeadAssembly#createOfflineCoordinator}. Returns null when the manager or client
- * is null, or when construction fails (logged + non-fatal).
+ * {@code HeadAssembly#createOfflineCoordinator}. Returns null when the manager is null, or when
+ * construction fails (logged + non-fatal).
+ *
+ * <p>Tempdoc 672: the Worker client is threaded as a live {@link Supplier}, not a captured value.
+ * At Head bootstrap the Worker is always disconnected (async connect), so a direct client value
+ * would be null and get frozen for the process lifetime — the {@code
+ * standalone-capability-stays-stuck} pattern. The coordinator is built whenever {@code manager}
+ * is non-null and resolves the client lazily at use-time, mirroring {@code
+ * ServicePhase.Input.indexingServiceSupplier}.
  */
 public final class OfflineCoordinatorBuilder {
 
@@ -30,10 +38,11 @@ public final class OfflineCoordinatorBuilder {
   public static OfflineCoordinator build(
       InferenceLifecycleManager manager,
       io.justsearch.app.api.OnlineAiService onlineAiService,
-      RemoteKnowledgeClient client,
-      Telemetry telemetry) {
-    if (manager == null || client == null) {
-      log.debug("OfflineCoordinator not created: manager or client unavailable");
+      Supplier<RemoteKnowledgeClient> clientSupplier,
+      Telemetry telemetry,
+      java.util.function.BooleanSupplier shouldInterruptBatch) {
+    if (manager == null) {
+      log.debug("OfflineCoordinator not created: inference manager unavailable");
       return null;
     }
     try {
@@ -63,9 +72,14 @@ public final class OfflineCoordinatorBuilder {
       GpuCapabilitiesService gpuCapabilitiesService = new GpuCapabilitiesService();
       VduBatchProcessor batchProcessor =
           new VduBatchProcessor(
-              vduProcessor, gpuCapabilitiesService, client, vduCatalog, vduCapabilityState);
+              vduProcessor,
+              gpuCapabilitiesService,
+              clientSupplier,
+              vduCatalog,
+              vduCapabilityState,
+              shouldInterruptBatch);
       OfflineCoordinator coordinator =
-          new OfflineCoordinator(manager, batchProcessor, client, vduCapabilityState);
+          new OfflineCoordinator(manager, batchProcessor, clientSupplier, vduCapabilityState);
       log.info("OfflineCoordinator created for VDU batch processing");
       return coordinator;
     } catch (Exception e) {

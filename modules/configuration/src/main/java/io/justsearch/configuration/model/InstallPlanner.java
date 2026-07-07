@@ -34,7 +34,23 @@ public final class InstallPlanner {
   }
 
   /**
-   * Computes the install plan with an explicit home directory.
+   * Computes the install plan with an explicit home directory, at the default
+   * {@link InstallIntent#DEFAULT} (Full Desktop). Backwards-compat overload —
+   * existing callers get the full experience unchanged.
+   */
+  public static InstallPlan plan(
+      ModelRegistry registry, HardwareProfile hardware, Path modelsDir, Path homeDir) {
+    return plan(registry, hardware, InstallIntent.DEFAULT, modelsDir, homeDir);
+  }
+
+  /**
+   * Computes the install plan for an explicit {@link InstallIntent} (tempdoc 657).
+   *
+   * <p>Intent is the product-shape axis, orthogonal to the hardware
+   * {@link DownloadProfile}: a package is included iff its {@link CapabilityTier}
+   * is {@link InstallIntent#wants wanted} by the intent <em>and</em> hardware
+   * permits its variant. So {@code MCP_LITE} skips the LLM + runtime tiers even on
+   * a capable GPU; the hardware gate still applies within the wanted tiers.
    *
    * <p>Tempdoc 374 alpha.15 fix B: packages with non-null {@code installRoot}
    * (currently the {@code cuda-runtime} package) install relative to
@@ -46,12 +62,17 @@ public final class InstallPlanner {
    *
    * @param registry the v2 model registry
    * @param hardware the detected hardware profile
+   * @param intent the install/runtime intent selecting which capability tiers are wanted
    * @param modelsDir root models directory (typically {@code homeDir/models})
    * @param homeDir AI home directory (typically {@code %APPDATA%/io.justsearch.shell})
    * @return the install plan
    */
   public static InstallPlan plan(
-      ModelRegistry registry, HardwareProfile hardware, Path modelsDir, Path homeDir) {
+      ModelRegistry registry,
+      HardwareProfile hardware,
+      InstallIntent intent,
+      Path modelsDir,
+      Path homeDir) {
     DownloadProfile profile = hardware.downloadProfile();
     List<InstallPlan.PlannedDownload> downloads = new ArrayList<>();
     List<InstallPlan.SkippedPackage> skipped = new ArrayList<>();
@@ -59,6 +80,17 @@ public final class InstallPlanner {
     long totalBytes = 0;
 
     for (ModelPackage pkg : registry.packages()) {
+      // Intent gate (tempdoc 657): skip packages whose capability tier this intent
+      // does not want, independent of hardware. An untagged package (tier == null) is
+      // always wanted, so pre-tier registries behave exactly as before.
+      if (!intent.wants(pkg.tier())) {
+        skipped.add(
+            new InstallPlan.SkippedPackage(
+                pkg.id(),
+                String.format("Not included in %s mode", intent.id())));
+        continue;
+      }
+
       // GGUF packages (chat) require GPU on this build — tempdoc 381 §"GPU-Primary"
       // direction. The skip reason names the actual constraint instead of the
       // misleading "CUDA not available" so the UI can surface why honestly.

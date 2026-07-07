@@ -7,7 +7,7 @@ pluginManagement {
   }
   plugins {
     // Define settings-only plugin versions here
-    id("com.gradle.develocity") version "4.4.2"
+    id("com.gradle.develocity") version "4.4.3"
   }
 }
 

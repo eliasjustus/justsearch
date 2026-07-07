@@ -1,0 +1,262 @@
+[
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Kraftwerk, oberes Feuchtgebiet, die erste Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo brannik 0003",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "druven1",
+   "falker2",
+   "wendreach3"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Beobachtungsstation, Höhenzug im Osten, die zweite Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "ochre lansk 0006",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "brelker4",
+   "drumond5",
+   "rellcrag6"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Getreidemühle, Krümmung des Flusses, die dritte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo vellum 0009",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "harnven7",
+   "harnfen8",
+   "kandell9"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Aktenlager, früheres Justizgebäude, die vierte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "verdant quartzine 0012",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmmire10",
+   "cavthorn11",
+   "skolun12"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Metallwerk, Viertel im Westen, die fünfte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo lansk 0015",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanker13",
+   "olmholt14",
+   "zelreach15"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Fernrohr, Karpaten-Bergland, die sechste Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "crimson brannik 0018",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "druker16",
+   "olmholt17",
+   "kanfen18"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Trambahn, Stadt an den Hängen, die siebte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure perrin 0021",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmstone19",
+   "falby20",
+   "drureach21"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Wasserleitung, Hügel im Süden, die achte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "ochre skack 0024",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellholt22",
+   "vordell23",
+   "mirgrove24"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Verlagshaus, zentrales Marktviertel, die neunte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "verdant ferrolite 0027",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "cavstone25",
+   "harnfen26",
+   "mirker27"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Küstenfeuer, steiniges Vorgebirge, die zehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure quartzine 0030",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "brelthorn28",
+   "orrby29",
+   "mirby30"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Weinanbaugebiet, lichtdurchflutete Senke, die elfte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "russet grist 0033",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "mirwick31",
+   "mirash32",
+   "wenddell33"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Thermalbad, Steilküste am Ufer, die zwölfte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "verdant lansk 0036",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexven34",
+   "orrholt35",
+   "cavholt36"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Kraftwerk, immergrüner Forst, die dreizehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "russet vellum 0039",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "skopost37",
+   "drudell38",
+   "kanven39"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Beobachtungsstation, salzhaltiges Flachland, die vierzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo perrin 0042",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "skoby40",
+   "brelash41",
+   "harnmond42"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Getreidemühle, Steingrube, die fünfzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "crimson brannik 0045",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenwick43",
+   "drufen44",
+   "taspost45"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Aktenlager, Zugang zum Hafen, die sechzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure perrin 0048",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmvale46",
+   "druash47",
+   "falash48"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Metallwerk, trockene Mulde, die siebzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo perrin 0051",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "orrdell49",
+   "orrdac50",
+   "skovale51"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Fernrohr, vereister Bergsee, die achtzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber lansk 0054",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falric52",
+   "harnric53",
+   "zelby54"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Trambahn, eingefriedete Anlage, die neunzehnte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo skack 0057",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limric55",
+   "olmpost56",
+   "limmire57"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Wasserleitung, Glockenturm, die zwanzigste Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure vellum 0060",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "cavash58",
+   "pellgrove59",
+   "zeldac60"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Verlagshaus, Erzgrube, die erste Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber vellum 0063",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "drudac61",
+   "wendthorn62",
+   "falvale63"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Küstenfeuer, stürmisches Moor, die zweite Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "pallid quartzine 0066",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "pellric64",
+   "vorpost65",
+   "wendfen66"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Weinanbaugebiet, Mündungsfächer, die dritte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure brannik 0069",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenfen67",
+   "nuthpost68",
+   "vorvale69"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Thermalbad, hohes Joch, die vierte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber perrin 0072",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexfen70",
+   "wendash71",
+   "limmond72"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Kraftwerk, Anglersteg, die fünfte Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure grist 0075",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "nuthcrag73",
+   "zelgrove74",
+   "vexric75"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Beobachtungsstation, Obstgarten am Hang, die sechste Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure grist 0078",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "wendash76",
+   "vexholt77",
+   "rellreach78"
+  ]
+ }
+]

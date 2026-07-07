@@ -37,6 +37,7 @@ import {
   bootIntentStreamBridge,
   stopIntentStreamBridge,
 } from '../../../api/intent/bootIntentStreamBridge.js';
+import type { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
 import type { IntentSource, SourceDispatch } from './IntentSource.js';
 
 /** Stable Manifest-tier id this source corresponds to. */
@@ -44,16 +45,11 @@ export const BACKEND_STREAM_SOURCE_REF = 'core.backend-stream';
 
 export interface BackendStreamSourceConfig {
   /**
-   * Absolute API base (e.g., `http://127.0.0.1:33221`). The SSE
-   * endpoint is appended as `/api/intent/stream`. Empty string ('')
-   * uses same-origin (vite dev + Tauri production both work).
+   * Tempdoc 662: the shared `MultiplexedStream` (one of the 5 always-on streams collapsed
+   * onto `/api/shell-events/stream`) this source subscribes its `system:intent-envelopes`
+   * streamId on. The caller owns its construction/start lifecycle (one instance per shell).
    */
-  apiBase: string;
-  /**
-   * Test seam: override the underlying EventSource factory. Forwarded
-   * to `bootIntentStreamBridge`'s options. Production code omits.
-   */
-  eventSourceFactory?: (url: string) => EventSource;
+  multiplex: MultiplexedStream;
 }
 
 export function createBackendStreamSource(
@@ -62,20 +58,6 @@ export function createBackendStreamSource(
   return {
     ref: BACKEND_STREAM_SOURCE_REF,
     start(dispatch: SourceDispatch): () => void {
-      // Environment guard: SSE requires EventSource. Production browsers
-      // have it; happy-dom-based vitest does not (this source's own tests
-      // inject a FakeEventSource via the factory seam). When no factory is
-      // supplied and the runtime lacks EventSource, no-op cleanly rather
-      // than throw from the underlying EnvelopeStream.
-      const hasEventSource =
-        typeof globalThis !== 'undefined' &&
-        typeof (globalThis as { EventSource?: unknown }).EventSource ===
-          'function';
-      if (!config.eventSourceFactory && !hasEventSource) {
-        return () => {
-          /* no-op when EventSource is unavailable */
-        };
-      }
       // Adapt SourceDispatch → IntentRouter shape that
       // bootIntentStreamBridge expects. The bridge only calls
       // `dispatch(intent)` (single arg); the source's dispatch hook
@@ -93,9 +75,7 @@ export function createBackendStreamSource(
           return () => undefined;
         },
       };
-      bootIntentStreamBridge(config.apiBase, routerAdapter, {
-        eventSourceFactory: config.eventSourceFactory,
-      });
+      bootIntentStreamBridge(config.multiplex, routerAdapter);
       // The bridge tracks its own singleton state; the canonical
       // teardown is the module-level stopIntentStreamBridge function.
       return () => {

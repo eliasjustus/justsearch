@@ -583,6 +583,8 @@ final class TransitionRunner {
       case INSUFFICIENT_VRAM ->
           new InferenceFailure.StartupFailure(StartupCode.INSUFFICIENT_VRAM, detail, cause);
       case MISSING_DLL -> new InferenceFailure.StartupFailure(StartupCode.MISSING_DLL, detail, cause);
+      case EXECUTABLE_NOT_FOUND ->
+          new InferenceFailure.StartupFailure(StartupCode.EXECUTABLE_NOT_FOUND, detail, cause);
       case PROCESS_EXITED ->
           new InferenceFailure.StartupFailure(StartupCode.PROCESS_EXITED, detail, cause);
       case PORT_ALLOCATION_FAILED ->
@@ -610,6 +612,7 @@ final class TransitionRunner {
     return switch (code) {
       case INSUFFICIENT_VRAM -> ModeTransitionException.Reason.INSUFFICIENT_VRAM;
       case MISSING_DLL -> ModeTransitionException.Reason.MISSING_DLL;
+      case EXECUTABLE_NOT_FOUND -> ModeTransitionException.Reason.EXECUTABLE_NOT_FOUND;
       case PROCESS_EXITED -> ModeTransitionException.Reason.PROCESS_EXITED;
       case PORT_ALLOCATION_FAILED -> ModeTransitionException.Reason.PORT_ALLOCATION_FAILED;
       case EXTERNAL_SERVER_POLICY_BLOCKED ->

@@ -52,6 +52,13 @@ def _snapshot_models(base_url: str) -> dict | None:
         compat = w.get("compatibility", {})
         embed_cuda = gpu_diag.get("embedOrtCuda") or {}
         splade_cuda = gpu_diag.get("spladeOrtCuda") or {}
+        reranker_cuda = gpu_diag.get("rerankerOrtCuda") or {}
+        # tempdoc 644: make the realized engine SET first-class in cohort identity so a
+        # silently-degraded run (e.g. cross-encoder off in a worktree) forms a distinct cohort
+        # and cannot be averaged with a CE-on baseline. `realized_engines` (presence) is
+        # startup-stable identity; `reranker_gpu` (device) is recorded but stripped from the
+        # comparison key (release._MODEL_EXECUTION_FLAGS), exactly like embed_gpu/splade_gpu.
+        from .preflight import realized_engine_set
         return {
             "embed_backend": gpu_diag.get("embedBackend"),
             "embed_fingerprint": compat.get("embeddingFingerprintCurrent"),
@@ -59,8 +66,11 @@ def _snapshot_models(base_url: str) -> dict | None:
             "embed_gpu": embed_cuda.get("available"),
             "splade_model_path": gpu_diag.get("spladeModelPath"),
             "splade_gpu": splade_cuda.get("available"),
+            "reranker_model_path": gpu_diag.get("rerankerModelPath"),
+            "reranker_gpu": reranker_cuda.get("available"),
             "ner_model_path": gpu_diag.get("nerModelPath"),
             "ner_gpu": gpu_diag.get("nerGpuEnabled"),
+            "realized_engines": realized_engine_set(gpu_diag),
         }
     except Exception:
         log.debug("Failed to snapshot model identity from /api/status")
@@ -253,14 +263,20 @@ def execute_run(
         latency_stats = _compute_latency_stats(raw_responses)
         score_stats = _compute_score_stats(raw_responses, top_k)
 
-        # Promote the cross-encoder STAGE p50 into aggregate_metrics so the perf-latency family
-        # flows + calibrates like a quality metric (tempdoc 640 metric-family registry). It is the
-        # dominant, noise-robust latency metric (§C-2); the full stage_timing_stats stays for drill-down.
-        _ce_p50 = (
-            (run_evidence.get("stage_timing_stats") or {}).get("cross_encoder_ms") or {}
-        ).get("p50")
-        if isinstance(_ce_p50, (int, float)):
-            aggregate["ce_p50_ms"] = float(_ce_p50)
+        # Promote the always-present latency-stage p50s into aggregate_metrics so the perf-latency
+        # family flows + calibrates like a quality metric (tempdoc 640 metric-family registry). The
+        # cross-encoder is the dominant, noise-robust cost (§C-2); tempdoc 647 completes the
+        # decomposition by also promoting the retrieval stage (the only other stage present on every
+        # query — chunk-merge/branch-fusion/lambdamart are query-conditional and stay report-only in
+        # stage_timing_stats, alongside the `unaccounted_ms` remainder + per-stage shares).
+        _stage_stats = run_evidence.get("stage_timing_stats") or {}
+        for _stage_key, _metric_key in (
+            ("cross_encoder_ms", "ce_p50_ms"),
+            ("retrieval_ms", "retrieval_p50_ms"),
+        ):
+            _p50 = (_stage_stats.get(_stage_key) or {}).get("p50")
+            if isinstance(_p50, (int, float)):
+                aggregate[_metric_key] = float(_p50)
 
         mode_results[mode] = {
             "aggregate_metrics": aggregate,
@@ -366,6 +382,14 @@ def execute_run(
                     "primary_docs_s": _run_metrics.get("primary_docs_s"),
                     "enrich_docs_s": _run_metrics.get("enrich_docs_s"),
                     "resident_bytes": _footprint,
+                    # tempdoc 647: trend the latency decomposition — retrieval from aggregate_metrics
+                    # (promoted), the unaccounted remainder from stage_timing_stats (report-only, so it
+                    # is trended without being promoted/gated).
+                    "retrieval_p50_ms": (mr["aggregate_metrics"] or {}).get("retrieval_p50_ms"),
+                    "unaccounted_p50_ms": (
+                        (mr["run_evidence"].get("stage_timing_stats") or {}).get("unaccounted_ms")
+                        or {}
+                    ).get("p50"),
                 },
             )
 

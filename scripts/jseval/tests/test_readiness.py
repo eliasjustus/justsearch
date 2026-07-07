@@ -12,7 +12,39 @@ from jseval.readiness import (
     _check_pipeline_complete_conditions,
     _check_search_conditions,
     _poll_until_stable,
+    flatten_status,
 )
+
+
+class TestFlattenStatus:
+    """tempdoc 644: data-driven flatten of worker sub-records (no hand-maintained allow-list)."""
+
+    def test_flattens_direct_fields_and_subrecords(self):
+        out = flatten_status({"worker": {
+            "buildStamp": "abc",
+            "core": {"indexedDocuments": 5},
+            "gpu": {"rerankerModelPath": "/m/r", "embedOrtCuda": {"available": True}},
+        }})
+        assert out["buildStamp"] == "abc"          # non-dict direct field
+        assert out["indexedDocuments"] == 5         # core sub-record child
+        assert out["rerankerModelPath"] == "/m/r"   # gpu sub-record child
+        # dict-valued leaf is copied through as a dict (one-level, NOT recursed) so preflight can
+        # read it via `.get("embedOrtCuda").get("available")`.
+        assert out["embedOrtCuda"] == {"available": True}
+
+    def test_data_driven_surfaces_formerly_omitted_subrecord(self):
+        # `visualExtraction` was absent from the old hardcoded allow-list — the data-driven
+        # flatten surfaces it automatically (the omission class that once hid `gpu`).
+        out = flatten_status({"worker": {"visualExtraction": {"ocrEnabled": True}}})
+        assert out["ocrEnabled"] is True
+
+    def test_sibling_collision_raises(self):
+        # Two sub-records claiming the same top-level key would silently drop one — fail loud.
+        with pytest.raises(ValueError, match="both define top-level key 'dup'"):
+            flatten_status({"worker": {"a": {"dup": 1}, "b": {"dup": 2}}})
+
+    def test_no_worker_returns_unchanged(self):
+        assert flatten_status({"foo": 1}) == {"foo": 1}
 
 
 def _good_snapshot(**overrides) -> dict:

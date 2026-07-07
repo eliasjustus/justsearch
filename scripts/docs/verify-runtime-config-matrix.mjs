@@ -28,7 +28,7 @@ function normalizeCell(cell) {
     return "";
   }
   const v = cell.trim();
-  return v === "-" || v === "—" ? "" : v;
+  return v === "-" || v === "ï¿½" ? "" : v;
 }
 
 function main() {
@@ -71,10 +71,19 @@ function main() {
     }
   }
 
-  const missingYaml = model.yamlKeys.filter((k) => !docYamlKeys.has(k));
-  const missingPairs = model.envSyspropPairs
-    .map((p) => `${p.envVar}|${p.sysprop}`)
-    .filter((k) => !docPairs.has(k));
+  // The doc is generated from model.rows, so the verify invariant is "every
+  // YAML key / env+sysprop pair the model renders appears in the doc table".
+  // (buildMatrixModel exposes rows + aggregate counts; it does not expose the
+  // pre-refactor model.yamlKeys / model.envSyspropPairs arrays.)
+  const modelYamlKeys = [...new Set(model.rows.map((r) => r.yamlKey).filter(Boolean))];
+  const modelPairs = [
+    ...new Set(
+      model.rows.filter((r) => r.envVar && r.sysprop).map((r) => `${r.envVar}|${r.sysprop}`),
+    ),
+  ];
+
+  const missingYaml = modelYamlKeys.filter((k) => !docYamlKeys.has(k));
+  const missingPairs = modelPairs.filter((k) => !docPairs.has(k));
 
   if (missingYaml.length || missingPairs.length) {
     console.error("runtime-config-matrix verify: FAIL");
@@ -106,8 +115,8 @@ function main() {
     `${JSON.stringify(
       {
         generated_at: new Date().toISOString(),
-        yaml_key_count: model.yamlKeys.length,
-        env_sysprop_pair_count: model.envSyspropPairs.length,
+        yaml_key_count: model.yamlKeyCount,
+        env_sysprop_pair_count: model.envSyspropPairCount,
         doc_row_count: dataRows.length,
       },
       null,
@@ -117,7 +126,7 @@ function main() {
   );
 
   console.log(
-    `runtime-config-matrix verify: OK (yaml=${model.yamlKeys.length}, pairs=${model.envSyspropPairs.length}, rows=${dataRows.length})`,
+    `runtime-config-matrix verify: OK (yaml=${model.yamlKeyCount}, pairs=${model.envSyspropPairCount}, rows=${dataRows.length})`,
   );
 }
 

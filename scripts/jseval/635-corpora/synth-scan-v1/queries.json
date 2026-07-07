@@ -1,0 +1,202 @@
+[
+ {
+  "query": "What is the value associated with the founder of the designer of the power station in the upper wetlands, the first installation?",
+  "answer": "crimson grist 0003",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmby1",
+   "taspost2",
+   "harnfen3"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the stargazing facility in the ridge to the east, the second installation?",
+  "answer": "verdant ferrolite 0006",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellgrove4",
+   "orrfen5",
+   "brellun6"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the grain-grinding works in the curve of the river, the third installation?",
+  "answer": "pallid grist 0009",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "cavdac7",
+   "taspost8",
+   "drucrag9"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the records vault in the former justice building, the fourth installation?",
+  "answer": "crimson skack 0012",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorthorn10",
+   "quenthorn11",
+   "wendwick12"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the metal-casting works in the quarter to the west, the fifth installation?",
+  "answer": "russet perrin 0015",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanmond13",
+   "taslun14",
+   "kanlun15"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the optical instrument in the Carpathian uplands, the sixth installation?",
+  "answer": "umber perrin 0018",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexven16",
+   "wendmond17",
+   "zelcrag18"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the streetcar line in the city on the slopes, the seventh installation?",
+  "answer": "crimson ferrolite 0021",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorwick19",
+   "wendreach20",
+   "rellgrove21"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the water channel in the hills to the south, the eighth installation?",
+  "answer": "umber vellum 0024",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexgrove22",
+   "quenpost23",
+   "olmholt24"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the publishing works in the central marketplace, the ninth installation?",
+  "answer": "russet grist 0027",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "nuthlun25",
+   "wendric26",
+   "mirdell27"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the coastal beacon in the stony promontory, the tenth installation?",
+  "answer": "indigo ferrolite 0030",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanpost28",
+   "rellker29",
+   "wendpost30"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the wine estate in the sunlit dale, the eleventh installation?",
+  "answer": "ochre brannik 0033",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellash31",
+   "tasvale32",
+   "brelven33"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the thermal spa in the shoreline bluffs, the twelfth installation?",
+  "answer": "azure skack 0036",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "orrash34",
+   "kanby35",
+   "harnker36"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the power station in the evergreen woodland, the thirteenth installation?",
+  "answer": "ochre ferrolite 0039",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falreach37",
+   "limash38",
+   "falash39"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the stargazing facility in the saline plains, the fourteenth installation?",
+  "answer": "verdant quartzine 0042",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "drustone40",
+   "skoash41",
+   "brelven42"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the grain-grinding works in the stone pit, the fifteenth installation?",
+  "answer": "crimson lansk 0045",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "wendfen43",
+   "pellker44",
+   "limmire45"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the records vault in the port entrance, the sixteenth installation?",
+  "answer": "crimson skack 0048",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "nuthdell46",
+   "falstone47",
+   "pellpost48"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the metal-casting works in the arid hollow, the seventeenth installation?",
+  "answer": "indigo ferrolite 0051",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorash49",
+   "limmond50",
+   "harnven51"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the optical instrument in the iced-over tarn, the eighteenth installation?",
+  "answer": "pallid ferrolite 0054",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limholt52",
+   "harnthorn53",
+   "vexmond54"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the streetcar line in the enclosed grounds, the nineteenth installation?",
+  "answer": "umber grist 0057",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vorash55",
+   "relldell56",
+   "orrven57"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the designer of the water channel in the belfry spire, the twentieth installation?",
+  "answer": "umber ferrolite 0060",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limdell58",
+   "cavker59",
+   "cavholt60"
+  ]
+ }
+]

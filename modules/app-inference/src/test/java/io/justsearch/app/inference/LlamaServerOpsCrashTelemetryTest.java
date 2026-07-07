@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
@@ -45,6 +46,10 @@ final class LlamaServerOpsCrashTelemetryTest {
 
   @Test
   @DisplayName("Bug F: handleServerCrash emits onHealthFailure(PROCESS_DIED, restart_triggered)")
+  // Timing-sensitive: handleServerCrash schedules a delay=0 recovery task that emits a second
+  // (non-PROCESS_DIED) failure; on Linux CI that async task races ahead of the size()==1 assertion.
+  // The scheduler is not injectable for a clean deterministic fix. Windows-native lane (tempdoc 668).
+  @Tag("windows")
   void bugF_processDeath_emitsTypedHealthFailure() {
     RecordingEvents events = new RecordingEvents();
     LlamaServerOps ops = newOps(events, () -> Mode.ONLINE, () -> false);
@@ -66,6 +71,10 @@ final class LlamaServerOpsCrashTelemetryTest {
 
   @Test
   @DisplayName("Bug F: a second crash before recovery still emits, with crashCount=2")
+  // Same Linux-CI race as bugF_processDeath_emitsTypedHealthFailure above (delay=0 recovery task
+  // races ahead of the size()==2 assertion) — doubly so here, since this test drives two crashes.
+  // Missed when that test was tagged during the tempdoc 668 Windows-native-tests migration.
+  @Tag("windows")
   void bugF_secondCrash_incrementsCount() {
     RecordingEvents events = new RecordingEvents();
     LlamaServerOps ops = newOps(events, () -> Mode.ONLINE, () -> false);

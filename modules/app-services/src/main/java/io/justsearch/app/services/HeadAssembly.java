@@ -391,7 +391,9 @@ public final class HeadAssembly implements AutoCloseable {
                             managerFinal,
                             this.capabilities.inference(),
                             settingsStoreFinal,
-                            this.lateBindings)))
+                            this.lateBindings,
+                            () -> this.knowledgeClient,
+                            this::currentKnowledgeServer)))
             .orThrow();
     long t_service_1 = System.currentTimeMillis();
     this.serviceOut = serviceOut;
@@ -849,6 +851,22 @@ public final class HeadAssembly implements AutoCloseable {
   public InferenceRuntimeView inferenceSnapshot() {
     return io.justsearch.app.services.bootstrap.phases.BootstrapProjections
         .projectInferenceSnapshot(this.inferenceManager);
+  }
+
+  /**
+   * Tempdoc 682 Item 2: expected llama-server build tag from the staging pin marker; null =
+   * unknown (no inference manager, no config, or no marker — all supported states).
+   */
+  public String expectedLlamaServerBuild() {
+    return this.inferenceManager == null ? null : this.inferenceManager.expectedLlamaServerBuild();
+  }
+
+  /**
+   * Tempdoc 682 Item 2: actually-running llama-server build tag observed from {@code /props};
+   * null until a server has been started or adopted.
+   */
+  public String actualLlamaServerBuild() {
+    return this.inferenceManager == null ? null : this.inferenceManager.actualLlamaServerBuild();
   }
 
   /** F6: rebuild the held ServiceGraph. Reads prior services from the existing held graph. */

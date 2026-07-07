@@ -187,16 +187,7 @@ public final class SseEnvelopeWriter {
       long heartbeatSeconds) {
     Objects.requireNonNull(snapshotExtras, "snapshotExtras");
     Objects.requireNonNull(heartbeatScheduler, "heartbeatScheduler");
-    // observations.md L118 fix: force SSE content-type even when client omits
-    // `Accept: text/event-stream`. Javalin's content negotiation otherwise
-    // returns text/plain Content-Length:0 for ad-hoc curl clients, swallowing
-    // every envelope this method writes. Real EventSource clients send the
-    // Accept header so this is a no-op for them.
-    if (client.ctx() != null) {
-      client.ctx().contentType("text/event-stream; charset=utf-8");
-      client.ctx().header("Cache-Control", "no-cache");
-      client.ctx().header("X-Accel-Buffering", "no");
-    }
+    forceSseHeaders(client);
     SseEnvelopeWriter writer = new SseEnvelopeWriter(client, channel, clock);
     writer.sendConnected();
 
@@ -249,12 +240,7 @@ public final class SseEnvelopeWriter {
       ScheduledExecutorService heartbeatScheduler,
       long heartbeatSeconds) {
     Objects.requireNonNull(heartbeatScheduler, "heartbeatScheduler");
-    // observations.md L118 fix: same forced content-type as attach() above.
-    if (client.ctx() != null) {
-      client.ctx().contentType("text/event-stream; charset=utf-8");
-      client.ctx().header("Cache-Control", "no-cache");
-      client.ctx().header("X-Accel-Buffering", "no");
-    }
+    forceSseHeaders(client);
     SseEnvelopeWriter writer = new SseEnvelopeWriter(client, channel, clock);
     writer.sendConnected();
 
@@ -281,6 +267,23 @@ public final class SseEnvelopeWriter {
 
     client.keepAlive();
     return writer;
+  }
+
+  /**
+   * Forces the SSE content-type/headers even when the client omits {@code Accept:
+   * text/event-stream} (observations.md L118 fix — Javalin's content negotiation otherwise
+   * returns {@code text/plain Content-Length:0} for ad-hoc curl clients, swallowing every
+   * envelope a writer sends; real {@code EventSource} clients send the Accept header so this
+   * is a no-op for them). Shared by {@link #attach}, {@link #attachEventOnly}, and {@link
+   * MultiplexedSseWriter} (which forces headers once for a connection carrying several
+   * channels rather than re-deriving this 3-liner).
+   */
+  static void forceSseHeaders(SseClient client) {
+    if (client.ctx() != null) {
+      client.ctx().contentType("text/event-stream; charset=utf-8");
+      client.ctx().header("Cache-Control", "no-cache");
+      client.ctx().header("X-Accel-Buffering", "no");
+    }
   }
 
   private void sendLifecycle(String kind, Map<String, Object> extras) {

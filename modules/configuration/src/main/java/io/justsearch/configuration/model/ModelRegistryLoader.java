@@ -98,7 +98,8 @@ public final class ModelRegistryLoader {
         rp.minVramBytes,
         rp.termsUrl,
         rp.installRoot,
-        rp.license);
+        rp.license,
+        CapabilityTier.fromId(rp.tier));
   }
 
   // Raw deserialization types — match the JSON structure exactly.
@@ -116,7 +117,8 @@ public final class ModelRegistryLoader {
       List<RawVariant> variants,
       List<RawSupportingFile> supportingFiles,
       String installRoot,
-      String license) {}
+      String license,
+      String tier) {}
 
   private record RawVariant(
       String filename,

@@ -10,6 +10,11 @@ import io.justsearch.app.api.BrainRuntimeService;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.ModeTransitionException;
+import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
+import io.justsearch.app.api.status.InferenceGpuView;
+import io.justsearch.app.api.status.InferenceStatusResponseBuilder;
+import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -38,6 +43,10 @@ final class InferenceHandlers {
   private final io.justsearch.app.services.settings.UiSettingsStore settingsStore;
   private final Runnable offlineProcessingTrigger;
   private final Telemetry telemetry;
+  // Tempdoc 656 O2: nullable — lets a failed online-mode transition project a SPECIFIC reason onto
+  // the runtime manifest's ai.pendingReason (the mode-transition path otherwise shows generic
+  // "Inference offline"; Tasks 0-5 wired only the RuntimeActivationService path).
+  private final InferenceCapability inferenceCapability;
 
   InferenceHandlers(
       OnlineAiService onlineAiService,
@@ -46,7 +55,8 @@ final class InferenceHandlers {
       EnterprisePolicyService enterprisePolicyService,
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
       Runnable offlineProcessingTrigger,
-      Telemetry telemetry) {
+      Telemetry telemetry,
+      InferenceCapability inferenceCapability) {
     this.onlineAiService = onlineAiService;
     this.knowledgeServer = knowledgeServer;
     this.gpuCapabilitiesService = gpuCapabilitiesService;
@@ -54,6 +64,7 @@ final class InferenceHandlers {
     this.settingsStore = settingsStore;
     this.offlineProcessingTrigger = offlineProcessingTrigger;
     this.telemetry = telemetry;
+    this.inferenceCapability = inferenceCapability;
   }
 
   /** Late-binds the Knowledge Server after async Worker startup. */
@@ -61,24 +72,30 @@ final class InferenceHandlers {
     this.knowledgeServer = ks;
   }
 
-  /** Handles GET /api/inference/status - returns current inference mode and queue sizes. */
+  /**
+   * Handles GET /api/inference/status - returns current inference mode and queue sizes.
+   *
+   * <p>Tempdoc 663 §L/Stage 4 — builds the typed {@link InferenceStatusResponse} record instead of
+   * a hand-built {@code Map}. Every field/condition below is unchanged from the prior Map-based
+   * version (see git history if diffing behavior); only the assembly mechanism changed.
+   */
   void handleInferenceStatus(Context ctx) {
     OnlineAiService onlineAi = onlineAiService;
-    Map<String, Object> response = new HashMap<>();
-    response.put("mode", onlineAi.getCurrentMode());
-    response.put("available", onlineAi.isAvailable());
-    response.put("starting", onlineAi.isStartingUp());
-    response.put("llmContextTokens", onlineAi.llmContextTokens());
-    response.put("configuredContextTokens", onlineAi.configuredContextTokens());
-    response.put("embeddingQueueSize", countPendingEmbeddings());
-    response.put("vduQueueSize", countPendingVdu());
+    InferenceStatusResponseBuilder builder = InferenceStatusResponseBuilder.builder()
+        .mode(onlineAi.getCurrentMode())
+        .available(onlineAi.isAvailable())
+        .starting(onlineAi.isStartingUp())
+        .llmContextTokens(onlineAi.llmContextTokens())
+        .configuredContextTokens(onlineAi.configuredContextTokens())
+        .embeddingQueueSize(countPendingEmbeddings())
+        .vduQueueSize(countPendingVdu());
 
     // External server adoption diagnostics, CUDA warnings, and startup timer (best-effort; additive fields).
     if (onlineAi instanceof io.justsearch.app.api.OnlineAiRuntimeIntrospection introspection) {
       try {
         var ext = introspection.externalServerStatus();
         if (ext != null) {
-          response.put("externalServer", ext);
+          builder.externalServer(ext);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -86,7 +103,7 @@ final class InferenceHandlers {
       try {
         String cudaWarning = introspection.cudaRuntimeWarning();
         if (cudaWarning != null && !cudaWarning.isBlank()) {
-          response.put("cudaRuntimeWarning", cudaWarning);
+          builder.cudaRuntimeWarning(cudaWarning);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -94,20 +111,20 @@ final class InferenceHandlers {
       try {
         long startupMs = introspection.lastStartupDurationMs();
         if (startupMs >= 0) {
-          response.put("lastStartupDurationMs", startupMs);
+          builder.lastStartupDurationMs(startupMs);
         }
       } catch (Exception ignored) {
         // best-effort
       }
       try {
-        response.put("hasVisionCapability", introspection.hasVisionCapability());
+        builder.hasVisionCapability(introspection.hasVisionCapability());
       } catch (Exception ignored) {
         // best-effort
       }
       try {
         String modelId = introspection.activeModelId();
         if (modelId != null && !modelId.isBlank()) {
-          response.put("activeModelId", modelId);
+          builder.activeModelId(modelId);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -116,7 +133,7 @@ final class InferenceHandlers {
         // Tempdoc 518 Appendix F W3.3 — generation counter (frontend detects mid-session restart).
         long gen = introspection.currentGeneration();
         if (gen >= 0) {
-          response.put("generation", gen);
+          builder.generation(gen);
         }
       } catch (Exception ignored) {
         // best-effort
@@ -160,38 +177,43 @@ final class InferenceHandlers {
         ? snapshot.effective().source()
         : (nvidiaSmiAvailable ? "nvidia-smi" : "none");
 
-    Map<String, Object> gpu = new HashMap<>();
-    gpu.put("cudaAvailable", cudaAvailable);
-    gpu.put("totalVramBytes", effectiveVramBytes);
-    gpu.put("vramDescription", vramDescription);
-    gpu.put("vramDetectionSource", vramDetectionSource);
-    gpu.put("nvidiaSmiAvailable", nvidiaSmiAvailable);
+    boolean nvmlAvailable = false;
+    Long nvmlTotalVramBytes = null;
+    String nvmlDriverVersion = null;
     try {
       var nvml = snapshot != null ? snapshot.nvml() : null;
       if (nvml != null) {
-        gpu.put("nvmlAvailable", nvml.available());
-        if (nvml.available()) {
-          gpu.put("nvmlTotalVramBytes", nvml.totalVramBytes());
-          gpu.put("nvmlDriverVersion", nvml.driverVersion());
+        nvmlAvailable = nvml.available();
+        if (nvmlAvailable) {
+          nvmlTotalVramBytes = nvml.totalVramBytes();
+          nvmlDriverVersion = nvml.driverVersion();
         }
-      } else {
-        gpu.put("nvmlAvailable", false);
       }
     } catch (Exception ignored) {
-      gpu.put("nvmlAvailable", false);
+      nvmlAvailable = false;
     }
 
     // Tempdoc 623 U7: record the pinned CUDA major (a constant — no ORT init) so the
     // benchmark-release hardware projection can publish it. The ORT *version* is captured
     // WORKER-side (where ORT is initialized) and surfaced via the health effective_config map
     // into /api/debug/state — NOT here, because the Head runs no ORT sessions. Best-effort.
+    String cudaVersion = null;
     try {
-      gpu.put("cudaVersion", io.justsearch.ort.OrtCudaHelper.CUDA_TOOLKIT_MAJOR);
+      cudaVersion = io.justsearch.ort.OrtCudaHelper.CUDA_TOOLKIT_MAJOR;
     } catch (Exception ignored) {
       // constant lookup is informational only.
     }
 
-    response.put("gpu", gpu);
+    builder.gpu(new InferenceGpuView(
+        cudaAvailable,
+        effectiveVramBytes,
+        vramDescription,
+        vramDetectionSource,
+        nvidiaSmiAvailable,
+        nvmlAvailable,
+        nvmlTotalVramBytes,
+        nvmlDriverVersion,
+        cudaVersion));
 
     // computeHardwareTier still wants a VRAM number; pass the effective bytes
     // (NVML-first, with nvidia-smi fallback handled internally by the snapshot).
@@ -202,10 +224,9 @@ final class InferenceHandlers {
         : null;
     long tierVramBytes = effectiveVramBytes != null ? effectiveVramBytes
         : (smiOnly != null ? smiOnly : -1L);
-    response.put(
-        "tier",
-        computeHardwareTier(tierVramBytes, onlineAi.isAvailable(), onlineAi.isStartingUp()));
-    ctx.json(response);
+    builder.tier(computeHardwareTier(tierVramBytes, onlineAi.isAvailable(), onlineAi.isStartingUp()));
+
+    ctx.json(builder.build());
   }
 
   /**
@@ -371,6 +392,17 @@ final class InferenceHandlers {
 
       // Check cause chain for typed ModeTransitionException (wrapped by OnlineAiServiceImpl)
       ModeTransitionException mte = findCause(e, ModeTransitionException.class);
+
+      // Tempdoc 656 O2: project the SPECIFIC failure cause onto the runtime manifest. The rollback's
+      // mode-change listener already fired a generic OFFLINE→"Inference offline"; this runs after
+      // switchToOnlineMode returned, so it is the last write and wins. Only meaningful for an
+      // online-mode failure (indexing failures don't change the AI-availability reason). Skips when
+      // the capability is currently READY (an unrelated failure must not regress a working runtime).
+      if (inferenceCapability != null
+          && "online".equalsIgnoreCase(mode)
+          && inferenceCapability.health() != CapabilityHealth.READY) {
+        inferenceCapability.transition(CapabilityHealth.OFFLINE, mapModeReason(mte).code());
+      }
       if (mte != null
           && mte.reason() == ModeTransitionException.Reason.EXTERNAL_SERVER_POLICY_BLOCKED) {
         Map<String, Object> payload = ApiErrorHandler.toResponse(
@@ -399,6 +431,25 @@ final class InferenceHandlers {
       }
       ctx.status(statusCode).json(payload);
     }
+  }
+
+  /**
+   * Tempdoc 656 O2: maps a mode-transition failure {@link ModeTransitionException.Reason} onto the
+   * closed {@link LifecycleReasonCode} taxonomy, reusing the inference codes added in Tasks 0-5 (no
+   * new code, so no readiness-reason-codes gate change). Mirrors
+   * {@code RuntimeActivationService.mapToLifecycleReason}. A null/untyped failure (or any unmapped
+   * reason) falls back to the activation-failed catch-all.
+   */
+  private static LifecycleReasonCode mapModeReason(ModeTransitionException mte) {
+    if (mte == null) return LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED;
+    return switch (mte.reason()) {
+      // "the llama-server executable / a required DLL is missing" — the runtime isn't installed.
+      case EXECUTABLE_NOT_FOUND, MISSING_DLL -> LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED;
+      // config validation "executable/model not found" also reduces to runtime-not-installed for the
+      // user's purposes (the doctor's next remedy is the same: provision the runtime).
+      case INVALID_CONFIG, CONFIG_REQUIRED -> LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED;
+      default -> LifecycleReasonCode.INFERENCE_ACTIVATION_FAILED;
+    };
   }
 
   /**

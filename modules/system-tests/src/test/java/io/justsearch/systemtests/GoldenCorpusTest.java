@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.systemtests.corpus.CorpusVectorGenerator;
 import io.justsearch.systemtests.corpus.FrozenEmbeddingBackend;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.DocumentInfo;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.QueryInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.DocumentInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.QueryInfo;
 import io.justsearch.systemtests.relevance.RelevanceMetrics;
 import io.justsearch.systemtests.relevance.RelevanceMetrics.AggregatedMetrics;
 import io.justsearch.systemtests.relevance.RelevanceMetrics.QueryResult;
@@ -25,7 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Golden Corpus integration tests for search relevance.
+ * Golden Corpus relevance-metric unit tests — pure {@link RelevanceMetrics} math against
+ * hardcoded doc-id lists (no real search engine, no {@code RunningRuntime}).
  *
  * <p>These tests verify that the search system correctly retrieves relevant documents
  * for different types of queries:
@@ -40,18 +41,24 @@ import org.slf4j.LoggerFactory;
  *   <li>Recall@3 ≥ 0.9 (find 90% of relevant docs in top 3)</li>
  *   <li>NDCG@3 ≥ 0.8 (relevant docs ranked highly)</li>
  * </ul>
+ *
+ * <p><b>Disambiguation (tempdoc 664):</b> this suite exercises {@code RelevanceMetrics}'
+ * arithmetic against fixed lists, not a live retrieval run — it does not measure real
+ * embedding-model retrieval quality. See {@link GoldenCorpusIntegrationTest} for the sibling
+ * suite that actually indexes and searches (still against hand-placed, not model-produced,
+ * vectors), and {@code jseval} (Python) for the canonical retrieval-quality harness.
  */
 @DisplayName("Golden Corpus Relevance Tests")
 class GoldenCorpusTest {
   private static final Logger log = LoggerFactory.getLogger(GoldenCorpusTest.class);
 
-  private static GoldenCorpusLoader corpus;
+  private static ManifestCorpusLoader corpus;
   private static FrozenEmbeddingBackend frozenBackend;
 
   @BeforeAll
   static void setupCorpus() throws IOException {
     // Load the Golden Corpus and truth manifest
-    corpus = GoldenCorpusLoader.loadDefault();
+    corpus = ManifestCorpusLoader.loadDefault();
     assertNotNull(corpus, "Failed to load Golden Corpus");
     log.info("Loaded Golden Corpus: {} documents, {} queries",
         corpus.documents().size(),

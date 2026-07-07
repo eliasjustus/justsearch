@@ -49,6 +49,7 @@ final class CoreApiAssembly {
       StatusLifecycleHandler statusLifecycleHandler,
       io.justsearch.ui.observability.GpuSaturationMonitor gpuSaturationMonitor,
       io.justsearch.ui.observability.GpuSaturationSampler gpuSaturationSampler,
+      io.justsearch.app.services.vdu.VduOfflineTriggerSampler vduOfflineTriggerSampler,
       AiInstallController aiInstallController,
       OpenAiCompatController openAiCompatController,
       PolicyController policyController,
@@ -60,6 +61,7 @@ final class CoreApiAssembly {
       TimeSeriesController timeSeriesController,
       AiRuntimeController aiRuntimeController,
       AiPackController aiPackController,
+      AiModelsController aiModelsController,
       HeadHttpInflightMetricCatalog inflightCatalog,
       HeadGpuMetricCatalog gpuCatalog,
       KnowledgeSearchController knowledgeSearchController) {}
@@ -142,7 +144,8 @@ final class CoreApiAssembly {
             enterprisePolicyService,
             b.settingsStore,
             b.offlineProcessingTrigger,
-            telemetry);
+            telemetry,
+            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     Supplier<String> diskPressureSupplier = null;
     if (telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt) {
       diskPressureSupplier = () -> lt.getHealthState().getDiskPressureLevel().name();
@@ -188,6 +191,9 @@ final class CoreApiAssembly {
       if (coordinator != null) {
         statusLifecycleHandler.setVduCapabilitySnapshotSupplier(
             () -> coordinator.vduCapabilityState().snapshot());
+        // Tempdoc 672 follow-up: live "is a batch running right now" fact for the progress
+        // indicator — same coordinator instance, no new wiring beyond this one supplier.
+        statusLifecycleHandler.setVduProcessingSupplier(coordinator::isProcessing);
       }
       // 630: request-time supplier of the connected knowledge-server bootstrap, for the energy +
       // post-resume status fields (lazy — the bootstrap is set after the worker connects).
@@ -201,6 +207,22 @@ final class CoreApiAssembly {
         new io.justsearch.ui.observability.GpuSaturationSampler(
             () -> gpuCapabilitiesService, gpuSaturationMonitor);
     statusLifecycleHandler.setGpuSaturationMonitor(gpuSaturationMonitor);
+    // Tempdoc 672 follow-up: idle/energy-aware VDU auto-trigger sampler, same shape as
+    // GpuSaturationSampler above. Every supplier is null-safe since b.HeadAssembly (and its
+    // serviceOut) may be absent in minimal/test constructions.
+    final HeadAssembly headForVduSampler = b.HeadAssembly;
+    io.justsearch.app.services.vdu.VduOfflineTriggerSampler vduOfflineTriggerSampler =
+        new io.justsearch.app.services.vdu.VduOfflineTriggerSampler(
+            () ->
+                headForVduSampler != null
+                    ? headForVduSampler.headInfraRegistry().offlineCoordinator()
+                    : null,
+            () -> headForVduSampler != null ? headForVduSampler.currentKnowledgeServer() : null,
+            () ->
+                headForVduSampler != null
+                    && headForVduSampler.serviceOut() != null
+                    && headForVduSampler.serviceOut().inferenceManager() != null
+                    && headForVduSampler.serviceOut().inferenceManager().isOnline());
     // Tempdoc 430 Phase 4: wire the HealthEvent substrate tap so each /api/status call
     // feeds the readiness envelope into ConditionStore + HealthEventChangeRegistry.
     if (b.HeadAssembly != null) {
@@ -357,9 +379,16 @@ final class CoreApiAssembly {
                 b.settingsStore,
                 gpuCapabilitiesService,
                 enterprisePolicyService,
-                b.workerFeatureCache);
+                b.workerFeatureCache,
+                resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     AiRuntimeController aiRuntimeController =
         new AiRuntimeController(runtimeActivationHelper, enterprisePolicyService, telemetry);
+    // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk
+    // presence — reuses aiInstallHelper + runtimeActivationHelper, no new resolution logic.
+    AiModelsController aiModelsController =
+        new AiModelsController(
+            new io.justsearch.app.services.ai.preflight.AiPreflightService(
+                aiInstallHelper, runtimeActivationHelper));
     AiPackImportService aiPackImportHelper =
         b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
             ? b.HeadAssembly.serviceOut().aiPackImportHelper()
@@ -436,6 +465,7 @@ final class CoreApiAssembly {
         statusLifecycleHandler,
         gpuSaturationMonitor,
         gpuSaturationSampler,
+        vduOfflineTriggerSampler,
         aiInstallController,
         openAiCompatController,
         policyController,
@@ -447,6 +477,7 @@ final class CoreApiAssembly {
         timeSeriesController,
         aiRuntimeController,
         aiPackController,
+        aiModelsController,
         inflightCatalog,
         gpuCatalog,
         knowledgeSearchController);

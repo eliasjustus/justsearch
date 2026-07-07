@@ -75,6 +75,71 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertEquals(null, parsed.lifecycle(), "older bodies have no lifecycle field");
     assertEquals(null, parsed.worker(), "older bodies have no worker sub-record");
     assertEquals(null, parsed.ai(), "older bodies have no ai sub-record");
+    assertEquals(null, parsed.mode(), "older bodies have no mode sub-record (tempdoc 657)");
+  }
+
+  @Test
+  void modeSubRecordRoundTripsAndStaysOptional() throws Exception {
+    // Tempdoc 657: the mode sub-record is a new OPTIONAL field. A body carrying it must round-trip;
+    // a body omitting it must still parse (mode == null), so the schema version stays 1.
+    String withMode =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-000000000009\",\n"
+            + "  \"pid\": 99,\n"
+            + "  \"startedAt\": \"2026-07-01T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/mode\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40404,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40404\",\n"
+            + "    \"readyAt\": \"2026-07-01T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"mode\": {\"intent\": \"mcp-lite\", \"realized\": \"retrieval-only\"}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withMode, RuntimeManifest.class);
+
+    assertNotNull(parsed.mode());
+    assertEquals("mcp-lite", parsed.mode().intent());
+    assertEquals("retrieval-only", parsed.mode().realized());
+  }
+
+  @Test
+  void aiServerBuildFieldsRoundTripAndStayOptional() throws Exception {
+    // Tempdoc 682 Item 2: serverBuildExpected/serverBuildActual are new OPTIONAL AiInfo fields.
+    // A body carrying them must round-trip; a body with an ai sub-record omitting them must
+    // still parse (fields == null), so the schema version stays 1.
+    String withBuilds =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-00000000682a\",\n"
+            + "  \"pid\": 682,\n"
+            + "  \"startedAt\": \"2026-07-06T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/682\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40682,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40682\",\n"
+            + "    \"readyAt\": \"2026-07-06T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"ai\": {\"phase\": \"READY\", \"required\": true,\n"
+            + "    \"serverBuildExpected\": \"b8571\", \"serverBuildActual\": \"b8600\"}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withBuilds, RuntimeManifest.class);
+    assertNotNull(parsed.ai());
+    assertEquals("b8571", parsed.ai().serverBuildExpected());
+    assertEquals("b8600", parsed.ai().serverBuildActual());
+
+    // Omitted fields stay null and are omitted on write (NON_NULL) — older readers unaffected.
+    RuntimeManifest.AiInfo bare =
+        new RuntimeManifest.AiInfo("OFFLINE", false, "Inference not configured", null, null, null);
+    String written = TOLERANT.writeValueAsString(bare);
+    assertTrue(
+        !written.contains("serverBuild"),
+        "absent build fields must be omitted (NON_NULL): " + written);
+    RuntimeManifest.AiInfo reparsed = TOLERANT.readValue(written, RuntimeManifest.AiInfo.class);
+    assertEquals(null, reparsed.serverBuildExpected());
+    assertEquals(null, reparsed.serverBuildActual());
   }
 
   @Test
@@ -137,5 +202,49 @@ class RuntimeManifestSchemaCompatibilityTest {
             + "This sanity-checks that the tolerance the tempdoc §12.3 backward-compat rule "
             + "depends on is an explicit Jackson choice, not a default the codebase happens "
             + "to inherit.");
+  }
+
+  @Test
+  void runtimeContractRoundTripsAndIsOmittedWhenAbsent() throws Exception {
+    // Tempdoc 654: the runtimeContract field is additive. When absent it must be omitted from JSON
+    // (@JsonInclude(NON_NULL)) so older readers are unaffected; when present it must round-trip.
+    RuntimeManifest.HeadInfo head =
+        RuntimeManifestHeadInfoBuilder.builder()
+            .apiPort(12345)
+            .apiBaseUrl("http://127.0.0.1:12345")
+            .readyAt("2026-07-02T00:00:00Z")
+            .build();
+
+    RuntimeManifest without =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("00000000-0000-0000-0000-0000000000c1")
+            .pid(1)
+            .startedAt("2026-07-02T00:00:00Z")
+            .dataDir("/tmp/c1")
+            .head(head)
+            .build();
+    String jsonWithout = TOLERANT.writeValueAsString(without);
+    assertTrue(
+        !jsonWithout.contains("runtimeContract"),
+        "absent runtimeContract must be omitted (NON_NULL): " + jsonWithout);
+
+    RuntimeManifest with =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("00000000-0000-0000-0000-0000000000c2")
+            .pid(2)
+            .startedAt("2026-07-02T00:00:00Z")
+            .dataDir("/tmp/c2")
+            .head(head)
+            .runtimeContract(RuntimeContract.current())
+            .build();
+    RuntimeManifest reparsed =
+        TOLERANT.readValue(TOLERANT.writeValueAsString(with), RuntimeManifest.class);
+    assertNotNull(reparsed.runtimeContract());
+    assertEquals(RuntimeContract.CURRENT_VERSION, reparsed.runtimeContract().version());
+    assertEquals(
+        RuntimeManifest.CURRENT_SCHEMA_VERSION,
+        reparsed.runtimeContract().constituents().manifestSchemaVersion());
   }
 }

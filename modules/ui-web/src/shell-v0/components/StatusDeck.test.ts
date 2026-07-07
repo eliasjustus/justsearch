@@ -15,17 +15,27 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     phase: 'connected',
     readiness: UNKNOWN,
     capabilities: { chat: false, rag: false, extract: false, embedding: false },
-    connection: { reachable: true, lastSuccessMs: Date.now(), consecutiveFailures: 0 },
+    connection: { reachable: true, lastSuccessMs: Date.now(), lastContactMs: Date.now(), consecutiveFailures: 0 },
     runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
     index: { documentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+    realized: {
+      reranker: { loaded: false, accelerator: null, failureReason: null },
+      embed: { loaded: false, accelerator: null, failureReason: null },
+      splade: { loaded: false, accelerator: null, failureReason: null },
+    },
     statusLabel: 'offline',
     statusTier: 'offline',
+    statusTone: 'neutral',
     stability: { kind: 'settled' },
     verdict: { kind: 'operational', severity: 'ok', reasons: [] },
     status: null,
     inference: null,
     lastSettledIndex: null,
+    installStatus: null,
+    runtimeStatus: null,
+    packStatus: null,
+    aiEngine: { kind: 'offline', stability: { kind: 'settled' }, installFailure: null },
     ...overrides,
   };
 }
@@ -84,20 +94,24 @@ describe('StatusDeck (slice 461)', () => {
     expect(memDot?.classList.contains('warn')).toBe(true);
   });
 
-  it('inference status badge tone follows AI state tier', async () => {
+  it('system pill tone follows the verdict-derived statusTone (tempdoc 649)', async () => {
     const badgeTone = (el: StatusDeck) =>
       el.shadowRoot?.querySelector('jf-status-badge')?.getAttribute('tone');
     const el = make();
-    el.aiState = makeAiState({ statusTier: 'online', statusLabel: 'Online' });
+    el.aiState = makeAiState({ statusTone: 'success', statusLabel: 'Online' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('success');
-    el.aiState = makeAiState({ statusTier: 'degraded', statusLabel: 'Indexing' });
+    // 649: the calm "Catching up…" (busy) state must render calm `info`, NOT amber.
+    el.aiState = makeAiState({ statusTone: 'info', statusLabel: 'Catching up…' });
+    await el.updateComplete;
+    expect(badgeTone(el)).toBe('info');
+    el.aiState = makeAiState({ statusTone: 'warning', statusLabel: 'Service degraded' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('warning');
-    el.aiState = makeAiState({ statusTier: 'offline', statusLabel: 'offline' });
+    el.aiState = makeAiState({ statusTone: 'neutral', statusLabel: 'offline' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('neutral');
-    el.aiState = makeAiState({ statusTier: 'disconnected', statusLabel: 'Disconnected' });
+    el.aiState = makeAiState({ statusTone: 'error', statusLabel: 'Backend disconnected' });
     await el.updateComplete;
     expect(badgeTone(el)).toBe('error');
   });
@@ -313,5 +327,70 @@ describe('StatusDeck (slice 461)', () => {
     const texts = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []).map((v) => v.textContent?.trim());
     expect(texts[0]).toBe(formatCount(1234)); // Files last-known
     expect(texts[1]).toBe('…'); // Size: no observed size → not a fake "0 B"
+  });
+
+  describe('Tempdoc 663 Design pass 3 — AI-engine toast tracker + click-routing', () => {
+    function captureToasts(): { specs: Array<{ classId?: string; message: string }>; stop: () => void } {
+      const specs: Array<{ classId?: string; message: string }> = [];
+      const listener = (e: Event) => specs.push((e as CustomEvent).detail);
+      document.addEventListener(EPHEMERAL_TOAST_EVENT, listener);
+      return { specs, stop: () => document.removeEventListener(EPHEMERAL_TOAST_EVENT, listener) };
+    }
+
+    it('installing → online fires exactly one "core.ai-engine.settled" toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'installing', stability: { kind: 'provisional', cause: 'installing' }, installFailure: null } });
+      await el.updateComplete;
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      // A second, unrelated re-render at the SAME settled kind must not re-fire (one-shot, not per-render).
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      stop();
+      const ai = specs.filter((s) => s.classId === 'core.ai-engine.settled');
+      expect(ai).toHaveLength(1);
+    });
+
+    it('installing → install_failed fires exactly one "core.ai-engine.failed" toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'installing', stability: { kind: 'provisional', cause: 'installing' }, installFailure: null } });
+      await el.updateComplete;
+      el.aiState = makeAiState({ aiEngine: { kind: 'install_failed', stability: { kind: 'settled' }, installFailure: 'disk full' } });
+      await el.updateComplete;
+      stop();
+      const ai = specs.filter((s) => s.classId === 'core.ai-engine.failed');
+      expect(ai).toHaveLength(1);
+    });
+
+    it('reaching "online" WITHOUT a preceding "installing" (e.g. first load already online) does not toast', async () => {
+      const el = make();
+      const { specs, stop } = captureToasts();
+      el.aiState = makeAiState({ aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null } });
+      await el.updateComplete;
+      stop();
+      expect(specs.filter((s) => s.classId === 'core.ai-engine.settled')).toHaveLength(0);
+    });
+
+    it('the inference-mode pill routes to the AI Brain surface when not_installed/install_failed', async () => {
+      const el = make();
+      el.aiState = makeAiState({
+        aiEngine: { kind: 'not_installed', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      const control = el.shadowRoot?.querySelector('[label*="AI Brain"]');
+      expect(control).not.toBeNull();
+    });
+
+    it('the inference-mode pill still routes to Health for ordinary states (e.g. online)', async () => {
+      const el = make();
+      el.aiState = makeAiState({
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      const control = el.shadowRoot?.querySelector('[label*="Open Health"]');
+      expect(control).not.toBeNull();
+    });
   });
 });

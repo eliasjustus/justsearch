@@ -4,7 +4,7 @@
  */
 
 import { request } from '../http';
-import { parseWireContract, type IndexCapabilities } from '../schemas';
+import { parseWireContract } from '../schemas';
 // Tempdoc 564 Phase 1: the raw wire type AND its runtime validator are now a single
 // generated projection of the Java record (record → JSON Schema → {TS, Zod}). The hand
 // `KnowledgeSearchResponse` interface and the fail-open `.loose()` post-map validation are
@@ -17,6 +17,10 @@ import {
 // Re-export the generated raw wire type so existing consumers (tests, callers) keep a
 // stable import path while the type itself is now the single generated projection.
 export type { KnowledgeSearchResponse } from '../generated/schema-types/knowledge-search-response';
+
+// Tempdoc 683: the hand IndexCapabilitiesSchema is deleted; the capabilities slice type
+// projects from the generated wire authority instead (projection, not fork).
+type IndexCapabilities = NonNullable<KnowledgeSearchResponse['indexCapabilities']>;
 
 // ============================================
 // Types

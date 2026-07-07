@@ -117,6 +117,40 @@ def test_signature_is_corpus_plus_qrels_sha256(tmp_path):
     assert corpus_identity.corpus_signature(ds) == h.hexdigest()
 
 
+def test_corpus_signature_explicit_files_mode(tmp_path):
+    """The `files=` mode (tempdoc 669): signs an arbitrary explicit file list,
+    not the golden/mixed two-file shape, for non-eval reference corpora."""
+    import hashlib
+
+    d = tmp_path / "demo-corpus"
+    d.mkdir()
+    a = d / "a.md"
+    b = d / "b.md"
+    a.write_text("alpha", encoding="utf-8")
+    b.write_text("beta", encoding="utf-8")
+
+    sig = corpus_identity.corpus_signature(d, files=[a, b])
+    h = hashlib.sha256()
+    h.update(a.read_bytes())
+    h.update(b.read_bytes())
+    assert sig == h.hexdigest()
+
+    # Order matters (files are hashed in the given order, not re-sorted).
+    assert corpus_identity.corpus_signature(d, files=[b, a]) != sig
+
+    # A changed file changes the signature.
+    a.write_text("alpha-changed", encoding="utf-8")
+    assert corpus_identity.corpus_signature(d, files=[a, b]) != sig
+
+    # Default (no `files=`) mode on the same directory is unaffected — no
+    # corpus.jsonl/qrels here, so it returns None rather than picking up `a`/`b`.
+    assert corpus_identity.corpus_signature(d) is None
+
+    # Empty / all-missing file list -> None, same "nothing to sign" contract.
+    assert corpus_identity.corpus_signature(d, files=[]) is None
+    assert corpus_identity.corpus_signature(d, files=[d / "missing.md"]) is None
+
+
 # ---------------------------------------------------------------------------
 # corpus_build — single source -> two projections
 # ---------------------------------------------------------------------------
@@ -201,6 +235,129 @@ def test_retrieval_difficulty_label_from_ndcg():
 
 
 # ---------------------------------------------------------------------------
+# descriptor_collision_report — the qrel self-consistency check (tempdoc 664)
+# ---------------------------------------------------------------------------
+
+def test_descriptor_collision_report_flags_gold_involved_collision():
+    # gold1 and distractor1 accidentally share a title -> qrel-corrupting collision.
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor2", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is False
+    assert report["n_groups"] == 1
+    assert report["n_docs_involved"] == 2
+    assert report["n_gold_involved"] == 1
+    assert sorted(report["groups"][0]["doc_ids"]) == ["distractor1", "gold1"]
+
+
+def test_descriptor_collision_report_distractor_only_does_not_fail():
+    # Two distractors collide with each other, but no gold chain is involved — reported, not failed.
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The reactor in the eastern ridge", "text": "..."},
+        {"_id": "distractor2", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is True  # no gold-involved collision
+    assert report["n_groups"] == 1
+    assert report["n_docs_involved"] == 2
+    assert report["n_gold_involved"] == 0
+
+
+def test_descriptor_collision_report_clean_corpus_passes():
+    docs = [
+        {"_id": "gold1", "title": "The vineyard in the sunny valley", "text": "..."},
+        {"_id": "distractor1", "title": "The reactor in the eastern ridge", "text": "..."},
+    ]
+    queries = [{"query": "q1", "evidence_ids": ["gold1"]}]
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["passed"] is True
+    assert report["n_groups"] == 0
+    assert report["n_docs_involved"] == 0
+
+
+def test_descriptor_collision_report_without_queries_reports_but_cannot_fail():
+    docs = [
+        {"_id": "a", "title": "Same Title", "text": "..."},
+        {"_id": "b", "title": "Same Title", "text": "..."},
+    ]
+    report = corpus_certify.descriptor_collision_report(docs)  # queries omitted
+    assert report["n_groups"] == 1
+    assert report["n_gold_involved"] == 0
+    assert report["passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# regeneration_determinism_report — the certification-time "seeded -> reproducible"
+# verification check (tempdoc 664, seventh pass)
+# ---------------------------------------------------------------------------
+
+_FULL_PROVENANCE = {
+    "method": "procedural-fabricated", "axis": "prose", "lang": "en", "seed": 1,
+    "hops": 1, "distractor_ratio": 3, "semantic": True, "n_chains": 3, "doc_words": 60,
+}
+
+
+def test_regeneration_determinism_skips_when_provenance_missing():
+    report = corpus_certify.regeneration_determinism_report(None)
+    assert report["passed"] is None
+    assert "not applicable" in report["reason"]
+
+
+def test_regeneration_determinism_skips_hand_authored_corpus():
+    report = corpus_certify.regeneration_determinism_report({"method": "hand-authored-fabricated"})
+    assert report["passed"] is None
+    assert "hand-authored-fabricated" in report["reason"]
+
+
+def test_regeneration_determinism_skips_incomplete_provenance():
+    # missing n_chains/doc_words — a corpus certified before the tempdoc 664 provenance fix.
+    incomplete = {k: v for k, v in _FULL_PROVENANCE.items() if k not in ("n_chains", "doc_words")}
+    report = corpus_certify.regeneration_determinism_report(incomplete)
+    assert report["passed"] is None
+    assert "n_chains" in report["reason"] and "doc_words" in report["reason"]
+
+
+def test_regeneration_determinism_real_regeneration_passes():
+    """Unmocked — a real end-to-end run of the certify-level check (mirrors
+    test_generate_is_deterministic_across_processes but through the public certify-level
+    function, confirming the wiring, not just the underlying generate() fix)."""
+    report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+    assert report["passed"] is True
+    assert report["method"] == "cross-process-regeneration-diff"
+
+
+def test_regeneration_determinism_flags_a_real_mismatch():
+    """Mocked subprocess: simulate a mismatch (the pre-fix bug class) without needing to actually
+    reintroduce non-determinism into corpus_generate.py."""
+    import subprocess as _sp
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        # cmd = [python, "-c", script, out_dir, axis, lang, seed, hops, ratio, semantic,
+        #        n_chains, doc_words] -- the output dir is always the 4th element (index 3).
+        out_dir = Path(cmd[3])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        calls["n"] += 1
+        (out_dir / "docs.jsonl").write_text(f"run{calls['n']}\n", encoding="utf-8")
+        (out_dir / "queries.json").write_text("[]", encoding="utf-8")
+        return _sp.CompletedProcess(cmd, 0, "", "")
+
+    # tempdoc 664 (twelfth pass): the subprocess call now lives in corpus_generate.regenerate_and_diff
+    # (extracted, shared with the pytest determinism test) rather than in corpus_certify itself.
+    with patch("jseval.corpus_generate.subprocess.run", side_effect=fake_run):
+        report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+    assert report["passed"] is False
+    assert "docs.jsonl" in report["mismatched_files"]
+
+
+# ---------------------------------------------------------------------------
 # corpus_fidelity — the retrieval-difficulty gate (§D.5)
 # ---------------------------------------------------------------------------
 
@@ -259,6 +416,32 @@ def test_fidelity_records_incomparable_headline(tmp_path):
     assert r["comparable"] is False
 
 
+def test_certify_computes_descriptor_collisions_end_to_end(tmp_path):
+    """tempdoc 664 (seventh-pass regression guard): `corpus-certify` must actually COMPUTE
+    descriptor_collisions against the real materialized `corpus.jsonl`, not just the pure
+    `descriptor_collision_report()` function in isolation. The sixth-pass fix was live-verified by
+    calling the function directly (bypassing the CLI's file-loading), which hid a wrong filename
+    (`docs.jsonl` instead of the real `corpus.jsonl` `corpus_build.py` writes) — this test exercises
+    the real CLI path end-to-end, mocking only the closed-book call."""
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    _write_source(tmp_path / "src")  # 4 clean, non-colliding docs (Alpha/Bex Ko/Gamma/Tas Vrel)
+    ds = tmp_path / "datasets" / "golden" / "x"
+    corpus_build.build_golden(tmp_path / "src", ds)
+    assert (ds / "corpus.jsonl").is_file()  # sanity: confirms the real filename this test guards
+
+    with patch("jseval.utility_calibrate.closed_book_filter", return_value=([], 0)):
+        r = CliRunner().invoke(main, ["corpus-certify", "--dataset", "x",
+                                      "--datasets-dir", str(tmp_path / "datasets")])
+    assert r.exit_code == 0, r.output
+    fid = json.loads((ds / "metadata.json").read_text(encoding="utf-8"))["fidelity"]
+    assert "descriptor_collisions" in fid, "descriptor_collisions was never computed by the real CLI path"
+    assert fid["descriptor_collisions"]["passed"] is True
+    assert fid["descriptor_collisions"]["n_groups"] == 0
+
+
 def test_certify_does_not_clobber_existing_retrieval_fidelity(tmp_path):
     """Regression (the merge-clobber bug): corpus-certify running AFTER corpus-fidelity must MERGE
     the fidelity block, not overwrite it — its placeholder `retrieval_difficulty: None` must not
@@ -307,8 +490,13 @@ def test_fidelity_does_not_clobber_existing_memory_independence(tmp_path):
     meta = json.loads((ds / "metadata.json").read_text(encoding="utf-8"))
     meta["fidelity"] = {"memory_independence": 1.0, "retrieval_difficulty": None}
     (ds / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    # This test exercises the fidelity-metadata MERGE; it mocks the pipeline instead of
+    # running a real backend, so the tempdoc 644 Axis 2 capability guard (which would refuse
+    # on an unreachable backend) is neutralized here — it has dedicated coverage in
+    # tests/test_preflight.py::TestAssertCapabilities.
     with patch("jseval.run.execute_run", return_value=_summary(0.70)), \
-         patch("jseval.corpus_fidelity.shortcut_leak_rate", return_value=(0.0, 0)):
+         patch("jseval.corpus_fidelity.shortcut_leak_rate", return_value=(0.0, 0)), \
+         patch("jseval.commands.corpus.assert_run_capabilities"):
         r = CliRunner().invoke(main, ["corpus-fidelity", "--dataset", "x",
                                       "--datasets-dir", str(tmp_path / "datasets")])
     assert r.exit_code == 0, r.output
@@ -326,6 +514,85 @@ def test_validator_warns_on_failed_fidelity():
     assert any("FAILED the fidelity gate" in x for x in msgs)
 
 
+# tempdoc 664 (post-review fix): descriptor_collisions must surface the same way its two sibling
+# fidelity sub-checks already do — the original wiring computed and persisted the verdict but
+# never warned on it, so a corpus with a real collision defect (confirmed: `needle-burial-v1`)
+# produced zero signal in normal `jseval run`/corpus-load usage.
+
+def test_validator_warns_on_failed_descriptor_collisions():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "descriptor_collisions": {"passed": False, "n_groups": 24,
+                                                                 "n_docs_involved": 51, "n_gold_involved": 7}}})
+    assert any("FAILED the descriptor-collision check" in x for x in msgs)
+    assert any("7 gold chain(s)" in x for x in msgs)
+
+
+def test_validator_warns_on_missing_descriptor_collisions_verdict():
+    """A corpus certified before this check existed has no `descriptor_collisions` key at all —
+    flagged (symmetric to the missing closed_book_certification / fidelity checks), not silently
+    treated as passing."""
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0}})
+    assert any("no descriptor_collisions verdict" in x for x in msgs)
+
+
+def test_validator_quiet_on_passing_descriptor_collisions():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "descriptor_collisions": {"passed": True, "n_groups": 0,
+                                                                 "n_docs_involved": 0, "n_gold_involved": 0}}})
+    assert not any("descriptor-collision" in x or "descriptor_collisions" in x for x in msgs)
+
+
+# tempdoc 664 (seventh pass): regeneration_determinism validator warnings — symmetric to the three
+# checks above, plus the extra "skip is silent" state this check alone has.
+
+def test_validator_warns_on_failed_regeneration_determinism():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": False,
+                                                                    "mismatched_files": ["docs.jsonl"]}}})
+    assert any("FAILED regeneration-determinism" in x for x in msgs)
+
+
+def test_validator_warns_on_missing_regeneration_determinism_verdict():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0}})
+    assert any("no regeneration_determinism verdict" in x for x in msgs)
+
+
+def test_validator_quiet_on_passing_regeneration_determinism():
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": True}}})
+    assert not any("regeneration-determinism" in x or "regeneration_determinism" in x for x in msgs)
+
+
+def test_validator_quiet_on_skipped_regeneration_determinism():
+    """A deliberate skip (hand-authored/incomplete-provenance corpus) is NOT a failure and NOT a
+    missing verdict — it must stay silent, distinct from the other two states."""
+    msgs, _ = _validate({"suite": "s", "contamination_class": "private-synthetic",
+                         "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+                         "fidelity": {"passed": True, "retrieval_ndcg": 0.70,
+                                      "band": [0.40, 0.85], "shortcut_leak_rate": 0.0,
+                                      "regeneration_determinism": {"passed": None,
+                                                                    "reason": "not applicable"}}})
+    assert not any("regeneration-determinism" in x or "regeneration_determinism" in x for x in msgs)
+
+
 def test_generate_produces_unique_multihop_source(tmp_path):
     from jseval import corpus_generate as cg
     stats = cg.generate(tmp_path / "g", axis="prose", n_chains=5, hops=2,
@@ -339,6 +606,132 @@ def test_generate_produces_unique_multihop_source(tmp_path):
     assert all(len(q["evidence_ids"]) >= 2 for q in qs)  # genuine multi-hop by construction
     answers = [q["answer"] for q in qs]
     assert len(answers) == len(set(answers))  # Issue-C: unique answer per chain (no shared pool)
+
+
+def test_generate_is_deterministic_across_processes(tmp_path):
+    """Regression guard for tempdoc 664: `generate()`'s docstring claims "seeded -> reproducible",
+    but the RNG seed used to derive `axis_offset` from `hash(axis)` was per-process-randomized
+    (Python's `str.__hash__`, PEP 456) unless `PYTHONHASHSEED` is pinned — invisible to an
+    in-process test (like `test_generate_produces_unique_multihop_source` above) because `hash()`
+    is stable *within* one process. This test spawns `generate()` in two SEPARATE `python`
+    processes with the identical nominal seed and diffs the output, closing the exact blind spot
+    that hid the bug (confirmed empirically pre-fix: 280/280 docs differed between two runs)."""
+    from jseval import corpus_generate as cg
+
+    out1, out2 = tmp_path / "run1", tmp_path / "run2"
+    result = cg.regenerate_and_diff(
+        out1, out2, axis="prose", lang="en", n_chains=5, hops=1,
+        distractor_ratio=3, doc_words=60, seed=42, semantic=True,
+    )
+    assert result["ok"], result.get("error")
+    assert not result["mismatched_files"], f"differs between two same-seed regenerations: {result['mismatched_files']}"
+    # meta.json isn't diffed by regenerate_and_diff (only docs.jsonl/queries.json -- the certification-
+    # relevant content); confirm it too, matching the original test's coverage.
+    assert (out1 / "meta.json").read_text(encoding="utf-8") == (out2 / "meta.json").read_text(encoding="utf-8")
+
+    # tempdoc 664 (twelfth pass): gold and distractor docs are now interleaved (not written as
+    # two unbroken blocks) -- confirm the change actually happened, not just that it's still
+    # deterministic. 5 gold chains x 2 docs (hops=1) = 10 gold doc ids among 40 total.
+    doc_ids = [json.loads(line)["_id"] for line in (out1 / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((out1 / "queries.json").read_text(encoding="utf-8"))
+    gold_ids = {eid for q in queries for eid in q["evidence_ids"]}
+    assert len(doc_ids) == 40 and len(gold_ids) == 10
+    gold_positions = [i for i, did in enumerate(doc_ids) if did in gold_ids]
+    assert gold_positions != list(range(10)), "gold docs are still one unbroken leading block -- not interleaved"
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 624 T.1 — construction-time descriptor-collision exclusion + the third
+# combinatorial (qualifier) axis. 664 built DETECTION (descriptor_collision_report,
+# tested above); these tests exercise the real generator fix that makes a
+# gold-involved collision structurally impossible, not merely caught after the fact.
+# ---------------------------------------------------------------------------
+
+def test_generate_excludes_gold_reserved_descriptors_from_distractors(tmp_path):
+    """Regression test for the original 664-measured bug: `_sem_for`'s distractor branch
+    used to draw an INDEPENDENT uniform (type, place) pair from the SAME pool gold chains
+    used, with no exclusion of gold-reserved combinations -- so a distractor could
+    reproduce a gold chain's exact descriptor, corrupting that query's own qrel (664
+    measured 7/20 gold-involved collisions in the committed needle-burial-v1 corpus).
+
+    Generates a REAL corpus via `corpus_generate.generate()` at realistic semantic-mode
+    scale -- n_chains=26 (`generate()`'s own semantic-mode place-pool cap) and
+    distractor_ratio=30 (the ratio 624's confidence pass measured 94% distractor
+    descriptor duplication at) -- and runs the real, unmodified
+    `corpus_certify.descriptor_collision_report` against it. This is the regression test
+    that would have caught the original bug: with the pre-fix uniform draw, a run at this
+    scale reliably produced gold-involved collisions; with the gold-reserved exclusion,
+    zero is now a structural guarantee, not a matter of luck.
+    """
+    from jseval import corpus_generate as cg
+
+    stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+    docs = [json.loads(line) for line in
+            (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
+
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+
+    assert stats["gold_chains"] == 26, "sem-mode place-pool cap did not engage as expected"
+    assert report["n_gold_involved"] == 0, (
+        f"gold-involved descriptor collision at realistic scale (the exact defect tempdoc "
+        f"664 measured): {report['groups']}"
+    )
+    assert report["passed"] is True
+
+
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_generate_excludes_gold_reserved_descriptors_from_distractors_multi_seed(lang, tmp_path):
+    """Same construction-time guarantee as above, swept across seeds and both language
+    pools (English + German) -- confirms the fix is structural (a property of the
+    exclusion logic itself), not an artifact of one lucky seed."""
+    from jseval import corpus_generate as cg
+
+    for seed in range(10):
+        out = tmp_path / f"g{seed}"
+        cg.generate(out, axis="prose", lang=lang, n_chains=26, hops=2,
+                    distractor_ratio=15, doc_words=60, seed=seed, semantic=True)
+        docs = [json.loads(line) for line in
+                (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+        queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+        report = corpus_certify.descriptor_collision_report(docs, queries)
+        assert report["n_gold_involved"] == 0, f"lang={lang} seed={seed}: {report['groups']}"
+
+
+def test_generate_third_axis_keeps_distractor_duplication_low_at_scale(tmp_path):
+    """Regression test for tempdoc 624 T.1 item 2 (the combinatorial third axis): the
+    fixed 2-axis (type, place) pool is only 12 x 26 = 312 combinations, and 624's
+    confidence-pass simulation found that even DISTRACTOR-ONLY (non-qrel-corrupting, but
+    wasted-diversity) descriptor duplication reached 94% at n_chains=26,
+    distractor_ratio=30 -- the scale needed to reach ~800 total docs.
+
+    Asserts the real generator's distractor-only duplication rate at that SAME scale is
+    now far below the measured pre-fix 94% figure -- a generous margin (25%), not a tight
+    pin, since exact duplication is seed-dependent; the point is "meaningfully improved
+    by an order of magnitude", not "reduced to some exact number".
+    """
+    from jseval import corpus_generate as cg
+
+    stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+    docs = [json.loads(line) for line in
+            (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+
+    # hops=2 -> 3 docs per chain (2 link docs + 1 attribute doc), one descriptor-carrying
+    # head doc per chain; distractor_ratio=30 against 78 gold docs is an exact multiple of
+    # 3 (2340), so no partial trailing chain to account for.
+    n_distractor_chains = stats["distractor_docs"] // 3
+    duplication_rate = report["n_docs_involved"] / n_distractor_chains
+
+    assert report["n_gold_involved"] == 0  # the construction-time guarantee still holds
+    assert duplication_rate < 0.25, (
+        f"distractor-descriptor duplication rate {duplication_rate:.2%} is not meaningfully "
+        f"improved over the pre-fix ~94% baseline measured at this same scale "
+        f"(tempdoc 624 confidence pass, item 3)"
+    )
 
 
 @pytest.mark.parametrize("axis,lang", [("code", "en"), ("tabular", "en"), ("prose", "de")])
@@ -364,6 +757,212 @@ def test_semantic_mode_defeats_grep_on_all_axes(tmp_path, axis, lang):
         # provenance records the semantic flag truthfully
     src_meta = _j.loads((out / "meta.json").read_text(encoding="utf-8"))
     assert src_meta["generation_provenance"]["semantic"] is True
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 624 T.2 — the degraded-scan corpus member (axis="scan"). A new
+# axis-renderer within the existing corpus artifact abstraction: documents
+# materialize as degraded-scan PNGs (defeats a casual multimodal `Read`, per the
+# tempdoc's live confidence-pass probe) while ground-truth `text` -- used for
+# retrieval scoring, certification, and the agent's evidence view -- is unchanged.
+# Pure-function / fixture tests only, no live claude, no dev stack.
+# ---------------------------------------------------------------------------
+
+def test_render_scan_image_produces_a_valid_png():
+    pytest.importorskip("PIL")
+    import io
+
+    from PIL import Image
+
+    from jseval import corpus_generate as cg
+
+    png_bytes = cg.render_scan_image("Some fabricated chain text to render onto a page.", seed=1)
+    img = Image.open(io.BytesIO(png_bytes))
+    img.load()  # force decode -- confirms it's a genuinely valid PNG, not just a header
+    assert img.format == "PNG"
+    assert img.size[0] > 0 and img.size[1] > 0
+
+
+def test_render_scan_image_deterministic_for_same_seed_varies_by_seed():
+    pytest.importorskip("PIL")
+    text = "The reactor in the northern marshlands was designed by the engineer Quenby."
+    from jseval import corpus_generate as cg
+
+    a1 = cg.render_scan_image(text, seed=42)
+    a2 = cg.render_scan_image(text, seed=42)
+    b = cg.render_scan_image(text, seed=7)
+    assert a1 == a2, "same seed must render byte-identical PNGs (noise is the only randomized step)"
+    assert a1 != b, "a different seed must vary the salt-and-pepper noise placement"
+
+
+def test_render_scan_image_accepts_real_corpus_scale_input():
+    """Sanity-bound calibration check (post-624-follow-up): the largest committed scan
+    doc today (`635-corpora/synth-scan-v1`, doc_words=520) renders to ~3,888 chars of
+    title+text at the only width/font_size any caller in this codebase ever passes
+    (900px/13pt). A same-scale input must still render successfully -- the new bounds
+    must have real headroom, not just theoretical headroom."""
+    pytest.importorskip("PIL")
+    import io
+
+    from PIL import Image
+
+    from jseval import corpus_generate as cg
+
+    word = "reactor northern marshland engineer Quenby fabricated province delegate "
+    text = (word * 80).strip()  # ~3,900 chars, matching the real worst-case doc
+    assert len(text) > 3800
+
+    png_bytes = cg.render_scan_image(text, seed=1)
+    img = Image.open(io.BytesIO(png_bytes))
+    img.load()
+    assert img.format == "PNG"
+
+
+def test_render_scan_image_rejects_oversized_text():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    oversized = "word " * (cg.MAX_SCAN_TEXT_CHARS // 4)
+    assert len(oversized) > cg.MAX_SCAN_TEXT_CHARS
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image(oversized, seed=1)
+
+
+def test_render_scan_image_rejects_oversized_width():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image("some short text", width=cg.MAX_SCAN_WIDTH_PX + 1, seed=1)
+
+
+def test_render_scan_image_rejects_oversized_font_size():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image("some short text", font_size=cg.MAX_SCAN_FONT_SIZE + 1, seed=1)
+
+
+def test_render_scan_image_rejects_excessive_wrapped_height():
+    """Defense in depth: individually-in-bounds width + text length can still combine
+    (e.g. a narrow width forcing near one-word-per-line wrapping of a long text) to a
+    wrapped page height beyond the ceiling. The height check must catch this
+    combination even though no single parameter alone tripped its own bound."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    narrow_width = 40  # near the wrap-width floor -- forces many short lines
+    long_text = "reactor province delegate marshland fabricated " * 400
+    assert len(long_text) < cg.MAX_SCAN_TEXT_CHARS
+    assert narrow_width < cg.MAX_SCAN_WIDTH_PX
+    with pytest.raises(cg.ScanRenderLimitExceeded):
+        cg.render_scan_image(long_text, width=narrow_width, seed=1)
+
+
+def test_generate_scan_axis_source_is_plain_text_like_every_other_axis(tmp_path):
+    """A `type_axis="scan"` corpus's committed *source* (`docs.jsonl`) must be identical in
+    shape to a plain prose source -- no image bytes anywhere -- so it stays small and
+    deterministic like every sibling (tempdoc 624 §T.2, revised: the scan-page PNG is a
+    materialize-time artifact, not a generation-time one; embedding it in the committed
+    source blew a doc_words=520 corpus up to 203MB vs. ~1.4-1.8MB for text-only siblings)."""
+    from jseval import corpus_generate as cg
+
+    out = tmp_path / "g"
+    stats = cg.generate(out, axis="scan", n_chains=3, hops=2, distractor_ratio=2,
+                         doc_words=520, seed=1)
+    docs = [json.loads(line) for line in (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(docs) == stats["docs"]
+    for d in docs:
+        assert set(d.keys()) == {"_id", "title", "text"}, f"{d['_id']} carries unexpected keys: {d.keys()}"
+        assert d["text"]
+    # multi-hop / unique-answer invariants (shared with every other axis) still hold
+    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+    assert all(len(q["evidence_ids"]) >= 2 for q in queries)
+    src_meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    assert src_meta["type_axis"] == "scan"
+
+
+def test_generate_scan_axis_deterministic_across_processes(tmp_path):
+    """Mirrors `test_generate_is_deterministic_across_processes` for the scan axis: since
+    `render()` now routes `axis="scan"` to the same `_render_prose` text generation as the
+    plain prose axis, this is really confirming the dispatch didn't introduce a new
+    per-process-random source -- the actual image rendering happens later, at build time."""
+    from jseval import corpus_generate as cg
+
+    out1, out2 = tmp_path / "run1", tmp_path / "run2"
+    result = cg.regenerate_and_diff(
+        out1, out2, axis="scan", lang="en", n_chains=2, hops=1,
+        distractor_ratio=2, doc_words=40, seed=9, semantic=False,
+    )
+    assert result["ok"], result.get("error")
+    assert not result["mismatched_files"], f"scan axis differs between two same-seed regenerations: {result['mismatched_files']}"
+
+
+def test_render_scan_page_deterministic_for_same_doc_id_varies_by_doc_id():
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    a1 = cg.render_scan_page("doc1", "Title", "Some fabricated ground-truth text.")
+    a2 = cg.render_scan_page("doc1", "Title", "Some fabricated ground-truth text.")
+    b = cg.render_scan_page("doc2", "Title", "Some fabricated ground-truth text.")
+    assert a1 == a2, "same doc_id + content must render byte-identical PNGs"
+    assert a1 != b, "a different doc_id must vary the salt-and-pepper noise seed"
+
+
+def test_build_golden_materializes_scan_docs_as_png(tmp_path):
+    """§T.2's core mechanism: `corpus_build.build_golden` renders the scan PNG HERE, at
+    materialize time, from the doc's own ground-truth `text` (via `render_scan_page`) --
+    the committed source never carries image bytes. `corpus-dir/` (the agent file-tools /
+    real-ingest view) gets the PNG; `corpus.jsonl` (the retrieval-quality view) keeps using
+    ground-truth `text` untouched, since that view scores against the *intended* content,
+    not whatever a real ingest pipeline manages to extract from the degraded image."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+    from jseval.materialize import doc_id_to_filename
+
+    src = tmp_path / "src"
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=3)
+    docs = [json.loads(line) for line in (src / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert all("image_b64" not in d for d in docs), "committed source must carry no image bytes"
+
+    ds = tmp_path / "golden" / "scan-x"
+    corpus_build.build_golden(src, ds, now="2026-07-02")
+
+    corpus_dir = ds / "corpus-dir"
+    for d in docs:
+        png_path = corpus_dir / doc_id_to_filename(d["_id"], ext="png")
+        assert png_path.is_file(), f"{d['_id']} was not materialized as a PNG"
+        assert png_path.read_bytes().startswith(b"\x89PNG"), f"{d['_id']}.png is not a real PNG"
+        assert not (corpus_dir / doc_id_to_filename(d["_id"])).exists()  # no stray .txt
+
+    # retrieval view is unaffected -- ground-truth text, not image content
+    corpus_lines = [json.loads(line) for line in (ds / "corpus.jsonl").read_text(encoding="utf-8").splitlines()]
+    by_id = {c["_id"]: c for c in corpus_lines}
+    for d in docs:
+        assert by_id[d["_id"]]["text"] == d["text"]
+
+
+def test_build_golden_scan_materialization_is_reproducible_from_source(tmp_path):
+    """The whole point of rendering at materialize time instead of embedding in source:
+    the PNG artifact must be exactly reconstructable from the committed source alone, any
+    number of times (no hidden state) -- this is what makes it safe for `datasets/` to stay
+    gitignored for a scan-axis corpus the same as every other axis."""
+    pytest.importorskip("PIL")
+    from jseval import corpus_generate as cg
+
+    src = tmp_path / "src"
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=80, seed=11)
+
+    ds1, ds2 = tmp_path / "ds1", tmp_path / "ds2"
+    corpus_build.build_golden(src, ds1, now="2026-07-02")
+    corpus_build.build_golden(src, ds2, now="2026-07-02")
+
+    pngs1 = sorted((ds1 / "corpus-dir").glob("*.png"))
+    pngs2 = sorted((ds2 / "corpus-dir").glob("*.png"))
+    assert pngs1 and len(pngs1) == len(pngs2)
+    assert [p.name for p in pngs1] == [p.name for p in pngs2]
+    assert all(a.read_bytes() == b.read_bytes() for a, b in zip(pngs1, pngs2))
 
 
 def test_validator_quiet_on_passing_fidelity():

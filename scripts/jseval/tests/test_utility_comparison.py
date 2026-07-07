@@ -195,6 +195,346 @@ def test_seed_aggregation_envelope():
     assert cell["n_paired_observations"] == 12  # 3 seeds x 4 queries
 
 
+# --- Answer-key leak detection backstop (tempdoc 624 §As-built #7) ----------
+#
+# A real leak was found where an agent under a file-tool condition read the
+# eval's own gold-answer file (queries.json) directly, producing a
+# leaked-but-correct answer indistinguishable from a genuine one by any
+# existing check. These tests prove the composer-level backstop: a flagged
+# (seed, qid) observation is EXCLUDED from the paired statistics (never enters
+# McNemar/bootstrap-CI) and surfaced separately in `leak_suspect_cells`, not
+# silently dropped from the record and not silently counted as a win.
+
+def test_leak_suspect_query_excluded_from_paired_stats_and_surfaced():
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    # q1 is leak-suspect on the with-tool arm — its favorable "correct=True"
+    # must not count toward the with-tool accuracy or the paired n.
+    c_pq["q1"] = {**c_pq["q1"], "leak_suspect": True}
+    summaries = [
+        _summary("A", a_pq, search_key=None),
+        _summary("C", c_pq, search_key="search-XYZ"),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["n_paired_observations"] == 3  # q1 excluded, 3 of 4 remain
+    assert cell["leak_suspect_cells"] == [
+        {"seed": 0, "qid": "q1", "baseline_leak_suspect": False, "with_tool_leak_suspect": True},
+    ]
+
+
+def test_no_leak_suspect_signal_no_false_positive():
+    """A clean run (no `leak_suspect` key on any per_query entry, the shape
+    every pre-existing summary already has) reports an empty
+    `leak_suspect_cells` and keeps every observation paired — the backstop
+    must not fire on ordinary, unflagged data."""
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["leak_suspect_cells"] == []
+    assert cell["n_paired_observations"] == 4
+
+
+def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
+    """Full pipeline: agent_retrieval_eval.find_leak_suspect_tool_calls's verdict
+    on a raw AgentResult-shaped record (as `_aggregate_agent` emits it) survives
+    agent_utility_run._per_query_from_result's reshape and lands as an
+    excluded+flagged observation in the composed cell."""
+    from jseval import agent_utility_run as aur
+
+    def _raw_results(corrects, leaked_qids=()):
+        out = []
+        for i, correct in enumerate(corrects):
+            qid = f"q{i}"
+            out.append({
+                "query": qid, "correct": correct, "cost_usd": 0.10,
+                "cache_creation_tokens": 4000, "num_turns": 5,
+                "leak_suspect_tool_calls": (
+                    [{"tool": "Read", "input": {"file_path": "/eval/queries.json"}}]
+                    if qid in leaked_qids else []
+                ),
+            })
+        return {"results": out}
+
+    corpus = {"dataset": "mixed/multihop-rag", "signature": "sig-mh"}
+    manifest_a = agent_manifest.build_agent_manifest(
+        corpus=corpus, agent_model="haiku", agent_model_version=None,
+        cli_version="2.1.183", mcp_tool_surface=None,
+        judge=agent_manifest.judge_identity(kind="substring-em"),
+        prompt_template="t", condition="A", seed=0, search_config_cohort_key=None)
+    manifest_c = agent_manifest.build_agent_manifest(
+        corpus=corpus, agent_model="haiku", agent_model_version=None,
+        cli_version="2.1.183", mcp_tool_surface=None,
+        judge=agent_manifest.judge_identity(kind="substring-em"),
+        prompt_template="t", condition="C", seed=0, search_config_cohort_key="search-1")
+
+    summary_a = {
+        "manifest": manifest_a, "condition": "A", "agent_model": "haiku", "corpus": corpus,
+        "per_query": aur._per_query_from_result(_raw_results([True, True])),
+    }
+    summary_c = {
+        "manifest": manifest_c, "condition": "C", "agent_model": "haiku", "corpus": corpus,
+        "per_query": aur._per_query_from_result(
+            _raw_results([True, True], leaked_qids={"q0"})),
+    }
+
+    rec = utility_comparison.compose_utility([summary_a, summary_c], composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["n_paired_observations"] == 1
+    assert cell["leak_suspect_cells"][0]["qid"] == "q0"
+    assert cell["leak_suspect_cells"][0]["with_tool_leak_suspect"] is True
+
+
+# --- tool_call_assertions (tempdoc 624 §As-built #5 residual-gap close) -----
+#
+# The additive coverage block that lets a consumer tell "0 violations observed
+# across N cells with real tool data" from "no tool data captured" -- the
+# credibility bar (tempdoc 624 §M.8 item 2) is a per-cell EMPIRICAL check, not
+# a config-trust assumption, and this is the record-level rollup of it.
+
+def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls=None,
+              leak_suspect=None, mcp_tools_offered=None, mcp_surface_unverified=None):
+    entry = {"correct": correct, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
+    if tool_calls is not None or disallowed is not None or leak_tool_calls is not None:
+        entry["tool_calls"] = tool_calls
+        entry["disallowed_tool_calls"] = disallowed
+        entry["leak_suspect_tool_calls"] = leak_tool_calls
+    if leak_suspect is not None:
+        entry["leak_suspect"] = leak_suspect
+    if mcp_tools_offered is not None:
+        entry["mcp_tools_offered"] = mcp_tools_offered
+    if mcp_surface_unverified is not None:
+        entry["mcp_surface_unverified"] = mcp_surface_unverified
+    return entry
+
+
+def test_tool_call_assertions_reports_clean_when_zero_violations_across_checked_cells():
+    a_pq = {f"q{i}": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]) for i in range(4)}
+    c_pq = {f"q{i}": _pq_entry(tool_calls=[{"tool": "justsearch_answer", "input": {}}],
+                               disallowed=[], leak_tool_calls=[]) for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    tca = rec["tool_call_assertions"]
+    assert tca["A"] == {"cells_total": 4, "cells_with_tool_data": 4,
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0,
+                        "cells_with_mcp_surface_verified": 0, "cells_mcp_surface_unverified": 0}
+    assert tca["C"] == {"cells_total": 4, "cells_with_tool_data": 4,
+                        "cells_with_disallowed_violations": 0, "cells_with_leak_suspect": 0,
+                        "cells_with_mcp_surface_verified": 0, "cells_mcp_surface_unverified": 0}
+
+
+def test_tool_call_assertions_counts_disallowed_violations():
+    c_pq = {
+        "q0": _pq_entry(tool_calls=[{"tool": "Bash", "input": {}}],
+                        disallowed=[{"tool": "Bash", "input": {}}], leak_tool_calls=[]),
+        "q1": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+        "q2": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+        "q3": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),
+    }
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert rec["tool_call_assertions"]["C"]["cells_with_disallowed_violations"] == 1
+    assert rec["tool_call_assertions"]["C"]["cells_with_tool_data"] == 4
+
+
+def test_tool_call_assertions_distinguishes_no_data_from_verified_clean():
+    """A `None` tool_calls list (no capture) must NOT count toward
+    cells_with_tool_data, even though the cell is otherwise a normal paired
+    observation -- the tri-state distinction the whole field exists for."""
+    a_pq = {
+        "q0": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None),  # no data
+        "q1": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[]),        # checked, clean
+        "q2": _pq_entry(),  # no tool_calls key at all (older-shaped summary)
+        "q3": _pq_entry(),
+    }
+    c_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_total"] == 4
+    assert a["cells_with_tool_data"] == 1  # only q1 carried a real (possibly empty) list
+    assert a["cells_with_disallowed_violations"] == 0
+
+
+def test_tool_call_assertions_degrades_gracefully_for_summaries_without_tool_call_keys():
+    """The OLDEST summary shape (pre-tempdoc-624-§As-built-#5, or the classic
+    run_agent_eval path's raw dict before this fix): per_query entries carry
+    NO tool_calls/disallowed_tool_calls/leak_suspect_tool_calls keys at all.
+    Must not crash and must read as "no tool data" everywhere, never a
+    fabricated 0-violations-means-clean signal."""
+    a_pq = {f"q{i}": {"correct": True, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
+            for i in range(3)}
+    c_pq = {f"q{i}": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 2}
+            for i in range(3)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    for cond in ("A", "C"):
+        tca = rec["tool_call_assertions"][cond]
+        assert tca["cells_total"] == 3
+        assert tca["cells_with_tool_data"] == 0
+        assert tca["cells_with_disallowed_violations"] == 0
+        assert tca["cells_with_leak_suspect"] == 0
+    # the paired comparison itself must still work -- absent tool-call keys
+    # must not break the existing accuracy/cost/token pairing.
+    assert rec["measured"]["mixed/multihop-rag"]["haiku"]["n_paired_observations"] == 3
+
+
+def test_tool_call_assertions_counts_leak_suspect_from_bool_flag_even_without_tool_data():
+    """`leak_suspect` can be set by the text-scan backstop
+    (`agent_utility_run.apply_leak_flags`) on a cell that never captured real
+    tool_calls data at all -- the leak-suspect count must still pick it up
+    (unlike the disallowed-violations count, which needs real tool data)."""
+    a_pq = {
+        "q0": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None, leak_suspect=True),
+        "q1": _pq_entry(tool_calls=None, disallowed=None, leak_tool_calls=None, leak_suspect=False),
+    }
+    c_pq = {"q0": _pq_entry(), "q1": _pq_entry()}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_with_leak_suspect"] == 1
+    assert a["cells_with_tool_data"] == 0  # still no real tool_calls captured
+
+
+def test_tool_call_assertions_grouped_per_condition_not_merged():
+    a_pq = {"q0": _pq_entry(tool_calls=[], disallowed=[], leak_tool_calls=[])}
+    c_pq = {"q0": _pq_entry(tool_calls=[{"tool": "Bash", "input": {}}],
+                            disallowed=[{"tool": "Bash", "input": {}}], leak_tool_calls=[])}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert set(rec["tool_call_assertions"]) == {"A", "C"}
+    assert rec["tool_call_assertions"]["A"]["cells_with_disallowed_violations"] == 0
+    assert rec["tool_call_assertions"]["C"]["cells_with_disallowed_violations"] == 1
+
+
+def test_tool_call_assertions_counts_mcp_surface_verified_and_unverified():
+    """tempdoc 624 battlefield retrospective: a cell offering >=1 mcp__justsearch
+    tool counts as verified; a cell whose init event never parsed counts as
+    unverified (an unknown, not a fabricated clean 0); a cell offering 0 tools
+    should never reach here at all (it was excluded upstream as `error`'d) --
+    this test only exercises the composer-side counting of what DOES arrive."""
+    c_pq = {
+        "q0": _pq_entry(mcp_tools_offered=2),                       # verified
+        "q1": _pq_entry(mcp_tools_offered=1),                       # verified
+        "q2": _pq_entry(mcp_surface_unverified=True),               # unverified
+        "q3": _pq_entry(),                                          # neither (condition A-like)
+    }
+    a_pq = {f"q{i}": _pq_entry() for i in range(4)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    c = rec["tool_call_assertions"]["C"]
+    assert c["cells_with_mcp_surface_verified"] == 2
+    assert c["cells_mcp_surface_unverified"] == 1
+    a = rec["tool_call_assertions"]["A"]
+    assert a["cells_with_mcp_surface_verified"] == 0
+    assert a["cells_mcp_surface_unverified"] == 0
+
+
+# --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
+
+def test_stratified_breakdown_reveals_offsetting_substrata_signal():
+    """Two corpus-signature strata within one cell (a corpus refresh between
+    seeds, so seed 0's queries and seed 1's queries carry different corpus
+    ``signature`` tags) with OPPOSITE accuracy deltas that cancel out in the
+    pooled number — the exact 'a pooled delta can hide a real signal' case
+    §T.4 motivates. The default ``qid -> corpus`` stratify map is derived
+    automatically (no caller-supplied mapping)."""
+    # Seed 0 / corpus signature "sig-old": the tool helps a lot (+0.5).
+    a0 = {
+        "q0": {"correct": False, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q1": {"correct": True, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q2": {"correct": False, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+        "q3": {"correct": True, "cost_usd": 0.10, "unique_tokens": 1000, "num_turns": 5},
+    }
+    c0 = {
+        "q0": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q1": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q2": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+        "q3": {"correct": True, "cost_usd": 0.05, "unique_tokens": 500, "num_turns": 5},
+    }
+    # Seed 1 / corpus signature "sig-new": the tool HURTS (-0.5), no cost delta.
+    a1 = {
+        "r0": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r1": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r2": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r3": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+    }
+    c1 = {
+        "r0": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r1": {"correct": False, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r2": {"correct": True, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+        "r3": {"correct": False, "cost_usd": 0.20, "unique_tokens": 2000, "num_turns": 5},
+    }
+    sig_old = {"dataset": "mixed/multihop-rag", "signature": "sig-old"}
+    sig_new = {"dataset": "mixed/multihop-rag", "signature": "sig-new"}
+
+    summaries = [
+        _summary("A", a0, seed=0, corpus=sig_old),
+        _summary("C", c0, seed=0, corpus=sig_old, search_key="s"),
+        _summary("A", a1, seed=1, corpus=sig_new),
+        _summary("C", c1, seed=1, corpus=sig_new, search_key="s"),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+
+    # Pooled: the two strata offset exactly -> looks like NO effect at all.
+    assert cell["accuracy"]["delta"] == 0.0
+    assert cell["accuracy"]["mcnemar_p"] == 1.0
+    assert cell["n_paired_observations"] == 8
+
+    strata = cell["stratified"]["by_stratum"]
+    old_label = "mixed/multihop-rag:sig-old"
+    new_label = "mixed/multihop-rag:sig-new"
+    assert set(strata) == {old_label, new_label}
+
+    old, new = strata[old_label], strata[new_label]
+
+    # Each stratum independently reveals the real, OPPOSITE-sign signal the
+    # pooled delta hides — same shape (accuracy/tokens_unique/cost_usd/turns/
+    # n_paired_observations) as the pooled block.
+    assert old["accuracy"]["delta"] == 0.5
+    assert new["accuracy"]["delta"] == -0.5
+    assert old["n_paired_observations"] == 4
+    assert new["n_paired_observations"] == 4
+
+    # §M.8 item 7: each stratum's significance test is its OWN, computed on its
+    # own n — NOT inherited/borrowed from the pooled result (pooled p=1.0 above;
+    # both strata resolve to a different, independently-derived p-value).
+    assert old["accuracy"]["mcnemar_p"] == 0.5
+    assert new["accuracy"]["mcnemar_p"] == 0.5
+    assert old["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
+
+    # Cost/token blocks are independently computed per stratum too (sig-old is
+    # cheaper+fewer-tokens with the tool; sig-new has no cost/token difference
+    # at all — the pooled cost/token deltas would average these together):
+    assert old["cost_usd"]["delta_mean"] < 0
+    assert new["cost_usd"]["delta_mean"] == 0.0
+    assert old["tokens_unique"]["delta_mean"] < 0
+    assert new["tokens_unique"]["delta_mean"] == 0.0
+
+
+def test_no_stratify_field_when_cell_is_single_corpus():
+    """Regression guard: when every summary in a cell shares ONE corpus
+    identity (the common case — no corpus refresh mid-cell), no ``stratified``
+    field is added anywhere on the composed cell. Byte-identical to the
+    pre-stratification composed-cell shape (tempdoc 624 §T.4: additive-only,
+    never a behavior change for existing callers)."""
+    a_pq, c_pq = _cell_pq([False, True, False, True], [True, True, True, False])
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert "stratified" not in cell
+    assert "stratified" not in cell["arms"]["substitution_c"]
+
+
 # --- Inspect-AI execution path (tempdoc 624 execution design) ----------------
 
 def test_inspect_path_roundtrip(tmp_path):
@@ -257,22 +597,115 @@ def test_inspect_path_roundtrip(tmp_path):
     assert cell["n_paired_observations"] == 8            # 4 queries x 2 seeds
 
 
+def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
+    """The residual §As-built #5 gap (`agent_utility_inspect.claude_agent_solver`
+    running `--output-format json` with no tool_calls capture) is now closed —
+    the solver runs `--output-format stream-json --verbose` and stashes real
+    `tool_calls` / `disallowed_tool_calls` / `leak_suspect_tool_calls` into
+    `state.metadata` (mirroring `agent_retrieval_eval.run_agent_eval`; see
+    `test_eval_logs_to_summaries_surfaces_real_tool_call_data` for that path).
+
+    This test documents the boundary that remains even so: both backstops —
+    the real tool-call scan (`find_leak_suspect_tool_calls`, reads
+    `state.metadata["tool_calls"]`) and the completion-text scan
+    (`agent_utility_run.scan_leaked_cells`, reads `state.output.completion`) —
+    only see signal shapes they know to look at. A custom/mock solver that
+    stashes a leak-shaped string under an UNRELATED metadata key (simulating,
+    e.g., a raw un-parsed MCP response preview never surfaced through either
+    channel) is still invisible to both. This is not the gap this change
+    closes — it is the honest edge of what "capture real tool calls" can cover
+    for a solver that doesn't route its signal through the same channel the
+    real `claude_agent_solver` does.
+    """
+    pytest.importorskip("inspect_ai")
+    from inspect_ai import Task, eval_set, task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+
+    from jseval import agent_utility_run as aur
+    from jseval.agent_utility_inspect import substring_scorer
+
+    @solver
+    def mock_solver_with_suspicious_response():
+        async def solve(state, generate):
+            md = state.metadata or {}
+            state.output.completion = md.get("echo", "")
+            # Simulates an MCP tool response that happened to mention the
+            # leaked file, stashed under a metadata key neither the tool_calls
+            # scan nor the completion-text scan reads.
+            state.metadata.update({
+                "cost_usd": 0.05, "unique_tokens": 1000, "num_turns": 2,
+                "mcp_response_preview": "...see queries.json for the answer...",
+            })
+            return state
+        return solve
+
+    cohort = {"model": "haiku", "cli_version": "2.1.183", "mcp_tool_surface_hash": "h",
+              "judge_kind": "substring-em", "prompt_template_hash": "p"}
+
+    @task
+    def mock_task(condition="A"):
+        samples = [Sample(id="q0", input="Q0", target="ANS0", metadata={"echo": "ANS0"})]
+        return Task(dataset=samples, solver=mock_solver_with_suspicious_response(),
+                    scorer=substring_scorer(),
+                    metadata={"condition": condition, "model": "haiku",
+                              "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
+                              "cohort": cohort})
+
+    log_dir = (tmp_path / "logs").as_posix()
+    eval_set([mock_task(condition="A"), mock_task(condition="C")],
+             log_dir=log_dir, epochs=1, model="mockllm/model", log_format="json")
+
+    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["leak_suspect_cells"] == []  # signal sat in a key neither scan reads
+    # No tool_calls captured for this mock solver (it never sets that key) — the
+    # new coverage record must report "no tool data" here, not a fabricated 0.
+    assert rec["tool_call_assertions"]["A"]["cells_with_tool_data"] == 0
+    assert rec["tool_call_assertions"]["A"]["cells_total"] == 1
+
+
 # --- Run-governance: loss-accounting + paired comparability (tempdoc 624) ------
 
 def test_paired_comparability_clean_and_asymmetric():
     from jseval.utility_governance import ArmLoss, paired_comparability
     full = {0: set(f"q{i}" for i in range(10)), 1: set(f"q{i}" for i in range(10))}
-    A = ArmLoss("A", 2, 10, 20, set(), {k: set(v) for k, v in full.items()})
-    C = ArmLoss("C", 2, 10, 20, set(), {k: set(v) for k, v in full.items()})
+    A = ArmLoss("A", 2, 10, 20, n_error_cells=0,
+                excluded_query_ids=set(), ok_by_seed={k: set(v) for k, v in full.items()})
+    C = ArmLoss("C", 2, 10, 20, n_error_cells=0,
+                excluded_query_ids=set(), ok_by_seed={k: set(v) for k, v in full.items()})
     v, m = paired_comparability({"A": A, "C": C})
     assert v.comparable is True and m["paired_n_retention"] == 1.0
-    # C drops q5-q8 (asymmetric, high rate); A drops none
+    # C drops q5-q8 (asymmetric, high rate: 9 errored cells of 20); A drops none
     okC = {0: {"q0", "q1", "q2", "q3", "q4"}, 1: {"q0", "q1", "q2", "q3", "q4", "q9"}}
-    Cbad = ArmLoss("C", 2, 10, 11, {"q5", "q6", "q7", "q8"}, okC)
+    Cbad = ArmLoss("C", 2, 10, 11, n_error_cells=9,
+                   excluded_query_ids={"q5", "q6", "q7", "q8"}, ok_by_seed=okC)
     v2, m2 = paired_comparability({"A": A, "C": Cbad})
     assert v2.comparable is False
     assert any("arm_C" in r for r in v2.reasons)        # per-arm exclusion rate
     assert m2["excluded_jaccard"] < 0.5                 # asymmetry caught
+
+
+def test_loss_accounting_partial_log_pending_is_not_excluded():
+    """Regression (2026-07-03): on a PARTIAL log, in-flight cells must count as
+    PENDING, never as excluded. The old arithmetic (n_excluded = planned -
+    completed) reported phantom 40%+ exclusion on healthy mid-flight runs and
+    got two healthy certified runs aborted."""
+    from jseval.utility_governance import ArmLoss
+    # Mid-run snapshot: 5 seeds x 10 queries seen (50 planned), 30 flushed clean,
+    # 0 errored — 20 cells simply in flight.
+    live = ArmLoss("A", 5, 10, 30, n_error_cells=0)
+    assert live.n_planned == 50
+    assert live.n_attempted == 30
+    assert live.n_pending == 20
+    assert live.n_excluded == 0            # the regression: this was 20 before
+    assert live.exclusion_rate == 0.0
+    # Same snapshot with 3 real error cells: only those 3 are excluded.
+    live_err = ArmLoss("A", 5, 10, 30, n_error_cells=3)
+    assert live_err.n_excluded == 3
+    assert live_err.n_attempted == 33 and live_err.n_pending == 17
+    assert abs(live_err.exclusion_rate - 3 / 33) < 1e-9
 
 
 def test_governance_end_to_end(tmp_path):
@@ -466,3 +899,207 @@ def test_judge_degrades_to_em_when_endpoint_down(tmp_path, monkeypatch):
     assert overlay["stats"]["degraded_to_em"] is True
     assert overlay["judge_identity"]["kind"] == "substring-em"  # honest: no LLM ran
     assert overlay["scores"]["C|0|q2"]["final"] is False        # falls back to EM
+
+
+# --- Cross-corpus composition (tempdoc 624 §Cross-corpus) --------------------
+#
+# compose_utility groups cell_summaries by (corpus, agent_model) BEFORE ever
+# calling _arm_comparison, so distinct dataset slugs (e.g. English/German/scan)
+# always land in SEPARATE top-level records — the pooled cross-corpus view
+# _arm_comparison's stratify_by already supports is unreachable through it.
+# compose_utility_cross_corpus pools 3 synthetic corpora that DELIBERATELY
+# reuse the SAME seed (0) and the SAME qids (q0..q3) — the two collisions a
+# naive pool would hit — and proves the per-stratum breakdown is hand-
+# computable and independent of the (offsetting-to-zero) pooled number.
+
+def _xcorpus_summary(dataset, condition, per_query, *, search_key=None):
+    return _summary(condition, per_query, search_key=search_key, seed=0,
+                     corpus={"dataset": dataset, "signature": "v1"})
+
+
+def _xcorpus_pq(correct_a, correct_c, cost_a=0.10, cost_c=0.05, tok_a=1000, tok_c=500):
+    a, c = {}, {}
+    for i in range(4):
+        q = f"q{i}"
+        a[q] = {"correct": correct_a[i], "cost_usd": cost_a, "unique_tokens": tok_a, "num_turns": 5}
+        c[q] = {"correct": correct_c[i], "cost_usd": cost_c, "unique_tokens": tok_c, "num_turns": 5}
+    return a, c
+
+
+def _xcorpus_fixture():
+    """3 corpora, SAME seed (0) + SAME qids (q0-q3) on purpose (collision probe).
+
+    - en: tool HELPS (+0.5), cheaper + fewer tokens with tool.
+    - de: tool HURTS (-0.5), no cost/token difference.
+    - scan: NO effect (0.0), no cost/token difference.
+
+    Pooled across all 3 (12 paired observations): the en (+0.5) and de (-0.5)
+    deltas offset exactly, scan contributes no discordant pairs -> pooled
+    delta = 0.0, mcnemar_p = 1.0 (the "hides a real per-corpus signal" case).
+    """
+    en_a, en_c = _xcorpus_pq([False, True, False, True], [True, True, True, True],
+                             cost_a=0.10, cost_c=0.05, tok_a=1000, tok_c=500)
+    de_a, de_c = _xcorpus_pq([True, True, True, True], [True, False, True, False],
+                             cost_a=0.20, cost_c=0.20, tok_a=2000, tok_c=2000)
+    scan_a, scan_c = _xcorpus_pq([True, True, True, True], [True, True, True, True],
+                                 cost_a=0.15, cost_c=0.15, tok_a=1500, tok_c=1500)
+    return [
+        _xcorpus_summary("golden/battlefield-en-v1", "A", en_a),
+        _xcorpus_summary("golden/battlefield-en-v1", "C", en_c, search_key="s"),
+        _xcorpus_summary("golden/battlefield-de-v1", "A", de_a),
+        _xcorpus_summary("golden/battlefield-de-v1", "C", de_c, search_key="s"),
+        _xcorpus_summary("golden/synth-scan-v1", "A", scan_a),
+        _xcorpus_summary("golden/synth-scan-v1", "C", scan_c, search_key="s"),
+    ]
+
+
+def test_cross_corpus_pooled_offsets_but_strata_reveal_signal():
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t", contamination_class="private-synthetic")
+
+    assert rec["schema"] == "utility-comparison-cross-corpus.v1"
+    assert rec["corpora"] == [
+        "golden/battlefield-de-v1:v1", "golden/battlefield-en-v1:v1", "golden/synth-scan-v1:v1",
+    ]
+    assert set(rec["measured"]) == {"haiku"}
+    cell = rec["measured"]["haiku"]
+
+    # Pooled: en (+0.5) and de (-0.5) offset exactly; scan contributes 0 -> hides the signal.
+    assert cell["n_paired_observations"] == 12
+    assert cell["accuracy"]["delta"] == 0.0
+    assert cell["accuracy"]["mcnemar_p"] == 1.0
+
+    strata = cell["stratified"]["by_stratum"]
+    en_label = "golden/battlefield-en-v1:v1"
+    de_label = "golden/battlefield-de-v1:v1"
+    scan_label = "golden/synth-scan-v1:v1"
+    assert set(strata) == {en_label, de_label, scan_label}
+
+    en, de, scan = strata[en_label], strata[de_label], strata[scan_label]
+
+    # Each stratum's McNemar is independently computed on ITS OWN n=4 (never
+    # inherited from the pooled p=1.0 above — §M.8 item 7).
+    assert en["n_paired_observations"] == 4
+    assert de["n_paired_observations"] == 4
+    assert scan["n_paired_observations"] == 4
+    assert en["accuracy"]["delta"] == 0.5
+    assert de["accuracy"]["delta"] == -0.5
+    assert scan["accuracy"]["delta"] == 0.0
+    assert en["accuracy"]["mcnemar_p"] == 0.5
+    assert de["accuracy"]["mcnemar_p"] == 0.5
+    assert scan["accuracy"]["mcnemar_p"] == 1.0
+    assert en["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
+
+    # Cost/token blocks are independently computed per stratum too (en is
+    # cheaper+fewer-tokens with the tool; de/scan have no cost/token delta —
+    # the pooled block would average these together and hide en's signal).
+    assert en["cost_usd"]["delta_mean"] < 0
+    assert en["tokens_unique"]["delta_mean"] < 0
+    assert de["cost_usd"]["delta_mean"] == 0.0
+    assert scan["cost_usd"]["delta_mean"] == 0.0
+
+
+def test_cross_corpus_no_seed_or_qid_collision():
+    """The 3 fixture corpora deliberately reuse seed=0 and qids q0-q3 — proving
+    pooling does NOT silently drop 2/3 of the data (the naive
+    ``a_by_seed[seed][0]`` bug) or misattribute one corpus's q0 to another's
+    stratum (the naive flat qid->label bug)."""
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t")
+    cell = rec["measured"]["haiku"]
+    # 3 corpora x 4 queries x 1 (shared) seed = 12 -- not 4 (would be the
+    # index-0-only bug) and not fewer due to qid overwrite.
+    assert cell["n_paired_observations"] == 12
+    assert rec["seed_count"] == 1                      # one REAL seed (0), reported honestly
+
+
+def test_cross_corpus_requires_two_or_more_corpora():
+    single = [s for s in _xcorpus_fixture() if s["corpus"]["dataset"] == "golden/battlefield-en-v1"]
+    with pytest.raises(utility_comparison.UtilityComposeError, match="2\\+ distinct corpora"):
+        utility_comparison.compose_utility_cross_corpus(single, composed_at="t")
+
+
+def test_cross_corpus_refuses_mixed_harness_cohort():
+    fixture = _xcorpus_fixture()
+    fixture[2] = _summary("A", fixture[2]["per_query"], seed=0,
+                          corpus=fixture[2]["corpus"], cli_version="9.9.9")  # different harness
+    with pytest.raises(utility_comparison.UtilityComposeError, match="agent_cohort_key differs"):
+        utility_comparison.compose_utility_cross_corpus(fixture, composed_at="t")
+
+
+def test_cross_corpus_governance_derives_tier_from_least_comparable_input():
+    gov = {"comparable": False, "reasons": ["logs-de: asymmetric_exclusion"], "metrics": {},
+           "per_arm_loss": {}}
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_fixture(), composed_at="t", confidence_tier="A", governance=gov)
+    assert rec["comparability"]["comparable"] is False
+    assert rec["confidence_tier"] == "C"                # DERIVED, overrides the passed "A"
+
+
+# --- revision (tempdoc 624 Design 1) ----------------------------------------
+
+def test_build_revision_constructs_valid_object():
+    rev = utility_comparison.build_revision(
+        supersedes="../out-en/utility-comparison.v1.json",
+        reason="leak_correction",
+        changed_fields=["measured.golden/battlefield-en-v1.haiku.accuracy"],
+    )
+    assert rev == {
+        "supersedes": "../out-en/utility-comparison.v1.json",
+        "reason": "leak_correction",
+        "changed_fields": ["measured.golden/battlefield-en-v1.haiku.accuracy"],
+    }
+
+
+def test_build_revision_accepts_every_closed_set_reason():
+    for reason in utility_comparison.REVISION_REASONS:
+        rev = utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json", reason=reason, changed_fields=[])
+        assert rev["reason"] == reason
+
+
+def test_build_revision_accepts_arm_invalidation_reason():
+    """tempdoc 624 battlefield retrospective: annotates a record whose with-tool
+    arm is now known to have run under a dead mcp_config (0 MCP tool calls)."""
+    rev = utility_comparison.build_revision(
+        supersedes="../out/utility-comparison.v1.json",
+        reason="arm_invalidation",
+        changed_fields=["measured.golden/battlefield-en-v1.haiku.with_tool"],
+    )
+    assert rev["reason"] == "arm_invalidation"
+
+
+def test_build_revision_rejects_reason_outside_closed_set():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="not in closed set"):
+        utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json",
+            reason="oops_not_a_real_reason",
+            changed_fields=[],
+        )
+
+
+def test_build_revision_changed_fields_is_a_copy_not_the_caller_list():
+    src = ["cohort.judge"]
+    rev = utility_comparison.build_revision(
+        supersedes="../out/utility-comparison.v1.json", reason="judge_rescore", changed_fields=src)
+    src.append("mutated_after_the_call")
+    assert rev["changed_fields"] == ["cohort.judge"]
+
+
+def test_build_revision_rejects_empty_supersedes():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="non-empty path string"):
+        utility_comparison.build_revision(supersedes="", reason="leak_correction", changed_fields=[])
+
+
+def test_build_revision_rejects_whitespace_only_supersedes():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="non-empty path string"):
+        utility_comparison.build_revision(supersedes="   ", reason="leak_correction", changed_fields=[])
+
+
+def test_build_revision_rejects_non_string_changed_field():
+    with pytest.raises(utility_comparison.UtilityComposeError, match="must be strings"):
+        utility_comparison.build_revision(
+            supersedes="../out/utility-comparison.v1.json",
+            reason="leak_correction",
+            changed_fields=["cohort.judge", 42],
+        )

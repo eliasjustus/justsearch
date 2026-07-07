@@ -31,6 +31,8 @@
  */
 
 import { subscribePooled } from '../../streaming/EnvelopeStreamPool.js';
+import type { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
+import { SHELL_EVENT_STREAM_IDS } from '../../streaming/shellEventStreamIds.js';
 import {
   tabularStrategy,
   type TabularData,
@@ -322,16 +324,27 @@ export function projectJobsToTasks(
  * `/api/indexing-jobs/stream`, same `pathHash` primaryKey → same tabular
  * reducer shape) share ONE EventSource instead of opening two. The returned
  * stop is the pool's idempotent unsubscribe (last release closes the stream).
+ * Tempdoc 662: when `opts.multiplex` is supplied, the bridge instead subscribes
+ * the `surface:indexing-jobs` streamId on the shared `MultiplexedStream` — one
+ * of the 5 always-on streams collapsed onto `/api/shell-events/stream` (the
+ * fix for the browser connection-pool exhaustion that starved the cheap status
+ * polls under load, tempdoc 649). Note: an open `core.indexing-jobs` Resource
+ * view (via `ResourceView.ts`'s OWN `subscribePooled` call, unmigrated — out
+ * of this tempdoc's scope) no longer shares a socket with this bridge in that
+ * case; it opens its own, same as before 662 for any non-bridge consumer.
  *
- * SSR/headless-safe: when no `eventSourceFactory` is supplied and the global
- * `EventSource` is unavailable, the bridge is a no-op (returns a stop fn that
- * does nothing) — it never tries to connect.
+ * SSR/headless-safe: when no `eventSourceFactory`/`multiplex` is supplied and
+ * the global `EventSource` is unavailable, the bridge is a no-op (returns a
+ * stop fn that does nothing) — it never tries to connect.
  */
 export function startIndexingJobsBridge(
   apiBase: string,
-  opts: { eventSourceFactory?: (url: string) => EventSource } = {},
+  opts: {
+    eventSourceFactory?: (url: string) => EventSource;
+    multiplex?: MultiplexedStream;
+  } = {},
 ): () => void {
-  if (!opts.eventSourceFactory && typeof EventSource === 'undefined') {
+  if (!opts.multiplex && !opts.eventSourceFactory && typeof EventSource === 'undefined') {
     return () => {};
   }
   const url = `${(apiBase || '').replace(/\/$/, '')}${STREAM_PATH}`;
@@ -341,27 +354,37 @@ export function startIndexingJobsBridge(
   // 602 R5 — a late pathHash resolve relabels in place by re-projecting the
   // latest rows (so the task keeps its CURRENT status, not a stale captured one).
   reproject = () => projectJobsToTasks(latestItems);
-  const stopSub = subscribePooled<StrategyState<TabularData<IndexingJobRow>>>(
-    url,
-    (snap) => {
-      latestItems = snap.payload.data.items;
-      // 595 §4.4: a fresh frame stamps liveness and clears any stall.
-      lastFrameAtMs = Date.now();
-      setFeedStalled(false);
-      projectJobsToTasks(latestItems);
-    },
-    () => {
-      const strat = tabularStrategy<IndexingJobRow>(PRIMARY_KEY);
-      return {
+  const onSnapshot = (snap: { payload: StrategyState<TabularData<IndexingJobRow>> }): void => {
+    latestItems = snap.payload.data.items;
+    // 595 §4.4: a fresh frame stamps liveness and clears any stall.
+    lastFrameAtMs = Date.now();
+    setFeedStalled(false);
+    projectJobsToTasks(latestItems);
+  };
+  const stopSub = opts.multiplex
+    ? opts.multiplex.subscribe<StrategyState<TabularData<IndexingJobRow>>>(
+        SHELL_EVENT_STREAM_IDS.INDEXING_JOBS,
+        () => {
+          const strat = tabularStrategy<IndexingJobRow>(PRIMARY_KEY);
+          return { initialState: strat.initialState, reducer: strat.reducer };
+        },
+        onSnapshot,
+      )
+    : subscribePooled<StrategyState<TabularData<IndexingJobRow>>>(
         url,
-        initialState: strat.initialState,
-        reducer: strat.reducer,
-        ...(opts.eventSourceFactory
-          ? { eventSourceFactory: opts.eventSourceFactory }
-          : {}),
-      };
-    },
-  );
+        onSnapshot,
+        () => {
+          const strat = tabularStrategy<IndexingJobRow>(PRIMARY_KEY);
+          return {
+            url,
+            initialState: strat.initialState,
+            reducer: strat.reducer,
+            ...(opts.eventSourceFactory
+              ? { eventSourceFactory: opts.eventSourceFactory }
+              : {}),
+          };
+        },
+      );
   // Tempdoc 575 §14: re-derive staleness on a tick. A job that STOPS getting
   // heartbeat frames (a wedged loop → no new Delta.Update) would otherwise keep
   // `running` forever; re-projecting the last known rows lets it cross the

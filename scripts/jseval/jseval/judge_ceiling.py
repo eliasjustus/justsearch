@@ -63,7 +63,18 @@ def assemble_pool(run_dir: Path, top_n: int | None = None) -> dict[str, list[str
 
 
 def _score_ranking(qrels: dict, rankings: dict[str, list[str]]) -> float | None:
-    """nDCG@10 of ``{qid: [doc_id in rank order]}`` against ``qrels``."""
+    """nDCG@10 of ``{qid: [doc_id in rank order]}`` against ``qrels``.
+
+    ``qrels`` is filtered to the queries actually present in ``rankings`` before scoring.
+    Without this, ``ir_measures`` silently scores every qrels query NOT present in
+    ``rankings`` as 0 and folds it into the mean — on a capped run (``--max-queries``), the
+    qrels file still holds the corpus's full query set, so passing it through unfiltered
+    dilutes the result by (queries actually judged / total corpus queries) — a confirmed,
+    real bug found via the tempdoc 643 sibling-thread ce-replay cross-check (2026-07-01):
+    an ~8x dilution on a 40-of-300-query scifact run. Every caller of this function wants
+    "nDCG over exactly the queries in rankings," never "credit missing queries as zero."
+    """
+    scoped_qrels = {qid: rels for qid, rels in qrels.items() if qid in rankings}
     scored = [
         ir_measures.ScoredDoc(query_id=qid, doc_id=d, score=float(len(ids) - i))
         for qid, ids in rankings.items()
@@ -71,7 +82,7 @@ def _score_ranking(qrels: dict, rankings: dict[str, list[str]]) -> float | None:
     ]
     if not scored:
         return None
-    return scoring.evaluate(qrels, scored).get("nDCG@10")
+    return scoring.evaluate(scoped_qrels, scored).get("nDCG@10")
 
 
 def judge_ceiling_report(
@@ -92,16 +103,32 @@ def judge_ceiling_report(
     fwd_rankings: dict[str, list[str]] = {}
     checked = 0
     top1_agree = 0
+    attempted = 0
+    skipped_qids: list[str] = []
     for qid, cands in pool.items():
         if not cands or qid not in qrels:
             continue
+        attempted += 1
         q = queries.get(qid, "")
-        fwd = rank_fn(q, cands, texts)
-        rev = rank_fn(q, list(reversed(cands)), texts)  # order-swap guardrail
+        # Tempdoc 643 U1 (first live run, 2026-07-01): a single query's malformed/truncated
+        # response (a real, observed per-query failure mode -- not every response fits any
+        # fixed token budget, e.g. when a served model doesn't fully honor enable_thinking) must
+        # not discard the OTHER 39 real, already-paid-for LLM calls. Only genuine unavailability
+        # (every attempted query fails) still degrades the whole probe -- see the all-failed
+        # check below, which mirrors AIUnavailable's original all-or-nothing intent for that case.
+        try:
+            fwd = rank_fn(q, cands, texts)
+            rev = rank_fn(q, list(reversed(cands)), texts)  # order-swap guardrail
+        except AIUnavailable:
+            skipped_qids.append(qid)
+            continue
         checked += 1
         if fwd and rev and fwd[0] == rev[0]:
             top1_agree += 1
         fwd_rankings[qid] = fwd
+
+    if attempted > 0 and checked == 0:
+        raise AIUnavailable(f"all {attempted} attempted queries failed (genuine unavailability)")
 
     llm_ndcg = _score_ranking(qrels, fwd_rankings)
     realized = (llm_ndcg - final_ndcg) if (llm_ndcg is not None and final_ndcg is not None) else None
@@ -111,6 +138,8 @@ def judge_ceiling_report(
     return {
         "status": "ok",
         "n_queries": len(fwd_rankings),
+        "n_skipped": len(skipped_qids),
+        "skipped_qids": skipped_qids,
         "llm_ndcg": llm_ndcg,
         "final_ndcg": final_ndcg,
         "judge_headroom_ceiling": ceiling,
@@ -124,7 +153,7 @@ def judge_ceiling_report(
     }
 
 
-def make_chat_rank_fn(llm_url: str, model: str = "local", timeout: float = 120.0) -> RankFn:
+def make_chat_rank_fn(llm_url: str, model: str = "local", timeout: float = 300.0) -> RankFn:
     """Live OpenAI-compatible rank_fn (reuses the agent-eval chat path).
 
     POSTs to ``{llm_url}/v1/chat/completions`` with a structured-output rerank
@@ -154,7 +183,14 @@ def make_chat_rank_fn(llm_url: str, model: str = "local", timeout: float = 120.0
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": f"Query: {query}\n\nCandidates:\n{listing}"},
             ],
-            "max_tokens": 512,
+            # Tempdoc 643 U1 (first live run of this probe, 2026-07-01): 512 was too tight for a
+            # realistic leg-union pool (observed up to 29 candidates on scifact) -- multi-digit
+            # numeric doc-ids tokenize to several tokens each, and not every served model fully
+            # honors enable_thinking=False, so the ranking array was getting truncated mid-string
+            # (a real "Unterminated string" JSON-parse failure, not a hypothetical one). Sized
+            # together with make_chat_rank_fn's default `timeout` (300s) for ~7 tok/s CPU
+            # inference (observed live) -- 2048 tokens comfortably fits in that budget with margin.
+            "max_tokens": 2048,
             "temperature": 0.0,
             "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {
@@ -223,3 +259,95 @@ def load_doc_texts(corpus_dir: Path) -> dict[str, str]:
             continue
         out[str(did)] = str(d.get("text") or d.get("contents") or d.get("title") or "")
     return out
+
+
+def load_ce_scores(run_dir: Path, mode: str | None = None) -> dict[str, dict[str, float]]:
+    """``{qid: {doc_id: ce_score}}`` from the final mode's ``judgeSignals`` (already captured
+    per query by the production pipeline — no live model, no LLM, no new eval run).
+
+    ``mode`` defaults to the run's preferred final mode (``hybrid`` else ``full``), matching
+    ``staged_recall_accounting.FINAL_MODE_PREFERENCE``.
+    """
+    if mode is None:
+        present = _sra._present_modes(run_dir)
+        mode = next((m for m in _sra.FINAL_MODE_PREFERENCE if m in present), None)
+    out: dict[str, dict[str, float]] = {}
+    if mode is None:
+        return out
+    path = run_dir / f"{mode}_per_query.json"
+    if not path.is_file():
+        return out
+    for rec in json.loads(path.read_text(encoding="utf-8")):
+        qid = rec.get("qid")
+        if not qid:
+            continue
+        scores = {
+            s["docId"]: s["ce_score"]
+            for s in (rec.get("judgeSignals") or [])
+            if s.get("ce_score") is not None
+        }
+        if scores:
+            out[qid] = scores
+    return out
+
+
+def ce_replay_rankings(
+    pool: dict[str, list[str]], ce_scores_by_qid: dict[str, dict[str, float]],
+) -> dict[str, list[str]]:
+    """Re-rank each query's leg-union pool by the production CE's own already-captured score.
+
+    Candidates the CE actually scored are sorted by that score, descending, first; candidates
+    outside its window (never scored) keep the pool's original order, appended after — the CE
+    rendered no judgment on them, so this reflects exactly what re-applying the shipped judge
+    (not a bigger window, not a different judge) over this pool would produce.
+    """
+    out: dict[str, list[str]] = {}
+    for qid, cands in pool.items():
+        scores = ce_scores_by_qid.get(qid, {})
+        scored = [c for c in cands if c in scores]
+        unscored = [c for c in cands if c not in scores]
+        scored.sort(key=lambda c: scores[c], reverse=True)
+        out[qid] = scored + unscored
+    return out
+
+
+def ce_replay_report(
+    pool: dict[str, list[str]],
+    ce_scores_by_qid: dict[str, dict[str, float]],
+    qrels: dict,
+    *,
+    final_ndcg: float | None,
+    ceiling: float | None = None,
+) -> dict:
+    """AI-free realizable-headroom probe: how much of ``ceiling`` does the *actual production
+    judge* (not a different/LLM judge — see :func:`judge_ceiling_report`) capture when replayed
+    over the full leg-union pool, using only its own already-captured scores.
+
+    No live model, no LLM, no new eval run — pure reprocessing of already-archived data. This is
+    a distinct question from the live judge-ceiling probe: it asks whether the judge that is
+    actually shipped would do better given a bigger pool, not whether a different judge would.
+    """
+    rankings = ce_replay_rankings(pool, ce_scores_by_qid)
+    replay_ndcg = _score_ranking(qrels, rankings)
+    realized = (
+        (replay_ndcg - final_ndcg) if (replay_ndcg is not None and final_ndcg is not None) else None
+    )
+    capture = (
+        (realized / ceiling) if (realized is not None and ceiling not in (None, 0)) else None
+    )
+    n_scored_queries = sum(1 for qid in pool if ce_scores_by_qid.get(qid))
+    return {
+        "status": "ok",
+        "n_queries": len(rankings),
+        "n_ce_scored_queries": n_scored_queries,
+        "ce_replay_ndcg": replay_ndcg,
+        "final_ndcg": final_ndcg,
+        "judge_headroom_ceiling": ceiling,
+        "headroom_realized": realized,
+        "capture_fraction": capture,
+        "caveat": (
+            "the production CE's window (not the full pool) bounds what it could have scored; "
+            "un-scored candidates keep their pool order, so this cannot credit the judge for "
+            "docs outside its own input window — see 'enlarge the CE window' as a distinct lever"
+        ),
+    }

@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Relevance metrics for evaluating search quality.
+ * Pure IR-metric arithmetic — no corpus, model, or search-engine dependency of its own.
  *
  * <p>Implements standard IR metrics:
  * <ul>
@@ -14,6 +14,18 @@ import java.util.Set;
  *   <li><b>NDCG@K</b> - Normalized Discounted Cumulative Gain (position-weighted)</li>
  *   <li><b>MRR</b> - Mean Reciprocal Rank of first relevant result</li>
  * </ul>
+ *
+ * <p><b>Disambiguation (tempdoc 664):</b> these functions are only as meaningful as the
+ * {@code retrievedDocs} list a caller passes in. Callers in this module ({@code
+ * GoldenCorpusIntegrationTest}, {@code PassageRetrievalIntegrationTest}) pass ranked lists
+ * produced against hand-placed, frozen embedding vectors — so their results measure
+ * fusion/ranking-code correctness given a fixed vector, not real embedding-model retrieval
+ * quality. {@code RagQualityEvalTest} uses one metric here ({@code recallAtK}) as one of five
+ * RAG-quality sub-metrics, also against frozen retrieval vectors (with a real LLM for
+ * generation/faithfulness scoring). This class is intentionally shared, generic infrastructure
+ * across those three unrelated manifests — not scoped to any one "golden corpus" concept. The
+ * canonical retrieval-quality harness (real embedding models, BEIR/mixed/golden corpora) is
+ * {@code jseval} (Python, {@code scripts/jseval/}).
  */
 public final class RelevanceMetrics {
 

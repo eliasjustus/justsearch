@@ -18,7 +18,6 @@ from jseval.ingest import (
     _wait_for_backpressure,
     _watcher_settle_timeout,
     add_watched_root,
-    ingest_batches,
     prepare_corpus,
 )
 from jseval.types import IngestConfig
@@ -135,50 +134,6 @@ def test_backpressure_waits_then_resumes(mock_sleep):
 
 
 # ---------------------------------------------------------------------------
-# ingest_batches
-# ---------------------------------------------------------------------------
-
-def test_ingest_batches_empty_dir(tmp_path):
-    """No .txt files → 0 batches."""
-    count = ingest_batches("http://localhost", tmp_path, batch_size=10)
-    assert count == 0
-
-
-@patch("jseval.ingest.httpx.Client")
-def test_ingest_batches_submits_files(MockClient, tmp_path):
-    # Create 5 test files
-    for i in range(5):
-        (tmp_path / f"doc{i}.txt").write_text(f"content {i}")
-
-    mock_client = MagicMock()
-    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
-    MockClient.return_value.__exit__ = MagicMock(return_value=False)
-
-    # Status check returns low queue depth (no backpressure)
-    status_resp = MagicMock()
-    status_resp.json.return_value = {"pendingJobs": 0}
-    status_resp.raise_for_status = MagicMock()
-
-    # Ingest POST returns success
-    ingest_resp = MagicMock()
-    ingest_resp.raise_for_status = MagicMock()
-
-    mock_client.get.return_value = status_resp
-    mock_client.post.return_value = ingest_resp
-
-    batches = ingest_batches(
-        "http://localhost", tmp_path, batch_size=3,
-    )
-
-    # 5 files in batches of 3 → 2 batches
-    assert batches == 2
-    # 2 POST calls for ingest
-    post_calls = [c for c in mock_client.post.call_args_list
-                  if c[0][0] == "/api/knowledge/ingest"]
-    assert len(post_calls) == 2
-
-
-# ---------------------------------------------------------------------------
 # _iter_corpus_jsonl
 # ---------------------------------------------------------------------------
 
@@ -238,7 +193,7 @@ def test_prepare_corpus_explicit_dir_empty_raises(tmp_path):
     corpus_dir = tmp_path / "empty"
     corpus_dir.mkdir()
 
-    with pytest.raises(FileNotFoundError, match="no .txt files"):
+    with pytest.raises(FileNotFoundError, match=r"no \.txt/\.png files"):
         prepare_corpus("scifact", IngestConfig(base_url="http://localhost:33221"), corpus_dir=corpus_dir)
 
 
@@ -317,3 +272,66 @@ def test_source_signature_none_for_beir(monkeypatch):
     materialize-if-empty behaviour preserved."""
     assert _source_signature("beir/scifact") is None
     assert _source_signature("anything-else") is None
+
+
+# ---------------------------------------------------------------------------
+# _ensure_materialized / _materialize_into — scan-axis regression (tempdoc 624 follow-up)
+#
+# `corpus_build.build_golden` already renders `axis="scan"` docs as `.png` in its OWN
+# `corpus-dir/` (covered by test_corpus_governance.py's `test_build_golden_materializes_
+# scan_docs_as_png`). That coverage did NOT catch this bug: `jseval run`'s real ingestion
+# path is `prepare_corpus` -> `_ensure_materialized` -> `_materialize_into`, which reads
+# `corpus.jsonl` directly and used to call `materialize.materialize()` without ever
+# checking `type_axis` — silently substituting plain ground-truth `.txt` files for the
+# degraded `.png` scans the dataset exists to test. This test exercises THAT path.
+# ---------------------------------------------------------------------------
+
+def test_ensure_materialized_renders_scan_docs_as_png(tmp_path, monkeypatch):
+    """A golden `axis="scan"` dataset materialized via `_ensure_materialized` (the function
+    `prepare_corpus`/`jseval run` actually calls) must produce real `.png` files, not `.txt`
+    ground-truth substitutes, for every document."""
+    pytest.importorskip("PIL")
+    import json
+
+    from jseval import corpora, corpus_build
+    from jseval import corpus_generate as cg
+    from jseval.materialize import doc_id_to_filename
+
+    src = tmp_path / "src"
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=5)
+    docs = [json.loads(line) for line in (src / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+
+    base = tmp_path / "datasets"
+    ds = base / "golden" / "scan-ingest-x"
+    corpus_build.build_golden(src, ds, now="2026-07-02")
+    monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+    cache = tmp_path / "cache" / "golden" / "scan-ingest-x"
+    n = _ensure_materialized("golden/scan-ingest-x", cache, None)
+
+    assert n == len(docs) + 1  # + sentinel
+    for d in docs:
+        png_path = cache / doc_id_to_filename(d["_id"], ext="png")
+        assert png_path.is_file(), f"{d['_id']} was materialized as .txt, not .png — scan axis was dropped"
+        assert png_path.read_bytes().startswith(b"\x89PNG"), f"{d['_id']}.png is not a real PNG"
+        assert not (cache / doc_id_to_filename(d["_id"])).exists()  # no stray .txt
+
+    sentinel = cache / doc_id_to_filename("__jseval_sentinel__")
+    assert sentinel.is_file()  # sentinel is unaffected — always plain .txt
+
+
+def test_ensure_materialized_plain_axis_unaffected(tmp_path, monkeypatch):
+    """A `type_axis` other than "scan" (or missing metadata.json entirely) must keep the
+    pre-existing plain-.txt materialization — this fix is additive, not axis-blind."""
+    from jseval import corpora
+
+    base = tmp_path / "datasets"
+    _seed_source(base, "golden/plain-x", ["a", "b"])
+    monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+    cache = tmp_path / "cache" / "golden" / "plain-x"
+    n = _ensure_materialized("golden/plain-x", cache, None)
+
+    assert n == 3  # 2 docs + sentinel
+    assert len(list(cache.glob("*.txt"))) == 3
+    assert not list(cache.glob("*.png"))

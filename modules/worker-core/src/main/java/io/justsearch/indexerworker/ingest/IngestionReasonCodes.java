@@ -11,6 +11,15 @@ public final class IngestionReasonCodes {
    * distinguish "got everything" from "got the prefix Tika handed us before we cut it off."
    */
   public static final String SUCCESS_PARTIAL = "SUCCESS_PARTIAL";
+
+  /**
+   * Indexed successfully, but the parser produced no usable content at all (tempdoc 671,
+   * Long-term design part 2) — distinct from {@link #SUCCESS} (which implies real content) and
+   * from {@link #SUCCESS_PARTIAL} (which means truncated, not empty). Written to
+   * {@code SchemaFields.EXTRACTION_REASON_CODE} so search-side callers can distinguish "no
+   * content because there genuinely was none" from a silent, misleading "full success."
+   */
+  public static final String SUCCESS_EMPTY = "SUCCESS_EMPTY";
   public static final String SKIPPED_TEMP_OR_SYSTEM = "SKIPPED_TEMP_OR_SYSTEM";
   public static final String UNCHANGED = "UNCHANGED";
   public static final String NON_REGULAR_SOURCE = "NON_REGULAR_SOURCE";

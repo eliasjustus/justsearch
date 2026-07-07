@@ -3,6 +3,7 @@ package io.justsearch.ui.api.mcp;
 
 import io.javalin.http.Context;
 import io.justsearch.agent.api.registry.ResourceCatalog;
+import io.justsearch.app.api.mcp.McpContractVersions;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,9 +32,11 @@ public final class McpProtocolHandler {
   private static final Logger log = LoggerFactory.getLogger(McpProtocolHandler.class);
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
   private static final String JSONRPC_VERSION = "2.0";
-  private static final String MCP_PROTOCOL_VERSION = "2025-11-25";
+  // Tempdoc 654: single-sourced from app-api so the manifest's RuntimeContract and this
+  // initialize response report identical versions by construction (projection, not fork).
+  private static final String MCP_PROTOCOL_VERSION = McpContractVersions.PROTOCOL_VERSION;
   private static final String SERVER_NAME = "JustSearch";
-  private static final String SERVER_VERSION = "1.0.0";
+  private static final String SERVER_VERSION = McpContractVersions.TOOL_SURFACE_VERSION;
   private static final Duration SESSION_TTL = Duration.ofMinutes(30);
 
   private final McpToolSurface surface;
@@ -68,7 +71,7 @@ public final class McpProtocolHandler {
       }
 
       Object result = switch (method) {
-        case "initialize" -> handleInitialize(ctx);
+        case "initialize" -> handleInitialize(ctx, params);
         case "initialized" -> {
           yield null;
         }
@@ -104,17 +107,42 @@ public final class McpProtocolHandler {
     ctx.status(204);
   }
 
-  private Map<String, Object> handleInitialize(Context ctx) {
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> handleInitialize(Context ctx, Object paramsObj) {
     cleanStaleSessions();
     String sessionId = UUID.randomUUID().toString();
-    sessions.put(sessionId, new McpSession(clock.instant()));
+    // Tempdoc 655: capture the caller's self-reported clientInfo.name (part of the MCP spec's own
+    // initialize request) for DISPLAY ONLY — surfaced later in the approval ceremony so a human
+    // can see which agent is asking. Never used for any trust decision (ADR-0030: a handshake-
+    // declared identity is a hint, not enforced policy — same line the ADR already draws for MCP
+    // tool annotations).
+    String clientName = null;
+    try {
+      var params = MAPPER.convertValue(paramsObj, Map.class);
+      Object clientInfo = params != null ? params.get("clientInfo") : null;
+      if (clientInfo instanceof Map<?, ?> ci && ci.get("name") instanceof String name
+          && !name.isBlank()) {
+        clientName = name;
+      }
+    } catch (Exception e) {
+      log.debug("Failed to parse clientInfo from initialize params: {}", e.getMessage());
+    }
+    sessions.put(sessionId, new McpSession(clock.instant(), clientName));
     ctx.header("Mcp-Session-Id", sessionId);
 
     return Map.of(
         "protocolVersion", MCP_PROTOCOL_VERSION,
+        // Tempdoc 655 fix: tools.listChanged/resources.listChanged were previously declared
+        // `true` with no code path that ever emits the corresponding notifications/*/list_changed
+        // message — an over-declared capability. Both the 6-tool list (McpToolSurface#listTools)
+        // and the advisory-resource list (AdvisoryResourceCatalog#DEFINITIONS) are fixed at
+        // compile time with no runtime-mutable path, so `false` is the honest declaration, not a
+        // deferred notification mechanism. resources.subscribe stays true — that capability (live
+        // updates within an already-known resource's own stream) is real and unrelated to whether
+        // the resource LIST can change.
         "capabilities", Map.of(
-            "tools", Map.of("listChanged", true),
-            "resources", Map.of("subscribe", true, "listChanged", true),
+            "tools", Map.of("listChanged", false),
+            "resources", Map.of("subscribe", true, "listChanged", false),
             "prompts", Map.of("listChanged", false)),
         "serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION));
   }
@@ -128,7 +156,10 @@ public final class McpProtocolHandler {
         (Map<String, Object>) params.getOrDefault("arguments", Map.of());
     if (toolName == null) return McpToolSurface.errorContent("Tool name is required");
     touchSession(sessionId);
-    return surface.callTool(toolName, arguments, sessionId);
+    String requestedBy = sessionId != null && sessions.get(sessionId) != null
+        ? sessions.get(sessionId).clientName
+        : null;
+    return surface.callTool(toolName, arguments, sessionId, requestedBy);
   }
 
   private Map<String, Object> handleResourcesRead(Object paramsObj) {
@@ -219,9 +250,13 @@ public final class McpProtocolHandler {
   private static final class McpSession {
     volatile Instant lastActivity;
     final java.util.Set<String> subscriptions = ConcurrentHashMap.newKeySet();
+    // Tempdoc 655: the client's self-reported name from `initialize`'s `clientInfo` — display
+    // only, never a trust input. Nullable — absent for clients that omit clientInfo.
+    final String clientName;
 
-    McpSession(Instant createdAt) {
+    McpSession(Instant createdAt, String clientName) {
       this.lastActivity = createdAt;
+      this.clientName = clientName;
     }
   }
 }

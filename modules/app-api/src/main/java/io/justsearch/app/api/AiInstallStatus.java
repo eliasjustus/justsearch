@@ -51,6 +51,12 @@ public final class AiInstallStatus {
   public static final class PackageStatus {
     public String packageId = "";
     public String label = "";
+    /**
+     * Capability-tier id (tempdoc 657): {@code retrieval-core} | {@code retrieval-enrichment} |
+     * {@code llm} | {@code runtime}, or null for an untagged package. Lets the UI group the
+     * download by tier (retrieval vs the optional LLM) without hardcoding the package taxonomy.
+     */
+    public String tier;
     public String state = "pending";
     public long bytesDownloaded;
     public long bytesTotal;

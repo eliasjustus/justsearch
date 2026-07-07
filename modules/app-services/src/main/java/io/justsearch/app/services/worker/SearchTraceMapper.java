@@ -244,6 +244,28 @@ final class SearchTraceMapper {
     return 0f;
   }
 
+  /**
+   * Tempdoc 643 (critical-analysis pass): like {@link #protoStageScore}, but tries each candidate
+   * wire id in order and returns the first one that is PRESENT — presence, not value, is
+   * the fallback signal, so a real score of {@code 0.0} on an earlier-priority stage is never
+   * mistaken for "absent, try the next one". Needed because no single stage id is a reliable
+   * "the pre-rerank score" across all pipeline shapes: {@code "fusion"} is null'd out entirely for
+   * single-leg presets ({@code HitProvenanceProjector.attachSingleLeg}) and is stale (pre-branch-
+   * merge) whenever chunk-branch fusion ran ({@code HitProvenanceProjector.attachBranchFusion} —
+   * the true final score there is {@code "branch-fusion"}). Returns 0f if none of the ids are
+   * present (should not happen for an eligible-for-reranking result, but degrades safely).
+   */
+  static float protoStageScoreAny(SearchResult sr, String... wireIds) {
+    for (String wireId : wireIds) {
+      for (io.justsearch.ipc.HitStage hs : sr.getTraceList()) {
+        if (hs.getId().equals(wireId)) {
+          return hs.getScore();
+        }
+      }
+    }
+    return 0f;
+  }
+
   private static io.justsearch.app.api.knowledge.SearchTrace.TraceStage stageNode(
       String id, String status, String reason, String detail, Long ms) {
     String r = (reason == null || reason.isBlank()) ? null : reason;

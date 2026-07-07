@@ -12,6 +12,20 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Tempdoc 655 long-term design pass — mocked before the component import below so the
+// OS-notification wiring inside AdvisoryToastHost.onSnapshot can be observed/controlled.
+const notifyMocks = vi.hoisted(() => ({
+  isWindowFocused: vi.fn(async () => true),
+  sendDesktopNotification: vi.fn(async () => {}),
+}));
+vi.mock('../../../utils/windowFocus.js', () => ({
+  isWindowFocused: notifyMocks.isWindowFocused,
+}));
+vi.mock('../../../utils/notify.js', () => ({
+  sendDesktopNotification: notifyMocks.sendDesktopNotification,
+}));
+
 import './AdvisoryToastHost.js';
 import type { AdvisoryToastHost } from './AdvisoryToastHost.js';
 import type {
@@ -369,5 +383,87 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     expect(el.visible.length).toBe(1);
     const toast = el.shadowRoot?.querySelector('.toast') as HTMLElement;
     expect(toast.textContent).toContain('Navigated to Library');
+  });
+});
+
+describe('AdvisoryToastHost — tempdoc 655 desktop-notification escalation', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    notifyMocks.isWindowFocused.mockReset().mockResolvedValue(true);
+    notifyMocks.sendDesktopNotification.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('a new REQUIRES_ACK record while unfocused fires a desktop notification', async () => {
+    notifyMocks.isWindowFocused.mockResolvedValue(false);
+    const store = new StubAdvisoryStore();
+    const el = make(store as unknown as AdvisoryStore);
+    store.push({ advisories: [], lastFrameKind: 'snapshot' });
+    await el.updateComplete;
+
+    store.push({
+      advisories: [rec('core.ingest-files', '2026-07-02T09:00:00Z', false, 'REQUIRES_ACK')],
+      lastFrameKind: 'update',
+    });
+    await el.updateComplete;
+
+    await vi.waitFor(() => {
+      expect(notifyMocks.sendDesktopNotification).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('a new REQUIRES_ACK record while FOCUSED does not fire a desktop notification', async () => {
+    notifyMocks.isWindowFocused.mockResolvedValue(true);
+    const store = new StubAdvisoryStore();
+    const el = make(store as unknown as AdvisoryStore);
+    store.push({ advisories: [], lastFrameKind: 'snapshot' });
+    await el.updateComplete;
+
+    store.push({
+      advisories: [rec('core.ingest-files', '2026-07-02T09:00:00Z', false, 'REQUIRES_ACK')],
+      lastFrameKind: 'update',
+    });
+    await el.updateComplete;
+    // Give the fire-and-forget async path a chance to run before asserting the negative.
+    await vi.waitFor(() => {
+      expect(notifyMocks.isWindowFocused).toHaveBeenCalled();
+    });
+    expect(notifyMocks.sendDesktopNotification).not.toHaveBeenCalled();
+  });
+
+  it('a new EPHEMERAL/PERSISTED record while unfocused does NOT fire a desktop notification', async () => {
+    notifyMocks.isWindowFocused.mockResolvedValue(false);
+    const store = new StubAdvisoryStore();
+    const el = make(store as unknown as AdvisoryStore);
+    store.push({ advisories: [], lastFrameKind: 'snapshot' });
+    await el.updateComplete;
+
+    store.push({
+      advisories: [rec('core.reindex', '2026-07-02T09:00:00Z', false, 'PERSISTED')],
+      lastFrameKind: 'update',
+    });
+    await el.updateComplete;
+
+    // Only REQUIRES_ACK is gated for OS escalation — give any async path a beat, then assert.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(notifyMocks.isWindowFocused).not.toHaveBeenCalled();
+    expect(notifyMocks.sendDesktopNotification).not.toHaveBeenCalled();
+  });
+
+  it('a REPLAYED (snapshot) REQUIRES_ACK record never fires a desktop notification', async () => {
+    notifyMocks.isWindowFocused.mockResolvedValue(false);
+    const store = new StubAdvisoryStore();
+    const el = make(store as unknown as AdvisoryStore);
+
+    // A REQUIRES_ACK record arriving as part of the initial LIFECYCLE snapshot (reconnect replay,
+    // not a live event) must not re-fire a notification for something already seen.
+    store.push({
+      advisories: [rec('core.ingest-files', '2026-07-02T09:00:00Z', false, 'REQUIRES_ACK')],
+      lastFrameKind: 'snapshot',
+    });
+    await el.updateComplete;
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(notifyMocks.isWindowFocused).not.toHaveBeenCalled();
+    expect(notifyMocks.sendDesktopNotification).not.toHaveBeenCalled();
   });
 });

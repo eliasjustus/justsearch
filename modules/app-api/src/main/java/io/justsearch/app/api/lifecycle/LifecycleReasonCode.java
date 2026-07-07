@@ -56,6 +56,17 @@ public enum LifecycleReasonCode {
   // --- Inference ---
   INFERENCE_STARTING("inference.starting"),
   INFERENCE_OFFLINE("inference.offline"),
+  // Tempdoc 656: the AI/Inference capability was the one capability whose failure reasons never
+  // reached this closed taxonomy — RuntimeActivationService already detected these causes precisely
+  // but only reported them to the immediate ai_activate RPC caller, never to InferenceCapability, so
+  // the runtime manifest's ai.pendingReason stayed on generic prose. These mirror the existing
+  // VDU_MISSING_MMPROJ / ORT_CUDA_MISSING_DLLS precedent for "a required artifact is absent".
+  INFERENCE_MODEL_NOT_CONFIGURED("inference.model_not_configured"),
+  INFERENCE_MODEL_NOT_FOUND("inference.model_not_found"),
+  INFERENCE_RUNTIME_NOT_INSTALLED("inference.runtime_not_installed"),
+  INFERENCE_POLICY_ONLINE_AI_DISABLED("inference.policy_online_ai_disabled"),
+  INFERENCE_POLICY_GPU_DISABLED("inference.policy_gpu_disabled"),
+  INFERENCE_ACTIVATION_FAILED("inference.activation_failed"),
 
   // --- Visual text extraction (OCR/VDU) ---
   OCR_DISABLED("ocr.disabled"),

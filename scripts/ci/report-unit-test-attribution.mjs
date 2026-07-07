@@ -27,6 +27,7 @@ function usage() {
     '',
     'Options:',
     '  --results-root <path>     Root to scan (default: repo root)',
+    '  --lane <lane>             Unit-test shard lane name',
     '  --runner-label <label>    Workflow runner label, e.g. windows-latest',
     '  --top <n>                 Number of slow suites to include (default: 20)',
     '  --out-json <path>         Write JSON report',
@@ -41,6 +42,7 @@ function usage() {
 function parseArgs(argv) {
   const out = {
     resultsRoot: null,
+    lane: null,
     runnerLabel: null,
     top: 20,
     outJson: null,
@@ -53,6 +55,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--results-root' && argv[i + 1]) out.resultsRoot = argv[++i];
+    else if (arg === '--lane' && argv[i + 1]) out.lane = argv[++i];
     else if (arg === '--runner-label' && argv[i + 1]) out.runnerLabel = argv[++i];
     else if (arg === '--top' && argv[i + 1]) out.top = Number.parseInt(argv[++i], 10);
     else if (arg === '--out-json' && argv[i + 1]) out.outJson = argv[++i];
@@ -98,16 +101,23 @@ function asInt(value) {
   return Math.trunc(asNumber(value, 0));
 }
 
-function walk(dir, out = []) {
+function isJUnitResultPath(root, absPath) {
+  const rel = normalizeRel(root, absPath);
+  const rootBase = path.basename(path.resolve(root));
+  if (rel.startsWith('modules/')) return /^modules\/[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
+  if (rootBase === 'modules') return /^[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
+  return /^build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
+}
+
+function walk(dir, root = dir, out = []) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
-      walk(abs, out);
+      walk(abs, root, out);
     } else if (entry.isFile() && /^TEST-.+\.xml$/i.test(entry.name)) {
-      const normalized = abs.split(path.sep).join('/');
-      if (normalized.includes('/build/test-results/test/')) out.push(abs);
+      if (isJUnitResultPath(root, abs)) out.push(abs);
     }
   }
   return out;
@@ -153,7 +163,7 @@ function round3(n) {
   return Math.round(n * 1000) / 1000;
 }
 
-export function buildReport({ root, top = 20, runner = runnerInfo({}) }) {
+export function buildReport({ root, lane = null, top = 20, runner = runnerInfo({}) }) {
   const suites = walk(root)
     .map((filePath) => parseSuite(root, filePath))
     .filter(Boolean);
@@ -195,6 +205,7 @@ export function buildReport({ root, top = 20, runner = runnerInfo({}) }) {
   return {
     kind: KIND,
     generatedAt: new Date().toISOString(),
+    lane,
     runner,
     totals: rounded(totals),
     modules: [...modules.values()]
@@ -217,6 +228,8 @@ export function renderMarkdown(report) {
     '### Unit test attribution',
     '',
     `Generated: ${report.generatedAt}`,
+    '',
+    `Lane: ${report.lane || 'unknown'}`,
     '',
     `Runner: ${report.runner.runnerLabel || 'unknown label'} / ${report.runner.runnerOs || 'unknown OS'} / image ${report.runner.imageOs || 'unknown'} ${report.runner.imageVersion || ''}`.trim(),
     '',
@@ -249,7 +262,7 @@ function main() {
       return;
     }
     const root = path.resolve(opts.resultsRoot || repoRootFromCwd());
-    const report = buildReport({ root, top: opts.top, runner: runnerInfo(opts) });
+    const report = buildReport({ root, lane: opts.lane, top: opts.top, runner: runnerInfo(opts) });
     const json = `${JSON.stringify(report, null, 2)}\n`;
     const md = renderMarkdown(report);
 

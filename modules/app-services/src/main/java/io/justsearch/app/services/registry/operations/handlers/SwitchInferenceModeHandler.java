@@ -138,6 +138,10 @@ public final class SwitchInferenceModeHandler implements OperationHandler {
             OperationResult.failure(
                 message, "POLICY_EXTERNAL_SERVER_DISALLOWED", details, false);
         case MISSING_DLL -> OperationResult.failure(message, "MISSING_DLL", details, false);
+        // Tempdoc 656 Task 3: not retryable — retrying without installing the runtime first won't
+        // help, same as MISSING_DLL.
+        case EXECUTABLE_NOT_FOUND ->
+            OperationResult.failure(message, "EXECUTABLE_NOT_FOUND", details, false);
         // Transient / runtime — caller MAY retry once underlying issue clears.
         case PORT_ALLOCATION_FAILED, PROCESS_EXITED, UNKNOWN ->
             OperationResult.failure(message, "MODE_SWITCH_FAILED", details, true);

@@ -458,3 +458,6 @@ def qu_v3(base_url: str, llm_port: int, max_queries: int, retrieval_depth: int, 
 
         print(f"\nZero-result queries (B): {len(zero_result_qids)}/{len(queries)}")
         print(f"Per-query nDCG@10 movement (B vs A): {improved} improved, {degraded} degraded, {neutral} neutral")
+
+
+COMMANDS = [qu_v3]

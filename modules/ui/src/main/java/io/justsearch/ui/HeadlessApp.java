@@ -716,13 +716,21 @@ public class HeadlessApp {
       // RuntimeManifestListenerWiring. The live-worker supplier reads
       // bootstrap.currentKnowledgeServer() so health-monitor-driven worker
       // restarts are reflected in the worker.grpcPort projection.
+      // Tempdoc 657: the install/runtime intent is a launch-time config value
+      // (-Djustsearch.mode / JUSTSEARCH_MODE), read once here and projected onto the
+      // manifest's mode.intent by the listener wiring.
+      String modeIntent =
+          io.justsearch.configuration.model.InstallIntent.fromConfig(
+                  io.justsearch.configuration.EnvRegistry.MODE.get().orElse(null))
+              .id();
       io.justsearch.ui.runtime.RuntimeManifestListenerWiring.wire(
           manifestPublisher,
           bootstrap,
           knowledgeServer,
           knowledgeServerStartError,
           bootstrap::currentKnowledgeServer,
-          () -> configStore.get().paths().indexBasePath());
+          () -> configStore.get().paths().indexBasePath(),
+          modeIntent);
 
       long workerMs = (System.nanoTime() - tPrev) / 1_000_000;
       long totalMs = (System.nanoTime() - t0) / 1_000_000;

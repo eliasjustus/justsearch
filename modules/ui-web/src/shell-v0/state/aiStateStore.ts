@@ -39,19 +39,47 @@ import {
   setStatusApiBase,
   type StatusSnapshot,
 } from '../utils/statusPoll.js';
+import {
+  subscribeAiInstall,
+  setAiInstallApiBase,
+  __resetAiInstallPollForTest,
+  type AiInstallSnapshot,
+  type InstallStatus,
+  type AiRuntimeStatus,
+  type PackImportStatus,
+} from '../utils/aiInstallPoll.js';
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
+// Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
+// the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
+import {
+  getLastOriginContactMs,
+  isOriginReachable,
+  bumpOriginContact,
+  __resetOriginContactForTest,
+} from './originContact.js';
 import {
   computeStability,
   computeVerdict,
   verdictHeadline,
+  verdictTone,
   type Stability,
   type SystemHealthVerdict,
 } from './verdict.js';
+// Tempdoc 663 Design pass 2 - the AI-engine lifecycle rollup (594/595/596's fourth sibling), computed
+// ONCE here from purely observed signals, alongside `stability`/`verdict`/`runtime`. Local, surface-only
+// UI intent (a just-clicked button) is NOT folded in here - see `applyLocalIntent` in `aiVerdict.ts`.
+import {
+  computeAiEngineVerdict,
+  aiEngineHeadline,
+  aiEngineTone,
+  type AiEngineVerdict,
+} from './aiVerdict.js';
+import type { NoticeTone } from '../utils/statusTone.js';
 
 // Re-export the raw snapshot types — the store is the single observed-state
 // authority, so consumers type `aiState.status` / `aiState.inference` from here.
-export type { StatusSnapshot, InferenceSnapshot };
+export type { StatusSnapshot, InferenceSnapshot, InstallStatus, AiRuntimeStatus, PackImportStatus };
 
 // ── Types ──
 
@@ -64,12 +92,22 @@ export interface AiCapabilities {
 
 export interface AiConnection {
   reachable: boolean;
+  /** Last *poll* success (the data-freshness stamp). */
   lastSuccessMs: number | null;
+  /**
+   * Tempdoc 649 — last POSITIVE CONTACT of any channel (poll success OR an SSE frame/heartbeat), the
+   * reachability stamp. Distinct from `lastSuccessMs` (poll freshness): under load the poll can lag while
+   * a stream keeps contact fresh. Surfaced so the CONNECTION panel can show both timestamps honestly.
+   */
+  lastContactMs: number | null;
   consecutiveFailures: number;
 }
 
 export interface AiRuntime {
-  mode: 'offline' | 'online' | 'indexing' | 'starting' | 'unknown';
+  // 663 Stage 2 — 'transitioning' is a REAL backend Mode value (app-api Mode.java: ONLINE, INDEXING,
+  // TRANSITIONING, OFFLINE), not a stray string. Previously silently collapsed to 'unknown' here,
+  // which is why BrainSurface had to bypass this projection and read the raw untyped snapshot.
+  mode: 'offline' | 'online' | 'indexing' | 'transitioning' | 'starting' | 'unknown';
   modelId: string | null;
   modelLabel: string | null;
   contextWindow: number | null;
@@ -99,6 +137,27 @@ export interface AiIndex {
   embeddingBlocked: Maybe<boolean>;
   embeddingQueueSize: Maybe<number>;
   vduQueueSize: Maybe<number>;
+}
+
+/**
+ * tempdoc 644 — realized retrieval-engine state, one entry per engine, projected by
+ * `computeRealized` from `status.worker.gpu`. The single FE authority for "which engine actually
+ * loaded, and on which device" (the `accelerator`), so a surface (HealthSurface) reads
+ * `aiState.realized.*` instead of re-deriving it from the raw snapshot — the fork-prevention the
+ * realized-capability register guards.
+ */
+export type EngineAccelerator = 'gpu' | 'cpu' | null;
+export interface EngineRealized {
+  loaded: boolean;
+  // null = not loaded, OR the ORT device is not yet probed (lazy init — e.g. the reranker only
+  // runs at query time), distinct from a known CPU realization.
+  accelerator: EngineAccelerator;
+  failureReason: string | null;
+}
+export interface AiRealized {
+  reranker: EngineRealized;
+  embed: EngineRealized;
+  splade: EngineRealized;
 }
 
 export type StatusTier = 'online' | 'degraded' | 'offline' | 'disconnected';
@@ -136,8 +195,18 @@ export interface AiState {
   runtime: AiRuntime;
   activity: AiActivity;
   index: AiIndex;
+  /** tempdoc 644 — realized retrieval-engine state (loaded? GPU/CPU? failure), per engine. */
+  realized: AiRealized;
   statusLabel: string;
   statusTier: StatusTier;
+  /**
+   * Tempdoc 649 — the ONE tone for the status-bar pill + liveness dot, the matched sibling of
+   * `statusLabel`: both project from the one verdict (`verdictTone`). Replaces the `statusTier`→tone
+   * fork that rendered the calm "Catching up…" (`busy`) state as amber `degraded`. Calm in-flux → `info`,
+   * real degradation → `warning`/`error`, settled-online → `success`. (`statusTier` stays for any coarse
+   * non-tone use; it no longer drives connection-status colour.)
+   */
+  statusTone: NoticeTone;
   /**
    * 595 §4.1 — the ONE "is what we're showing settled, or in flux?" axis. Every
    * transition-/freshness-sensitive renderer consults this instead of treating a
@@ -169,6 +238,24 @@ export interface AiState {
    * `onStatusUpdate` (the poll callback), never written by a `computed`, so the graph is acyclic.
    */
   lastSettledIndex: { documentCount: number; indexSizeBytes: number | null } | null;
+  /**
+   * 663 Stage 3 — the last-known install/runtime/pack snapshots, fed by the shared, always-on
+   * `aiInstallPoll` (mirrors `status`/`inference` above: `null` until the first successful poll,
+   * retained — never regressed to `null` — on a later transient failure). BrainSurface consumes
+   * these instead of running its own one-shot, non-retrying fetch (the structural cause of the
+   * "stuck on Connecting… forever" bug, tempdoc 663 §O).
+   */
+  installStatus: InstallStatus | null;
+  runtimeStatus: AiRuntimeStatus | null;
+  packStatus: PackImportStatus | null;
+  /**
+   * Tempdoc 663 Design pass 2 - the ONE AI-engine lifecycle verdict, the fourth 594/595/596 sibling.
+   * Computed once here from `installStatus`/`runtimeStatus`/`runtime`/`connection.reachable` - every
+   * consumer (BrainSurface, any future status-pill/capability-map use) reads this instead of privately
+   * re-deriving it. Does NOT include surface-local optimistic intent (a just-clicked button) - overlay
+   * that via `applyLocalIntent` (`aiVerdict.ts`) on the consuming surface, not here.
+   */
+  aiEngine: AiEngineVerdict;
 }
 
 const STALE_THRESHOLD_MS = 15_000; // 3x the inference poll interval
@@ -189,6 +276,10 @@ const lastInferenceSuccessSig = signal<number | null>(null);
 const lastStatusSuccessSig = signal<number | null>(null);
 const activitySig = signal<AiActivity>(INITIAL_ACTIVITY);
 const installStateSig = signal<Maybe<{ installed: boolean; installing: boolean }>>(UNKNOWN);
+// 663 Stage 3 — raw install/runtime/pack snapshots from the shared `aiInstallPoll`.
+const installStatusSig = signal<InstallStatus | null>(null);
+const runtimeStatusSig = signal<AiRuntimeStatus | null>(null);
+const packStatusSig = signal<PackImportStatus | null>(null);
 // 595 §15.3 (E2) — retained last-settled index counts. Written ONLY by the poll
 // callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
 const lastSettledIndexSig = signal<{ documentCount: number; indexSizeBytes: number | null } | null>(null);
@@ -206,6 +297,7 @@ const loadStartedAtSig = signal<number | null>(null);
 const listeners = new Set<(s: AiState) => void>();
 let unsubInference: (() => void) | null = null;
 let unsubStatus: (() => void) | null = null;
+let unsubAiInstall: (() => void) | null = null;
 let started = false;
 let stalenessTimer: number | null = null;
 let _startedAtMs = 0;
@@ -265,12 +357,42 @@ function computeStaleness(): Staleness {
   };
 }
 
+/**
+ * Tempdoc 649 — REACHABILITY (is the backend alive at all?), derived from the most recent POSITIVE
+ * CONTACT of ANY channel: a poll success (`lastInference/StatusSuccessSig`) OR any SSE frame/heartbeat
+ * (`getLastOriginContactMs`). This is DELIBERATELY SEPARATE from poll-freshness (`computeStaleness`):
+ * under load the cheap polls get starved behind the browser's 6-per-host connection limit, but the
+ * always-on SSE streams keep heartbeating (15s) — so a poll-only signal wrongly reads "disconnected"
+ * while the backend is provably alive. Reachability via the ONE `isOriginReachable` authority fixes
+ * that. Before the first contact, the start-up grace window must elapse before we are willing to call
+ * the origin unreachable (mirrors `neverConnected`), so startup shows "Connecting…", not a false alarm.
+ */
+function computeReachability(): { reachable: boolean; lastContactMs: number | null } {
+  // Depend on the clock tick so reachability flips re-evaluate (the stream stamp is a plain global; the
+  // 5s `checkStaleness` tick bumps `clockTickSig` when the value would change — see checkStaleness).
+  void clockTickSig.get();
+  const lastInf = lastInferenceSuccessSig.get();
+  const lastStatus = lastStatusSuccessSig.get();
+  const lastStream = getLastOriginContactMs();
+  const lastContactMs = Math.max(lastInf ?? 0, lastStatus ?? 0, lastStream ?? 0) || null;
+  const now = Date.now();
+  if (lastContactMs === null) {
+    // No contact of any kind yet: not reachable, but not "disconnected" until the grace window elapses.
+    return { reachable: started && now - _startedAtMs <= STALE_THRESHOLD_MS, lastContactMs: null };
+  }
+  return { reachable: isOriginReachable(lastContactMs, now), lastContactMs };
+}
+
 function computeConnection(): AiConnection {
-  const { lastSuccessMs, neverConnected, stale } = computeStaleness();
+  // `lastSuccessMs` stays the last POLL success (the data-freshness stamp consumers read); `reachable`
+  // is the contact-based truth (tempdoc 649). They are different facts and must not be conflated.
+  const { lastSuccessMs } = computeStaleness();
+  const { reachable, lastContactMs } = computeReachability();
   return {
-    reachable: !neverConnected && !stale,
+    reachable,
     lastSuccessMs,
-    consecutiveFailures: stale || neverConnected ? 1 : 0,
+    lastContactMs,
+    consecutiveFailures: reachable ? 0 : 1,
   };
 }
 
@@ -282,7 +404,12 @@ function computeRuntime(): AiRuntime {
   if (mode === 'online') resolvedMode = 'online';
   else if (mode === 'indexing') resolvedMode = 'indexing';
   else if (mode === 'offline') resolvedMode = 'offline';
+  // `starting` (an explicit live-load signal) takes priority over the raw 'transitioning' mode —
+  // preserves the existing 'starting' UI (ETA sub-text) for the model-load case. Only a
+  // 'transitioning' mode WITHOUT the starting flag (a generic mode swap not caused by a load) falls
+  // through to the new 'transitioning' branch below (663 Stage 2 — previously silently 'unknown').
   else if (inference?.starting) resolvedMode = 'starting';
+  else if (mode === 'transitioning') resolvedMode = 'transitioning';
 
   return {
     mode: resolvedMode,
@@ -305,6 +432,7 @@ function computeStatusLabel(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
   act: AiActivity,
+  aiEngine: AiEngineVerdict,
 ): string {
   // 595 §10.5 — the status bar is a PROJECTION of the one verdict, with the
   // transient ACTIVITY overlay layered on top (active work implies a live
@@ -323,7 +451,9 @@ function computeStatusLabel(
   // Provisional / unreachable phrasing comes from the ONE verdict-wording source
   // (595 §15.1 — `verdictHeadline`), not a parallel switch here, so the status bar
   // and the Health badge cannot drift apart (§2.B: no confident "offline" default
-  // while connecting/reconnecting/transitioning).
+  // while connecting/reconnecting/transitioning). Backend-connectivity problems
+  // outrank AI-install state — nothing AI-related is actionable if the backend
+  // itself is unreachable, so this check stays first, unchanged (Design pass 3 §V).
   if (
     verdict.kind === 'connecting' ||
     verdict.kind === 'unreachable' ||
@@ -331,14 +461,11 @@ function computeStatusLabel(
   ) {
     return verdictHeadline(verdict);
   }
-  // Settled (operational / checking / degraded): keep the familiar runtime label
-  // — the verdict's SEVERITY drives the bar's tone (computeStatusTier), so a
-  // cosmetic degradation stays calm and an impairing one turns the dot amber.
-  if (runtime.mode === 'online' && runtime.modelLabel) {
-    return `Online — ${runtime.modelLabel}`;
-  }
-  if (runtime.mode === 'online') return 'Online';
-  if (runtime.mode === 'indexing') return 'Indexing';
+  // Design pass 3 — the AI-specific label now comes from the ONE AI-engine presentation
+  // projection (`presentAiEngineVerdict`), not a parallel `runtime.mode` switch — the exact same
+  // "one wording source, no drift" discipline the verdict branch above already has. `starting`
+  // stays a special case here (unchanged from before): it needs the LIVE, ticking elapsed time
+  // (`runtime.loadStartedAtMs`), which a static headline lookup cannot carry.
   if (runtime.mode === 'starting') {
     // Tempdoc 601 §19 — live MEASURED elapsed (a count-up, never a countdown), mirroring the
     // 'thinking' branch above: the `>2s` gate keeps trivially-fast loads on the bare label, and
@@ -346,8 +473,8 @@ function computeStatusLabel(
     const elapsed = elapsedSecondsSince(runtime.loadStartedAtMs);
     return elapsed > 2 ? `Starting… ${humanizeSeconds(elapsed)}` : 'Starting…';
   }
-  if (runtime.mode === 'unknown') return 'offline';
-  return 'Offline';
+  const headline = aiEngineHeadline(aiEngine);
+  return aiEngine.kind === 'online' && runtime.modelLabel ? `Online — ${runtime.modelLabel}` : headline;
 }
 
 function computeIndex(): AiIndex {
@@ -365,6 +492,39 @@ function computeIndex(): AiIndex {
       status === null ? UNKNOWN : known((status.embedding?.compatState ?? '').startsWith('BLOCKED')),
     embeddingQueueSize: fromInference(inference?.embeddingQueueSize),
     vduQueueSize: fromInference(inference?.vduQueueSize),
+  };
+}
+
+/**
+ * tempdoc 644 — the ONE realized retrieval-engine projection (reranker / embed / splade), read off
+ * `status.worker.gpu`. Exported as the authority the realized-capability register binds to; surfaces
+ * consume `aiState.realized.*` rather than re-reading `worker.gpu.*OrtCuda` ad-hoc (the fork-class).
+ * `accelerator` distinguishes a known GPU/CPU realization from a not-yet-probed device (lazy ORT
+ * init — `available` false but `attempted` false → `null`, not a false "CPU" claim). Per-query stage
+ * execution is a different record (the search trace) and is intentionally not projected here.
+ */
+export function computeRealized(): AiRealized {
+  const gpu = statusSig.get()?.worker?.gpu;
+  const project = (
+    loaded: boolean,
+    cuda:
+      | { available?: boolean | null; attempted?: boolean | null; failureReason?: string | null }
+      | null
+      | undefined,
+  ): EngineRealized => {
+    const accelerator: EngineAccelerator = !loaded
+      ? null
+      : cuda?.available
+        ? 'gpu'
+        : cuda?.attempted
+          ? 'cpu'
+          : null;
+    return { loaded, accelerator, failureReason: cuda?.failureReason || null };
+  };
+  return {
+    reranker: project(!!gpu?.rerankerModelPath, gpu?.rerankerOrtCuda),
+    embed: project(!!gpu?.embedBackend, gpu?.embedOrtCuda),
+    splade: project(!!gpu?.spladeModelPath, gpu?.spladeOrtCuda),
   };
 }
 
@@ -391,6 +551,43 @@ function computeStatusTier(
       if (runtime.mode === 'indexing' || runtime.mode === 'starting') return 'degraded';
       return 'offline';
   }
+}
+
+/**
+ * Tempdoc 649 — the ONE tone for the status pill + liveness dot, the matched sibling of
+ * `computeStatusLabel`. Both the pill and the dot consume this single verdict-derived tone, so `statusTier`
+ * is no longer a second tone authority: the calm "Catching up…" (`transitioning`, severity `busy`) projects
+ * `verdictTone('busy')='info'` (calm tint) instead of the old `statusTier='degraded'` amber.
+ *
+ * Scope: this change is intentionally CONNECTION-ONLY. The verdict-driven kinds
+ * (`connecting`/`transitioning`/`unreachable`/`degraded`) take their tone from the one `verdictTone`; every
+ * NON-connection state keeps its PRE-649 tone:
+ *   - AI **activity** ("Thinking…") is NOT special-cased here — its tone falls through to the verdict/runtime
+ *     logic, so a "Thinking…" overlay still shows the UNDERLYING health (green healthy / amber degraded), as
+ *     before. The label is the only thing the activity overlays (`computeStatusLabel`), not the tone.
+ *   - settled `indexing`/`starting` keep their prior **amber** (`warning`) "in-flux" tone (595); only the
+ *     connection states were the 649 over-alarm. `online → success`, `offline`/unknown → `neutral`.
+ */
+function computeStatusTone(
+  verdict: SystemHealthVerdict,
+  runtime: AiRuntime,
+  aiEngine: AiEngineVerdict,
+): NoticeTone {
+  // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
+  // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
+  if (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  ) {
+    return verdictTone(verdict.severity);
+  }
+  // Design pass 3 — the AI-specific tone now comes from the ONE AI-engine presentation projection
+  // (`aiEngineTone`), which preserves this function's own pre-existing convention (indexing/starting
+  // stay amber, distinct from settled online) — see `aiEngineTone`'s own doc comment.
+  if (runtime.mode === 'starting') return 'warning';
+  return aiEngineTone(aiEngine.kind);
 }
 
 function computePhase(): ConnectionPhase {
@@ -427,6 +624,7 @@ function buildSnapshot(): AiState {
   const connection = computeConnection();
   const runtime = computeRuntime();
   const index = computeIndex();
+  const realized = computeRealized();
   const activity = activitySig.get();
   const status = statusSig.get();
   // 595 §4.1/§4.2 — derive the ONE stability axis + verdict, then project the
@@ -441,19 +639,35 @@ function buildSnapshot(): AiState {
     servingSearchGenerationId: migration?.servingSearchGenerationId,
     servingIngestGenerationId: migration?.servingIngestGenerationId,
     catchingUp: status?.catchingUp,
+    // Tempdoc 649 — poll-stale BUT reachable via another channel ⟹ calm "Catching up…", not "Reconnecting…".
+    reachableViaContact: connection.reachable,
   });
   const verdict = computeVerdict({
     phase,
     stability,
     readiness,
+    // Tempdoc 649 — distinguishes "no poll yet but origin alive" (Connecting…) from a true unreachable.
+    reachableViaContact: connection.reachable,
     // 595 §15.2 (E4) — project the backend's own stuck-rebuild signals so a wedged
     // generation cutover escalates from calm "Rebuilding…" to a warning.
     migrationPaused: migration?.migrationPaused,
     migrationSwitchingAgeMs: migration?.migrationSwitchingAgeMs,
     migrationSwitchingMaxDurationMs: migration?.migrationSwitchingMaxDurationMs,
   });
-  const statusLabel = computeStatusLabel(verdict, runtime, activity);
+  const installStatus = installStatusSig.get();
+  const runtimeStatus = runtimeStatusSig.get();
+  // Tempdoc 663 Design pass 2 - the AI-engine rollup, computed the same way stability/verdict are
+  // (purely observed signals; no surface-local UI intent). Computed BEFORE statusLabel/statusTone
+  // (Design pass 3) since those now project their AI-specific wording/tone from this value.
+  const aiEngine = computeAiEngineVerdict({
+    installStatus,
+    runtimeStatus,
+    runtime,
+    reachable: connection.reachable,
+  });
+  const statusLabel = computeStatusLabel(verdict, runtime, activity, aiEngine);
   const statusTier = computeStatusTier(verdict, runtime);
+  const statusTone = computeStatusTone(verdict, runtime, aiEngine);
   return {
     phase,
     readiness,
@@ -462,13 +676,19 @@ function buildSnapshot(): AiState {
     runtime,
     activity,
     index,
+    realized,
     statusLabel,
     statusTier,
+    statusTone,
     stability,
     verdict,
     status,
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),
+    installStatus,
+    runtimeStatus,
+    packStatus: packStatusSig.get(),
+    aiEngine,
   };
 }
 
@@ -555,6 +775,25 @@ function onStatusUpdate(snap: StatusSnapshot | null): void {
 }
 
 /**
+ * 663 Stage 3 — apply a fresh install/runtime/pack snapshot. `aiInstallPoll` already retains
+ * last-known-good per field on a transient failure, so every call here has at-least-as-much data
+ * as before; this finally wires the (previously dead-in-production) `installStateSig`.
+ */
+function onAiInstallUpdate(snap: AiInstallSnapshot): void {
+  installStatusSig.set(snap.install);
+  runtimeStatusSig.set(snap.runtime);
+  packStatusSig.set(snap.packs);
+  if (snap.install) {
+    installStateSig.set(
+      known({
+        installed: snap.install.installedFully === true,
+        installing: snap.install.state === 'running',
+      }),
+    );
+  }
+}
+
+/**
  * 595 §15.3 (E2) — on a SETTLED successful poll, retain the index counts so a later
  * provisional window can show them dimmed. Settled-ness reuses the ONE pure oracle
  * `computeStability` (phase='connected' — we just got a successful poll); a non-settled
@@ -585,15 +824,15 @@ function stampSettledIndex(snap: StatusSnapshot): void {
 }
 
 function checkStaleness(): void {
-  const now = Date.now();
-  const lastSuccess = Math.max(
-    lastInferenceSuccessSig.get() ?? 0,
-    lastStatusSuccessSig.get() ?? 0,
-  );
-  const wasReachable = aiState.get().connection.reachable;
-  const isStale = lastSuccess > 0 && now - lastSuccess > STALE_THRESHOLD_MS;
-  const neverConnected = lastSuccess === 0 && now - _startedAtMs > STALE_THRESHOLD_MS;
-  if ((isStale || neverConnected) !== !wasReachable) {
+  // Tempdoc 649 — two time-derived axes can change between input-signal updates: the poll-freshness
+  // PHASE (data current vs aged out) and contact-based REACHABILITY (the stream stamp is a plain
+  // global). Bump the clock tick when EITHER would flip vs the currently-displayed snapshot, so the
+  // memoized `computed` re-evaluates — covering both the calm "Catching up…" transition (poll goes
+  // stale while still reachable) and the unreachable transition (all contact ages out).
+  const current = aiState.get();
+  const phaseNow = computePhase();
+  const { reachable: reachableNow } = computeReachability();
+  if (phaseNow !== current.phase || reachableNow !== current.connection.reachable) {
     clockTickSig.set(clockTickSig.get() + 1);
   }
 }
@@ -606,16 +845,20 @@ export function startAiStateStore(apiBase: string): void {
   _startedAtMs = Date.now();
   setInferenceApiBase(apiBase);
   setStatusApiBase(apiBase);
+  setAiInstallApiBase(apiBase);
   unsubInference = subscribeInference(onInferenceUpdate);
   unsubStatus = subscribeStatus(onStatusUpdate);
+  unsubAiInstall = subscribeAiInstall(onAiInstallUpdate);
   stalenessTimer = window.setInterval(checkStaleness, 5000);
 }
 
 export function stopAiStateStore(): void {
   unsubInference?.();
   unsubStatus?.();
+  unsubAiInstall?.();
   unsubInference = null;
   unsubStatus = null;
+  unsubAiInstall = null;
   if (stalenessTimer !== null) {
     window.clearInterval(stalenessTimer);
     stalenessTimer = null;
@@ -668,6 +911,16 @@ export function __feedForTest(opts: {
   }
 }
 
+/**
+ * Test-only (tempdoc 649): record positive origin contact at `ms` (default now), mirroring an SSE
+ * frame/heartbeat, so tests can exercise reachable-but-poll-stale without a live stream. Bump the clock
+ * tick so the reachability derivation re-evaluates (the stream stamp is a plain global).
+ */
+export function __feedContactForTest(ms: number = Date.now()): void {
+  bumpOriginContact(ms);
+  clockTickSig.set(clockTickSig.get() + 1);
+}
+
 /** Test-only: force the staleness derivation to re-evaluate (mirrors the interval). */
 export function __tickClockForTest(): void {
   clockTickSig.set(clockTickSig.get() + 1);
@@ -682,8 +935,13 @@ export function __resetAiStateForTest(): void {
   lastStatusSuccessSig.set(null);
   activitySig.set(INITIAL_ACTIVITY);
   installStateSig.set(UNKNOWN);
+  installStatusSig.set(null);
+  runtimeStatusSig.set(null);
+  packStatusSig.set(null);
   lastSettledIndexSig.set(null);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
+  __resetOriginContactForTest();
+  __resetAiInstallPollForTest();
   _startedAtMs = 0;
 }

@@ -31,6 +31,10 @@ public class ModeTransitionException extends Exception {
     ALREADY_TRANSITIONING,
     EXTERNAL_SERVER_CONFLICT,
     MISSING_DLL,
+    // Tempdoc 656 Task 3: distinct from MISSING_DLL (which inspects an already-launched process's
+    // exit code) — this fires when the server executable itself does not exist, before a process is
+    // ever started.
+    EXECUTABLE_NOT_FOUND,
     PROCESS_EXITED,
     HEALTH_CHECK_TIMEOUT,
     HEALTH_CHECK_INTERRUPTED,
@@ -113,6 +117,8 @@ public class ModeTransitionException extends Exception {
           new InferenceFailure.StartupFailure(StartupCode.INSUFFICIENT_VRAM, detail, cause);
       case MISSING_DLL ->
           new InferenceFailure.StartupFailure(StartupCode.MISSING_DLL, detail, cause);
+      case EXECUTABLE_NOT_FOUND ->
+          new InferenceFailure.StartupFailure(StartupCode.EXECUTABLE_NOT_FOUND, detail, cause);
       case PROCESS_EXITED ->
           new InferenceFailure.StartupFailure(StartupCode.PROCESS_EXITED, detail, cause);
       case PORT_ALLOCATION_FAILED ->

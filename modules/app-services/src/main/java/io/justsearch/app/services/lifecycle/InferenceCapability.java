@@ -4,6 +4,7 @@ package io.justsearch.app.services.lifecycle;
 import io.justsearch.app.api.lifecycle.Capability;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 
@@ -60,9 +61,14 @@ public final class InferenceCapability implements Capability {
    */
   public CapabilityHealth transition(CapabilityHealth newHealth, String newReason) {
     CapabilityHealth prev = this.health;
+    String prevReason = this.reason;
     this.reason = newReason;
     this.health = newHealth;
-    if (prev != newHealth) {
+    // Tempdoc 656 Task 0: fire listeners on a reason-only change too (health unchanged), not just a
+    // health transition. RuntimeManifestListenerWiring is purely listener-driven with no polling
+    // fallback, so a more specific reason arriving while health stays e.g. OFFLINE would otherwise
+    // never reach the manifest.
+    if (prev != newHealth || !Objects.equals(prevReason, newReason)) {
       for (BiConsumer<CapabilityHealth, CapabilityHealth> listener : listeners) {
         listener.accept(prev, newHealth);
       }

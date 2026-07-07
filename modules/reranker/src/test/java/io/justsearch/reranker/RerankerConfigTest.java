@@ -21,6 +21,13 @@ class RerankerConfigTest {
     assertEquals(200, config.deadlineBudgetMs());
     assertEquals(5, config.minHitsThreshold());
     assertEquals(512, config.maxSequenceLength());
+    // Tempdoc 643: judge-stage refinement floor defaults to off.
+    assertFalse(config.judgeBlendEnabled());
+    assertEquals(0.5, config.judgeBlendAlpha());
+    // Tempdoc 643 (E1/E2): confidence-driven arbitration + perf-skip default to off.
+    assertFalse(config.judgeArbitrationEnabled());
+    assertEquals(0.85, config.judgeArbitrationAlphaDiverge());
+    assertFalse(config.judgeArbitrationSkipEnabled());
   }
 
   @Test
@@ -31,13 +38,17 @@ class RerankerConfigTest {
 
   @Test
   void isReadyReturnsFalseWhenModelPathNull() {
-    RerankerConfig config = new RerankerConfig(true, null, 50, 200, 5, 512, false, 0, 16_000);
+    RerankerConfig config =
+        new RerankerConfig(
+            true, null, 50, 200, 5, 512, false, 0, 16_000, false, 0.5, false, 0.85, false);
     assertFalse(config.isReady());
   }
 
   @Test
   void isReadyReturnsTrueWhenEnabledAndModelPathSet() {
-    RerankerConfig config = new RerankerConfig(true, Path.of("/models/reranker"), 50, 200, 5, 512, false, 0, 16_000);
+    RerankerConfig config = new RerankerConfig(
+        true, Path.of("/models/reranker"), 50, 200, 5, 512, false, 0, 16_000, false, 0.5, false,
+        0.85, false);
     assertTrue(config.isReady());
   }
 
@@ -52,7 +63,12 @@ class RerankerConfigTest {
         256,
         false,
         0,
-        16_000
+        16_000,
+        true,
+        0.7,
+        true,
+        0.9,
+        true
     );
 
     assertTrue(config.enabled());
@@ -63,6 +79,11 @@ class RerankerConfigTest {
     assertEquals(256, config.maxSequenceLength());
     assertFalse(config.gpuEnabled());
     assertEquals(0, config.gpuDeviceId());
+    assertTrue(config.judgeBlendEnabled());
+    assertEquals(0.7, config.judgeBlendAlpha());
+    assertTrue(config.judgeArbitrationEnabled());
+    assertEquals(0.9, config.judgeArbitrationAlphaDiverge());
+    assertTrue(config.judgeArbitrationSkipEnabled());
   }
 
   @Test
@@ -76,7 +97,12 @@ class RerankerConfigTest {
         512,
         true,
         1,
-        16_000
+        16_000,
+        false,
+        0.5,
+        false,
+        0.85,
+        false
     );
 
     assertTrue(config.gpuEnabled());
@@ -248,6 +274,105 @@ class RerankerConfigTest {
       restoreProperty("justsearch.rerank.min_hits", oldMinHits);
       TestResolvedConfigHelper.restoreGlobal(prevStore);
     }
+  }
+
+  @Test
+  void fromEnvReadsJudgeBlendSettingsFromConfigStore() {
+    // Tempdoc 643: judge-stage refinement floor — verify the EnvRegistry -> ResolvedConfigBuilder
+    // -> ResolvedConfig.Ai.Reranker -> RerankerConfig.from() chain end-to-end.
+    ConfigStore prevStore = ConfigStore.globalOrNull();
+    String oldEnabled = System.getProperty("justsearch.rerank.enabled");
+    String oldBlendEnabled = System.getProperty("justsearch.rerank.judge_blend_enabled");
+    String oldBlendAlpha = System.getProperty("justsearch.rerank.judge_blend_alpha");
+    try {
+      ConfigStore store =
+          new ConfigStore(
+              TestResolvedConfigHelper.fromEntries(
+                  java.util.Map.of(
+                      "justsearch.rerank.judge_blend_enabled", "true",
+                      "justsearch.rerank.judge_blend_alpha", "0.3")));
+      ConfigStore.setGlobal(store);
+
+      System.setProperty("justsearch.rerank.enabled", "true");
+      System.clearProperty("justsearch.rerank.judge_blend_enabled");
+      System.clearProperty("justsearch.rerank.judge_blend_alpha");
+
+      RerankerConfig config = RerankerConfig.fromEnv();
+      assertTrue(config.judgeBlendEnabled(), "judgeBlendEnabled should be read from ConfigStore");
+      assertEquals(0.3, config.judgeBlendAlpha(), "judgeBlendAlpha should be read from ConfigStore");
+    } finally {
+      restoreProperty("justsearch.rerank.enabled", oldEnabled);
+      restoreProperty("justsearch.rerank.judge_blend_enabled", oldBlendEnabled);
+      restoreProperty("justsearch.rerank.judge_blend_alpha", oldBlendAlpha);
+      TestResolvedConfigHelper.restoreGlobal(prevStore);
+    }
+  }
+
+  @Test
+  void defaultJudgeBlendIsOffWhenUnset() {
+    // The floor must default to off so existing behavior (CE replaces fusion order) is unchanged.
+    RerankerConfig config = RerankerConfig.DISABLED;
+    assertFalse(config.judgeBlendEnabled());
+  }
+
+  @Test
+  void fromEnvReadsJudgeArbitrationSettingsFromConfigStore() {
+    // Tempdoc 643 (E1/E2): verify the EnvRegistry -> ResolvedConfigBuilder ->
+    // ResolvedConfig.Ai.Reranker -> RerankerConfig.from() chain end-to-end for the arbitration
+    // fields, mirroring fromEnvReadsJudgeBlendSettingsFromConfigStore above.
+    ConfigStore prevStore = ConfigStore.globalOrNull();
+    String oldEnabled = System.getProperty("justsearch.rerank.enabled");
+    String oldArbitrationEnabled =
+        System.getProperty("justsearch.rerank.judge_arbitration_enabled");
+    String oldAlphaDiverge =
+        System.getProperty("justsearch.rerank.judge_arbitration_alpha_diverge");
+    String oldSkipEnabled =
+        System.getProperty("justsearch.rerank.judge_arbitration_skip_enabled");
+    try {
+      ConfigStore store =
+          new ConfigStore(
+              TestResolvedConfigHelper.fromEntries(
+                  java.util.Map.of(
+                      "justsearch.rerank.judge_arbitration_enabled", "true",
+                      "justsearch.rerank.judge_arbitration_alpha_diverge", "0.95",
+                      "justsearch.rerank.judge_arbitration_skip_enabled", "true")));
+      ConfigStore.setGlobal(store);
+
+      System.setProperty("justsearch.rerank.enabled", "true");
+      System.clearProperty("justsearch.rerank.judge_arbitration_enabled");
+      System.clearProperty("justsearch.rerank.judge_arbitration_alpha_diverge");
+      System.clearProperty("justsearch.rerank.judge_arbitration_skip_enabled");
+
+      RerankerConfig config = RerankerConfig.fromEnv();
+      assertTrue(
+          config.judgeArbitrationEnabled(),
+          "judgeArbitrationEnabled should be read from ConfigStore");
+      assertEquals(
+          0.95,
+          config.judgeArbitrationAlphaDiverge(),
+          "judgeArbitrationAlphaDiverge should be read from ConfigStore");
+      assertTrue(
+          config.judgeArbitrationSkipEnabled(),
+          "judgeArbitrationSkipEnabled should be read from ConfigStore");
+    } finally {
+      restoreProperty("justsearch.rerank.enabled", oldEnabled);
+      restoreProperty(
+          "justsearch.rerank.judge_arbitration_enabled", oldArbitrationEnabled);
+      restoreProperty(
+          "justsearch.rerank.judge_arbitration_alpha_diverge", oldAlphaDiverge);
+      restoreProperty(
+          "justsearch.rerank.judge_arbitration_skip_enabled", oldSkipEnabled);
+      TestResolvedConfigHelper.restoreGlobal(prevStore);
+    }
+  }
+
+  @Test
+  void defaultJudgeArbitrationIsOffWhenUnset() {
+    // Arbitration/perf-skip must default to off so existing behavior (static judgeBlendAlpha,
+    // CE always called) is unchanged.
+    RerankerConfig config = RerankerConfig.DISABLED;
+    assertFalse(config.judgeArbitrationEnabled());
+    assertFalse(config.judgeArbitrationSkipEnabled());
   }
 
   // ==================== Auto-enable on explicit path (374 alpha.18 R4-sweep) ====================

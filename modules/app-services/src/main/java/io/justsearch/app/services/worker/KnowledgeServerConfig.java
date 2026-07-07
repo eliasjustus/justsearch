@@ -40,7 +40,18 @@ public record KnowledgeServerConfig(
     private static final long DEFAULT_DEADLINE_MS = 5000;
     private static final long DEFAULT_PORT_DISCOVERY_TIMEOUT_MS = 15_000;
     private static final int DEFAULT_MAX_RETRIES = 3;
-    private static final String DEFAULT_WORKER_HEAP = "512m";
+    /**
+     * Tempdoc 682 item 1: raised from the Nov-2025 "512m" (which had no recorded derivation)
+     * after a measured 2026-07-06 indexing run showed 512m has no safety margin. Evidence
+     * (GC log, {@code -Xms512m -Xmx512m}, mixed/desktop-mixed-v1, 2286 docs, full enrichment):
+     * after-GC live-set peak 348M (68% of heap), heap at 499-512M before collections, and
+     * 5 G1 evacuation failures (2 humongous-allocation-triggered) within 543s — one step from
+     * OOM, measured at only ~74% enrichment completion and WITHOUT live Tika-PDF/office parse
+     * pressure (no PDF corpus exercised), so the observed pressure is a lower bound. 1g puts
+     * the observed live-set peak at ~34% occupancy. Override via JUSTSEARCH_WORKER_HEAP for
+     * constrained devices; the spawner pins -Xms=-Xmx, so this is fully resident from boot.
+     */
+    private static final String DEFAULT_WORKER_HEAP = "1g";
     private static final long DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS = 5000;
     private static final long DEFAULT_PID_VALIDATION_TIMEOUT_MS = 5000;
     /** Default stability window: 5 minutes. Worker must run this long to reset restart counter. */

@@ -116,3 +116,60 @@ class TestVerifySentinel:
     def test_sentinel_absent(self, tmp_path):
         tmp_path.mkdir(exist_ok=True)
         assert verify_sentinel(tmp_path) is False
+
+
+class TestMaterializeScanAxis:
+    """tempdoc 624 §T.2: a doc carrying ``image_b64`` materializes as a `.png` of the
+    image bytes instead of a `.txt` of `text` -- `text` itself is untouched (still the
+    ground truth a caller reading the dict directly would see)."""
+
+    def test_writes_png_for_image_b64_doc(self, tmp_path):
+        import base64
+        png_bytes = b"\x89PNG\r\n\x1a\nfake-but-nonempty-payload"
+        corpus = [{"_id": "scan1", "title": "Scan Doc", "text": "ground truth text",
+                   "image_b64": base64.b64encode(png_bytes).decode("ascii")}]
+        count = materialize(corpus, tmp_path)
+        assert count == 1
+
+        png_path = tmp_path / doc_id_to_filename("scan1", ext="png")
+        assert png_path.exists()
+        assert png_path.read_bytes() == png_bytes
+        assert not (tmp_path / doc_id_to_filename("scan1")).exists()  # no stray .txt
+
+    def test_mixed_corpus_writes_png_and_txt(self, tmp_path):
+        import base64
+        png_bytes = b"\x89PNG\r\nsome-bytes"
+        corpus = [
+            {"_id": "scan1", "text": "gt", "image_b64": base64.b64encode(png_bytes).decode("ascii")},
+            {"_id": "plain1", "text": "plain text doc"},
+        ]
+        materialize(corpus, tmp_path)
+        assert (tmp_path / doc_id_to_filename("scan1", ext="png")).exists()
+        assert (tmp_path / doc_id_to_filename("plain1")).read_text(encoding="utf-8") == "plain text doc"
+
+    def test_falsy_image_b64_falls_back_to_text(self, tmp_path):
+        corpus = [{"_id": "d1", "text": "hi", "image_b64": None}]
+        materialize(corpus, tmp_path)
+        assert (tmp_path / doc_id_to_filename("d1")).read_text(encoding="utf-8") == "hi"
+
+    def test_ir_datasets_namedtuple_without_image_field_unaffected(self, tmp_path):
+        """Regression guard: MagicMock auto-vivifies ANY attribute access (including
+        `image_b64`) into a truthy Mock object -- `_extract_doc_fields` must not treat
+        that as a real image, or this (pre-existing) test double would crash
+        `base64.b64decode` on a Mock instead of writing the plain-text file."""
+        doc = MagicMock()
+        doc.doc_id = "d1"
+        doc.text = "content"
+        doc.title = "Title"
+        count = materialize([doc], tmp_path)
+        assert count == 1
+        f = tmp_path / doc_id_to_filename("d1")
+        assert "Title" in f.read_text(encoding="utf-8")
+
+
+class TestDocIdToFilenameExt:
+    def test_default_ext_is_txt(self):
+        assert doc_id_to_filename("abc") == "abc.txt"
+
+    def test_custom_ext(self):
+        assert doc_id_to_filename("abc", ext="png") == "abc.png"

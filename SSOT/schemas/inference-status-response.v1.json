@@ -1,0 +1,115 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "activeModelId" : {
+      "type" : "string"
+    },
+    "available" : {
+      "type" : "boolean"
+    },
+    "configuredContextTokens" : {
+      "type" : "integer"
+    },
+    "cudaRuntimeWarning" : {
+      "type" : "string"
+    },
+    "embeddingQueueSize" : {
+      "type" : "integer"
+    },
+    "externalServer" : {
+      "type" : "object",
+      "properties" : {
+        "adoptedAtMs" : {
+          "type" : "integer"
+        },
+        "consecutiveHealthFailures" : {
+          "type" : "integer"
+        },
+        "contextTokens" : {
+          "type" : [ "integer", "null" ]
+        },
+        "contextTooSmall" : {
+          "type" : "boolean"
+        },
+        "lastHealthError" : {
+          "type" : [ "string", "null" ]
+        },
+        "lastHealthOkAtMs" : {
+          "type" : "integer"
+        },
+        "modelId" : {
+          "type" : [ "string", "null" ]
+        },
+        "modelMismatch" : {
+          "type" : "boolean"
+        },
+        "usingExternalLlamaServer" : {
+          "type" : "boolean"
+        },
+        "verificationError" : {
+          "type" : [ "string", "null" ]
+        },
+        "verified" : {
+          "type" : "boolean"
+        }
+      }
+    },
+    "generation" : {
+      "type" : "integer"
+    },
+    "gpu" : {
+      "type" : "object",
+      "properties" : {
+        "cudaAvailable" : {
+          "type" : "boolean"
+        },
+        "cudaVersion" : {
+          "type" : "string"
+        },
+        "nvidiaSmiAvailable" : {
+          "type" : "boolean"
+        },
+        "nvmlAvailable" : {
+          "type" : "boolean"
+        },
+        "nvmlDriverVersion" : {
+          "type" : "string"
+        },
+        "nvmlTotalVramBytes" : {
+          "type" : "integer"
+        },
+        "totalVramBytes" : {
+          "type" : "integer"
+        },
+        "vramDescription" : {
+          "type" : "string"
+        },
+        "vramDetectionSource" : {
+          "type" : "string"
+        }
+      }
+    },
+    "hasVisionCapability" : {
+      "type" : "boolean"
+    },
+    "lastStartupDurationMs" : {
+      "type" : "integer"
+    },
+    "llmContextTokens" : {
+      "type" : "integer"
+    },
+    "mode" : {
+      "type" : "string"
+    },
+    "starting" : {
+      "type" : "boolean"
+    },
+    "tier" : {
+      "type" : "string"
+    },
+    "vduQueueSize" : {
+      "type" : "integer"
+    }
+  }
+}

@@ -7,9 +7,9 @@ assistance). Please set expectations accordingly — and thank you for trying it
 
 | You want to… | Go to |
 |---|---|
-| **Ask a question** / share an idea | [GitHub Discussions](https://github.com/eliasjustus/JustSearch/discussions) |
-| **Report a bug** | [Bug report template](https://github.com/eliasjustus/JustSearch/issues/new?template=bug_report.md) |
-| **Request a feature** | [Feature request template](https://github.com/eliasjustus/JustSearch/issues/new?template=feature_request.md) — but read [`NON-GOALS.md`](NON-GOALS.md) first so it fits the project's scope |
+| **Ask a question** / share an idea | [GitHub Discussions](https://github.com/eliasjustus/justsearch/discussions) |
+| **Report a bug** | [Bug report template](https://github.com/eliasjustus/justsearch/issues/new?template=bug_report.md) |
+| **Request a feature** | [Feature request template](https://github.com/eliasjustus/justsearch/issues/new?template=feature_request.md) — but read [`NON-GOALS.md`](NON-GOALS.md) first so it fits the project's scope |
 | **Report a security issue** | **Do not open a public issue** — follow [`SECURITY.md`](SECURITY.md) |
 | **Contribute code** | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 
@@ -27,5 +27,5 @@ assistance). Please set expectations accordingly — and thank you for trying it
 
 - Most setup and build questions are answered in [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
   [documentation](docs/).
-- Check existing [issues](https://github.com/eliasjustus/JustSearch/issues) and
-  [discussions](https://github.com/eliasjustus/JustSearch/discussions) — your question may already be answered.
+- Check existing [issues](https://github.com/eliasjustus/justsearch/issues) and
+  [discussions](https://github.com/eliasjustus/justsearch/discussions) — your question may already be answered.

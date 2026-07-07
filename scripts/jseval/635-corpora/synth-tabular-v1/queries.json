@@ -1,142 +1,142 @@
 [
  {
   "query": "In the records for the power station in the upper wetlands, following the links, what attribute is recorded for the final entity?",
-  "answer": "russet ferrolite 0003",
+  "answer": "indigo brannik 0003",
   "question_type": "2_hop",
   "evidence_ids": [
-   "mirmire1",
-   "pellreach2",
-   "rellcrag3"
+   "wendmond1",
+   "mirmire2",
+   "falby3"
   ]
  },
  {
   "query": "In the records for the stargazing facility in the ridge to the east, following the links, what attribute is recorded for the final entity?",
-  "answer": "azure lansk 0006",
+  "answer": "pallid vellum 0006",
   "question_type": "2_hop",
   "evidence_ids": [
-   "olmash4",
-   "skoker5",
-   "tasash6"
+   "rellven4",
+   "vexthorn5",
+   "breldell6"
   ]
  },
  {
   "query": "In the records for the grain-grinding works in the curve of the river, following the links, what attribute is recorded for the final entity?",
-  "answer": "pallid lansk 0009",
+  "answer": "russet grist 0009",
   "question_type": "2_hop",
   "evidence_ids": [
-   "cavmire7",
-   "wenddac8",
-   "falker9"
+   "falfen7",
+   "vexholt8",
+   "quenlun9"
   ]
  },
  {
   "query": "In the records for the records vault in the former justice building, following the links, what attribute is recorded for the final entity?",
-  "answer": "russet skack 0012",
+  "answer": "indigo quartzine 0012",
   "question_type": "2_hop",
   "evidence_ids": [
-   "nuthash10",
-   "pellstone11",
-   "olmdac12"
+   "brelstone10",
+   "vexreach11",
+   "orrmire12"
   ]
  },
  {
   "query": "In the records for the metal-casting works in the quarter to the west, following the links, what attribute is recorded for the final entity?",
-  "answer": "pallid lansk 0015",
+  "answer": "verdant lansk 0015",
   "question_type": "2_hop",
   "evidence_ids": [
-   "falfen13",
-   "rellvale14",
-   "vexholt15"
+   "wendlun13",
+   "rellker14",
+   "vorwick15"
   ]
  },
  {
   "query": "In the records for the optical instrument in the Carpathian uplands, following the links, what attribute is recorded for the final entity?",
-  "answer": "azure skack 0018",
+  "answer": "verdant quartzine 0018",
   "question_type": "2_hop",
   "evidence_ids": [
-   "kangrove16",
-   "cavker17",
-   "mirlun18"
+   "harndell16",
+   "tasdell17",
+   "nuththorn18"
   ]
  },
  {
   "query": "In the records for the streetcar line in the city on the slopes, following the links, what attribute is recorded for the final entity?",
-  "answer": "crimson lansk 0021",
+  "answer": "verdant brannik 0021",
   "question_type": "2_hop",
   "evidence_ids": [
-   "skocrag19",
-   "olmcrag20",
-   "brelcrag21"
+   "falthorn19",
+   "kandac20",
+   "orrdell21"
   ]
  },
  {
   "query": "In the records for the water channel in the hills to the south, following the links, what attribute is recorded for the final entity?",
-  "answer": "umber vellum 0024",
+  "answer": "ochre perrin 0024",
   "question_type": "2_hop",
   "evidence_ids": [
-   "nuthcrag22",
-   "brelric23",
-   "orrgrove24"
+   "kanlun22",
+   "tasholt23",
+   "mirfen24"
   ]
  },
  {
   "query": "In the records for the publishing works in the central marketplace, following the links, what attribute is recorded for the final entity?",
-  "answer": "crimson skack 0027",
+  "answer": "indigo ferrolite 0027",
   "question_type": "2_hop",
   "evidence_ids": [
-   "mirvale25",
-   "vexash26",
-   "harnvale27"
+   "limash25",
+   "limfen26",
+   "vexthorn27"
   ]
  },
  {
   "query": "In the records for the coastal beacon in the stony promontory, following the links, what attribute is recorded for the final entity?",
-  "answer": "crimson lansk 0030",
+  "answer": "russet vellum 0030",
   "question_type": "2_hop",
   "evidence_ids": [
-   "quengrove28",
-   "brelby29",
-   "vexker30"
+   "harnholt28",
+   "orrthorn29",
+   "harnby30"
   ]
  },
  {
   "query": "In the records for the wine estate in the sunlit dale, following the links, what attribute is recorded for the final entity?",
-  "answer": "pallid ferrolite 0033",
+  "answer": "crimson brannik 0033",
   "question_type": "2_hop",
   "evidence_ids": [
-   "vexwick31",
-   "vexby32",
-   "nuthlun33"
+   "tasdac31",
+   "quenmire32",
+   "skogrove33"
   ]
  },
  {
   "query": "In the records for the thermal spa in the shoreline bluffs, following the links, what attribute is recorded for the final entity?",
-  "answer": "pallid vellum 0036",
+  "answer": "pallid ferrolite 0036",
   "question_type": "2_hop",
   "evidence_ids": [
-   "zelash34",
-   "skovale35",
-   "mirdell36"
+   "falcrag34",
+   "druwick35",
+   "brelker36"
   ]
  },
  {
   "query": "In the records for the power station in the evergreen woodland, following the links, what attribute is recorded for the final entity?",
-  "answer": "indigo grist 0039",
+  "answer": "umber skack 0039",
   "question_type": "2_hop",
   "evidence_ids": [
-   "limpost37",
-   "rellholt38",
-   "vexdac39"
+   "limstone37",
+   "pellash38",
+   "tasmire39"
   ]
  },
  {
   "query": "In the records for the stargazing facility in the saline plains, following the links, what attribute is recorded for the final entity?",
-  "answer": "umber grist 0042",
+  "answer": "russet skack 0042",
   "question_type": "2_hop",
   "evidence_ids": [
-   "brelmond40",
-   "tasthorn41",
-   "skowick42"
+   "zelmire40",
+   "rellven41",
+   "vorven42"
   ]
  },
  {
@@ -144,59 +144,59 @@
   "answer": "russet perrin 0045",
   "question_type": "2_hop",
   "evidence_ids": [
-   "rellven43",
-   "kanpost44",
-   "harnric45"
+   "limven43",
+   "nuthdac44",
+   "orrholt45"
   ]
  },
  {
   "query": "In the records for the records vault in the port entrance, following the links, what attribute is recorded for the final entity?",
-  "answer": "crimson perrin 0048",
+  "answer": "russet vellum 0048",
   "question_type": "2_hop",
   "evidence_ids": [
-   "mirthorn46",
-   "drulun47",
-   "vorreach48"
+   "orrash46",
+   "kanash47",
+   "druby48"
   ]
  },
  {
   "query": "In the records for the metal-casting works in the arid hollow, following the links, what attribute is recorded for the final entity?",
-  "answer": "indigo ferrolite 0051",
+  "answer": "russet lansk 0051",
   "question_type": "2_hop",
   "evidence_ids": [
-   "vexreach49",
-   "rellreach50",
-   "quenlun51"
+   "olmwick49",
+   "limlun50",
+   "vorholt51"
   ]
  },
  {
   "query": "In the records for the optical instrument in the iced-over tarn, following the links, what attribute is recorded for the final entity?",
-  "answer": "umber vellum 0054",
+  "answer": "russet vellum 0054",
   "question_type": "2_hop",
   "evidence_ids": [
-   "tasven52",
-   "falfen53",
-   "tasthorn54"
+   "skothorn52",
+   "cavby53",
+   "mirmire54"
   ]
  },
  {
   "query": "In the records for the streetcar line in the enclosed grounds, following the links, what attribute is recorded for the final entity?",
-  "answer": "umber brannik 0057",
+  "answer": "russet grist 0057",
   "question_type": "2_hop",
   "evidence_ids": [
-   "limmire55",
-   "pellstone56",
-   "nuthvale57"
+   "limwick55",
+   "kanstone56",
+   "pellcrag57"
   ]
  },
  {
   "query": "In the records for the water channel in the belfry spire, following the links, what attribute is recorded for the final entity?",
-  "answer": "verdant grist 0060",
+  "answer": "verdant skack 0060",
   "question_type": "2_hop",
   "evidence_ids": [
-   "tasfen58",
-   "cavthorn59",
-   "vexlun60"
+   "pellmire58",
+   "wendthorn59",
+   "pellreach60"
   ]
  }
 ]

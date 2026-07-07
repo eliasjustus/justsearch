@@ -31,6 +31,14 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
     // Bumped 2 -> 3 on 2026-04-19 after E-J-N4 measurement (tempdoc 390): test wall
     // 96s -> 75.9s = -20.1%, non-overlapping IQRs. Thermally safe (Gradle build measured
     // 86 C max vs 100 C TjMax, CPU Package Power p95 148W of 190W PL2).
+    // CI value stays 1 — this was EMPIRICALLY VALIDATED, not conservatism. Tempdoc 668 hypothesised
+    // that raising it to 2 would parallelise the critical-path unit lane; the hosted A/B refuted it:
+    // app-ui wall-clock was 597s at 2 vs ~598s at 1 (zero gain — the 4-vCPU runner is already
+    // CPU-saturated by one test task, so a second just time-slices), AND the contention blew a
+    // timing-sensitive test's timebox (worker-services ProcessExtractionSandboxTest ->
+    // ExtractionTimeoutException -> lane FAILED). So on a 4-vCPU runner, cross-module test
+    // parallelism buys nothing and breaks timing-sensitive tests. Do not raise it without moving to
+    // a runner with more vCPUs. Local stays 3 (measurement-backed on a 12-core box, tempdoc 390).
     // Override: -PtestParallelism=N
     val testParallelism = project.providers.gradleProperty("testParallelism")
         .map { it.toInt() }
@@ -62,22 +70,41 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
 
       val includeExperiment = project.findProperty("includeExperiment")?.toString()?.toBoolean() ?: false
       val includeStress = project.findProperty("includeStress")?.toString()?.toBoolean() ?: false
+      // Tempdoc 668 Windows→Linux migration (option B): tests tagged "windows" exercise
+      // genuinely Windows-specific product behaviour (single-instance lock, job objects,
+      // power status). They are excluded on NON-Windows hosts (the Linux CI lanes) so the bulk
+      // of CI runs on the ~2.8x faster Linux runners; the dedicated windows-native lane runs
+      // ONLY the tagged tests via -PwindowsOnly=true (includeTags "windows"). On a Windows host
+      // (local dev, or that lane's runner) they run normally in the default flow — they can only
+      // be tested on Windows, so excluding them there would silently drop their local coverage
+      // (and make `--tests "*WindowsFooTest*"` fail with "no tests found").
+      val windowsOnly = project.findProperty("windowsOnly")?.toString()?.toBoolean() ?: false
+      val isWindowsHost =
+          System.getProperty("os.name").lowercase(java.util.Locale.ROOT).contains("windows")
       project.tasks.withType(Test::class.java).configureEach {
         usesService(testGate)
         useJUnitPlatform {
-          val excluded = mutableListOf<String>()
-          if (!includeExperiment) {
-            excluded.add("evidence")
-            excluded.add("experiment")
-          }
-          // Tempdoc 397 §14.21 R3: stress tests (e.g.,
-          // OrtSessionManagerConcurrentStressTest) are designed for nightly / merge-gate
-          // runs, not fast inner loops. Opt in with -PincludeStress=true to run them.
-          if (!includeStress) {
-            excluded.add("stress")
-          }
-          if (excluded.isNotEmpty()) {
-            excludeTags(*excluded.toTypedArray())
+          if (windowsOnly) {
+            includeTags("windows")
+          } else {
+            val excluded = mutableListOf<String>()
+            // Skip the Windows-specific tests only where they cannot run (non-Windows CI).
+            if (!isWindowsHost) {
+              excluded.add("windows")
+            }
+            if (!includeExperiment) {
+              excluded.add("evidence")
+              excluded.add("experiment")
+            }
+            // Tempdoc 397 §14.21 R3: stress tests (e.g.,
+            // OrtSessionManagerConcurrentStressTest) are designed for nightly / merge-gate
+            // runs, not fast inner loops. Opt in with -PincludeStress=true to run them.
+            if (!includeStress) {
+              excluded.add("stress")
+            }
+            if (excluded.isNotEmpty()) {
+              excludeTags(*excluded.toTypedArray())
+            }
           }
         }
         maxHeapSize = "384m"

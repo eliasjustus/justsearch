@@ -18,7 +18,7 @@ must read files (condition A) or retrieve via JustSearch (condition C). That is 
 # 2. Ingest this corpus (MCP tool):
 #      justsearch_dev_ingest  paths=["scripts/jseval/util-smoke/corpus"]
 # 3. Write an MCP config pointing at the stack:
-echo '{"mcpServers":{"justsearch":{"url":"http://127.0.0.1:P/mcp"}}}' > /tmp/js-mcp.json
+echo '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:P/mcp"}}}' > /tmp/js-mcp.json
 
 # 4. Baseline arm A (generic file tools only):
 python -m jseval agent-eval \

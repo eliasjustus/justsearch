@@ -68,7 +68,20 @@
             },
             "cost_usd": { "type": "object" },
             "turns": { "type": "object" },
-            "n_paired_observations": { "type": "integer" }
+            "n_paired_observations": { "type": "integer" },
+            "leak_suspect_cells": {
+              "type": "array",
+              "description": "Answer-key leak detection backstop (tempdoc 624 §As-built #7). Each entry is a (seed, qid) observation EXCLUDED from this arm's paired statistics because a tool-call scan flagged a Read/Glob path naming the eval's own gold-answer file (queries.json) on one side of the pair. Empty when nothing was flagged. Only covers the bespoke stream-json harness path (agent_retrieval_eval.run_agent_eval) today -- the Inspect-AI opt-in path does not capture tool_calls, so a run executed there reports an empty list regardless of whether a leak occurred.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "seed": {},
+                  "qid": { "type": "string" },
+                  "baseline_leak_suspect": { "type": "boolean" },
+                  "with_tool_leak_suspect": { "type": "boolean" }
+                }
+              }
+            }
           }
         }
       }
@@ -83,6 +96,16 @@
         "measures": { "type": "string" },
         "does_not_measure": { "type": "string", "description": "States the SUBSTITUTION-vs-ADDITION caveat (C-4)." },
         "contamination_class": { "type": "string", "enum": ["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"], "description": "Corpus contamination class (C-5) as a first-class label, not a footnote." }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "description": "Present ONLY when this record is a corrected re-derivation of a prior record composed from the same identity-bearing inputs (tempdoc 624 Design 1) -- e.g. a queries.json-leak exclusion, a condition-C re-check, or a judge-rescoring pass. Absent on an original composition. `agent_cohort_key`/`pairing_key` are deliberately invariant across the original and every corrected version, so they cannot themselves distinguish 'this composed record' from 'that other composition of the identical cohort' -- `supersedes` therefore references a file path, not an in-record identity.",
+      "required": ["supersedes", "reason", "changed_fields"],
+      "properties": {
+        "supersedes": { "type": "string", "description": "Relative path (from this record's own file) to the prior record's JSON file that this record corrects." },
+        "reason": { "type": "string", "enum": ["leak_correction", "judge_rescore", "reseed", "other"], "description": "Closed set naming WHY this revision exists." },
+        "changed_fields": { "type": "array", "items": { "type": "string" }, "description": "Dot-path names of the top-level/nested fields that materially changed vs. the superseded record. Caller-specified, not auto-diffed -- accurate, not required to be exhaustive." }
       }
     },
     "external_baselines": {

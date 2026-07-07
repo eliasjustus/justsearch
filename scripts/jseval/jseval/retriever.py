@@ -249,7 +249,13 @@ def resolve_doc_id(hit: dict) -> str:
 
 
 def _filename_to_doc_id(filename: str) -> str:
-    """Strip file extension and URL-decode to recover the BEIR doc ID."""
+    """Strip file extension, URL-decode, and lowercase to recover the BEIR doc ID.
+
+    Lowercasing is structural, not a per-dataset patch: Windows filesystems are
+    case-preserving but not case-authoritative, so a filesystem-resolved doc-id can differ in
+    case from the qrels-declared one for the same document. `corpora.py:_read_qrels_tsv` lowercases
+    at its own mint site, so both sides of the qrel-lookup match consistently.
+    """
     stem = PurePosixPath(filename).stem
     if not stem and "\\" in filename:
         # Windows-style path that PurePosixPath can't parse
@@ -257,9 +263,9 @@ def _filename_to_doc_id(filename: str) -> str:
         if "." in stem:
             stem = stem.rsplit(".", 1)[0]
     try:
-        return urllib.parse.unquote(stem)
+        return urllib.parse.unquote(stem).lower()
     except Exception:
-        return stem
+        return stem.lower()
 
 
 def _extract_leaf(path: str) -> str:

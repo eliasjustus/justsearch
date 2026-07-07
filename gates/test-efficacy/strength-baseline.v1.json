@@ -5,7 +5,7 @@
   "seams": {
     "hybrid-fusion": {
       "minStrength": 75,
-      "maxNoCoverage": 10
+      "maxNoCoverage": 9
     },
     "chunk-offset-math": {
       "minStrength": 88,
@@ -29,6 +29,18 @@
     },
     "worker-liveness-suicide": {
       "minStrength": 93,
+      "maxNoCoverage": 0
+    },
+    "ocr-outcome-classifier": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "extraction-outcome-classifier": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "ingestion-success-classifier": {
+      "minStrength": 100,
       "maxNoCoverage": 0
     }
   }

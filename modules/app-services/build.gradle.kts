@@ -113,6 +113,15 @@ testing {
       targets {
         all {
           testTask.configure {
+            // Throttles ONLY this suite's internal fork parallelism. In CI the shared
+            // TestGateService already serializes cross-module Test tasks (testParallelism=1,
+            // see JvmBaseConventionsPlugin), so this does not guard against cross-module
+            // contention. app-services lives in the measured critical-path shard (app-ui,
+            // slowest in 12/15 sampled runs; tempdoc 668). This `1` is a conservative default,
+            // not a memory constraint: the hosted runner has 16 GiB (2x384 MB forks + a 1 GB
+            // daemon is trivial) and only 4 vCPUs, so the real ceiling is CPU. Raising to 2 is
+            // plausibly safe but is an optimization-band change deferred to hosted validation
+            // (tempdoc 668 scope boundary), not made here.
             maxParallelForks = 1
             jvmArgs("--enable-native-access=ALL-UNNAMED")
             jvmArgs("-Dnet.bytebuddy.experimental=true")

@@ -48,6 +48,7 @@ withTempRoot((root) => {
 
   const report = buildReport({
     root,
+    lane: 'alpha-lane',
     top: 2,
     runner: {
       runnerLabel: 'windows-latest',
@@ -60,6 +61,7 @@ withTempRoot((root) => {
   });
 
   assert.equal(report.kind, 'justsearch-unit-test-attribution.v1');
+  assert.equal(report.lane, 'alpha-lane');
   assert.deepEqual(report.totals, {
     suites: 3,
     tests: 7,
@@ -76,6 +78,7 @@ withTempRoot((root) => {
 
   const md = renderMarkdown(report);
   assert.match(md, /windows-latest/);
+  assert.match(md, /Lane: alpha-lane/);
   assert.match(md, /example\.BetaTest/);
 });
 
@@ -90,6 +93,7 @@ withTempRoot((root) => {
   const res = spawnSync(process.execPath, [
     scriptPath,
     '--results-root', root,
+    '--lane', 'gamma-lane',
     '--runner-label', 'windows-latest',
     '--out-json', outJson,
     '--out-md', outMd,
@@ -102,6 +106,7 @@ withTempRoot((root) => {
   assert.equal(JSON.parse(fs.readFileSync(outJson, 'utf8')).totals.errors, 1);
   assert.match(fs.readFileSync(outMd, 'utf8'), /GammaTest/);
   assert.match(fs.readFileSync(summary, 'utf8'), /Unit test attribution/);
+  assert.equal(JSON.parse(res.stdout).lane, 'gamma-lane');
   assert.equal(JSON.parse(res.stdout).runner.imageVersion, 'v-test');
 });
 
@@ -113,6 +118,20 @@ withTempRoot((root) => {
   const pass = spawnSync(process.execPath, [scriptPath, '--results-root', root, '--allow-empty', '--json'], { encoding: 'utf8' });
   assert.equal(pass.status, 0, pass.stderr);
   assert.equal(JSON.parse(pass.stdout).totals.suites, 0);
+});
+
+withTempRoot((root) => {
+  write(
+    path.join(root, 'modules/real/build/test-results/test/TEST-example.RealTest.xml'),
+    suiteXml({ name: 'example.RealTest', tests: 1, skipped: 0, failures: 0, errors: 0, time: 1 }),
+  );
+  write(
+    path.join(root, 'tmp/gha-unit-copy/modules/copied/build/test-results/test/TEST-example.CopiedTest.xml'),
+    suiteXml({ name: 'example.CopiedTest', tests: 99, skipped: 0, failures: 0, errors: 0, time: 99 }),
+  );
+  const report = buildReport({ root, top: 5 });
+  assert.equal(report.totals.tests, 1);
+  assert.equal(report.modules[0].module, 'modules/real');
 });
 
 console.log('test-report-unit-test-attribution: PASS');

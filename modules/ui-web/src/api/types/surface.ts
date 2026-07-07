@@ -19,7 +19,10 @@
 
 import type { OperationRef, Presentation, Provenance } from './registry.js';
 import type { DiagnosticChannelRef } from './diagnostic.js';
-import type { Altitude } from '../generated/registry-enums.generated.js';
+import type {
+  Altitude,
+  Audience as GenAudience,
+} from '../generated/registry-enums.generated.js';
 
 export type { Altitude };
 
@@ -28,13 +31,14 @@ export type { Altitude };
 // ============================================================
 
 /**
- * Access-control audience axis. Mirrors `Audience.java`.
+ * Access-control audience axis. Generated alias of the Java `Audience`
+ * authority (`registry-enums.generated.ts`).
  *
  * Trust ordering for the audience-composition rule (slice 449 §0 D2):
  * `USER < OPERATOR < DEVELOPER`. AGENT is excluded from the comparison —
  * agent surfaces are consumed by headless tool APIs, not human chrome.
  */
-export type Audience = 'USER' | 'AGENT' | 'OPERATOR' | 'DEVELOPER';
+export type Audience = GenAudience;
 
 /** Closed list useful for exhaustive switches and test fixtures. */
 export const AUDIENCES: readonly Audience[] = [

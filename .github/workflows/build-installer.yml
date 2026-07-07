@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
       # archive, causing Gradle to regenerate ~100 MB of work every run. The v2
       # key forces a fresh save of the full ~290 MB on next miss.
       - name: Cache Gradle module build outputs
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             modules/ui/build
@@ -72,7 +72,7 @@ jobs:
       # llamaPrebuiltSha256). This cache is tiny (compared to Gradle outputs) but avoids
       # re-downloading on every run, and is robust against Gradle cache-save quirks.
       - name: Cache llama-server prebuilt
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: modules/ui/build/llama-server/prebuilt
           key: llama-server-${{ runner.os }}-b8571-40D8C4B9
@@ -81,7 +81,7 @@ jobs:
       # Tauri downloads these on every cargo-tauri invocation and validates hashes. Caching
       # skips the ~10-15s download step between bundleSidecar and makensis.
       - name: Cache Tauri bundler downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/AppData/Local/tauri

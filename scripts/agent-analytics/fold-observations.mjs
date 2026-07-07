@@ -1,29 +1,40 @@
 #!/usr/bin/env node
 
 /**
- * Reconcile per-session observation shards into docs/observations.md `## Inbox`
- * (tempdoc 618 Seam C). The everyday write path is note-observation.mjs, which
- * appends to a per-session shard under docs/observations.d/ — contention-free by
- * construction. This tool folds those shards into the curated single-file inbox
- * at a boundary (run manually, or at merge next to record-merge.mjs).
+ * Fold per-session observation shards into the GROUPED conditions store
+ * (tempdoc 618 Seam C write path + tempdoc 680 identity-at-the-fold).
+ *
+ * Writers stay blind and flat: note-observation.mjs appends one-liners to a
+ * per-session shard under docs/observations.d/ — contention-free by construction,
+ * unchanged. This tool resolves IDENTITY at the store: each shard entry either
+ * merges into an existing condition in docs/observations.md `## Conditions`
+ * (occurrence appended, `seen` incremented — recurrence is the ranking signal,
+ * not a rule violation) or opens a new condition with a PROPOSED kind
+ * (trailing `?`) for the triage pass to confirm.
  *
  *   node scripts/agent-analytics/fold-observations.mjs            # dry run (default)
  *   node scripts/agent-analytics/fold-observations.mjs --apply    # write + delete folded shards
  *
- * Properties:
- *  - Append-only into `## Inbox`; never rewrites existing entries.
- *  - Deduplicates against entries already present (so a surviving shard, e.g. a
- *    failed delete, cannot reintroduce a duplicate on a later run).
- *  - Writes observations.md FIRST, then deletes the consumed shards — so a crash
+ * Properties (unchanged from the 618/665 fold):
+ *  - Writes observations.md FIRST, then deletes the consumed shards — a crash
  *    between the two leaves shards intact (re-runnable, no loss).
+ *  - Idempotent: exact-occurrence dedupe inside each condition means a surviving
+ *    shard (e.g. a failed delete) cannot double-count on a later run.
  *  - Correctness of the data does NOT depend on this tool: every shard is a
  *    committed file in git; the fold is consolidation, not durability.
+ *
+ * Run at the documented merge-teardown boundary (next to record-merge.mjs).
+ * Retirement of conditions is NOT this tool's job — observations-triage.mjs
+ * proposes retirements (probe-derived); a human applies deletions.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { repoRoot } from './lib/telemetry-io.mjs';
 import { SHARD_DIR } from './note-observation.mjs';
+import {
+  parseStore, serializeStore, matchGroup, mergeOccurrence, newGroupFrom,
+} from './lib/observations-store.mjs';
 
 export const INBOX_FILE = 'docs/observations.md';
 const ENTRY_RE = /^- \[[ xX]\] /;
@@ -43,58 +54,57 @@ export function listShards(root = repoRoot) {
     .sort();
 }
 
-/** Extract inbox entry lines (`- [ ] …`) from a shard's text. */
+/** Extract flat entry lines (`- [ ] …`) from a shard's text. */
 export function entriesFromShard(text) {
   return text.split(/\r?\n/).filter((l) => ENTRY_RE.test(l)).map((l) => l.replace(/\s+$/, ''));
 }
 
 /**
- * Insert entry lines at the END of the `## Inbox` section of observations.md
- * (immediately before the next sibling `## ` heading, or EOF). Returns the new
- * file text, or null if `## Inbox` is absent. Skips entries already present
- * (exact-line dedupe).
- */
-export function insertIntoInbox(inboxText, entries) {
-  const lines = inboxText.split(/\r?\n/);
-  const inboxIdx = lines.findIndex((l) => /^##\s+Inbox\b/.test(l));
-  if (inboxIdx === -1) return null;
-  // Find the next sibling `## ` heading after Inbox → end of the Inbox section.
-  let endIdx = lines.length;
-  for (let i = inboxIdx + 1; i < lines.length; i++) {
-    if (/^##\s+/.test(lines[i])) { endIdx = i; break; }
-  }
-  const existing = new Set(lines.map((l) => l.replace(/\s+$/, '')));
-  const fresh = entries.filter((e) => !existing.has(e));
-  if (fresh.length === 0) return inboxText; // nothing new — idempotent no-op
-  // Trim trailing blank lines inside the section, then append fresh entries.
-  let insertAt = endIdx;
-  while (insertAt > inboxIdx + 1 && lines[insertAt - 1].trim() === '') insertAt--;
-  const block = ['', ...fresh];
-  const next = [...lines.slice(0, insertAt), ...block, ...lines.slice(insertAt)];
-  return next.join('\n');
-}
-
-/**
- * Fold all shards into the inbox.
- * @returns {{folded: number, entries: number, shards: string[], changed: boolean}}
+ * Fold all shards into the conditions store.
+ * @returns {{folded:number, entries:number, merged:number, opened:number,
+ *            unchangedDupes:number, proposedKinds:number, shards:string[], changed:boolean}}
  */
 export function foldShards({ root = repoRoot, apply = false } = {}) {
   const shards = listShards(root);
-  const inboxPath = path.join(root, INBOX_FILE);
-  const inboxText = fs.readFileSync(inboxPath, 'utf8');
-  const allEntries = [];
-  for (const s of shards) {
-    allEntries.push(...entriesFromShard(fs.readFileSync(s, 'utf8')));
+  const storePath = path.join(root, INBOX_FILE);
+  const storeText = fs.readFileSync(storePath, 'utf8');
+  const store = parseStore(storeText);
+  if (store === null) {
+    throw new Error(
+      `fold-observations: ${INBOX_FILE} has no '## Conditions' section — the store predates the ` +
+        'tempdoc-680 grouped format. Migrate it first (see tempdoc 680) or update this checkout.',
+    );
   }
-  const result = { folded: shards.length, entries: allEntries.length, shards, changed: false };
+
+  const allEntries = [];
+  for (const s of shards) allEntries.push(...entriesFromShard(fs.readFileSync(s, 'utf8')));
+
+  const result = {
+    folded: shards.length, entries: allEntries.length,
+    merged: 0, opened: 0, unchangedDupes: 0, proposedKinds: 0,
+    shards, changed: false,
+  };
   if (allEntries.length === 0) return result;
 
-  const next = insertIntoInbox(inboxText, allEntries);
-  if (next === null) throw new Error(`fold-observations: '## Inbox' not found in ${INBOX_FILE}`);
-  result.changed = next !== inboxText;
+  const slugs = new Set(store.groups.map((g) => g.slug));
+  for (const entry of allEntries) {
+    const hit = matchGroup(store.groups, entry);
+    if (hit) {
+      if (mergeOccurrence(hit, entry)) result.merged += 1;
+      else result.unchangedDupes += 1;
+    } else {
+      const g = newGroupFrom(entry, slugs);
+      slugs.add(g.slug);
+      store.groups.push(g);
+      result.opened += 1;
+    }
+  }
+  result.proposedKinds = store.groups.filter((g) => /\?$/.test(g.fields.kind || '')).length;
 
+  const next = serializeStore(store);
+  result.changed = next !== storeText;
   if (apply) {
-    if (result.changed) fs.writeFileSync(inboxPath, next, 'utf8'); // write FIRST
+    if (result.changed) fs.writeFileSync(storePath, next, 'utf8'); // write FIRST
     for (const s of shards) fs.rmSync(s, { force: true }); // then delete consumed shards
   }
   return result;
@@ -105,12 +115,20 @@ function main() {
   const r = foldShards({ apply });
   if (r.entries === 0) {
     console.log('fold-observations: no shard entries to fold.');
-    return;
+  } else {
+    console.log(
+      `fold-observations: ${apply ? 'folded' : 'would fold'} ${r.entries} entr${r.entries === 1 ? 'y' : 'ies'} ` +
+        `from ${r.folded} shard(s) — ${r.merged} merged into existing conditions, ${r.opened} new condition(s) opened` +
+        `${r.unchangedDupes ? `, ${r.unchangedDupes} exact duplicate(s) skipped` : ''}` +
+        `${apply ? '; shards removed.' : ' [dry run — pass --apply].'}`,
+    );
   }
-  console.log(
-    `fold-observations: ${apply ? 'folded' : 'would fold'} ${r.entries} entr${r.entries === 1 ? 'y' : 'ies'} ` +
-      `from ${r.folded} shard(s)${r.changed ? '' : ' (all already present — no change)'}${apply ? '; shards removed.' : ' [dry run — pass --apply].'}`,
-  );
+  if (r.proposedKinds > 0) {
+    console.log(
+      `fold-observations: ${r.proposedKinds} condition(s) carry a proposed kind ('kind: …?') — ` +
+        'confirm them at the next triage pass (node scripts/agent-analytics/observations-triage.mjs).',
+    );
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))) {

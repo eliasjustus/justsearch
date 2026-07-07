@@ -11,12 +11,18 @@ import { css, html, type TemplateResult, nothing } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import '../StatusDot.js';
 import { type AdvisorySnapshot, AdvisoryStore } from './AdvisoryStore.js';
+import { getAiState, subscribeAiState, type ConnectionPhase } from '../../state/aiStateStore.js';
+
+/** Genuine, sustained connectivity trouble — not a momentary reconnect blip. */
+function isStalePhase(phase: ConnectionPhase): boolean {
+  return phase === 'stale' || phase === 'disconnected';
+}
 
 export class AdvisoryRailBadge extends JfElement {
   static properties = {
     store: { attribute: false },
     unreadCount: { state: true },
-    isConnected: { state: true },
+    feedStale: { state: true },
   };
 
   /**
@@ -26,9 +32,22 @@ export class AdvisoryRailBadge extends JfElement {
    */
   declare store: AdvisoryStore | null;
   declare unreadCount: number;
-  declare isConnected: boolean;
+  /**
+   * Tempdoc 662 post-implementation fix: derived from the calm, already-debounced
+   * `aiStateStore` connection authority (`AiState.phase`), NOT the store's raw
+   * per-frame `isConnected`. The raw flag flips false/true on every multiplexer
+   * reconnect — a routine event since 662's late-subscribe fix — which made this
+   * badge flicker to "disconnected" on a large fraction of normal app boots
+   * (measured live: ~6ms on idle localhost, longer under real network latency).
+   * `phase` only reports `stale`/`disconnected` after a genuine, sustained gap
+   * (15s threshold, `aiStateStore.ts` `STALE_THRESHOLD_MS`), matching every other
+   * liveness-sensitive surface in the app (`HealthSurface.ts`'s `connPhase`,
+   * `LivenessReadout`).
+   */
+  declare feedStale: boolean;
 
   private storeUnsubscribe: (() => void) | null = null;
+  private aiUnsub: (() => void) | null = null;
 
   static styles = css`
     :host {
@@ -90,7 +109,7 @@ export class AdvisoryRailBadge extends JfElement {
     super();
     this.store = null;
     this.unreadCount = 0;
-    this.isConnected = false;
+    this.feedStale = isStalePhase(getAiState().phase);
   }
 
   override connectedCallback(): void {
@@ -98,15 +117,21 @@ export class AdvisoryRailBadge extends JfElement {
     if (this.store) {
       this.storeUnsubscribe = this.store.subscribe((s: AdvisorySnapshot) => {
         this.unreadCount = s.unreadCount;
-        this.isConnected = s.isConnected;
       });
     }
+    this.aiUnsub = subscribeAiState((s) => {
+      this.feedStale = isStalePhase(s.phase);
+    });
   }
 
   override disconnectedCallback(): void {
     if (this.storeUnsubscribe) {
       this.storeUnsubscribe();
       this.storeUnsubscribe = null;
+    }
+    if (this.aiUnsub) {
+      this.aiUnsub();
+      this.aiUnsub = null;
     }
     super.disconnectedCallback();
   }
@@ -118,19 +143,21 @@ export class AdvisoryRailBadge extends JfElement {
   }
 
   override render(): TemplateResult {
-    // Slice 490 Group B6: a dimmed dot indicates the SSE stream is not connected.
-    // The badge stays click-targetable (drawer can still open against the local
-    // snapshot); the dot is the user-visible "advisory feed may be stale" cue.
-    const titleText = this.isConnected
-      ? 'Advisories'
-      : 'Advisories (offline — feed may be stale)';
+    // Slice 490 Group B6 (tempdoc 662 post-implementation fix): a dimmed dot
+    // indicates sustained connectivity trouble (`feedStale`, derived from the
+    // calm `aiStateStore` authority — see the field doc above), not a momentary
+    // reconnect blip. The badge stays click-targetable (drawer can still open
+    // against the local snapshot); the dot is the user-visible cue.
+    const titleText = this.feedStale
+      ? 'Advisories (offline — feed may be stale)'
+      : 'Advisories';
     const ariaLabel = this.unreadCount > 0
       ? `${titleText} — ${this.unreadCount} unread`
       : titleText;
     return html`
       <button
         type="button"
-        class=${this.isConnected ? '' : 'disconnected'}
+        class=${this.feedStale ? 'disconnected' : ''}
         title=${titleText}
         aria-label=${ariaLabel}
         @click=${this.handleClick}
@@ -142,7 +169,7 @@ export class AdvisoryRailBadge extends JfElement {
         ${this.unreadCount > 0
           ? html`<span class="count">${this.unreadCount > 99 ? '99+' : this.unreadCount}</span>`
           : nothing}
-        ${!this.isConnected
+        ${this.feedStale
           ? html`<jf-status-dot
               class="disconnected-dot"
               tone="neutral"

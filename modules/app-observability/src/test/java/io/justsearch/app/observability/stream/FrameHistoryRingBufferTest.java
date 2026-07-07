@@ -31,6 +31,10 @@ final class FrameHistoryRingBufferTest {
   @Test
   @DisplayName("default capacity is 9000 frames")
   void defaultCapacity() {
+    // Value-coupled to the FE dedup LRU (DEDUP_LRU_SIZE in
+    // modules/ui-web/src/api/intent/bootIntentStreamBridge.ts). A coordinated change must
+    // update both sides; one-sided drift also fails the cross-language check in
+    // bootIntentStreamBridge.test.ts ("BE/FE capacity drift", tempdoc 682 Item 3).
     assertEquals(9000, new FrameHistoryRingBuffer().capacity());
   }
 

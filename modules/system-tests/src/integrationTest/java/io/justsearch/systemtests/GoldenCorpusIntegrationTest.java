@@ -13,9 +13,9 @@ import io.justsearch.indexing.api.IndexApi.IndexDocument;
 import io.justsearch.reranker.CrossEncoderReranker;
 import io.justsearch.reranker.RerankerConfig;
 import io.justsearch.systemtests.corpus.FrozenEmbeddingBackend;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.DocumentInfo;
-import io.justsearch.systemtests.corpus.GoldenCorpusLoader.QueryInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.DocumentInfo;
+import io.justsearch.systemtests.corpus.ManifestCorpusLoader.QueryInfo;
 import io.justsearch.systemtests.relevance.RelevanceMetrics;
 import io.justsearch.systemtests.relevance.RelevanceMetrics.AggregatedMetrics;
 import io.justsearch.systemtests.relevance.RelevanceMetrics.QueryResult;
@@ -54,6 +54,13 @@ import org.slf4j.LoggerFactory;
  *   <li>Recall@3 ≥ 0.9 for all query modes</li>
  *   <li>NDCG@3 ≥ 0.8 for all query modes</li>
  * </ul>
+ *
+ * <p><b>Disambiguation (tempdoc 664):</b> the vectors indexed here come from
+ * {@code FrozenEmbeddingBackend} / {@code frozen-vectors.json} ({@code "model":
+ * "test-deterministic"}) — hand-placed, not real embedding-model output. This suite proves
+ * fusion/ranking-code correctness (RRF, BM25↔vector fusion) given a fixed vector; it stays
+ * green regardless of real embedding-model regressions. It does not measure retrieval quality
+ * — {@code jseval} (Python) is the canonical harness for that.
  */
 @DisplayName("Golden Corpus Integration Tests")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -67,7 +74,7 @@ class GoldenCorpusIntegrationTest {
   private static Path configFile;
   private static String previousConfig;
   private static RunningRuntime runtime;
-  private static GoldenCorpusLoader corpus;
+  private static ManifestCorpusLoader corpus;
   private static FrozenEmbeddingBackend embeddingBackend;
 
   @BeforeAll
@@ -75,7 +82,7 @@ class GoldenCorpusIntegrationTest {
     log.info("Setting up Golden Corpus integration test...");
 
     // Load corpus and frozen embeddings
-    corpus = GoldenCorpusLoader.loadDefault();
+    corpus = ManifestCorpusLoader.loadDefault();
     embeddingBackend = FrozenEmbeddingBackend.load(
         GoldenCorpusIntegrationTest.class.getResourceAsStream("/corpus/frozen-vectors.json"),
         false  // lenient mode - return zero vectors for unknown text

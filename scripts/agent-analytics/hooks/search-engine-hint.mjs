@@ -10,7 +10,10 @@
  * can change ranking quality, performance, OR recall-survival, it nudges the relevance gate
  * (nDCG@10), the perf gate (latency/throughput/footprint), AND the leak gate (cascade-leak rate);
  * when an agent edits the INFERENCE / LLM path (a distinct subject), it nudges the llm-gen gate
- * (TTFT / e2e / tokens-sec — tempdoc 640 L) so a regression on any axis fails loudly instead of coasting.
+ * (TTFT / e2e / tokens-sec — tempdoc 640 L); when an agent edits the MCP TOOL SURFACE (a third
+ * distinct subject — whether an LLM agent can still successfully DRIVE the retrieval tool, not
+ * raw retrieval quality), it nudges the utility gate (tempdoc 673) — so a regression on any axis
+ * fails loudly instead of coasting.
  *
  * - Synchronous, path-check only (no process spawn), never blocks.
  */
@@ -50,6 +53,21 @@ function isInferenceSource(filePath) {
   return INFERENCE_PATTERNS.some((re) => re.test(p));
 }
 
+// The MCP tool surface itself (tempdoc 673) — a THIRD distinct subject from retrieval ranking and
+// LLM-generation latency: whether an LLM agent can still successfully DRIVE the JustSearch retrieval
+// tool at all (tool description/schema/protocol changes), not raw retrieval quality. Deliberately
+// narrower than ENGINE_PATTERNS/INFERENCE_PATTERNS — this is the one surface the utility-gate's
+// detection floor is designed to react to, and unlike the other two gates this one costs a real paid
+// agent-call run, so the trigger set stays tight (tempdoc 673 §D6/§F5).
+const MCP_SURFACE_PATTERNS = [
+  /modules\/ui\/src\/main\/java\/io\/justsearch\/ui\/api\/mcp\//,
+];
+
+function isMcpSurfaceSource(filePath) {
+  const p = normalize(filePath);
+  return MCP_SURFACE_PATTERNS.some((re) => re.test(p));
+}
+
 async function main() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -66,7 +84,8 @@ async function main() {
     if (!filePath) return;
     const engine = isEngineSource(filePath);
     const inference = isInferenceSource(filePath);
-    if (!engine && !inference) return;
+    const mcpSurface = isMcpSurfaceSource(filePath);
+    if (!engine && !inference && !mcpSurface) return;
 
     const blocks = [];
     if (engine) {
@@ -94,6 +113,21 @@ async function main() {
         `  python -m jseval llm-gate --bench-file <dir>/llm-bench.json`,
         `After a deliberate change, re-pin: llm-gate --bench-file ... --update-baseline.`,
         `Floor: scripts/jseval/llm-gen-ratchet-baselines.v1.json. Load /jseval.`,
+      ].join('\n'));
+    }
+    if (mcpSurface) {
+      blocks.push([
+        `MCP tool surface edited — this can change whether an LLM agent can still successfully DRIVE`,
+        `the JustSearch retrieval tool (tempdoc 673), a different subject from retrieval ranking or`,
+        `LLM-generation latency. Unlike the other two ratchets this one costs a REAL paid agent-call`,
+        `run — deliberate/periodic, not auto-run on every edit. If this change could plausibly affect`,
+        `tool usability (description/schema/protocol), run the detection gate before merging:`,
+        `  python -m jseval utility-gate --record <utility-comparison.v1.json> --corpus golden/util-smoke`,
+        `(records come from \`jseval agent-eval\` + \`utility-compose\` against util-smoke/, condition C only`,
+        `— see scripts/jseval/util-smoke/README.md; ~$0.20-0.60, needs a live dev stack + claude CLI. Only a`,
+        `fabricated/engineered corpus can be gated here — tempdoc 673 D8 refuses a realistic one by default.)`,
+        `After a deliberate change, re-pin: utility-gate --record ... --update-baseline.`,
+        `Floor: scripts/jseval/utility-ratchet-baselines.v1.json. Load /jseval.`,
       ].join('\n'));
     }
     const hint = blocks.join('\n\n');

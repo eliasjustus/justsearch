@@ -142,15 +142,22 @@ The hosted public checks that are branch-protection candidates are declared in
 `scripts/ci/workflow-signal-policy.v1.json`. Keep the three unit-test shard names stable unless
 the branch-protection required checks are updated in the same change.
 
-The guard for this ownership model is:
+The guards for this ownership model are:
 
 ```bash
+node scripts/ci/verify-unit-test-shard-policy.mjs
 node scripts/ci/verify-test-evidence-policy.mjs
 ```
 
-The public `Unit tests` lane also publishes a unit-test attribution report from existing Gradle/JUnit
-XML. That report shows module totals, slow suites, skips, failures, errors, and hosted runner image
-identity. It is diagnostic evidence only; Gradle remains the source of pass/fail truth.
+`scripts/ci/unit-test-shard-policy.v1.json` declares each hosted unit shard's check name, artifact,
+runner label, Gradle tasks, local reproduction command, owner, platform classification, and
+warn-only budget settings. The verifier fails when that policy drifts from the `ci.yml` unit-test
+matrix or the workflow-signal required checks.
+
+The public `Unit tests` lanes also publish unit-test attribution and advisory budget reports from
+existing Gradle/JUnit XML. Attribution shows module totals, slow suites, skips, failures, errors,
+lane identity, and hosted runner image identity. Budget reports are diagnostic and warn-only; Gradle
+remains the source of pass/fail truth.
 
 ## Deterministic UI evidence (EvidenceBundle v1)
 

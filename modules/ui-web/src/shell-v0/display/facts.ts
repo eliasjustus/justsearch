@@ -203,6 +203,39 @@ const FACTS: Record<string, FactDef> = {
   // (StatusDeck composes pending + embed counts with a "hide if 0" rule and needs the raw numbers;
   // Health shows a count + "Processing/Idle" sub). Per 559 §8 / 594 §17.2 "share the value, keep the
   // shell", there is no single shared VALUE worth centralizing — it stays shell-local in both.
+
+  // Tempdoc 663 — AI-engine (Brain) leaf facts, sourced from `aiState.runtime`/`inference` (the
+  // shared, always-on poller), NOT `aiState.status.gpu` (the Worker's own GPU — a distinct signal;
+  // `core.gpu.accel` above owns that one). `s.inference === null` means "not polled yet" (unknown);
+  // once polled, an absent value (no active model / no GPU) is a real `null`, not a fabricated one.
+  'core.ai.model': {
+    label: 'Model',
+    source: {
+      kind: 'observed',
+      read: (s) => (s.inference ? s.runtime.modelLabel || null : undefined),
+      // The raw model id (pre-friendlified) as the tooltip — matches the prior inline rendering.
+      provenance: (s) => s.runtime.modelId ?? undefined,
+    },
+  },
+  'core.ai.contextWindow': {
+    label: 'Context',
+    source: {
+      kind: 'observed',
+      read: (s) =>
+        s.inference
+          ? s.runtime.contextWindow != null
+            ? `${formatCount(s.runtime.contextWindow)} tokens`
+            : null
+          : undefined,
+    },
+  },
+  'core.ai.gpu': {
+    label: 'GPU',
+    source: {
+      kind: 'observed',
+      read: (s) => (s.inference ? s.runtime.gpu?.description || null : undefined),
+    },
+  },
 };
 
 /** Map a boolean capability flag to the tri-state ObservedRead contract (name-only when present). */

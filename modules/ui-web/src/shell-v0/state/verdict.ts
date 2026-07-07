@@ -41,7 +41,11 @@ export type ProvisionalCause =
   | 'generation-switch'
   | 'worker-restart'
   // 630: a brief window after OS resume while the worker re-reconciles files changed during sleep.
-  | 'catching-up';
+  | 'catching-up'
+  // 649: the poll-specific data is stale (aged past the freshness window) BUT the backend is provably
+  // reachable via another channel (an SSE heartbeat) — typically the cheap poll starved behind the
+  // browser connection-pool limit under load. Calm: data is merely behind, the backend is alive.
+  | 'updating';
 // NOTE (595 §4.4 refinement): a stalled live JOB feed is NOT a global Stability
 // cause. `Stability` also gates the doc-count / folder renderers (§4.3), which must
 // NOT go provisional for a jobs-feed stall (the `/api/status` doc count is still
@@ -80,6 +84,12 @@ export interface StabilityInput {
   readonly servingIngestGenerationId: string | null | undefined;
   /** 630: `catchingUp` — true for a brief window after an OS resume (post-sleep reconcile). */
   readonly catchingUp?: boolean | null;
+  /**
+   * 649: is the backend reachable via ANY channel (poll success OR an SSE frame/heartbeat)? When the
+   * poll-freshness phase is `stale` but this is true, the data is merely behind (the cheap poll
+   * starved under load) while the backend is alive — a calm `updating` state, NOT `channel-stale`.
+   */
+  readonly reachableViaContact?: boolean;
 }
 
 /**
@@ -110,7 +120,14 @@ export function computeStability(i: StabilityInput): Stability {
   if (i.catchingUp === true) return { kind: 'provisional', cause: 'catching-up' };
   // Connection axis (557's existing provisional cases, generalized).
   if (i.phase === 'connecting') return { kind: 'provisional', cause: 'initial-load' };
-  if (i.phase === 'stale') return { kind: 'provisional', cause: 'channel-stale' };
+  if (i.phase === 'stale') {
+    // 649: the poll-data aged out. If the backend is still reachable via another channel (an SSE
+    // heartbeat), the data is merely behind (the poll starved under load) — a calm `updating` state.
+    // Only when NO channel has had recent contact is this a true lost-channel `channel-stale`.
+    return i.reachableViaContact
+      ? { kind: 'provisional', cause: 'updating' }
+      : { kind: 'provisional', cause: 'channel-stale' };
+  }
   return { kind: 'settled' };
 }
 
@@ -128,6 +145,12 @@ export interface VerdictInput {
   readonly migrationPaused?: boolean;
   readonly migrationSwitchingAgeMs?: number;
   readonly migrationSwitchingMaxDurationMs?: number;
+  /**
+   * 649: is the backend reachable via ANY channel? Distinguishes "no poll has landed yet but the
+   * origin is alive (streams beating)" — which should read "Connecting…", not a false "Backend
+   * disconnected" — from a genuine unreachable origin (no contact of any kind within the window).
+   */
+  readonly reachableViaContact?: boolean;
 }
 
 /**
@@ -144,6 +167,13 @@ export interface VerdictInput {
  */
 export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
   if (i.phase === 'disconnected') {
+    // 649: "disconnected" is the POLL-freshness verdict (no poll ever landed + grace elapsed). If the
+    // backend is nonetheless reachable via another channel (streams heartbeating), it is alive but the
+    // first poll hasn't arrived — that is "Connecting…", not a false "Backend disconnected". Only when
+    // there is NO positive contact of any kind do we raise the unreachable alarm.
+    if (i.reachableViaContact === true) {
+      return { kind: 'connecting', severity: 'info', reasons: [] };
+    }
     // Tempdoc 637 #1: carry an FE-derived reason code so the unreachable state words itself
     // through the CAUSE_ROWS vocabulary (a loud banner), instead of a silent empty result one
     // layer up. `binding.unreachable` is declared FE-derived in readiness-reason-codes.v1.json.
@@ -166,6 +196,14 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
       if (overdue) {
         return { kind: 'transitioning', severity: 'warn', reasons: [cause, 'overdue'] };
       }
+    }
+    // Tempdoc 649 — `channel-stale` is genuine lost contact (no poll AND no stream frame within the
+    // window), worded "Reconnecting…". Unlike `updating` (reachable, data merely behind → calm "Catching
+    // up…"), this is a connectivity problem the user should see as a WARNING, not calm. Severity 'warn'
+    // gives the proper ramp: updating(busy→info) < channel-stale(warn→amber) < unreachable(error→red),
+    // so the calm and the alarming in-flux states are visually distinct on every surface.
+    if (cause === 'channel-stale') {
+      return { kind: 'transitioning', severity: 'warn', reasons: [cause] };
     }
     return { kind: 'transitioning', severity: 'busy', reasons: [cause] };
   }
@@ -212,6 +250,10 @@ export function verdictHeadline(v: SystemHealthVerdict): string {
         case 'generation-switch':
           return 'Switching index…';
         case 'catching-up':
+          return 'Catching up…';
+        case 'updating':
+          // 649: reachable but the poll is behind (e.g. starved under load). Calm — the backend is
+          // alive, the view is merely catching up. Shares 562's reachable+stale vocabulary.
           return 'Catching up…';
         case 'rebuilding':
         default:
@@ -270,6 +312,10 @@ export function verdictBody(v: SystemHealthVerdict): string {
           return 'Switching to the freshly-built index; this completes shortly.';
         case 'catching-up':
           return 'Re-checking your files for changes made while your computer was asleep.';
+        case 'updating':
+          // 649: honest, generic wording — the backend is busy/reachable and the view is behind, with
+          // NO claim about sleep (distinct from `catching-up`) or a lost connection (not `channel-stale`).
+          return 'The backend is busy; showing last-known values while the view catches up.';
         case 'rebuilding':
         default:
           return 'The index is being rebuilt; document counts and results will settle when it finishes.';

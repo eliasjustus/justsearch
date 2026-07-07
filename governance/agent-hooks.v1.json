@@ -52,6 +52,23 @@
       "file": "docs-regen-hint.mjs",
       "role": "advisory"
     },
+    "docs-granularity-hint": {
+      "file": "docs-granularity-hint.mjs",
+      "role": "advisory"
+    },
+    "pipe-mask-hint": {
+      "file": "pipe-mask-hint.mjs",
+      "role": "advisory"
+    },
+    "known-state-hint": {
+      "file": "known-state-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/known-state-hint.test.mjs",
+        "note": "expected-state delivery (tempdoc 680); precision corpus + real-baseline load"
+      }
+    },
     "export-session-env": {
       "file": "export-session-env.mjs",
       "role": "advisory"
@@ -79,6 +96,10 @@
     },
     "lockfile-hint": {
       "file": "lockfile-hint.mjs",
+      "role": "advisory"
+    },
+    "observation-shard-hint": {
+      "file": "observation-shard-hint.mjs",
       "role": "advisory"
     },
     "maintain-doc-hint": {
@@ -243,6 +264,18 @@
           },
           {
             "hookId": "governance-precommit-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "docs-granularity-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "pipe-mask-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "known-state-hint",
             "timeout": 5
           }
         ]
@@ -448,6 +481,14 @@
         "hooks": [
           {
             "hookId": "maintain-doc-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "hookId": "observation-shard-hint",
             "timeout": 5
           }
         ]

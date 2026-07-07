@@ -1,0 +1,20 @@
+{
+  "schema": "utility-ratchet-baseline.v1",
+  "tempdoc": 683,
+  "note": "POINTER + fallback (mirrors relevance-ratchet-baselines.v1.json / tempdoc 623 T-5). Per-corpus condition-C FLOORS are PROJECTED from `current_release` when the release carries a per-corpus `utility` section. No release carries one yet (utility records come from the agent-eval pipeline, not run summaries), so `fallback_baselines` — the previously pinned measured values, moved here verbatim — governs, and gate behavior is unchanged. `jseval utility-gate` loads this via ratchet_kernel.load_baselines_doc + utility_gate.project_release_to_baselines; `--update-baseline` / `utility-gate-derive` re-pin into `fallback_baselines`.",
+  "current_release": "release.v1.json",
+  "tolerance_default_abs": 0.15,
+  "per_corpus_tolerance": {
+    "golden/util-smoke": 0.15
+  },
+  "derived_from_runs": true,
+  "fallback_baselines": {
+    "golden/util-smoke": {
+      "agent_model": "haiku",
+      "c_floor_min": 1.0,
+      "cli_version": "2.1.183 (Claude Code)",
+      "src": "measured condition-C accuracy from a utility-comparison.v1 record",
+      "tolerance_abs": 0.15
+    }
+  }
+}

@@ -11,6 +11,8 @@
     "hops": 1,
     "distractor_ratio": 6,
     "semantic": true,
-    "templated": true
+    "templated": true,
+    "n_chains": 20,
+    "doc_words": 520
   }
 }

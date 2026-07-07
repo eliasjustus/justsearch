@@ -15,6 +15,9 @@
  * accepts subsequent re-emissions after a true ring-buffer-out-of-window event.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bootIntentStreamBridge,
@@ -24,10 +27,12 @@ import {
 import type { IntentRouter } from '../../shell-v0/router/intentRouter.js';
 import type { Intent } from '../../shell-v0/router/types.js';
 import type { SseEnvelope } from '../../shell-v0/streaming/envelope-types.js';
+import { MultiplexedStream } from '../../shell-v0/streaming/MultiplexedStream.js';
 
 class FakeEventSource extends EventTarget {
   url: string;
   closed = false;
+  readyState = 0;
   constructor(url: string) {
     super();
     this.url = url;
@@ -37,9 +42,25 @@ class FakeEventSource extends EventTarget {
       new MessageEvent('frame', { data: JSON.stringify(envelope) }),
     );
   }
+  emitOpen(): void {
+    this.readyState = 1;
+    this.dispatchEvent(new Event('open'));
+  }
   close(): void {
     this.closed = true;
   }
+}
+
+/** Builds a MultiplexedStream wired to `fakeEs` and already past the realistic
+ * 'open'-before-'frame' EventSource ordering (see MultiplexedStream.test.ts). */
+function multiplexOn(fakeEs: FakeEventSource): MultiplexedStream {
+  const mux = new MultiplexedStream({
+    url: 'http://test/api/shell-events/stream',
+    eventSourceFactory: () => fakeEs as unknown as EventSource,
+  });
+  mux.start();
+  fakeEs.emitOpen();
+  return mux;
 }
 
 function navigationIntent(target: string): Intent {
@@ -101,18 +122,14 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('dispatches a single intent envelope into intentRouter.dispatch', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     expect(dispatchSpy.mock.calls[0]?.[0]).toEqual(navigationIntent('core.library'));
   });
 
   it('dedups replays of the same envelope id (the load-bearing case)', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     // Same id delivered twice — simulates ring-buffer replay after reconnect
     // with stale resume-token.
     fakeEs.emitFrame(updateFrame(1, 'ie-dup-001'));
@@ -121,9 +138,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('dispatches distinct envelope ids independently', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     fakeEs.emitFrame(updateFrame(2, 'ie-002'));
     fakeEs.emitFrame(updateFrame(3, 'ie-003'));
@@ -131,9 +146,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('reset lifecycle clears the LRU so re-emitted ids dispatch again', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     fakeEs.emitFrame(updateFrame(1, 'ie-001'));
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
 
@@ -150,9 +163,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('ignores payloads without the intent.envelope kind discriminator', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     const envelope: SseEnvelope = {
       streamId: 'system:intent-envelopes',
       frameKind: 'UPDATE',
@@ -166,9 +177,7 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('ignores payloads without a stable id', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     const envelope: SseEnvelope = {
       streamId: 'system:intent-envelopes',
       frameKind: 'UPDATE',
@@ -187,18 +196,53 @@ describe('bootIntentStreamBridge — LRU dedup (slice 487 §4.3 / post-impl A5)'
   });
 
   it('teardown stops the bridge and a second boot becomes possible', () => {
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs), router);
     expect(__isRunningForTest()).toBe(true);
     stopIntentStreamBridge();
     expect(__isRunningForTest()).toBe(false);
 
     // Booting again should construct a fresh stream.
     const fakeEs2 = new FakeEventSource('http://test/api/intent/stream');
-    bootIntentStreamBridge('http://test', router, {
-      eventSourceFactory: () => fakeEs2 as unknown as EventSource,
-    });
+    bootIntentStreamBridge(multiplexOn(fakeEs2), router);
     expect(__isRunningForTest()).toBe(true);
+  });
+});
+
+/**
+ * Tempdoc 682 Item 3 — cross-language drift check for the hand-coupled FE/BE 9000 pair.
+ *
+ * The server SSE replay ring buffer (`FrameHistoryRingBuffer.DEFAULT_CAPACITY`, Java) and the
+ * FE dedup LRU (`DEDUP_LRU_SIZE` above) must stay equal: an FE LRU smaller than the server
+ * replay window admits duplicate-event storms after reconnect; a server window smaller than
+ * the LRU wastes dedup memory and masks replay gaps. There is no shared codegen authority for
+ * this pair (the liveness-constants generator family projects liveness *windows*, a different
+ * shape — see gen-stream-liveness-constants.mjs header), so this test parses both source files
+ * and fails on one-sided drift, following the parser.conformance.test.ts pattern of reading a
+ * repo file cross-tree.
+ */
+describe('BE/FE capacity drift', () => {
+  it('FE DEDUP_LRU_SIZE equals BE FrameHistoryRingBuffer.DEFAULT_CAPACITY', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const javaSrc = readFileSync(
+      resolve(
+        here,
+        '../../../../app-observability/src/main/java/io/justsearch/app/observability/stream/FrameHistoryRingBuffer.java',
+      ),
+      'utf8',
+    );
+    const tsSrc = readFileSync(resolve(here, 'bootIntentStreamBridge.ts'), 'utf8');
+
+    const javaLiteral = /DEFAULT_CAPACITY\s*=\s*([\d_]+)/.exec(javaSrc)?.[1];
+    const tsLiteral = /DEDUP_LRU_SIZE\s*=\s*([\d_]+)/.exec(tsSrc)?.[1];
+    if (!javaLiteral) {
+      throw new Error('DEFAULT_CAPACITY literal not found — did FrameHistoryRingBuffer.java move?');
+    }
+    if (!tsLiteral) {
+      throw new Error('DEDUP_LRU_SIZE literal not found — did bootIntentStreamBridge.ts change shape?');
+    }
+
+    const beCapacity = Number(javaLiteral.replace(/_/g, ''));
+    const feLruSize = Number(tsLiteral.replace(/_/g, ''));
+    expect(feLruSize).toBe(beCapacity);
   });
 });

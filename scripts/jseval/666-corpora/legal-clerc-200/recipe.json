@@ -1,0 +1,7 @@
+{
+  "method": "huggingface-direct-sample",
+  "source": "jhu-clsp/CLERC (test split, single-removed/direct task variant)",
+  "seed": 666,
+  "n_docs": 198,
+  "n_queries": 200
+}

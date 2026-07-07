@@ -59,16 +59,16 @@ missing cell: **semantic *and* fully offline.** No surveyed alternative occupies
 ## Benchmarks
 
 Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
-~300 queries/corpus; measured on the canonical 2026-06-21 release tree in pre-public development). Numbers are
+~300 queries/corpus; measured on the canonical 2026-07-01 release tree). Numbers are
 the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
-| BEIR / SciFact | **0.757** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
+| BEIR / SciFact | **0.756** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
 | Enron-QA | 0.719 | |
-| MIRACL-de (German) | 0.728 | multilingual — no per-language tuning |
-| MIRACL-fr (French) | 0.707 | |
-| CourtListener (legal) | 0.608 | hybrid default; legal rises to **0.97** in `full` mode (all retrievers + rerank) |
+| MIRACL-de (German) | 0.852 | multilingual — no per-language tuning |
+| MIRACL-fr (French) | 0.866 | |
+| Legal (CLERC case-retrieval) | 0.516 | citation-retrieval task on real US federal case law; replaces an earlier bespoke legal corpus that had no reproducible construction path (tempdoc 666) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
@@ -80,10 +80,12 @@ Per-corpus nDCG@10 floors are projected from this release and regression-gated i
 
 Reproduce (from `scripts/jseval`): `python -m jseval run --start-backend --dataset beir/scifact --modes hybrid`
 then `python -m jseval relevance-gate --dataset beir/scifact`. Slugs: `beir/scifact`, `mixed/enron-qa`,
-`mixed/courtlistener-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
+`mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
 Full methodology, comparison-class caveats, and reproduction:
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md). The table above is
-projected from `scripts/jseval/release.v1.json` (the canonical 2026-06-21 release), not hand-transcribed.
+projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-01 release), not hand-transcribed.
+For the broader research angle — open questions, what's deferred, and how to get involved — see
+[`RESEARCH.md`](RESEARCH.md).
 
 ## Quickstart (build from source)
 
@@ -133,7 +135,8 @@ commits are co-authored.
 Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) (CLA required). Please read
 [`NON-GOALS.md`](NON-GOALS.md) first so a change fits the project's scope. Security: [`SECURITY.md`](SECURITY.md).
 You **don't** need any of the agent/governance machinery to contribute — it's published as transparency
-([`MAINTAINING.md`](MAINTAINING.md)), not a required path.
+([`MAINTAINING.md`](MAINTAINING.md)), not a required path. Interested in the research side (open questions,
+what's deferred, collaboration) rather than contributing code? See [`RESEARCH.md`](RESEARCH.md).
 
 ## License
 

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS runs (
     ndcg_10 REAL, map_10 REAL, mrr_10 REAL, recall_10 REAL, p1 REAL,
     mean_latency_ms REAL, context_hit_rate REAL,
     ce_p50_ms REAL, primary_docs_s REAL, enrich_docs_s REAL, resident_bytes REAL,
+    retrieval_p50_ms REAL, unaccounted_p50_ms REAL,
     comparable INTEGER NOT NULL DEFAULT 1,
     manifest_hash TEXT
 );
@@ -71,13 +72,21 @@ _REGRESSION_THRESHOLD = 0.95  # warn if latest < 95% of window mean
 # tempdoc 640 R3: perf families trended alongside quality. Additive columns on `runs` (mirrors the
 # manifest_hash migration). `_TREND_METRIC` maps a public metric name -> (column, lower_is_better) so
 # check_trend can trend any family direction-aware (nDCG higher-better; latency/footprint lower-better).
-_PERF_HISTORY_COLUMNS = ("ce_p50_ms", "primary_docs_s", "enrich_docs_s", "resident_bytes")
+# tempdoc 647: the latency-decomposition stages join the trend set — `retrieval_p50_ms` and, most
+# importantly, `unaccounted_p50_ms` (the CPT "unaccounted" remainder) so *dark-latency creep over
+# commits* is catchable on the trend path, without needing a calibrate-cohort gate.
+_PERF_HISTORY_COLUMNS = (
+    "ce_p50_ms", "primary_docs_s", "enrich_docs_s", "resident_bytes",
+    "retrieval_p50_ms", "unaccounted_p50_ms",
+)
 _TREND_METRIC: dict[str, tuple[str, bool]] = {
     "nDCG@10": ("ndcg_10", False),
     "ce_p50_ms": ("ce_p50_ms", True),
     "primary_docs_s": ("primary_docs_s", False),
     "enrich_docs_s": ("enrich_docs_s", False),
     "resident_bytes": ("resident_bytes", True),
+    "retrieval_p50_ms": ("retrieval_p50_ms", True),
+    "unaccounted_p50_ms": ("unaccounted_p50_ms", True),
 }
 
 
@@ -115,8 +124,9 @@ def append_run(
                 ndcg_10, map_10, mrr_10, recall_10, p1,
                 mean_latency_ms, context_hit_rate,
                 ce_p50_ms, primary_docs_s, enrich_docs_s, resident_bytes,
+                retrieval_p50_ms, unaccounted_p50_ms,
                 comparable, manifest_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 summary.get("timestamp"),
                 summary.get("git_sha"),
@@ -133,6 +143,8 @@ def append_run(
                 pm.get("primary_docs_s"),
                 pm.get("enrich_docs_s"),
                 pm.get("resident_bytes"),
+                pm.get("retrieval_p50_ms"),
+                pm.get("unaccounted_p50_ms"),
                 1 if comparable else 0,
                 manifest_hash,
             ),
@@ -241,6 +253,7 @@ def get_history(
         "ndcg_10, map_10, mrr_10, recall_10, p1, "
         "mean_latency_ms, context_hit_rate, "
         "ce_p50_ms, primary_docs_s, enrich_docs_s, resident_bytes, "
+        "retrieval_p50_ms, unaccounted_p50_ms, "
         "comparable, manifest_hash "
         "FROM runs "
         "WHERE dataset = ? AND mode = ?"

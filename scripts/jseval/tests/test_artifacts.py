@@ -132,6 +132,50 @@ class TestBuildPerQueryEntries:
         q1 = entries[0]
         assert q1["totalRelevant"] == 2  # d1 (rel=2) + d2 (rel=1)
 
+    def test_judge_signals_extracted_per_hit(self):
+        # Tempdoc 643: per-hit CE score + per-leg ranks persisted from the response's results/trace.
+        mr = _mock_mode_result()
+        mr["raw_responses"][0]["results"] = [
+            {
+                "id": "d1.txt",
+                "trace": [
+                    {"id": "sparse-retrieval", "rank": 1, "score": 5.0},
+                    {"id": "splade-retrieval", "rank": 3, "score": 2.0},
+                    {"id": "dense-retrieval", "rank": 2, "score": 0.8},
+                    {"id": "fusion", "score": 1.1},
+                    {"id": "cross-encoder", "score": 4.2},
+                ],
+            },
+        ]
+        qrels = {"q1": {"d1": 1, "d2": 0}, "q2": {"d3": 1}}
+        entries = _build_per_query_entries("hybrid", mr, qrels)
+
+        q1 = entries[0]
+        assert len(q1["judgeSignals"]) == 1
+        sig = q1["judgeSignals"][0]
+        assert sig["docId"] == "d1"
+        assert sig["bm25_rank"] == 1
+        assert sig["splade_rank"] == 3
+        assert sig["dense_rank"] == 2
+        assert sig["ce_score"] == 4.2
+
+        # q2 has no "results" key in the mock raw_response → empty, not an error.
+        assert entries[1]["judgeSignals"] == []
+
+    def test_judge_signals_skips_unresolvable_hit(self):
+        # A hit whose doc-id can't be resolved is skipped (logged), not a crash.
+        mr = _mock_mode_result()
+        mr["raw_responses"][0]["results"] = [
+            {"id": "unresolvable-bare-id", "trace": []},
+            {"id": "d2.txt", "trace": [{"id": "cross-encoder", "score": 1.0}]},
+        ]
+        qrels = {"q1": {"d1": 1}, "q2": {"d3": 1}}
+        entries = _build_per_query_entries("hybrid", mr, qrels)
+
+        q1 = entries[0]
+        assert len(q1["judgeSignals"]) == 1
+        assert q1["judgeSignals"][0]["docId"] == "d2"
+
 
 class TestMirrorTelemetry:
     """LR4-d: artifacts.write_run copies telemetry NDJSON into run_dir."""

@@ -15,7 +15,7 @@ export interface MetricRef {
   label?: string | null;
   resourceId?: string;
 }
-export const metricRefSchema = z.object({
+export const metricRefSchema = z.strictObject({
   "hint": z.enum(["SPARK", "GAUGE", "HISTOGRAM"]).nullable().optional(),
   "label": z.string().nullable().optional(),
   "resourceId": z.string().optional(),
@@ -25,7 +25,7 @@ export type OperationInvocationNullable = {
   defaultArgsJson?: string;
   target?: string;
 } | null;
-export const operationInvocationNullableSchema = z.object({
+export const operationInvocationNullableSchema = z.strictObject({
   "defaultArgsJson": z.string().optional(),
   "target": z.string().optional(),
 }).nullable();
@@ -64,12 +64,12 @@ export interface HealthEvent {
   };
   timestamp?: string;
 }
-export const healthEventSchema = z.object({
-  "body": z.union([z.object({
+export const healthEventSchema = z.strictObject({
+  "body": z.union([z.strictObject({
     "attributes": z.record(z.string(), z.unknown()).optional(),
     "recovery": operationInvocationNullableSchema.optional(),
     "kind": z.literal("lifecycle"),
-  }), z.object({
+  }), z.strictObject({
     "lastTransitionTime": z.string().optional(),
     "message": z.string().nullable().optional(),
     "reason": z.string().optional(),
@@ -78,7 +78,7 @@ export const healthEventSchema = z.object({
     "status": z.enum(["TRUE", "FALSE", "UNKNOWN"]).optional(),
     "subject": z.string().optional(),
     "kind": z.literal("condition"),
-  }), z.object({
+  }), z.strictObject({
     "lastTransitionTime": z.string().optional(),
     "magnitudes": z.record(z.string(), z.unknown()).optional(),
     "message": z.string().nullable().optional(),
@@ -91,7 +91,7 @@ export const healthEventSchema = z.object({
   "i18nKey": z.string().nullable().optional(),
   "id": z.string().optional(),
   "severity": z.enum(["INFO", "WARNING", "ERROR"]).optional(),
-  "source": z.object({
+  "source": z.strictObject({
     "serviceInstanceId": z.string().optional(),
     "serviceName": z.string().optional(),
     "serviceVersion": z.string().nullable().optional(),

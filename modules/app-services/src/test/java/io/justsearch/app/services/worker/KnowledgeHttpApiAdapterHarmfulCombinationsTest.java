@@ -36,7 +36,8 @@ import org.junit.jupiter.api.Test;
 class KnowledgeHttpApiAdapterHarmfulCombinationsTest {
 
   private static final RerankerConfig ENABLED =
-      new RerankerConfig(true, null, 20, 200L, 5, 512, false, 0, 16_000);
+      new RerankerConfig(
+          true, null, 20, 200L, 5, 512, false, 0, 16_000, false, 0.5, false, 0.85, false);
 
   private static final class FakeRerankerService implements RerankerService {
     private final boolean loaded;
@@ -327,7 +328,8 @@ class KnowledgeHttpApiAdapterHarmfulCombinationsTest {
         "258-B1: document-length gate is disabled when maxAvgDocLengthChars is 0")
     void gateDisabled_crossEncoderAlwaysEligible() {
       RerankerConfig noGate =
-          new RerankerConfig(true, null, 20, 200L, 5, 512, false, 0, 0);
+          new RerankerConfig(
+              true, null, 20, 200L, 5, 512, false, 0, 0, false, 0.5, false, 0.85, false);
       PipelineConfig hybrid =
           SearchPipelinePresets.expandPreset(SearchMode.SEARCH_MODE_HYBRID, noGate);
       // Even very long docs should pass when gate is disabled (maxAvgDocLengthChars=0)

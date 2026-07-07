@@ -20,6 +20,10 @@
     ],
     "mixed/miracl-de-2k": [
       { "model": "BGE-M3 Dense", "value": 0.567, "source_url": "https://arxiv.org/html/2402.03216v4", "version": "BGE-M3 (Chen et al., 2024) Table 1", "split": "dev", "self_reproduced": false, "caveat": "NON-CANONICAL: German is a MIRACL surprise language with NO baseline row in the MIRACL paper; this is BGE-M3's own reproduction. DEV split. Flag as resting on a single non-canonical source." }
+    ],
+    "mixed/legal-clerc-200": [
+      { "model": "BM25", "value": 0.054, "source_url": "https://arxiv.org/abs/2406.17186", "version": "CLERC (Hou et al., NAACL 2025) Table 3", "split": "test", "self_reproduced": false, "caveat": "SCALE MISMATCH, not a comparison class issue: CLERC's own retrieval collection is 1.84M documents / 23.7M passages; our mixed/legal-clerc-200 corpus is a 198-document candidate pool (200 queries, following tempdoc 666's construction: one positive + curated negatives per query, mirroring CLERC's own query+positive+20-negatives record shape). nDCG@10 on a ~200-document pool is structurally far easier than on a 1.84M-document collection, so our 0.516 is NOT 'beating published BM25 (0.054)' — it reflects a much smaller candidate set. Cited to establish CLERC as a real, citable academic legal-retrieval benchmark grounding this corpus, not as a head-to-head score comparison." },
+      { "model": "Contriever-MSMarco (zero-shot dense)", "value": 0.0422, "source_url": "https://arxiv.org/abs/2406.17186", "version": "CLERC (Hou et al., NAACL 2025) Table 3", "split": "test", "self_reproduced": false, "caveat": "Same scale-mismatch caveat as the BM25 row above — full 1.84M-doc/23.7M-passage collection vs. our 198-document pool. Listed as the strongest zero-shot dense baseline CLERC reports (ahead of E5 v2 0.0367, BGE En v1.5 0.0343, DPR 0.0224)." }
     ]
   }
 }

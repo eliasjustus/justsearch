@@ -44,7 +44,11 @@ fun resolveTool(notation: String): java.io.File {
         isCanBeResolved = true
         isTransitive = false
       }
-  return configuration.singleFile
+  val file = configuration.singleFile
+  // Maven-cached native tools lack the executable bit; +x for Linux/macOS CI
+  // (generateProto java.io.IOException error=13). No-op on Windows. Tempdoc 668.
+  file.setExecutable(true)
+  return file
 }
 
 val protocBinary =

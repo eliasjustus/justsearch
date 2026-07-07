@@ -5,6 +5,7 @@ from __future__ import annotations
 from jseval.provenance import (
     aggregate_run_evidence,
     extract_hit_evidence,
+    extract_judge_signals,
     extract_query_evidence,
 )
 
@@ -81,6 +82,84 @@ class TestExtractHitEvidence:
         ev = extract_hit_evidence(hit)
         assert ev["fusion_score"] == 0.88
         assert ev["fusion_method"] == "cc"
+
+
+# ---------------------------------------------------------------------------
+# Per-hit judge-arbitration signals (tempdoc 643)
+# ---------------------------------------------------------------------------
+
+class TestExtractJudgeSignals:
+    def test_bm25_and_splade_kept_separate(self):
+        # Unlike extract_hit_evidence's splade_executed collapsing, both legs' own ranks
+        # must survive distinctly when BOTH run in the same hybrid query.
+        hit = {
+            "trace": [
+                {"id": "sparse-retrieval", "rank": 1, "score": 5.5},
+                {"id": "splade-retrieval", "rank": 4, "score": 2.1},
+                {"id": "dense-retrieval", "rank": 2, "score": 0.9},
+                {"id": "fusion", "score": 1.2},
+                {"id": "cross-encoder", "score": 3.7},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["bm25_rank"] == 1
+        assert sig["bm25_score"] == 5.5
+        assert sig["splade_rank"] == 4
+        assert sig["splade_score"] == 2.1
+        assert sig["dense_rank"] == 2
+        assert sig["dense_score"] == 0.9
+        assert sig["fusion_score"] == 1.2
+        assert sig["ce_score"] == 3.7
+
+    def test_no_trace_returns_all_none(self):
+        sig = extract_judge_signals({})
+        assert sig == {
+            "bm25_rank": None, "bm25_score": None,
+            "splade_rank": None, "splade_score": None,
+            "dense_rank": None, "dense_score": None,
+            "fusion_score": None, "ce_score": None,
+        }
+
+    def test_no_cross_encoder_stage(self):
+        hit = {"trace": [{"id": "sparse-retrieval", "rank": 1, "score": 1.0}]}
+        sig = extract_judge_signals(hit)
+        assert sig["ce_score"] is None
+        assert sig["bm25_rank"] == 1
+
+    def test_branch_fusion_preferred_over_stale_fusion(self):
+        # Tempdoc 643 critical-analysis-pass correction: when chunk-branch fusion ran, "fusion"
+        # reflects only the whole-doc branch's own internal score (stale) -- the true final
+        # score is on "branch-fusion", which must win.
+        hit = {
+            "trace": [
+                {"id": "fusion", "score": 0.42},
+                {"id": "branch-fusion", "score": 0.91},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 0.91
+
+    def test_falls_back_to_fusion_when_no_branch_fusion(self):
+        hit = {"trace": [{"id": "fusion", "score": 1.23}]}
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 1.23
+
+    def test_falls_back_to_fusion_when_branch_fusion_present_but_scoreless(self):
+        # HitProvenanceProjector.attachBranchFusion can emit a "branch-fusion" stage with no
+        # score (fusionScore()==null) -- must fall through to "fusion", not report None.
+        hit = {
+            "trace": [
+                {"id": "fusion", "score": 1.5},
+                {"id": "branch-fusion"},
+            ],
+        }
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] == 1.5
+
+    def test_fusion_score_none_when_neither_stage_present(self):
+        hit = {"trace": [{"id": "sparse-retrieval", "score": 1.0}]}
+        sig = extract_judge_signals(hit)
+        assert sig["fusion_score"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +372,43 @@ class TestStageTiming:
         ]
         agg = aggregate_run_evidence(evidences)
         assert agg["stage_timing_stats"] == {}
+
+    def test_unaccounted_remainder_closes_the_decomposition(self):
+        # tempdoc 647: took_ms encloses the stages, so the remainder is the CPT "unaccounted" node and
+        # the per-entry shares close to 1. Remainders: 180-(4+150)=26, 182-(6+154)=22 → mean 24.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 4, "cross_encoder_ms": 150}, "took_ms": 180},
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 6, "cross_encoder_ms": 154}, "took_ms": 182},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert "unaccounted_ms" in st
+        assert st["unaccounted_ms"]["mean"] == 24.0
+        assert st["unaccounted_ms"]["p50"] >= 0  # non-negative by construction
+        total_share = (st["retrieval_ms"]["share"] + st["cross_encoder_ms"]["share"]
+                       + st["unaccounted_ms"]["share"])
+        assert abs(total_share - 1.0) < 1e-3  # the parts close to the whole
+
+    def test_unaccounted_clamps_subms_rounding_negatives(self):
+        # Σ stages slightly exceeds took_ms (sub-ms rounding at tiny stages) → clamp to 0 and count it.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 5, "cross_encoder_ms": 176}, "took_ms": 180},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert st["unaccounted_ms"]["p50"] == 0
+        assert st["unaccounted_ms"]["clamped_negative_count"] == 1
+
+    def test_no_shares_or_remainder_without_took_ms(self):
+        # Backward compatibility: legacy inputs without took_ms get neither shares nor a remainder.
+        evidences = [
+            {"components": {}, "error": None,
+             "stage_timing": {"retrieval_ms": 5, "cross_encoder_ms": 40}},
+        ]
+        st = aggregate_run_evidence(evidences)["stage_timing_stats"]
+        assert "unaccounted_ms" not in st
+        assert "share" not in st["retrieval_ms"]
 
 
 class TestUnifiedTraceFirst:

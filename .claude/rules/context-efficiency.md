@@ -3,7 +3,7 @@
 # Project-Specific Agent Guidance
 
 ## Search Strategy
-- **Use `model: haiku`** for simple subagent tasks (file lookups, pattern searches).
+- **Worker floor: sonnet; haiku only where wrong output is self-evident** (CLAUDE.md rule).
 - **Bound Explore agents**: default to 1; cap synthesis output.
 - **Known large files** (use offset/limit): UnifiedChatView.ts, Shell.ts, SearchSurface.ts, SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs.
 - **Docs index**: docs/llms.txt. Module structure: docs/explanation/01-system-overview.md.

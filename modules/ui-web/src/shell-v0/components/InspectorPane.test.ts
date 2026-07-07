@@ -115,6 +115,36 @@ describe('InspectorPane (slice 462)', () => {
     expect(el.shadowRoot?.querySelector('pre')?.textContent).toContain('ALPHA DOCUMENT');
   });
 
+  it('renders provenance for a zero-content document instead of hiding it (tempdoc 671)', async () => {
+    // A document OCR/VDU found no text on used to show a bare "No preview available." with no
+    // diagnostic — the exact document class this tempdoc's backend fix (ExtractionStatus /
+    // OcrSkipReason) is about. The backend sends visualExtractionEvidence unconditionally even
+    // when content is empty; the render gate used to hide it behind `!previewText`.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          content: '',
+          textProvenance: 'vdu_pending',
+          visualExtractionEvidence: {
+            route: 'structured',
+            ocrSkipReason: 'no_text_found',
+          },
+        }),
+      })),
+    );
+    const el = make();
+    setSelected({ id: 'd', title: 't', path: 'p' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('.preview-source')?.textContent).toContain('VDU pending');
+    expect(el.shadowRoot?.querySelector('.empty')?.textContent).toContain(
+      'No preview available',
+    );
+  });
+
   it('close button sets state.isOpen=false', async () => {
     const el = make();
     setSelected({ id: 'd', title: 't', path: 'p' });

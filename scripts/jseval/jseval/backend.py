@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 
-from ._paths import REPO_ROOT
+from ._paths import REPO_ROOT, shared_models_dir
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +93,17 @@ def start_backend(
     env["JUSTSEARCH_API_PORT"] = str(port)
     if env_overrides:
         env.update(env_overrides)
+
+    # Tempdoc 644 Axis 1: when launched from a git worktree, the worktree's own models/
+    # holds only LFS pointer files, so reranker/dense/SPLADE discovery silently fails and
+    # the cross-encoder turns off → wrong-but-plausible hybrid numbers. Default
+    # JUSTSEARCH_MODELS_DIR to the MAIN checkout's models (mirrors dev-runner.cjs:428-434).
+    # Lowest precedence: a caller/env/run-config JUSTSEARCH_MODELS_DIR always wins.
+    if not env.get("JUSTSEARCH_MODELS_DIR"):
+        shared_models = shared_models_dir()
+        if shared_models is not None:
+            env["JUSTSEARCH_MODELS_DIR"] = str(shared_models)
+            log.info("Resolved JUSTSEARCH_MODELS_DIR=%s (shared models)", shared_models)
 
     cmd = [
         str(gradlew),

@@ -22,8 +22,8 @@ export interface AgentHistoryResponse {
     timestamp?: string | null;
   })[] | null;
 }
-export const agentHistoryResponseSchema = z.object({
-  "batches": z.array(z.object({
+export const agentHistoryResponseSchema = z.strictObject({
+  "batches": z.array(z.strictObject({
     "batchId": z.string().nullable().optional(),
     "explanation": z.string().nullable().optional(),
     "failedCount": z.number().int().nullable().optional(),

@@ -20,7 +20,7 @@ directory produced by the Phase 3 nightly workflow:
      but at least ``contract_violations`` + ``rate_timeline`` +
      ``stratified_metrics`` + ``bootstrap_ci`` must exist).
 
-Exit codes (see :func:`jseval.cli.cmd_gate`):
+Exit codes (see :func:`jseval.commands.gates.cmd_gate`):
 
 - 0 — gate passed.
 - 1 — any hard assertion failed (σ outside band, manifest missing

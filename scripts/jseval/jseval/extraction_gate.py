@@ -17,7 +17,7 @@ pilot would fall into.
 The verdict is conservative because an extraction swap is expensive (new model
 download + a full reindex): adopt ONLY on a clear downstream win, hold on neutral.
 
-Exit codes (see :func:`jseval.cli.cmd_extraction_gate`):
+Exit codes (see :func:`jseval.commands.gates.cmd_extraction_gate`):
 
 - 0 — ``ship``: candidate improves downstream nDCG@10 by >= ``min_improvement_abs``
   on the primary mode and does not regress any guard mode.

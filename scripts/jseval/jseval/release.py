@@ -35,10 +35,37 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 RELEASE_SCHEMA = "release.v1"
 RELEASE_SCHEMA_VERSION = 1
+
+# release_id contract (tempdoc 683, mirrored in release.v1.schema.json): a required,
+# date-suffixed human label, e.g. "667-external-baselines-2026-07-01".
+RELEASE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*-\d{4}-\d{2}-\d{2}$"
+_RELEASE_ID_RE = re.compile(RELEASE_ID_PATTERN)
+
+
+def validate_release_id(release_id: str | None) -> str | None:
+    """Return an error message when ``release_id`` is missing/malformed, else ``None``.
+
+    The compose CLI refuses to write a release without a conformant id (the id is what
+    outward docs cite — see scripts/ci/check-outward-number-citations.mjs), so it must
+    exist and be stable-format from day one.
+    """
+    if not release_id:
+        return (
+            "release_id is required: pass --release-id <label>-<YYYY-MM-DD> "
+            f"(pattern {RELEASE_ID_PATTERN})"
+        )
+    if not _RELEASE_ID_RE.match(release_id):
+        return (
+            f"release_id {release_id!r} does not match {RELEASE_ID_PATTERN} "
+            "(lowercase label, '-' separators, date suffix — e.g. "
+            "667-external-baselines-2026-07-01)"
+        )
+    return None
 
 # --- The config-cohort key field-set (tempdoc 623 T-1 / U1) -----------------
 #
@@ -60,7 +87,7 @@ _CORPUS_DEPENDENT_COMMIT_METADATA = (
 )
 # model_fingerprints keys that are execution-context (vary GPU vs CPU), excluded
 # from model identity:
-_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu")
+_MODEL_EXECUTION_FLAGS = ("embed_gpu", "splade_gpu", "ner_gpu", "reranker_gpu")
 
 
 class ComposeError(ValueError):
@@ -212,6 +239,10 @@ def _corpus_source(summary: dict) -> dict:
         "query_count": summary.get("query_count"),
         "signature": ci.get("signature"),
         "sha256": ci.get("signature"),  # the digest seam; None until populated
+        # Record-if-available pass-through (tempdoc 683): corpus_identity today carries
+        # only `signature` (corpus_identity.py), so this stays None until a fetcher
+        # records an upstream revision — no fetcher rebuild here.
+        "upstream_revision": ci.get("upstream_revision"),
     }
     if isinstance(dataset, str) and dataset.startswith("beir/"):
         # BEIR corpora are fetched by ir_datasets — the id IS the pointer.
@@ -242,6 +273,13 @@ def _measured_for_mode(summary: dict, mode: str) -> dict | None:
     _footprint = _pg.derive_resident_model_bytes(manifest)
     if isinstance(_footprint, (int, float)):
         run_metrics["resident_bytes"] = float(_footprint)
+    # tempdoc 647: the per-component footprint allocation (embed/SPLADE/reranker/NER/LLM) projects the
+    # same way, so the perf gate can guard each component's resident bytes from bloating (best-effort —
+    # AI-offline runs omit `llm_bytes`).
+    _components = _pg.derive_resident_component_bytes(manifest)
+    if _components:
+        for _ckey, _cval in _components.items():
+            run_metrics[_ckey] = float(_cval)
     return {
         "config_mode": mode,
         "metrics": dict(metrics),
@@ -275,6 +313,7 @@ def compose(
     release_id: str | None = None,
     external_baselines: dict | None = None,
     require_comparable: bool = True,
+    leak_by_dataset: dict | None = None,
 ) -> dict:
     """Compose cohort-identical run summaries into one benchmark release.
 
@@ -285,6 +324,11 @@ def compose(
     :param composed_at: ISO timestamp (passed in — scripts can't call ``Date.now``).
     :param external_baselines: optional ``{dataset: [{model, value, source, ...}]}``
         cited (immutable) references shown side-by-side; never a projection of ours.
+    :param leak_by_dataset: optional ``{dataset_slug: leak_rate}`` measured from the
+        runs' ``staged_recall_accounting`` projections (sourced by the compose CLI,
+        which has the run dirs; tempdoc 683). When non-empty, written as the
+        release's ``leak`` section so leak-gate's ``current_release`` pointer can
+        project ceilings from it.
     :raises ComposeError: if the runs don't all share one ``config_cohort_key``,
         or (when ``require_comparable``) a default-mode run isn't ``comparable``.
     :returns: the release document (``release.v1`` schema).
@@ -316,13 +360,27 @@ def compose(
 
     # 2. Reference cohort tuple (from the first member's manifest — all equal).
     ref_manifest = run_summaries[0]["manifest"]
+    # tempdoc 664: `config_cohort_key` deliberately excludes GPU/hardware execution flags
+    # (`_MODEL_EXECUTION_FLAGS`) — intentional, and guarded by
+    # `test_config_key_ignores_gpu_execution_flags`, so relevance-style comparisons aren't
+    # needlessly split by hardware. That leaves a real gap for hardware-SENSITIVE metric
+    # families (perf: latency/throughput): `cohort["hardware"]` below was silently sourced from
+    # only the FIRST member, with no check the rest agree. Record that agreement explicitly here
+    # — additive, does not change `config_cohort_key` or cohort membership — so a
+    # hardware-sensitive projection (perf_gate.py) can refuse to trust a mixed-hardware release.
+    hardware_snapshots = [_hardware_projection(s["manifest"]) for s in run_summaries]
     cohort = {
         "config_cohort_key": cohort_key,
         "git_sha": ref_manifest.get("git_sha"),
         "eval_protocol_hash": ref_manifest.get("eval_protocol_hash"),
         "policy_hash": ref_manifest.get("policy_hash"),
         "model_identity": _model_identity(ref_manifest.get("model_fingerprints")),
+        # tempdoc 644: the realized engine set this release was measured under (also inside
+        # model_identity; surfaced here as the legible read-path the homogeneity gate compares a
+        # HEAD run against). All members share it — engine-set differences split config_cohort_key.
+        "realized_engines": (ref_manifest.get("model_fingerprints") or {}).get("realized_engines"),
         "hardware": _hardware_projection(ref_manifest),
+        "hardware_homogeneous": all(h == hardware_snapshots[0] for h in hardware_snapshots),
     }
 
     # 3. Per-corpus measured projection (one row per dataset) + ablations.
@@ -349,6 +407,15 @@ def compose(
             if abl is not None:
                 ablations.setdefault(ds, []).append(abl)
 
+    leak_section = {
+        canonical_dataset_slug(ds): {
+            "leak_rate": float(rate),
+            "src": "staged_recall_accounting projection",
+        }
+        for ds, rate in (leak_by_dataset or {}).items()
+        if isinstance(rate, (int, float))
+    }
+
     return {
         "schema": RELEASE_SCHEMA,
         "schema_version": RELEASE_SCHEMA_VERSION,
@@ -358,6 +425,7 @@ def compose(
         "cohort": cohort,
         "measured": measured,
         "ablations": ablations,
+        **({"leak": leak_section} if leak_section else {}),
         "external_baselines": external_baselines or {},
         # First-class negative-space statement (tempdoc 623 T-3 / §F): a release
         # must never imply the extraction front-half is measured.

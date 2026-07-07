@@ -1,0 +1,16 @@
+{
+  "note": "Tempdoc 663 — the ONE AI-engine lifecycle verdict derivation. `BrainSurface.deriveAiState()` used to reconcile installStatus/busy-flags/runtimeStatus.onnxFeatures/the unified runtime/a raw inference read by a hand-ordered precedence ladder (the representation-drift class this register exists to make unwritable). `computeAiEngineVerdict` (state/aiVerdict.ts) is now the ONE place that reads `installStatus?.state`/`onnxFeatures` to decide the AI-engine lifecycle; every other shell-v0 site must consume its result, not re-derive from those raw fields. Mirrors check-verdict-derivation / check-folder-status-derivation.",
+  "seam": {
+    "symbol": "computeAiEngineVerdict",
+    "file": "modules/ui-web/src/shell-v0/state/aiVerdict.ts"
+  },
+  "scope": "modules/ui-web/src/shell-v0",
+  "predicatePattern": "installStatus\\?\\.state\\s*[=!]==|onnxFeatures\\?\\.some",
+  "allowed": [
+    "modules/ui-web/src/shell-v0/state/aiVerdict.ts",
+    "modules/ui-web/src/shell-v0/views/BrainSurface.ts"
+  ],
+  "allowedNotes": {
+    "modules/ui-web/src/shell-v0/views/BrainSurface.ts": "installStalled() reads installStatus.state === 'running' to detect a STALE in-progress install (paired with isAiInstallLive's staleness window) — a distinct question from the lifecycle KIND computeAiEngineVerdict answers, not a re-derivation of it. Every OTHER read of installStatus.state/onnxFeatures in this file was fixed to consume computeAiEngineVerdict instead (tempdoc 663) before this allow-list entry was added — re-check with a fresh grep before assuming new occurrences are equally legitimate."
+  }
+}

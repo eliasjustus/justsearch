@@ -101,6 +101,8 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   private final Supplier<GpuCapabilitiesService> gpuCapabilitiesSupplier;
   private volatile Supplier<io.justsearch.app.services.vdu.VduCapabilityState.Snapshot>
       vduCapabilitySnapshotSupplier;
+  /** Tempdoc 672 follow-up: is a VDU offline-processing batch actively running right now. */
+  private volatile Supplier<Boolean> vduProcessingSupplier;
 
   /** Tempdoc 419 C3 V1 — late-bound suppliers for the head-side time-series + health views. */
   private volatile Supplier<RrdMetricStore> rrdStoreSupplier;
@@ -284,6 +286,11 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   void setVduCapabilitySnapshotSupplier(
       Supplier<io.justsearch.app.services.vdu.VduCapabilityState.Snapshot> supplier) {
     this.vduCapabilitySnapshotSupplier = supplier;
+  }
+
+  /** Tempdoc 672 follow-up: late-bind the "is VDU actively processing right now" supplier. */
+  void setVduProcessingSupplier(Supplier<Boolean> supplier) {
+    this.vduProcessingSupplier = supplier;
   }
 
   /** Tempdoc 630: late-bind the connected knowledge-server bootstrap (energy + resume signals). */
@@ -565,17 +572,30 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       return null;
     }
     var supplier = vduCapabilitySnapshotSupplier;
-    if (supplier == null) {
-      return workerView;
+    io.justsearch.app.services.vdu.VduCapabilityState.Snapshot snapshot = null;
+    if (supplier != null) {
+      try {
+        snapshot = supplier.get();
+      } catch (RuntimeException e) {
+        log.debug("VDU capability snapshot supplier failed: {}", e.getMessage());
+      }
     }
-    io.justsearch.app.services.vdu.VduCapabilityState.Snapshot snapshot;
-    try {
-      snapshot = supplier.get();
-    } catch (RuntimeException e) {
-      log.debug("VDU capability snapshot supplier failed: {}", e.getMessage());
-      return workerView;
+    // Tempdoc 672 follow-up: "is a batch running right now" is read independently of the
+    // blocked-reason snapshot above — a healthy, actively-processing batch has no blocked reason
+    // at all, so the old blockedReason-only guard would have skipped this fact entirely.
+    var processingSupplier = vduProcessingSupplier;
+    boolean processing = false;
+    if (processingSupplier != null) {
+      try {
+        Boolean value = processingSupplier.get();
+        processing = value != null && value;
+      } catch (RuntimeException e) {
+        log.debug("VDU processing supplier failed: {}", e.getMessage());
+      }
     }
-    if (snapshot == null || snapshot.blockedReason() == null || snapshot.blockedReason().isBlank()) {
+    String blockedReason = snapshot != null ? snapshot.blockedReason() : null;
+    boolean blockedReasonPresent = blockedReason != null && !blockedReason.isBlank();
+    if (!blockedReasonPresent && !processing) {
       return workerView;
     }
     VisualExtractionView visual =
@@ -590,7 +610,8 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
             visual.ocrBlockedReason(),
             visual.visualTextNeededCount(),
             visual.visualEnrichmentNeededCount(),
-            snapshot.blockedReason());
+            blockedReasonPresent ? blockedReason : visual.vduBlockedReason(),
+            processing);
     return WorkerOperationalViewBuilder.builder()
         .core(workerView.core())
         .failure(workerView.failure())
@@ -1000,6 +1021,20 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return gate;
   }
 
+  /**
+   * Tempdoc 656: {@code inferenceCapability.pendingReason()} holds a real
+   * {@link LifecycleReasonCode#code()} when set via {@code RuntimeActivationService}'s wiring
+   * (Task 2), but can also hold arbitrary free prose from
+   * {@code InferenceCapabilityWiring.attachInferenceModeListener}'s mode-change callback (e.g.
+   * "Inference offline", "GPU allocated to indexing") — only forward it when it's a known code;
+   * otherwise fall back to the generic {@code INFERENCE_OFFLINE}, same as before this fix.
+   */
+  private static String resolveInferenceReasonCode(
+      io.justsearch.app.services.lifecycle.InferenceCapability inferenceCapability) {
+    String reason = inferenceCapability.pendingReason();
+    return LifecycleReasonCode.isKnown(reason) ? reason : LifecycleReasonCode.INFERENCE_OFFLINE.code();
+  }
+
   static String throughputReadinessReason(WorkerOperationalView workerView) {
     if (workerView == null || !hasActiveIndexWork(workerView)) {
       return null;
@@ -1064,17 +1099,20 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     };
 
     // Inference component: derived from capability health (migrated from OnlineAiService).
+    // Tempdoc 656: mirrors the WORKER component's pattern just above (prefer a specific known
+    // reason over the generic fallback) — previously every non-READY/non-STARTING state hardcoded
+    // INFERENCE_OFFLINE regardless of what inferenceCapability.pendingReason() actually held,
+    // which is why RuntimeActivationService's now-wired precise reasons (Task 2) weren't reaching
+    // this composite/the FE degradation banner even after the runtime-manifest fix landed.
     LifecycleSnapshotV1.Component inference = switch (inferenceCapability.health()) {
       case READY -> new LifecycleSnapshotV1.Component(LifecycleState.LIFECYCLE_STATE_READY, null);
       case PENDING -> onlineAi != null && onlineAi.isStartingUp()
           ? new LifecycleSnapshotV1.Component(
               LifecycleState.LIFECYCLE_STATE_STARTING, LifecycleReasonCode.INFERENCE_STARTING.code())
           : new LifecycleSnapshotV1.Component(
-              LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
-      case DEGRADED, RECOVERING -> new LifecycleSnapshotV1.Component(
-          LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
-      case OFFLINE -> new LifecycleSnapshotV1.Component(
-          LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.INFERENCE_OFFLINE.code());
+              LifecycleState.LIFECYCLE_STATE_DEGRADED, resolveInferenceReasonCode(inferenceCapability));
+      case DEGRADED, RECOVERING, OFFLINE -> new LifecycleSnapshotV1.Component(
+          LifecycleState.LIFECYCLE_STATE_DEGRADED, resolveInferenceReasonCode(inferenceCapability));
     };
 
     LifecycleSnapshotV1.Components components =

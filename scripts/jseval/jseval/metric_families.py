@@ -67,16 +67,21 @@ QUALITY = MetricFamily(
     calibrate=True,
 )
 
-# The cross-encoder STAGE p50 — the dominant, noise-robust latency metric (tempdoc 640 §C-2).
-# Promoted into `aggregate_metrics` (run.py) so it flows + calibrates like a quality metric.
+# The per-stage latency decomposition (tempdoc 640 §C-2 + tempdoc 647). The cross-encoder is the
+# dominant, noise-robust cost; tempdoc 647 completes the family with the retrieval stage — the only
+# other stage present on every query (chunk-merge/branch-fusion/lambdamart are query-conditional, so
+# they stay report-only in `stage_timing_stats` with the `unaccounted_ms` remainder + shares, never
+# gated). Both gated stages are promoted into `aggregate_metrics` (run.py) so they flow + calibrate
+# like a quality metric; each gates RELATIVELY (the band self-widens via the calibrate envelope ±2σ,
+# so the tiny/noisier retrieval stage does not flap — its fixed fallback band is wider than CE's).
 PERF_LATENCY = MetricFamily(
     name="perf-latency",
     source_class="per_mode",
     source_path="aggregate_metrics",
-    metric_keys=("ce_p50_ms",),
-    lower_is_better={"ce_p50_ms": True},
+    metric_keys=("ce_p50_ms", "retrieval_p50_ms"),
+    lower_is_better={"ce_p50_ms": True, "retrieval_p50_ms": True},
     comparator="ratio",
-    bands={"ce_p50_ms": 1.25},
+    bands={"ce_p50_ms": 1.25, "retrieval_p50_ms": 1.5},
     calibrate=True,
 )
 
@@ -91,14 +96,47 @@ PERF_THROUGHPUT = MetricFamily(
     calibrate=False,  # per-run + noisier — not in the per-mode envelope
 )
 
+# Resident footprint (tempdoc 640) + its per-component allocation (tempdoc 647). `resident_bytes` is the
+# summed total; the component keys (embed / SPLADE / reranker / NER / LLM) are its deterministic
+# addends — footprint is config-determined (workload-independent), so an ABSOLUTE per-component
+# allocation check is admissible (the one place a per-part absolute allowance is legitimate; 647 §C-2).
+# All are best-effort (SKIP when a model path is unresolvable, and `llm_bytes` is absent on AI-offline
+# runs where the LLM is not resident); tight bands because the values are deterministic per config.
 PERF_FOOTPRINT = MetricFamily(
     name="perf-footprint",
     source_class="per_run",
     source_path="run_metrics",
-    metric_keys=("resident_bytes",),
-    lower_is_better={"resident_bytes": True},
+    metric_keys=(
+        "resident_bytes",
+        "embed_bytes",
+        "splade_bytes",
+        "reranker_bytes",
+        "ner_bytes",
+        "llm_bytes",
+    ),
+    lower_is_better={
+        k: True
+        for k in (
+            "resident_bytes",
+            "embed_bytes",
+            "splade_bytes",
+            "reranker_bytes",
+            "ner_bytes",
+            "llm_bytes",
+        )
+    },
     comparator="ratio",
-    bands={"resident_bytes": 1.05},
+    bands={
+        k: 1.05
+        for k in (
+            "resident_bytes",
+            "embed_bytes",
+            "splade_bytes",
+            "reranker_bytes",
+            "ner_bytes",
+            "llm_bytes",
+        )
+    },
     calibrate=False,
 )
 
@@ -110,6 +148,20 @@ LEAK = MetricFamily(
     source_path="staged_recall_accounting.json",
     metric_keys=("leak_rate",),
     lower_is_better={"leak_rate": True},  # higher leak is worse → ceiling comparator
+    comparator="ceiling",
+    tolerance_abs=0.05,
+    calibrate=False,
+)
+
+# Tempdoc 643 (E3, T6-a "dominant-count ≠ dominant-cost"): a [0,1] cost-weighted severity over
+# the JUDGE_RANK_LOW rank distribution — same projection source as LEAK, so it shares that
+# family's shape. Higher is worse (a bucket dominated by rank-6-10 mis-ranks vs near-free rank-2).
+JUDGE_LOW_COST_WEIGHT = MetricFamily(
+    name="judge-low-cost-weight",
+    source_class="projection",
+    source_path="staged_recall_accounting.json",
+    metric_keys=("judge_low_cost_weight",),
+    lower_is_better={"judge_low_cost_weight": True},
     comparator="ceiling",
     tolerance_abs=0.05,
     calibrate=False,
@@ -132,7 +184,7 @@ LLM_GEN = MetricFamily(
 )
 
 REGISTRY: tuple[MetricFamily, ...] = (
-    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, LLM_GEN,
+    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, JUDGE_LOW_COST_WEIGHT, LLM_GEN,
 )
 BY_NAME: dict[str, MetricFamily] = {f.name: f for f in REGISTRY}
 

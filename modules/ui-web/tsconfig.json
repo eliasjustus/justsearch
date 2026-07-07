@@ -24,10 +24,16 @@
     // Skip lib check for faster builds
     "skipLibCheck": true,
 
-    // Paths
-    "baseUrl": ".",
+    // TS 6 migration (post 2026-07-01 dependabot bump): @types are no longer
+    // picked up implicitly for this program shape — declare the two the code
+    // relies on (node globals in tests, vite/client for *.css module decls).
+    "types": ["node", "vite/client"],
+    // Some vitest suites import sibling modules with an explicit .ts extension.
+    "allowImportingTsExtensions": true,
+
+    // Paths (TS 6: `baseUrl` is deprecated — relative `paths` replace it)
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts"],

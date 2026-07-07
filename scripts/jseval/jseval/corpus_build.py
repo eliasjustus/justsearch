@@ -24,7 +24,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jseval import materialize
+from jseval import corpus_generate, materialize
 from jseval.corpus_identity import corpus_signature
 
 
@@ -95,10 +95,18 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
             ensure_ascii=False, indent=1),
         encoding="utf-8")
 
-    # --- agent view: raw corpus-dir (reuse materialize: title+body → .txt files) ---
+    # --- agent view: raw corpus-dir (reuse materialize: title+body → .txt files, or,
+    # for the axis="scan" member, a degraded-scan PNG rendered HERE at materialize time
+    # from the doc's own ground-truth `text` -- tempdoc 624 §T.2. The committed source
+    # (`docs.jsonl`) never carries image bytes: `render_scan_page` is deterministic per
+    # doc id, so the artifact is always reconstructable from source + this build step,
+    # the same "single source -> projections" contract every other axis already keeps.
+    # `datasets/` is gitignored precisely because materialized output is regenerable.
     corpus_dir = dataset_dir / "corpus-dir"
+    type_axis = src_meta.get("type_axis")
+
     materialize.materialize(
-        ({"_id": d["_id"], "title": d.get("title", ""), "text": d["text"]} for d in docs),
+        (corpus_generate.materialize_doc_entry(d, type_axis) for d in docs),
         corpus_dir, skip_existing=False)
 
     # --- identity + provenance metadata ---

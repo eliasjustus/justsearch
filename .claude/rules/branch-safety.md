@@ -9,32 +9,18 @@ The main checkout (`F:\JustSearch`) stays on `main` and is never switched.
 
 ### Creating a worktree
 
-**Within a session** — use the `EnterWorktree` tool:
-```
-EnterWorktree { name: "feature-name" }
-```
-This creates a worktree at `.claude/worktrees/<name>/` with a branch
-`worktree-<name>` based on local `HEAD` — the project `.claude/settings.json`
-sets `worktree.baseRef: "head"`, so worktrees (and `isolation:"worktree"`
-subagents) carry your unpushed/just-merged commits instead of branching from a
-stale `origin` (tempdoc 618 §1). Config files (`.claude/settings.local.json`,
-`.mcp.json`) are tracked, so every worktree already has them.
-
-**Make a worktree dev-ready** — from inside the worktree run:
-```
-node scripts/dev/prepare-worktree.cjs          # npm ci + installDist
-node scripts/dev/prepare-worktree.cjs --no-dist # FE-only (skip the Java dists)
-```
-
-**Shared models / runtime**: the dev-runner now resolves `JUSTSEARCH_MODELS_DIR`
-from the **main** checkout automatically and auto-stages a CPU llama-server
-baseline into an empty `native-bin` (tempdoc 618 §2/§3) — so models and
-`default`-variant `ai_activate` work from a worktree with no manual step. Only
-if you run a backend outside the dev-runner do you still need to export it:
-```
-JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
-```
-GPU `cuda12` stays "Install AI"'s domain; dev-staging leaves it untouched.
+**Within a session** — `EnterWorktree { name: "feature-name" }` creates
+`.claude/worktrees/<name>/` on branch `worktree-<name>` based on local `HEAD`
+(`worktree.baseRef: "head"` — carries your unpushed/just-merged commits,
+tempdoc 618 §1). Make it dev-ready from inside:
+`node scripts/dev/prepare-worktree.cjs` (`--no-dist` for FE-only) — it also
+seeds the gitignored `.mcp.json` / `settings.local.json` from their `.example`
+files. Shared models and the shared cuda12 llama-server resolve from the
+**main** checkout automatically (GPU-only by design — no CPU fallback;
+inference fails CLOSED without cuda12). Full mechanics — config-seeding
+caveats, cuda staging, env vars for backends started OUTSIDE the dev-runner —
+in `docs/reference/contributing/common-workflows.md` §Worktree mechanics
+(relocated, tempdoc 681).
 
 **New terminal session** — launch Claude with the `--worktree` flag:
 ```bash
@@ -152,6 +138,9 @@ backend work.
 3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
    investigation, and retry commits off `main`.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
+   Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
+   (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is
+   already back on `main` doing post-merge maintenance).
 5. Remove the worktree. GitHub deletes merged remote branches; delete local
    branches after verifying the merge. On Windows, prefer
    `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over
@@ -160,6 +149,25 @@ backend work.
    deleting through into main's real `node_modules` (tempdoc 618 §2).
    This teardown also records the `session_id → merge_commit` link; backfill
    with `node scripts/agent-analytics/record-merge.mjs` if needed.
+
+### Publishing docs-only changes (history granularity) <!-- rule:docs-ride-along -->
+
+Public `main` is a curated narrative, not a working log. ADR-0045 already makes
+the merge *squash* a branch into one commit; this rule governs the complementary
+question of whether a change should be its **own** public PR at all (tempdoc 653
+"axis 2").
+
+- A **tempdoc / observations** edit (`docs/tempdocs/**`, `docs/observations*`) is
+  dated working history. Do not open a standalone PR for a tempdoc-only change.
+  Ride it along in the same PR as the code it documents, or batch several tempdoc
+  edits into one periodic `docs(tempdocs): …` PR.
+- A **canonical-doc** update (`docs/{explanation,reference,how-to,decisions}`) is
+  durable current truth and may stand alone as its own PR/commit.
+- A branch mixing docs with code is already a ride-along — publish it normally.
+
+The `docs-granularity-hint` hook surfaces this at `git push` when a branch
+changes only working history; it never blocks. Rationale and the worked example
+live in `docs/reference/contributing/agent-guide.md` (History publication).
 
 ### Working on shared `main` safely (multi-agent)
 

@@ -19,9 +19,9 @@ The `system-tests` module provides comprehensive system-level testing beyond uni
 
 | Class | Responsibility |
 |-------|----------------|
-| `GoldenCorpusLoader` | Loads golden corpus test data |
-| `GoldenCorpusTest` | Relevance testing against golden queries |
-| `RelevanceMetrics` | Computes precision, recall, MRR |
+| `ManifestCorpusLoader` | Loads a document corpus + truth manifest — generic, shared by 2 unrelated test manifests (not "golden corpus"-specific despite its former name); `RelevanceMetrics`, not this class, is the piece additionally shared with `RagQualityEvalTest` |
+| `GoldenCorpusTest` | Relevance testing against golden queries — fusion/ranking-code correctness against frozen vectors, not real embedding-model retrieval quality (see `jseval` for that) |
+| `RelevanceMetrics` | Computes precision, recall, MRR — pure arithmetic; meaningful only relative to whatever ranked list a caller passes in |
 | `RrfFusionHarness` | Tests RRF fusion ranking |
 | `SoakTestRunner` | Long-running memory tests |
 | `NmtMemoryTracker` | Native memory tracking |

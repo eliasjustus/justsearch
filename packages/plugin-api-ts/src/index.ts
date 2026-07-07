@@ -13,7 +13,7 @@
  * Compartment.evaluate (see docs/how-to/write-a-plugin.md).
  *
  * The V1.5 contract is documented at:
- * https://github.com/eliasjustus/JustSearch/blob/main/docs/how-to/write-a-plugin.md
+ * https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/write-a-plugin.md
  */
 
 export * from './plugin-types.js';

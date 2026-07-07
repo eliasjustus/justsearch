@@ -30,6 +30,8 @@ import {
   EnvelopeStream,
   type EnvelopeReducer,
 } from '../../streaming/EnvelopeStream.js';
+import type { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
+import { advisoryEndpointToShellEventStreamId } from '../../streaming/shellEventStreamIds.js';
 import type { SseEnvelope } from '../../streaming/envelope-types.js';
 import {
   listResources,
@@ -202,13 +204,17 @@ function capList(list: readonly string[]): readonly string[] {
 }
 
 /**
- * Per-Resource entry — one EnvelopeStream + its snapshot.
+ * Per-Resource entry — either a direct EnvelopeStream OR a subscription on the shared
+ * `MultiplexedStream` (tempdoc 662) + its snapshot. `stream` is present only for the
+ * direct-connection fallback path (no `multiplex` configured, or an endpoint
+ * `advisoryEndpointToShellEventStreamId` doesn't recognize) — the multiplexed path has no
+ * per-resource socket to stop, only `unsubscribe()` to call.
  * Slice 494: renderHint moved to the wire record (AdvisoryRecord.renderHint);
  * the per-Resource stamp is no longer needed.
  */
 interface ResourceStreamEntry {
   readonly resourceId: string;
-  readonly stream: EnvelopeStream<AdvisoryStreamPayload>;
+  readonly stream?: EnvelopeStream<AdvisoryStreamPayload>;
   /** Local snapshot mirroring this stream's latest payload + connection. */
   snapshot: {
     advisories: readonly AdvisoryEvent[];
@@ -246,12 +252,24 @@ export class AdvisoryStore {
   /** Document-event bridge so decoupled callers reach the one store. */
   private ephemeralListener: ((e: Event) => void) | null = null;
 
+  /**
+   * Tempdoc 662: the shared `MultiplexedStream` (one of the 5 always-on streams collapsed
+   * onto `/api/shell-events/stream`). When set, each discovered advisory Resource whose
+   * endpoint `advisoryEndpointToShellEventStreamId` recognizes subscribes on it instead of
+   * opening its own EventSource; an unrecognized endpoint (a future advisory class added
+   * before that map is updated) falls back to a direct EnvelopeStream, same as when no
+   * `multiplex` is configured at all.
+   */
+  private readonly multiplex?: MultiplexedStream;
+
   constructor(opts?: {
     apiBase?: string;
     eventSourceFactory?: (url: string) => EventSource;
+    multiplex?: MultiplexedStream;
   }) {
     this.apiBase = opts?.apiBase ?? '';
     this.eventSourceFactory = opts?.eventSourceFactory;
+    this.multiplex = opts?.multiplex;
     this.userStateUnsubscribe = subscribeDocument(() => this.notify());
   }
 
@@ -290,7 +308,7 @@ export class AdvisoryStore {
     this.localEphemeral = [];
     for (const entry of this.entries.values()) {
       entry.unsubscribe();
-      entry.stream.stop();
+      entry.stream?.stop();
     }
     this.entries.clear();
     this.userStateUnsubscribe();
@@ -447,7 +465,7 @@ export class AdvisoryStore {
     for (const [id, entry] of this.entries) {
       if (!desired.has(id)) {
         entry.unsubscribe();
-        entry.stream.stop();
+        entry.stream?.stop();
         this.entries.delete(id);
       }
     }
@@ -460,6 +478,47 @@ export class AdvisoryStore {
   }
 
   private startStreamForResource(resource: Resource): void {
+    const streamId = this.multiplex
+      ? advisoryEndpointToShellEventStreamId(resource.endpoint)
+      : null;
+    if (this.multiplex && streamId) {
+      this.startMultiplexedStreamForResource(resource, this.multiplex, streamId);
+      return;
+    }
+    this.startDirectStreamForResource(resource);
+  }
+
+  /** Tempdoc 662: subscribe this Resource's recognized streamId on the shared multiplexer
+   * instead of opening a dedicated EventSource. */
+  private startMultiplexedStreamForResource(
+    resource: Resource,
+    multiplex: MultiplexedStream,
+    streamId: string,
+  ): void {
+    const entry: ResourceStreamEntry = {
+      resourceId: resource.id,
+      snapshot: { advisories: [], isConnected: false, lastFrameKind: 'initial' },
+      unsubscribe: () => {},
+    };
+    entry.unsubscribe = multiplex.subscribe<AdvisoryStreamPayload>(
+      streamId,
+      () => ({ initialState: { advisories: [], lastFrameKind: 'initial' }, reducer: advisoryReducer }),
+      (s) => {
+        entry.snapshot = {
+          advisories: s.payload.advisories,
+          isConnected: s.isConnected,
+          lastFrameKind: s.payload.lastFrameKind,
+        };
+        this.notify();
+      },
+    );
+    this.entries.set(resource.id, entry);
+  }
+
+  /** Fallback: a direct EnvelopeStream — used when no `multiplex` is configured, or for an
+   * advisory Resource whose endpoint `advisoryEndpointToShellEventStreamId` doesn't (yet)
+   * recognize. */
+  private startDirectStreamForResource(resource: Resource): void {
     const url = this.apiBase
       ? `${this.apiBase}${resource.endpoint}`
       : resource.endpoint;
@@ -539,9 +598,16 @@ export class AdvisoryStore {
  * constructs one store at mount and passes it to each advisory chrome element
  * via a property — eliminating the first-caller-wins {@code apiBase} race the
  * singleton had.
+ *
+ * @param multiplex Tempdoc 662: the shared `MultiplexedStream` each recognized advisory
+ *     Resource subscribes on instead of opening its own EventSource. Omit to keep the
+ *     pre-662 direct-connection behavior (e.g. in tests that don't exercise multiplexing).
  */
-export function createAdvisoryStore(apiBase?: string): AdvisoryStore {
-  const store = new AdvisoryStore({ apiBase });
+export function createAdvisoryStore(
+  apiBase?: string,
+  multiplex?: MultiplexedStream,
+): AdvisoryStore {
+  const store = new AdvisoryStore({ apiBase, multiplex });
   if (typeof EventSource !== 'undefined') {
     store.start();
   }
