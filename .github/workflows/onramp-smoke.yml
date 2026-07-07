@@ -48,6 +48,15 @@ jobs:
         working-directory: modules/ui-web
         run: npm ci
 
+      # Pre-build the backend distribution so the smoke's stack-start budget isn't spent on a cold,
+      # from-scratch Gradle assemble. Without this, `dev-runner start` runs `assemble` from cold INSIDE
+      # startStack's 240s window (stage-reference-corpus.mjs) and the stack never comes up — the
+      # 2026-07-02 run (28607534344) failed exactly here: "FAIL stack start timed out" at 240s while
+      # still compiling. test-onramp-first-success.mjs's header notes it "needs installDist"; this is
+      # the step that satisfies it (dev-runner's later `assemble` check is then near-instant/UP-TO-DATE).
+      - name: Build backend distribution (installDist — keeps stack-start off the cold-build path)
+        run: ./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist
+
       # Force the model-less Tier 0 path deterministically (independent of whether models/ exists).
       - name: Prepare empty models dir
         shell: pwsh

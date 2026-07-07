@@ -3,7 +3,7 @@ title: "Five-minute agent/runtime onramp: the runtime foundation is shipped (GPU
 type: tempdocs
 status: "FOUNDATION + ONRAMP IMPLEMENTED (live + browser verified 2026-07-01, §Implementation twelfth pass): the doctor (scripts/dev/doctor.mjs), demo corpus (examples/onramp-corpus), runnable proof (scripts/dev/test-onramp-first-success.mjs), the manifest-reason polish, and the tier-honest CONTRIBUTING onramp section all shipped and verified. Earlier: Two things are done + live/browser-verified: the AI-readiness diagnosability substrate (Tasks 0-5) and the GPU-only shared dev runtime (Move 1 + Move 2, ninth pass). §Onramp design (tenth pass, 2026-07-01) then returns to the tempdoc's ORIGINAL purpose (the five-minute onramp) and settles its long-term shape: it is an ASSEMBLY problem — the ingredients (ingest/search endpoints, MCP connect surface, the preflight endpoint, the runtime manifest, a tiny corpus candidate) already exist scattered; the remaining core is composing them into a tiered, evidence-producing first-success path (O1 tier ladder — Tier 0 zero-model search proven; O2 doctor extending AiPreflightService as a projection of manifest+status; O3 demo corpus; O4 a runnable proof; O5 minimal honest discoverability), plus fixing the deferred manifest-reason polish inside the doctor. NOT yet built. Explicitly NOT the whole 'five-minute onramp': the identity/MCP-matrix/tier-naming framing is coupled to the unstarted 654/655/657 and is handed to them. Detail on the implemented foundation follows. --- Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
 created: 2026-06-28
-updated: 2026-07-01
+updated: 2026-07-08
 category: developer-experience / activation / mcp / diagnostics
 related:
   - 618-agent-developer-velocity-friction
@@ -2122,4 +2122,104 @@ after merge** (`gh workflow run "Onramp Smoke"`), inherent to CI work.
 The deferred tier projection / declared ladder / UI-MCP renderers (wait for the 2nd consumer); a
 `dev-runner --no-frontend` flag (future trim of the CI frontend spawn); an `ubuntu-latest` lane
 (dev-runner has Linux paths but the stack is only *proven* on Windows).
+
+## §Takeover investigation + verdict (seventeenth pass, 2026-07-08)
+
+Takeover pass in a dedicated worktree (`worktree-656-onramp-takeover`), verified against `main` @
+`5c718fd`. Full re-read of this tempdoc + live checks of what shipped, whether the deferred work's
+promotion trigger has fired, and what actually broke in the CI proof-lane. Investigation only — no
+feature code / design changed. Purpose: an explicit "should this be done at all, and now?" verdict,
+since the tempdoc reads as IMPLEMENTED but its one continuous proof (the CI smoke) has never gone green.
+
+### A. What is verifiably shipped on `main` (confirmed, not assumed)
+Confirmed by `git log` + on-disk presence at this base:
+- **PR #44** `feat(656)` — GPU-only shared dev runtime (Moves 1+2), truthful AI-readiness diagnosis
+  (Tasks 0-5), tiered first-success path. **PR #50** `fix(656/657)` — post-merge review batch.
+- Artifacts present: `scripts/dev/doctor.mjs`, `examples/onramp-corpus/{README,cinnamon,clockwork-garden,
+  lighthouse,telescope}.md`, `scripts/dev/test-onramp-first-success.mjs`, `.github/workflows/onramp-smoke.yml`,
+  the `npm run doctor` / `dev-runner doctor` discoverability, and the CONTRIBUTING onramp section.
+- **The adjacencies 656 handed off have since shipped independently:** **654** runtime-contract v1
+  (`feat(654)` #47, status IMPLEMENTED 2026-07-02); **657** install-intent axis + model-pack tiers +
+  runtime-mode projection (`feat(657)` #49, substrate implemented & live-verified 2026-07-02). So 656's
+  own buildable-now scope AND the neighbours it was blocked-behind are done.
+
+### B. The deferred tier-projection's promotion trigger has NOT fired (checked live)
+The fourteenth pass deferred promoting `deriveTier` out of the CLI into a canonical Head projection +
+declared `capability-tiers` catalog + FE/MCP renderers, gated on **"the FIRST second-renderer."**
+Checked directly: `grep -rniE "deriveTier|nextRemedy|capability-tiers"` across `scripts/`,
+`modules/ui-web/src/`, `modules/app-services/` returns **only `scripts/dev/doctor.mjs`** — still exactly
+one consumer. Crucially, **654 and 657 shipping did not create a second renderer of the onramp tier:**
+654 shipped a runtime *contract* descriptor; 657 shipped an install-*mode* projection (Full Desktop /
+Headless Runtime / MCP Lite) and an *intent*-tier-coverage register (`governance/intent-tier-coverage.v1.json`
+— conversation-intent tiers, a different axis). None render the model/runtime *capability tier* the
+doctor derives. So the trigger genuinely has not fired, and per the codebase's "a second consumer
+justifies the projection" + YAGNI discipline, promoting it now would be abstraction-for-one-reader — the
+exact premature move the fourteenth pass foreclosed. **Correctly still deferred.**
+
+### C. The one live, in-scope defect: the CI proof-lane has never been green (root cause found)
+`Onramp Smoke` (the sixteenth pass's idea-B6 continuous proof-lane) has run **once**, on 2026-07-02
+(`workflow_dispatch`, run `28607534344`), and **failed**; as of 2026-07-08 no re-dispatch, so it is past
+its `staleDays: 7` freshness line (`workflow-signal-policy.v1.json`). Pulled the failed-run log — the
+failure is **not** a product regression and **not** the Tier-0 path itself:
+- Every step passed *except* `Onramp first-success smoke (Tier 0)`, which died at **`FAIL stack start
+  timed out`** — before ingest/query ever ran.
+- Timeline: `starting dev stack` at 17:01:57 → `[dev-runner] Ensuring distribution is up-to-date
+  (assemble)...` → still compiling Java at 17:05:52 → timeout at 17:05:57. That is **exactly 240 s**,
+  matching `startStack`'s `startTimeoutMs = 240000` (`scripts/dev/lib/stage-reference-corpus.mjs:29`).
+- **Root cause:** the workflow does not pre-build the distribution, so on a cold public runner
+  `dev-runner start` triggers a from-scratch Gradle `assemble` that alone consumes the entire 240 s
+  stack-start budget, leaving zero time for the stack to come up. This is precisely the "the lane pays a
+  full dev-stack bootstrap (Java `assemble` + `npm ci` + Vite spawn)" cost the **fifteenth pass flagged
+  as a known cost** — it was recorded but not guarded against. The smoke's own script header even says it
+  "needs installDist"; the workflow never runs it.
+- **Fix shape (small; NOT implemented this pass):** add a `:modules:ui:installDist
+  :modules:indexer-worker:installDist` (or `assemble`) build step to `onramp-smoke.yml` *before* the
+  smoke — so `dev-runner`'s up-to-date check is near-instant — and/or raise `startTimeoutMs` for the CI
+  invocation. Mirrors how the smoke is run locally (dist pre-built).
+
+### D. External-currency check (fast-moving ground only)
+The tempdoc's prior research (flutter/brew doctor, TTFV, sample-corpus) is settled practice. The one
+genuinely moving input — the **MCP spec RC finalizing 2026-07-28** (session/handshake removal; the
+fourteenth pass logged it) — is **owed to 655, not 656**: the onramp deliberately composes over the MCP
+*connect surface* and hands transport mechanics to 655, so the spec churn does not move 656's verdict. No
+new research warranted; no external assets used.
+
+### E. Verdict (explicit)
+**Should this tempdoc be done at all, and now? — It is already done; do NOT re-open it for new
+implementation.** 656's entire buildable-now scope shipped and merged (§A). What remains is exactly two
+categories, both of which correctly resolve to "not now":
+1. **The deferred tier-projection architecture** — correctly gated on a second tier-renderer that still
+   does not exist (§B). Building it now duplicates `deriveTier` for one reader; wait for the trigger.
+2. **Hand-offs** (655 MCP matrix/attach; the FE first-run empty-state per 654; retrieval "why this
+   result" per 658) — other tempdocs' work; 654/657 have already advanced on their own.
+
+The **only** action this pass finds warranted under 656's own name is a **small CI fix** to the
+proof-lane 656 shipped (§C) — making an already-built thing green, not new capability. That is a bounded
+bug-fix, not a "take over and implement the tempdoc" effort. Recommend closing 656 as **DONE (scope
+complete)** once the proof-lane is green, with the tier-projection recorded as a trigger-gated future
+item (already is).
+
+- **Cheapest evidence that validates/invalidates the remaining work:**
+  - For the deferred tier-projection — *the appearance of a second renderer of the capability tier* (an
+    FE first-run screen or an MCP `justsearch_status` tier field). It **does not exist today** (§B grep,
+    single consumer) → the work is correctly not-yet-needed. This evidence is cheap and already gathered.
+  - For the CI fix — *the failed-run log*, which **already exists** and pinpoints the cause (§C). No
+    further experiment needed; a local repro would not even hit the cold-assemble path (local dist is
+    pre-built).
+- **What it displaces / duplicates:** nothing new to build. The deferred piece, if built prematurely,
+  would *duplicate* the single `deriveTier` into a 2nd/3rd renderer — the representation-drift class the
+  tempdoc itself guards against. Its hand-offs *overlap* 654 (runtime contract, shipped), 657 (install
+  modes/tiers, shipped), 655, 658 — already de-conflicted via the tempdoc's ownership seams.
+
+### F. Not done in this pass (initial state)
+No feature code, no design, no CI edit — the proof-lane fix (§C) and any tempdoc-status change were
+left for explicit go-ahead. This section is investigation history (dated), not current-truth canon.
+
+### G. §C proof-lane fix applied (2026-07-08, on user go-ahead)
+On the user's "run it," applied the §C fix: `onramp-smoke.yml` now runs
+`./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist` **before** the smoke, so
+`dev-runner start`'s later `assemble` check is UP-TO-DATE and the 240 s stack-start budget is no longer
+consumed by a cold from-scratch build. Minimal change; no timeout bump needed (pre-build removes the
+cold-build path entirely). `check-workflow-triggers` still green (triggers unchanged); YAML well-formed.
+Validated by a real `workflow_dispatch` run against the branch (result recorded at commit/PR time).
 
