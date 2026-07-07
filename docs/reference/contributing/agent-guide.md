@@ -495,6 +495,32 @@ commits can be as noisy as you like — checkpoint, retry, "wip" — they never 
 public commit. Preview it before merge with
 `node scripts/ci/preview-squash-message.mjs --pr <N>`.
 
+That checker looks for a section titled exactly `## Testing` — a `## Test
+plan` header (or similar) triggers its `missing-testing-signal` warning even
+if a testing section is present under a different name (tempdoc 695). It
+also flags literal GFM `- [ ]`/`- [x]` checklist syntax in the body: that
+syntax renders as an interactive checkbox on the PR page, but publishes as
+inert plain-text `- [x]` once it becomes the squash commit message — prefer
+plain bullets or a prose list there instead.
+
+Two `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
+
+- **Waiting on a PR's or run's CI completion** fits `gh pr checks <N> --watch
+  --interval 30` (backgrounded) better than a hand-rolled poll loop — the
+  latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs
+  hundreds of loop iterations and GitHub API calls on a multi-minute job, and
+  can outlast the Bash tool's own command timeout. `gh run watch <run-id>
+  --exit-status` is the equivalent for a specific workflow run. The default
+  10s refresh reprints the full check table every tick; `--interval 30` or
+  higher cuts output volume substantially on jobs known to run several
+  minutes.
+- **`gh pr merge <N> --squash --delete-branch` can report `failed to run
+  git: fatal: 'main' is already used by worktree` even when the remote merge
+  succeeded.** That's `gh`'s local post-merge branch-sync step failing
+  because `main` is checked out in another worktree of this repo — not a
+  failed merge. Confirm with `gh pr view <N> --json
+  state,mergedAt,mergeCommit` instead of retrying the merge.
+
 **Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
 fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR
 per edit still produces one standalone public commit each. The convention (rule

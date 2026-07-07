@@ -106,7 +106,10 @@ This is not advisory — the hook prevents execution.
 
 **Allowed in the main worktree:** `git status`, `git log`, `git diff`,
 `git add`, `git commit`, `git push`, `git merge`, `git worktree`,
-`git fetch`, `git pull`, `git stash`.
+`git fetch`, `git pull`, `git stash`. Branch protection can reject a direct
+`git push` to `main` (confirmed 2026-07, tempdoc 695) — route the change
+through a worktree + PR instead. `git commit` on `main` stays possible
+regardless, so a rejected push can strand local commits ahead of `origin`.
 
 **Warning — `git stash` with staged changes:** Never use `git stash` (especially
 `--keep-index`) to inspect the staging area. Use `git diff --cached --stat`
@@ -137,6 +140,8 @@ backend work.
 2. Open/update a PR; title/body, review, CI are the durable record.
 3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
    investigation, and retry commits off `main`.
+   If `origin/main` moves after push, catch up with `git merge`, not
+   `git rebase` (agent-lessons.md; tempdoc 695).
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
    Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
    (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is
