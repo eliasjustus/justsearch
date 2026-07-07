@@ -32,7 +32,7 @@ JustSearch enforces a strict **Single-tenant GPU Policy** across processes:
 
 ### Transition Protocol
 
-When the user opens the "Chat" tab:
+When the user escalates to an Ask/agent turn in the unified "Search" window (tempdoc 687 — there is no separate Chat tab):
 1.  **Main:** Begins a mode transition via `ModeStateMachine` (validates not already transitioning, stores previous mode for rollback).
 2.  **Main:** Signals Worker via MMF (`main_gpu_active = 1`).
 3.  **Worker:** Unloads/suspends GPU-backed ORT encoder work as needed and skips embedding work while the flag is set.

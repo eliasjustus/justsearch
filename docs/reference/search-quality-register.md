@@ -344,6 +344,12 @@ corpus as currently committed)*
 
 What's worth measuring next. Remove rows when filled.
 
+<!-- tempdoc 687 (Search Thread, 2026-07-07): retrieval BEHAVIOR note, not a quality lever —
+     agent-run searches can now be user-scoped (`docIds` from scope chips flow AgentRequest →
+     AgentToolDispatcher.scopeToolCall → SearchTool's PATH filter, overriding tool args; absent →
+     unchanged). No analyzer/ranking change; utility-gate relevance: a scoped condition narrows the
+     candidate pool the agent judges, which future agent-utility runs should account for. -->
+
 | Dataset | encoder | ce | cc | Modes needed | Why |
 |---------|---------|----|----|-------------|-----|
 | mixed/cord19-qddf | bge-m3 | minilm-512 | bm25-dom | full (with working dense) | Re-run after dense fix; upgrade C→A |

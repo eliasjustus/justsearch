@@ -1,8 +1,9 @@
 ---
 title: "One window, one thread: the Search Thread interaction model"
 type: tempdoc
-status: in-progress
+status: implemented
 updated: 2026-07-07
+implemented: 2026-07-07 (branch worktree-search-thread, S1-S8; live-verified end-to-end with the local model)
 created: 2026-07-04
 related: [497, 526, 561, 577, 596, 602, 609, 613, 678]
 ---
