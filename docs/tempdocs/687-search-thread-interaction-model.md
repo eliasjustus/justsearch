@@ -178,3 +178,74 @@ beyond the citations below).
   architecture for high-stakes actions (action + reasoning + impact + rollback + expiry)
   exceeds our Assist ceremony by two fields (impact estimate, expiry); the undo ledger
   already covers rollback. Recorded as candidate scope, not built.
+
+
+## State of record (2026-07-07, implementing session closed)
+
+For continuation WITHOUT the implementing session's context. All work lives on branch
+`worktree-search-thread`; no PR yet (maintainer-gated).
+
+### Implementation map (commit → scope)
+Round 1 (the model, S1–S8): `4ffd677` card · `a325c84` route/floor/landing + scope state +
+thread tolerance · `d704e8e` scope mount + SEARCH events · `631bd7e` committed cards ·
+`84a39e6` computed affordance · `794b73f`+`b528c80` the retirement · `0d0ec83` reading stage ·
+`0f826f3` agent scoping (backend) · `a0b611e` agent cards/consent/receipt · `adddaf4` e2e fixes.
+Round 2 (R1–R5): `532584d` grounding inversion + [n] normalization + boot warmup · `8cb6f4b`
+banner/decay/truncation/ask-sends/consent/bar-conformance · `a74c7b7` landing column + narrow
+overlay mount · `67a5c36` close + Q6 finding.
+
+### Verification evidence (claim → pointer)
+- FE suite green: `npm run test:unit:run` — 362 files / 3714 tests (last run at `a74c7b7`).
+- Java suite green: `./gradlew.bat test -PskipWebBuild=true` exit 0 (last at `0f826f3`/`532584d`).
+- R1c/R3a: `MarkdownBlock.test.ts` suites "687 R3a — literal [n] normalization" and
+  "687 R1c — grounding-mark inversion" (30/30).
+- R3d: `GrpcSearchServiceWarmUpTest` (3 tests; the differential `OperationalMetrics` check is the
+  no-side-effects proof); live: "Search path ready" in the worker log of dev run `9185c4a8…`;
+  first-query HTTP 870ms→330ms (curl timings, implementing session).
+- R1a: UnifiedChatView round-2 banner tests; live: collapsed state persisted across reload
+  (dev run `9185c4a8…`).
+- R2/R3c/R1b/R5c/R4: suites in `ResultsCard.test.ts` / `AutonomyDial.test.ts` /
+  `DocumentPane.test.ts` / `UnifiedChatView.test.ts` (137 in the view suite); the R4 accent
+  culprit was `composerStyles`' `.composer button` light-DOM reach — fix is jf-control shadow
+  conformance, gate-verified (controls-a11y, atom-fork net reduction).
+- R5a: the stable-slot node-identity test (composer textarea identity across landing↔docked)
+  + live centered-column screenshots (implementing session).
+- Gates: full ui-web check list green EXCEPT the four pre-existing-at-base failures below.
+
+### Unverified assumptions & deferred checks (each needs its 15–60 min)
+1. **R5b at a real CSS breakpoint** — verified at the state level only (grid pane unmounts,
+   drawer pane mounts in the OverlayHost right-drawer slot with `overlay` sizing 448×733);
+   the automation could not physically resize the window. Verify in a real narrow window.
+2. **Live with-citations weave** — strip/upgrade paths are unit-pinned but were not observed
+   live (the live test answer carried no citation records; see follow-up F2).
+3. **Uncited-span exception marking** — deliberately deferred pending live claim-score
+   distribution sampling (P2's retirement condition governs; do the sampling before choosing
+   a threshold).
+4. **Residual ~350ms steady-state hybrid latency** on a 6-doc corpus — separate scope from
+   the (fixed) cold start; unprofiled.
+
+### Follow-ups that must not be lost
+- **F1 (confirmed trust bug)**: a dataDir runtime artifact (`.dev-data/agent-history/<uuid>.md`)
+  was ingested UNTAGGED by the generic watcher, bypassing the 585-D4b reserved-collection
+  exclusion (doc count 5→6; ranked in results). Structural fix: the worker refuses to ingest
+  under its own dataDir (prefix guard at the scanner/watcher).
+- **F2**: bullet-list answers defeat the citation sentence-matcher — sources retrieved but ZERO
+  marks woven, leaving the model's dangling "[n]" unlinked. The weave needs list-item-aware
+  segmentation.
+- **F3**: two duration authorities disagree on-screen (run frame wall-clock vs the receipt's
+  generation time). One authority, or label both.
+- **F4**: a bare trailing "[n]" line escapes `stripTrailingCitationBlock`'s shape.
+- **F5**: DocumentPane's fetch-failure state renders a raw error string; needs the designed
+  disconnected/diagnostic presentation.
+- **F6**: visual-grammar / density: the working surface over-spends space systemically
+  (attention inversion, row-per-scrap stratification, metadata-before-content duplication,
+  implementation leakage, no alignment spine). An INDEPENDENT visual audit (fresh agent,
+  screenshot-based) is planned as the next design input — do not pre-empt it with piecemeal
+  padding fixes.
+- **F7**: the Python jseval ui-shot harness still assumes the retired InspectorPane's tab
+  structure; `InspectorTabRegistry` is an orphaned contribution point.
+- **F8**: pre-existing-at-base gate failures, NOT from this branch (verified against base
+  `2ef7396`): `contract-projection` ×2 (schema-types drift `vduProcessing`; register-drift
+  `InferenceStatusResponse`), `ts-any` (`MultiplexedStream.ts:60`), `check-theme-token-closure`
+  (`RecentsMenu.ts`), `check-accent-as-text` (`ActionLedgerView.ts`) — they belong to other
+  work streams' areas.
