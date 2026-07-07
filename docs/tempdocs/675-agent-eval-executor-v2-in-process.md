@@ -253,3 +253,69 @@ here only as a closed option.
   `agent_utility_inspect.py:365-374`; no max-turns / no `cache_control` — both runners' argv builders
   (`agent_utility_inspect.py:_build_argv`, `agent_retrieval_eval.py:_build_agent_cmd`); retry-slot 2×
   `agent_utility_inspect.py:136-238`.
+
+### External research (2026-07-07) — parity verified against current docs, one premise corrected
+
+Verified against current official docs (Claude Agent SDK `code.claude.com/docs/en/agent-sdk/*`,
+Inspect AI `ukgovernmentbeis/inspect_ai`, Anthropic prompt-caching) rather than training priors,
+because these are fast-moving and load-bearing for lever 2.
+
+**Claude Agent SDK (Python `claude-agent-sdk`) — the Direction section's "parity risks to verify"
+are RESOLVED, favourably, with two migration gaps and one corrected premise.** The SDK IS the
+right in-process substrate:
+- Tool calls **and** tool results arrive as structured objects (`AssistantMessage.content` tool_use
+  blocks + a final `ResultMessage`) — no stdout `stream-json` parsing. Resolves the "tool RESULTS
+  enter the record" constraint the annexes were blinded on.
+- **MCP-over-HTTP is native** — `mcp_servers={"justsearch": {"type": "http", "url":
+  "http://127.0.0.1:<port>/mcp"}}`. The offered MCP surface is a constructed *value* (assertable),
+  not an init-event disclosure — this dissolves the dead-config class (the `"type":"http"` bug that
+  retracted the $109/3h run, 624 twenty-fifth pass) at the source.
+- Usage + cost as objects (`ResultMessage.total_cost_usd` / `.usage` / `.model_usage`) — resolves
+  the "usage/cost visibility is nonstandard" item; no hand-stashed metadata.
+- **`max_turns` is a first-class option** — directly enables lever 3's turn-tail cap.
+- `model`, `permission_mode="bypassPermissions"`, `system_prompt` map 1:1. **Two migration gaps to
+  handle, not assume:** (a) the SDK exposes `allowed_tools` (allowlist) but **no denylist** — the
+  current `--disallowedTools` leak-control becomes allowlist membership (re-express the leak-scan /
+  disallowed-tool assertions as "not in the offered allowlist"); (b) corpus access maps to `cwd`,
+  but the current design deliberately separates an **isolated tempdir cwd** from `--add-dir
+  <corpus>` precisely to avoid `CLAUDE.md`/ambient-context contamination (624 fifth pass found the
+  operator's own global config could bypass isolation) — verify that isolation survives the SDK's
+  `cwd` model before trusting a migrated run.
+- **Premise correction (honest limit).** The Python Agent SDK **still launches a Claude Code CLI
+  subprocess per `query()`/`ClaudeSDKClient` session** ("100 concurrent cells → 100 processes",
+  per the SDK docs). So this doc's Direction-section framing — that the in-process cell "dissolves
+  the subprocess boundary" and sheds the process-count RAM ceiling — is **wrong for this SDK**; that
+  overhead is retained. It does **not** regress the baseline (`claude -p` also spawns one per cell),
+  and it is **moot for wall-clock**: the search backend saturates at ~6.7 qps and the cell is
+  network-bound, so client process count is not the binding ceiling — the `max_tasks=1` 2× and the
+  API/backend are (see the bench + attribution above). A *truly* in-process path (agent loop built
+  directly on the Anthropic Messages API + tool runner, no CLI) would remove the RAM ceiling and
+  grant prompt-cache control, but it sacrifices CLI agent-loop parity (system prompt, tool defaults,
+  permission semantics) with the measured baseline — a parity cost the owner's "measured, not
+  assumed" bar disfavours. **Decision: take the Claude Agent SDK (parity-preserving). Lever 2's
+  value is forensics + the retry-slot fix + `max_turns` + assertable MCP config — not subprocess
+  removal.** The Direction section's rationale #1 (dissolve the cell-interior failure class) holds;
+  its implied throughput-from-fewer-processes claim does not.
+
+**Inspect concurrency — lever 1 stays inside the Inspect shell (no rewrite of the executor
+harness).** `max_samples` = concurrent samples *within a task* (default `max_connections+1`; the
+docs say set it *above* `max_connections` for tool/sandbox tasks); `max_tasks` = concurrent tasks;
+both are directable mid-flight. The single-pool fix is therefore: fold the whole cell matrix into
+**one task** with each cell a sample and `condition` a sample field (instead of one-task-per-
+condition + `max_tasks=1`), then calibrate `max_samples` to the pool cap. Conditions interleave
+contemporaneously at the calibrated concurrency — the temporal-confound fix **and** the 2× recovery,
+both achievable without leaving Inspect.
+
+**Prompt caching (lever 2-D DOWNGRADED to opportunistic).** Prefix-match, `cache_control:
+{ephemeral}`, 5-min TTL, **haiku minimum cacheable prefix = 4096 tokens**, read ~0.1×. Two
+constraints kill it as a *planned* lever under the Agent SDK: (a) concurrent cells racing a cold
+shared prefix all pay full price — the cache is readable only *after the first response starts
+streaming*, so a fan-out needs a warmed prefix (a `max_tokens:0` pre-warm, or a single lead cell)
+to benefit; (b) **the Agent SDK exposes no cache control** — caching is whatever the bundled CLI
+does automatically, opaque and unassertable. So deliberate prefix caching is a lever only on the
+raw-API path; under the chosen Agent SDK it is opportunistic-and-opaque, not a design knob. Do not
+bank a caching win in the lever ranking.
+
+**License note (for the implementing session):** any Agent SDK example code adapted into the
+executor must clear the repo's license-and-notices CI check — `anthropics/claude-agent-sdk-python`
+is MIT; attribute the source if code is lifted. (This research pass copied nothing.)
