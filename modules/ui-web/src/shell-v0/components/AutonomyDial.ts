@@ -16,8 +16,13 @@ import {
   setAutonomyLevel,
   listAutonomyLevels,
   subscribeAutonomy,
+  hasAutoConsent,
+  setAutoConsent,
   type AutonomyLevel,
 } from '../substrates/autonomy/index.js';
+// Search Thread S7 (tempdoc decision 6) — the ONE modal primitive (ModalController, composed
+// inside ConfirmDialog); reused via its Promise-based helper rather than authoring a new modal.
+import { confirmAsync } from './ConfirmDialog.js';
 
 const LABELS: Record<AutonomyLevel, string> = {
   watch: 'Watch',
@@ -119,7 +124,26 @@ export class AutonomyDial extends JfElement {
     }
   `;
 
-  private select(level: AutonomyLevel): void {
+  /**
+   * Search Thread S7 (tempdoc decision 6) — the FIRST switch to Auto (per browser profile,
+   * `hasAutoConsent`) opens a consent modal naming what Auto may do (mirrors postureChrome(3)'s
+   * honest "confirming irreversible writes" framing); Confirm persists the flag and applies the
+   * level, Cancel applies nothing — the dial simply never optimistically flips, so there is
+   * nothing to revert. Every later switch to Auto is silent.
+   */
+  private async select(level: AutonomyLevel): Promise<void> {
+    if (level === 'auto' && this.level !== 'auto' && !hasAutoConsent()) {
+      const ok = await confirmAsync({
+        title: 'Turn on Auto mode?',
+        message:
+          'Auto mode acts without asking for your approval on each step. Irreversible writes still confirm.',
+        confirmLabel: 'Turn on Auto',
+        cancelLabel: 'Cancel',
+        variant: 'info',
+      });
+      if (!ok) return;
+      setAutoConsent();
+    }
     setAutonomyLevel(level);
   }
 

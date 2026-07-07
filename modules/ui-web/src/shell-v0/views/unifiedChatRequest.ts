@@ -50,6 +50,10 @@ export interface ThreadMessage {
   // and suppress the "Branch here" button (you can only branch from your
   // own session's messages, not a re-resolved prefix).
   inheritedFromParent?: boolean;
+  // Search Thread S7 (tempdoc decision 6) — the completed turn's wall-clock duration, captured at
+  // `send()`'s onDone from `aiState.activity.startedAtMs` (never persisted server-side, so a
+  // reloaded/record turn simply lacks it — the receipt line omits duration rather than fabricate it).
+  durationMs?: number;
 }
 
 export const SHAPE_LABELS: Record<ShapeId, string> = {

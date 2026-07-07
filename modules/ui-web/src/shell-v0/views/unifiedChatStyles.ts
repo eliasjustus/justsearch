@@ -597,11 +597,14 @@ export const unifiedChatBodyStyles = css`
       max-width: 60ch;
     }
     /* Tempdoc 577 §2.12 Move 3 — the epistemic answer FRAME line (generalizes the round-1
-       uncited-note): a one-line trust header above an answer that is not fully grounded, so an
-       ungrounded model answer cannot pose as index-grounded. Ambient by default; the ungrounded
-       arm is marked a touch more present (it is the trust-critical case). */
+       uncited-note): a one-line trust note, so an ungrounded model answer cannot pose as
+       index-grounded. Ambient by default; the ungrounded arm is marked a touch more present (it
+       is the trust-critical case). Search Thread S7 (tempdoc decision 6) — this is now also THE
+       quiet per-turn receipt line (grounding verdict + duration + model, see .answer-receipt below):
+       margin moved from -bottom to -top since the non-transform frames now render UNDER the answer
+       block (the transform frame keeps its own pre-content position — see .answer-frame-transform). */
     .answer-frame {
-      margin-bottom: 0.4rem;
+      margin-top: 0.4rem;
       font-size: var(--font-size-xs);
       font-style: italic;
       color: var(--text-secondary);
@@ -610,11 +613,23 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-warning);
       font-style: normal;
     }
+    /* Search Thread S7 (tempdoc decision 6) — a fully grounded answer carries no warning text, only
+       the quiet receipt tail (duration + model); ambient, non-italic (never reads as a caveat). */
+    .answer-frame-grounded {
+      color: var(--text-tertiary);
+      font-style: normal;
+    }
     /* Tempdoc 603 D-4 — the SOURCED frame: the answer drew on retrieved documents but per-sentence
        grounding was not verified (document-level retrieval). Informational, NOT a warning — a calm
        secondary note (provenance is real), distinct from the italic default and the warning ungrounded arm. */
     .answer-frame-sourced {
       color: var(--text-secondary);
+      font-style: normal;
+    }
+    /* Search Thread S7 (tempdoc decision 6) — the receipt tail (duration + model) is always plain
+       tokens, never italicized by the surrounding frame's own styling (e.g. the base italic default,
+       or the grounding-why disclosure it can sit beside). */
+    .answer-receipt {
       font-style: normal;
     }
     /* Tempdoc 603 C3 — an extraction (transform) is the model's own structuring, not retrieved data.

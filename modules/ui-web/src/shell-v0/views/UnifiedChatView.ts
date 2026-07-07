@@ -14,7 +14,7 @@
  * shape that produced its response.
  */
 
-import { html, unsafeCSS, nothing, type TemplateResult } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 // Tempdoc 621 Phase 1 — the chat window's body styles, extracted to keep this file readable.
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
@@ -58,7 +58,7 @@ import {
   DEFAULT_CAPABILITIES_BY_KIND,
   type SelectionItem,
 } from '../state/selectionState.js';
-import { setAiActivity, subscribeAiState, type AiState } from '../state/aiStateStore.js';
+import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../state/aiStateStore.js';
 import { subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
@@ -156,8 +156,9 @@ import { getAutonomyLevel, subscribeAutonomy } from '../substrates/autonomy/inde
 // Tempdoc 577 §2.14 Root I (#19) — temporal anchoring: relative time on turn boundaries.
 import { formatRelative } from '../utils/relativeTime.js';
 import '../components/AutonomyDial.js';
-// Tempdoc 561 #6: the ONE search-evidence projection (shared with the live tool card).
-import { SEARCH_EVIDENCE_CSS } from '../components/chat/searchEvidence.js';
+// Search Thread S7 (tempdoc decision 4) — the agent search tool card's evidence projection; used
+// here only to resolve a `card-open` hit back out of the SAME structuredData the card rendered from.
+import { findAgentSearchHit } from '../components/chat/toolSearchCard.js';
 // Tempdoc 561 (surface tier): the ONE shared agent controller + the retrospective drawer.
 import { getAgentSessionController, subscribeAgentSession } from '../state/agentSessionStore.js';
 import { toggleRetrospective } from '../state/retrospectiveDrawer.js';
@@ -1985,7 +1986,7 @@ export class UnifiedChatView extends JfElement {
     return nothing;
   }
 
-  static styles = [composerStyles, unsafeCSS(SEARCH_EVIDENCE_CSS), whyThisResultStyles, facetChipStyles, highlightStyles, scopeChipRowStyles, unifiedChatBodyStyles,
+  static styles = [composerStyles, whyThisResultStyles, facetChipStyles, highlightStyles, scopeChipRowStyles, unifiedChatBodyStyles,
     // §13 Pillar B — the GENERATED grid frame for the conversation-zone (replaces the hand-authored
     // grid-template-columns + per-zone placements removed above; faithful per de-risk Probe S2).
     composeGridStyles(CONVERSATION_ZONES, {
@@ -4037,6 +4038,10 @@ export class UnifiedChatView extends JfElement {
   private renderTimelineItems(items: readonly UnifiedTurnItem[]): TemplateResult {
     const out: TemplateResult[] = [];
     let trace: UnifiedTurnItem[] = [];
+    // Search Thread S7 (tempdoc decision 6) — the agent turn's receipt duration, best-effort: the
+    // nearest PRECEDING user item's timestamp (no new instrumentation — `ts` already exists on every
+    // UnifiedTurnItem). Omitted (never fabricated) when no preceding user item is in view.
+    let lastUserTs: number | null = null;
     const flush = (isTrailing: boolean): void => {
       if (trace.length > 0) {
         out.push(this.renderRunTrace(trace, isTrailing));
@@ -4044,6 +4049,7 @@ export class UnifiedChatView extends JfElement {
       }
     };
     for (const it of items) {
+      if (it.kind === 'user') lastUserTs = it.ts;
       // Tempdoc 577 §2.14 Root I (#19) — the run/session boundary seam, rendered before the first
       // live item that follows restored history so a resumed thread reads as two exchanges, not one.
       if (this.resumeSeamId !== null && it.id === this.resumeSeamId) {
@@ -4056,7 +4062,7 @@ export class UnifiedChatView extends JfElement {
       }
       if (it.prominence === 'primary') {
         flush(false); // a primary item follows this segment → its run answered → collapsed
-        out.push(this.renderUnifiedItem(it));
+        out.push(this.renderUnifiedItem(it, lastUserTs));
       } else {
         trace.push(it);
       }
@@ -4208,21 +4214,49 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 577 Move 3 — the answer's epistemic header line (or nothing for grounded/transform).
-   * §2.16 — `degraded` refines the `ungrounded` wording: a shape that SEARCHED but found nothing to
-   * cite reads distinct from a mode that never searches (computed via groundingDegraded at the call
-   * site, where shapeId × sourceCount are known).
+   * Search Thread S7 (tempdoc decision 6) — the quiet per-turn receipt tail: duration + model name,
+   * plain tokens (never a fabricated value — each part is omitted when unavailable). Read once here
+   * so `renderAnswerFrameLine`'s two call sites (and its own frame-authority) share the one format,
+   * rather than each re-deriving the "Xs · model" string.
+   */
+  private formatReceiptTail(receipt?: { durationMs?: number; modelLabel?: string | null }): string {
+    if (!receipt) return '';
+    const parts: string[] = [];
+    if (typeof receipt.durationMs === 'number' && receipt.durationMs >= 0) {
+      parts.push(
+        receipt.durationMs >= 1000
+          ? `${(receipt.durationMs / 1000).toFixed(1)}s`
+          : `${receipt.durationMs}ms`,
+      );
+    }
+    if (receipt.modelLabel) parts.push(receipt.modelLabel);
+    return parts.join(' · ');
+  }
+
+  /**
+   * Tempdoc 577 Move 3 — the answer's epistemic header line (`null` grounding label for
+   * grounded/transform). Search Thread S7 (tempdoc decision 6) — this is now ALSO the ONE quiet
+   * per-turn receipt: EXTENDED (not forked) with an optional duration+model tail, so a completed
+   * ask/agent turn gets ONE line, never a second. §2.16 — `degraded` refines the `ungrounded`
+   * wording: a shape that SEARCHED but found nothing to cite reads distinct from a mode that never
+   * searches (computed via groundingDegraded at the call site, where shapeId × sourceCount are known).
    */
   private renderAnswerFrameLine(
     frame: AnswerFrame,
     degraded = false,
+    receipt?: { durationMs?: number; modelLabel?: string | null },
   ): TemplateResult | typeof nothing {
     const label = answerFrameLabel(frame, degraded);
-    if (label === null) return nothing;
-    return html`<div class="answer-frame answer-frame-${frame}" role="note">${label}</div>`;
+    const receiptText = this.formatReceiptTail(receipt);
+    if (label === null && !receiptText) return nothing;
+    return html`<div class="answer-frame answer-frame-${frame}" role="note">
+      ${label ?? nothing}${label && receiptText ? ' · ' : nothing}${receiptText
+        ? html`<span class="answer-receipt">${receiptText}</span>`
+        : nothing}
+    </div>`;
   }
 
-  private renderUnifiedItem(it: UnifiedTurnItem): TemplateResult {
+  private renderUnifiedItem(it: UnifiedTurnItem, turnStartedAtMs: number | null = null): TemplateResult {
     switch (it.kind) {
       case 'user': {
         // Tempdoc 610 — the transcript controls (edit-in-place, the per-turn ⋯ menu, the version pager,
@@ -4276,13 +4310,29 @@ export class UnifiedChatView extends JfElement {
             it.content,
             sourcesAreChunkPrecise(agentSources),
           );
+          const degraded = groundingDegraded(this.currentShapeId(), it.attributes.sources.length);
           const partsA = this.recordFloorParts(it.id);
+          // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration best-effort from the
+          // nearest preceding user item's ts (no persisted per-turn timing yet); model name read live
+          // from aiState (the current session's active model — the best available fact for a just-
+          // completed run; a reloaded past turn may show a since-changed model, so this is omitted
+          // only when aiState carries none, never fabricated).
+          const receipt = {
+            durationMs:
+              turnStartedAtMs != null && it.ts > turnStartedAtMs
+                ? it.ts - turnStartedAtMs
+                : undefined,
+            modelLabel: getAiState().runtime?.modelLabel ?? null,
+          };
           return html`${partsA.divider}<div class="message assistant${partsA.cls}" data-item-id=${it.id}>
-            ${this.renderAnswerFrameLine(
-              frame,
-              groundingDegraded(this.currentShapeId(), it.attributes.sources.length),
-            )}
+            ${/* Search Thread S7 — the transform-shaped "unmissable" warning stays PRE-content (its
+                established position: an unmissable strip that abuts the extracted result — see
+                `.answer-frame-transform`); every other frame's line is now the quiet receipt UNDER the
+                answer. Exactly one of the two ever renders for a given turn — the ONE authority, split
+                by call site, never a second simultaneous line. */ ''}
+            ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
+            ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
               it.content,
               it.attributes.sources as AgentSource[],
@@ -4504,8 +4554,27 @@ export class UnifiedChatView extends JfElement {
       <jf-tool-call-card
         .toolCall=${toolCall}
         .stepPresentation=${stepPresentation(it)}
+        @card-open=${(e: CustomEvent<{ id: string }>) => this.handleToolEvidenceOpen(toolCall, e.detail.id)}
       ></jf-tool-call-card>
     </div>`;
+  }
+
+  /**
+   * Search Thread S7 (tempdoc decision 4) — a `card-open` from the agent-search tool card nested
+   * inside `<jf-tool-call-card>` (its `card-open` bubbles + composes through the results-card's OWN
+   * shadow boundary, then through ToolCallCard's, arriving here). Mirrors `handleCommittedCardOpen`:
+   * looks the hit back up by id (== path) in the tool call's OWN structuredData — the card carries no
+   * independent hit store — and opens it through the same reading-pane path.
+   */
+  private handleToolEvidenceOpen(toolCall: ToolCall, hitId: string): void {
+    const host = this.host_;
+    if (!host?.search || !host?.ui) return;
+    const hit = findAgentSearchHit(toolCall.structuredData, hitId);
+    if (!hit) return;
+    host.ui.showInspector(
+      host.search.hitToSelectedItem(hit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+    );
+    addScopeChip({ kind: 'file', label: filenameOf(hit.path), docIds: [hit.path] });
   }
 
   private renderMessage(m: ThreadMessage, idx: number): TemplateResult {
@@ -4566,6 +4635,11 @@ export class UnifiedChatView extends JfElement {
           m.content,
           sourcesAreChunkPrecise(m.sources ?? []),
         );
+    const degraded = m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount);
+    // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration from the message's own
+    // captured `durationMs` (set at `send()`'s onDone; absent on a reloaded/record turn — omitted,
+    // never fabricated), model name read live from aiState.
+    const receipt = { durationMs: m.durationMs, modelLabel: getAiState().runtime?.modelLabel ?? null };
     return html`
       ${floorDivider}
       <div class="message assistant${inheritedClass}" data-item-id=${m.id ?? nothing} data-msg-idx=${idx}>
@@ -4575,10 +4649,10 @@ export class UnifiedChatView extends JfElement {
               Interpreted as: <em>${m.standaloneQuestion}</em>
             </div>`
           : nothing}
-        ${this.renderAnswerFrameLine(
-          frame,
-          m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount),
-        )}
+        ${/* Search Thread S7 — the transform-shaped "unmissable" warning stays PRE-content (its
+            established position abutting the extracted result); every other frame's line is now the
+            quiet receipt UNDER the answer. Exactly one of the two ever renders per turn. */ ''}
+        ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
         ${m.isExtract
           ? // Tempdoc 565 §15.B — extract is verbatim text: the ONE renderer in `plain` format.
             html`<jf-markdown-block format="plain" .text=${m.content} frame=${frame}></jf-markdown-block>`
@@ -4594,6 +4668,7 @@ export class UnifiedChatView extends JfElement {
               ></jf-markdown-block>`
             : // Tempdoc 565 §15.B — the canonical answer block for every other mode (agent/chat).
               html`<jf-markdown-block .text=${m.content} frame=${frame}></jf-markdown-block>`}
+        ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
         ${(m.sources?.length ?? 0) > 0 || (m.citations?.length ?? 0) > 0
           ? html`<jf-citations-panel
               .sources=${m.sources ?? []}
@@ -4977,6 +5052,11 @@ export class UnifiedChatView extends JfElement {
           shapeId,
           isExtract: shapeId === 'core.extract',
         };
+        // Search Thread S7 (tempdoc decision 6) — the receipt's duration, read BEFORE the activity
+        // reset below clears `startedAtMs`. Omitted (never fabricated) if the activity state was
+        // somehow already cleared (defensive; `startedAtMs` is set at the top of `send()`).
+        const turnStartedAtMs = getAiState().activity.startedAtMs;
+        if (turnStartedAtMs != null) msg.durationMs = Date.now() - turnStartedAtMs;
         if (this.citations.length > 0) msg.citations = [...this.citations];
         if (this.sources.length > 0) msg.sources = [...this.sources];
         if (this.claims.length > 0) msg.claims = [...this.claims];

@@ -8,8 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AutonomyDial } from './AutonomyDial.js';
 import {
   getAutonomyLevel,
+  hasAutoConsent,
+  setAutoConsent,
   __resetAutonomyForTest,
 } from '../substrates/autonomy/index.js';
+import './ConfirmDialog.js';
 
 void AutonomyDial;
 
@@ -61,6 +64,74 @@ describe('<jf-autonomy-dial> (§32 U1)', () => {
         ?.querySelector('[data-testid="autonomy-assist"]')
         ?.hasAttribute('data-active'),
     ).toBe(false);
+  });
+
+  // Search Thread S7 (tempdoc decision 6) — the FIRST switch to Auto opens a consent modal;
+  // every later switch is silent, and canceling never flips the dial.
+  describe('Auto-mode consent (S7 decision 6)', () => {
+    afterEach(() => {
+      document.body.querySelectorAll('jf-confirm-dialog').forEach((el) => el.remove());
+    });
+
+    it('selecting Auto the FIRST time opens a consent modal and does not yet change the level', async () => {
+      await flush();
+      (
+        host.shadowRoot?.querySelector('[data-testid="autonomy-auto"]') as HTMLButtonElement
+      ).click();
+      await flush();
+      expect(getAutonomyLevel()).toBe('assist');
+      const dialog = document.body.querySelector('jf-confirm-dialog') as
+        | (HTMLElement & { open: boolean; message: string })
+        | null;
+      expect(dialog, 'the shared confirm-dialog modal mounts').not.toBeNull();
+      expect(dialog?.open).toBe(true);
+      expect(dialog?.message).toContain('without asking');
+      expect(dialog?.message).toContain('Irreversible writes still confirm');
+    });
+
+    it('confirming the modal persists the consent flag and applies the level', async () => {
+      await flush();
+      (
+        host.shadowRoot?.querySelector('[data-testid="autonomy-auto"]') as HTMLButtonElement
+      ).click();
+      await flush();
+      const dialog = document.body.querySelector('jf-confirm-dialog')!;
+      dialog.dispatchEvent(new CustomEvent('confirm'));
+      await flush();
+      await flush();
+      expect(getAutonomyLevel()).toBe('auto');
+      expect(hasAutoConsent()).toBe(true);
+    });
+
+    it('canceling the modal leaves the dial on the previous level (never optimistically flipped)', async () => {
+      await flush();
+      (
+        host.shadowRoot?.querySelector('[data-testid="autonomy-auto"]') as HTMLButtonElement
+      ).click();
+      await flush();
+      const dialog = document.body.querySelector('jf-confirm-dialog')!;
+      dialog.dispatchEvent(new CustomEvent('cancel'));
+      await flush();
+      await flush();
+      expect(getAutonomyLevel()).toBe('assist');
+      expect(hasAutoConsent()).toBe(false);
+      expect(
+        host.shadowRoot
+          ?.querySelector('[data-testid="autonomy-assist"]')
+          ?.hasAttribute('data-active'),
+      ).toBe(true);
+    });
+
+    it('a SECOND switch to Auto (consent already recorded) applies silently — no modal', async () => {
+      setAutoConsent();
+      await flush();
+      (
+        host.shadowRoot?.querySelector('[data-testid="autonomy-auto"]') as HTMLButtonElement
+      ).click();
+      await flush();
+      expect(getAutonomyLevel()).toBe('auto');
+      expect(document.body.querySelector('jf-confirm-dialog')).toBeNull();
+    });
   });
 
   // §32 unify — compact variant: segments only, no title/hint block.

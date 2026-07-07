@@ -425,7 +425,7 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAutonomyForTest();
   });
 
-  it('561 #6 — renders search EVIDENCE from the RECORD (live == record, not the raw dump)', async () => {
+  it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
     const view = mountView();
     await view.updateComplete;
     // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
@@ -440,7 +440,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
         attributes: {
           callId: 'c1', toolName: 'core_search_index', status: 'completed',
           output: '[1] taxes (score: 0.92)\n    Path: C:/docs/taxes.md',
-          structuredData: { searchResults: [{ title: 'Tax Notes', path: 'C:/docs/taxes.md', excerpt: 'deductible limits', line: 42 }] },
+          structuredData: {
+            query: 'taxes',
+            resultCount: 1,
+            searchResults: [{ title: 'Tax Notes', path: 'C:/docs/taxes.md', excerpt: 'deductible limits', line: 42 }],
+          },
         },
       },
     ];
@@ -448,25 +452,30 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     await view.updateComplete;
     const sr = view.shadowRoot!;
     // Tempdoc 565 §12.3.B — the record's tool activity renders through the SAME <jf-tool-call-card>
-    // the live half uses, so the structured evidence now lives in the CARD's shadow DOM (one tool
-    // renderer; live == record). Pierce into the card to assert the evidence cards still render.
-    const card = sr.querySelector('.tool-activity jf-tool-call-card') as
-      | (Element & { updateComplete: Promise<unknown> })
+    // the live half uses. Search Thread S7 (tempdoc decision 4): the search evidence itself now lives
+    // in the ONE shared `<jf-results-card>` nested inside the tool card's shadow DOM (a THIRD nesting
+    // level to pierce — live == record == user search, one card).
+    const toolCard = sr.querySelector('.tool-activity jf-tool-call-card') as
+      | (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> })
       | null;
-    expect(card).not.toBeNull();
-    await card!.updateComplete;
-    const cardSr = card!.shadowRoot!;
-    const evidence = cardSr.querySelector('[data-testid="tool-search-evidence"]');
-    expect(evidence).not.toBeNull();
-    const text = (evidence?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(toolCard).not.toBeNull();
+    await toolCard!.updateComplete;
+    const resultsCard = toolCard!.shadowRoot.querySelector(
+      '[data-testid="tool-search-card"] jf-results-card',
+    ) as (Element & { shadowRoot: ShadowRoot; updateComplete: Promise<unknown> }) | null;
+    expect(resultsCard, 'the shared results card mounts inside the tool card').not.toBeNull();
+    await resultsCard!.updateComplete;
+    // Expand the collapsed excerpt to the row list.
+    (resultsCard!.shadowRoot.querySelector('[data-testid="card-excerpt"]') as HTMLButtonElement).click();
+    await resultsCard!.updateComplete;
+    const text = (resultsCard!.shadowRoot.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).toContain('Tax Notes');
     expect(text).toContain('deductible limits');
-    expect(text).toContain('line 42');
     // Honesty: no fabricated "% RELEVANCE" badge from the uncalibrated ranking score (559 §5 / C-6).
     expect(text).not.toContain('%');
-    // The raw monospace dump is suppressed in favour of the structured cards (live == record):
-    // the card renders `.tool-output` only when there is NO structured evidence.
-    expect(cardSr.querySelector('.tool-output')).toBeNull();
+    // The raw monospace dump is suppressed in favour of the structured card (live == record):
+    // the tool card renders `.tool-output` only when there is NO structured evidence.
+    expect(toolCard!.shadowRoot.querySelector('.tool-output')).toBeNull();
   });
 
   it('renders the unified interleaved thread (chat + agent tool activity) from the record (Slice 2)', async () => {
@@ -1313,6 +1322,184 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
     expect(block, 'the reloaded extraction renders an answer block').not.toBeNull();
     expect(block!.getAttribute('frame'), 'reloaded extract uses the verbatim transform frame').toBe('transform');
+  });
+});
+
+// Search Thread S7 (tempdoc decision 6) — the quiet per-turn receipt (grounding verdict + duration +
+// model), EXTENDING the existing answer-frame line (never a second line). Full grounding-classification
+// coverage lives in evidenceProjection.test.ts; these tests assert the render-site wiring only.
+describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decision 6)', () => {
+  function chunkCitation(chunkIndex: number): {
+    parentDocId: string;
+    chunkIndex: number;
+    chunkTotal: number;
+    startChar: number;
+    endChar: number;
+    score: number;
+    excerpt: string;
+    startLine: number;
+    endLine: number;
+    headingText: string;
+    headingLevel: number;
+  } {
+    return {
+      parentDocId: 'doc-1',
+      chunkIndex,
+      chunkTotal: 1,
+      startChar: 0,
+      endChar: 10,
+      score: 0.9,
+      excerpt: 'excerpt',
+      startLine: 1,
+      endLine: 2,
+      headingText: '',
+      headingLevel: 0,
+    };
+  }
+
+  afterEach(() => {
+    // Restore the shared aiState fixture so other describe blocks see the original shape.
+    delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+  });
+
+  it('a grounded turn with duration + model shows ONLY the quiet receipt tail (no warning text), non-italic', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        durationMs: 3200,
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line, 'the receipt line renders even for a fully grounded answer').not.toBeNull();
+    expect(line!.classList.contains('answer-frame-grounded')).toBe(true);
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('3.2s · Llama 3 8B');
+    const receipt = line!.querySelector('.answer-receipt');
+    expect(receipt, 'the duration+model tail is its own non-italic span').not.toBeNull();
+    expect(getComputedStyle(receipt!).fontStyle).toBe('normal');
+    // The receipt sits AFTER the answer block (under it), not before.
+    const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
+    expect(
+      !!(block!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_FOLLOWING),
+      'the receipt line follows the answer block in document order',
+    ).toBe(true);
+    view.remove();
+  });
+
+  it('a partially-grounded turn keeps its warning text and appends the receipt tail on the SAME line', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a. b.',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a.', score: 0.9, sourceRefs: [0] }],
+        durationMs: 500,
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line).not.toBeNull();
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('Partly grounded — some statements are not backed by your documents · 500ms · Llama 3 8B');
+    // Exactly ONE receipt-bearing line — never a second.
+    expect(view.shadowRoot!.querySelectorAll('.message.assistant[data-item-id="a1"] .answer-frame').length).toBe(1);
+    view.remove();
+  });
+
+  it('an extract (transform) turn keeps the unmissable banner BEFORE the answer, extended with the receipt', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.extract', id: 'u1' },
+      { role: 'assistant', content: '{}', shapeId: 'core.extract', id: 'a1', isExtract: true, durationMs: 800 },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame-transform',
+    );
+    expect(line).not.toBeNull();
+    expect((line!.textContent ?? '')).toContain('Model-generated structure');
+    expect((line!.textContent ?? '')).toContain('800ms');
+    const block = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] jf-markdown-block');
+    expect(
+      !!(line!.compareDocumentPosition(block!) & Node.DOCUMENT_POSITION_FOLLOWING),
+      'the transform banner still precedes the answer block',
+    ).toBe(true);
+    view.remove();
+  });
+
+  it('omits duration (never fabricates) when the turn carries none — a reloaded turn with no stored durationMs', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      {
+        role: 'assistant',
+        content: 'a',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [chunkCitation(0)],
+        // no durationMs — the reload case
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] .answer-frame',
+    );
+    expect(line).not.toBeNull();
+    expect((line!.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe('Llama 3 8B');
+    view.remove();
+  });
+
+  it('renders no line at all when neither a warning nor a duration/model receipt applies', async () => {
+    delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)] },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(
+      view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] .answer-frame'),
+    ).toBeNull();
+    view.remove();
   });
 });
 
@@ -3490,6 +3677,34 @@ describe('Search Thread S6 — the reading pane (DocumentPane mount + open flows
     (
       view as unknown as { handleCommittedCardOpen(hitId: string): void }
     ).handleCommittedCardOpen('h1');
+    await view.updateComplete;
+    expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
+    expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
+    view.remove();
+  });
+
+  // Search Thread S7 (tempdoc decision 4) — a `card-open` bubbling out of the agent-search results
+  // card nested inside `<jf-tool-call-card>` resolves the hit back out of the SAME structuredData
+  // the card rendered from (no independent hit store) and opens through the same reading-pane path.
+  it('a card-open from the agent-search tool card also sets readingDocPath and auto-pins the chip', async () => {
+    const view = mountView();
+    stubHost(view);
+    await view.updateComplete;
+    const toolCall = {
+      callId: 'c1',
+      toolName: 'core_search_index',
+      arguments: '{"query":"invoice audit"}',
+      risk: 'LOW',
+      status: 'completed',
+      structuredData: {
+        query: 'invoice audit',
+        resultCount: 1,
+        searchResults: [{ title: 'Q1 invoice', path: '/docs/q1.md', excerpt: 'total due', line: 0 }],
+      },
+    } as unknown as import('../controllers/AgentSessionController.js').ToolCall;
+    (
+      view as unknown as { handleToolEvidenceOpen(toolCall: unknown, hitId: string): void }
+    ).handleToolEvidenceOpen(toolCall, '/docs/q1.md');
     await view.updateComplete;
     expect((view as unknown as ReadingFields).readingDocPath).toBe('/docs/q1.md');
     expect(scopeChipsMock.chips).toEqual([{ kind: 'file', label: 'q1.md', docIds: ['/docs/q1.md'] }]);
