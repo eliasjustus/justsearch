@@ -127,6 +127,50 @@ class SearchToolTest {
   }
 
   @Test
+  void executeWithDocIds() {
+    // Tempdoc S7 — docIds is not part of the LLM-facing PARAMETER_SCHEMA (AgentToolDispatcher
+    // merges it in server-side), but SearchTool must still honor it when present in the parsed
+    // arguments, threading it into KnowledgeSearchRequest.Filters.docIds (QueryFilterBuilder
+    // matches it against SchemaFields.PATH).
+    stubbedResponse = emptyResponse();
+
+    tool.execute(
+        "{\"query\": \"invoices\", \"docIds\": [\"/docs/a.md\", \"/docs/b.md\"]}");
+
+    var req = capturedRequest.get();
+    assertNotNull(req);
+    assertNotNull(req.filters());
+    assertEquals(List.of("/docs/a.md", "/docs/b.md"), req.filters().docIds());
+  }
+
+  @Test
+  void executeWithoutDocIdsOrPathPrefix_filtersIsNull() {
+    // Absent case: no docIds, no path_prefix — filters stays null (unscoped), the pre-S7 behavior.
+    stubbedResponse = emptyResponse();
+
+    tool.execute("{\"query\": \"invoices\"}");
+
+    var req = capturedRequest.get();
+    assertNotNull(req);
+    assertNull(req.filters());
+  }
+
+  @Test
+  void executeWithDocIdsAndPathPrefix_bothFiltersApply() {
+    stubbedResponse = emptyResponse();
+
+    tool.execute(
+        "{\"query\": \"invoices\", \"path_prefix\": \"/docs/finance\","
+            + " \"docIds\": [\"/docs/finance/a.md\"]}");
+
+    var req = capturedRequest.get();
+    assertNotNull(req);
+    assertNotNull(req.filters());
+    assertEquals("/docs/finance", req.filters().pathPrefix());
+    assertEquals(List.of("/docs/finance/a.md"), req.filters().docIds());
+  }
+
+  @Test
   void executeCallbackError() {
     tool =
         new SearchTool(
@@ -244,6 +288,44 @@ class SearchToolTest {
     assertTrue(((String) item.get("excerpt")).contains("deductible"), "excerpt carried");
     // Honesty floor: no relevance score is emitted (would fabricate calibration from a ranking score).
     assertFalse(item.containsKey("score"), "no uncalibrated relevance score is surfaced");
+  }
+
+  @Test
+  void structuredDataCarriesQueryAndResultCount() {
+    // Tempdoc S7 — additive structuredData keys alongside searchResults/feedbackFeatures: the
+    // executed query text and the number of hits in THIS response.
+    stubbedResponse =
+        KnowledgeSearchResponseBuilder.builder()
+            .totalHits(5) // deliberately different from results().size() to distinguish the two
+            .tookMs(5)
+            .results(List.of(
+                KnowledgeSearchResponseHitBuilder.builder()
+                    .id("doc-1").score(0.9)
+                    .fields(Map.of("title", "Tax Notes", "path", "/docs/taxes.md"))
+                    .build(),
+                KnowledgeSearchResponseHitBuilder.builder()
+                    .id("doc-2").score(0.7)
+                    .fields(Map.of("title", "More Taxes", "path", "/docs/taxes2.md"))
+                    .build()))
+            .build();
+
+    OperationResult result = tool.execute("{\"query\": \"taxes\"}");
+    assertTrue(result.success(), result.message());
+
+    assertEquals("taxes", result.structuredData().get("query"));
+    assertEquals(2, result.structuredData().get("resultCount"), "resultCount is this response's hit count");
+  }
+
+  @Test
+  void structuredDataCarriesTheExecutedSanitizedQuery() {
+    // sanitizeFilePathQuery rewrites a file-path-shaped query before it's sent; structuredData's
+    // "query" should reflect the ACTUALLY EXECUTED text, not the LLM's raw input.
+    stubbedResponse = emptyResponse();
+
+    OperationResult result = tool.execute("{\"query\": \"docs/reference/config.md\"}");
+    assertTrue(result.success(), result.message());
+
+    assertEquals("docs reference config", result.structuredData().get("query"));
   }
 
   @Test

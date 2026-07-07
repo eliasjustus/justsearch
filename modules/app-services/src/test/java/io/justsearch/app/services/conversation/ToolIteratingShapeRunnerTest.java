@@ -38,4 +38,24 @@ final class ToolIteratingShapeRunnerTest {
             Map.of("messages", List.of(Map.of("role", "user", "content", "hi"))));
     assertNull(r.autonomyLevel());
   }
+
+  @Test
+  @DisplayName("parseRequest carries docIds (scope chips) through to the AgentRequest")
+  void parseRequestCarriesDocIds() {
+    AgentRequest r =
+        ToolIteratingShapeRunner.parseRequest(
+            Map.of(
+                "messages", List.of(Map.of("role", "user", "content", "hi")),
+                "docIds", List.of("/docs/taxes.md", "/docs/invoices.md")));
+    assertEquals(List.of("/docs/taxes.md", "/docs/invoices.md"), r.docIds());
+  }
+
+  @Test
+  @DisplayName("parseRequest defaults docIds to empty (unscoped) when absent")
+  void parseRequestDefaultsDocIdsWhenAbsent() {
+    AgentRequest r =
+        ToolIteratingShapeRunner.parseRequest(
+            Map.of("messages", List.of(Map.of("role", "user", "content", "hi"))));
+    assertEquals(List.of(), r.docIds());
+  }
 }

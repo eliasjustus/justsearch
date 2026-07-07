@@ -18,12 +18,16 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Tool-dispatch cluster for the agent loop (tempdoc 240 W5 — extracted from
@@ -161,6 +165,53 @@ final class AgentToolDispatcher {
     // Phase 1.7 audit-test gate ratifies this is the ONLY direct dispatcher
     // call site in modules/app-agent.
     return operationExecutor.dispatch(op, call.arguments());
+  }
+
+  // Tempdoc S7 — the search tool's registered Operation id (AgentToolsOperationCatalog.SEARCH_INDEX
+  // in app-services, which modules/app-agent cannot import — app-agent depends only on
+  // app-agent-api/app-api/configuration/telemetry). Duplicated here as the wire-stable string the
+  // two modules agree on, mirroring how Operation ids already cross this boundary as plain strings
+  // (e.g. call.toolName() dispatch).
+  private static final String SEARCH_OPERATION_ID = "core.search-index";
+  private static final ObjectMapper DOC_IDS_MAPPER = new ObjectMapper();
+
+  /**
+   * Tempdoc S7 — when this run carries a docIds scope (FE scope chips) AND the dispatched
+   * operation is the search tool, merge {@code docIds} into the LLM's own tool-call arguments so
+   * the search filter applies regardless of what the LLM asked for. A no-op (returns {@code call}
+   * unchanged) for every other operation, and a no-op when the session carries no scope (the
+   * common, unscoped case) — the LLM's own arguments then keep riding the conversation history
+   * untouched.
+   */
+  ToolCallRequest scopeToolCall(Operation op, ToolCallRequest call, AgentSession session) {
+    List<String> scope = session.docIdsScope();
+    if (scope.isEmpty() || !SEARCH_OPERATION_ID.equals(op.id().value())) {
+      return call;
+    }
+    String merged = mergeDocIdsIntoArguments(call.arguments(), scope);
+    if (merged == null) {
+      return call;
+    }
+    return new ToolCallRequest(call.id(), call.toolName(), merged);
+  }
+
+  /** Merges a {@code docIds} array into a tool call's raw JSON arguments; null on parse failure. */
+  private static String mergeDocIdsIntoArguments(String argumentsJson, List<String> docIds) {
+    try {
+      JsonNode parsed =
+          argumentsJson == null || argumentsJson.isBlank()
+              ? DOC_IDS_MAPPER.createObjectNode()
+              : DOC_IDS_MAPPER.readTree(argumentsJson);
+      ObjectNode node =
+          parsed.isObject() ? (ObjectNode) parsed : DOC_IDS_MAPPER.createObjectNode();
+      var arr = DOC_IDS_MAPPER.createArrayNode();
+      docIds.forEach(arr::add);
+      node.set("docIds", arr);
+      return DOC_IDS_MAPPER.writeValueAsString(node);
+    } catch (Exception e) {
+      LOG.warn("Failed to merge docIds scope into tool-call arguments; dispatching unscoped", e);
+      return null;
+    }
   }
 
   boolean handleSafetyGate(
