@@ -1,6 +1,6 @@
 [versions]
 jdk = "25"
-spotless = "8.7.0"
+spotless = "8.8.0"
 junit = "5.14.4"
 mockito = "5.22.0"
 "junit-platform" = "1.14.4"
