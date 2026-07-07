@@ -94,8 +94,14 @@ function longPathDelete(p) {
 function reportHolders(p) {
   if (process.platform !== 'win32') return;
   const base = path.basename(p);
+  // `-and $_.ProcessId -ne $PID` excludes THIS query's own powershell process,
+  // whose command line contains `base` (in the -like literal) and would otherwise
+  // always self-match. Honest limit: Win32_Process exposes CommandLine but NOT the
+  // working directory, so a cwd-only holder (the common case — a shell whose cwd is
+  // inside the worktree) still won't appear; this catches only holders that NAME the
+  // path in argv (e.g. `node serve-worktree-fe <path>`, an editor opened on it).
   const psCmd =
-    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${base}*' } | ` +
+    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${base}*' -and $_.ProcessId -ne $PID } | ` +
     `ForEach-Object { "PID $($_.ProcessId): $($_.Name) — $($_.CommandLine)" }`;
   const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
     encoding: 'utf8',
