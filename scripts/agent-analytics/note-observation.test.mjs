@@ -46,11 +46,22 @@ try {
     const root = freshRoot();
     assert.equal(resolveSessionId({ root, env: { CLAUDE_CODE_SESSION_ID: 'cc-sid' } }), 'cc-sid');
   });
-  run('resolveSessionId pointer file wins over env', () => {
+  // Env-first is deliberate (tempdoc 684): the pointer file records whatever
+  // session last STARTED in this checkout, which is foreign in the shared
+  // main checkout — env always carries the calling process's own identity.
+  run('resolveSessionId: env wins over the pointer file', () => {
     const root = freshRoot();
     fs.mkdirSync(path.join(root, 'tmp', 'agent-telemetry'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'tmp', 'agent-telemetry', 'current-session-id'), 'file-wins');
-    assert.equal(resolveSessionId({ root, env: { JUSTSEARCH_AGENT_SESSION_ID: 'env' } }), 'file-wins');
+    fs.writeFileSync(path.join(root, 'tmp', 'agent-telemetry', 'current-session-id'), 'file-loses');
+    assert.equal(resolveSessionId({ root, env: { JUSTSEARCH_AGENT_SESSION_ID: 'env-wins' } }), 'env-wins');
+  });
+  run('resolveSessionId: foreign pointer file does not override the caller env (tempdoc 684 fix)', () => {
+    const root = freshRoot();
+    fs.mkdirSync(path.join(root, 'tmp', 'agent-telemetry'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tmp', 'agent-telemetry', 'current-session-id'), 'foreign-session-from-another-agent');
+    const id = resolveSessionId({ root, env: { CLAUDE_CODE_SESSION_ID: 'mine-123' } });
+    assert.equal(id, 'mine-123');
+    assert.notEqual(id, 'foreign-session-from-another-agent');
   });
   run('resolveSessionId sanitizes unsafe filename chars', () => {
     const root = freshRoot();
