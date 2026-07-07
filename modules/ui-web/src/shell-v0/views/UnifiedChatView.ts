@@ -1962,15 +1962,15 @@ export class UnifiedChatView extends JfElement {
           <jf-conversation-history
             @conversation-select=${(e: CustomEvent) => this.onConversationSelect(e)}
           ></jf-conversation-history>
-          ${/* Search Thread S5b — the affordance-bar row retired; History (the retrospective drawer:
+          ${/* Search Thread S5b — the affordance-bar row retired; Activity (the retrospective drawer:
                 Sessions/Timeline/History) moves next to New chat/Export so it stays reachable from
                 every tier, not just from within the (now-gone) tab row. */ ''}
           <button
             class="new-chat-btn"
             @click=${() => toggleRetrospective()}
-            title="History — past sessions, timeline, tool calls, inbox"
+            title="Activity — past sessions, timeline, tool calls, inbox"
           >
-            History
+            Activity
           </button>
           ${this.thread.length > 0 && !agentMode
             ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>

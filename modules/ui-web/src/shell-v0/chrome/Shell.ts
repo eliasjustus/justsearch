@@ -569,6 +569,14 @@ export class Shell extends JfElement {
         'rail   stage     inspector'
         'rail   status    inspector';
     }
+    /* Search Thread S5b — the expanded (labels-visible) rail needs its GRID TRACK widened too:
+       the Rail's own :host([expanded]) width is clamped by this column otherwise. */
+    :host([data-rail-expanded]) {
+      grid-template-columns: 11rem 1fr;
+    }
+    :host([data-rail-expanded][data-inspector-open]) {
+      grid-template-columns: 11rem 1fr 22rem;
+    }
     jf-inspector-pane {
       grid-area: inspector;
       overflow: hidden;
@@ -1300,8 +1308,10 @@ export class Shell extends JfElement {
     // surfaceOrder change.
     this.userConfigUnsubscribe = subscribeUserConfig((cfg) => {
       this.userConfig = cfg;
+      this.syncRailExpandedAttr();
       this.refreshSurfaces();
     });
+    this.syncRailExpandedAttr();
     // Tempdoc 586 F-2 — re-filter the rail live when the Simple/Advanced mode changes (mirrors the
     // surfaceVisibility re-filter above). subscribeUiMode fires immediately, so this also seeds the
     // initial filtered rail consistently with the persisted mode.
@@ -1974,6 +1984,12 @@ export class Shell extends JfElement {
     }
   }
 
+  /** S5b — mirror the persisted rail-expanded state onto the host so the grid track widens. */
+  private syncRailExpandedAttr(): void {
+    if (this.userConfig?.railExpanded) this.setAttribute('data-rail-expanded', '');
+    else this.removeAttribute('data-rail-expanded');
+  }
+
   private isRailVisible(): boolean {
     const layoutId = this.userConfig?.activeLayoutId;
     if (!layoutId) return true;
@@ -2370,7 +2386,7 @@ export class Rail extends JfElement {
     .expand-toggle {
       color: var(--text-muted);
     }
-    :host([expanded]) .expand-toggle {
+    :host([expanded]) .expand-toggle .btn-wrap {
       transform: rotate(180deg);
     }
     .btn-wrap {
