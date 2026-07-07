@@ -230,11 +230,12 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] analyze-session `hot_file_concentration`/`rapid_reedit` count the same logical file under different worktree-qualified paths (e.g. UnifiedChatView.ts in 3 worktrees) as separate files, diluting concentration. Consider normalizing worktree-prefixed paths to the logical repo path. (2026-06-20)
 
 ### obs:dev-runner-native-bin-wipe — dev-runner/build staged llama-server mirror could purge Install-AI cuda12 variant (618 §3 era)
-`kind: environment` `anchor: scripts/dev/dev-runner.cjs` `seen: 4` `first: 2026-06-20` `last: 2026-07-05` `status: proposed-retire (superseded by tempdoc 656 GPU-only design: no CPU baseline staging remains)`
+`kind: environment` `anchor: scripts/dev/dev-runner.cjs` `seen: 5` `first: 2026-06-20` `last: 2026-07-06` `status: proposed-retire (superseded by tempdoc 656 GPU-only design: no CPU baseline staging remains)`
 - [ ] dev-runner `cleanDataDir` soft-clean keep-set omits `native-bin` — every `dev_start --clean soft` (the DEFAULT) deletes `{dev-data}/native-bin`, wiping the Install-AI'd cuda12 GPU llama-server variant (~3GB). Models survive (kept) but the runtime doesn't, so GPU-auto-selected activation then fails "Variant not installed: cuda12". Fix: add 'native-bin' to the soft-clean keep set in scripts/dev/dev-runner.cjs (line ~253). (2026-06-20)
 - [ ] CORRECTION to prior entry: the AI-runtime wipe is NOT cleanDataDir — it's tempdoc 618 §3 (IN-PROGRESS, uncommitted on main: build.gradle.kts + 618 tempdoc both modified). 618 added auto-staging of llama-server into modules/ui/native-bin via a Gradle Sync task (stageLlamaToDevNativeBin) AND a dev-runner cpSync at every start (dev-runner.cjs ~L367-396). Source = BUILD stage (CPU baseline only); the cuda12 GPU variant is a separate ~3GB Install-AI runtime download NOT in the build, so the Sync/cpSync overwrites+purges variants/cuda12. Activation auto-selects cuda12 on GPU hosts → 'Variant not installed: cuda12'. Pre-618 nothing touched native-bin on build/start, so the Install-AI'd variant persisted (why AI worked before + this is new). Fix in 618: make the stage additive / preserve variants/ (don't Sync-purge), or exclude variants/cuda12 from the mirror. (2026-06-20)
 - [ ] dev_start with skipBuild:true fails twice in F:/justsearch-public main checkout: backend never emits JUSTSEARCH_API_PORT within the 15s window (dev-runner.cjs:1212), preflight all-green; no run record left to tail. Live-capture legs should use the standard build-first path or investigate the port-emission window. (2026-07-05)
 - [ ] ROOT CAUSE for the dev-runner JDK-8 boot failure (follow-up to prior note): a scoop install/update of temurin8-jdk on 2026-07-04 18:12 rewrote the persisted User JAVA_HOME to F:\scoop\apps\temurin8-jdk\current (manifest env_set stanza does this unconditionally). dev-runner spawns ui.bat inheriting ambient env without setting JAVA_HOME (`scripts/dev/dev-runner.cjs:1056`), and ui.bat prefers JAVA_HOME unconditionally (`modules/ui/build/install/ui/bin/ui.bat:42`), so the JDK-23+-only launcher flag now kills the JVM. A compatible Temurin 25.0.2 exists at F:\scoop\apps\temurin25-jdk\current (toolchain targets 25, `modules/ui/build.gradle.kts:884`). Recommended: dev-runner resolves/pins an explicit JDK-25 JAVA_HOME into the spawn env + preflight runs JAVA_EXE -version so this fails fast instead of a 15s port timeout. NOT fixed here: repointing the User JAVA_HOME is a machine-level change and something deliberately installed temurin8 on 07-04 evening — whoever did that should reconcile. (2026-07-05)
+- [ ] ai_activate on a fresh worktree dev stack fails RUNTIME_VARIANT_NOT_INSTALLED(cuda12) although dev-runner resolveAiDevEnv() set JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (dev-runner.cjs:420-437) — the activation flow consults installedVariants/install-state only, so branch-safety's 'every worktree references that one shared copy with zero per-worktree download' promise doesn't hold for activation. Worktree 683 live-verify hit this. (2026-07-06)
 
 ### obs:agent-tool-arg-coercion — Agent tool schema rejects string-typed numbers ("limit":"10") — burns an iteration every session; no coercion at tool boundary
 `kind: defect` `anchor: modules/app-services/.../registry/executor/OperationInputSchemaValidator.java` `seen: 2` `first: 2026-05-30` `last: 2026-06-11`
@@ -257,9 +258,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Standalone worker (no Head) bootstraps config from env+JVM only and skips application.yaml's index section, so index.auto_recovery/recovery.policy/integrity_check silently default (recovery disabled) — standalone recovery behavior diverges from production. Surfaced building tempdoc-628 CorruptionRebuildE2ETest. — `modules/indexer-worker/src/main/java/io/justsearch/indexerworker/IndexerWorker.java:85` (2026-06-21)
 
 ### obs:healthsurface — Worker recovery health-event occurrences (worker.restart-attempted/recovered, head.unclean-shutdown-
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/HealthSurface.ts` `seen: 2` `first: 2026-06-11` `last: 2026-06-21`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/HealthSurface.ts` `seen: 3` `first: 2026-06-11` `last: 2026-07-07`
 - [ ] Worker recovery health-event occurrences (worker.restart-attempted/recovered, head.unclean-shutdown-recovered) are delivered live via /api/health/events/stream but are NOT surfaced in any current FE nav surface: the unified Activity feed (tempdoc 612) filters them out, and HealthSurface.ts renderEvents() 'Recent events' section appears unrouted (core.health-surface renders the system overview instead) — `modules/ui-web/src/shell-v0/views/HealthSurface.ts:1330` (600/604 presentation territory) (2026-06-21)
 - [ ] Health audience — declared-vs-effective, likely working-as-intended (analyzed 2026-06-11, 569 follow-up): the Java `CoreSurfaceCatalog` declares the health surface `Audience.USER` (who *sees* the surface) while the FE `HealthSurface.ts:1266` passes `viewer-audience=OPERATOR` (the privilege tier to invoke the surface's OPERATOR-audience ops — `core.restart-worker`/`core.bulk-reindex`/`core.clear-failed-jobs`/`core.export-diagnostics`). These are two different axes (surface-visibility vs operation-privilege), not a single value to reconcile; in a local single-user app the user IS the operator, so the FE claiming OPERATOR is consistent. The 00-primitives audience-composition MAX rule raises effective audience via consumed *DiagnosticChannels*, not ops, so it doesn't auto-promote here. Verdict: not a bug to flip — a real decision only if multi-user audience separation is ever introduced (then either declare the surface `OPERATOR` or gate the ops by the real viewer instead of a hardcoded OPERATOR). — `CoreSurfaceCatalog.java` (`Audience.USER`) vs `modules/ui-web/src/shell-v0/views/HealthSurface.ts:1266` (2026-06-11)
+- [ ] USER-FACING fossil, live-verified 2026-07-07: the core.export-diagnostics jf-operation button never upgrades on BOTH hosting surfaces (HealthSurface.ts:1407, HelpSurface.ts:412) — element connected in the surface shadow tree but no shadowRoot/zero width while customElements.get('jf-operation') is defined globally (scoped-registry upgrade gap suspected); the 2026-07-04 ui-audit health/scrolled screenshot on main corroborates (Quick Actions shows only Reindex/Force Rebuild, no Export Diagnostics). Export Diagnostics is currently UNREACHABLE from the UI; the operation backend path works (live-verified via POST /api/operations/core.export-diagnostics/invoke). Presentation-authority fix needed — out of 683 scope. (2026-07-07)
 
 ### obs:bash-guard — Document in hooks-reference.md that the bash-guard force matcher is `git push`-anchored (`scripts/ag
 `kind: follow-up?` `anchor: scripts/agent-analytics/hooks/bash-guard.mjs` `seen: 2` `first: 2026-06-21` `last: 2026-06-30`
@@ -416,8 +418,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing (base HEAD, not 627): `./gradlew build` fails at `:ssotValidateExec` — field-catalog.schema.json requires 'analyzer' but 58/68 fields in SSOT/catalogs/fields.v1.json lack it (mid-flight ADR-0043 analyzer migration). Blocks full-build pre-merge gate for all worktrees off this HEAD. (2026-06-21)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 2` `first: 2026-06-21` `last: 2026-07-07`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
+- [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
 
 ### obs:tikaocrruntime — Pre-existing (untracked, another agent's 607 OCR work): IndexerWorkerGuardrailsTest fails — TikaOcrR
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/extract/TikaOcrRuntime.java` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
@@ -561,8 +564,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] branch-safety.md claims '.claude/settings.local.json is tracked' but it is gitignored (seeded from settings.local.json.example) — doc drift — `.claude/rules/branch-safety.md:20` (2026-07-01)
 
 ### obs:test-pipeline — test-pipeline.mjs fails at line 361 (JSON.parse of empty intervene output for realLargeFile large-fi
-`kind: environment?` `anchor: scripts/agent-analytics/test-pipeline.mjs` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
+`kind: environment?` `anchor: scripts/agent-analytics/test-pipeline.mjs` `seen: 2` `first: 2026-07-01` `last: 2026-07-06`
 - [ ] test-pipeline.mjs fails at line 361 (JSON.parse of empty intervene output for realLargeFile large-file test) on origin/main too — pre-existing/environmental, not from tempdoc 618 — `scripts/agent-analytics/test-pipeline.mjs:361` (2026-07-01)
+- [ ] test-pipeline.mjs has multiple stale/pre-existing failures on this machine (1f expects no additionalContext but intervene.mjs emits the auto-limit note for any >8KB file; 3a/3b hardcode D:\code\JustSearch; 10/11 expect retired guidance text incl. BrainView.tsx) — pre-dates 683; capture-evidence-bundle.mjs restoration fixed 1b/1c — `scripts/agent-analytics/test-pipeline.mjs:354` (2026-07-06)
 
 ### obs:goldencorpusintegrationtest — Pre-existing test-isolation issue unrelated to tempdoc-664: running --tests "*GoldenCorpusIntegratio
 `kind: environment?` `anchor: GoldenCorpusIntegrationTest` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
@@ -815,8 +819,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Independent UX audit, OUTSIDE the 565 agent window (real WCAG-AA contrast gaps the color-token gate misses — it bans bare accent literals, not text-on-token pairings): `ConfirmDialog.ts:202,209` (`color: white` on --accent-danger; `color: #18181b` on --accent-warning) and `CommandPalette.ts:208` (`color: #000` on --accent-tint). Swap to the paired on-tint/on-accent token. Also a GATE GAP: nothing enforces reduced-motion guards or text-on-token contrast — candidate `check-motion-safety.mjs` / a contrast-pair pass. (2026-06-05)
 
 ### obs:check-theme-token-closure — check-theme-token-closure: ghost token `--font-body` referenced in TokenEditorPlugin.ts (tempdoc 568
-`kind: environment?` `anchor: check-theme-token-closure` `seen: 1` `first: 2026-06-05` `last: 2026-06-05`
+`kind: environment?` `anchor: check-theme-token-closure` `seen: 2` `first: 2026-06-05` `last: 2026-07-06`
 - [ ] check-theme-token-closure: ghost token `--font-body` referenced in TokenEditorPlugin.ts (tempdoc 568 theme-authoring work) defined nowhere — pre-existing on the 565 branch base, unrelated to §15 (2026-06-05)
+- [ ] check-theme-token-closure and check-accent-as-text FAIL on base HEAD 2ef7396 (RecentsMenu.ts token closure; ActionLedgerView.ts accent-fill-as-text > baseline 0) — pre-existing, files untouched by 683 worktree; found running the ui-web gate battery (2026-07-06)
 
 ### obs:agentrunshape — **565 §3.A contract drift — `AgentRunShape` `done` EventDescriptor omits `sources`/`citations`** (`A
 `kind: defect?` `anchor: modules/app-services/.../conversation/AgentRunShape.java` `seen: 1` `first: 2026-06-05` `last: 2026-06-05`
@@ -1001,8 +1006,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] IndexingOverlay gating field `ai.index.embeddingQueueSize` does not track the embedding *backfill* queue (that's `embeddingPendingCount` in /api/status); the overlay never surfaces during normal embedding backfill — verify which queue it is meant to reflect (VDU/online-embed vs backfill) — `modules/ui-web/src/shell-v0/components/IndexingOverlay.ts:333` (2026-06-17)
 
 ### obs:server — Dev-stack ownership gates only `start` (spawn); a non-owner agent can POST `/api/knowledge/ingest`,
-`kind: defect?` `anchor: scripts/dev/justsearch-dev-mcp/server.mjs` `seen: 1` `first: 2026-06-17` `last: 2026-06-17`
+`kind: defect?` `anchor: scripts/dev/justsearch-dev-mcp/server.mjs` `seen: 2` `first: 2026-06-17` `last: 2026-07-01`
 - [ ] Dev-stack ownership gates only `start` (spawn); a non-owner agent can POST `/api/knowledge/ingest`, `/api/indexing/reindex|gc|migration`, or `reload` against a peer's running stack with no owner check — ownership grants no exclusivity over the mutating/lifecycle surface — `scripts/dev/justsearch-dev-mcp/server.mjs` (2026-06-17)
+- [ ] Fresh worktree dev-data has no AI chat-model pack imported; POST /api/ai/runtime/activate fails MODEL_PATH_REQUIRED even with llama-server auto-staged. /api/ai/packs/* expects a packaged manifest (end-user Install-AI flow), not a local-file import. Workaround: GET/POST full /api/settings/v2 with llm.modelPath set to a real local GGUF, then retry activate. Worth a documented dev-stack shortcut. — `scripts/dev/justsearch-dev-mcp/server.mjs:2432-2520` (2026-07-01)
 
 ### obs:indexgenerationmanager — `IndexGenerationManager.startMigration` builds a second-precision generation id (`g-<yyyyMMdd-HHmmss
 `kind: follow-up?` `anchor: modules/worker-core/src/main/java/io/justsearch/indexerworker/index/IndexGenerationManager.java` `seen: 1` `first: 2026-06-18` `last: 2026-06-18`
@@ -1149,8 +1155,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] governance kernel: ts-any gate fails on modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts (`(import.meta as any).env`) — pre-existing since PR #22 (tempdoc 662), not registered in gates/ts-any/baseline.txt. Not part of any tempdoc-655 work. (2026-07-02)
 
 ### obs:contract-surfaces-v1 — governance kernel: contract-projection gate fails — governance/contract-surfaces.v1.json and codegen
-`kind: environment?` `anchor: contract-surfaces.v1.json` `seen: 1` `first: 2026-07-02` `last: 2026-07-02`
+`kind: environment?` `anchor: contract-surfaces.v1.json` `seen: 2` `first: 2026-07-02` `last: 2026-07-07`
 - [ ] governance kernel: contract-projection gate fails — governance/contract-surfaces.v1.json and codegen TARGETS disagree on InferenceStatusResponse (a codegen TARGET not registered in the register). Pre-existing since the initial public release commit (29579e5), unrelated to tempdoc-655 work. Neither gate is wired into required public CI (ci.yml) — only phase-3-observability-nightly.yml references the governance kernel. (2026-07-02)
+- [ ] contract-projection gate RED on main (pre-existing, found during 681 publish full-kernel run 2026-07-07): schema-types-drift (gen-wire-schema-types check fails) + register-drift (codegen TARGET InferenceStatusResponse not in governance/contract-surfaces.v1.json) — needs `node scripts/codegen/gen-wire-schema-types.mjs` + register row by whoever added InferenceStatusResponse (2026-07-07)
 
 ### obs:docs — Found an unexpected concurrent python process (PID 17084, started 04:56:21, ~12s after my own jseval
 `kind: environment?` `anchor: scripts/jseval/624-corpora/battlefield-en-v1/docs.jsonl` `seen: 1` `first: 2026-07-02` `last: 2026-07-02`
@@ -1545,8 +1552,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-critical and no longer named by any invariant — SqliteJobQueue lives in modules/indexer-worker and no Head main code touches SQLite today, yet nothing (invariant text or ArchUnit rule) forbids a future Head-side SQLite reader. Consider re-affirming the SQLite half of the ownership invariant. (2026-07-06)
 
 ### obs:correction-probe — correction_probe's data file (jseval/data/correction-eval-queries.v1.json) was LOST in the private->
-`kind: environment?` `anchor: scripts/jseval/jseval/correction_probe.py` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
+`kind: environment?` `anchor: scripts/jseval/jseval/correction_probe.py` `seen: 2` `first: 2026-07-03` `last: 2026-07-06`
 - [ ] correction_probe's data file (jseval/data/correction-eval-queries.v1.json) was LOST in the private->public migration: correction_probe.py arrived in the initial public-release squash (29579e5) but its manifest has zero git history anywhere — the data/ dir never made it. Consequence: 2 tests fail on every suite run and are now normalized as 'expected pre-existing failures' in every agent brief — the broken-window pattern that will hide the next real failure. Fix is RECOVERY from the private archive (the original curated manifest), not fabrication of a new one (would silently change the probe's semantics). Until restored: either restore the file or remove probe+tests together. — `scripts/jseval/jseval/correction_probe.py:16` (2026-07-03)
+- [ ] test_correction_probe fails: jseval/data/correction-eval-queries.v1.json is not committed (load_manifest default path) — pre-existing, unrelated to 683 — `scripts/jseval/jseval/correction_probe.py:31` (2026-07-06)
 
 ### obs:utility-calibrate — Agent-eval concurrency lever (624 certified runs): local resources are not the binder -- calibration
 `kind: defect?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
@@ -1601,8 +1609,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Follow-up (tempdoc 680 retrospective): a small PostToolUse Write hint for NEW docs/tempdocs/*.md files in the main checkout ('commit the draft — worktrees branch from commits, not working trees') would mechanize the draft-commit lesson; third incident of the class (#446 + two in the 680 cycle) meets the rule-of-three bar — `scripts/agent-analytics/hooks/observation-shard-hint.mjs` is the template (2026-07-07)
 
 ### obs:prepare-worktree — prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which
-`kind: defect?` `anchor: prepare-worktree.cjs` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+`kind: defect?` `anchor: prepare-worktree.cjs` `seen: 2` `first: 2026-07-06` `last: 2026-07-06`
 - [ ] prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which cmd does not resolve ('is not recognized...'), while .\gradlew.bat from the same cwd works and JAVA_HOME is a valid JDK 25 — the spawn likely needs an explicit .\\ / cwd-qualified path (scripts/dev/prepare-worktree.cjs). npm-ci + config-seeding halves complete fine. (2026-07-06)
+- [ ] prepare-worktree.cjs installDist step fails in a fresh worktree: spawns 'gradlew.bat' bare (not './gradlew.bat' / absolute), 'not recognized' on Windows cmd spawn — npm ci half works, dist half never ran. scripts/dev/prepare-worktree.cjs (2026-07-06)
 
 ### obs:parser-conformance-test — modules/ui-web `npm run typecheck` fails on the untouched base: TypeScript 6.0.3 (package.json ^6.0.
 `kind: environment?` `anchor: src/shell-v0/router/parser.conformance.test.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
@@ -1651,6 +1660,54 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:llamaserveropscrashtelemetrytest — LlamaServerOpsCrashTelemetryTest ('Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes
 `kind: environment?` `anchor: modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] LlamaServerOpsCrashTelemetryTest ('Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes') failed once on PR #76 CI (run 28836376358) but passes locally on identical merged code (--rerun) and passed main's own CI an hour earlier — timing-sensitive crash-telemetry flake under CI load, same class as the NdjsonInferenceTransitionLog retention flake — `modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java` (2026-07-07)
+
+### obs:unanchored-general-57 — ui-web typecheck is RED on main since the Dependabot npm-frontend bump (`b406e72`, TS -> 6.0.3): tsc
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] ui-web typecheck is RED on main since the Dependabot npm-frontend bump (`b406e72`, TS -> 6.0.3): tsc hard-errors TS5101 on the deprecated baseUrl in `modules/ui-web/tsconfig.json:28`. The `@/*` path alias it serves is used nowhere (no src imports, no vite config refs) — fix is deleting baseUrl+paths (done in worktree-search-thread, will land with that PR; cherry-pick earlier if main needs green typecheck sooner). (2026-07-06)
+
+### obs:unanchored-drift-18 — Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-critical and no longer named by any invariant — SqliteJobQueue lives in modules/indexer-worker and no Head main code touches SQLite today, yet nothing (invariant text or ArchUnit rule) forbids a future Head-side SQLite reader. Consider re-affirming the SQLite half of the ownership invariant. (2026-07-06)
+
+### obs:plugincapabilitybundle — Dependabot bump #7 (2026-07-01) moved ui-web to TypeScript 6.0.3 which broke `npm run typecheck` rep
+`kind: defect?` `anchor: PluginCapabilityBundle.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] Dependabot bump #7 (2026-07-01) moved ui-web to TypeScript 6.0.3 which broke `npm run typecheck` repo-wide (TS5101 baseUrl config error masking 66 file errors: missing types field, TS2882 css side-effect imports, TS5097 .ts-extension imports, TS2741 CustomElementRegistry.initialize) — minimal TS6 migration fix rides along in the 683 worktree (`modules/ui-web/tsconfig.json`, `PluginCapabilityBundle.ts:220`); CI apparently never ran the FE typecheck on that bump (2026-07-06)
+
+### obs:wireprojection — wireProjection.ts/wireValidator.ts have zero runtime consumers after the FE proto teardown (683 item
+`kind: defect?` `anchor: modules/ui-web/src/api/wireProjection.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] wireProjection.ts/wireValidator.ts have zero runtime consumers after the FE proto teardown (683 item 4) — protobuf-es/protovalidate boundary helpers whose only remaining caller is bigintToNumber's own test; candidates for retirement with the @bufbuild deps — `modules/ui-web/src/api/wireProjection.ts:102` (2026-07-06)
+
+### obs:token-names-generated — same pre-existing cluster: gen-token-names --check (stale token-names.generated.ts, 220 tokens) and 
+`kind: environment?` `anchor: token-names.generated.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] same pre-existing cluster: gen-token-names --check (stale token-names.generated.ts, 220 tokens) and strip-token-fallbacks --check (6 fallbacks) also fail on base HEAD via untouched RecentsMenu.ts/ActionLedgerView.ts — the ui-web token gate set was skipped when those components landed; one regen+rebalance session fixes all four checks (2026-07-06)
+
+### obs:unanchored-drift-19 — reconfirmed the stale-dist pitfall from the worktree side: dev-runner start printed 'Ensuring distri
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] reconfirmed the stale-dist pitfall from the worktree side: dev-runner start printed 'Ensuring distribution is up-to-date (assemble)' but the head served pre-edit bytecode (diagnostics export lacked the just-added fe-telemetry entry) — assemble reported up-to-date without refreshing modules/ui/build/install; explicit :modules:ui:installDist before start remains mandatory (CLAUDE.md pitfall row, tempdoc 511-followup) (2026-07-06)
+
+### obs:component-vocabulary-generated — component-vocabulary.generated.ts is stale vs reality: jf-security-surface, jf-context-inspector-pan
+`kind: defect?` `anchor: component-vocabulary.generated.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] component-vocabulary.generated.ts is stale vs reality: jf-security-surface, jf-context-inspector-pane, jf-recents-menu mount in the live app but are absent from the vocabulary (683 liveness census, live DOM walk 2026-07-06) — the generated register lags the tree; check its regen trigger (2026-07-06)
+
+### obs:unanchored-drift-20 — ui-shot step skeleton-library fails in every harness mode (live --no-demo, --fixtures, demo): rail c
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] ui-shot step skeleton-library fails in every harness mode (live --no-demo, --fixtures, demo): rail click reaches the library surface but data-testid skeleton-library never becomes visible; the e2e_view_delay_ms=4000 skeleton-hold mechanism has no matching selectors in modules/ui-web/src (grep empty) — step vs FE drift predating worktree 683; found during the 683 liveness census (2026-07-06)
+
+### obs:buf — Stale comment: contracts/catalog/severity/buf.yaml:8 still claims the root :wireGenerate task discov
+`kind: defect?` `anchor: contracts/catalog/severity/buf.yaml` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Stale comment: contracts/catalog/severity/buf.yaml:8 still claims the root :wireGenerate task discovers each catalog for TS emission — :wireGenerate is Java-only since the 683 TS-emission teardown — `contracts/catalog/severity/buf.yaml:8` (2026-07-07)
+
+### obs:unanchored-missing-6 — npm version skew trap: a locally-resynced modules/ui-web/package-lock.json (npm 11.6/node 24.12) pas
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] npm version skew trap: a locally-resynced modules/ui-web/package-lock.json (npm 11.6/node 24.12) passed local 'npm ci --dry-run' but failed CI's stricter sync validator (node 24.14 bundled npm) with 'Missing: @emnapi/core@1.11.2' — optional wasm-binding transitives. Fix that works on both: regenerate with 'npx -y npm@latest install --package-lock-only' and verify 'ci --dry-run' under BOTH npms. Cost one red required-checks round on PR #77. (2026-07-07)
+
+### obs:unanchored-drift-21 — package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pr
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
+
+### obs:unanchored-general-58 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
 
 ## Parked
 
