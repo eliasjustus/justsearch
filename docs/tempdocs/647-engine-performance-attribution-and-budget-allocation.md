@@ -3,7 +3,7 @@ title: "Engine performance attribution — completing the perf metric-family int
 type: tempdocs
 status: "IMPLEMENTED + SHIPPED + LIVE-VALIDATED (2026-07-01). All of 647's implementable surface is done as pure `jseval` Python (no engine/UI/public-doc change), unit + live validated. See the dated sections below for the design history; the last three sections (Feature B / Deferred items / Trend / Live-activation) are the current state, and the final §Handoff consolidates open items. SHIPPED: (1) closed latency decomposition — `provenance._aggregate_stage_timing` computes the per-query `unaccounted_ms` remainder + per-stage `share` (report-only; closes to 1.0), `run.py` promotes `retrieval_p50_ms` into `aggregate_metrics` beside `ce_p50_ms`, `metric_families`+`perf_gate` gate retrieval relatively (envelope band + 1.5 fallback) + register per-component footprint, `release._measured_for_mode` projects them; (2) `jseval compare` which-stage-moved attribution (`compare_runs.compare_stage_decomposition`); (3) `jseval perf-report` — per-run latency-waterfall + footprint-allocation readout (`build_perf_report`); (4) `jseval trend` trends `unaccounted_p50_ms` (dark-latency creep) + `retrieval_p50_ms` (history columns + migration); (5) `perf_gate` component-derivation memo. VALIDATED: ~1091 jseval unit tests green (only the 2 pre-existing unrelated `test_correction_probe` failures); a live fresh-backend scifact run proved end-to-end materialization (shares 1.0000, retrieval promoted, footprint incl. NER), `perf-report` renders live, `perf-gate` stays green. REMAINING — NOT a 647 code task: activating the new floors so they gate live needs a release recompose. UPDATE (post-merge with `main`, 2026-07-01): tempdoc **666 has already re-anchored `release.v1.json`** to a live commit (`84b305b2`) + current corpora (`beir/scifact`, `mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`, `mixed/enron-qa`) — resolving the earlier dead-commit/retired-corpus blocker this tempdoc first diagnosed (courtlistener→CLERC). So activation is now just a **routine recompose once 647's metrics are on `main`**: a fresh cohort run re-pins the floors and picks up the new `retrieval_p50_ms` + footprint-component metrics (they are absent from 666's release because it predates this code). The perf code activates the moment that recompose lands — no special corpus-integrity decision remains."
 created: 2026-06-25
-updated: 2026-07-01
+updated: 2026-07-07
 author: agent analysis — spun out of tempdoc 640 (scope correction, 2026-06-25). Filed as a purpose-only stub per the 640 convention; no design chosen.
 related:
   - 640-engine-performance-budget-latency-throughput-footprint   # delivered the measure→guard band; this is its 'attribute → budget' continuation. The ratchet protects any allocations from regressing.
@@ -1101,3 +1101,26 @@ The NER `model.onnx` (135 MB) was downloaded from the model registry
 (`modules/ui/src/main/resources/ai/model-registry.v2.json` → `eliasjustus/justsearch-releases` `models-v1`,
 sha-256 verified) into `models/onnx/ner/`. Like the other model `.onnx`, it is an **Install-AI download artifact,
 not git-tracked** — a fresh environment obtains models via the Install-AI flow / registry, not the repo.
+
+## Addendum (2026-07-07) — recompose must re-pin AFTER tempdoc 691's NER fix
+
+Two dated updates from the 691 corpus-build-throughput pass (merged to `main`
+2026-07-07, PR #90):
+
+1. **The routine recompose this handoff describes must use a post-691 cohort
+   run.** Between 647's close (2026-07-01) and 2026-07-07, NER enrichment ran
+   ~10× degraded (INT8 CPU model on CUDA — 691 §B-5/F-013), so enrichment
+   `docs_per_s` measured in that window describes a broken machine state.
+   Floors pinned from a pre-fix run would sit far below healthy throughput and
+   let a real regression back toward the degraded state pass the ratchet.
+   Post-691-merge, a fresh cohort run picks up the healthy numbers
+   (battlefield reference: 124.0 s / 3.15 docs/s enrichment, 691 §Phase C).
+2. **This tempdoc's "Local-environment note" above resolves 691's open
+   provenance question** (691 §Unverified assumptions #7): the NER
+   `model.onnx` mtime of 2026-07-01 traces to the model-registry / Install-AI
+   download recorded here — not to an interrupted `build-ner.py` run. The
+   registry `models-v1` pack supplied only the CPU (INT8) variant with no
+   `model_fp16.onnx` sibling, which is what put the dev environment into the
+   silent INT8-on-CUDA state 691 diagnosed. Routed to 691's model-artifact
+   integrity follow-up: whether the registry pack itself should carry (or the
+   install flow should fetch) the fp16 GPU variants.
