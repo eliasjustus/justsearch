@@ -1,9 +1,9 @@
 ---
-title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process executor so cell failures are observable, resumable, and forensically complete"
+title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "open — design pass done (2026-07-07), no implementation yet. STUB→design: §Design pass (2026-07-07) records a measured attribution of the ~3h wall (520-cell matrix; wall dominated by the max_tasks=1 condition-serialization 2× + a tail-heavy agent-loop per-cell mean, NOT the search backend) plus a bench-backed lever ranking. Owner priority (2026-07-07): CUT WALL-CLOCK, not decouple — levers are the single concurrency pool + the in-process cell (neither touches inference placement). CPU-inference offload / dedicated-CPU-backend was surfaced by the attribution and REJECTED by the owner (a slower CPU run holds the box longer AND contends for the CPU dev itself needs, so it slows all dev for longer — faster-on-GPU = shorter exclusive hold = less disruption). Original trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "open — DESIGN SETTLED (2026-07-07), no implementation yet. Read §Settled design first (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
-updated: 2026-07-03
+updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
 category: agent-eval / jseval / execution-infrastructure
 related:
@@ -464,3 +464,130 @@ Two narrower shapes fall out, each potentially reusable beyond this eval:
 And a method refinement worth promoting if it survives scrutiny: **attribute signal, not only cost** —
 extend 691's "attribution before allocation" so a measurement's *runtime* is optimized only after its
 *sensitivity* is confirmed sufficient to conclude.
+
+---
+
+## Settled design (2026-07-07) — executor-v2 substrate, scoped to what 675 owns
+
+> This is the design conclusion. It supersedes the open questions in §Theorization *for the executor
+> substrate only*; the statistical/cadence reframes there remain open and are explicitly handed to
+> their owners below. General, not implementation-level: it fixes the *shape* of v2 and the exact
+> extend/replace/orphan boundary, code-verified this session (`file:line` in §Evidence and inline).
+
+### The design in one paragraph
+
+The measurement cell becomes an **in-process Claude Agent SDK session** (parity-preserving), so a
+cell's tool calls, tool **results**, model init, and usage/cost are objects — not stdout to parse —
+and the offered MCP surface is a constructed, assertable value rather than an init-event disclosure.
+The matrix stops being **one Inspect task per condition run under `max_tasks=1`** (the current
+structure, verified) and becomes **one task whose samples are the flat cell list**, with
+`(corpus, condition, seed→epoch, query)` as the sample identity and **one bounded concurrency pool**
+(`max_samples` at the calibrated cap). Each cell runs under a **per-cell wall-clock budget** (so a
+disclosed retry can no longer hold a slot for twice the budget) and a **generous `max_turns` cap**
+(clipping the pathological turn tail without biasing the measured tool-use — set well above the
+useful range). Everything else that already works is **preserved, not rebuilt**: Inspect's durable
+per-sample resume, 624's cell-identity seam, and the `utility-comparison.v1` record. Net effect: the
+same substrate change that makes a cell forensically legible also removes the run's two structural
+wall-clock wastes (per-condition serialization, unbounded retry/turn budgets), so the measurement is
+cheap enough to run at the cadence decisions need.
+
+### Extend / preserve — the parts that work are load-bearing and stay
+
+- **The Inspect shell.** `eval_set` durable per-sample resume is already keyed by a **deterministic
+  `eval_set_id`** (pinned from a config hash precisely so a crash-restart resumes; `agent_utility_inspect.py:355-374`)
+  → resume is *satisfied*; v2 preserves it, only adjusting the sample-id shape to carry `condition`
+  (e.g. `"{condition}|q{i}"`) so ids stay unique inside one task. Adaptive concurrency, epochs-as-
+  seeds, schema-valid EvalLog — all retained.
+- **624's "one identity, three roles" seam.** Sample id = cell identity = resume key = pairing key =
+  record key. v2 conforms; it does **not** introduce a new identity or a parallel resume mechanism.
+- **The record + composer.** `utility-comparison.v1` is unchanged, and `compose_utility` is decoupled
+  from task/sample topology (it consumes already-reshaped summaries, `utility_comparison.py:266`) —
+  so it needs no change.
+- **Calibration.** Extend `utility_calibrate` to pilot the **per-cell budget at the target
+  concurrency** (and optionally probe the concurrency cap), never hand-set — this keeps the
+  hard-won "calibrate, don't guess" governance (624's twice-learned lesson).
+
+### The single-pool restructure's real (bounded) blast radius
+
+Beyond the runner itself, exactly **one** downstream reader is coupled to the one-task-per-condition
+shape: `eval_logs_to_summaries` reads `condition` from **task-level** `log.eval.metadata`
+(`agent_utility_run.py:170-171`); it must read it from **sample** metadata instead (seed is already
+sample-level there, so the plumbing pattern exists). This adjustment is **in-scope for 675** — it is a
+direct consequence of the restructure, not a 624 record change.
+
+### Orphans — their deletion/tombstoning is THIS tempdoc's work, not a later cleanup sweep
+
+The classic runner's file (`agent_retrieval_eval.py`) is a grab-bag; only the *classic executor* is
+orphaned, and some neighbours must **relocate first** so the orphan deletes cleanly:
+
+1. **Delete:** `agent_retrieval_eval.run_agent_eval` (the `ThreadPoolExecutor` classic execution path),
+   `_get_reflection` (+ its `claude -p --resume` reflection subprocess — an arm the composer never
+   reads), and `_build_agent_cmd` (its argv builder).
+2. **Delete (in-place within the Inspect runner):** `agent_utility_inspect._build_argv`, its
+   `subprocess.run` cell dispatch, and the one-task-per-condition + `max_tasks=1` construct —
+   superseded by the Agent-SDK cell and the single pool.
+3. **Delete:** `build_disallowed_tools` (the `--disallowedTools` flag builder) — superseded by the
+   Agent SDK `allowed_tools` allowlist. (The *assertion* helpers `find_disallowed_tool_calls` /
+   `find_leak_suspect_tool_calls` **survive**, adapted to object input.)
+4. **Confirm-last-consumer, then delete:** the stdout parsers `parse_claude_stream_json` /
+   `parse_claude_init_event` orphan once no path shells out for stdout; verify no surviving Tier-2
+   path still uses them before removing.
+5. **Remove or repoint:** the CLI subcommand `cmd_agent_eval` (`jseval agent-eval`) and the tests in
+   `test_agent_retrieval_eval.py` that call `run_agent_eval` — either drop them or repoint to a v2
+   smoke mode (675's Direction already elects smoke/diagnostic status with a deprecation note naming
+   v2).
+6. **Relocate before deleting (so the orphan's neighbours don't break):** the surviving shared helpers
+   (`stage_corpus_dir`, `_score_answer`, the two assertion helpers) move to a neutral module —
+   `_score_answer` alone has three other consumers (`corpus_fidelity.py`, `utility_calibrate.py`,
+   `utility_judge.py`), and the file also hosts the **independent Tier-1/Tier-2 retrieval runners**
+   (`run_retrieval_eval`, `run_tier2_eval`, `load_queries`, formatters) which are **not** 675's to
+   touch. Leaving a "retired" module alive purely as a helper-import target is the anti-pattern the
+   relocation avoids.
+
+### Scope boundary — what 675 does NOT own (handed to owners, recognized-not-built)
+
+The §Theorization reframes are real but belong elsewhere; 675 executes *whatever cell set it is
+given* and must not absorb the measurement-design question:
+
+- **Statistical / cadence design** — continuous trickle, sequential/anytime-valid stopping, variance-
+  driven allocation, control variates, the surrogate-proxy study, and memoize-the-invariant-arm →
+  **624** (matrix/record) and **673** (standing cadence/gate). 675's single-pool flat-cell executor
+  makes any *subset* cheap to run, which is the mechanism those tiers need — but *which* cells and
+  *when* is their policy, not this substrate's.
+- **Backend query throughput** (the ~6.7 qps GPU-rerank ceiling measured this session) — **648** +
+  the /search-quality register; retrieval-semantics-affecting, out of an executor's remit.
+- **Record shape, judge, governance gates** — **624**, settled.
+
+### Reach — candidate principles (named, with earn/retire; deliberately NOT built now)
+
+Separating "recognizing a principle" from "building general structure": these are recorded as
+candidate shapes, not new apparatus.
+
+- **Primary — Two-tier (or continuous) measurement** (the shape v2 *instantiates*). Every quality axis
+  needs a *cheap signal at decision cadence* plus a *rare high-rigor certification*, and the expensive
+  tier must never sit on the critical path of routine work. v2 is the shared substrate that makes both
+  cheap. **Applies elsewhere:** the relevance ratchet, the performance gate (640), the leak scan, the
+  llm-gen gate. **Candidate existing violation:** if agent-utility's only routine-runnable tier is the
+  full certification (673 defined but not the routine cadence), that is the gap v2 narrows — stated as
+  a candidate, not an assertion. **Earns its keep when:** the cheap tier catches a real regression
+  ahead of a certification run *and* routine development is observably not blocked by the expensive
+  tier. **Retire when:** the cheap tier's false-negative rate forces routine re-runs of certification
+  anyway — then it is one tier with overhead, not two.
+- **Amdahl ceiling of a shared serial resource** (diagnostic). A saturated shared resource (here the
+  per-model GPU inference `Semaphore(1)`) caps throughput no matter the client parallelism. **Applies:**
+  anywhere client fan-out funnels into a shared GPU session (embed / rerank / NER / SPLADE all use a
+  single-permit semaphore; corpus-build throughput, 691, already lives against it). **Earns its keep
+  when:** it correctly predicts a concurrency raise that does not improve wall-clock (the bench already
+  showed qps saturation). **Retire when:** the resource is over-provisioned relative to any realistic
+  concurrency (as a *fact* it doesn't retire; as a *live lever* it does).
+- **Attribute signal, not only cost** (refinement of 691's attribution-before-allocation). Optimize a
+  measurement's runtime only after confirming its sensitivity can conclude. **Applies:** any standing
+  gate where a "make it faster" investment is proposed. **Earns its keep when:** it correctly defers a
+  throughput investment because the metric was first shown noise-dominated (673's finding is the live
+  example). **Retire when:** metric sensitivity is never in practice the binding constraint — then the
+  refinement is ceremony.
+- **Memoize-the-invariant-arm** (from §Theorization C). In a paired comparison, the arm independent of
+  the variable under test is a caching opportunity, bounded by whether the design needs the arms
+  contemporaneous. **Applies:** any A/B with a fixed reference arm. **Earns its keep when:** a
+  regression-tier run measurably shrinks by reusing the engine-independent arm with no comparability
+  loss. **Retire when:** the temporal-drift re-baseline cost approaches the savings.
