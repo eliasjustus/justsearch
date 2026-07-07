@@ -894,8 +894,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing a11y: the DeclaredSurface engine renders declared regions as `<section role="main">`, so every declaration-default surface (Help/Settings/Library/Health) produces duplicate + nested `main` landmarks beneath the shell STAGE `main` (axe: landmark-no-duplicate-main, landmark-main-is-top-level). Invisible to check-a11y-closure (scans Shell.ts source, not the 569 engine's runtime output). Surfaced by the tempdoc 578 measured axe audit on standalone Help (non-composed) — independent of 578; a 569-engine follow-up — `modules/ui-web/src/shell-v0/components/DeclaredSurface.ts` (2026-06-13)
 
 ### obs:settings-v2-live — Build-hygiene: `./gradlew build` (re)normalizes line endings (CRLF→LF) on `SSOT/catalogs/synonyms.{d
-`kind: environment?` `anchor: ui-web/src/api/__fixtures__/settings-v2-live.json` `seen: 1` `first: 2026-06-13` `last: 2026-06-13`
+`kind: environment?` `anchor: ui-web/src/api/__fixtures__/settings-v2-live.json` `seen: 2` `first: 2026-06-13` `last: 2026-07-06`
 - [ ] Build-hygiene: `./gradlew build` (re)normalizes line endings (CRLF→LF) on `SSOT/catalogs/synonyms.{de,en}.v1.txt` and `ui-web/src/api/__fixtures__/settings-v2-live.json`, leaving content-identical churn in git status after every build (pre-existing; noticed during tempdoc 578) (2026-06-13)
+- [ ] running `npm run test:unit:run` in modules/ui-web rewrites a committed fixture with changed line endings (content-identical), dirtying the worktree — likely a fixture-refreshing test vs core.autocrlf interplay — `modules/ui-web/src/api/__fixtures__/settings-v2-live.json:1` (2026-07-06)
 
 ### obs:inference-model-id — Inference model-id drift: `modules/ui/inference-model-id.txt` and `scripts/verify-prerequisites.mjs`
 `kind: defect?` `anchor: modules/ui/inference-model-id.txt` `seen: 1` `first: 2026-06-13` `last: 2026-06-13`
@@ -982,8 +983,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] execution-surface gate fails on `FeatureSnapshots.java` — references SearchTrace but unregistered in governance/execution-surfaces.v1.json (pre-existing, last touched 2026-06-15 / af756370c; surfaced during 597 work) — register as projection or decide projection-vs-fork (2026-06-17)
 
 ### obs:gen-token-names — `gen-token-names.mjs --check` reports token-names.generated.ts stale (220 tokens) on main — pre-exis
-`kind: environment?` `anchor: gen-token-names.mjs` `seen: 1` `first: 2026-06-17` `last: 2026-06-17`
+`kind: environment?` `anchor: gen-token-names.mjs` `seen: 2` `first: 2026-06-17` `last: 2026-07-07`
 - [ ] `gen-token-names.mjs --check` reports token-names.generated.ts stale (220 tokens) on main — pre-existing, neither tokens.css nor the generated file touched by 596-remaining (2026-06-17)
+- [ ] Pre-existing red on unmodified main (verified 2026-07-07 in main checkout): scripts/ci/gen-token-names.mjs --check and scripts/ci/strip-token-fallbacks.mjs --check modules/ui-web/src both exit 1 — same class as the already-tracked theme-token-closure / accent-as-text reds; the four ui-web token-family checks are currently not enforceable as a gate set on main. (2026-07-07)
 
 ### obs:0004-single-tenant-gpu-policy — ADR-0004 line 52 stale: claims embedder "defaults to CPU-only (JUSTSEARCH_EMBED_GPU_LAYERS opt-in)"
 `kind: defect?` `anchor: docs/decisions/0004-single-tenant-gpu-policy.md` `seen: 1` `first: 2026-06-17` `last: 2026-06-17`
@@ -1596,6 +1598,18 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:observation-shard-hint — Follow-up (tempdoc 680 retrospective): a small PostToolUse Write hint for NEW docs/tempdocs/*.md fil
 `kind: lesson?` `anchor: scripts/agent-analytics/hooks/observation-shard-hint.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Follow-up (tempdoc 680 retrospective): a small PostToolUse Write hint for NEW docs/tempdocs/*.md files in the main checkout ('commit the draft — worktrees branch from commits, not working trees') would mechanize the draft-commit lesson; third incident of the class (#446 + two in the 680 cycle) meets the rule-of-three bar — `scripts/agent-analytics/hooks/observation-shard-hint.mjs` is the template (2026-07-07)
+
+### obs:prepare-worktree — prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which
+`kind: defect?` `anchor: prepare-worktree.cjs` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] prepare-worktree.cjs fails at the gradlew step on this environment: spawns plain 'gradlew.bat' which cmd does not resolve ('is not recognized...'), while .\gradlew.bat from the same cwd works and JAVA_HOME is a valid JDK 25 — the spawn likely needs an explicit .\\ / cwd-qualified path (scripts/dev/prepare-worktree.cjs). npm-ci + config-seeding halves complete fine. (2026-07-06)
+
+### obs:parser-conformance-test — modules/ui-web `npm run typecheck` fails on the untouched base: TypeScript 6.0.3 (package.json ^6.0.
+`kind: environment?` `anchor: src/shell-v0/router/parser.conformance.test.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] modules/ui-web `npm run typecheck` fails on the untouched base: TypeScript 6.0.3 (package.json ^6.0.3) errors TS5101 on deprecated baseUrl in `modules/ui-web/tsconfig.json:28`; with ignoreDeprecations silenced, pre-existing TS2591/TS2304/TS5097 errors surface across many existing files (e.g. `src/shell-v0/router/parser.conformance.test.ts:14`, `src/shell-v0/views/SearchSurface.degradation.test.ts:12`) — typecheck gate appears broken since the TS6 bump — `modules/ui-web/tsconfig.json:28` (2026-07-06)
+
+### obs:unanchored-general-51 — downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] downloadLlamaCudaPrebuilt skips the SHA-256 pin the CPU prebuilt has ('hash check disabled for large file') — the cuda12 zip is version-pinned by URL but not content-pinned — `modules/ui/build.gradle.kts:566-570` (2026-07-06)
 
 ## Parked
 
