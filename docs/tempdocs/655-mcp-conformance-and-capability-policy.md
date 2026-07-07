@@ -1,7 +1,7 @@
 ---
-title: "MCP conformance and capability policy: define the conformance bar and mutating-tool policy for JustSearch's production MCP endpoint"
+title: "MCP surface obligations — conformance, capability policy, and agent-adoption legibility for JustSearch's production MCP endpoint"
 type: tempdocs
-status: open — core capability-policy + conformance work shipped and live-verified (see "Current state" at the end); client fixture coverage remains deliberately deferred as a product decision. 2026-07-07: this tempdoc now ALSO owns the adoption/discoverability lever — the 624 Step-1 pilot measured adoption_rate 0.0 with a verified eager-offered surface (see "Adoption-zero finding" at the end); the 624 Step-2 utility run is gated on moving adoption via the product surface (names/descriptions/server instructions), never via the frozen eval prompt
+status: open — core capability-policy + conformance work shipped and live-verified (see "Current state" at the end); client fixture coverage remains deliberately deferred as a product decision. 2026-07-07: this tempdoc now ALSO owns the adoption/discoverability lever — the 624 Step-1 pilot measured adoption_rate 0.0 with a verified eager-offered surface (see "Adoption-zero finding" at the end); the 624 Step-2 utility run is gated on moving adoption via the product surface (names/descriptions/server instructions), never via the frozen eval prompt. 2026-07-07: the adoption lever now has a settled DESIGN (not built) — an "agent-legibility layer": the absent MCP `initialize.instructions` field populated as a single-sourced projection of the existing `getStatusContext` steering signal, comparative (not feature-forward) guidance placed where 366's eval proved it works (connect-time instructions + tool responses, not longer descriptions), and validated on 624's scale-member corpus via a two-corpus adoption contrast. See "Design pass on the agent-adoption legibility lever" at the end. 2026-07-07: the agent-legibility layer is now IMPLEMENTED and live-verified (instructions field + comparative response hints + TOOL_SURFACE_VERSION 0.2.0 + orphan removal; real `claude` CLI quoted the instructions back over the production HTTP `/mcp`; 11/11 conformance) — see "Implementation of the agent-legibility layer" at the end. The decisive adoption two-corpus contrast stays deferred to 624's not-yet-built scale corpus
 created: 2026-06-28
 updated: 2026-07-07
 category: mcp / agent-safety / contract-testing / capability-policy
@@ -994,3 +994,673 @@ outcome-reshaping and invalidates the comparison. Success metric: the before/aft
 `adoption_rate` / `first_mcp_call_index` / `mcp_call_share` delta on a re-run of the 624 Step-1
 pilot (~$3/iteration, machinery ready on main), reported as its own result regardless of direction.
 The 624 Step-2 utility run stays gated until adoption is measurably non-zero.
+
+---
+
+# Takeover investigation of the adoption lever (2026-07-07) — grounding + verdict, no code written
+
+A fresh takeover pass focused on the adoption-zero finding this tempdoc now owns. Goal: verify the
+finding against its own artifacts, test its stated hypotheses against the code and the run data, and
+end with an explicit "should this be done, and now" verdict — not to begin implementation. Every
+claim below is anchored to a primary source read this pass.
+
+## What was verified free, from artifacts already on disk
+
+- **The finding reproduces exactly.** `scripts/jseval/624-run-2026-07-07-pilot/logs/…agent-utility-task….json`,
+  parsed cell-by-cell: 10/10 B cells, **174 tool calls (75 Grep, 61 Read, 38 Bash), 0 `justsearch_*`
+  calls**, 8–31 calls/cell, accuracy 0.9. `mcp_tools_offered=6` and `mcp_servers=[{justsearch,
+  connected}]` on all 10 cells. The finding's headline numbers are accurate, not rounded or narrated.
+- **The "deferral" sub-hypothesis is empirically false for this cohort.** The finding's candidate
+  mechanism #1 ("deferred-tool clients see descriptions only after loading") does not apply here:
+  `mcp_tools_deferred=False` on every cell (cohort `tool_surfacing_mode: eager`, CLI 2.1.202). The
+  six tools *and their hand-written descriptions were in-context at decision time* and the agent
+  chose Grep anyway. So the live lever is not "fix deferral" — it is the harder "descriptions were
+  read and lost to a habit prior," which is a weaker thing for copy edits to move.
+- **The server `instructions` field is genuinely absent.** `McpProtocolHandler.handleInitialize`
+  (lines 133–147) returns `protocolVersion` / `capabilities` / `serverInfo` and **no `instructions`
+  key**. The finding's candidate #3 is real and code-confirmed.
+- **`prompts/*` and `resources/*` handlers exist** (`McpProtocolHandler` 80–85, `McpToolSurface#listPrompts`
+  734) — so the "onboarding prompt/resource surface" the finding references is present but unexercised.
+
+## Two corrections to the finding's own framing, from reading the evidence
+
+1. **Lever triage: two of the three named candidates are structurally weak; one is both untried and
+   capable of reaching an autonomous agent.** MCP *prompts* are, by protocol design, **user-invoked**
+   (they surface to the human as slash-commands/templates; an autonomous agent client never calls
+   `prompts/get` unprompted). So "surface onboarding via prompts/resources" cannot move autonomous
+   adoption on its own — it addresses a human-in-the-loop path this eval doesn't exercise. Of the
+   three levers, tool *descriptions* were already eagerly surfaced and ignored (above), which leaves
+   the server **`instructions` field** as the single lever that is both (a) genuinely untried and (b)
+   structurally injected into the agent's system context by real clients at connect time. If any
+   description-tuning campaign is run, `instructions` is the higher-leverage, lower-cost thing to try
+   first, and copy-tuning descriptions that were just shown to be read-and-ignored is the lower-leverage
+   half.
+
+2. **The adoption metric on this corpus has near-zero accuracy headroom, so "adoption unlocks utility
+   measurement" is weak here.** The A-arm/grep baseline already scores **0.9** on battlefield-en-v1
+   (390 docs, English, multi-hop). Even *perfect* MCP adoption leaves ≤1/10 of accuracy to win on
+   this corpus; the only axis with room is cost/call-count. Steering work validated **solely** against
+   condition-B `adoption_rate` on this corpus can therefore move the proxy (adoption) without any way
+   to show it moved the goal (better/cheaper answers). This is the classic proxy-optimization trap the
+   measurement-integrity boundary (freeze the eval prompt) does *not* protect against.
+
+## The one signal that survives every confound
+
+The 2026-07-07 smoke's condition-C texture — even when *forced* onto the MCP-only surface, cells
+reached `justsearch_search` only after ToolSearch flailing and **no cell has ever called
+`justsearch_answer`**, the surface's own designated primary QA tool, in any run on record — is not a
+choice artifact. When a tool is the *only* option and still isn't found/used, that is a genuine
+interface-discoverability defect, independent of corpus scale or grep-competitiveness. This part is
+squarely 655's domain and is worth fixing regardless of how the adoption question resolves.
+
+## The competing explanation the finding does not rule out
+
+The finding, and 624's pre-registered tree, both route "null + low adoption" straight to "steering
+problem → 655." But there are two live explanations for zero adoption and only one is a defect:
+- **(a) Discoverability/steering defect** — the agent would benefit but doesn't realize it. Fixable
+  by 655 surface work.
+- **(b) Rational non-adoption at this scale** — at 390 grep-able docs an agent that scores 0.9 with
+  Grep is making a *correct* call to ignore a branded search tool. Not a defect; 655 copy work would
+  be optimizing a proxy.
+The default JustSearch deployment (Claude Code, which ships Grep/Read/Bash, + the JustSearch MCP) is
+exactly condition B, so (b) is not an artificial scenario — but neither is it ruled out. 624's tree
+only reaches for the **scale** lever on the *high*-adoption null branch; it never tests scale against
+the *low*-adoption branch, which is where it would actually discriminate (a) from (b). The cheapest
+experiment that separates them is a corpus-hardness variant of the same pilot (grep baseline pushed
+down to ~0.5 by a larger / less-grep-able corpus): if adoption stays 0 at scale → (a), a real defect,
+now measurable on a corpus with accuracy headroom; if adoption rises at scale → (b), and the honest
+product move is positioning ("JustSearch for corpora too big to grep"), not copy edits. That machinery
+is 624-owned and ~$3, the same envelope as the steering re-run this tempdoc already budgets.
+
+## What this displaces or duplicates
+
+- **tempdoc 366** (tool-interface-design eval) authored the current descriptions — 655's copy-tuning
+  is a *second iteration on 366's output*, justified only because 366's descriptions now measure at 0
+  adoption. Not new territory; a re-open of settled work with a new reason.
+- **tempdoc 656** (five-minute agent runtime onramp) and **654** (runtime contract / product center)
+  own the onboarding-surface story; the "onboarding prompt/resource" lever named in the finding is
+  closer to 656's remit than 655's.
+- The **server `instructions` field** is the only genuinely net-new surface — it duplicates nothing.
+
+## Verdict
+
+**Should this be done at all?** Partly. Split the owned scope in two:
+- **Do now, narrowly (real defect, no confound):** fix the interface-discoverability defect that shows
+  even under *forced* use — `justsearch_answer` never invoked, `justsearch_search` reached only after
+  flailing. Prime candidate lever: add the absent server `instructions` field. This is defensible on
+  its own evidence and does not depend on the adoption metric being sound.
+- **Do NOT yet, as framed:** a description-copy-tuning campaign validated against condition-B
+  `adoption_rate` on battlefield-en-v1. That target has near-zero accuracy headroom (0.9 grep
+  baseline) and has not been separated from the rational-non-adoption explanation.
+
+**Should it be done now?** The narrow interface-defect half: yes. The broad adoption-steering half:
+not before one cheap discriminating experiment.
+
+**Cheapest evidence that validates/invalidates the need — does it exist?** Two tiers:
+- *Already exists, free:* the pilot's own 0.9 grep baseline. It alone establishes that condition-B
+  `adoption_rate` on this corpus cannot demonstrate accuracy utility, which invalidates using it as the
+  *sole* success metric. No new spend needed to know that.
+- *Cheap, does not yet exist (~$3, 624 machinery on main):* the corpus-hardness variant of the pilot
+  that separates "discoverability defect" from "rational non-adoption." This is the single highest-value
+  next spend, and it is a 624 experiment, not a 655 code change — worth running *before* 655 commits
+  iterations to copy tuning.
+
+**What it displaces/duplicates:** the description-tuning half re-opens tempdoc 366; the onboarding-prompt
+lever overlaps 656; only the server `instructions` field is net-new.
+
+**Net:** this tempdoc's *original* MCP conformance + capability-policy body is shipped and sound and
+needs nothing. The *newly-inherited* adoption lever is a real finding but is framed one hypothesis too
+narrowly: it pre-commits to "steer the agent via copy" before ruling out "the agent is right to ignore
+a search tool on a grep-able corpus." Recommend (1) ship the `instructions`-field / interface-defect fix
+now on its own merit, and (2) gate the description-tuning campaign behind the ~$3 corpus-hardness pilot
+that tells us whether adoption-zero is a defect or an artifact. Neither step is authorized to begin until
+the owner says go.
+
+---
+
+# Theorization pass on the adoption lever (2026-07-07) — directions, reframings, tensions (nothing decided)
+
+Written before any design commitment, to surface options and hidden assumptions a design pass should
+weigh rather than rediscover. Everything below is a possibility or a tension, not a ruling.
+
+## Reframing the problem — three different problems wear one label
+
+1. **From "persuade the agent" to "signal the boundary honestly."** The current frame ("adoption is
+   zero; move it via the surface") implicitly treats non-adoption as a persuasion failure. A more
+   durable frame: the surface's job is to make the *decision boundary* legible — the conditions under
+   which the tool actually beats grep (corpus larger than the agent can scan, paraphrase/semantic
+   queries keyword-grep misses, cross-lingual, entity/facet-scoped retrieval). A description that
+   states "prefer me WHEN X; grep is fine WHEN Y" makes a rational agent adopt *exactly when adoption
+   helps* — which, crucially, re-couples `adoption_rate` to utility and rescues it as a valid proxy
+   (the decoupling flagged in the verdict above is a symptom of feature-forward, not
+   boundary-forward, copy). Today's descriptions are feature-forward ("supports hybrid/text/vector
+   modes, querySyntax LUCENE, facets…"); none states when *not* to use the tool.
+
+2. **From "documentation problem" to "competition-under-a-prior problem."** An autonomous agent
+   selects tools under a strong training prior in which "grep the files" is overwhelmingly
+   represented, and under first-call uncertainty (grep is a known-safe quantity; a branded tool might
+   return nothing, be slow, or need setup). You are not competing on description quality against a
+   blank slate — you are competing against the model's prior and against zero-risk familiarity. That
+   reframes the levers: naming that *rides* the prior rather than fighting it, position in the tool
+   list, and lowering the perceived cost/risk of the *first* call may all matter more than richer
+   prose. Once an agent commits to a grep path it rarely revisits, so the whole contest is decided in
+   the first one or two tool selections.
+
+3. **From "did it call the tool" to "did the tool change the outcome."** `adoption_rate` (cells with
+   ≥1 MCP call) is binary and hollow-able: an agent that calls `justsearch_search` once, gets
+   confused, and falls back to grep counts as "adopted" while deriving nothing. A metric shape worth
+   pre-registering alongside it: *adoption that changed the trajectory* (tool call followed by an
+   answer the agent kept, or a measurable drop in total calls). Otherwise a copy edit can move the
+   headline number without moving anything real.
+
+## Hidden assumptions worth surfacing before they get baked in
+
+- **Model tier.** The finding is haiku-only. Smaller models lean harder on habitual tool priors and
+  under-explore; a frontier agent (the product's actual blast radius — Claude Code on Sonnet/Opus with
+  the JustSearch MCP) may adopt spontaneously. If so, "adoption is zero" is partly a small-model
+  artifact and the surface work should target the tier that actually underperforms. The cheapest
+  disambiguation is a single Sonnet cell: if it adopts, the problem is "steer small models"; if it
+  ignores the tool too, the surface itself is implicated. This assumption is currently untested and
+  cheap to test.
+- **Single-harness overfitting.** Adoption is measured through one stack (inspect-ai + one CLI version
+  + haiku). The MCP surface is a *public contract* consumed by many clients (Claude Code, Cursor,
+  Claude Desktop) and future models. Tuning copy until *this* harness adopts risks a local optimum
+  that doesn't transfer and may rot as clients/models change. Mitigation principle: change only things
+  that are principled in their own right (an honest decision boundary, the absent `instructions`
+  field) rather than harness-specific incantations that happen to move one number.
+- **More copy is not free.** ADR-0015 measured that *optional-parameter schema bloat hurt small-model
+  accuracy* — the schemas were hand-minimized deliberately. Persuasive description prose is the same
+  category of cost: more tokens in the tool surface can degrade the very small models the campaign
+  targets. "Add more convincing copy" may be self-defeating; shorter, front-loaded, decision-first
+  descriptions are the hypothesis more consistent with the existing evidence than longer ones.
+- **The grep baseline is the north star, not the enemy.** Fighting to win adoption on corpora where
+  grep is genuinely adequate optimizes against the product's own honesty. Defining the regimes where
+  JustSearch *structurally* wins (scale beyond the agent's scan budget, semantic/cross-lingual,
+  entity-scoped) and making those the eval strata, the tool descriptions, AND the product narrative —
+  one aligned story — is likely more valuable than any copy tuned to a grep-competitive corpus.
+
+## A menu of surface levers (ordered by leverage-per-cost, not decided)
+
+- **Server `instructions` field (untried, structurally reaches the agent).** Most clients inject it
+  into system context at connect time. Content should be a decision rule, not a plea: "this machine
+  has a local index of the user's files; for questions over the indexed corpus, `justsearch_answer`
+  returns cited passages across documents in one call — prefer it to reading files individually when
+  the corpus is large or the question spans multiple documents."
+- **Front-load / compress the tool descriptions** so the first sentence is the decision boundary, and
+  test *shorter* against *longer* rather than assuming richer wins (per the ADR-0015 caution).
+- **Naming.** `justsearch_answer` never gets called; a name that evokes the action at the name level
+  may outweigh a 300-word body for tool selection — but names are a versioned contract surface (654),
+  so naming churn has downstream cost and should be weighed, not done reflexively.
+- **MCP tool annotations** (`readOnlyHint`, etc.) — cheap, honest, MCP-native, and may nudge
+  client-side tool-preference heuristics without touching prose.
+- **Progressive disclosure in the first response / status** — teach the agent what the tool is good
+  for via the first result it sees, lowering first-call uncertainty.
+- **Explicitly NOT a lever for autonomous adoption:** the `prompts/*` surface. MCP prompts are
+  *user-invoked* by protocol (they surface to the human as slash-commands/templates and inject a
+  directive + status context — see `McpToolSurface#getPrompt`); an autonomous agent never calls
+  `prompts/get`. Improving them helps the human-in-the-loop onboarding path (closer to tempdoc 656's
+  remit) but cannot move the autonomous `adoption_rate` this finding measures.
+
+## Candidate principle / recurring system shape (named, not built)
+
+- **The public-surface triad: correct + safe + legible.** This tempdoc's original spine is conformance
+  (the surface speaks the protocol correctly) and capability policy (the surface is safe for an
+  untrusted caller). The adoption finding exposes a third, co-equal property the same surface must
+  have to matter: **legibility** — it must be *legibly better, at the moment of choice, exactly when
+  it is better*. Correct + safe + ignored is commercially inert. The three are one surface's three
+  obligations, not three projects.
+- **A tool description should encode a decision boundary, not a feature list.** Candidate invariant,
+  worth testing against the other tools and the REST surface before asserting: an external-facing
+  capability's self-description should tell a rational caller *when to choose it and when not to*, so
+  that adoption tracks utility by construction. This is the same "align the metric with the goal"
+  move, expressed at the surface layer.
+- **Latent capability, unwired surface — a repeating pattern in this codebase.** The consent mechanism
+  existed but MCP wasn't wired to it; `sendDesktopNotification` existed with zero callers; the
+  protocol's `instructions` field exists but `handleInitialize` never sets it; prompts/resources exist
+  but no agent path surfaces them. The recurring corrective (this tempdoc's own thesis, now a fourth
+  time) is *wire the existing capability to the surface that exercises it* before building anything
+  new. Adoption is the same shape one level up: the value exists; the surface doesn't yet make it
+  reachable at decision time.
+
+## Ideas worth banking for later (not now)
+
+- **The eval harness is standing A/B infrastructure for the surface, not a one-off.** Once the
+  before/after adoption pilot exists, *any* future tool-surface change (naming, a new tool, a
+  description edit) can be regression-tested for adoption impact. That reusability is itself a durable
+  asset worth naming — the surface acquires a measurement rig, so surface evolution stops being
+  guesswork.
+- **Client-conditional `instructions`.** 655 already captures `clientInfo.name` (display-only today).
+  A future `instructions` field could be tailored per client without new plumbing — but note the same
+  discipline the earlier passes settled: `clientInfo` is a hint, never a trust key; conditioning
+  *guidance* on it is fine, conditioning *policy* on it is not.
+- **Adoption as a positioning question, not only a copy question.** If the corpus-hardness experiment
+  shows non-adoption is rational at small scale, the honest deliverable is not a copy campaign but a
+  documented statement of when the tool earns its place — which then flows back into the description
+  boundary, the eval strata, and the product narrative as one coherent story.
+
+## Cross-tempdoc boundary (to prevent the same question being half-answered in five places)
+
+The adoption question sits where 624 (measurement / corpus strata), 654 (product-center thesis), 656
+(human onboarding onramp), 366 (tool-interface eval that authored today's descriptions), and 660
+(plugin surface) meet. A crisp division keeps the copy work from sprawling: **655 owns the surface as
+presented to an autonomous agent at decision time** (names, descriptions, annotations, server
+`instructions`); **624 owns whether and when the tool actually helps** (utility, corpus hardness);
+**656 owns the human onboarding path** (prompts/resources, first-run). The corpus-hardness experiment
+that discriminates "defect" from "rational non-adoption" is a 624 experiment whose *result* gates
+655's copy work — the two are sequenced, not merged.
+
+---
+
+# External research pass on the adoption lever (2026-07-07) — checking the moving targets
+
+The conformance/capability half of this tempdoc had a landscape check (see "External landscape check
+2026-07-02"); the newly-inherited adoption lever had none, and my theorization above rested on several
+claims about externally-owned, fast-moving targets (MCP client behavior, agent tool-selection research,
+the grep-vs-RAG debate) asserted from training knowledge rather than checked. This pass checks them. It
+**corrects two of my own earlier claims** — recorded rather than scrubbed. Nothing external was copied
+into the repo; sources are cited by URL for attribution only (no code/text/assets vendored, so the
+license-and-notices check has nothing to flag here).
+
+## Finding 1 — the `instructions` field is real and reaches the flagship client, but is client-uneven
+
+The MCP spec defines an optional `instructions` field on the `initialize` result — "instructions
+describing how to use the server and its features," which a client "may add to the system prompt." The
+spec does **not** mandate how a client uses it (implementation-defined). In practice: **Claude Code
+injects it into the system prompt and respects it consistently**; VS Code (Copilot Chat) and Goose
+inject it; **Claude Desktop does not yet consume it** (tracked as an open anthropics/claude-code issue
+to add exactly that); Cursor's handling varies. This is the same uneven-support shape the elicitation
+research earlier in this tempdoc found — but it lands *favorably* for the adoption lever, because the
+624 eval runs through the **Claude Code CLI**, the one client that honors `instructions` reliably. So
+of the three candidate levers, the server `instructions` field is confirmed both untried *and*
+structurally effective **in the exact client the measurement uses** — the strongest single reason to
+try it first. (Sources: [MCP spec — lifecycle/initialize & prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts),
+[cline discussion #3114 on injecting server instructions into the system prompt](https://github.com/cline/cline/discussions/3114),
+[anthropics/claude-code issue #43749 — Claude Desktop should consume the `instructions` field](https://github.com/anthropics/claude-code/issues/43749),
+[MCP server-instructions primer](https://sudoall.com/mcp-server-instructions/).)
+
+## Finding 2 — "prefer grep over RAG" is the frontier consensus; it strongly grounds the rational-non-adoption reading
+
+This is the most consequential finding and it *strengthens the verdict's caution*. Anthropic itself
+**replaced Claude Code's original vector-RAG pipeline with agentic grep** because the agentic approach
+"outperformed everything. By a lot" (attributed to Claude Code's creator); Cursor and Devin are
+reported to make the same choice. The analytical framing that best fits JustSearch's situation is the
+**cost-curve** model: `total_cost = build_cost + maintain_cost × time + per_query_cost × queries`, in
+which for "most small-to-mid-size repos the crossover is never reached" — the index's build/maintenance
+cost never amortizes, so grep wins. The same source names the three regimes where **indexed retrieval
+does win**:
+1. **Very large corpora** (its example is 100M+ line monorepos) where index cost amortizes over query volume;
+2. **Semantic queries where there is no specific symbol to grep** — conceptual/edge-case/"what discusses X" questions;
+3. **Context-scarce models**, where one-shot retrieval preserves context that multi-round grep would burn.
+
+Three implications for this tempdoc, in order of importance:
+- **The battlefield-en-v1 pilot sits squarely in the "crossover never reached" regime** (390 docs, keyword-findable). An agent choosing grep there is behaving as the cost curve predicts is *optimal*, not making a discoverability mistake — this is external, independent corroboration of the "rational non-adoption" branch the verdict said 624's tree never tests.
+- **It gives a precise, externally-grounded definition of when JustSearch structurally wins**, which is exactly the decision boundary a description should encode: *large corpus, OR semantic/no-exact-keyword query, OR a context-scarce agent.* JustSearch is a **document** product, and natural-language questions over prose hit the "no specific symbol" regime far more often than code lookups do — so its structural advantage is real, but it lives on the **query-type and scale axes, not on keyword lookup over a small corpus.**
+- **A new eval-design critique falls out:** the battlefield corpus tests recall of *fabricated proper-noun facts*, which are precisely the keyword-findable case grep is best at — so the eval may be adversarially easy for grep and understate JustSearch's semantic/paraphrase advantage. A corpus whose questions are semantic (no literal keyword present in the target passage) would test the regime where adoption *should* rationally occur. This is a 624 corpus-design point, surfaced here because it directly shapes whether the adoption metric can ever move for the right reason. (Sources: [Anthropic replaced their RAG pipeline with agentic search — analysis](https://robertheubanks.substack.com/p/anthropic-replaced-their-rag-pipeline),
+[HarrisonSec — "Agent Retrieval Is a Cost Curve Problem: Why Claude Code Doesn't Use RAG"](https://harrisonsec.com/blog/agent-retrieval-cost-curve-claude-code-grep-vs-rag/),
+[Milvus — a dissenting "grep burns too many tokens" cost argument](https://milvus.io/blog/why-im-against-claude-codes-grep-only-retrieval-it-just-burns-too-many-tokens.md).
+The dissent matters: the token-cost-of-grep counterargument is itself the "context-scarce model" regime above, and it is the axis on which a retrieval tool most plausibly beats grep even at modest scale.)
+
+## Finding 3 — Anthropic's tool-writing guidance corrects one of my earlier claims and qualifies another
+
+I fetched Anthropic's [*Writing effective tools for AI agents*](https://www.anthropic.com/engineering/writing-tools-for-agents) (the authoritative primary source) against the theorization pass's hypotheses:
+- **Correction — "shorter/front-loaded descriptions" is NOT what Anthropic recommends.** Their guidance
+  favors *richer* descriptions: "think of how you would describe your tool to a new hire… Consider the
+  context that you might implicitly bring… and make it explicit." My theorization floated *shorter*
+  descriptions as the better-supported hypothesis; against Anthropic's general guidance that is
+  backwards. **But it does not simply flip**, because ADR-0015's *own* small-model eval measured that
+  optional-parameter surface *hurt* accuracy — so the honest position is a genuine, model-tier-dependent
+  tension: frontier-model guidance says richer; JustSearch's small-model evidence says leaner. This
+  reinforces the model-tier hidden assumption (the pilot is haiku-only) rather than resolving it — and
+  means "shorten the descriptions" must not be adopted as an assumed win; it is a hypothesis to test on
+  the actual target tier, exactly as Anthropic says naming choices must be.
+- **Qualification — the "decision-boundary description" principle is half-endorsed, half mine.** Anthropic
+  does say to "be explicit about when to use each tool" (the positive half). It does **not** address
+  stating when *not* to use a tool / when to prefer the alternative — that "and grep is fine when Y"
+  refinement, which is what makes `adoption_rate` track utility, is my own extension, not established
+  guidance. Recording that honestly so a future reader doesn't over-credit it.
+- **Confirmations:** naming/namespacing has "non-trivial effects on tool-use evaluations… Effects vary
+  by LLM… choose a naming scheme according to your own evaluations" — directly supports both the
+  eval-driven approach *and* the single-harness-overfitting caution (you must eval on your target, yet
+  your target is many clients). And "more tools don't always lead to better outcomes… a few thoughtful
+  tools" endorses JustSearch's already-curated surface (ADR-0015). There is also active academic work on
+  exactly this problem — [*MCP Tool Descriptions Are Smelly! …Augmented MCP Tool Descriptions*](https://arxiv.org/html/2602.14878v1)
+  (2026) — signalling that "how tool descriptions drive selection" is a live research area, not settled,
+  which is itself a reason to treat any copy change as a measured experiment rather than a fix.
+
+## Net effect of the research pass on the earlier passes
+
+- The **verdict stands and is strengthened**: the "rational non-adoption at grep-able scale" reading is
+  now backed by the frontier labs' own published choice and a cost-curve model, not just internal
+  reasoning. The corpus-hardness experiment the verdict called the highest-value next spend is confirmed
+  as the right discriminator, and gains a sharper design target (semantic/no-literal-keyword questions,
+  not just "more docs").
+- The **`instructions`-field-first recommendation is strengthened**: confirmed effective in the exact
+  client the eval uses.
+- **Two theorization claims are corrected/qualified**: "shorter descriptions" is against general guidance
+  (kept only as a small-model-specific, must-test hypothesis), and the "when-not-to" half of the
+  decision-boundary principle is my extension, not industry-established.
+- No direction is reversed; the option space is the same, with two hypotheses down-weighted and two
+  recommendations more firmly grounded.
+
+---
+
+# Design pass on the agent-adoption legibility lever (2026-07-07) — settled at the design level, not built
+
+A design pass that grounds the adoption lever against what already exists in the codebase and in the
+adjacent tempdocs (654, 656, 366, 624), so the design extends existing seams rather than forking new
+ones. Design level only — exact copy, field wiring, and version mechanics belong to whoever implements
+this. Two prior claims of mine are corrected by the codebase evidence; recorded, not scrubbed.
+
+## The problem, corrected by evidence — the surface is not broken
+
+The single most important correction: **the MCP tool surface is not broken, and zero adoption is not
+proof that it is.** Tempdoc 366 (which authored the current descriptions, via a 50-question Haiku
+agentic eval) measured **~38% adoption of `justsearch_answer`** in its own harness. The 624 pilot
+measured **0%** — but in a materially different setting: the agent also holds file tools (Grep/Read/
+Bash) and the corpus (390 keyword-findable docs) is one where, per the external cost-curve research
+above, grep is the rational choice. The gap between 38% and 0% is precisely the *competition-under-a-
+prior on a grep-competitive corpus* effect, not a regression in the descriptions. This reframes the
+whole lever: the job is **not** "fix the broken surface." It is "make the surface's *comparative*
+advantage legible, and measure adoption where that advantage actually exists." Two coupled deficiencies
+follow, and the design must address both or it will optimize a proxy:
+
+- **(A) Legibility deficiency (655 owns).** No server-level steering reaches an autonomous agent's
+  decision context at all — the MCP `initialize.instructions` field is absent (`McpProtocolHandler`
+  returns only `protocolVersion`/`capabilities`/`serverInfo`). The steering content that *does* exist
+  (`McpToolSurface#getStatusContext` — doc count, enrichment coverage, and a guidance tail) is wired
+  **only into the user-invoked prompts**, which an autonomous agent never calls. And the guidance that
+  exists is *feature-forward* ("Use justsearch_answer for questions…"), not *comparative* ("prefer the
+  index over reading files one-by-one WHEN the corpus is large or the question is semantic").
+- **(B) Measurement-validity deficiency (624 owns; gates 655).** Adoption is being measured on a
+  grep-competitive corpus where a rational agent *should* decline. On that corpus the metric cannot
+  distinguish "legibility fixed" from "corpus finally favors the tool," and worse, it can be moved by
+  copy that manufactures adoption a rational agent shouldn't give.
+
+## The design: an agent-legibility layer, built by wiring and reframing what exists
+
+Name it the **agent-legibility layer** — the third obligation of the MCP surface alongside conformance
+(speaks the protocol correctly) and capability policy (safe for an untrusted caller). It is deliberately
+a *wiring + framing* design, not new machinery, because the deficiency is that existing signals aren't
+connected to the surface the agent reads — the same shape this tempdoc has hit three times already.
+Three coordinated moves, each conforming to an existing seam:
+
+**Move 1 — Populate the `initialize.instructions` field as a single-sourced projection of the steering
+signal that already exists.** This is the one server-level slot that reaches an autonomous agent's
+system context, and the research pass confirmed the eval's own client (Claude Code) injects and honors
+it. Its content is the *comparative decision boundary* — when the local index beats brute-force file
+reading (large corpus / semantic or paraphrase questions with no exact keyword / when preserving the
+agent's context budget matters) — plus the live index-status line `getStatusContext` already assembles.
+Critically, this **extends** `getStatusContext` (promotes its output from the user-only prompt path to
+the agent-visible initialize path), and per 654's "projection, not fork" principle it must be
+**single-sourced** so the prompt path and the instructions field cannot drift into two hand-authored
+copies.
+
+**Move 2 — Make the guidance *comparative*, and place it where 366's eval proved placement works.**
+366 established, with measured evidence, that (a) rich descriptions and extra schema params **hurt** the
+small target model (a severe accuracy regression; "invisible to Haiku"), and (b) *"agents read
+descriptions once at session start and forget specifics by turn 5 — put workflow guidance in tool
+responses, not descriptions."* So the comparative framing must NOT be crammed into longer descriptions
+(that repeats 366's proven mistake). It belongs at the two placements 366's evidence endorses: the
+**connect-time `instructions` field** (Move 1 — the natural home for one-time orientation) and **tool
+responses** (re-read every turn — where a hint like "this answer drew on N documents; reading them
+individually would have been M file calls" makes the comparative advantage self-evident *after* first
+use). Description text stays minimal and leads with the comparative "prefer me when…" clause; schemas
+are untouched (ADR-0015 / 366 forbid additions without eval proof). This conforms to and extends 366's
+progressive-disclosure pattern rather than replacing it.
+
+**Move 3 — Validate on a corpus where the advantage is real, using 624's existing machinery.** The
+surface change is measured by 624's pre-registered adoption triple (`adoption_rate`,
+`first_mcp_call_index`, `mcp_call_share`) with the mandated dual-view (intention-to-treat + per-protocol)
+reporting — but the decisive run is on **624's already-designed "scale member" corpus** (§1 Step 3 of
+624: ~2–4k docs, where the file-tool agent's search-output budget explodes), not only the grep-able
+battlefield-en-v1. The honest success signal is a **two-corpus contrast**: legibility should *raise*
+adoption on the scale corpus (where the index wins) while *not* inflating it on the grep-able corpus
+(where a rational agent still declines). That selective movement — not a raw adoption bump — is what
+shows the layer works *for the right reason*. This is coordination with 624, not new eval code: 655
+authors the surface, 624 owns the corpus and harness, and the before/after delta is the shared,
+pre-registered, publishable deliverable.
+
+## Conformance to existing seams (what this design does NOT reinvent)
+
+- **Tool-surface versioning is 654's, already shipped.** The surface change is material, so it bumps
+  `McpContractVersions.TOOL_SURFACE_VERSION` (currently `0.1.0`, explicitly pre-1.0 / still-settling per
+  654's under-promise stance) — which by construction propagates to MCP `serverInfo.version` and the
+  runtime manifest's `mcpToolSurfaceVersion`. No new version field; conform to the single-sourced one.
+- **"Projection, not fork" is 654's principle** — the steering content is single-sourced (Move 1).
+- **Progressive disclosure is 366's pattern** — extended, not replaced (Move 2).
+- **The adoption metrics, neutral-prompt freeze, dual-view reporting, interpretation tree, and
+  surface-verification assertions are 624's** — reused wholesale (Move 3). The "move adoption only via
+  the product surface, never the eval prompt" boundary is 624's pre-registered rule and is honored.
+- **Conformance framing stays honest** — per 654's D8 fence, nothing here claims "certified" or
+  "conformant"; the legibility layer is a product-quality change measured by its own adoption run, not a
+  compliance claim.
+
+## Deliberately out of scope (structure the present problem does not require)
+
+- **Tool renaming.** Names carry semantic weight (366), are keyed by the eval's surface-verification
+  assertions, and are part of 654's versioned surface. The evidence does not isolate names as the
+  blocker (descriptions were shown and the agent had a *rational* reason to decline). Renaming stays a
+  hypothesis to test *only if* Moves 1–3 fail to move the scale-corpus adoption — not a committed change.
+- **`/.well-known/mcp/server-card.json` auto-discovery (SEP-1649) and an agent-facing doctor via
+  `justsearch_status`** — both are real, 655-assigned levers handed over from 656's backlog, but they
+  address *connection/readiness* friction (finding and health-checking the server), a different problem
+  than the *choose-to-use* deficiency this design targets. Recorded as adjacent 655 work, not folded in.
+- **Per-client `instructions`, MCP elicitation as a primary path, and any generalized "steering
+  framework."** No third consumer and no present need; earlier passes already fenced these.
+
+## What this design orphans (removal belongs to THIS tempdoc, not a later sweep)
+
+- **The feature-forward guidance tail inside `McpToolSurface#getStatusContext`** — `"Use
+  justsearch_answer for questions, justsearch_search for exploration, justsearch_status for detailed
+  health."` Once the comparative decision-boundary steering becomes the single-sourced canonical string
+  (Move 1), this imperative-enumeration phrasing is superseded. If it is left in place, the prompt path
+  and the instructions field become two divergent copies — exactly the fork 654's projection principle
+  and this tempdoc's own "second channel" lesson (the 559 toast-collapse) warn against. Its
+  replacement-by-single-source is part of this design's work, not a follow-up.
+- **Nothing else is displaced.** Position-bias ordering (`justsearch_answer` first) is a committed,
+  evidence-backed lever (366 / ToolTweak) and stays. Descriptions are reframed, not removed. Schemas are
+  untouched. `serverInfo.version` was already de-literalized by 654.
+
+## Reach and principle
+
+**This design is an instance of a shape this tempdoc has already named — conform, don't re-name it.**
+It is the fourth occurrence of *latent capability, unwired surface*: the consent mechanism existed but
+MCP wasn't wired to it; `sendDesktopNotification` existed with no caller; and now the steering signal
+(`getStatusContext`) and the decision-boundary knowledge both exist but aren't wired to the surface an
+autonomous agent reads. The corrective is always the same — wire the existing capability to the surface
+that exercises it, single-sourced — and it composes with 654's "projection, not fork." No parallel
+principle is needed.
+
+**But the design also reveals a sharper principle worth naming plainly, because it reaches past MCP:**
+
+> **A capability surface must make its *comparative* advantage legible at the consumer's decision point,
+> in the consumer's decision terms — and an adoption metric for that surface is only valid on inputs
+> where the advantage actually exists.** Correct + safe is not sufficient; a surface whose advantage is
+> not legible *where and when the consumer chooses* is functionally invisible, and a surface measured
+> where it has no advantage measures the input, not the surface.
+
+Two halves, deliberately joined: the **legibility** half (say *when to prefer me over the alternative
+the consumer already holds*, at the decision point, not a feature list) and the **measurement-validity**
+half (measure uptake only where the advantage exists, or the metric will read rational decline as
+failure — or be "fixed" by copy that manufactures adoption the consumer shouldn't give). The second half
+is what keeps the first from degenerating into persuasion.
+
+**Where else it applies (named, not built):**
+- The **REST API surface** — endpoints enumerate what they do, not when to prefer one over another; the legibility half applies, though REST consumers are humans reading docs, which softens the "decision point" urgency.
+- The **runtime contract / capability descriptor (654)** — it enumerates capabilities; whether it *positions* them is the same question one layer up.
+- A **future plugin surface (660)** — plugins competing for an agent's attention face the identical legibility problem; this is the most likely next instance.
+- The **public docs / README (human consumer)** — the same shape at the human layer, but here the public-claims CI lane binds the honesty constraint directly: legibility must not become an unbacked comparative claim (no "beats grep" without a citable measured run).
+
+**Where existing code already violates it:** today's tool descriptions and `getStatusContext` guidance
+are feature-forward, not comparative (legibility half); the `instructions` field is absent; and the
+adoption pilot currently measures on a grep-competitive corpus (measurement-validity half — violated
+right now, which is exactly why the pilot read 0.0 and could not interpret it without this analysis).
+
+**What would show the principle earning its keep:** on 624's two-corpus contrast, honest comparative
+legibility *raises* adoption on the scale corpus while *not* inflating it on the grep-able corpus — i.e.
+adoption visibly moves toward tracking utility rather than uniformly up. That selective movement is the
+observable evidence the principle is doing real work rather than restating "write good docs."
+
+**Retirement condition (stated so the principle can't become self-justifying apparatus):** if adoption
+on the headroom corpus turns out to be dominated by factors the surface cannot touch — concretely, if
+two well-designed `instructions`/description variants produce statistically indistinguishable adoption
+across ≥2 model tiers on that corpus — then surface-legibility is not the operative lever (the mover is
+model priors, client-side tool-preference config, or human-first invocation), and this principle should
+be retired in favor of whatever does move the metric. Continuing to tune the surface past that point
+would be optimizing apparatus, not outcomes.
+
+## Design status
+
+Settled at the design level; nothing built. The design is a wiring/reframing change (instructions field
+as single-sourced projection + comparative response-hints + a version bump), scoped to conform to 654's
+version and projection seams, 366's progressive-disclosure evidence, and 624's measurement contract, and
+it orphans exactly one thing (the feature-forward `getStatusContext` tail) whose removal is part of the
+same work. Not authorized to begin until the owner says go, and Move 3's decisive run depends on 624's
+scale-member corpus existing.
+
+---
+
+# Implementation-readiness / risk register (2026-07-07) — de-risking pass before any build
+
+A pre-implementation confidence pass that resolved the reducible uncertainties in the design above with
+primary-source evidence (no feature code written, no paid eval run). Each row: the check, the finding
+with citation, and the effect on confidence.
+
+| # | Uncertainty | Finding | Effect |
+|---|---|---|---|
+| T1 | Fork risk — how many production MCP surfaces? | **One.** The Java `McpProtocolHandler.handleInitialize` (`McpProtocolHandler.java:133-147`) is the sole production surface. The three `.mjs` servers are all non-production: `scripts/prod/justsearch-mcp/server.mjs` is *deprecated legacy* (per `docs/reference/mcp-production-server.md:165-176`, despite its own stale "Production" header), `scripts/mcp/reference-server.mjs` is a test stub, `scripts/dev/justsearch-dev-mcp/server.mjs` is dev-stack tooling. None proxies `POST /mcp`. | ↑ The `instructions` field lands in exactly one place; no cross-surface sync. |
+| T2 | Move 2 feasibility — does a response-hint mechanism exist to extend? | **Yes, already live.** `McpToolSurface` builds a per-response `hints` list (`McpToolSurface.java:548-560`) and has `appendEnrichmentHint`/`appendEnrichmentHintToList` (`:986-1011`); the class header names "response-level progressive disclosure hints" (`:35`). Hints already cross-reference other tools. | ↑ Move 2's response half is a small extension, not new structure. |
+| T3 | Single-source safety — is `getStatusContext` safe to call at `initialize`? | Static: it is null-tolerant and non-throwing (try/catch → "status unknown", `:788,:803-805`) but makes a worker `status()` round-trip. **Refinement found:** single-source the *static comparative guidance* (the adoption-driving part — no worker call) and let each surface *optionally* append live status; this keeps a blocking cross-process call off the connect path. | ↑ Cleaner factoring than "call getStatusContext at initialize"; residual worker-latency concern removed by design. |
+| T4 | Breakage surface — what tests/gates pin the initialize shape or version literal? | **Zero forced changes.** `McpProtocolHandlerTest.initialize_returnsCapabilities` asserts `serverInfo.version` against the *constant* `McpContractVersions.TOOL_SURFACE_VERSION` (projection, `:76-79`), so bumping the constant stays green; it reads keys via `.get()` (not exact-map-match), so an added `instructions` key doesn't break it; the conformance gate runs only the optional-field-tolerant upstream `server-initialize` scenario (`check-mcp-conformance.mjs:54`). | ↑ Version bump + instructions field need only *additive* test coverage, no rewrites. |
+| T5 | Validation dependency — does 624's scale corpus exist? | **Generator-only.** Both on-disk corpora are 390 docs (`battlefield-en-v1`, `battlefield-de-v1`); no ~2-4k-doc corpus exists. The parametric generator `corpus_generate.py::generate()` *can* produce one via `distractor_ratio`/`n_chains` levers, but has no wired CLI command and no scale preset. Corpus selection itself is pure config (`--corpus-dir`/`--dataset`, `commands/utility.py:132,142`), not code. | → Moves 1–2 are unblocked and smoke-measurable on the existing corpus; Move 3's *decisive two-corpus contrast* is a genuine sequencing dependency on 624 generating + certifying the scale corpus. |
+| T6 | Plumbing (load-bearing) — does the eval's CLI actually inject server `instructions` into the model? | **Confirmed empirically.** The harness delegates the whole MCP handshake to the stock `claude` CLI subprocess and adds no system-prompt override (`agent_utility_inspect.py:74-101,115,138`), so it cannot strip instructions. Direct experiment with CLI **v2.1.202** (the exact eval version, present locally) against a throwaway MCP server whose `instructions` told the model to emit a codeword: the model emitted the codeword `ZANZIBAR-QUILL-7734`, which existed nowhere else. So this CLI reads + injects + the model obeys server instructions. | ↑↑ The biggest risk is now largely closed. Residual: tested via stdio, production is HTTP — very low, since `instructions` lives in the transport-independent InitializeResult. |
+
+## Residual uncertainties after this pass
+
+1. **The empirical adoption outcome is irreducible pre-implementation** — whether *comparative* instructions/hint copy actually shifts a model's tool-choice prior on a headroom corpus is exactly what the design measures; it cannot be known before the change exists. This is not a knowledge gap to close now; it is the question the ~$3 pilot answers cheaply. The de-risking above ensures the *plumbing* that carries the copy works, so a null result would be a real product signal, not a wiring artifact.
+2. **Move 3's decisive validation is sequenced behind 624** generating and certifying the ~2-4k-doc scale corpus (T5). Moves 1–2 can ship and be smoke-measured on the existing corpus first; the two-corpus contrast that proves "adoption tracks utility" waits on that corpus.
+3. **Copy quality is the craft, not a surprise** — the instructions/response-hint text must be accurate, honest under the public-claims CI lane (no unbacked "beats grep" comparative), and minimal per 366. High-leverage judgment work, but well-understood and bounded.
+
+## Confidence rating for the remaining work
+
+**Implementation readiness: 8/10.** The change is small and single-surface, extends mechanisms that
+already exist (response hints, the versioning seam, the status string), forces no test rewrites, and its
+one load-bearing external assumption (instructions reach the model) is now empirically confirmed on the
+exact CLI version. Surprises have been substantially removed. The two points held back from a higher
+score are both *outcome* uncertainties, not *build* uncertainties: the irreducible "does the copy move
+the metric" question (by design, answered by the pilot) and the 624 scale-corpus sequencing dependency
+for decisive validation — neither is closable before implementation, and both are correctly external to
+655's own build.
+
+## Implementation difficulty and model/effort recommendation
+
+**Difficulty: low-to-moderate mechanically, with one disproportionately high-leverage judgment part.**
+The mechanical work — add the `instructions` field to `handleInitialize`, refactor the shared static
+guidance so the prompt path and instructions field read one source, add one comparative entry to the
+existing response-hint list, bump `TOOL_SURFACE_VERSION`, remove the orphaned feature-forward tail, add
+test coverage — is bounded, verifiable, and low-risk (the "delegate a bounded chunk" profile). The crux
+is the **copy**: the comparative decision-boundary text is what the entire adoption outcome rides on, and
+it must thread accuracy, public-claims honesty, effectiveness, and 366's no-bloat constraint at once.
+
+**Recommendation: Opus at medium effort for the whole change.** The change is small enough that running
+it entirely on the stronger tier costs little, and the copy + the single-sourcing factoring + the
+required critical-analysis/public-claims pass all benefit from the stronger model's judgment; splitting
+tiers would save marginal tokens while adding coordination overhead on a small diff. If cost-optimizing,
+the acceptable split is Sonnet for the mechanical wiring/version-bump/tests and Opus (or main-loop tier)
+for authoring the instructions/hint copy and the final critical-analysis pass. Medium — not high/max —
+effort is right: the design is settled and de-risked and no architectural ambiguity remains; the
+remaining demand is craft and honesty in a few sentences of user-facing text, not structural problem-
+solving. (Fable would serve the mechanical parts well; the copy benefits from deliberation over speed.)
+
+---
+
+# Implementation of the agent-legibility layer (2026-07-07) — shipped and live-verified
+
+The design above is implemented, following it exactly. Backend-only change (no `modules/ui-web` /
+frontend surface — the consumer is an autonomous agent, so the MCP protocol *is* the surface). All three
+moves plus the version bump and the orphan removal landed in one change.
+
+**What shipped:**
+- **Move 1 (instructions field).** `McpProtocolHandler.handleInitialize` now returns the MCP-spec
+  `instructions` field, sourced from a new `McpToolSurface#instructions()` (Layer 1 asks Layer 2 for the
+  content, per the tempdoc-500 layering). The content is the new single-sourced `TOOL_SELECTION_GUIDANCE`
+  constant — a *comparative* decision boundary (prefer the index over reading files one-by-one when the
+  corpus is large / the question is semantic with no exact keyword / it spans documents / to conserve
+  context; file tools are equally good for a small or exact lookup). `instructions()` makes no worker
+  `status()` call, keeping the connect handshake free of a cross-process round-trip (the de-risking T3
+  refinement).
+- **Move 2 (comparative response hints).** Extended the *existing* response-hint mechanism (not a new
+  one): `callAnswer` appends a factual, count-based comparative line when `chunksFound > 1`; `callSearch`
+  adds a comparative entry to its existing `hints` list on a productive search. Placement follows tempdoc
+  366's evidence (guidance in responses, re-read each turn — not in longer descriptions). Schemas and
+  tool descriptions were left untouched (ADR-0015 / 366).
+- **Version bump (654 seam).** `McpContractVersions.TOOL_SURFACE_VERSION` `0.1.0 → 0.2.0`; it projects by
+  construction into MCP `serverInfo.version` and the runtime manifest's `mcpToolSurfaceVersion`.
+- **Orphan removal (teardown rode along).** The feature-forward tail in `getStatusContext`
+  (`"Use justsearch_answer for questions, justsearch_search for exploration, …"`) is deleted and replaced
+  by a reference to the single-sourced `TOOL_SELECTION_GUIDANCE`, so the prompt path and the instructions
+  field can no longer fork (654 "projection, not fork"). A new test asserts both surfaces read the one
+  source.
+- **Docs.** `docs/reference/mcp-production-server.md` updated (the connect-time `instructions` field under
+  Tool Selection; the comparative hint under Progressive Disclosure) — reference doc only, no public
+  adoption claim.
+
+**Verification — every tier green, including the real agent-facing surface (there is no UI to
+browser-check; the MCP protocol is validated instead):**
+1. `spotlessApply` + full `build -x test` compile gate: green.
+2. Unit: extended `McpProtocolHandlerTest` (asserts `initialize` returns a non-blank, comparative
+   `instructions` string, and a single-source guard that the prompt path and `instructions()` share one
+   guidance string) plus the full `:modules:ui:test` and `:modules:app-api:test` suites: green (the
+   projection-based version assertions stayed green through the bump, as predicted).
+3. Live MCP protocol probe against the running production HTTP `/mcp`: `initialize` returned
+   `serverInfo.version: "0.2.0"` and the full comparative `instructions` string; `tools/call` for
+   `justsearch_answer` showed the answer comparative hint ("Assembled evidence from 3 sources in a single
+   retrieval call — …"), and `justsearch_search` showed the search hint ("Searched the entire index in one
+   call. …").
+4. **Real-agent behavioral check (closes the de-risking HTTP residual):** the actual `claude` CLI
+   (v2.1.202, the eval's version), connected to the production HTTP `/mcp`, quoted the server's
+   `instructions` back verbatim — confirming the field reaches the model's context through the real
+   client over the real transport, not just stdio.
+5. Conformance: the upstream `@modelcontextprotocol/conformance` suite via
+   `check-mcp-conformance.mjs` — all 11 asserted protocol scenarios pass (the optional `instructions`
+   field did not perturb `server-initialize`).
+
+**What is deliberately NOT done in this change, and why (unchanged from the design):** the *decisive*
+adoption measurement — the two-corpus contrast that shows adoption rising where the index wins and staying
+low where grep is adequate — is deferred. It depends on tempdoc 624's ~2–4k-doc "scale member" corpus,
+which does not yet exist (the generator `corpus_generate.py` can produce it via `distractor_ratio`/
+`n_chains` levers, but no such corpus is built and no CLI wrapper exists). Running the paid pilot only on
+the existing 390-doc grep-competitive corpus cannot show the positive result by design (a rational agent
+should still decline there), so it was not spent. The surface is shipped and proven to carry the signal
+end-to-end; whether that signal moves adoption is the pre-registered 624 pilot's result once its scale
+corpus exists.
+
+## Post-implementation refute-first review + fix (2026-07-07)
+
+An adversarial, refute-first review (independent subagent, default stance "each claim is wrong until the
+code proves it") of the shipped change found two **accuracy defects in the comparative response hints** —
+text an autonomous agent reads, where a false comparative claim breaks the honesty this whole layer is
+built on. Both fixed; the rest of the change reviewed clean (instructions field, single-sourcing, version
+projection, Map.of usage, no golden/test-literal breakage).
+
+- **Answer hint overstated document span (fixed).** It gated on `chunksFound() > 1` and asserted evidence
+  "spanning multiple documents", but `chunksFound` counts *chunks*, not documents. The review traced two
+  real worker paths where it lies: the virtual-chunk fallback sets `chunksFound` to every sub-chunk across
+  all docs (40 chunks for 2 docs → "40 sources … multiple documents"), and the `CHUNKS_BELOW_THRESHOLD`
+  path has `chunksFound > 1` with `chunksUsed = 0` and no assembly at all. Fix: a pure, unit-tested helper
+  `McpToolSurface.comparativeAnswerHint(citations)` that counts **distinct `parentDocId`** from the actual
+  citations and only claims "N documents" when N > 1 — which also self-suppresses the fallback-dump case
+  (empty citations → 0). `docsUsed` was rejected as the basis because the rich-params retrieve path reports
+  it as 0 regardless (a pre-existing bug logged to the observations inbox, out of 655's scope).
+- **Search hint claimed "entire index" under filters (fixed).** Changed "Searched the entire index in one
+  call" → "Searched the index in one call", accurate whether or not `filters` narrowed the query.
+
+**Verification of the fix:** new regression test `comparativeAnswerHint_countsDistinctDocuments_notChunks`
+(single-doc multi-chunk → no claim; 3 distinct docs → "3 documents"; empty/null → no claim) plus the full
+`:modules:ui:test` and `:modules:app-api:test` suites and the `build -x test` gate: all green. The live
+anchor for the review is the earlier real `tools/call justsearch_answer` this session, which showed the
+*pre-fix* buggy output in genuine agent-visible response text — confirming the defect was real behavior,
+not a code-reading hypothesis. A live re-probe of the corrected hint was deferred (the shared dev stack was
+held by another active session and taking it over was declined per branch-safety); the deterministic helper
+test is the authoritative check for the corrected logic, and the hint delivery *mechanism* was already
+proven live end to end earlier in this session.

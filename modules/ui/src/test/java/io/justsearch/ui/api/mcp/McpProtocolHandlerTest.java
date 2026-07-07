@@ -13,6 +13,7 @@ import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
+import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.mcp.McpContractVersions;
 import io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
@@ -92,6 +93,71 @@ class McpProtocolHandlerTest {
     Map<String, Object> resourcesCap = (Map<String, Object>) caps.get("resources");
     assertEquals(Boolean.FALSE, resourcesCap.get("listChanged"));
     assertEquals(Boolean.TRUE, resourcesCap.get("subscribe"));
+
+    // Tempdoc 655 (agent-legibility layer): initialize now carries the MCP `instructions` steering
+    // field — the one server-level surface an autonomous agent reads at tool-selection time. It must
+    // be present, non-blank, and COMPARATIVE (state when to prefer the index), not a bare feature list.
+    Object instructions = result.get("instructions");
+    assertNotNull(instructions, "initialize must return the MCP `instructions` steering field");
+    String instr = (String) instructions;
+    assertFalse(instr.isBlank(), "instructions must not be blank");
+    assertTrue(
+        instr.contains("justsearch_answer"),
+        "instructions must steer toward the primary retrieval tool");
+    assertTrue(
+        instr.toLowerCase().contains("prefer"),
+        "instructions must be comparative (when to prefer the index), not a bare feature list");
+  }
+
+  @Test
+  void instructionsAndPromptPath_shareSingleSourcedGuidance() throws Exception {
+    // Tempdoc 655: the connect-time instructions() surface and the user-invoked prompt path
+    // (getStatusContext) must read ONE guidance string — 654 "projection, not fork". A distinctive
+    // phrase that lives only in TOOL_SELECTION_GUIDANCE must appear in both.
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK);
+    String marker = "ordinary file tools are equally good";
+    assertTrue(
+        surface.instructions().contains(marker),
+        "instructions() must carry the single-sourced comparative guidance");
+    String promptJson =
+        MAPPER.writeValueAsString(surface.getPrompt("search_files", Map.of("topic", "x")));
+    assertTrue(
+        promptJson.contains(marker),
+        "the user-invoked prompt path must read the SAME single-sourced guidance (no fork)");
+  }
+
+  @Test
+  void comparativeAnswerHint_countsDistinctDocuments_notChunks() {
+    // Regression (review finding F1): the hint must key on DISTINCT cited documents, not chunksFound
+    // — multiple chunks from ONE document must NOT produce a "spanning multiple documents" claim.
+    assertEquals(
+        "",
+        McpToolSurface.comparativeAnswerHint(List.of(cite("docA"), cite("docA"), cite("docA"))),
+        "multiple chunks from a single document must not claim 'multiple documents'");
+
+    // The fallback-dump path (chunksFound>1 but nothing assembled) yields empty citations → no hint.
+    assertEquals("", McpToolSurface.comparativeAnswerHint(List.of()));
+    assertEquals("", McpToolSurface.comparativeAnswerHint(null));
+
+    // Genuinely multi-document assembly → fires with the honest distinct-document count.
+    String hint =
+        McpToolSurface.comparativeAnswerHint(List.of(cite("docA"), cite("docB"), cite("docC")));
+    assertTrue(hint.contains("3 documents"), "distinct-document count must drive the hint: " + hint);
+    assertTrue(hint.contains("single retrieval call"));
+
+    // Blank parentDocId is not counted as a document (only docA is real → 1 distinct → no claim).
+    assertEquals("", McpToolSurface.comparativeAnswerHint(List.of(cite(""), cite("docA"))));
+  }
+
+  private static DocumentService.ContextCitation cite(String parentDocId) {
+    return new DocumentService.ContextCitation(
+        parentDocId, 0, 1, 0, 0, 1.0f, "excerpt", 0, 0, "", 0);
   }
 
   @Test

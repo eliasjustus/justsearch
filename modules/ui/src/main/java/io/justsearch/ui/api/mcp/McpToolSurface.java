@@ -87,6 +87,22 @@ public final class McpToolSurface {
           + "After ingesting documents, poll this to check if enrichment (embeddings, NER, SPLADE) "
           + "is complete before using entity filters or semantic search.";
 
+  // Tempdoc 655: the single-sourced, COMPARATIVE tool-selection guidance — the one string that
+  // states when to prefer the index over reading files directly. Consumed by both the connect-time
+  // instructions() surface (MCP `initialize`) and the user-invoked prompt path (getStatusContext),
+  // so the two cannot fork (654 "projection, not fork"). Kept minimal and honest (small-model
+  // description bloat hurts adoption per ADR-0015 / tempdoc 366; and file tools genuinely are fine
+  // for small/exact cases — no absolute "beats grep" claim).
+  private static final String TOOL_SELECTION_GUIDANCE =
+      "JustSearch maintains a local search index over the user's documents. Prefer justsearch_answer"
+          + " — which retrieves and assembles cited passages from across many documents in a single"
+          + " call — over reading files one-by-one when the corpus is large, when the question is"
+          + " conceptual or semantic (no exact keyword or filename to match on), when it spans"
+          + " multiple documents, or when you want to conserve context. For a small set of files or"
+          + " an exact string / filename lookup, ordinary file tools are equally good. Use"
+          + " justsearch_search to explore what is in the index, and justsearch_status for the live"
+          + " index size and readiness.";
+
   private final List<OperationCatalog> operationCatalogs;
   private final OperationDispatcher dispatcher;
   private final java.util.function.Supplier<KnowledgeSearchController> knowledgeLookup;
@@ -448,6 +464,15 @@ public final class McpToolSurface {
       sb.append("Retrieval mode: ").append(result.retrievalMode()).append("\n");
       if (result.contextTruncated()) sb.append("Note: context was truncated to fit token budget.\n");
 
+      // Tempdoc 655: comparative response hint (placed in the RESPONSE, re-read each turn, per
+      // tempdoc 366's finding that descriptions are forgotten by turn 5). Counts DISTINCT cited
+      // documents — see comparativeAnswerHint for why chunksFound cannot back a "multiple documents"
+      // claim.
+      String comparativeHint = comparativeAnswerHint(result.citations());
+      if (!comparativeHint.isEmpty()) {
+        sb.append(comparativeHint).append("\n");
+      }
+
       // Facet sidecar (parallel discovery)
       appendFacetSidecar(sb, query);
 
@@ -465,6 +490,30 @@ public final class McpToolSurface {
       log.warn("MCP answer failed", e);
       return errorContent("Answer retrieval failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * Tempdoc 655: the comparative answer hint, keyed on DISTINCT cited documents — the only honest
+   * basis for a "spanning multiple documents" claim. {@code chunksFound} cannot back it: it counts
+   * chunks (many per document, and includes found-but-unused chunks — e.g. the virtual-chunk fallback
+   * reports every sub-chunk across every document), and it stays &gt; 1 even on a bare full-text dump
+   * where no chunk assembly happened. Citations carry {@code parentDocId} and are empty unless real
+   * chunk assembly occurred, so counting distinct parentDocId is correct and self-suppressing on the
+   * fallback path. ({@code docsUsed} is unusable here — the rich-params retrieve path reports it as 0
+   * regardless; logged to observations.) Package-private + pure so it is unit-tested directly, without
+   * the live retrieve mock chain.
+   */
+  static String comparativeAnswerHint(List<DocumentService.ContextCitation> citations) {
+    if (citations == null) return "";
+    long distinctDocs =
+        citations.stream().map(c -> c.parentDocId()).filter(id -> !id.isBlank()).distinct().count();
+    if (distinctDocs > 1) {
+      return "Assembled evidence from "
+          + distinctDocs
+          + " documents in a single retrieval call — for a question spanning multiple documents this"
+          + " is fewer steps than locating and reading each file.";
+    }
+    return "";
   }
 
   // =========================================================================
@@ -553,6 +602,13 @@ public final class McpToolSurface {
                 + " indexed.");
       } else if (resp.totalHits() > 100 && args.get("filters") == null) {
         hints.add("Many results. Use the facet values above as filters to narrow down.");
+      }
+      // Tempdoc 655: comparative response hint — searched the whole index in one call, which beats
+      // listing-and-reading files for a topical/semantic query. Factual, only on a productive search.
+      if (resp.totalHits() > 0) {
+        hints.add(
+            "Searched the index in one call. For conceptual or cross-document questions,"
+                + " justsearch_answer returns assembled cited passages directly.");
       }
       appendEnrichmentHintToList(hints);
       if (!hints.isEmpty()) {
@@ -782,10 +838,22 @@ public final class McpToolSurface {
     };
   }
 
+  /**
+   * Tempdoc 655: the connect-time steering surface, returned as MCP {@code initialize}'s
+   * {@code instructions} field (populated by {@link McpProtocolHandler#handleInitialize}). Static,
+   * comparative tool-selection guidance — deliberately does NOT call the worker for live status, so
+   * the connect handshake carries no cross-process round-trip. Live index state is available to the
+   * agent via {@code justsearch_status}; the user-invoked prompt path ({@link #getStatusContext})
+   * prepends live counts to the SAME guidance string, so the two surfaces cannot fork.
+   */
+  public String instructions() {
+    return TOOL_SELECTION_GUIDANCE;
+  }
+
   private String getStatusContext() {
     try {
       KnowledgeSearchController ctrl = knowledgeLookup.get();
-      if (ctrl == null) return "JustSearch index status unknown.";
+      if (ctrl == null) return "JustSearch index status unknown. " + TOOL_SELECTION_GUIDANCE;
       var status = ctrl.getAdapter().status();
       var sb = new StringBuilder("JustSearch has ");
       sb.append(status.docCount()).append(" documents indexed.");
@@ -796,12 +864,13 @@ public final class McpToolSurface {
       if (extras.get("spladeCoveragePercent") instanceof Number n) {
         sb.append(" SPLADE: ").append(String.format("%.0f%%", n.doubleValue())).append(".");
       }
-      sb.append(
-          " Use justsearch_answer for questions, justsearch_search for exploration,"
-              + " justsearch_status for detailed health.");
+      // Single-sourced comparative guidance (tempdoc 655): the feature-forward enumeration that used
+      // to live here ("Use justsearch_answer for questions…") is superseded by TOOL_SELECTION_GUIDANCE
+      // so the prompt path and the initialize instructions field speak with one voice.
+      sb.append(" ").append(TOOL_SELECTION_GUIDANCE);
       return sb.toString();
     } catch (Exception e) {
-      return "JustSearch index status unknown.";
+      return "JustSearch index status unknown. " + TOOL_SELECTION_GUIDANCE;
     }
   }
 
