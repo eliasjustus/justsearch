@@ -313,3 +313,60 @@ Minor nit also fixed: `prepare-worktree.cjs` now reports a resolver throw via it
   logged to the observations inbox.
 - The refuter confirmed the rest correct: injection order at all 4 sites, Issue-3 completeness across all
   modules, content-safety of the LF `.replace`.
+
+## Session lessons & operational provenance (2026-07-08) — stands without any chat transcript
+
+Noncanonical working history; verify against `main` before trusting. Recorded so a future agent (or an
+external reader) can continue/audit without the private session.
+
+**Public provenance.** Branch `worktree-td696-dev-jdk-eol` (no PR opened yet — not merged). Commits:
+`740ecb1` (confidence-building risk register), `f8ac602` (feat: resolver + LF normalization), `86f2bf4`
+(fix: Worker `java.home` from the refute review).
+
+**Exact validation commands (reproducible).**
+- Node: `npm run test:resolve-jdk` (11 checks); `npm run test:dev-runner`.
+- Java: `JAVA_HOME=<jdk25> ./gradlew.bat build -PskipWebBuild=true`;
+  `./gradlew.bat :modules:app-services:test --tests "*WorkerSpawnerJavaBinaryTest*"`.
+- Issue-3 no-churn (decisive): after a full build, `git status --short` shows zero modified files under
+  `SSOT/**`, `modules/**/resources/**/schemas/**`, `modules/ui-web/src/api/__fixtures__/**`,
+  `SSOT/messages/errors.en.json`. Force it with `--rerun-tasks` on the five test tasks so no writer is
+  skipped by cache.
+- F1 live (decisive): rebuild the Head dist (`:modules:ui:installDist`), start
+  `node scripts/dev/dev-runner.cjs start --skip-build` under an ambient JDK-8-first PATH, inspect the
+  Worker java binary (`Get-CimInstance Win32_Process -Filter "Name='java.exe'"` filtered to
+  `indexer-worker` → must be a `java.home`/JDK-25 path, not bare `java`), and confirm `/api/health`
+  `worker: LIFECYCLE_STATE_READY`.
+
+**Generalizable lessons.**
+1. **Env presence ≠ env consulted.** A fix that relies on "the child inherits `JAVA_HOME`/`PATH`/env"
+   must verify the child actually *reads* it, not just that it's present. The shipped Issue-1 fix put
+   `JAVA_HOME` in the Worker's env but the Worker launched a bare `java` off PATH — the risk register's
+   "confirm no `.environment().clear()`" check was necessary-but-insufficient and nearly shipped a broken
+   fix. When a fix's correctness rests on inheritance, trace the *consumption* site.
+2. **A pass under uncontrolled conditions isn't proof.** The Worker "was READY" in an earlier session — by
+   PATH-order luck, not correctness. An incidental success under an uncontrolled variable (here: which JDK
+   PATH fronts) must not be read as validation; control the variable or inspect the actual runtime state
+   (the process command line settled it unambiguously).
+3. **Refute-first review earns its keep.** An independent "every claim is wrong until proven" pass caught
+   the substantive C3 bug that the implementer's own review missed. Keep it as standard for non-trivial
+   changes.
+4. **Direct-`gradlew` JDK gap (recommended follow-up).** This tempdoc fixes dev-runner / hot-swap /
+   prepare-worktree, but an agent/human running `./gradlew.bat` *directly* still inherits the ambient
+   `JAVA_HOME`. On a machine where `where java` fronts a JDK 8 (this dev's scoop setup), every direct
+   gradle call needs `JAVA_HOME=<jdk25>` set manually — a repeated per-agent cost. Consider a documented
+   contributor/agent note or a `.gradle` init-script that resolves a >=24 toolchain for the bootstrap JVM.
+
+**Known unrelated dirty work / follow-ups (do not treat as this tempdoc's scope).**
+- The **`updateSchemas`-always-true** gate in several `build.gradle.kts` (a task named `updateSchemas` is
+  exposed as a project property, so `hasProperty(...)` is always true → tests regenerate rather than
+  compare, defeating the schema-drift guard). Pre-existing; logged to the observations inbox; the strongest
+  696 follow-up.
+- `LambdaMartBenchmarkTest` (app-services integrationTest) is **load-flaky** — a 5ms-p50 latency assertion
+  that fails under concurrent-build load and passes in isolation; logged.
+- `prepare-worktree.cjs` has a separate gradlew-path bug (obs 1625) — unrelated to JDK, out of scope.
+- The main checkout carries pre-existing untracked `models/**/*.onnx` (LFS) belonging to no session.
+
+**Private/ephemeral caveats (not canonical).** Session-specific ports (e.g. `51457`) are throwaway;
+machine paths like `F:\scoop\apps\temurin25-jdk\current` are this dev's install — the resolver finds an
+equivalent JDK 25 on any machine via its candidate chain (`JAVA_HOME` → `JUSTSEARCH_DEV_JDK_HOME` →
+`~/.gradle/jdks` → scoop/Adoptium/OS roots).
