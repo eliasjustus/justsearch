@@ -500,6 +500,16 @@ is inline in the phase sections above. Durable evidence pointers:
 7. **The 07-01 interrupted-download provenance story for `model.onnx`** is
    inferred from mtimes + the missing `build.json`/fp16 sibling; the file was
    never committed, so no prior version exists to diff.
+   **RESOLVED (2026-07-07, via 647's "Local-environment note"):** the file was
+   downloaded 2026-07-01 from the model registry (`model-registry.v2.json` →
+   `models-v1` pack, sha-verified) by the 647 session — not by an interrupted
+   `build-ner.py` run. The registry pack supplied only the CPU/INT8 variant
+   with no `model_fp16.onnx`, which is what created the silent INT8-on-CUDA
+   state. Consequence for the model-artifact-integrity follow-up: this is an
+   install-flow gap, not a one-off local accident — any fresh GPU environment
+   provisioned from that pack would reproduce the degradation (dev-mode
+   silently; contract-mode as a visible-but-easy-to-miss `degraded` status).
+   Verify the pack contents before scoping the fix.
 8. **Pre-fix NER `ortP50` values from batched-healthy runs are meaningless**
    (14 stray batch=1 calls in C2) — use batch-timing shares for any pre-691
    NER attribution.
