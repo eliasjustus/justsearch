@@ -313,6 +313,47 @@ owner distribution-policy decision; files are on disk in the main checkout
 with provenance recorded above); `build-ner.py` incremental mode (item 5);
 the embed lever (item 6).
 
+## Phase E (2026-07-07): embed/SPLADE batch-sweep micro-bench — batch size is a DEAD END; the live lever is batch FILL
+
+`EncoderBatchSweepBench` (new, `modules/benchmarks`; run command in its
+header; results `tmp/bench/encoder-batch-sweep/`) drove the real fp16
+sessions directly at seq=512, sweeping batch × arena. No dev stack.
+
+**E-1. Embed batch size: compute-saturated at 8.** chunks/s is flat from
+batch 8 → 64 (148 → 158, +6.7% max; per-chunk 6.75 → 6.32 ms); batch 64
+OOMs the 3072 arena but fits 4096. F-005's batch=8 conclusion HOLDS under
+the new model/arena — but for a different reason (GEMM saturation, not VRAM
+safety). Batch=16 fits the current arena on paper, but a historical comment
+records 51 fragmentation OOMs at batch=16 over a real 5,184-doc run — a
+13-call constant-shape bench cannot falsify that; do not raise without a
+soak test. Not worth it for ≤7%.
+
+**E-2. SPLADE batch: architectural wall.** batch=8 needs a 6144 MB arena for
++2.4% chunks/s; batch=16 needs ≈10.5 GB arena alone (measured request
+6,938,886,144 B — byte-identical to the historical "6.94 GB" citation).
+Keep 4/4096.
+
+**E-3. The real finding — production embed runs HALF-EMPTY batches.** The
+bench does 6.75 ms/chunk isolated; production C2 did 12.6 ms/chunk (54 s ORT
+/ 4,290 chunks) at 1,235 recorded calls = **avg batch ≈3.5**, and per-call
+cost is launch-bound at small batches (53 ms @ 8 vs ~45 ms @ 3.5). Filling
+batches → ~536 calls ≈ 28 s: **~1.9× on the dominant stage** (~21% off the
+enrichment wall) with no batch-size/arena change at all. Dispatch-site reads:
+the combined loop DOES batch across docs (`CombinedEnrichmentBackfillOps:279`
+`embedDocumentBatch(embedContents)`, cycles of ≤100 parents + ≤50 chunk
+docs), so the ragged calls originate BELOW the loop — prime suspect: parent
+documents being internally chunked-and-pooled per doc inside the embedding
+provider (391 parents × ragged 8+3 ≈ the observed call count). Next step:
+verify `embedDocumentBatch`'s chain, then flatten chunk inference across
+documents into full sub-batches (pool per doc afterwards) inside the
+provider/encoder layer — contained, no RMW-loop changes.
+
+**E-4. Velocity framing (handoff note).** Post-NER-fix, a 1,000-doc build is
+~6-7 min; E-3 would take it to ~5 min. The dominant stack-holder in an eval
+cycle is now the agent-cell matrix (~3 h, tempdocs 624/675), not corpus
+build — after E-3, further build optimization is third-order vs 675's
+in-process executor.
+
 ## Remaining implementation items (Phase B/C follow-through)
 
 1. **Durable arena default:** `justsearch.ner.gpu_mem_mb` 512 → 2048

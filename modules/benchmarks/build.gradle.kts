@@ -286,3 +286,39 @@ tasks.register<JavaExec>("rerankerBench") {
 
   jvmArgs("-Xms512m", "-Xmx4g", "--enable-native-access=ALL-UNNAMED")
 }
+
+// Register the encoder batch-size / arena-cap sweep bench (tempdoc 691)
+tasks.register<JavaExec>("encoderBatchSweepBench") {
+  group = "benchmark"
+  description = "Sweep embed + SPLADE ORT batch size and GPU arena cap to measure throughput scaling (tempdoc 691)."
+  mainClass.set("io.justsearch.benchmarks.EncoderBatchSweepBench")
+  classpath = sourceSets["main"].runtimeClasspath
+  workingDir = rootProject.projectDir
+
+  val outDir = project.findProperty("benchOutDir")?.toString() ?: "tmp/bench/encoder-batch-sweep"
+  val embedModelDir = project.findProperty("benchEmbedModelDir")?.toString() ?: "models/onnx/gte-multilingual-base"
+  val spladeModelDir = project.findProperty("benchSpladeModelDir")?.toString() ?: "models/splade/naver-splade-v3"
+  val seqLen = project.findProperty("benchSeqLen")?.toString() ?: ""
+  val warmup = project.findProperty("benchWarmup")?.toString() ?: ""
+  val iterations = project.findProperty("benchIterations")?.toString() ?: ""
+  val embedBatches = project.findProperty("benchEmbedBatches")?.toString() ?: ""
+  val embedArenasMb = project.findProperty("benchEmbedArenasMb")?.toString() ?: ""
+  val spladeBatches = project.findProperty("benchSpladeBatches")?.toString() ?: ""
+  val spladeArenasMb = project.findProperty("benchSpladeArenasMb")?.toString() ?: ""
+
+  val argsList = mutableListOf(
+    "--out-dir=$outDir",
+    "--embed-model-dir=$embedModelDir",
+    "--splade-model-dir=$spladeModelDir",
+  )
+  if (seqLen.isNotBlank()) argsList.add("--seq-len=$seqLen")
+  if (warmup.isNotBlank()) argsList.add("--warmup=$warmup")
+  if (iterations.isNotBlank()) argsList.add("--iterations=$iterations")
+  if (embedBatches.isNotBlank()) argsList.add("--embed-batches=$embedBatches")
+  if (embedArenasMb.isNotBlank()) argsList.add("--embed-arenas-mb=$embedArenasMb")
+  if (spladeBatches.isNotBlank()) argsList.add("--splade-batches=$spladeBatches")
+  if (spladeArenasMb.isNotBlank()) argsList.add("--splade-arenas-mb=$spladeArenasMb")
+  args(argsList)
+
+  jvmArgs("-Xms512m", "-Xmx4g", "--enable-native-access=ALL-UNNAMED")
+}
