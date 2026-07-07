@@ -134,7 +134,7 @@ import {
   toggleFacetValue,
 } from '../state/searchFiltersState.js';
 // Tempdoc 561 C-2 (graded continuum): chrome grades on the agency posture (affordance × dial).
-import { agencyPosture, postureChrome } from '../state/agencyPosture.js';
+import { agencyPosture, postureChrome, deriveAffordance } from '../state/agencyPosture.js';
 import { getAutonomyLevel, subscribeAutonomy } from '../substrates/autonomy/index.js';
 // Tempdoc 577 §2.14 Root I (#19) — temporal anchoring: relative time on turn boundaries.
 import { formatRelative } from '../utils/relativeTime.js';
@@ -349,7 +349,8 @@ export class UnifiedChatView extends JfElement {
     isStreaming: { state: true },
     streamingText: { state: true },
     errorMessage: { state: true },
-    affordance: { state: true },
+    explicitAffordance: { state: true },
+    schemaAttached: { state: true },
     thread: { state: true },
     aiState: { state: true },
     showResumePrompt: { state: true },
@@ -443,7 +444,18 @@ export class UnifiedChatView extends JfElement {
   declare isStreaming: boolean;
   declare streamingText: string;
   declare errorMessage: string;
-  declare affordance: Affordance;
+  /**
+   * Search Thread S5a — the sticky EXPLICIT tier choice (tab click, shape preset, restored
+   * session), or null when the tier is derived. The standing `affordance` is a computed
+   * projection (see the accessor pair below) — never a stored field.
+   */
+  declare explicitAffordance: Affordance | null;
+  /**
+   * S5a (decision 6) — a schema ATTACHMENT is a deliberate act ('+ Schema' on the bar), tracked
+   * separately from `schemaDraft` (whose constructor template is a convenience, not an intent).
+   * Recoverable: an attachment survives tab switches. Attached ⇒ the tier derives 'extract'.
+   */
+  declare schemaAttached: boolean;
   declare thread: ThreadMessage[];
   declare citations: CitationMatch[];
   declare sources: RetrievalCitation[];
@@ -518,7 +530,6 @@ export class UnifiedChatView extends JfElement {
   private autonomyUnsubscribe: (() => void) | null = null;
   /** Tempdoc 610 §J.3 — re-render when the shared hidden-source set changes (e.g. toggled from the rail). */
   private excludedSourcesUnsub: (() => void) | null = null;
-  private userToggledAffordance = false;
   // Tempdoc 561 P-A/P-B (Slice 2): the canonical thread record (GET /api/thread/{id}). When present,
   // the conversation renders the unified interleaved thread (chat turns + agent activity) projected
   // from this ONE record; empty -> fall back to the live this.thread render (offline / pre-fetch).
@@ -613,13 +624,12 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
-    // Tempdoc 577 Goal 3 (§3.11) — the window lands in the `retrieve` base tier (the always-available
-    // search entry tier), not free-chat. When a chat model is online the aiState subscription
-    // auto-upgrades to `documents` (§ connectedCallback), so the online landing is unchanged; the only
-    // behavioural delta is the AI-offline cold start, which now opens working search instead of a dead
-    // "AI Offline" composer. `retrieve` is ephemeral (never persisted), so a restored session with a
-    // real affordance still overrides this below.
-    this.affordance = 'retrieve';
+    // Tempdoc 577 Goal 3 (§3.11) / Search Thread S5a — the window lands DERIVED (no explicit pin):
+    // deriveAffordance yields the `retrieve` base tier, the always-available search floor. The old
+    // AI-online auto-upgrade to `documents` is gone (decision B14 — capability appearing must not
+    // move the user); a restored session with a real affordance still pins explicitly below.
+    this.explicitAffordance = null;
+    this.schemaAttached = false;
     this.thread = [];
     this.citations = [];
     this.sources = [];
@@ -669,8 +679,8 @@ export class UnifiedChatView extends JfElement {
       'core.free-chat': 'none',
     };
     if (this.shapeId && presetByShape[this.shapeId] !== undefined) {
+      // S5a — a deep-linked shape is an explicit tier choice (the setter pins it sticky).
       this.affordance = presetByShape[this.shapeId]!;
-      this.userToggledAffordance = true;
     }
     // Tempdoc 565 §15.C (fix): mounting the workflow shape arms a one-shot RUN affordance instead of
     // auto-running — the user explicitly triggers the run (no surprising re-run on every mount). The
@@ -684,7 +694,6 @@ export class UnifiedChatView extends JfElement {
     if (initial.query) this.inputDraft = initial.query;
     if (initial.affordance !== 'none') {
       this.affordance = initial.affordance;
-      this.userToggledAffordance = true;
     }
     // 548 §4.5: drain the one-shot auto-run flag parked by the IntentRouter's
     // `answer` lowering. maybeAutoRun() fires once the prompt + AI capability
@@ -699,10 +708,9 @@ export class UnifiedChatView extends JfElement {
     const refreshDocsFromSelection = (): void => {
       const cur = getCurrentSelection().items[0];
       if (cur && cur.kind === 'result-set') {
+        // S5a (decision B14) — the selection carries into sends as docIds; it no longer
+        // auto-flips the standing tier out from under the user.
         this.pinnedDocIds = cur.items.map((r) => r.id);
-        if (this.pinnedDocIds.length > 0 && !this.userToggledAffordance) {
-          this.affordance = 'documents';
-        }
       }
     };
     refreshDocsFromSelection();
@@ -715,7 +723,6 @@ export class UnifiedChatView extends JfElement {
       if (s.query) this.inputDraft = s.query;
       if (s.affordance !== 'none') {
         this.affordance = s.affordance;
-        this.userToggledAffordance = true;
       }
       this.maybeAutoRun();
     });
@@ -750,10 +757,10 @@ export class UnifiedChatView extends JfElement {
       void this.loadConversation(lastViewed, 'core.free-chat');
     }
     this.aiStateUnsubscribe = subscribeAiState((s) => {
+      // S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED:
+      // the user's tier is sticky-explicit or derived from what they hold; a model coming
+      // online changes availability chrome (route chip unpins), never the standing view.
       this.aiState = s;
-      if (!this.userToggledAffordance && s.capabilities.rag) {
-        this.affordance = 'documents';
-      }
       this.maybeAutoRun();
     });
     // Tempdoc 561 C-2: the dial change only re-grades chrome (placeholder / send label / rail
@@ -834,6 +841,9 @@ export class UnifiedChatView extends JfElement {
     // showAbilities/forkEditing above); `committedSearches`/`queryTrail` themselves are deliberately
     // NOT touched here — they are recoverable task state, the same category as `thread`/`scopeChips`.
     this.queryTrailOpen = false;
+    // S5a — `explicitAffordance` (sticky tier choice) and `schemaAttached` (a held attachment)
+    // are recoverable task state, deliberately NOT settled here: clearing them on navigation
+    // would un-pin the tier / drop the attachment on every tab switch — the churn B14 retired.
   }
 
   override disconnectedCallback(): void {
@@ -1693,7 +1703,6 @@ export class UnifiedChatView extends JfElement {
     // free-chat thread; viewing it needs no model (only sending a new turn does).
     if (this.affordance === 'retrieve') {
       this.affordance = 'none';
-      this.userToggledAffordance = true;
     }
     void this.loadConversation(sessionId, 'core.free-chat');
   }
@@ -1770,6 +1779,10 @@ export class UnifiedChatView extends JfElement {
     // Slice 515 FIX-1: forget the previous askAi-pinned docIds so a new
     // conversation starts with open-retrieval unless the user re-selects.
     this.pinnedDocIds = [];
+    // S5a — New chat clears the sticky tier pin and any held schema attachment: the fresh
+    // conversation derives back to the retrieve floor.
+    this.explicitAffordance = null;
+    this.schemaAttached = false;
     this.parentFirstMessagePreview = null;
     // Tempdoc 610 Phase B — a fresh conversation is a root: no fork pointers.
     this.branchParentId = null;
@@ -2000,6 +2013,26 @@ export class UnifiedChatView extends JfElement {
   private currentRoute(): TurnRoute {
     if (this.askPinned()) return 'search';
     return this.routeOverride ?? inferRoute(this.inputDraft);
+  }
+
+  /**
+   * Search Thread S5a — the standing tier is a COMPUTED projection (deriveAffordance in
+   * agencyPosture.ts, the one authority): explicit choice > schema attachment > 'retrieve'.
+   * Route is passed null here — a typed question flips the SUBMIT (escalateAsk), never the
+   * standing view (the live search floor must not be yanked mid-keystroke). Reactivity holds
+   * because every derivation input is itself reactive state.
+   */
+  get affordance(): Affordance {
+    return deriveAffordance({
+      explicit: this.explicitAffordance,
+      route: null,
+      hasSchemaAttachment: this.schemaAttached,
+    });
+  }
+
+  /** Assignment IS explicit selection (tab clicks, tests, restores) — it pins the tier sticky. */
+  set affordance(v: Affordance) {
+    this.explicitAffordance = v;
   }
 
   private renderAffordanceBar(agentMode: boolean): TemplateResult {
@@ -2288,7 +2321,13 @@ export class UnifiedChatView extends JfElement {
    */
   private escalateAsk(): void {
     this.commitLiveSearch('ask');
-    this.affordance = 'documents';
+    // S5a — the submit-time derivation: route 'ask' derives the documents tier through the ONE
+    // authority (agencyPosture.deriveAffordance), pinned for the conversation that follows.
+    this.explicitAffordance = deriveAffordance({
+      explicit: null,
+      route: 'ask',
+      hasSchemaAttachment: false,
+    });
     void this.send();
     this.routeOverride = null;
   }
@@ -2302,6 +2341,20 @@ export class UnifiedChatView extends JfElement {
     const route = this.currentRoute();
     return html`<div class="route-row">
       ${this.renderQueryTrail()}
+      ${/* S5a (decision 6) — Structured is an attachment you ADD to the bar: attaching seeds the
+            draft template (if empty) and the tier derives 'extract' while it is held. */ ''}
+      ${this.schemaAttached
+        ? nothing
+        : html`<button
+            type="button"
+            class="schema-attach"
+            title="Attach a JSON schema — turns this turn into a structured extraction"
+            @click=${() => {
+              this.schemaAttached = true;
+            }}
+          >
+            + Schema
+          </button>`}
       <jf-route-chip
         .route=${route}
         .askAvailability=${projectAvailability('documents', this.aiState)}
@@ -3177,11 +3230,9 @@ export class UnifiedChatView extends JfElement {
    * commit the affordance was clicked from is never mutated, only a fresh search starts.
    */
   private handleCardFork(query: string): void {
-    this.affordance = 'retrieve';
-    // A fork can be clicked from documents/agent affordance (a restored SEARCH thread item renders
-    // there too); without this the aiState subscription's auto-upgrade-to-'documents' would snap
-    // the affordance straight back the moment aiState next emits (see connectedCallback).
-    this.userToggledAffordance = true;
+    // S5a — forking back to a live search UNPINS the tier (derived → 'retrieve'); with the B14
+    // auto-upgrade deleted, nothing snaps it back when aiState next emits.
+    this.explicitAffordance = null;
     this.routeOverride = null;
     this.inputDraft = query;
     setSearchQuery(query);
@@ -4524,7 +4575,22 @@ export class UnifiedChatView extends JfElement {
   private renderSchemaInput(): TemplateResult {
     return html`
       <div>
-        <div class="schema-label">JSON Schema</div>
+        <div class="schema-label">
+          JSON Schema
+          ${/* S5a (decision 6) — a derived attachment can be detached; an explicit Structured
+                tab selection toggles off through the tab instead. */ ''}
+          ${this.schemaAttached
+            ? html`<button
+                type="button"
+                class="schema-detach"
+                @click=${() => {
+                  this.schemaAttached = false;
+                }}
+              >
+                Detach schema
+              </button>`
+            : nothing}
+        </div>
         <textarea
           class="mono"
           rows="4"
@@ -4539,7 +4605,6 @@ export class UnifiedChatView extends JfElement {
 
   private toggleAffordance(target: Affordance): void {
     this.affordance = this.affordance === target ? 'none' : target;
-    this.userToggledAffordance = true;
     // Tempdoc 561 P-A/P-B (Slice 2): crossing planes (esp. agent -> answer) may have added turns to
     // the record (an agent run); refresh so the unified thread reflects both planes.
     void this.refreshUnifiedThread();

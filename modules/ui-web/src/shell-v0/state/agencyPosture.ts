@@ -66,3 +66,35 @@ export function postureChrome(p: AgencyPosture): PostureChrome {
       return { placeholder: '', sendLabel: 'Send', approvalPosture: '' };
   }
 }
+
+/**
+ * Search Thread S5a (tempdoc decisions 2/6/B14) — the affordance DERIVATION authority. The
+ * unified window's standing tier is no longer imperatively mutated from scattered sites; it is
+ * this pure precedence, computed from what the user actually holds:
+ *
+ *   1. `explicit` — a sticky, user-chosen tier (tab click, deep-linked shape preset, restored
+ *      session). Sticky until cleared (New chat / fork-back-to-search); nothing overrides it.
+ *   2. schema attachment present → 'extract' (Structured is an ATTACHMENT you add to the bar,
+ *      not a place you go — decision 6).
+ *   3. committed route 'ask' → 'documents' (a SUBMIT-time input: escalating a retrieve turn
+ *      derives the ask tier for that send; the standing view passes route null so typing a
+ *      question never yanks the tier out from under the live search floor).
+ *   4. default 'retrieve' — the always-available floor.
+ *
+ * Autonomy is deliberately ABSENT: delegation is always an explicit act (decision B14 killed
+ * every auto-upgrade — capability appearing must not move the user), so 'agent'/'none' only ever
+ * arrive through `explicit`.
+ */
+export interface AffordanceDerivationInput {
+  readonly explicit: Affordance | null;
+  /** The committed per-turn route at submit time; null for the standing (non-submit) view. */
+  readonly route: 'search' | 'ask' | null;
+  readonly hasSchemaAttachment: boolean;
+}
+
+export function deriveAffordance(input: AffordanceDerivationInput): Affordance {
+  if (input.explicit !== null) return input.explicit;
+  if (input.hasSchemaAttachment) return 'extract';
+  if (input.route === 'ask') return 'documents';
+  return 'retrieve';
+}

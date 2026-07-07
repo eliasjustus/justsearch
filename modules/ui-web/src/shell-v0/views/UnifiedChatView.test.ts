@@ -246,6 +246,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('561 #6 — renders search EVIDENCE from the RECORD (live == record, not the raw dump)', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       {
         id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent',
@@ -284,6 +289,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
 
   it('renders the unified interleaved thread (chat + agent tool activity) from the record (Slice 2)', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     // Populate the canonical-record events (as GET /api/thread would return), out of input order to
     // prove the render projects by the authoritative timestamp.
@@ -485,6 +495,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 fix A — a multi-turn record renders one INDEPENDENTLY-collapsible trace per run', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     // Two completed runs in one session: user1 · tool1 · answer1 · user2 · tool2 · answer2.
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'turn one', attributes: {} },
@@ -515,6 +530,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 §12.3.E — renders a source-chip row under a grounded answer + cross-highlights via the store', async () => {
     __resetSelectedSource();
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     const sources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -563,6 +583,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   it('565 §13.8 P3 — the source chips collapse behind a "Sources · N" disclosure; clicking toggles it', async () => {
     __resetSelectedSource();
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     const sources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -938,6 +963,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
 
   it('renders the projection as the single read-model: reconciled live turns dedupe, in-flight turns overlay (Pillar 2)', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     // The record (GET /api/thread) holds two reconciled turns.
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
@@ -1355,6 +1385,10 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
 
   it('exposes a leading Search affordance that selects the retrieve tier', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — boot already derives 'retrieve' (no B14 auto-upgrade to leave from), so start from an
+    // explicit documents pin to exercise the selection transition the tab exists for.
+    view.affordance = 'documents';
     await view.updateComplete;
     const searchBtn = Array.from(
       view.shadowRoot?.querySelectorAll('.affordance-btn') ?? [],
@@ -2689,6 +2723,11 @@ describe('UnifiedChatView editable compaction summary (610 §E.2)', () => {
   it('renders Edit on the expanded compaction summary and opens an editable textarea', async () => {
     const view = mountView();
     await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
+    await view.updateComplete;
     view.thread = [
       { role: 'user', content: 'q', id: 'm-1', shapeId: 'core.free-chat' },
       { role: 'assistant', content: 'a', id: 'm-2', shapeId: 'core.free-chat' },
@@ -2720,6 +2759,11 @@ describe('UnifiedChatView per-message exclude (610 §E.3)', () => {
 
   it('toggles a message excluded: persists via the store, tracks the id, and dims the turn', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     (view as unknown as { sessionId: string }).sessionId = 'uc-test-ex';
     view.thread = [
@@ -3000,6 +3044,11 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
 
   it('a restored SEARCH thread event renders as an excerpt card with a "Search again" affordance', async () => {
     const view = mountView();
+    await view.updateComplete;
+    // S5a — the B14 auto-upgrade is retired: land in the documents plane EXPLICITLY
+    // (the tier a user now reaches by tab click / escalation), where the thread renders.
+    view.affordance = 'documents';
+    view.requestUpdate();
     await view.updateComplete;
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       {

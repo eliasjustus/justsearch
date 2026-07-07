@@ -1146,6 +1146,25 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    /* S5a (decision 6) — the schema attach/detach affordances: quiet text buttons on the bar. */
+    .schema-attach,
+    .schema-detach {
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      padding: 0.1rem 0.45rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .schema-attach:hover,
+    .schema-detach:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
     }
     .error {
       padding: 0.5rem 0.75rem;
