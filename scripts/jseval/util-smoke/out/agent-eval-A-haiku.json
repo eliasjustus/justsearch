@@ -5,11 +5,11 @@
   "total_queries": 2,
   "errors": 0,
   "accuracy": 1.0,
-  "avg_cost_usd": 0.0253,
-  "avg_turns": 3.0,
-  "avg_duration_ms": 9920,
-  "avg_unique_content_tokens": 7334,
-  "total_cost_usd": 0.0506,
+  "avg_cost_usd": 0.0393,
+  "avg_turns": 3.5,
+  "avg_duration_ms": 10060,
+  "avg_unique_content_tokens": 15048,
+  "total_cost_usd": 0.0786,
   "results": [
     {
       "query": "Who led the Great Cinnamon Heist of 1823?",
@@ -17,32 +17,42 @@
       "question_type": "inference_query",
       "condition": "A",
       "model": "haiku",
-      "agent_answer": "According to the corpus, the Great Cinnamon Heist of 1823 was led by **Captain Mortimer Flux**, who stole 4000 barrels of cinnamon from the port of Zanzibar in a single moonless night.",
+      "agent_answer": "Based on the documents in the corpus directory, **Captain Mortimer Flux** led the Great Cinnamon Heist of 1823. He stole 4000 barrels of cinnamon from the port of Zanzibar over a single moonless night.",
       "correct": true,
-      "cost_usd": 0.025528000000000002,
-      "input_tokens": 26,
-      "cache_creation_tokens": 7366,
-      "cache_read_tokens": 78270,
-      "output_tokens": 454,
-      "num_turns": 3,
-      "duration_ms": 10961,
+      "cost_usd": 0.05818330000000001,
+      "input_tokens": 178,
+      "cache_creation_tokens": 24713,
+      "cache_read_tokens": 48023,
+      "output_tokens": 618,
+      "num_turns": 4,
+      "duration_ms": 10804,
       "error": "",
       "reflection": "",
       "tool_calls": [
         {
-          "tool": "Glob",
+          "tool": "Bash",
           "input": {
-            "path": "F:/JustSearch/.claude/worktrees/624-agent-utility-eval/scripts/jseval/util-smoke/corpus",
-            "pattern": "**/*"
+            "command": "ls -la \"C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\"",
+            "description": "List files in corpus directory"
+          }
+        },
+        {
+          "tool": "Grep",
+          "input": {
+            "pattern": "Great Cinnamon Heist|1823",
+            "path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
+            "output_mode": "content"
           }
         },
         {
           "tool": "Read",
           "input": {
-            "file_path": "F:/JustSearch/.claude/worktrees/624-agent-utility-eval/scripts/jseval/util-smoke/corpus/cinnamon.md"
+            "file_path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\cinnamon.md"
           }
         }
-      ]
+      ],
+      "disallowed_tool_calls": [],
+      "leak_suspect_tool_calls": []
     },
     {
       "query": "Who built the Vexford Telescope?",
@@ -50,32 +60,34 @@
       "question_type": "inference_query",
       "condition": "A",
       "model": "haiku",
-      "agent_answer": "According to the corpus, the Vexford Telescope was built in 1947 by engineer **Lila 034**.",
+      "agent_answer": "According to the documents, the Vexford Telescope was built in 1947 by engineer Lila 034.",
       "correct": true,
-      "cost_usd": 0.0250416,
+      "cost_usd": 0.0203727,
       "input_tokens": 26,
-      "cache_creation_tokens": 7303,
-      "cache_read_tokens": 78226,
-      "output_tokens": 387,
+      "cache_creation_tokens": 5383,
+      "cache_read_tokens": 66747,
+      "output_tokens": 449,
       "num_turns": 3,
-      "duration_ms": 8879,
+      "duration_ms": 9317,
       "error": "",
       "reflection": "",
       "tool_calls": [
         {
           "tool": "Glob",
           "input": {
-            "pattern": "**/*",
-            "path": "F:/JustSearch/.claude/worktrees/624-agent-utility-eval/scripts/jseval/util-smoke/corpus"
+            "path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
+            "pattern": "**/*"
           }
         },
         {
           "tool": "Read",
           "input": {
-            "file_path": "F:/JustSearch/.claude/worktrees/624-agent-utility-eval/scripts/jseval/util-smoke/corpus/telescope.md"
+            "file_path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\telescope.md"
           }
         }
-      ]
+      ],
+      "disallowed_tool_calls": [],
+      "leak_suspect_tool_calls": []
     }
   ],
   "seed": 0

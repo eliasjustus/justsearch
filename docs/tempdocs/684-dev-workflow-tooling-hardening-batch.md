@@ -47,9 +47,38 @@ neighbouring session's shard. The tearing-down session has no way to pass its ow
 the marker-file read; `remove-worktree.cjs` forwards it. `note-observation.mjs` already
 resolves per-session shards — verify it takes the same override or document why not.
 
+**Investigation addendum (2026-07-07, 681 publish session — root cause sharpened, fix
+simplifies).** Live-probed in the affected environment:
+
+- **The correct identity is ALREADY in every Bash invocation's env.** Both
+  `CLAUDE_CODE_SESSION_ID` (harness-native, v2.1.200) and `JUSTSEARCH_AGENT_SESSION_ID`
+  (repo export) carried the *caller's* id in the same shell where the marker file carried a
+  neighbour's. The defect is therefore a **resolution-order inversion**, not missing plumbing:
+  `resolveSessionId()` in `note-observation.mjs:47-53` checks the shared marker file FIRST and
+  treats env as a *fallback* — designed for "file missing", not for "file stale", and the file
+  is a last-SessionStart-wins single slot per checkout. (Worktree checkouts each have their own
+  `tmp/agent-telemetry/`, which is why worktree-side attribution stays correct; only shared
+  checkouts — main — misroute.) Third live instance same day: an observation note filed from
+  the main checkout landed in the neighbour's shard via exactly this path.
+- **Fix shape (smaller than the flag-forwarding design):** invert to env-first
+  (`CLAUDE_CODE_SESSION_ID` → `JUSTSEARCH_AGENT_SESSION_ID` → marker file → worktree hash) in
+  the ONE shared resolver, and make `record-merge.mjs` import that resolver instead of its
+  private file-only read (`record-merge.mjs:28-34` is a mini-fork of the same logic today).
+  `remove-worktree.cjs` then needs NO forwarding for the common case — its record-merge child
+  inherits the caller's env. Keep the explicit `--session-id` flag as the escape hatch for
+  headless/cron contexts where the env vars are absent.
+- **Implementation probes owed:** (a) confirm `CLAUDE_CODE_SESSION_ID` presence in
+  subagent-spawned Bash (parent's vs own id — either is defensible, but document which);
+  (b) `export-session-env.mjs`'s own header calls its CLAUDE_ENV_FILE mechanism
+  "broken on Windows (#27987)" yet `JUSTSEARCH_AGENT_SESSION_ID` was present — find the actual
+  setter before relying on it (the harness-native var is the safer primary).
+
 **Acceptance.** A session tearing down a worktree can attribute the merge to itself
 regardless of what `current-session-id` contains; `session-merges.ndjson` entries from
-teardown are correct by construction, not by residency luck.
+teardown are correct by construction, not by residency luck. **Added per the addendum:** a
+`note-observation.mjs` call from the main checkout while a foreign id sits in
+`current-session-id` writes to the CALLER's shard (unit-testable by passing `env` to
+`resolveSessionId`, which already takes it as a parameter).
 
 ## Item 3 — `prepare-worktree.cjs`: the Gradle half never runs
 

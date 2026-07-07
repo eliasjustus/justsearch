@@ -562,6 +562,62 @@ class TestClaudeAgentSolverMcpSurfaceAssertion:
         assert result.metadata["mcp_servers"] == []
         assert result.metadata["mcp_tools_offered"] == 0
 
+    def test_deferred_tools_stamped_true_when_server_connected_but_no_justsearch_tools(
+        self, monkeypatch, tmp_path,
+    ):
+        """tempdoc 624 §M.8 amendment (Step 0 item 4): the justsearch server
+        actually CONNECTED (unlike the dead-config case), but no mcp__justsearch
+        tool is listed in the init event's `tools` -- the ToolSearch-deferred
+        surfacing shape. This still hits the same 'not offered' assertion (Step 0
+        does not change that gate), but mcp_tools_deferred must distinguish it
+        from a genuinely dead config in the stashed metadata."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init",
+             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
+             "tools": ["Read", "Grep"]},
+            {"type": "result", "is_error": False, "result": "answered from files anyway"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_tools_deferred"] is True
+        assert "expected MCP tool surface not offered" in result.metadata["error"]
+
+    def test_deferred_tools_stamped_false_for_genuinely_dead_config(self, monkeypatch, tmp_path):
+        """The dead-config case: the server never connected at all -- must NOT
+        be misread as 'deferred' (justsearch_connected is False)."""
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init", "mcp_servers": [],
+             "tools": ["Read", "Grep", "Glob", "Bash"]},
+            {"type": "result", "is_error": False, "result": "answered from files anyway"},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_tools_deferred"] is False
+
+    def test_deferred_tools_false_when_justsearch_tools_offered_eagerly(self, monkeypatch, tmp_path):
+        stdout = _stream_json(
+            {"type": "system", "subtype": "init",
+             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
+             "tools": ["Read", "Grep", "mcp__justsearch__search_query"]},
+            {"type": "result", "is_error": False, "result": "the answer",
+             "total_cost_usd": 0.02, "num_turns": 1,
+             "usage": {"cache_creation_input_tokens": 10}},
+        )
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_tools_deferred"] is False
+        assert "error" not in result.metadata
+
+    def test_deferred_tools_none_when_no_init_event(self, monkeypatch, tmp_path):
+        stdout = _stream_json({"type": "result", "is_error": False, "result": "the answer"})
+        result = _run_solver(
+            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
+
+        assert result.metadata["mcp_tools_deferred"] is None
+
     def test_with_tool_condition_without_mcp_config_is_exempt(self, monkeypatch, tmp_path):
         """B/C with mcp_config=None (no real config in play at all, e.g. a
         negative-control run) must not be held to the offered-surface assertion."""

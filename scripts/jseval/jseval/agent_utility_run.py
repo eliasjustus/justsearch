@@ -64,6 +64,11 @@ def _per_query_from_result(run_result: dict) -> dict:
             "mcp_servers": r.get("mcp_servers"),
             "mcp_tools_offered": r.get("mcp_tools_offered"),
             "mcp_surface_unverified": bool(r.get("mcp_surface_unverified")),
+            # Tool-surfacing-mode stamp (tempdoc 624 §M.8 amendment, Step 0 item 4):
+            # only agent_utility_inspect.claude_agent_solver populates this today --
+            # `r.get(...)` reads None for a classic run_agent_eval result (same
+            # "no data" semantics as mcp_servers/mcp_tools_offered above).
+            "mcp_tools_deferred": r.get("mcp_tools_deferred"),
         }
     return pq
 
@@ -112,6 +117,13 @@ def build_compose_summary(
         "agent_model": model,
         "corpus": corpus,
         "per_query": _per_query_from_result(run_result),
+        # Executor provenance (tempdoc 624 §M.8 amendment, Step 0 item 6): this
+        # summary came from the classic `run_agent_eval` shell-out, which is
+        # smoke-only / non-record-grade (see agent_retrieval_eval's module
+        # docstring) -- the composer needs this to distinguish a legacy-sourced
+        # record from an Inspect-sourced one (utility_comparison stamps it at
+        # `cohort.executor`).
+        "executor": "legacy-agent-eval",
     }
 
 
@@ -204,6 +216,9 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
                 "mcp_servers": (s.metadata or {}).get("mcp_servers"),
                 "mcp_tools_offered": (s.metadata or {}).get("mcp_tools_offered"),
                 "mcp_surface_unverified": bool((s.metadata or {}).get("mcp_surface_unverified")),
+                # Tool-surfacing-mode stamp (tempdoc 624 §M.8 amendment, Step 0
+                # item 4): `claude_agent_solver` stashes this alongside mcp_servers.
+                "mcp_tools_deferred": (s.metadata or {}).get("mcp_tools_deferred"),
             }
 
         for seed, per_query in sorted(by_seed.items()):
@@ -223,6 +238,8 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
             summaries.append({
                 "manifest": manifest, "condition": condition, "agent_model": model,
                 "corpus": corpus, "per_query": per_query,
+                # Executor provenance (Step 0 item 6): the record-grade path.
+                "executor": "inspect-ai",
             })
     return summaries
 
