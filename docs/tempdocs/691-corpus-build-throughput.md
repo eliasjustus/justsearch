@@ -1,7 +1,7 @@
 ---
 title: "Corpus-build throughput: increase indexing/enrichment throughput and decrease total corpus-build time — the indexing-side sibling of 648 that its stub explicitly reserved ('a separate target… spin a sibling stub'). Purpose kept deliberately GENERAL for now: make building an enrichment-complete (dense-searchable) index over a multi-thousand-file corpus fast enough that repeated agentic-utility eval runs (624/673) stop monopolizing the shared dev stack for hours. Method inherited from 647: attribution before allocation before optimization — no lever is chosen until measurement says which cost dominates."
 type: tempdocs
-status: "open — Phases A+B (attribution) and C (fix verification) COMPLETE (2026-07-07). Root cause found and FIXED-BY-ARTIFACT: NER's fp16 GPU model variant was missing from disk (interrupted build-ner.py run ~2026-07-01), so dev-mode silently ran the INT8 CPU-quantized model on CUDA at ~10× per-call cost — NER was ~75% of enrichment wall. With model_fp16.onnx restored (provenance in §Phase C) + JUSTSEARCH_NER_GPU_MEM_MB=2048: battlefield corpus build 333.4s → 124.0s (2.69×), NER p50 28.8→3.16ms. New dominant cost: embedding (62% share; GPU util still only ~52%). REMAINING: durable-fix code items (arena default, dev-mode degradation warning, encoder_profiles batched-path blind spot) + embed as next lever — not yet implemented."
+status: "open — Phases A-E complete (2026-07-07), durable fixes SHIPPED on PR #90 (branch worktree-691-corpus-throughput). Headline: NER's missing fp16 variant silently ran the INT8 CPU model on CUDA (~10× per-call); with the model restored + arena 512→2048, battlefield corpus build 333.4s → 124.0s (2.69×). Batch-size tuning measured as a dead end (Phase E); the remaining embed lever is DUPLICATE chunk embedding (E-5, ~20% of build) — retrieval-semantics-affecting, decision point recorded, NOT implemented. See §Evidence index and §Unverified assumptions before continuing."
 created: 2026-07-07
 author: agent session 2026-07-07 (Fable orientation pass; three-subagent tempdoc/code survey + targeted source verification)
 category: performance / indexing / eval-infrastructure
@@ -430,3 +430,100 @@ any win.
 **Phase C — re-measure, ratchet, close.** Before/after on the same corpora;
 update the registers; record the new floor via the existing 640 perf-gate
 path.
+
+## Evidence index (for continuation without the originating session)
+
+Raw experiment artifacts (jseval stdout JSON, GPU traces, /api/status
+snapshots, worker.log extracts) lived in the originating agent session's
+local temp scratchpad and are **not preserved** — every load-bearing number
+is inline in the phase sections above. Durable evidence pointers:
+
+- **Corpus-build A/B numbers (E2/B1/C1/C2 tables)** — reproduce with:
+  `cd scripts/jseval && python -m jseval run --dataset golden/battlefield-en-v1
+  --max-queries 0 --pipeline --start-backend --clean --json` (env overrides
+  `JUSTSEARCH_NER_GPU_MEM_MB` / `JUSTSEARCH_WORKER_HEAP` per run). The
+  pre-fix rows additionally require removing/renaming
+  `models/onnx/ner/model_fp16.onnx` (that absence *is* the bug).
+- **Variant-selection + arena evidence** — worker.log session-init lines
+  quoted verbatim in §Phase A/B-5 (`ner: GPU session initialized —
+  model=…, memLimit=…MB`); the OOM signature is the BFCArena "Available
+  memory of X is smaller than requested bytes of Y" + "Batched NER inference
+  failed, falling back to per-doc".
+- **fp16 model provenance** — sha256 + HF source commit in §Phase C;
+  `models/onnx/ner/build.json` (on the dev machine, untracked pending the
+  distribution decision) records both variants.
+- **Batch-sweep results (§Phase E)** — re-runnable:
+  `./gradlew.bat :modules:benchmarks:encoderBatchSweepBench` with `-Pbench*`
+  flags documented in `modules/benchmarks/src/main/java/io/justsearch/benchmarks/EncoderBatchSweepBench.java`
+  (committed on this branch); it writes result.json/summary.md/cells.jsonl.
+- **Phase D code verification** — unit claims map to:
+  `ResolvedConfigBuilderTest` (NER default 2048 pinned),
+  `DevModeVariantProbeTest` (degraded + reason asserted),
+  `ModelSessionPolicyResolverTest` (arena caps; distinctness tripwire
+  retirement), `policy-snapshot.json` golden. Full suite:
+  `./gradlew.bat test -PskipWebBuild=true` → BUILD SUCCESSFUL (exit 0) on
+  branch commit 1283508; `build -x test` green; spotless applied;
+  `preview-squash-message --pr 90` → 0 warnings.
+
+## Unverified assumptions & deferred checks (read before building on this)
+
+1. **E-5's duplicate-embedding arithmetic is static-read only.** The ~8,600
+   chunk-inference reconciliation closes numerically, but per-cycle
+   `embedDocIds.size()` distribution was never read from a live run — the
+   existing log line at `CombinedEnrichmentBackfillOps.java:421-444` answers
+   it in one build run. Do that before implementing the dedup lever.
+2. **The shipped defaults have not been live-verified as-committed.** All
+   live A/Bs used env-var overrides on pre-PR code. One post-merge
+   battlefield run (no env vars) should confirm: memLimit=2048 in the init
+   line, zero OOM fallbacks, ~124 s total — and additionally that the new
+   batched-path NER profiler records (expect call counts ≈ docs, p50 in the
+   tens-of-ms at batch≈11, NOT the old 14-stray-calls artifact) and that no
+   degraded-WARN fires for NER (fp16 present → optimal). The degraded WARN
+   itself has unit-tier coverage only; it has never been observed live.
+3. **1,000-doc projection (~5.3-6 min) is linear extrapolation** from the
+   391-doc C2 run (justified by the closed encoder-dominated decomposition;
+   expect ±15%; unmeasured at that scale).
+4. **Embed batch=16 fragmentation risk is historical, not re-tested** — a
+   code comment records 51 OOMs over a real 5,184-doc run at the current
+   arena; the 13-call constant-shape bench cannot falsify it. Do not raise
+   `MAX_ORT_BATCH_SIZE` without a soak test.
+5. **NER-arena-2048 coexistence with the online LLM is argued by design**
+   (GPU mutual exclusion + arena shrinkage; measured 7.7 GB peak was
+   LLM-offline). Never measured with llama-server resident.
+6. **Primary indexing remains ~35% below the 640 baseline, unexplained.**
+   Both candidate commits cleared by code review (B-6); heap ruled out by A/B
+   (B-2); remaining suspects are non-code (the enron corpus was regenerated —
+   5,486 docs vs the baseline's 5,459 — and/or machine/disk state). Decisive
+   experiment (deliberately deferred, low value: primary is <15% of build):
+   run 640-era code (`29579e5`) in a worktree against the same regenerated
+   corpus.
+7. **The 07-01 interrupted-download provenance story for `model.onnx`** is
+   inferred from mtimes + the missing `build.json`/fp16 sibling; the file was
+   never committed, so no prior version exists to diff.
+8. **Pre-fix NER `ortP50` values from batched-healthy runs are meaningless**
+   (14 stray batch=1 calls in C2) — use batch-timing shares for any pre-691
+   NER attribution.
+
+## Follow-up ledger (beyond the Remaining-items list above)
+
+- Post-merge: fold observation shards (`node scripts/agent-analytics/fold-observations.mjs --apply`)
+  — this session's shard holds: worker.log NUL-corruption from ORT stderr;
+  uncached per-request `SsotAnalyzerRegistry` reload during backfill;
+  pipeline-abort orphans the worker child process; SPLADE gpu_mem_mb doc
+  drift (env-vars doc says 2048, code default 4096); worktree model-path
+  scaffold dirs are empty (binaries only in the main checkout); duplicate
+  chunk embedding (E-5).
+- Model distribution decision covers more than NER: `model.onnx`/`model_fp16.onnx`
+  for gte-multilingual-base, reranker, and naver-splade-v3 are ALSO untracked
+  on the dev machine despite the LFS policy — same decision, one policy.
+- jseval tooling wishlist accumulated across §A-5/§B-4/§C/§E friction lists
+  (abort-keep-partial, chunk-aware ETA, `--gpu-trace`, batches-vs-calls
+  metric units, dataset regeneration pointers) — route to the jseval owner
+  (tempdoc 645 lineage) as one batch.
+- NER cross-doc batching (the "item 22" per-doc decision) should be
+  re-examined ONLY after the now-shipped batched-path profiling produces real
+  per-call data (B-5 caveat).
+- 640's baseline tables (97.3/8.2 docs/s and per-stage seconds) describe a
+  machine state that no longer exists (different NER model file state,
+  regenerated corpus); treat 691's C2 as the current reference until the
+  perf-gate recompose refreshes floors.
