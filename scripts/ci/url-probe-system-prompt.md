@@ -46,7 +46,7 @@ note:  audience=USER, confirm=none
 
 op:    core.export-diagnostics
 title: export diagnostics
-note:  audience=OPERATOR, confirm=none
+note:  audience=USER, confirm=none
 
 op:    core.add-watched-root
 title: add watched root

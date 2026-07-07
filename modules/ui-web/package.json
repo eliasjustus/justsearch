@@ -33,6 +33,7 @@
     "gen:liveness-constants": "node ../../scripts/codegen/gen-liveness-constants.mjs",
     "gen:api-client": "node ../../scripts/codegen/gen-api-client.mjs",
     "check:api-client-regen": "node ../../scripts/ci/check-api-client-regen.mjs",
+    "check:component-vocabulary": "node ../../scripts/ci/gen-component-vocabulary.mjs --check",
     "check:liveness-constants-regen": "node ../../scripts/ci/check-liveness-constants-regen.mjs",
     "check:liveness-constants-single-authority": "node ../../scripts/ci/check-liveness-constants-single-authority.mjs",
     "check:shape-handler-regen": "node ../../scripts/ci/check-shape-handler-regen.mjs",

@@ -41,7 +41,6 @@ final class InferenceHandlers {
   private final GpuCapabilitiesService gpuCapabilitiesService;
   private final EnterprisePolicyService enterprisePolicyService;
   private final io.justsearch.app.services.settings.UiSettingsStore settingsStore;
-  private final Runnable offlineProcessingTrigger;
   private final Telemetry telemetry;
   // Tempdoc 656 O2: nullable — lets a failed online-mode transition project a SPECIFIC reason onto
   // the runtime manifest's ai.pendingReason (the mode-transition path otherwise shows generic
@@ -54,7 +53,6 @@ final class InferenceHandlers {
       GpuCapabilitiesService gpuCapabilitiesService,
       EnterprisePolicyService enterprisePolicyService,
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
-      Runnable offlineProcessingTrigger,
       Telemetry telemetry,
       InferenceCapability inferenceCapability) {
     this.onlineAiService = onlineAiService;
@@ -62,7 +60,6 @@ final class InferenceHandlers {
     this.gpuCapabilitiesService = gpuCapabilitiesService;
     this.enterprisePolicyService = enterprisePolicyService;
     this.settingsStore = settingsStore;
-    this.offlineProcessingTrigger = offlineProcessingTrigger;
     this.telemetry = telemetry;
     this.inferenceCapability = inferenceCapability;
   }
@@ -549,24 +546,6 @@ final class InferenceHandlers {
         msg = e.toString();
       }
       ctx.status(500).json(ApiErrorHandler.toResponse(ApiErrorCode.INFERENCE_DETACH_FAILED, msg, telemetry, ApiErrorHandler.routeOf(ctx)));
-    }
-  }
-
-  /** Handles POST /api/offline/process - triggers VDU and embedding batch processing. */
-  void handleTriggerOfflineProcessing(Context ctx) {
-    if (offlineProcessingTrigger == null) {
-      ctx.status(503).json(ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Offline processing not available", telemetry, ApiErrorHandler.routeOf(ctx)));
-      return;
-    }
-
-    try {
-      log.info("Triggering offline processing (VDU + Embeddings)");
-      // Run in background to not block the request
-      Thread.ofVirtual().name("offline-processing").start(offlineProcessingTrigger);
-      ctx.json(Map.of("success", true, "message", "Offline processing started"));
-    } catch (Exception e) {
-      log.error("Failed to trigger offline processing", e);
-      ctx.status(500).json(ApiErrorHandler.toResponse(ApiErrorCode.INTERNAL_ERROR, e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
     }
   }
 

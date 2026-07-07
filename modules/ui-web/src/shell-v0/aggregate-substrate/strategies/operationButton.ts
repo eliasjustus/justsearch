@@ -72,6 +72,14 @@ assertFieldRoles<Operation>(OPERATION_BUTTON_ROLES);
  */
 export interface OperationButtonHostExtensions {
   viewerAudience?: Audience;
+  /**
+   * Invocation args forwarded from the surface via `<jf-operation
+   * .args=...>` down to the inner `<jf-op-button>` (and from there to
+   * `OperationClient.invoke`). Tempdoc 689 — the `.args` binding on
+   * `<jf-operation>` was previously dead: nothing in this strategy
+   * read or forwarded it.
+   */
+  args?: Record<string, unknown>;
 }
 
 const DEFAULT_VIEWER_AUDIENCE: Audience = 'USER';
@@ -104,12 +112,12 @@ export const operationButtonStrategy: AggregateStrategy<
   'Operation',
   'button'
 > = (op, _ctx, host) => {
-  const viewerAudience =
-    (host as typeof host & OperationButtonHostExtensions).viewerAudience ??
-    DEFAULT_VIEWER_AUDIENCE;
+  const hostExt = host as typeof host & OperationButtonHostExtensions;
+  const viewerAudience = hostExt.viewerAudience ?? DEFAULT_VIEWER_AUDIENCE;
   if (!operationVisibleTo(op, viewerAudience)) {
     return nothing;
   }
+  const args = hostExt.args ?? {};
 
   const tooltipParts: string[] = [];
   if (op.lineage.affects.length > 0) {
@@ -130,6 +138,7 @@ export const operationButtonStrategy: AggregateStrategy<
       api-base=${host.apiBase}
       confirm-kind=${op.policy.confirm.kind}
       title=${title}
+      .args=${args}
     ></jf-op-button>
   `;
 };

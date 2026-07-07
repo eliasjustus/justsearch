@@ -143,7 +143,6 @@ final class CoreApiAssembly {
             gpuCapabilitiesService,
             enterprisePolicyService,
             b.settingsStore,
-            b.offlineProcessingTrigger,
             telemetry,
             resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
     Supplier<String> diskPressureSupplier = null;
