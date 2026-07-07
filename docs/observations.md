@@ -175,11 +175,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] #581 tempdoc-number collision across worktree 577-goal3-unify (581-language-agnostic-analysis-rule vs 581-retire-synonyms-de/en changesets) — must renumber before that worktree merges (noticed 2026-06-15, from 582 investigation)
 
 ### obs:dev-fe-stale-port-rebind — Dev FE keeps a dead backend port across dev-stack restarts until hard reload (stale Vite/apiBase)
-`kind: lesson` `anchor: scripts/dev/dev-runner.cjs` `seen: 4` `first: 2026-06-17` `last: 2026-07-05`
+`kind: lesson` `anchor: scripts/dev/dev-runner.cjs` `seen: 7` `first: 2026-06-17` `last: 2026-07-07`
 - [ ] Dev FE (Vite :5173) proxy/manifest goes stale across dev-stack restarts — the loaded SPA keeps pointing at a dead backend port (footer shows old port + perpetual 'Reconnecting…') until a hard reload of http://localhost:5173/. Impedes live UI validation after a dev_start cycle; hard-reload re-points it. `scripts/dev/dev-runner.cjs` (2026-06-21)
 - [ ] Dev ergonomics: a ui-web tab left open across a dev-stack restart keeps the OLD backend port baked in (absolute apiBase, e.g. :63175) → silent 'Failed to fetch' / 'Reconnecting…' and empty search results until a hard page reload rebinds it; relative /api fetches via the Vite proxy keep working, which masks the staleness during live UI validation (2026-06-23)
 - [ ] Worktree live-UI checks: a stale Vite on :5173 (from a prior dev-runner/ui-shot start) keeps serving pre-change FE code, silently masking the worktree's edits in the browser. Start the worktree Vite on a distinct port and confirm a known-new module is served before trusting the render. (tempdoc 601 §15.3) (2026-06-17)
 - [ ] dev stack boot fails when the spawned java resolves to JDK 8: dist launcher passes --sun-misc-unsafe-memory-access=warn (JDK 23+-only flag, from build.gradle.kts jvm args — `modules/ui/build.gradle.kts:1008`) and the JVM exits 'Unrecognized option'. Same dev_start worked ~1h earlier in the same session, so java resolution in the dev-runner environment drifted (PATH java is 1.8.0_492). Consider pinning an explicit toolchain java path in dev-runner.cjs instead of inheriting environment java. (2026-07-05)
+- [ ] dev-runner CLI start without --session-id creates an ownerless lease that neighbouring sessions' starts treat as stale and silently reclaim (RECLAIM_DEAD/stale_reclaim) — two live-probe stacks killed mid-probe this way (stop-report disposition normal_stop, runs 0c821187/11c346d5, 2026-07-07). Fix candidates: dev-runner.cjs could default session-id from tmp/agent-telemetry/current-session-id like the analytics scripts do, or refuse ownerless starts with a hint. scripts/dev/dev-runner.cjs (2026-07-07)
+- [ ] justsearch_dev_start failed twice in a row with 'Backend did not emit JUSTSEARCH_API_PORT within 15s' (no active run recorded, tail_log returned NO_ACTIVE_RUN) while quick_health/preflight both reported healthy/ready; MCP server also flagged mcpServerStale (source changed since boot) — blocked live regen of url-probe-system-prompt.md via render-prompt, had to hand-verify instead — `scripts/dev/dev-runner.cjs:1212` (2026-07-07)
+- [ ] gradle :modules:ui:jar reports UP-TO-DATE with stale jar after Java edits when config cache active — dist served old routes (404 on new endpoint) until --no-configuration-cache forced rebuild; consider a dev-runner preflight jar-vs-classes mtime check — `scripts/dev/dev-runner.cjs:1056` (2026-07-06)
 
 ### obs:statuswire-conformance-red — StatusWireContractConformanceTest red — record fields drift from status.proto
 `kind: environment` `anchor: StatusWireContractConformanceTest` `seen: 3` `first: 2026-06-21` `last: 2026-06-23`
@@ -264,9 +267,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] USER-FACING fossil, live-verified 2026-07-07: the core.export-diagnostics jf-operation button never upgrades on BOTH hosting surfaces (HealthSurface.ts:1407, HelpSurface.ts:412) — element connected in the surface shadow tree but no shadowRoot/zero width while customElements.get('jf-operation') is defined globally (scoped-registry upgrade gap suspected); the 2026-07-04 ui-audit health/scrolled screenshot on main corroborates (Quick Actions shows only Reindex/Force Rebuild, no Export Diagnostics). Export Diagnostics is currently UNREACHABLE from the UI; the operation backend path works (live-verified via POST /api/operations/core.export-diagnostics/invoke). Presentation-authority fix needed — out of 683 scope. (2026-07-07)
 
 ### obs:bash-guard — Document in hooks-reference.md that the bash-guard force matcher is `git push`-anchored (`scripts/ag
-`kind: follow-up?` `anchor: scripts/agent-analytics/hooks/bash-guard.mjs` `seen: 2` `first: 2026-06-21` `last: 2026-06-30`
+`kind: follow-up?` `anchor: scripts/agent-analytics/hooks/bash-guard.mjs` `seen: 3` `first: 2026-06-21` `last: 2026-07-07`
 - [ ] Document in hooks-reference.md that the bash-guard force matcher is `git push`-anchored (`scripts/agent-analytics/hooks/bash-guard.mjs:29`), so `git rm -f` / `rm -f` are NOT blocked by it — deferred from 618 §15 because hooks-reference.md held another agent's uncommitted WIP (a live §4/§12 contention instance) (2026-06-21)
 - [ ] bash-guard gap: `never-checkout-in-main`/`never-destructive-git-in-main` only match the bare `git checkout`/`git reset --hard` form; the `git -C <path> …` variant bypasses the guard (verified — `git -C <main> checkout main` executed in the main checkout despite the hook). tier-register lists these as hook-tier ~100% but coverage has this hole — `scripts/agent-analytics/hooks/bash-guard.mjs`. (2026-06-30)
+- [ ] 664 publish-gate dropped as not-wanted (2026-07-07): the gh-pr-confirmation guard (bash-guard.mjs CONFIRM_PUBLISH layer making gh pr create/ready/merge require interactive confirm; feature commit 2d56424 on pruned branch worktree-664-publish-gate) added publish-friction the owner does not want (publishing is gated via conversation). Guard code + design (branch tempdoc 665-publish-action-confirmation-gate.md) recoverable from reflog/SHA short-term. Was a pre-681 artifact; landing needed a tier-register #37->#38 renumber + tempdoc renumber off the 665 collision + a prose-tier-register changeset. (2026-07-07)
 
 ### obs:localapiserver — More pre-existing RED tests on base (not 638 work): ui LocalApiServerThinComposerTest + RegistryCont
 `kind: environment?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java` `seen: 2` `first: 2026-06-23` `last: 2026-06-25`
@@ -418,9 +422,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing (base HEAD, not 627): `./gradlew build` fails at `:ssotValidateExec` — field-catalog.schema.json requires 'analyzer' but 58/68 fields in SSOT/catalogs/fields.v1.json lack it (mid-flight ADR-0043 analyzer migration). Blocks full-build pre-merge gate for all worktrees off this HEAD. (2026-06-21)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 2` `first: 2026-06-21` `last: 2026-07-07`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 3` `first: 2026-06-21` `last: 2026-07-07`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
 - [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
+- [ ] remove-worktree.cjs record-merge misattribution RE-OBSERVED 2026-07-07 (681 teardown): linked session 20097c0b (neighbour's id in main checkout's current-session-id) to a local merge commit instead of the tearing-down session 06f94413 -> squash f604144; backfilled manually in session-merges.ndjson — `scripts/dev/remove-worktree.cjs` (2026-07-07)
 
 ### obs:tikaocrruntime — Pre-existing (untracked, another agent's 607 OCR work): IndexerWorkerGuardrailsTest fails — TikaOcrR
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/extract/TikaOcrRuntime.java` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
@@ -472,8 +477,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] battlefield-de-v1 (and the generator's lang=de path generally): the 'German' corpus's FILLER paragraphs are untranslated English — only the linking sentences are German (measured: both corpora share the same English filler; A-arm analysis 03, corpus analysis 05). Load-bearing for any future cross-lingual battlefield claim: a corpus labeled German that is ~90% English text cannot back a cross-lingual retrieval claim; the generator needs true target-language filler before the cross-lingual member (624 §M.2 successor) is built. — `scripts/jseval/jseval/corpus_generate.py` (2026-07-03)
 
 ### obs:agenthistoryindexer — Restored agent runs are viewable but not searchable: AgentHistoryIndexer is purely live-listener-fed
-`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java` `seen: 2` `first: 2026-06-23` `last: 2026-07-07`
 - [ ] Restored agent runs are viewable but not searchable: AgentHistoryIndexer is purely live-listener-fed (no rebuild/backfill path), and faithful backup-import doesn't fire listeners — so a restored run's transcript never enters the agent-history collection. DERIVED-projection rebuild gap (585's domain); fix = re-index restored runs at import OR add an AgentHistoryIndexer backfill-from-ledger — `modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java` (2026-06-23)
+- [ ] CONFIRMED trust bug (687-R2 Q6): dataDir runtime artifact modules/ui-web/.dev-data/agent-history/<uuid>.md was ingested UNTAGGED into the user corpus (ranked #2 for 'getting started'; doc count 5->6) — the 585-D4b reserved-collection exclusion only guards TAGGED docs, and the generic file watcher ingested the same file untagged, bypassing it. Structural fix: worker refuses to ingest anything under its own dataDir (prefix guard in the scanner/watcher) — `modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java` (2026-07-07)
 
 ### obs:knowledgesearchcontroller — BUG (585, HIGH): the agent-history search scope is silently dropped — KnowledgeSearchController neve
 `kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/KnowledgeSearchController.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
@@ -783,8 +789,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] SelectionContextInjector.java uses a raw `"\n\n---\n\n"` separator literal instead of a canonical constant (SeparatorConstantDrift test was red on main; allowlisted as the sanctioned escape during tempdoc 554 impl). Structural fix: hoist a shared SECTION_SEPARATOR constant to a module app-services can reach. — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/SelectionContextInjector.java:285` (2026-06-03)
 
 ### obs:execution-surfaces-v1 — Pre-existing on main (surfaced by the 560 merge, NOT 4c): `execution-surface` gate fails — `governan
-`kind: environment?` `anchor: governance/execution-surfaces.v1.json` `seen: 1` `first: 2026-06-03` `last: 2026-06-03`
+`kind: environment?` `anchor: governance/execution-surfaces.v1.json` `seen: 2` `first: 2026-06-03` `last: 2026-07-07`
 - [ ] Pre-existing on main (surfaced by the 560 merge, NOT 4c): `execution-surface` gate fails — `governance/execution-surfaces.v1.json` still references `modules/ui-web/src/shell-v0/views/AskView.ts`, which 561 P2 deleted (commit 1cea1ce9d "retire the separate views"). Remove the stale register entry — 561/one-window cleanup. (2026-06-03)
+- [ ] execution-surface gate fails pre-existing on search-thread base: governance/execution-surfaces.v1.json's fe-generated-pb entry points to modules/ui-web/src/api/generated/knowledge_pb.d.ts, which no longer exists after 683 retired the protoc-gen-es TS plugin (contracts/wire/buf.gen.yaml now has plugins:[]) — register entry orphaned by that change, not by search-thread — `governance/execution-surfaces.v1.json:54` (2026-07-07)
 
 ### obs:sse-pbt-test — sse.pbt.test.ts fails typecheck — `fast-check` dev-dep not installed in modules/ui-web/node_modules
 `kind: defect?` `anchor: modules/ui-web/src/api/sse.pbt.test.ts` `seen: 1` `first: 2026-06-04` `last: 2026-06-04`
@@ -1151,8 +1158,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] BrowseOperationHandler never reads the list_files arg despite justsearch_browse's tool description promising an explicit override — only auto-detect (no subfolders -> list files) is implemented — `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/BrowseOperationHandler.java` (2026-07-02)
 
 ### obs:multiplexedstream — governance kernel: ts-any gate fails on modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts (
-`kind: environment?` `anchor: MultiplexedStream.ts` `seen: 1` `first: 2026-07-02` `last: 2026-07-02`
+`kind: environment?` `anchor: MultiplexedStream.ts` `seen: 2` `first: 2026-07-02` `last: 2026-07-07`
 - [ ] governance kernel: ts-any gate fails on modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts (`(import.meta as any).env`) — pre-existing since PR #22 (tempdoc 662), not registered in gates/ts-any/baseline.txt. Not part of any tempdoc-655 work. (2026-07-02)
+- [ ] ts-any gate fails pre-existing on search-thread base: MultiplexedStream.ts:60 (import.meta as any) exists at base 2ef7396 with ratchet baseline 0 — 683-era addition without a changeset/rebalance — `modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts:60` (2026-07-07)
 
 ### obs:contract-surfaces-v1 — governance kernel: contract-projection gate fails — governance/contract-surfaces.v1.json and codegen
 `kind: environment?` `anchor: contract-surfaces.v1.json` `seen: 2` `first: 2026-07-02` `last: 2026-07-07`
@@ -1677,7 +1685,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui-web/src/api/wireProjection.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
 - [ ] wireProjection.ts/wireValidator.ts have zero runtime consumers after the FE proto teardown (683 item 4) — protobuf-es/protovalidate boundary helpers whose only remaining caller is bigintToNumber's own test; candidates for retirement with the @bufbuild deps — `modules/ui-web/src/api/wireProjection.ts:102` (2026-07-06)
 
-### obs:token-names-generated — same pre-existing cluster: gen-token-names --check (stale token-names.generated.ts, 220 tokens) and 
+### obs:token-names-generated — same pre-existing cluster: gen-token-names --check (stale token-names.generated.ts, 220 tokens) and
 `kind: environment?` `anchor: token-names.generated.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
 - [ ] same pre-existing cluster: gen-token-names --check (stale token-names.generated.ts, 220 tokens) and strip-token-fallbacks --check (6 fallbacks) also fail on base HEAD via untouched RecentsMenu.ts/ActionLedgerView.ts — the ui-web token gate set was skipped when those components landed; one regen+rebalance session fixes all four checks (2026-07-06)
 
@@ -1705,7 +1713,47 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
 
-### obs:unanchored-general-58 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
+### obs:unanchored-general-58 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) -
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
+
+### obs:unanchored-drift-22 — Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] Hard Invariant #1 names only Lucene, but the worker-exclusive SQLite job queue is equally ownership-critical and no longer named by any invariant — SqliteJobQueue lives in modules/indexer-worker and no Head main code touches SQLite today, yet nothing (invariant text or ArchUnit rule) forbids a future Head-side SQLite reader. Consider re-affirming the SQLite half of the ownership invariant. (2026-07-06)
+
+### obs:unanchored-general-59 — 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distributi
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] 643 dropped as effectively-landed (2026-07-07): Part-1 core (JUDGE_RANK_LOW bucket + rank-distribution + judge-ceiling/ce-replay realizable-headroom) already shipped via PR #36 (db62746); the only genuinely-unmerged Part-1 residue was the JUDGE_RANK_LOW sub-cause taxonomy (CE_NOT_SCORED/CE_DEMOTION attribution) + the Part-2 runtime CE-confidence trust gate (shouldTrustCeReorder/trust_gate, default-off Java). Per tempdoc 643 §Merge-reconciliation the trust gate's keep/remove is unresolved pending an unrun CE-margin-discrimination measurement (AUC>=0.65 on enron-qa); it can be rebuilt verbatim from §Long-term design. Branch worktree-643-judge-rung-conformance (tip 7d6dde2, feature b88272a) pruned unshipped. (2026-07-07)
+
+### obs:jfoperation — CORRECTION to the 2026-07-07 'export-diagnostics button never upgrades / scoped-registry gap suspect
+`kind: defect?` `anchor: JfOperation.ts` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] CORRECTION to the 2026-07-07 'export-diagnostics button never upgrades / scoped-registry gap suspected' inbox note: static root-cause (689 takeover) shows the elements upgrade fine — JfOperation is light-DOM (shadowRoot always null, JfOperation.ts:120-122) and renders nothing because the (Operation,button) strategy's AUDIENCE GATE returns nothing (operationButton.ts:110-112): these ops are Audience.OPERATOR while viewer audience defaults to USER. Proximate defect: HealthSurface.ts:1375 comment claims viewer-audience=OPERATOR is passed but no element sets it (only hit repo-wide is the comment). No registry bug exists; do not chase one. (2026-07-07)
+
+### obs:url-probe-system-prompt — url-probe-system-prompt.md was already stale before my edit: core.rebuild-index shows audience=OPERA
+`kind: environment?` `anchor: scripts/ci/url-probe-system-prompt.md` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] url-probe-system-prompt.md was already stale before my edit: core.rebuild-index shows audience=OPERATOR at line 30-32 but CoreOperationCatalog.java:430 declares Audience.USER (tempdoc 598) — pre-existing drift, out of scope for tempdoc 689 item 3 — `scripts/ci/url-probe-system-prompt.md:32` (2026-07-07)
+
+### obs:unanchored-drift-23 — post-merge MCP capture_evidence still unverified (688 deferred item): the long-running justsearch-de
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] post-merge MCP capture_evidence still unverified (688 deferred item): the long-running justsearch-dev MCP server is stale (sourceChangedSinceBoot — predates the 683 merge) and its spawn of the new capture script died with a libuv assertion (UV_HANDLE_CLOSING, exit 3221226505). Re-test after an MCP reconnect; the direct CLI path works (validator OK on a live bundle this session). (2026-07-07)
+
+### obs:markdownblockmap-test — DOMPurify.sanitize() under happy-dom strips the single outermost wrapper element of an otherwise-sta
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/documentPane/markdownBlockMap.test.ts` `seen: 1` `first: 2026-07-06` `last: 2026-07-06`
+- [ ] DOMPurify.sanitize() under happy-dom strips the single outermost wrapper element of an otherwise-standalone fragment (e.g. `<table><tr>...` sanitizes to `<tbody><tr>...` with the `<table>` tag gone; same for h1/pre/blockquote) — verified via isolated script; test-environment artifact of this DOMPurify+happy-dom combination, not a production defect (real browsers preserve the wrapper) — affects any future test asserting on outer tag names of DOMPurify-sanitized content — `modules/ui-web/src/shell-v0/components/documentPane/markdownBlockMap.test.ts` (2026-07-06)
+
+### obs:gen-wire-schema-types — contract-projection gate fails pre-existing on search-thread base: (1) schema-types-drift — vduProce
+`kind: environment?` `anchor: scripts/codegen/gen-wire-schema-types.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] contract-projection gate fails pre-existing on search-thread base: (1) schema-types-drift — vduProcessing in status-response.schema.json (e96c94d) never regenerated into FE schema-types; (2) register-drift — InferenceStatusResponse is a codegen TARGET but unregistered in governance/contract-surfaces.v1.json. Both belong to the 683 wire-hardening area — not fixed from the search-thread worktree to avoid colliding with that session — `scripts/codegen/gen-wire-schema-types.mjs` (2026-07-07)
+
+### obs:searchorchestrator — SearchOrchestrator.warmUp() doc-count guard doesn't account for post-boot index deletion races (docC
+`kind: follow-up?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/services/SearchOrchestrator.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] SearchOrchestrator.warmUp() doc-count guard doesn't account for post-boot index deletion races (docCount>0 at boot, later trimmed to 0 by user action before deferred model init completes) — theoretical edge, not exercised by current tests — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/SearchOrchestrator.java:172` (2026-07-07)
+
+### obs:unanchored-drift-24 — package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pr
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
+- [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description is stale pre-cutover text, author/keywords empty - GitHub/npm surfaces show wrong metadata (outsider first-touch audit 2026-07-01) - `package.json:3` (2026-07-04)
+
+### obs:unanchored-general-60 — README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - 
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`
 - [ ] README badge line still ships the empty placeholder comment (build status / release / nDCG badge) - visibly unfinished self-presentation on the public front door (outsider first-touch audit 2026-07-01) - `README.md:7` (2026-07-04)
 
