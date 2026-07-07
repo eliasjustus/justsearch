@@ -4,7 +4,7 @@ type: tempdoc
 status: implemented
 updated: 2026-07-07
 implemented: 2026-07-07 (branch worktree-search-thread, S1-S8; live-verified end-to-end with the local model)
-round2: 2026-07-07 design settled (post-implementation audit; see §Round 2)
+round2: 2026-07-07 implemented + live-verified (R1-R5; residue: agent-history ingest guard — see observations)
 created: 2026-07-04
 related: [497, 526, 561, 577, 596, 602, 609, 613, 678]
 ---
