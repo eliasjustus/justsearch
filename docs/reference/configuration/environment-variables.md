@@ -170,7 +170,7 @@ Scope:
 | **NER GPU** | | | |
 | `JUSTSEARCH_NER_GPU_ENABLED` | `justsearch.ner.gpu_enabled` | Bool | Enable GPU acceleration for NER inference. Falls back to `JUSTSEARCH_GPU_ENABLED` when unset. |
 | `JUSTSEARCH_NER_GPU_DEVICE_ID` | `justsearch.ner.gpu_device_id` | Int | CUDA device ID for NER inference (default 0). |
-| `JUSTSEARCH_NER_GPU_MEM_MB` | `justsearch.ner.gpu_mem_mb` | Int | GPU memory arena limit for NER sessions in MB (default 512). |
+| `JUSTSEARCH_NER_GPU_MEM_MB` | `justsearch.ner.gpu_mem_mb` | Int | GPU memory arena limit for NER sessions in MB (default 2048; 512 OOMed the fp16 variant's attention intermediates, degrading NER to per-doc fallback — tempdoc 691). |
 | **BGE-M3 GPU** | | | |
 | `JUSTSEARCH_BGE_M3_GPU_ENABLED` | `justsearch.bgem3.gpu_enabled` | Bool | Enable GPU acceleration for BGE-M3 inference. Falls back to `JUSTSEARCH_GPU_ENABLED` when unset. |
 | `JUSTSEARCH_BGE_M3_GPU_DEVICE_ID` | `justsearch.bgem3.gpu_device_id` | Int | CUDA device ID for BGE-M3 inference (default 0). |
