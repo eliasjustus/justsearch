@@ -111,7 +111,7 @@ When you notice an issue outside your current task's scope — pre-existing bug,
   node scripts/agent-analytics/note-observation.mjs "<description> — \`<file:line>\`"
   ```
 
-  It resolves your session id and stamps the date; the shard commits with your work. `fold-observations.mjs --apply` later reconciles shards into the `## Inbox` of `docs/observations.md`.
+  It resolves your session id and stamps the date; the shard commits with your work. `fold-observations.mjs --apply` later folds shards into `docs/observations.md`'s conditions store.
 - **Do not investigate.** Record and return to your task.
 - Issues caused by your current change don't belong here — fix those.
 
@@ -125,7 +125,7 @@ Before appending a new rule or lesson, run the gate:
    - Cross-cutting platform constraint → `.claude/rules/agent-lessons.md`
    - Named reference case → `docs/reference/contributing/agent-postmortems.md` (one paragraph + one citation)
    - Domain workflow → existing skill body or new `/skill-name`
-   - Out-of-scope finding → `docs/observations.md` Inbox (one line, don't fix here)
+   - Out-of-scope finding → `docs/observations.md` (one line, don't fix here)
 2. **Already-said test** — grep CLAUDE.md and `.claude/rules/` for the keyword. If the concept is already covered, edit the existing line; don't add a duplicate.
 3. **Enforcement question** — if the rule is "must" / "never" / "always" load-bearing, the right home may be a hook or an ArchUnit test, not more prose. Anthropic: *"hooks enforce rules at 100%"* vs ~70% adherence for prose rules.
 
@@ -256,7 +256,7 @@ Full rules — destructive-command list, worktree lifecycle, merge workflow: `.c
 - **Full agent guide**: `docs/reference/contributing/agent-guide.md`
 - **Docs index**: `docs/llms.txt`
 - **Active work**: `docs/tempdocs/`
-- **Out-of-scope findings**: `docs/observations.md` (Inbox section)
+- **Out-of-scope findings**: `docs/observations.md` (conditions store)
 - **Canonical docs** (must not drift): `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
 - **Reference cases by handle**: `docs/reference/contributing/agent-postmortems.md`
 - **Contribution recipes**: `docs/reference/contributing/common-workflows.md` (relocated from always-loaded; path-triggerable recipes also push via `governance/consult-register.v1.json`)

@@ -1,0 +1,56 @@
+{
+  "kind": "expected-state.v1",
+  "version": 1,
+  "comment": "Known expected state of verification commands (tempdoc 680, environment lane). Consumed by the known-state-hint hook (PreToolUse Bash): when a command matches an entry's `match` regexes, the claim is surfaced so sessions stop re-deriving 'is this failure mine?' via stash-and-verify. DISCIPLINE: every pin carries an exit — an `exitProbe` (a command; exit 0 means the pinned state is GONE, checked by observations-triage --probe, report-only) or a `reviewBy` date after which the pin must be re-affirmed or removed. A pin without a fired exit is edited only by a human. `slow:` prefix on exitProbe = only checked with --slow.",
+  "entries": [
+    {
+      "id": "ui-web-typecheck-ts5101",
+      "match": ["npm .*typecheck", "tsc\\b.*-p\\b|tsc\\b.*--noEmit"],
+      "claim": "ui-web `npm run typecheck` is RED repo-wide (TS5101: tsconfig.json baseUrl deprecation vs pinned typescript 6.x) — pre-existing on main since ~2026-07-01; a typecheck failure that is ONLY TS5101 is not caused by your change.",
+      "evidence": "observations condition obs:ui-web-typecheck-ts5101 (seen 5); probe re-confirmed 2026-07-05",
+      "added": "2026-07-06",
+      "exitProbe": "slow: npm --prefix modules/ui-web run typecheck"
+    },
+    {
+      "id": "correction-eval-queries-missing",
+      "match": ["pytest\\b", "python -m pytest", "jseval\\b.*test"],
+      "claim": "jseval tests/test_correction_probe.py::TestLoadManifest (2 tests) are RED everywhere — the data file scripts/jseval/jseval/data/correction-eval-queries.v1.json exists nowhere in git history. Those two failures are not yours.",
+      "evidence": "observations condition obs:correction-eval-queries-missing (seen 12); file-absence probe re-confirmed 2026-07-05",
+      "added": "2026-07-06",
+      "exitProbe": "node -e \"process.exit(require('fs').existsSync('scripts/jseval/jseval/data/correction-eval-queries.v1.json')?0:1)\""
+    },
+    {
+      "id": "theme-token-closure-red",
+      "match": ["check-theme-token-closure"],
+      "claim": "check-theme-token-closure is RED on main (8 ghost tokens in shell-v0/components/RecentsMenu.ts) — pre-existing; only NEW ghost tokens beyond RecentsMenu.ts are yours.",
+      "evidence": "observations condition obs:theme-token-closure-red (seen 8); probe re-confirmed 2026-07-06",
+      "added": "2026-07-06",
+      "exitProbe": "node scripts/ci/check-theme-token-closure.mjs"
+    },
+    {
+      "id": "accent-as-text-red",
+      "match": ["check-accent-as-text"],
+      "claim": "check-accent-as-text is RED on main (accent-fill-as-text over baseline in ActionLedgerView.ts) — pre-existing; only NEW accent-as-text uses are yours.",
+      "evidence": "observations condition obs:accent-as-text-red (seen 6); probe re-confirmed 2026-07-06",
+      "added": "2026-07-06",
+      "exitProbe": "node scripts/ci/check-accent-as-text.mjs"
+    },
+    {
+      "id": "vdu-pdf-fixtures-local-env",
+      "match": ["gradlew(\\.bat)? .*test", "gradle .*test"],
+      "claim": "VduEligibilityPdfFixturesTest can be RED on THIS machine only (Tesseract/tessdata + Tika PDF env; @DisabledIfEnvironmentVariable CI=true, CI is green) — a local failure there is environmental, not your change.",
+      "evidence": "observations condition obs:vdu-pdf-fixtures-local-env (seen 9)",
+      "added": "2026-07-06",
+      "exitProbe": "slow: ./gradlew.bat :modules:worker-services:test --tests \"*VduEligibilityPdfFixturesTest*\""
+    },
+    {
+      "id": "governance-gates-standing-red",
+      "match": ["verifyGovernanceGates", "gradlew(\\.bat)? build(?!.*-x)", "governance/run\\.mjs --gate (class-size|ui-bundle)"],
+      "claim": "class-size and ui-bundle gates carry standing RED on main (pin drift behind merges; bundle hard-cap owner decision pending) — check whether the reported files are YOURS before treating the gate as your failure.",
+      "evidence": "observations conditions obs:class-size-pin-drift (seen 12) + obs:ui-bundle-gate-red (seen 12)",
+      "added": "2026-07-06",
+      "reviewBy": "2026-08-03",
+      "owner": "gate owners (class-size pins / bundle budget) — re-affirm or clear by reviewBy"
+    }
+  ]
+}
