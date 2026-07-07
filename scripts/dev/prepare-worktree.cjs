@@ -34,7 +34,10 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const noDist = process.argv.includes('--no-dist');
 const isWin = process.platform === 'win32';
 const npm = isWin ? 'npm.cmd' : 'npm';
-const gradle = isWin ? 'gradlew.bat' : './gradlew';
+// Absolute, cwd-qualified path: a bare 'gradlew.bat' is not reliably resolved
+// from the child's cwd by every spawn environment ("'gradlew.bat' is not
+// recognized" — tempdoc 684), even with cwd set correctly.
+const gradle = isWin ? path.join(repoRoot, 'gradlew.bat') : path.join(repoRoot, 'gradlew');
 
 function run(cmd, args, cwd) {
   console.error(`[prepare-worktree] $ ${cmd} ${args.join(' ')}  (cwd: ${cwd})`);
