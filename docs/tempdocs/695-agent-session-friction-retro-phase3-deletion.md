@@ -146,6 +146,15 @@ command) and is fewer tool calls. Worth a one-line addition to `.claude/rules/ho
 or a CI-triage skill note: *"Waiting on PR/run completion: use `gh pr checks <N> --watch` or
 `gh run watch <id>` backgrounded, not a hand-rolled poll loop."*
 
+**Empirically confirmed while filing this tempdoc:** `gh pr checks 98 --watch` (this tempdoc's own
+PR — [#98](https://github.com/eliasjustus/justsearch/pull/98)) ran as one command, blocked
+correctly for the full ~7-minute `Windows-native tests` job, and exited 0 on all-green — no
+sleep-guard friction, no timeout recovery round-trip. One secondary cost surfaced: the default
+10-second refresh reprints the *entire* check table on every tick, producing ~46 KB of output over
+a 7-minute wait — noisy for the context window on a long-running job. `gh pr checks <N> --watch`
+supports `-i, --interval <seconds>` (default 10); prefer `--watch --interval 30` (or higher) for
+jobs known to run several minutes, to cut the output volume roughly 3x for the same wait.
+
 ### 2.2 Manual full-diff secret scanning duplicated a check the repo already runs automatically
 
 **What happened:** before pushing, the full ~590-line diff was dumped to a temp file and read
@@ -243,7 +252,7 @@ intent to create durable documentation unambiguous even though "your tempdoc" it
 gh pr view <N> --json state,mergedAt,mergeCommit
 
 # Watch CI to completion without a hand-rolled poll loop (§2.1)
-gh pr checks <N> --watch
+gh pr checks <N> --watch --interval 30   # empirically confirmed via PR #98; --interval cuts output volume on multi-minute jobs
 gh run watch <run-id> --exit-status
 
 # Squash-message gate (run before every merge; catches PR-body convention issues, §2.3)
