@@ -11,7 +11,7 @@
  * 3. If the fixture shape changed unintentionally, fix the backend
  */
 import { describe, it, expect } from 'vitest';
-import { SettingsV2Schema } from './schemas';
+import { settingsV2Schema } from './generated/schema-types/settings-v2';
 import { statusResponseSchema } from './generated/schema-types/status-response';
 import { knowledgeSearchResponseSchema } from './generated/schema-types/knowledge-search-response';
 import { mapKnowledgeSearchResponse } from './domains/search';
@@ -75,8 +75,11 @@ describe('Cross-language contract: StatusResponse vs generated statusResponseSch
 });
 
 describe('Cross-language contract: SettingsV2 round-trip', () => {
-  it('Java-serialized SettingsV2 passes Zod validation', () => {
-    const result = SettingsV2Schema.safeParse(settingsFixture);
+  // Tempdoc 683 (X3): validates against the GENERATED strict `settingsV2Schema`
+  // (record → JSON Schema → Zod), not the retired fail-open `.loose()` hand schema —
+  // an unknown wire key now fails here instead of passing silently.
+  it('Java-serialized SettingsV2 passes generated Zod validation', () => {
+    const result = settingsV2Schema.safeParse(settingsFixture);
     if (!result.success) {
       const issues = result.error.issues.map(
         (i) => `  ${i.path.join('.')}: ${i.message} (expected ${i.code})`,

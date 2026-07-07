@@ -308,10 +308,11 @@ tasks.named("verify") {
 // === Wire-Category contract codegen (slice 3a-1-8 Phase 2) ===
 //
 // Java emission is part of `:modules:api-contract-projection-java:generateProto`
-// (driven by the com.google.protobuf Gradle plugin). TS emission runs `buf
-// generate` from the pinned npm workspace at scripts/wire-contract/.
-// `:wireGenerate` aggregates both. `:wireVerify` confirms the working tree
-// matches regenerated output (CI gate).
+// (driven by the com.google.protobuf Gradle plugin); `:wireGenerate` wraps it.
+// FE types are NOT generated from proto: they come from the record→JSON-Schema
+// →{TS,Zod} pipeline (scripts/codegen/gen-wire-schema-types.mjs). The npm
+// workspace at scripts/wire-contract/ now pins only the buf CLI, used by the
+// `wire` governance gate for `buf breaking` (scripts/governance/gates/wire/).
 
 val wireContractDir = layout.projectDirectory.dir("scripts/wire-contract")
 val isWindows = System.getProperty("os.name").lowercase().contains("win")
@@ -319,7 +320,7 @@ val npmCmd = if (isWindows) "npm.cmd" else "npm"
 
 val wireNpmInstall = tasks.register<Exec>("wireNpmInstall") {
   group = "build"
-  description = "Install pinned buf + protoc-gen-es into scripts/wire-contract/."
+  description = "Install the pinned buf CLI (used by the wire governance gate) into scripts/wire-contract/."
   workingDir = wireContractDir.asFile
   commandLine(npmCmd, "install", "--no-fund", "--no-audit")
   inputs.file(wireContractDir.file("package.json").asFile)
@@ -327,34 +328,10 @@ val wireNpmInstall = tasks.register<Exec>("wireNpmInstall") {
   outputs.dir(wireContractDir.dir("node_modules").asFile)
 }
 
-val wireGenerateTs = tasks.register<Exec>("wireGenerateTs") {
-  group = "build"
-  description = "Generate TypeScript from contracts/wire/ via buf + protoc-gen-es."
-  dependsOn(wireNpmInstall)
-  workingDir = wireContractDir.asFile
-  commandLine(npmCmd, "run", "generate")
-  inputs.dir(layout.projectDirectory.dir("contracts/wire"))
-  outputs.dir(layout.projectDirectory.dir("modules/ui-web/src/api/generated"))
-}
-
 tasks.register("wireGenerate") {
   group = "build"
-  description = "Regenerate Java + TypeScript projections of the wire-Category contract."
+  description = "Regenerate the Java projection of the wire-Category contract."
   dependsOn(":modules:api-contract-projection-java:generateProto")
-  dependsOn(wireGenerateTs)
-}
-
-tasks.register<Exec>("wireVerify") {
-  group = "verification"
-  description = "Verify wire-contract codegen output matches committed artifacts (CI gate)."
-  dependsOn("wireGenerate")
-  commandLine(
-      "git", "diff", "--quiet", "--exit-code", "--",
-      "modules/ui-web/src/api/generated",
-      "modules/api-contract-projection-java/build/generated"
-  )
-  isIgnoreExitValue = false
-  onlyIf { System.getenv("CI") != null }
 }
 
 // Docs linting tasks — Java-based, no Node.js required

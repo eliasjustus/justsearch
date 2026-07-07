@@ -21,8 +21,14 @@
 // authority (registry-enums.generated.ts) — these unions are aliases, not hand-authored mirrors.
 import type {
   Audience as GenAudience,
+  AuditPolicy as GenAuditPolicy,
   ExecutorTag as GenExecutorTag,
+  HistoryMode as GenHistoryMode,
+  OnOverflow as GenOnOverflow,
+  PathPolicy as GenPathPolicy,
+  RenderHint as GenRenderHint,
   RiskTier as GenRiskTier,
+  SubscriptionMode as GenSubscriptionMode,
   TrustTier as GenTrustTier,
 } from '../generated/registry-enums.generated.js';
 
@@ -78,17 +84,17 @@ export const CATEGORIES: readonly Category[] = [
   'TIMESERIES',
 ] as const;
 
-/** Subscription transport. Mirrors `SubscriptionMode.java`. */
-export type SubscriptionMode = 'ONE_SHOT' | 'SSE_STREAM' | 'POLLING';
+/** Subscription transport. Generated alias of the Java `SubscriptionMode` authority. */
+export type SubscriptionMode = GenSubscriptionMode;
 
-/** Privacy axis path policy. Mirrors `PathPolicy.java`. */
-export type PathPolicy = 'NO_PATHS' | 'RAW' | 'HASHED_REQUIRES_RESOLVER';
+/** Privacy axis path policy. Generated alias of the Java `PathPolicy` authority. */
+export type PathPolicy = GenPathPolicy;
 
-/** History retention mode. Mirrors `HistoryPolicy.Mode`. */
-export type HistoryMode = 'RING_BUFFER' | 'DURABLE' | 'EXTERNAL';
+/** History retention mode. Generated alias of the Java `HistoryPolicy.Mode` authority. */
+export type HistoryMode = GenHistoryMode;
 
-/** History overflow behavior. Mirrors `OnOverflow`. */
-export type OnOverflow = 'EVICT_OLDEST' | 'BACKPRESSURE' | 'DROP_NEWEST';
+/** History overflow behavior. Generated alias of the Java `OnOverflow` authority. */
+export type OnOverflow = GenOnOverflow;
 
 /** Provenance contributor tier. Generated alias of the Java `TrustTier` authority. */
 export type ProvenanceTier = GenTrustTier;
@@ -96,12 +102,13 @@ export type ProvenanceTier = GenTrustTier;
 /** Operation risk tier. Generated alias of the Java `RiskTier` authority. */
 export type RiskTier = GenRiskTier;
 
-/** Operation audit policy. Mirrors `AuditPolicy` (Java enum
- * `NONE | METADATA_ONLY | FULL_PAYLOAD`). The FE type previously
- * declared the last variant as `'FULL'`, which silently disagreed
- * with the wire — fixed in 511-followup-2 alongside the schema
- * alignment. */
-export type AuditPolicy = 'NONE' | 'METADATA_ONLY' | 'FULL_PAYLOAD';
+/** Operation audit policy. Generated alias of the Java `AuditPolicy`
+ * authority (`NONE | METADATA_ONLY | FULL_PAYLOAD`). Drift history: the
+ * hand-authored FE type previously declared the last variant as `'FULL'`,
+ * which silently disagreed with the wire — fixed in 511-followup-2, and now
+ * structurally impossible because the union is the generated
+ * `registry-enums.generated.ts` projection, not a hand mirror. */
+export type AuditPolicy = GenAuditPolicy;
 
 /**
  * Audience axis. Mirrors `Audience.java`. Tempdoc 511 §"Aggregate
@@ -210,8 +217,9 @@ export type Privacy = ResourceWire['privacy'];
  * Slice 490 §4.C — renderer-selection hint for advisory-shaped Resource events.
  * Mirrors `RenderHint.java`. Drives the FE chrome's toast / inbox / ack-required
  * dispatch when the upstream Resource has `kind = KIND_ADVISORY`.
+ * Generated alias of the Java `RenderHint` authority.
  */
-export type RenderHint = 'EPHEMERAL' | 'PERSISTED' | 'REQUIRES_ACK';
+export type RenderHint = GenRenderHint;
 
 /**
  * Slice 490 §4.C — sibling axis to OperationPolicy. Declared on advisory-shaped

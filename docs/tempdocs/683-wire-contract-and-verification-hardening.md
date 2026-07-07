@@ -121,7 +121,13 @@ Hand-mirrored enum unions (registry.ts, conversation-shape.ts); hand `Audience`
 (surface.ts); loose `SearchResponseSchema`, `IndexCapabilitiesSchema`,
 `AgentSessionSummarySchema`, `ErrorEnvelopeSchema`; `validateWithFallback`;
 `modules/ui-web/src/api/generated/*_pb.*` + buf TS emission target; the loose
-SettingsV2 schema after onboarding.
+SettingsV2 schema after onboarding; `:wireGenerateTs`/`:wireVerify` Gradle tasks
+(`:wireGenerate` kept, Java-only); `scripts/wire-contract/` README rewritten to
+buf-breaking-only truth + `@bufbuild/protoc-gen-es` and the `generate` script
+dropped (`@bufbuild/buf` kept — the wire gate's enforcer resolves buf from that
+workspace); dead FE proto-support `wireValidator.ts` + `wireProjection.ts`(+test,
+incl. unconsumed `bigintToNumber`); `@bufbuild/protobuf`/`@bufbuild/protovalidate`
+removed from ui-web deps.
 
 ## Out of scope (deliberate)
 
@@ -173,6 +179,33 @@ set is larger than the walk's). Two concrete findings, both actionable now:
 **Live-validation results riding on the same runs:** 47 live steps with **zero real
 console errors and zero `[WireContract]` hits** (strict schemas + dev-throw against
 real payloads); diagnostics export live-verified embedding `frontend/fe-telemetry.json`
-when the body carries `feTelemetry` and omitting it otherwise; the repaired evidence
-capture ran against the live stack producing a validator-OK `status:passed` bundle
-with `session_id` stamped and a durable `evidence-index.ndjson` join line.
+via BOTH transports — the REST body (`POST /api/diagnostics/export`) and, after the
+review-cycle fix, the operation-invoke path the UI client actually uses
+(`POST /api/operations/core.export-diagnostics/invoke` with `args.feTelemetry` —
+seeded context verified inside the produced zip, 2026-07-07) — and omitting the entry
+when absent; the repaired evidence capture ran against the live stack producing a
+validator-OK `status:passed` bundle with `session_id` stamped and a durable
+`evidence-index.ndjson` join line.
+
+**Census catch, escalated during review (2026-07-07):** the Export Diagnostics
+`jf-operation` button **never upgrades on either hosting surface** (HealthSurface,
+HelpSurface) — connected in the surface shadow tree, no shadowRoot, zero width, while
+the element class is globally defined; the 2026-07-04 pre-branch UI audit screenshot
+corroborates the button absent on `main` (only Reindex/Force Rebuild render). Export
+Diagnostics is therefore currently unreachable from the UI on `main` too — a live
+instance of the dead-but-plausible class this tempdoc's census targets, found because
+the review's live button-click verification refused to pass on a path users can't
+reach. Inbox-logged for a presentation-authority fix (scoped-registry upgrade gap
+suspected); out of this branch's scope. The wire-drift telemetry chain is complete and
+verified up to that button; it lights up end-to-end the moment the button fossil is
+fixed.
+
+**Review cycle (2026-07-07, refute-first pass over the implementation claims):**
+verification claims held under independent re-execution; the delivery ledger did not —
+two FE halves had silently fallen between parallel implementation briefs (enum
+repoint, SettingsV2 FE wiring; both since landed), the proto teardown was incomplete
+(Gradle tasks, wire-contract README/deps, dead `wireProjection`/`wireValidator` code;
+since completed, −597 lines), and the drift telemetry was wired to a REST function no
+UI code calls (since fixed via operation args, above). The golden-wire conformance
+test caught the deliberate `feTelemetry` input-schema addition and was recaptured via
+its documented delete-and-rerun workflow (+5/−1 lines, the schema change only).

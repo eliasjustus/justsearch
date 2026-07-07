@@ -6,10 +6,10 @@
  * Posture (tempdoc 683): a wire-contract mismatch THROWS in dev (impossible to
  * miss) and degrades in prod (console.error + the `wireDriftTelemetry` ring).
  *
- * The few hand schemas that remain here are deliberately permissive (.loose())
- * free-form surfaces (settings, the agent-session snapshot detail); every
- * record-backed wire surface validates against its generated
- * record→JSON-Schema→Zod projection in `./generated/schema-types/`.
+ * The one hand schema that remains here is the deliberately permissive
+ * (.loose()) agent-session snapshot detail; every record-backed wire surface
+ * validates against its generated record→JSON-Schema→Zod projection in
+ * `./generated/schema-types/`.
  */
 
 import { z } from 'zod';
@@ -17,44 +17,9 @@ import { isDevMode } from './devMode';
 import { recordWireDrift } from './wireDriftTelemetry';
 import { agentSessionsResponseSchema } from './generated/schema-types/agent-sessions-response';
 
-// ==================== Settings v2 ====================
-
-const UiSettingsV2Schema = z
-  .object({
-    theme: z.enum(['system', 'dark', 'light']).optional().nullable(),
-    highContrast: z.boolean().optional().nullable(),
-    density: z.enum(['compact', 'comfort', 'rich']).optional().nullable(),
-    defaultAction: z.enum(['open', 'reveal', 'preview']).optional().nullable(),
-    inspectorWidth: z.number().optional().nullable(),
-    pauseIndexingDuringAi: z.boolean().optional().nullable(),
-    mode: z.enum(['simple', 'advanced']).optional().nullable(),
-    hasSeenTrustLoopNudge: z.boolean().optional().nullable(),
-    excludePatterns: z.array(z.string()).optional().nullable(),
-    vimMode: z.boolean().optional().nullable(),
-  })
-  .loose();
-
-const LlmSettingsV2Schema = z
-  .object({
-    serverExecutable: z.string().optional().nullable(),
-    contextWindow: z.number().optional().nullable(),
-    maxTokens: z.number().optional().nullable(),
-    gpuLayers: z.number().optional().nullable(),
-    modelPath: z.string().optional().nullable(),
-    llamaLibPath: z.string().optional().nullable(),
-  })
-  .loose();
-
-export const SettingsV2Schema = z
-  .object({
-    ui: UiSettingsV2Schema.optional().nullable(),
-    llm: LlmSettingsV2Schema.optional().nullable(),
-    indexPaths: z.array(z.string()).optional().nullable(),
-    settingsMode: z.enum(['read_write', 'in_memory']).optional().nullable(),
-  })
-  .loose();
-
-
+// Tempdoc 683 (X3): the hand SettingsV2Schema / UiSettingsV2Schema / LlmSettingsV2Schema are
+// deleted — /api/settings/v2 validates against the generated record→JSON-Schema→Zod projection
+// (`./generated/schema-types/settings-v2`) at the parse boundary in `api/domains/settings.ts`.
 // Tempdoc 683: ErrorEnvelopeSchema deleted — zero runtime consumers.
 // Tempdoc 683: the Search Response hand schemas (SearchResponseSchema, SearchHitSchema,
 // IndexCapabilitiesSchema, …) are deleted — the generated `knowledgeSearchResponseSchema`
