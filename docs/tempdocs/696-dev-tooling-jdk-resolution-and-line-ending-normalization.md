@@ -275,3 +275,41 @@ plain `./gradlew test` takes the "regenerate baseline" branch instead of compari
 the churn symptom and is forward-compatible if that gate is later corrected, but the always-true gate
 (which also defeats the schema-drift guard the comparison was meant to provide) is a separate defect worth
 its own fix. This is the strongest candidate for a 696 follow-up.
+
+## Post-implementation refute review + fix (2026-07-07)
+
+An adversarial refute-first review of the shipped implementation found **one substantive bug in the
+Issue-1 fix itself** (and one minor nit). Recorded because the miss is instructive.
+
+**The miss — the Worker's dev launch never *read* `JAVA_HOME`.** The shipped fix set `JAVA_HOME` on the
+Head's spawn env and the risk register claimed the Worker "inherits it transitively → low risk, confirm
+`WorkerSpawner` doesn't `.clear()` env." That check was **necessary but insufficient**: env *presence* ≠
+env *consulted*. `WorkerSpawner.buildCommand()` launched the Worker in dev mode with a **bare `java`**
+(`isWindows() ? "java.exe" : "java"`), resolved via PATH — and on this machine `where java` fronts a
+**JDK 8** (scoop temurin8) while the Worker bytecode is JDK 25 (`0x45`), so the Worker could crash with
+`UnsupportedClassVersionError`. The earlier "worker READY" was PATH order happening to favor JDK 25 —
+luck, exactly the ambient fragility Issue 1 exists to remove. `detectProductionMode()` returns false for a
+dev installDist launch, so the Worker always took the bare-java branch.
+
+**The fix.** `WorkerSpawner.buildCommand()` now selects the Worker's java binary from
+`System.getProperty("java.home")` (the running Head JVM's own runtime — deterministically the resolved
+JDK 25, since dev-runner launches the Head under it), unified before the prod/dev branch (which now differ
+only in the AOT-cache path). Extracted a package-private `workerJavaBinary(boolean)` with a regression
+test `WorkerSpawnerJavaBinaryTest` (asserts the binary is `java.home`-based, never bare `java`). This is
+the missing Worker leg; the shipped Head/hot-swap/prepare-worktree env injections are unchanged.
+Minor nit also fixed: `prepare-worktree.cjs` now reports a resolver throw via its clean
+`[prepare-worktree] …` convention instead of a raw Node stack.
+
+**Verification — the fix is proven live, not just against the plan:**
+- Unit: `WorkerSpawnerJavaBinaryTest` green; full `:modules:app-services:test` green.
+- **Decisive live check:** rebuilt the Head dist, started the dev stack under the ambient **JDK-8-first
+  PATH**, and inspected the actual Worker process (`Get-CimInstance Win32_Process`): its java binary was
+  `F:\scoop\apps\temurin25-jdk\current\bin\java.exe` (JDK 25, `java.home`), **not** bare `java` — and
+  `/api/health` reported `worker: LIFECYCLE_STATE_READY`. So the Worker now launches under the Head's
+  JDK 25 independent of PATH order. (The earlier external anchor for the Head leg: with ambient JDK-8
+  `JAVA_HOME`, the resolver injected JDK 25 and `gradlew -version` booted under JVM 25.0.2, exit 0.)
+- One flaky failure observed during a concurrent full build — `LambdaMartBenchmarkTest` (a 5ms-p50 latency
+  assertion, load-sensitive) — passed cleanly in isolation (`--rerun-tasks`); unrelated to this change,
+  logged to the observations inbox.
+- The refuter confirmed the rest correct: injection order at all 4 sites, Issue-3 completeness across all
+  modules, content-safety of the LF `.replace`.

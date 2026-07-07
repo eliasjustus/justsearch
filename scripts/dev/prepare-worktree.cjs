@@ -77,8 +77,16 @@ run(npm, ['ci'], path.join(repoRoot, 'modules', 'ui-web'));
 
 // 2. Dists the dev stack launches from (skippable for FE-only work).
 if (!noDist) {
+  let devJdkHome;
+  try {
+    devJdkHome = resolveJdkHome();
+  } catch (e) {
+    // Report via this file's convention (a clean one-liner), not a raw Node stack trace.
+    console.error(`[prepare-worktree] ${e.message}`);
+    process.exit(1);
+  }
   run(gradle, [':modules:ui:installDist', ':modules:indexer-worker:installDist'], repoRoot, {
-    JAVA_HOME: resolveJdkHome(),
+    JAVA_HOME: devJdkHome,
   });
 }
 
