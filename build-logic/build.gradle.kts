@@ -52,6 +52,12 @@ plugins {
       displayName = "Mutation Testing Conventions"
       description = "Applies PIT (pitest) with shared defaults; modules declare seam targetClasses (tempdoc 555)"
     }
+    register("buildAttributionConventions") {
+      id = "conventions.build-attribution"
+      implementationClass = "conventions.BuildAttributionConventionsPlugin"
+      displayName = "Build Attribution Conventions"
+      description = "Emits task timing evidence when justsearchBuildAttributionTasksJson is set"
+    }
   }
 }
 
