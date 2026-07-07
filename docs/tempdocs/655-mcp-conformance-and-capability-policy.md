@@ -1,9 +1,9 @@
 ---
 title: "MCP conformance and capability policy: define the conformance bar and mutating-tool policy for JustSearch's production MCP endpoint"
 type: tempdocs
-status: open — core capability-policy + conformance work shipped and live-verified (see "Current state" at the end); only client fixture coverage remains, deliberately deferred as a product decision
+status: open — core capability-policy + conformance work shipped and live-verified (see "Current state" at the end); client fixture coverage remains deliberately deferred as a product decision. 2026-07-07: this tempdoc now ALSO owns the adoption/discoverability lever — the 624 Step-1 pilot measured adoption_rate 0.0 with a verified eager-offered surface (see "Adoption-zero finding" at the end); the 624 Step-2 utility run is gated on moving adoption via the product surface (names/descriptions/server instructions), never via the frozen eval prompt
 created: 2026-06-28
-updated: 2026-07-02
+updated: 2026-07-07
 category: mcp / agent-safety / contract-testing / capability-policy
 related:
   - 500-mcp-protocol-surface
@@ -949,3 +949,48 @@ calling it. Verifying the real popup requires running the built desktop app itse
 **If continuing this work:** the only genuinely open original question is client fixture coverage.
 Everything else this tempdoc set out to do has a recorded, verified conclusion above.
 
+
+---
+
+# Adoption-zero finding (2026-07-07) — this tempdoc now owns the discoverability/steering lever
+
+> Source: tempdoc 624 pass 25 (Step-1 adoption pilot; artifacts
+> `scripts/jseval/624-run-2026-07-07-pilot/`). Routed here by the pass-24 pre-registered
+> interpretation tree ("null with low adoption → not a utility finding — an adoption finding;
+> route to 655").
+
+## The finding
+
+With the full `mcp__justsearch__*` surface **verifiably offered** (per-cell init-event assertion,
+eager surfacing at CLI 2.1.202, neutral non-priming prompt), a haiku-class agent holding ordinary
+file tools made **zero MCP calls in 10/10 cells (174 tool calls total)** on a 390-doc multi-hop
+corpus, brute-forcing 9/10 answers via Bash/Grep/Read at 8–31 calls per cell. Offering the
+retrieval surface changed nothing about agent behavior. Corroborating texture from the 2026-07-07
+smoke (util-smoke, condition C): even when *forced* onto the MCP-only surface, cells reached
+`justsearch_search` only after ToolSearch flailing, and **no cell has ever called
+`justsearch_answer`** — the surface's own designated primary QA tool — in any run on record.
+
+## Why this is a 655 subject
+
+Adoption is a property of the tool surface as presented to the model at decision time — names,
+descriptions, server `instructions`, prompts/resources — which is exactly the surface this tempdoc
+certifies and governs. Candidate mechanisms to investigate (hypotheses, not conclusions):
+- **Descriptions may not reach the decision point.** Deferred-tool clients see descriptions only
+  after loading; even eager clients may weigh names over long description bodies. The
+  `justsearch_answer` description's "primary tool for question-answering" guidance has never once
+  produced a `justsearch_answer` call.
+- **Naming semantics vs. habit priors.** `Grep` is a verb the model uses reflexively;
+  `justsearch_search` is a branded noun. The agent's prior (file tools solve file questions) may
+  dominate any wording.
+- **No server-level steering surface is exercised.** MCP `initialize` carries an `instructions`
+  field; the onboarding prompts/resources exist but nothing in a cell ever surfaces them.
+
+## Boundary (measurement integrity — hard constraint)
+
+The eval-side cell prompt is FROZEN (pre-registered neutral text, 624 pass 24 §2). Adoption must be
+moved **only via the product surface** (tool names/descriptions/annotations, server instructions,
+prompts/resources) — that is the product improvement being measured. Any eval-prompt steering is
+outcome-reshaping and invalidates the comparison. Success metric: the before/after
+`adoption_rate` / `first_mcp_call_index` / `mcp_call_share` delta on a re-run of the 624 Step-1
+pilot (~$3/iteration, machinery ready on main), reported as its own result regardless of direction.
+The 624 Step-2 utility run stays gated until adoption is measurably non-zero.

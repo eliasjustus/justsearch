@@ -1,0 +1,111 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 1,
+  "composed_at": "2026-07-07T08:33:12.958282+00:00",
+  "cohort": {
+    "agent_cohort_key": "785c6af8d7b534f899f26178d03eda2c49659bc58727fe60bab1cdaf55ad051c",
+    "git_sha": "56908dd4fb2ae1a3894f083159731f4c1ff5b538",
+    "cli_version": "2.1.202 (Claude Code)",
+    "mcp_tool_surface_hash": null,
+    "judge": {
+      "kind": "substring-em"
+    },
+    "prompt_template_hash": "c6835f2fc85da3a7adeb1c68e64b8b292be9eca00cde4360c39f652b2de4bd29",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "528aa2f95c97c874ee992e8db0c96816756ab1dee5467df9f6d6a49ee47e5a72",
+    "hardware": null,
+    "tool_surfacing_mode": "eager",
+    "executor": "inspect-ai"
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {},
+  "seed_count": 1,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": true,
+    "reasons": [],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "B": 0.0
+      }
+    },
+    "per_arm_loss": {
+      "B": {
+        "n_attempted": 10,
+        "n_completed": 10,
+        "n_excluded": 0,
+        "exclusion_rate": 0.0
+      }
+    }
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "public-pre-cutoff"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  },
+  "tool_call_assertions": {
+    "B": {
+      "cells_total": 10,
+      "cells_with_tool_data": 10,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0,
+      "cells_with_mcp_surface_verified": 10,
+      "cells_mcp_surface_unverified": 0
+    }
+  }
+}
