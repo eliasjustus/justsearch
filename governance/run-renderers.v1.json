@@ -102,7 +102,6 @@
     ],
     "authoritySymbols": ["renderWhyDisclosure", "renderFacetChips", "traceChipsFor", "tracePartsFor", "highlightTerms"],
     "consumerSites": [
-      "modules/ui-web/src/shell-v0/views/SearchSurface.ts",
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
       "modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts"
     ]

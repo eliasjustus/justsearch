@@ -358,13 +358,15 @@ export class CommandPalette extends JfElement {
       // the navigation INTENT, giving "the user asked to search" a single
       // authority instead of a setSearchQuery side-channel + a separate navigate.
       // Mirrors the shipped `core.palette.search-from-here` empty state
-      // (Shell.activateSurface('core.search-surface', { query }, …)), so URL
+      // (Shell.activateSurface('core.unified-chat-surface', { query }, …)), so URL
       // projection / telemetry / observability all see the navigation. Fired as a
       // composed event so it crosses the shadow boundary up to Shell's
       // `navigate-with-context` listener.
+      // Search Thread S5b — the standalone Search rail surface is retired; the retrieve tier
+      // folded into the one window (core.unified-chat-surface).
       this.dispatchEvent(
         new CustomEvent('navigate-with-context', {
-          detail: { target: 'core.search-surface', state: { query: text } },
+          detail: { target: 'core.unified-chat-surface', state: { query: text } },
           bubbles: true,
           composed: true,
         }),
@@ -427,7 +429,9 @@ export class CommandPalette extends JfElement {
     if (commandId.startsWith(navPrefix)) {
       const tail = commandId.slice(navPrefix.length);
       // Match the names registered in CommandRegistry.registerShellCommands.
-      if (tail === 'search') return 'core.search-surface';
+      // Search Thread S5b — 'search' now resolves to the one window (the standalone Search
+      // rail surface is retired; its retrieve tier folded into core.unified-chat-surface).
+      if (tail === 'search') return 'core.unified-chat-surface';
       if (tail === 'library') return 'core.library-surface';
       if (tail === 'settings') return 'core.settings-surface';
       if (tail === 'health') return 'core.health-surface';

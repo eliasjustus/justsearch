@@ -37,6 +37,7 @@ import {
   getAgentSessionController,
   __resetAgentSessionStore,
 } from '../state/agentSessionStore.js';
+import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
 // against a real api.
@@ -91,6 +92,48 @@ let scopeChipsListener: ((chips: unknown) => void) | null = null;
 const scopeChipsMock = {
   chips: [] as Array<{ kind: string; label: string; docIds: readonly string[] }>,
 };
+// S5b pin-parity — controllable pinned-search store mock (subscribe fires immediately, real-store
+// parity). vi.hoisted: the factory below executes before top-level consts would initialize.
+const pinsCtl = vi.hoisted(() => {
+  const state = {
+    listener: null as ((pins: unknown) => void) | null,
+    pins: [] as Array<{ id: string; query: string; pinnedAt: number; runs: unknown[] }>,
+  };
+  return {
+    state,
+    reset(pins: Array<{ id: string; query: string; pinnedAt: number; runs: unknown[] }>) {
+      state.pins = pins;
+    },
+    pinSearch: (query: string) => {
+      state.pins = [...state.pins, { id: 'pin-' + query, query, pinnedAt: 1, runs: [] }];
+      state.listener?.(state.pins);
+      return state.pins[state.pins.length - 1];
+    },
+    unpinSearch: (id: string) => {
+      state.pins = state.pins.filter((p) => p.id !== id);
+      state.listener?.(state.pins);
+      return true;
+    },
+  };
+});
+const pinSearchMock = vi.fn(pinsCtl.pinSearch);
+const unpinSearchMock = vi.fn(pinsCtl.unpinSearch);
+const recordRunMock = vi.fn();
+vi.mock('../state/pinnedSearchState.js', () => ({
+  subscribePinnedSearches: (listener: (pins: unknown) => void) => {
+    pinsCtl.state.listener = listener;
+    listener(pinsCtl.state.pins);
+    return () => {
+      pinsCtl.state.listener = null;
+    };
+  },
+  getPinnedSearches: () => pinsCtl.state.pins,
+  isPinned: (q: string) => pinsCtl.state.pins.some((p) => p.query === q.trim()),
+  pinSearch: (q: string) => pinSearchMock(q),
+  unpinSearch: (id: string) => unpinSearchMock(id),
+  recordRun: (q: string, t: number) => recordRunMock(q, t),
+}));
+
 vi.mock('../state/searchState.js', () => ({
   subscribeSearch: vi.fn((listener: (s: unknown) => void) => {
     searchListener = listener;
@@ -182,6 +225,140 @@ describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   });
 });
 
+// Search Thread S5b — SearchSurface (the retired standalone Search rail surface) had its own B3
+// retrieval-degraded banner (testid="search-degradation"), but it read the SAME ONE verdict/
+// readinessNotice authority (aiStateStore → verdict.ts → readinessNotice) the chat banner already
+// renders unconditionally (testid="chat-degradation", every affordance tier — see render()). These
+// port SearchSurface.degradation.test.ts's scenarios onto that one shared banner, proving the
+// retrieve tier gets the identical worded notice with no separate banner needed.
+describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.degradation.test.ts, Search Thread S5b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
+    (view as unknown as { aiState: unknown }).aiState = { ...AI_STATE_READY, verdict };
+    view.affordance = 'retrieve';
+    view.requestUpdate();
+  }
+
+  it('621/595 — an impairing degradation renders "Semantic search degraded" (warn) while on the retrieve tier', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('Semantic search degraded');
+    const op = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]');
+    expect(op?.getAttribute('operation-id')).toBe('core.trigger-offline-processing');
+  });
+
+  it('595 §10.3 — a cosmetic degradation (LambdaMART) renders CALMLY (info), never "keyword results"', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    expect(banner?.textContent).toContain('Reduced search capability');
+    expect(banner?.textContent).not.toContain('keyword results');
+    expect(banner?.getAttribute('tone')).toBe('info');
+  });
+
+  it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['index.blocked_legacy'] });
+    await view.updateComplete;
+    const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
+    const text = banner?.textContent ?? '';
+    expect(text).toContain('Reindex required');
+    expect(text).toContain('built before semantic search was available');
+    const op = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]');
+    expect(op?.getAttribute('operation-id')).toBe('core.rebuild-index');
+  });
+
+  it('falls back to the Open Health navigate remedy for an unknown/empty cause', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: [] });
+    await view.updateComplete;
+    const nav = view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-nav"]');
+    expect(nav).not.toBeNull();
+    expect(nav?.textContent).toContain('Open Health');
+  });
+});
+
+// Search Thread S5b — ports SearchSurface.stateRetention.test.ts's selection-retention scenarios
+// (the standalone Search surface's `applySelection` re-publish/inspector-reopen) onto the retrieve
+// tier's `republishRetrieveSelection` (called from connectedCallback).
+describe('UnifiedChatView retrieve-tier selection retention (ports SearchSurface.stateRetention.test.ts, Search Thread S5b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetSelectionForTest();
+  });
+
+  const HITS = [
+    { id: 'h1', title: 'Q1 invoice', path: '/docs/q1.md', snippet: 'total due', kind: 'markdown' },
+    { id: 'h2', title: 'helper.ts', path: '/src/helper.ts', snippet: 'function pay()', kind: 'code' },
+  ];
+  function snapshotWith(results: typeof HITS): UnifiedChatView['searchSnapshot'] {
+    return {
+      query: 'invoice',
+      results,
+      totalHits: results.length,
+      isSearching: false,
+      processingTimeMs: 12,
+      error: null,
+      searchTrace: null,
+    } as unknown as UnifiedChatView['searchSnapshot'];
+  }
+
+  it('re-publishes a retained single-hit selection to the GLOBAL selectionState on reconnect', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    (view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds = new Set(['h2']);
+    // The Shell clears the GLOBAL selection on surface change — simulate that gap before reconnect.
+    __resetSelectionForTest();
+
+    (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection();
+
+    const sel = getSelection();
+    expect(sel.surfaceId).toBe('core.unified-chat-surface');
+    expect(sel.items).toEqual([
+      expect.objectContaining({ kind: 'search-hit', hitId: 'h2', path: '/src/helper.ts' }),
+    ]);
+    view.remove();
+  });
+
+  it('drops a stale id no longer present in the current snapshot instead of republishing garbage', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    (view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds = new Set(['gone']);
+    __resetSelectionForTest();
+
+    (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection();
+
+    expect(getSelection().items).toEqual([]);
+    expect((view as unknown as { retrieveSelectedIds: ReadonlySet<string> }).retrieveSelectedIds.size).toBe(0);
+    view.remove();
+  });
+
+  it('is a no-op when there is no held selection', () => {
+    const view = mountView();
+    (view as unknown as { searchSnapshot: unknown }).searchSnapshot = snapshotWith(HITS);
+    __resetSelectionForTest();
+
+    expect(() =>
+      (view as unknown as { republishRetrieveSelection: () => void }).republishRetrieveSelection(),
+    ).not.toThrow();
+    expect(getSelection().items).toEqual([]);
+    view.remove();
+  });
+});
+
 describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -206,12 +383,11 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     expect(answerPlane?.hasAttribute('hidden')).toBe(false);
     expect(view.shadowRoot?.querySelector('jf-agent-view')).toBeNull();
     expect(view.shadowRoot?.querySelector('jf-composer')).not.toBeNull();
-    // the Agent affordance toggle is present + active (the crossing control stays visible).
-    const agentBtn = Array.from(
-      view.shadowRoot?.querySelectorAll('.affordance-btn') ?? [],
-    ).find((b) => b.textContent?.trim() === 'Agent');
-    expect(agentBtn).toBeDefined();
-    expect(agentBtn?.classList.contains('active')).toBe(true);
+    // Search Thread S5b — the affordance tab row is retired; the crossing is explicit-affordance-only
+    // now. The shape-indicator still names the active tier (a passive readout, not a clickable tab).
+    const shapeIndicator = view.shadowRoot?.querySelector('.shape-indicator');
+    expect(shapeIndicator?.textContent?.trim()).toBe('Agent');
+    expect(view.shadowRoot?.querySelector('.affordance-bar')).toBeNull();
   });
 
   it('561 C-2 — the supervision dial appears only at the agency crossing, and the chrome grades with it', async () => {
@@ -1383,20 +1559,19 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
     searchListener = null;
   });
 
-  it('exposes a leading Search affordance that selects the retrieve tier', async () => {
+  it('reaches the retrieve tier via an explicit affordance set, with no tab row rendered (Search Thread S5b)', async () => {
     const view = mountView();
     await view.updateComplete;
     // S5a — boot already derives 'retrieve' (no B14 auto-upgrade to leave from), so start from an
-    // explicit documents pin to exercise the selection transition the tab exists for.
+    // explicit documents pin to exercise the selection transition the (now-retired) tab used to.
     view.affordance = 'documents';
     await view.updateComplete;
-    const searchBtn = Array.from(
-      view.shadowRoot?.querySelectorAll('.affordance-btn') ?? [],
-    ).find((b) => b.textContent?.trim() === 'Search');
-    expect(searchBtn).toBeDefined();
-    (searchBtn as HTMLElement).click();
+    // Search Thread S5b — the affordance tab row is retired; the retrieve tier is reached only via
+    // explicit affordance assignment (programmatic entry — palette/actions/deep-links) now.
+    expect(view.shadowRoot?.querySelector('.affordance-bar')).toBeNull();
+    view.affordance = 'retrieve';
     await view.updateComplete;
-    expect(searchBtn?.classList.contains('active')).toBe(true);
+    expect(view.affordance).toBe('retrieve');
     // Search Thread D2/D3 (stage S2) — the chat thread is replaced by the bare LANDING (ephemeral, no
     // thread history), not the old static retrieve-empty-prompt (retired in favor of the landing bar).
     expect(view.shadowRoot?.querySelector('[data-testid="retrieve-empty-prompt"]')).toBeNull();
@@ -3116,5 +3291,72 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
     // The dropdown closes after picking an entry.
     expect(view.shadowRoot?.querySelector('[data-testid="query-trail-menu"]')).toBeNull();
     view.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S5b pin-parity — pinned searches resurface on the landing + the bar's pin toggle
+// (the retired SearchSurface header's persisted pin store, same authority).
+// ---------------------------------------------------------------------------
+describe('Search Thread S5b — pinned searches (landing strip + pin toggle)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    pinsCtl.reset([]);
+  });
+
+  it('renders the landing pinned strip from the store and one click re-runs the pin', async () => {
+    pinsCtl.reset([{ id: 'p1', query: 'quarterly invoices', pinnedAt: 1, runs: [] }]);
+    const view = mountView();
+    await view.updateComplete;
+    const strip = view.shadowRoot?.querySelector('[data-testid="landing-pins"]');
+    expect(strip).not.toBeNull();
+    const btn = strip?.querySelector('button.pinned-search-btn') as HTMLElement;
+    expect(btn?.textContent?.trim()).toBe('quarterly invoices');
+    btn.click();
+    await view.updateComplete;
+    expect(view.inputDraft).toBe('quarterly invoices');
+    const { setQuery } = await import('../state/searchState.js');
+    expect(vi.mocked(setQuery)).toHaveBeenCalledWith('quarterly invoices');
+  });
+
+  it('hides the strip when nothing is pinned', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="landing-pins"]')).toBeNull();
+  });
+
+  it('the bar pin toggle pins the active query and unpins a pinned one (aria-pressed truth)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(searchListener).not.toBeNull();
+    searchListener!({ ...SEARCH_EMPTY, query: 'tax report' });
+    await view.updateComplete;
+    const toggle = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    toggle.click();
+    await view.updateComplete;
+    expect(pinSearchMock).toHaveBeenCalledWith('tax report');
+    const after = view.shadowRoot?.querySelector('[data-testid="pin-toggle"]') as HTMLElement;
+    expect(after.getAttribute('aria-pressed')).toBe('true');
+    after.click();
+    await view.updateComplete;
+    expect(unpinSearchMock).toHaveBeenCalledWith('pin-tax report');
+  });
+
+  it('a committed search records a run against the pin history', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    searchListener!({
+      ...SEARCH_EMPTY,
+      query: 'tax report',
+      results: [{ id: 'h1', title: 'T', path: '/t.md', snippet: '', kind: 'markdown' }],
+      matchCount: 1,
+      totalHits: 3,
+    });
+    await view.updateComplete;
+    (view as unknown as { commitLiveSearch(r: string): void }).commitLiveSearch('open');
+    expect(recordRunMock).toHaveBeenCalledWith('tax report', 3);
   });
 });

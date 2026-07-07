@@ -24,6 +24,11 @@ import org.junit.jupiter.api.Test;
 @DisplayName("SurfaceStateSchemaLoader (slice 489 round-7 §F7)")
 final class SurfaceStateSchemaLoaderTest {
 
+  // Search Thread S5b — core.search-surface's own Surface() entry is retired from
+  // CoreSurfaceCatalog.java (folded into core.unified-chat-surface); its classpath schema resource
+  // is kept ONLY as this test's fixture (the one resource with an integer-typed field, needed by
+  // schemaDeclaresIntegerTypesForFilterBounds below) — a generic loader-mechanism test, not an
+  // assertion about a live surface.
   private static final SurfaceRef SEARCH = new SurfaceRef("core.search-surface");
   private static final SurfaceRef GHOST = new SurfaceRef("core.ghost-surface");
 

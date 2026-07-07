@@ -127,6 +127,7 @@ import type { InspectorPane } from '../components/InspectorPane.js';
 import {
   getUserConfig,
   subscribeUserConfig,
+  setRailExpanded,
 } from '../state/userConfigState.js';
 import { updateShellContext, subscribeShellContext } from '../state/shellContextState.js';
 // Tempdoc 543 §3.B + §20.7 A0 — Scope substrate. Direct restoreScope
@@ -413,7 +414,9 @@ export class Shell extends JfElement {
    * `sourceTeardowns` (where it would never be reached).
    */
   private disconnected = false;
-  /** Slice 496 P6 — previous active surface for "Go back" navigation toast. */
+  /** The previously-active surface, for "Go back" (`goBack`/`navigateBack`). Search Thread S5b —
+   *  set directly by `setActiveSurface`'s own bookkeeping (the navigation toast that used to set
+   *  this as a side effect is retired). */
   private previousActiveId: string | null = null;
   /** Tempdoc 507 §3 — CORE-tier PluginHostApi injected into surfaces at mount. */
   private hostApi_: PluginHostApi | null = null;
@@ -1145,34 +1148,20 @@ export class Shell extends JfElement {
         template: 'related to {primarySelection}',
         onInvoke: (expanded) => {
           const encoded = encodeURIComponent(expanded);
-          location.hash = `#justsearch://surface/core.search-surface?query=${encoded}`;
+          // Search Thread S5b — the standalone Search rail surface is retired; the retrieve tier
+          // folded into the one window.
+          location.hash = `#justsearch://surface/core.unified-chat-surface?query=${encoded}`;
         },
       });
-      // Tempdoc 521 §16.2 deeper — in-tree consumer for the
-      // {compute:<expr>} slot. Demonstrates the Raycast inter-slot
-      // reference form end-to-end: the user picks a week count, the
-      // compute slot projects weeks → days, the resolved literal
-      // becomes a `modifiedFromMs` query the IntentRouter already
-      // plumbs into SearchSurface's filter pane. Closes C-018 for
-      // the compute substrate.
-      registerTemplate({
-        id: 'core.search-recent-weeks',
-        label: 'Search docs from the last N weeks',
-        category: 'Search',
-        source: 'core',
-        provenance: CORE_PROVENANCE,
-        template:
-          'modifiedSinceDays={compute:{n} * 7} (last {argument name="n" default="4"} weeks)',
-        onInvoke: (expanded) => {
-          const match = /modifiedSinceDays=(\d+)/.exec(expanded);
-          if (!match) return;
-          const days = Number.parseInt(match[1]!, 10);
-          if (!Number.isFinite(days) || days <= 0) return;
-          const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
-          location.hash =
-            `#justsearch://surface/core.search-surface?modifiedFromMs=${cutoffMs}`;
-        },
-      });
+      // Tempdoc 521 §16.2 deeper — in-tree consumer for the {compute:<expr>} slot, demonstrating the
+      // Raycast inter-slot reference form: the user picks a week count, the compute slot projects
+      // weeks → days, the resolved literal becomes a `modifiedFromMs` query the IntentRouter plumbed
+      // into SearchSurface's date-filter pane (Before/After inputs). Search Thread S5b — that
+      // filter pane is retired with the standalone Search surface (it was outside the retrieve
+      // tier's declared carry-forward scope: jf-results-card + route chip + scope chips + landing);
+      // `core.unified-chat-surface` has no `modifiedFromMs` consumer, so repointing this template's
+      // hash target would be a silent no-op (Hard Invariant: never a silent no-op) rather than a
+      // working port. Retired outright alongside the feature it demonstrated, not left dangling.
     }).catch(() => { /* swallow */ });
 
     // §11.6 / §13.6 — Raycast-style core fallback contributions for
@@ -1211,8 +1200,10 @@ export class Shell extends JfElement {
             // so URL projection, telemetry, observability listeners
             // (audit, replay-dedup) all see the navigation. The prior
             // `location.hash =` mutation skipped middleware.
+            // Search Thread S5b — the standalone Search rail surface is retired; the retrieve tier
+            // folded into the one window.
             this.activateSurface(
-              'core.search-surface',
+              'core.unified-chat-surface',
               { query: q },
               'BUTTON',
             );
@@ -1413,7 +1404,6 @@ export class Shell extends JfElement {
         // Tauri deep-link, backend-emitted intent) because every navigation
         // path funnels through NavigationHandler.setActiveSurface.
         this.updateDocumentTitle(id);
-        // Slice 496 P1+P6 — show navigation toast when the surface changes.
         if (prev && prev !== id) {
           // Tempdoc 609 §R (T1.1) — animate the surface swap. activeId was set synchronously above, so
           // Lit's update is microtask-pending; this captures the before-snapshot now and awaits the flush.
@@ -1422,11 +1412,12 @@ export class Shell extends JfElement {
           // search hit); close it on a genuine surface change so stale content
           // doesn't persist across surfaces.
           setInspectorOpen(false);
-          const fromName = present({ kind: 'surface', id: prev }).label;
-          const toName = present({ kind: 'surface', id }).label;
-          if (fromName && toName) {
-            this.showNavigationToast(fromName, toName, prev);
-          }
+          // Search Thread S5b — the navigation TOAST is retired (replace-with-nothing: navigation is
+          // already visible in the rail/title, so no push notification rides along). The
+          // `previousActiveId` bookkeeping it used to do as a side effect moves here, in
+          // `setActiveSurface` itself, so `goBack`/`navigateBack` (the host API's back action) keeps
+          // working without the toast that used to be its only caller of this assignment.
+          this.previousActiveId = prev;
         }
       },
       isKnownSurface,
@@ -1449,12 +1440,15 @@ export class Shell extends JfElement {
           requestMemberTab(targetId, originalId);
         }
       },
-      // 548 S4-A: a `query` intent is lowered to a navigation of the search surface.
+      // 548 S4-A: a `query` intent is lowered to a navigation of the search surface. Search Thread
+      // S5b — the standalone Search rail surface is retired; the retrieve tier folded into the one
+      // window (core.unified-chat-surface), so a bare `query` intent now lowers to the SAME surface
+      // an `answer` intent does (below) — only the shape/affordance they land in differs.
       // Wire the binding explicitly here (the router also defaults to these) so the
       // surface id + state key are visible at the construction site rather than a
-      // hidden default — matches the `core.search-surface` / `query` used elsewhere
+      // hidden default — matches the `core.unified-chat-surface` / `query` used elsewhere
       // in this class and by buildSearchAdapter.
-      querySurfaceId: 'core.search-surface',
+      querySurfaceId: 'core.unified-chat-surface',
       queryStateKey: 'query',
       // 548 §4.5: an `answer` intent is lowered to the shape-hosting chat surface.
       answerSurfaceId: 'core.unified-chat-surface',
@@ -1732,26 +1726,6 @@ export class Shell extends JfElement {
     const activity = this._aiState?.activity?.state;
     const activityPrefix = activity === 'thinking' ? '⟳ ' : activity === 'streaming' ? '● ' : '';
     document.title = label ? `${activityPrefix}${label} · JustSearch` : 'JustSearch';
-  }
-
-  /**
-   * Slice 496 P1+P6 — show a transient toast when the active surface changes.
-   * Tempdoc 559 Authority III: projected through the one message model
-   * (emitEphemeralToast) instead of bespoke nav-toast state — the surface names
-   * are already humanized via present() at the call site; the "Go back" action
-   * is a local callback on the ephemeral record.
-   */
-  private showNavigationToast(from: string, to: string, previousId: string): void {
-    this.previousActiveId = previousId;
-    emitEphemeralToast({
-      // Tempdoc 613 §5.2 — the `core.navigation` class declares supersede:true (602 R4: only the
-      // latest nav breadcrumb matters) and defaultSeverity:'info'; sourced from the class policy,
-      // not re-stated here.
-      classId: 'core.navigation',
-      message: `Navigated to ${to}`,
-      actionLabel: previousId ? `Go back to ${from}` : undefined,
-      onAction: previousId ? () => this.goBack() : undefined,
-    });
   }
 
   private goBack(): void {
@@ -2160,8 +2134,10 @@ export class Shell extends JfElement {
         .aiActivity=${this._aiState?.activity?.state ?? 'idle'}
         .aiChatAvailable=${this._aiState?.capabilities?.chat ?? true}
         .aiDependentIds=${this._aiDependentIds}
+        .expanded=${this.userConfig?.railExpanded ?? false}
         @rail-select=${(e: CustomEvent<{ id: string }>) =>
           this.handleRailClick(e.detail.id)}
+        @rail-expand-toggle=${() => setRailExpanded(!(this.userConfig?.railExpanded ?? false))}
       >
         <!-- Slice 490 §4.D / Group B3 — rail-mounted badge slotted into
              <jf-rail>'s "bottom-chrome" region, honoring Placement.RAIL.
@@ -2309,6 +2285,9 @@ export class Rail extends JfElement {
     aiActivity: { attribute: false },
     aiChatAvailable: { type: Boolean, attribute: false },
     aiDependentIds: { attribute: false },
+    // Search Thread S5b — the rail's collapsed (icon-only, default) / expanded (icon + label)
+    // chrome state. `reflect: true` so `:host([expanded])` can widen the rail in CSS.
+    expanded: { type: Boolean, reflect: true },
   };
 
   declare surfaces: SurfaceCatalogEntry[];
@@ -2316,6 +2295,7 @@ export class Rail extends JfElement {
   declare aiActivity: import('../state/aiStateStore.js').ActivityState;
   declare aiChatAvailable: boolean;
   declare aiDependentIds: Set<string>;
+  declare expanded: boolean;
 
   constructor() {
     super();
@@ -2324,6 +2304,7 @@ export class Rail extends JfElement {
     this.aiActivity = 'idle';
     this.aiChatAvailable = true;
     this.aiDependentIds = new Set();
+    this.expanded = false;
   }
 
   static styles = css`
@@ -2336,6 +2317,13 @@ export class Rail extends JfElement {
       padding: 0.5rem 0;
       border-right: 1px solid var(--border-subtle);
       background: var(--surface-1);
+      transition: width var(--duration-fast) var(--ease-standard);
+    }
+    /* Search Thread S5b — expanded (labels-visible) rail: buttons stretch full-width and align
+       their content to the leading edge instead of the collapsed icon-only centering. */
+    :host([expanded]) {
+      align-items: stretch;
+      padding: 0.5rem 0.5rem;
     }
     button {
       width: 2.25rem;
@@ -2349,6 +2337,14 @@ export class Rail extends JfElement {
       align-items: center;
       justify-content: center;
       transition: background var(--duration-fast), color var(--duration-fast);
+    }
+    :host([expanded]) button {
+      width: 100%;
+      height: auto;
+      min-height: 2.25rem;
+      justify-content: flex-start;
+      gap: 0.625rem;
+      padding: 0.35rem 0.6rem;
     }
     button:hover {
       background: var(--surface-secondary);
@@ -2364,6 +2360,18 @@ export class Rail extends JfElement {
     }
     button.ai-dimmed:hover {
       opacity: 0.7;
+    }
+    .rail-label {
+      font-size: var(--font-size-sm);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .expand-toggle {
+      color: var(--text-muted);
+    }
+    :host([expanded]) .expand-toggle {
+      transform: rotate(180deg);
     }
     .btn-wrap {
       position: relative;
@@ -2442,6 +2450,31 @@ export class Rail extends JfElement {
           ${icon({ name: iconName, size: 18 })}
           ${showDot ? html`<span class="activity-dot"></span>` : nothing}
         </span>
+        ${this.expanded ? html`<span class="rail-label">${railName}</span>` : nothing}
+      </button>
+    `;
+  }
+
+  /**
+   * Search Thread S5b — the rail-foot chevron toggling collapsed (icon-only) ↔ expanded
+   * (icon + label) chrome. Fires `rail-expand-toggle`; Shell owns the persisted userConfig write
+   * (mirrors `rail-select`'s dispatch-up-then-Shell-decides shape).
+   */
+  private renderExpandToggle(): TemplateResult {
+    return html`
+      <button
+        class="expand-toggle"
+        title=${this.expanded ? 'Collapse rail' : 'Expand rail'}
+        aria-label=${this.expanded ? 'Collapse rail' : 'Expand rail'}
+        aria-pressed=${this.expanded ? 'true' : 'false'}
+        data-testid="rail-expand-toggle"
+        @click=${() =>
+          this.dispatchEvent(
+            new CustomEvent('rail-expand-toggle', { bubbles: true, composed: true }),
+          )}
+      >
+        <span class="btn-wrap">${icon({ name: 'chevron-right', size: 16 })}</span>
+        ${this.expanded ? html`<span class="rail-label">Collapse</span>` : nothing}
       </button>
     `;
   }
@@ -2510,6 +2543,8 @@ export class Rail extends JfElement {
       <div class="divider"></div>
       ${this.renderHelpButton()}
       ${bottom.map((s) => this.renderButton(s))}
+      <div class="divider"></div>
+      ${this.renderExpandToggle()}
     `;
   }
 }
@@ -2731,7 +2766,7 @@ export class Stage extends JfElement {
     // On first navigation the custom element isn't defined yet: kick off the
     // dynamic import, show a loading state, and re-render once the element
     // upgrades (whenDefined). See ../views/lazySurfaceRegistry.ts. The default
-    // landing surface (jf-search-surface) is eager, so it never hits this path.
+    // landing surface (jf-unified-chat-view) is eager, so it never hits this path.
     const mountTag = surface.mountTag;
     if (isLazySurface(mountTag) && !customElements.get(mountTag)) {
       void ensureSurfaceLoaded(mountTag);

@@ -731,25 +731,23 @@ export const unifiedChatBodyStyles = css`
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .affordance-bar {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding-bottom: 0.25rem;
-    }
-    /* Tempdoc 561 C-2: the supervision dial sits at the trailing edge of the crossing control. */
-    .affordance-dial {
-      margin-left: auto;
-    }
-    /* Tempdoc 561 surface tier: the retrospective "Activity" button sits at the trailing edge. */
-    .affordance-trailing {
-      margin-left: auto;
-    }
     /* Tempdoc 561 C-2: the rail summary names the approval posture (graded by the dial). */
     .activity-rail > summary {
       color: var(--text-secondary);
     }
-    .affordance-btn {
+    /* Search Thread S5b — the affordance TAB ROW (.affordance-bar/.affordance-btn) is retired
+       (the row died with the standalone tabs — the retrieve tier, the route chip, the results
+       card's Ask AI, and the landing escalation strip are the crossing controls now). The two
+       surviving controls that used to reuse .affordance-btn — History (moved to the header,
+       styled via the shared .new-chat-btn) and the agent-only toolbar below — get their own
+       modest classes instead. */
+    .agent-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding-bottom: 0.35rem;
+    }
+    .agent-tool-btn {
       padding: 0.2rem 0.5rem;
       font-size: var(--font-size-xs);
       border-radius: 0.25rem;
@@ -759,14 +757,14 @@ export const unifiedChatBodyStyles = css`
       cursor: pointer;
       transition: all var(--duration-fast) var(--ease-standard);
     }
-    .affordance-btn:hover {
+    .agent-tool-btn:hover {
       border-color: var(--accent-tint);
       color: var(--text-primary);
     }
-    /* Tempdoc 577 Ext III — the retrospective toggle is a panel control, not a posture: a gap
-     * separates it from the autonomy dial so it cannot read as a fourth segment. */
-    .retrospective-toggle {
-      margin-left: 0.75rem;
+    .agent-tool-btn[aria-pressed='true'] {
+      background: var(--accent-tint);
+      color: var(--accent-on-tint);
+      border-color: var(--accent-tint);
     }
     /* Tempdoc 565 §12.3.E — at the wide breakpoint the persistent evidence rail replaces the toggle
        drawer, so the "Sources · N" affordance (which opens that drawer) is redundant and hidden. */
@@ -774,46 +772,6 @@ export const unifiedChatBodyStyles = css`
       .sources-affordance {
         display: none;
       }
-    }
-    .affordance-btn.active {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-color: var(--accent-tint);
-    }
-    .affordance-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    .affordance-btn:disabled:hover {
-      border-color: var(--border-subtle);
-      color: var(--text-secondary);
-    }
-    /* Tempdoc 596 — the capability tabs are jf-control. The visual box is the inner button
-       (::part(control)); the host is a bare wrapper so the base .affordance-btn box doesn't
-       double up. The dimmed unavailable look is owned by jf-control (button[aria-disabled]). */
-    jf-control.affordance-btn {
-      border: none;
-      background: transparent;
-      padding: 0;
-    }
-    jf-control.affordance-btn::part(control) {
-      padding: 0.2rem 0.5rem;
-      font-size: var(--font-size-xs);
-      border-radius: 0.25rem;
-      border: 1px solid var(--border-subtle);
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: all var(--duration-fast) var(--ease-standard);
-    }
-    jf-control.affordance-btn:hover::part(control) {
-      border-color: var(--accent-tint);
-      color: var(--text-primary);
-    }
-    jf-control.affordance-btn.active::part(control) {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-color: var(--accent-tint);
     }
     /* Tempdoc 561 P-A/P-B (Slice 3): the secondary Activity rail — demoted agent chrome (budget),
        collapsible so the conversation stays primary. */
@@ -1149,6 +1107,33 @@ export const unifiedChatBodyStyles = css`
       display: flex;
       align-items: center;
       gap: 0.5rem;
+    }
+    /* S5b pin-parity — the landing's pinned-search strip + the bar's pin toggle. */
+    .pinned-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+    }
+    .pinned-search-btn,
+    .pin-toggle {
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      padding: 0.1rem 0.45rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .pinned-search-btn:hover,
+    .pin-toggle:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .pin-toggle[aria-pressed='true'] {
+      color: var(--accent);
+      border-color: var(--accent);
     }
     /* S5a (decision 6) — the schema attach/detach affordances: quiet text buttons on the bar. */
     .schema-attach,

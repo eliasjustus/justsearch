@@ -1,5 +1,5 @@
 {
-  "shell-v0/views/SearchSurface.ts": [
+  "shell-v0/components/searchResults/ResultsCard.ts": [
     "search-results", "command-mode", "zero-results", "input-focus",
     "filters-chips", "search-simple-mode", "search-advanced-mode",
     "multi-select", "row-hover", "snippets-expanded", "selection-preserved",

@@ -273,7 +273,9 @@ async def _type_and_search(page, query: str = "justsearch") -> None:
     try:
         await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
     except Exception:
-        await page.evaluate("() => { location.hash = 'justsearch://surface/core.search-surface'; }")
+        # Search Thread S5b — the standalone `core.search-surface` rail surface is retired; the
+        # retrieve tier folded into the one window (matches S.RAIL_SURFACE_SEARCH above).
+        await page.evaluate("() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }")
     # tempdoc 615 §11 HARDEN: resolve the search input by accessible role+name first
     # (stable across testid churn), falling back to the testid.
     inp = await S.SEARCH_INPUT.locate(page)
@@ -319,8 +321,10 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
     async def setup_filters_chips(page):
         # tempdoc 615 §6.1b: live facets render as a `[data-testid=facet-row]` of `.facet-chip` buttons
         # (only when the response carries facet counts), NOT the retired filter-toggle + type dropdown.
-        # Clicking a chip toggles it (`.facet-chip.selected`/`aria-pressed=true`) and re-submits. The
-        # always-visible date `[data-testid=filter-row]` is the fallback subject when a query has no facets.
+        # Clicking a chip toggles it (`.facet-chip.selected`/`aria-pressed=true`) and re-submits. Search
+        # Thread S5b — the standalone Search surface's date-filter row (`[data-testid=filter-row]`, the
+        # prior always-visible fallback subject) retired with the surface; the result row is the fallback
+        # subject when a query has no facets (guaranteed present once _type_and_search has real hits).
         await _type_and_search(page)
         facet = page.locator('[data-testid="facet-row"] .facet-chip').first
         try:
@@ -330,7 +334,7 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                 state="visible", timeout=10_000
             )
         except Exception:
-            await page.locator('[data-testid="filter-row"]').wait_for(state="visible", timeout=5_000)
+            await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=5_000)
 
     async def setup_inspector_open(page):
         # tempdoc 615 §6.1b: live Lit opens the inspector by clicking a result ROW (SearchSurface

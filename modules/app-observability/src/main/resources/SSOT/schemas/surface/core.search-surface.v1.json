@@ -1,5 +1,5 @@
 {
-  "$comment": "Slice 489 §5 — URL-addressable state contract for core.search-surface. The schema declares the addressable state shape; per slice 489 round-7 F7 (2026-05-12) it lives in a resource file rather than inline Java string. Bindings stay in CoreSurfaceCatalog.java because they reference typed records (StateBinding) with abstract storeId values the FE resolves at runtime.",
+  "$comment": "Slice 489 §5 — was the URL-addressable state contract for core.search-surface. Search Thread S5b (the great retirement): the standalone core.search-surface Surface entry is REMOVED from CoreSurfaceCatalog.java (folded into core.unified-chat-surface); no production code loads this resource anymore. Kept as SurfaceStateSchemaLoaderTest's fixture ONLY — it is the one classpath resource demonstrating an integer-typed field (modifiedFromMs/modifiedToMs), which the F3 validator-demonstrable test needs and core.unified-chat-surface.v1.json's schema does not have. Not tied to a live surface; do not re-wire a Surface() entry to this id.",
   "type": "object",
   "properties": {
     "query": {

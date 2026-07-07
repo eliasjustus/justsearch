@@ -155,4 +155,12 @@ export interface RendererUserConfig {
    * the second registered surface in the rail when undefined.
    */
   secondaryActiveSurface?: string;
+
+  /**
+   * Search Thread S5b — the rail's collapsed/expanded chrome state. `true` shows each rail
+   * button's text label beside its icon (a wider rail); `false`/undefined is the default
+   * icon-only rail. Toggled by the rail-foot chevron (`Rail.renderExpandToggle`); persisted here
+   * so it survives reload, mirroring `activeLayoutId`'s persistence shape.
+   */
+  railExpanded?: boolean;
 }

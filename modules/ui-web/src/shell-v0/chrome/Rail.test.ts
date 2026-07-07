@@ -100,3 +100,56 @@ describe('Rail — altitude-projected homing (tempdoc 571)', () => {
     expect(productIds[chatIdx + 1]).toBe('core.activity-surface');
   });
 });
+
+describe('Rail — collapsed/expanded chrome (Search Thread S5b)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function mount(expanded: boolean): Rail {
+    const el = document.createElement('jf-rail') as Rail;
+    el.surfaces = [surface('core.unified-chat-surface'), surface('core.library-surface')];
+    el.expanded = expanded;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('defaults to collapsed (icon-only, no visible labels)', async () => {
+    const el = document.createElement('jf-rail') as Rail;
+    el.surfaces = [surface('core.unified-chat-surface')];
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    expect(el.expanded).toBe(false);
+    expect(el.shadowRoot!.querySelector('.rail-label')).toBeNull();
+    const toggle = el.shadowRoot!.querySelector('[data-testid="rail-expand-toggle"]');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('renders a text label beside each icon when expanded', async () => {
+    const el = mount(true);
+    await el.updateComplete;
+
+    const labels = [...el.shadowRoot!.querySelectorAll('.rail-label')];
+    expect(labels.length).toBeGreaterThan(0);
+    const toggle = el.shadowRoot!.querySelector('[data-testid="rail-expand-toggle"]');
+    expect(toggle!.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('the expand toggle is a keyboard-accessible native button that dispatches rail-expand-toggle', async () => {
+    const el = mount(false);
+    await el.updateComplete;
+
+    let fired = 0;
+    el.addEventListener('rail-expand-toggle', () => {
+      fired += 1;
+    });
+    const toggle = el.shadowRoot!.querySelector(
+      '[data-testid="rail-expand-toggle"]',
+    ) as HTMLButtonElement;
+    expect(toggle.tagName).toBe('BUTTON');
+    toggle.click();
+    expect(fired).toBe(1);
+  });
+});

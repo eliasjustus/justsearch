@@ -367,7 +367,7 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
       acknowledged: false,
       sourceRenderHint: 'EPHEMERAL',
       origin: 'local',
-      toast: { message, classId: 'core.navigation', supersede: true },
+      toast: { message, classId: 'core.draft-kept', supersede: true },
     };
   }
 

@@ -33,6 +33,10 @@ const RETIRED_SURFACE_ALIASES: AliasMap = {
   // into Health. A deep-link redirects to the System hub, whose first member (Health) opens by default —
   // exactly where the strip now lives, so no member-tab intent is needed.
   'core.system-self-view': { target: 'core.system-surface', reason: 'renamed' },
+  // Search Thread S5b (the great retirement) — the standalone Search rail surface is retired; its
+  // retrieve tier folded into the one window. A deep-link/bookmark to core.search-surface resolves
+  // into it rather than dead-ending.
+  'core.search-surface': { target: 'core.unified-chat-surface', reason: 'renamed' },
 };
 
 /**

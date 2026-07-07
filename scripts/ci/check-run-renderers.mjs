@@ -224,8 +224,9 @@ for (const f of files) {
   if (!srrAuthorities.has(f) && SRR_SYMBOL.test(src) && !srrConsumers.has(f)) {
     failures.push(
       `${f}: imports a search-result render symbol (${srr.authoritySymbols.join('/')}) outside the ` +
-        `registered consumer sites — the per-hit "why" + facet-chip render is ONE authority shared by ` +
-        `SearchSurface + the retrieve tier (577 §3.9a); register a new consumer in ${REGISTER} only with ` +
+        `registered consumer sites — the per-hit "why" + facet-chip render is ONE authority consumed by ` +
+        `the retrieve tier / ResultsCard (577 §3.9a, retired standalone SearchSurface folded in at ` +
+        `Search Thread S5b); register a new consumer in ${REGISTER} only with ` +
         `review, or it is a second fork of the search-result evidence render.`,
     );
   }

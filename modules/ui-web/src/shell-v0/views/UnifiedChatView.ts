@@ -55,7 +55,7 @@ import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
 import { readinessNotice, reasonFor } from '../state/readinessNotice.js';
 import { verdictTone } from '../state/verdict.js';
-import { projectAvailability, unavailableBecause, type Availability } from '../state/availability.js';
+import { projectAvailability, unavailableBecause } from '../state/availability.js';
 import '../components/SystemNotice.js';
 import '../components/OpButton.js';
 import '../components/Control.js';
@@ -119,6 +119,14 @@ import {
   type SearchHit,
   type SearchScopeChip,
 } from '../state/searchState.js';
+import {
+  subscribePinnedSearches,
+  isPinned,
+  pinSearch,
+  unpinSearch,
+  recordRun,
+  type SearchPin,
+} from '../state/pinnedSearchState.js';
 // Search Thread S3 — the shared scope-chip row renderer (mirrors the facet-chip precedent).
 import { renderScopeChips, scopeChipRowStyles } from '../components/scopeChipRow.js';
 import { icon } from '../components/Icon.js';
@@ -382,6 +390,7 @@ export class UnifiedChatView extends JfElement {
     // Search Thread D5 (stage S3) — the pinned scope chips (mirrored from the searchState module
     // store). Recoverable task state, not a transient — survives tab switch like selection/facets.
     scopeChips: { state: true },
+    pinnedSearches: { state: true },
     // Search Thread S4-final — committed (frozen) searches, oldest first. Recoverable task state
     // (like `thread`/`scopeChips`): these are part of the visible thread history, not in-flight UI —
     // NOT reset in settleTransients.
@@ -481,6 +490,8 @@ export class UnifiedChatView extends JfElement {
    *  buildSearchIntent, already unioned in searchState) and AI retrieval (unioned into docIds at
    *  send time — see effectiveDocIds()). */
   declare scopeChips: SearchScopeChip[];
+  /** S5b pin-parity — the persisted pinned searches (UserStateDocument via pinnedSearchState). */
+  declare pinnedSearches: readonly SearchPin[];
   /** Search Thread S4-final — committed (frozen) searches, oldest first; see {@link CommittedSearch}. */
   declare committedSearches: CommittedSearch[];
   /** Search Thread S4-final — recent-query trail, newest first, deduped, capped at 8. */
@@ -526,6 +537,7 @@ export class UnifiedChatView extends JfElement {
   private facetUnsub: (() => void) | null = null;
   // Search Thread D5 (stage S3) — the scope-chip store subscription.
   private scopeChipsUnsub: (() => void) | null = null;
+  private pinnedSearchesUnsub: (() => void) | null = null;
   // Tempdoc 561 C-2: re-render the graded chrome when the autonomy dial changes (chrome only).
   private autonomyUnsubscribe: (() => void) | null = null;
   /** Tempdoc 610 §J.3 — re-render when the shared hidden-source set changes (e.g. toggled from the rail). */
@@ -642,6 +654,7 @@ export class UnifiedChatView extends JfElement {
     this.facetSelections = {};
     this.routeOverride = null;
     this.scopeChips = [];
+    this.pinnedSearches = [];
     this.committedSearches = [];
     this.queryTrail = [];
     this.queryTrailOpen = false;
@@ -787,6 +800,45 @@ export class UnifiedChatView extends JfElement {
     this.scopeChipsUnsub = subscribeScopeChips((chips) => {
       this.scopeChips = chips;
     });
+    // S5b pin-parity — the pinned-search strip moved from the retired SearchSurface onto the
+    // landing + the bar's pin toggle (plan: "pinned chips land on the card/landing").
+    this.pinnedSearchesUnsub = subscribePinnedSearches((pins) => {
+      this.pinnedSearches = pins;
+    });
+    this.republishRetrieveSelection();
+  }
+
+  /**
+   * Search Thread S5b (state-retention parity with the retired SearchSurface, tempdoc 609
+   * instance-retention) — the retrieve tier's multi-select is instance @state
+   * (`retrieveSelectedIds`), so it survives a disconnect/reconnect cycle; but the GLOBAL
+   * selectionState does not (other rail surfaces clear it on surface change). Re-publish it +
+   * reopen the inspector for the primary hit, mirroring SearchSurface.connectedCallback. Stale ids
+   * (results changed while away) are dropped — only ids still present in the current snapshot count.
+   */
+  private republishRetrieveSelection(): void {
+    if (this.retrieveSelectedIds.size === 0 || (this.searchSnapshot?.results.length ?? 0) === 0) return;
+    const hits = this.searchSnapshot!.results;
+    const primaryIndex = hits.findIndex((h) => this.retrieveSelectedIds.has(h.id));
+    const survivingIds = hits.filter((h) => this.retrieveSelectedIds.has(h.id)).map((h) => h.id);
+    if (survivingIds.length === 0) {
+      this.retrieveSelectedIds = new Set();
+      return;
+    }
+    // Reopen the inspector for the primary hit — a passive preview restore, NOT a fresh "open"
+    // (recordOpenDisposition stays scoped to openRetrieveHit's real user-click path).
+    const primaryHit = primaryIndex >= 0 ? hits[primaryIndex] : hits.find((h) => survivingIds.includes(h.id));
+    this.handleRetrieveCardSelection({
+      ids: survivingIds,
+      primaryId: primaryHit?.id ?? survivingIds[0]!,
+      primaryIndex: primaryIndex >= 0 ? primaryIndex : 0,
+    });
+    const host = this.host_;
+    if (primaryHit && host?.search && host?.ui) {
+      host.ui.showInspector(
+        host.search.hitToSelectedItem(primaryHit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
+      );
+    }
   }
 
   /**
@@ -868,6 +920,8 @@ export class UnifiedChatView extends JfElement {
     this.facetUnsub = null;
     this.scopeChipsUnsub?.();
     this.scopeChipsUnsub = null;
+    this.pinnedSearchesUnsub?.();
+    this.pinnedSearchesUnsub = null;
     this.excludedSourcesUnsub?.();
     this.excludedSourcesUnsub = null;
     // §21 — the run-spine's observers + scroll listeners are torn down by NavigationController.hostDisconnected.
@@ -1904,19 +1958,37 @@ export class UnifiedChatView extends JfElement {
     return html`
       <div class="header">
         <div>
-          <strong>Chat</strong> — ask anything
+          <strong>Search</strong> — ask anything
           <jf-conversation-history
             @conversation-select=${(e: CustomEvent) => this.onConversationSelect(e)}
           ></jf-conversation-history>
+          ${/* Search Thread S5b — the affordance-bar row retired; History (the retrospective drawer:
+                Sessions/Timeline/History) moves next to New chat/Export so it stays reachable from
+                every tier, not just from within the (now-gone) tab row. */ ''}
+          <button
+            class="new-chat-btn"
+            @click=${() => toggleRetrospective()}
+            title="History — past sessions, timeline, tool calls, inbox"
+          >
+            History
+          </button>
           ${this.thread.length > 0 && !agentMode
             ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>
                    <button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
         </div>
-        <span class="shape-indicator">${agentMode ? 'Agent' : SHAPE_LABELS[currentShape]}</span>
+        <span class="shape-indicator">${
+          agentMode
+            ? 'Agent'
+            : // Search Thread S5b — resolveShape falls through 'retrieve' to 'core.free-chat'
+              // (SHAPE_LABELS 'Chat'), which read wrong once the header/rail/tab renamed to
+              // "Search": the badge must not call the search-only tier "Chat".
+              this.affordance === 'retrieve'
+              ? 'Search'
+              : SHAPE_LABELS[currentShape]
+        }</span>
       </div>
       ${this.renderDegradationBanner()}
-      ${this.renderAffordanceBar(agentMode)}
       <div class="answer-plane">${this.renderAnswerPlane()}</div>
     `;
   }
@@ -1979,23 +2051,6 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 561 P-B3: the affordance bar — the §2.1 crossing control, shared by both planes so the
-   * user can cross between the answer plane (Documents/Structured) and the action plane (Agent)
-   * from within the one window. 'Agent' replaces the old disabled 'Tools' stub (the un-built
-   * crossing the audit flagged).
-   */
-  /**
-   * Tempdoc 596 §9/§14 — the availability of a capability tab, projected once from the observed-state
-   * authority. `isStreaming` is a HARD intent gate (can't switch mode mid-stream) → `blocked` (inert);
-   * everything else is a SOFT capability gap → `unavailable{reason}` (reachable reason, non-silent
-   * block). The reason that used to live on a suppressed `title` is now rendered by jf-control.
-   */
-  private tabAvailability(affordance: 'documents' | 'extract' | 'agent'): Availability {
-    if (this.isStreaming) return { kind: 'blocked' };
-    return projectAvailability(affordance, this.aiState);
-  }
-
-  /**
    * Search Thread D2/D3 (stage S2) — Ask is PINNED to `'search'` when the documents affordance is
    * unavailable/blocked (Hard Invariant: never a silent no-op). Mirrors `RouteChip`'s own pinned
    * semantics so the chip and the actual Enter-key routing can never disagree.
@@ -2035,74 +2090,34 @@ export class UnifiedChatView extends JfElement {
     this.explicitAffordance = v;
   }
 
-  private renderAffordanceBar(agentMode: boolean): TemplateResult {
+  /**
+   * Search Thread S5b — the affordance TAB ROW is retired (the escalation affordances that replace
+   * it: the route chip, the results card's Ask AI, and the landing escalation strip). The agent-only
+   * controls the row used to host (the supervision dial, Abilities, Sources) move onto the composer,
+   * rendered ONLY while `affordance === 'agent'` — {@link renderComposerBlock} calls this.
+   */
+  private renderAgentToolbar(): TemplateResult | typeof nothing {
+    if (this.affordance !== 'agent') return nothing;
     return html`
-      <div class="affordance-bar">
-        ${/* Tempdoc 577 Goal 3 (§3.2) — the retrieve base tier: instant search hits, no LLM. The
-              lowest intent rung; "Documents" (Ask) and "Agent" (Delegate) are the escalations. */ ''}
-        <button
-          class="affordance-btn ${this.affordance === 'retrieve' ? 'active' : ''}"
-          @click=${() => this.toggleAffordance('retrieve')}
-          title="Search your files — instant results, no AI"
-        >
-          Search
-        </button>
-        ${/* Tempdoc 596 — the three capability tabs are jf-control with TYPED availability: an
-              unavailable tab is aria-disabled + focusable, its reason reachable, and a blocked
-              activation surfaces the reason (no suppressed title, no swallowed click). */ ''}
-        <jf-control
-          class="affordance-btn ${this.affordance === 'documents' ? 'active' : ''}"
-          .availability=${this.tabAvailability('documents')}
-          .onActivate=${() => this.toggleAffordance('documents')}
-          >Documents</jf-control
-        >
-        <jf-control
-          class="affordance-btn ${this.affordance === 'extract' ? 'active' : ''}"
-          .availability=${this.tabAvailability('extract')}
-          .onActivate=${() => this.toggleAffordance('extract')}
-          >Structured</jf-control
-        >
-        <jf-control
-          class="affordance-btn ${agentMode ? 'active' : ''}"
-          .availability=${this.tabAvailability('agent')}
-          .onActivate=${() => this.toggleAffordance('agent')}
-          >Agent</jf-control
-        >
-        ${/* Tempdoc 561 C-2: the supervision dial appears only at the agency crossing (agent mode),
-              making the answer→action phase transition visible — the chrome grades, not a new mode. */ ''}
-        ${agentMode
-          ? html`<jf-autonomy-dial class="affordance-dial" compact></jf-autonomy-dial>`
-          : nothing}
-        ${/* Tempdoc 561 surface tier: open the retrospective drawer (Sessions/Timeline/History)
-              folded into the one window — replacing the retired standalone agent surface's tabs. */ ''}
-        ${/* Tempdoc 577 Ext III — the retrospective is NOT "Activity" (that read as a fourth posture
-              beside the dial, and collided with the live-run rail + the Activity surface): it is the
-              record looking BACK — "History". Spaced off the dial so it reads as a panel toggle. */ ''}
-        <button
-          class="affordance-btn retrospective-toggle ${agentMode ? '' : 'affordance-trailing'}"
-          @click=${() => toggleRetrospective()}
-          title="History — past sessions, timeline, tool calls, inbox"
-        >
-          History
-        </button>
+      <div class="agent-toolbar">
+        ${/* Tempdoc 561 C-2: the supervision dial makes the answer→action phase transition visible. */ ''}
+        <jf-autonomy-dial compact></jf-autonomy-dial>
         ${/* Tempdoc 577 §2.13 #17 — the authority-space toggle: "what can this agent do, and what
-            will ask first" — calibrate trust by inspection, before delegating (agent mode only). */ ''}
-        ${agentMode
-          ? html`<button
-              class="affordance-btn"
-              aria-pressed=${this.showAbilities ? 'true' : 'false'}
-              @click=${() => {
-                this.showAbilities = !this.showAbilities;
-              }}
-              title="What this agent can do, and what will ask first"
-            >
-              Abilities
-            </button>`
-          : nothing}
+            will ask first" — calibrate trust by inspection, before delegating. */ ''}
+        <button
+          class="agent-tool-btn"
+          aria-pressed=${this.showAbilities ? 'true' : 'false'}
+          @click=${() => {
+            this.showAbilities = !this.showAbilities;
+          }}
+          title="What this agent can do, and what will ask first"
+        >
+          Abilities
+        </button>
         ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages). */ ''}
-        ${agentMode && (this.agentCtrl?.answerSources.length ?? 0) > 0
+        ${(this.agentCtrl?.answerSources.length ?? 0) > 0
           ? html`<button
-              class="affordance-btn sources-affordance"
+              class="agent-tool-btn sources-affordance"
               @click=${() => toggleSources()}
               title="The latest answer's grounding sources"
             >
@@ -2202,6 +2217,7 @@ export class UnifiedChatView extends JfElement {
    */
   private renderComposerBlock(): TemplateResult {
     return html`
+      ${this.renderAgentToolbar()}
       ${this.renderSteerInput()}
       ${this.renderAffordancePreview()}
       ${this.affordance === 'extract' ? this.renderSchemaInput() : nothing}
@@ -2337,9 +2353,37 @@ export class UnifiedChatView extends JfElement {
    * affordance (documents/extract/agent have no ambiguous Enter to disambiguate).
    * Search Thread S4-final — also hosts the "⌄ recent" query-trail dropdown.
    */
+  /**
+   * S5b pin-parity — pin/unpin the CURRENT query (pinnedSearchState, the same persisted store
+   * the retired SearchSurface's header used). Rendered only when a query is active.
+   */
+  private renderPinToggle(): TemplateResult | typeof nothing {
+    const q = (this.searchSnapshot?.query ?? '').trim();
+    if (!q) return nothing;
+    const pinned = isPinned(q);
+    return html`<button
+      type="button"
+      class="pin-toggle"
+      data-testid="pin-toggle"
+      aria-pressed=${pinned ? 'true' : 'false'}
+      title=${pinned ? 'Unpin this search' : 'Pin this search'}
+      @click=${() => {
+        if (pinned) {
+          const pin = this.pinnedSearches.find((p) => p.query === q);
+          if (pin) unpinSearch(pin.id);
+        } else {
+          pinSearch(q);
+        }
+      }}
+    >
+      ${pinned ? '★ Pinned' : '☆ Pin'}
+    </button>`;
+  }
+
   private renderRouteRow(): TemplateResult {
     const route = this.currentRoute();
     return html`<div class="route-row">
+      ${this.renderPinToggle()}
       ${this.renderQueryTrail()}
       ${/* S5a (decision 6) — Structured is an attachment you ADD to the bar: attaching seeds the
             draft template (if empty) and the tier derives 'extract' while it is held. */ ''}
@@ -2405,8 +2449,34 @@ export class UnifiedChatView extends JfElement {
                 Add folders in Library to start searching
               </button>`}
         </div>
+        ${/* S5b pin-parity — pinned searches (persisted, UserStateDocument) resurface on the
+              landing: one click re-runs the saved query through the normal floor. */ ''}
+        ${this.pinnedSearches.length > 0
+          ? html`<div class="pinned-row" data-testid="landing-pins" role="list" aria-label="Pinned searches">
+              ${this.pinnedSearches.map(
+                (pin) => html`<button
+                  type="button"
+                  role="listitem"
+                  class="pinned-search-btn"
+                  title="Run pinned search"
+                  @click=${() => this.runPinnedSearch(pin)}
+                >
+                  ${pin.query}
+                </button>`,
+              )}
+            </div>`
+          : nothing}
       </div>
     `;
+  }
+
+  /** S5b pin-parity — re-run a pinned search: restore the draft + fire the floor. */
+  private runPinnedSearch(pin: SearchPin): void {
+    this.explicitAffordance = null;
+    this.routeOverride = null;
+    this.inputDraft = pin.query;
+    setSearchQuery(pin.query);
+    this.onFocusComposer();
   }
 
   /** Search Thread D2/D3 (stage S2) — window-level `jf-focus-composer` → focus the textarea. */
@@ -3286,6 +3356,9 @@ export class UnifiedChatView extends JfElement {
     };
     this.committedSearches = [...this.committedSearches, committed];
     this.rememberQueryInTrail(query);
+    // S5b pin-parity — a committed search is a real run: feed the pin's run history (no-op
+    // unless this query is pinned; pinnedSearchState gates re-records within MIN_RUN_GAP_MS).
+    recordRun(query, s.totalHits);
     // Search Thread S4-final — `this.sessionId` (constructor: `createConversationId()`) is a
     // client-generated id present from the moment this view mounts, and the backend's write path
     // (`AgentRunStore.appendSearchEvent`) keys/creates the event's home purely off this string with
@@ -4601,13 +4674,6 @@ export class UnifiedChatView extends JfElement {
         ></textarea>
       </div>
     `;
-  }
-
-  private toggleAffordance(target: Affordance): void {
-    this.affordance = this.affordance === target ? 'none' : target;
-    // Tempdoc 561 P-A/P-B (Slice 2): crossing planes (esp. agent -> answer) may have added turns to
-    // the record (an agent run); refresh so the unified thread reflects both planes.
-    void this.refreshUnifiedThread();
   }
 
   private getPlaceholder(): string {

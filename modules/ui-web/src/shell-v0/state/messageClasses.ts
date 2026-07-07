@@ -51,8 +51,10 @@ export const LOCAL_MESSAGE_CLASSES = {
   // The generic catch-all: unrelated one-off window notices. No supersede (they must not collapse
   // into each other); tone is per-message.
   'core.ephemeral': { renderHint: 'EPHEMERAL', supersede: false, locality: 'window' },
-  // Surface navigation breadcrumb — only the latest matters, so it supersedes its own class.
-  'core.navigation': { renderHint: 'EPHEMERAL', supersede: true, defaultSeverity: 'info', locality: 'window' },
+  // Search Thread S5b — the `core.navigation` surface-navigation-breadcrumb toast is RETIRED
+  // (replace-with-nothing: navigation is already visible in the rail/title). Its one emit site
+  // (Shell.ts's old showNavigationToast) is gone, so this row is removed in the same change (the
+  // check-message-classes BACKWARD check requires no dead declaration).
   // "Index ready — all systems operational" settle announcement (595/StatusDeck).
   'core.verdict.settled': {
     renderHint: 'EPHEMERAL',

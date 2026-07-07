@@ -470,16 +470,16 @@ describe('AdvisoryStore', () => {
     store.subscribe((s) => {
       latest = s;
     });
-    store.emitEphemeral({ message: 'Navigated to Search', classId: 'core.navigation' });
+    store.emitEphemeral({ message: 'Draft kept: Search', classId: 'core.draft-kept' });
     expect(latest!.advisories.length).toBe(1);
     store.emitEphemeral({
-      message: 'Navigated to Library',
-      classId: 'core.navigation',
+      message: 'Draft kept: Library',
+      classId: 'core.draft-kept',
       supersede: true,
     });
-    // The first nav toast is replaced, not stacked.
+    // The first draft-kept toast is replaced, not stacked.
     expect(latest!.advisories.length).toBe(1);
-    expect(latest!.advisories[0]!.toast?.message).toBe('Navigated to Library');
+    expect(latest!.advisories[0]!.toast?.message).toBe('Draft kept: Library');
   });
 
   it('602 R4 — supersede only collapses the SAME classId, not unrelated default toasts', () => {
@@ -489,12 +489,12 @@ describe('AdvisoryStore', () => {
     store.subscribe((s) => {
       latest = s;
     });
-    // Two unrelated default-class one-offs, then a superseding nav toast.
+    // Two unrelated default-class one-offs, then a superseding draft-kept toast.
     store.emitEphemeral({ message: 'Copied' });
     store.emitEphemeral({ message: 'AI is offline', severity: 'warning' });
     store.emitEphemeral({
-      message: 'Navigated to Search',
-      classId: 'core.navigation',
+      message: 'Draft kept: Search',
+      classId: 'core.draft-kept',
       supersede: true,
     });
     // The two core.ephemeral one-offs survive; only same-class would collapse.
@@ -509,12 +509,12 @@ describe('AdvisoryStore', () => {
       latest = s;
     });
     store.emitEphemeral({
-      message: 'Navigated to Search',
-      classId: 'core.navigation',
+      message: 'Draft kept: Search',
+      classId: 'core.draft-kept',
       supersede: true,
     });
     expect(latest!.advisories.length).toBe(1);
-    expect(latest!.advisories[0]!.toast?.message).toBe('Navigated to Search');
+    expect(latest!.advisories[0]!.toast?.message).toBe('Draft kept: Search');
   });
 });
 

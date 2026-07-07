@@ -32,8 +32,14 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
       operations: ['core.reindex', 'core.add-watched-root', 'core.remove-watched-root', 'core.preview-excludes', 'core.apply-excludes'],
       resources: ['core.indexed-roots'],
     },
-    // Tempdoc 521 §22 Phase D — Library pairs with Search by default.
-    splitPairing: { secondary: 'core.search-surface' },
+    // Tempdoc 521 §22 Phase D — Library pairs with Search by default. Search Thread S5b: the
+    // standalone `core.search-surface` is retired; `Shell.resolveSecondarySurface` reads this off
+    // the live catalog (`getSurface(pairedId)`), so leaving the old id here would silently resolve
+    // to nothing and fall through to the "first non-primary rail surface" fallback (dead, not
+    // broken — but a stale declared intent). Repointed to `core.unified-chat-surface`, which owns
+    // the retrieve tier now AND already declares the reciprocal pairing (`splitPairing: { secondary:
+    // 'core.library-surface' }` below) — the honest, symmetric choice, not a silent no-op.
+    splitPairing: { secondary: 'core.unified-chat-surface' },
   },
   {
     id: 'core.help-surface',
@@ -167,16 +173,10 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
   // Tempdoc 575 §17 Face B (the System Self-View / "Now") was a RAIL surface here; RETIRED by tempdoc
   // 578 Workstream A — its live-strip is folded into Health (<jf-system-self-view variant="strip">) and
   // a deep-link to core.system-self-view aliases to the System hub (RETIRED_SURFACE_ALIASES).
-  {
-    id: 'core.search-surface',
-    mountTag: 'jf-search-surface',
-    labelKey: 'registry-surface.search-surface.label',
-    descriptionKey: 'registry-surface.search-surface.description',
-    audience: 'USER',
-    placement: 'RAIL',
-    // Tempdoc 521 §22 Phase D — Search pairs with Library by default.
-    splitPairing: { secondary: 'core.library-surface' },
-  },
+  // Search Thread S5b (the great retirement) — the standalone `core.search-surface` RAIL surface
+  // (jf-search-surface) was here; RETIRED — its retrieve tier folded into `core.unified-chat-surface`
+  // above (Search Thread S1-S5a). A deep-link to core.search-surface aliases to the one window
+  // (RETIRED_SURFACE_ALIASES, same treatment as core.agent-surface / core.system-self-view).
   {
     id: 'core.logs-surface',
     mountTag: 'jf-log-surface',
