@@ -1123,6 +1123,24 @@ export const unifiedChatBodyStyles = css`
       text-decoration: underline;
       cursor: pointer;
     }
+    .escalation-delegate {
+      background: none;
+      border: none;
+      padding: 0;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      color: var(--text-tertiary);
+      cursor: pointer;
+      text-decoration: underline dotted;
+    }
+    .escalation-delegate:hover:not([aria-disabled='true']) {
+      color: var(--text-primary);
+    }
+    .escalation-delegate[aria-disabled='true'] {
+      cursor: default;
+      opacity: 0.6;
+      text-decoration: none;
+    }
     .escalation-strip {
       display: flex;
       flex-wrap: wrap;

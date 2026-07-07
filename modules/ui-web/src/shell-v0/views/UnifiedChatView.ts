@@ -1889,6 +1889,12 @@ export class UnifiedChatView extends JfElement {
     this.ragMeta = null;
     this.rewriteNote = null;
     this.claims = [];
+    // S8 live finding — the previous conversation's unified record (events/lifecycles) must not
+    // survive into the fresh one: stale events kept isLanding() false, so New chat never
+    // returned to the bare landing.
+    this.unifiedEvents = [];
+    this.unifiedLifecycles = [];
+    this.agentBudget = null;
     this.showResumePrompt = false;
     // Slice 515 FIX-1: forget the previous askAi-pinned docIds so a new
     // conversation starts with open-retrieval unless the user re-selects.
@@ -2263,7 +2269,23 @@ export class UnifiedChatView extends JfElement {
           ? html`<div class="escalation-strip">
               <div>Search instantly · no AI</div>
               <div>Ask — answers with citations</div>
-              <div>Delegate — the agent works multi-step</div>
+              ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
+                    only carries diagnostics); until delegation folds into ask-turns entirely, the
+                    strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
+              <button
+                type="button"
+                class="escalation-delegate"
+                data-testid="escalation-delegate"
+                aria-disabled=${this.aiState?.capabilities?.chat ? 'false' : 'true'}
+                title=${this.aiState?.capabilities?.chat
+                  ? 'Delegate a multi-step task to the agent'
+                  : 'The local AI model is offline'}
+                @click=${() => {
+                  if (this.aiState?.capabilities?.chat) this.affordance = 'agent';
+                }}
+              >
+                Delegate — the agent works multi-step
+              </button>
             </div>`
           : nothing}
       </div>
