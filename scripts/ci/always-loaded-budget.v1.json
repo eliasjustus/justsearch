@@ -4,14 +4,14 @@
   "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or verifyGovernanceGates once the doc set stabilizes (582 R3: extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
     "CLAUDE.md": 22053,
-    ".claude/rules/agent-lessons.md": 9149,
-    ".claude/rules/branch-safety.md": 10204,
+    ".claude/rules/agent-lessons.md": 9680,
+    ".claude/rules/branch-safety.md": 10581,
     ".claude/rules/context-efficiency.md": 1955,
     ".claude/rules/hooks-reference.md": 2740,
     ".claude/rules/slice-execution.md": 4667,
     ".claude/rules/tier-register.md": 15725
   },
-  "totalCeiling": 66493,
+  "totalCeiling": 67401,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -82,6 +82,20 @@
       "to": 9149,
       "reason": "Time-to-complete architecture-signal lesson (owner-adopted 2026-07-07, same 681 ride-along tranche)",
       "ts": "2026-07-07T02:18:12.815Z"
+    },
+    {
+      "file": ".claude/rules/agent-lessons.md",
+      "from": 9149,
+      "to": 9680,
+      "reason": "tempdoc 695: document the rebase-after-push force-push trap (bash-guard blocks it unconditionally) — a genuine cross-cutting platform constraint, trimmed to minimum before bumping",
+      "ts": "2026-07-07T20:37:36.025Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 10204,
+      "to": 10581,
+      "reason": "tempdoc 695: correct a stale claim that git push is unconditionally allowed on main — branch protection now rejects it in practice, a factual fix not a new topic",
+      "ts": "2026-07-07T20:37:40.008Z"
     }
   ]
 }
