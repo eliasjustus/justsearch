@@ -4,12 +4,12 @@ name: CI wall-clock trend
 # on `main` — the durable "is a lane drifting up / are we at the floor" signal that
 # per-run budgets are too noisy to give. Advisory only: it never fails anything and
 # only opens a SINGLE de-duped issue on SUSTAINED drift (per-lane median over the
-# window above its advisory ceiling). Mirrors phase-3-observability-nightly.yml
+# window above its advisory ceiling).
 # (post-hoc analyzer + actions:read + issues:write + var gate).
 
-# Manual-only, matching the repo's ADR-0026 convention (the sibling
-# phase-3-observability-nightly analyzer is likewise workflow_dispatch-only, with
-# its cron intentionally not enabled). A scheduled cadence can be added later if
+# Manual-only, matching the repo's ADR-0026 convention (workflow_dispatch-only,
+# with its cron intentionally not enabled — see ADR-0026 for the self-hosted
+# runner-availability rationale). A scheduled cadence can be added later if
 # the repo decides to enable scheduled analyzers — it would also need its
 # expectedTriggers updated in workflow-signal-policy.v1.json.
 on:

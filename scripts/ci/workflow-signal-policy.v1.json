@@ -70,17 +70,6 @@
       "advisory": true
     },
     {
-      "name": "Phase 3 Observability Nightly",
-      "path": ".github/workflows/phase-3-observability-nightly.yml",
-      "class": "scheduled-quality-signal",
-      "expectedTriggers": ["workflow_dispatch"],
-      "owner": "tempdocs 400/404 when jseval gate is reached; workflow signal governance for setup drift",
-      "failureDefault": "workflow-assumption-drift",
-      "staleDays": 7,
-      "blocking": false,
-      "advisory": true
-    },
-    {
       "name": "CI wall-clock trend",
       "path": ".github/workflows/ci-walltime-trend.yml",
       "class": "scheduled-quality-signal",

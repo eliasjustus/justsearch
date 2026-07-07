@@ -15,11 +15,10 @@ Before interpreting a GitHub Actions failure, run:
 node scripts/ci/workflow-signal-health.mjs --repo eliasjustus/justsearch --md
 ```
 
-Use the computed failure class to route the public hosted `CI` fact lanes and the active manual specialty workflows: `docs-lint.yml`, `build-installer.yml`, `codeql.yml`, and `phase-3-observability-nightly.yml`.
+Use the computed failure class to route the public hosted `CI` fact lanes and the active manual specialty workflows: `docs-lint.yml`, `build-installer.yml`, `codeql.yml`.
 
 - `release-blocking-failure` on `Build Installer` routes to tempdoc 374 / Production-Reality Verification.
 - Public hosted `CI` failures route by fact-lane name first: public claims, license/notices, build, unit tests, secret scan, or DCO.
-- `Phase 3 Observability Nightly` routes to tempdocs 400/404 only when the failing step reaches `jseval gate`; setup or dependency install failures are `infra-drift` / `workflow-assumption-drift`.
 - `Docs Lint` failures route to the matching docs lint section below.
 - `CodeQL` failures route to the reported query/path first; do not treat them as generic build failures.
 

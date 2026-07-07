@@ -61,7 +61,7 @@ None of these change the cohort_hash — the envelope is still "valid"
 in that it exists and is used — but its σ numbers describe an older
 runtime profile and over- or under-band the new reality.
 
-Symptom: the nightly `jseval gate` starts filing false-alarm issues
+Symptom: a manual `jseval gate` run starts filing false-alarm issues
 (σ drifts outside the ±10% band stably). Operators then follow
 `docs/how-to/recalibrate-phase3-baseline.md` to rebase the gate and
 regenerate the envelope.
@@ -118,10 +118,10 @@ tighter or looser, rotate.
    should be refreshed alongside because encoder duration
    distributions shifted. See
    `docs/how-to/calibrate-drift-baseline.md`.
-4. **Update the nightly gate baseline** — if the cohort is the one
-   the nightly workflow guards, also follow
+4. **Update the drift-gate baseline** — if the cohort is the one
+   `jseval gate` guards, also follow
    `docs/how-to/recalibrate-phase3-baseline.md` to rebase the
-   hardcoded σ in the workflow env.
+   recorded σ.
 
 ## Non-triggers (do NOT rotate)
 
