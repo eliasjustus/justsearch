@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "IMPLEMENTED (2026-07-07) on branch worktree-675-executor-v2 — live-smoke validated end-to-end; see §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). END-TO-END THROUGHPUT STILL UNMEASURED — the ~3 h→? win needs the next certified run. Read §Review fixes (2026-07-08) + §Unverified assumptions FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
 updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
@@ -716,8 +716,10 @@ backend rerank/query-cache ceiling (648). No PR opened yet.
 ### Review fixes (2026-07-08) — critical review + refute-first pass
 
 A critical review of the 2026-07-07 commit, hardened by a refute-first adversarial subagent (which
-overturned two of my initial conclusions before I could ship the wrong fix), found real issues. All
-fixes are live-verified against the dev stack (`live-verify-out.txt`).
+overturned two of my initial conclusions before I could ship the wrong fix), found real issues. The
+durable evidence for each fix is a named regression test + the reproducible full-suite command (see
+Validation below); the live numbers quoted per fix were one-time observations from a throwaway driver
+this session (NOT a committed artifact — reproduce via the per-fix procedure against a live dev stack).
 
 - **F0 — resume was BROKEN, now FIXED.** Re-invoking with the same `log_dir` raised
   `PrerequisiteError: … not associated with a task passed to eval_set`. Root cause (isolated by a
@@ -755,5 +757,36 @@ fixes are live-verified against the dev stack (`live-verify-out.txt`).
   list planned) — it is reused to build the SDK's `disallowed_tools` denylist. Stale `run_agent_eval`
   references in `utility_calibrate.py` docstrings were also cleaned up.
 
-Validation: full jseval unit suite green (1522 passed; only the 2 pre-existing `test_correction_probe`
-reds remain) + the live checks above.
+**Validation (durable + reproducible).** `cd scripts/jseval && PYTHONUTF8=1 INSPECT_DISPLAY=none python
+-m pytest -q` → **1522 passed, 2 failed**; the 2 are the pre-existing `test_correction_probe::TestLoadManifest`
+(missing `scripts/jseval/jseval/data/correction-eval-queries.v1.json`, absent from git history —
+unrelated). Durable proofs of the fixes: `test_run_utility_eval_resumes_on_rerun_same_log_dir` (F0) and
+`test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error` (F2). The live numbers
+(1.7 s resume vs 161 s cold, 42 `mcp__justsearch__*` calls, `error_max_turns`) are session observations,
+reproducible via `jseval utility-run --conditions C --seeds 1 --max-queries 1` against a live stack.
+
+### Unverified assumptions / deferred checks / follow-up (2026-07-08)
+
+Recorded so a later agent need not reconstruct them from the working session:
+
+- **The end-to-end throughput win is UNMEASURED.** v2's whole point — cutting the ~3 h matrix
+  wall-clock via the single concurrency pool — has NOT been measured with a full certified run; only a
+  5-cell smoke + the targeted live checks above ran. The wall-clock number is a design *expectation*
+  until the next certified run (this tempdoc's own trigger) produces it. **Biggest open item; do not
+  claim a speedup as measured until then.**
+- **Upstream Inspect float-drift is worked around, not fixed.** The guard against reintroducing a float
+  into the task/solver arg surface is a docstring comment (prose-tier, ~70% adherence), not a test or
+  gate. Follow-up: a cheap unit test asserting no float in the resolved `task_args`/solver params, or an
+  upstream Inspect issue (`use_float=True` in `json.py`'s `ijson` read-back). Logged in this session's
+  observations shard.
+- **Mid-run crash resume not independently live-verified.** The refuter found a genuine killed-mid-run
+  resume ALSO failed pre-fix. The fix targets the same `task_identifier` mechanism (so it should cover
+  both), and the unit test + full-re-run live check pass — but a process-killed-mid-run resume was not
+  itself live-exercised. Deferred check.
+- **The executed-vs-blocked "blocked" branch is unit-test-only.** Under `bypassPermissions` a disallowed
+  tool is removed from the toolset, so it never appears as an attempt — the `_blocked()` blocked branch
+  is near-unreachable live; its coverage is the `test_record_cell_*` unit tests, not a live denial.
+- **No committed evidence bundle for the live checks.** `capture_evidence` crashed on a libuv assertion
+  this session (it captured only api-status/health, run-id `c57e1b65-…`), so the live-check outputs
+  exist only in the session's throwaway driver, not a durable bundle. Re-run the per-fix procedures to
+  regenerate.
