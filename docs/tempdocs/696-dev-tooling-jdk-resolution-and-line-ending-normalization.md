@@ -150,3 +150,85 @@ byte-identical (LF) to what is committed, i.e. `git status` stays clean after a 
 ## Status
 
 Investigation complete; canonical JDK decided (25); scope proposed. **Implementation not started.**
+
+## Implementation-readiness / risk register (2026-07-07) — pre-implementation de-risking pass
+
+A read-only confidence pass (no feature code; one non-mutating diagnostic test run, restored after). Each
+row: finding, effect on confidence, and any scope change. Evidence is `file:line`-cited.
+
+### Issue 1 — dev-runner JDK resolution
+
+- **T1 (spawn footprint) — BROADER than two dev-runner sites (scope up).** JVM launches that inherit the
+  ambient JDK: `dev-runner.cjs:1011` (gradle `assemble` `spawnSync`, **no `env`** → add JAVA_HOME);
+  `dev-runner.cjs:1074+` (head launch — **already builds an explicit `env: { ...process.env, ... }`
+  object**, the clean injection point); the **worker + inference are spawned by the head** and inherit its
+  env transitively (comment at `:1023` "env vars are inherited"; residual — confirm `WorkerSpawner`
+  doesn't `.environment().clear()`, low risk). Two sites OUTSIDE dev-runner share the same JDK-8
+  vulnerability: `scripts/dev/justsearch-dev-mcp/server.mjs:2545,2587` (hot-swap via bare `java …
+  --source 25` off PATH) and `scripts/dev/prepare-worktree.cjs` (spawns gradle installDist; also has a
+  separate path bug, obs 1625). **→ the clean design is ONE shared JDK-resolver helper consumed by all
+  three files, not two inline patches.**
+- **T2 (resolution strategy) — no existing mechanism to reuse (build fresh; MEDIUM confidence).**
+  `dev-runner.cjs` has zero JDK logic; the MCP `justsearch.dev.preflight` checks dist/models, not JDK.
+  Proposed ordering: ambient `JAVA_HOME`/PATH java if version ≥24 → a new `JUSTSEARCH_DEV_JDK_HOME` env
+  convention → known candidate roots (Gradle's own `~/.gradle/jdks/` auto-download cache is the
+  least-machine-brittle; scoop `temurin25-jdk`/Program Files as fallback) → fail-fast with a clear
+  remediation message. Chicken-and-egg ruled out `gradlew -q javaToolchains` for discovery (it needs a
+  working ≥17 JVM to run). **This heuristic is the judgment-heavy part of the whole tempdoc** — a weak one
+  becomes a new drift source; the env-var escape hatch bounds that risk.
+- **T3 (direct-`gradlew` scope) — RESOLVED; dev-runner scope is correct (confidence up).** README.md:92 /
+  CONTRIBUTING.md:53 document the contract: "any recent JDK to bootstrap Gradle — the toolchain
+  auto-resolves the required JDK 25." The session failure was `JAVA_HOME`=JDK **8** (below the bootstrap
+  floor) from a scoop temurin8 clobber (obs 240) — a machine env issue, out of repo-tooling scope. So the
+  fix is "make the dev stack resilient to a broken ambient JDK," not "fix direct gradle." obs 240
+  pre-specifies exactly this fix.
+- **T4 (verification) — resolver unit is testable; E2E is gapped.** Version-parse + JDK-selection are pure
+  (unit-test with mocked `java -version`). Full E2E (reproduce JDK-8 → `dev_start` succeeds) needs a JDK-8
+  env + the shared stack (contended); a non-stack probe (`JAVA_HOME=<temurin8>` + run only the resolver's
+  detect step) is feasible and should be the accepted verification at impl time.
+
+### Issue 3 — schema-writer LF normalization
+
+- **T5 (writer set) — 8 sites, not 6 (scope up; the tempdoc's "6" was incomplete).** Named 6 verified;
+  **`ErrorCatalogJsonArtifactTest` (writes `SSOT/messages/errors.en.json`) is the missed 7th** and DOES
+  churn (confirmed live below). Plus 5 first-capture-gated writers (4 `app-observability` schema tests +
+  `UIOperationViewConformanceTest`) that don't churn today but share the pattern — fix for consistency.
+  Main-source controllers/`McpToolSurface` use the same Jackson API but serialize HTTP responses
+  **in-memory, never to disk** — not affected (so the 655 `McpToolSurface` change is unrelated).
+- **T6 (approach) — use `.replace("\r\n","\n")`, NOT the indenter swap (HIGH confidence).** Committed files
+  are 2-space indent, but `DefaultPrettyPrinter` has **separate object/array indenters** — a naive
+  `new DefaultIndenter("  ","\n")` swap must patch both or array content still emits CRLF. String-replace
+  on the produced string has no such trap and has an **in-codebase precedent** (`StatusRecordSchemaTest.java:581,590`
+  already normalizes on the compare side).
+- **T7 (test interaction) — the fix is purely anti-churn; won't break passing tests (HIGH confidence, LIVE-verified).**
+  Most tests parse-and-compare (`MAPPER.readTree`) — line-ending-insensitive. The subagent flagged
+  `ErrorCatalogJsonArtifactTest`'s raw-string compare as a *possible live RED test on Windows*; I ran it
+  (`./gradlew.bat :modules:app-api:test --tests "*ErrorCatalogJsonArtifactTest*"`, JAVA_HOME=temurin25):
+  it **PASSED and churned `errors.en.json`** (git status `M` after; restored). So it is a **churn source,
+  not a failure** — Issue 3 is confirmed cosmetic, and normalizing writers to LF keeps the compare passing.
+- **T8 (helper home) — small open decision.** No cross-module test-support bridge is currently consumed as
+  a test dependency (`modules/test-support` is a `java-library` used only via a launched CLI, not
+  `testFixtures`). Options: (a) wire `testImplementation(project(":modules:test-support"))` into the
+  affected modules and host `writeJsonPretty(path,json)` there; or (b) a tiny per-site/per-module
+  `.replace`. Given the 8 sites span app-api/ui/app-observability/app-services, (b) may be simpler than
+  wiring a new cross-module dep into 4 modules — an implementation-pass call.
+
+### Confidence rating & difficulty
+
+**Issue 3: ~8.5/10, difficulty LOW.** Approach settled (string-replace, precedent exists), risk understood
+(cosmetic, won't break tests — live-verified), sites enumerated (8). Only open item: helper location (small).
+
+**Issue 1: ~6.5/10, difficulty MEDIUM.** Injection points are clear, but the footprint is broader (one
+shared resolver across 3 files), the discovery heuristic has real cross-machine robustness choices (the
+judgment-heavy part), and full E2E verification is gapped (JDK-8 env + contended stack).
+
+**Overall: ~7/10.** The pass settled Issue 3's approach, mapped Issue 1's exact injection points and true
+footprint, resolved the direct-gradle scope question, and killed the scary "ErrorCatalog might be RED"
+false alarm. Residual uncertainty is concentrated in Issue 1's resolver heuristic + its E2E gap.
+
+**Model/effort recommendation:** **Sonnet at high effort** for the whole tempdoc. Both are dev-tooling,
+bounded, and verifiable (unit-testable resolver + a git-status-clean check for Issue 3), and Issue 3 is
+squarely mechanical. Issue 1's cross-machine JDK-discovery heuristic is the one piece where judgment
+matters — it's well-specified by obs 240 + T2 above, so a strong brief lets Sonnet handle it, but **escalate
+just the resolver design to Opus if the heuristic proves shaky**. Not max effort: no architectural
+ambiguity remains. Suggested sequencing — do Issue 3 first (fast, high-confidence win), then Issue 1.
