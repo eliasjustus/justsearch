@@ -195,7 +195,7 @@ Scope:
 | Env Variable | System Property | Type | Description |
 | :--- | :--- | :--- | :--- |
 | **JVM & Worker** | | | |
-| `JUSTSEARCH_WORKER_HEAP` | `justsearch.worker.heap` | String | Worker JVM max heap size (default `512m`). Example: `1g`, `2048m`. |
+| `JUSTSEARCH_WORKER_HEAP` | `justsearch.worker.heap` | String | Worker JVM max heap size (default `1g`; raised from `512m` on measured evidence, tempdoc 682). The spawner pins `-Xms` = `-Xmx`, so the full amount is resident from boot. Example: `1g`, `2048m`. |
 | `JUSTSEARCH_JVM_OPTS` | N/A | String | Custom JVM options passed to worker process. Useful for GC logging (`-Xlog:gc*`), NMT (`-XX:NativeMemoryTracking=summary`), or profiling. Multiple options separated by whitespace. **Limitation:** Options are split on whitespace; file paths with spaces are not supported. |
 | **Dev Hot-Reload** | | | |
 | `JUSTSEARCH_DEV_HOTRELOAD` | `justsearch.dev.hotreload` | Bool | Enables dev hot-reload: JDWP agent on Worker + `DevReloadManager` for service reconstruction on signal. Use with MCP `start(hotReload: true)` or set env var before starting the dev stack. Default `false`. |

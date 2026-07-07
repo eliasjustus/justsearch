@@ -236,10 +236,6 @@ Licenses of third-party components redistributed with JustSearch.
   @babel/traverse 7.29.7 — MIT
   @babel/types 7.28.6 — MIT
   @babel/types 7.29.7 — MIT
-  @bufbuild/cel 0.4.0 — Apache-2.0
-  @bufbuild/cel-spec 0.4.0 — Apache-2.0
-  @bufbuild/protobuf 2.12.1 — (Apache-2.0 AND BSD-3-Clause)
-  @bufbuild/protovalidate 1.2.0 — Apache-2.0
   @endo/cache-map 1.1.0 — Apache-2.0
   @endo/env-options 1.1.11 — Apache-2.0
   @endo/immutable-arraybuffer 1.1.2 — Apache-2.0

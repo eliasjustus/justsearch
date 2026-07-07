@@ -31,15 +31,9 @@ Failure mode to avoid: creating a new utility function when an identical one exi
 
 ### Fix Root Causes, Not Symptoms <!-- rule:fix-root-causes-not-symptoms -->
 
-**Never do any of the following to resolve a build or test failure:**
-- Comment out or delete the failing code
-- Weaken an assertion (e.g., `assertEquals` → `assertNotNull`, or adding `try/catch` around a test)
-- Delete or `@Disabled` a failing test
-- Add `@SuppressWarnings` or `// noinspection` to silence a warning
-- Broaden a catch clause (e.g., `catch (IOException e)` → `catch (Exception e)`)
-- Remove validation or error handling that's "in the way"
+**Never resolve a build or test failure by making the failure invisible instead of impossible** — deleting or commenting the failing code, weakening or disabling the test, suppressing the warning, broadening the catch, removing the validation "in the way". (The suppression subset is ratcheted by `check-suppression-ratchet.mjs`; the rest is review-caught.)
 
-**If a test fails after your changes**, the test is probably right and your code is wrong. Investigate the test's intent before assuming it's outdated. If you genuinely believe the test is wrong, explain why and ask the user before modifying it.
+**If a test fails after your changes**, the test is probably right and your code is wrong. Investigate its intent; if you genuinely believe it's wrong, explain why and ask the user before modifying it.
 
 ### Verify Your Work <!-- rule:verify-your-work -->
 
@@ -70,15 +64,7 @@ Failure mode to avoid: treating correlation as causation. The experiment produce
 
 ### Structural Defects Don't Need Repeat Incidents <!-- rule:structural-defects-no-repeat -->
 
-YAGNI applies to speculative abstractions, not to known structural defects. One documented silent bug proves the bug-class, not just the bug — you do not need a second instance to endorse the fix. If a tempdoc argues for a structural improvement with a proof-by-example, critique the argument's substance (wrong diagnosis, wrong mechanism, wrong scope) — not urgency.
-
-**Do not re-introduce "wait-for-more-evidence" triggers under different names.** These are all the same failure mode:
-- "low historical rate of X"
-- "wait for Y to land first, then the design will be informed"
-- "start with a cheaper intermediate step (test, guardrail, Alt-N)"
-- "bridging measure until there's more motion"
-
-If the user tells you to disregard a tempdoc's own trigger list, do not invent new ones. A correctness argument is not a cost-benefit argument — don't convert one into the other unless asked.
+YAGNI applies to speculative abstractions, not to known structural defects. One documented silent bug proves the bug-class — critique a structural tempdoc's substance (wrong diagnosis, wrong mechanism, wrong scope), not its urgency. **Do not re-introduce "wait-for-more-evidence" triggers under different names** ("low historical rate", "wait for Y first", "cheaper intermediate step", "bridging measure") — every deferral framing is the same move: converting a correctness argument into a cost-benefit argument. Don't convert one into the other unless asked, and if the user disregards a tempdoc's own trigger list, do not invent new ones.
 
 ### Tempdocs Are Dated History, Not Current Truth <!-- rule:tempdocs-are-dated-history -->
 
@@ -86,12 +72,7 @@ If the user tells you to disregard a tempdoc's own trigger list, do not invent n
 
 ### Tempdoc Is Your Contract <!-- rule:tempdoc-is-your-contract -->
 
-When you are assigned a tempdoc, every item marked for implementation is work the user has already deemed necessary. You do not get to unilaterally decide that remaining items are "not worth it", "too difficult", "low priority", or "diminishing returns". The user made that judgment when the tempdoc was written.
-
-- **Implement every item** in the tempdoc unless the user explicitly tells you to skip it.
-- **If you believe an item is infeasible**, explain why and ask the user — do not silently skip it or mark the tempdoc as complete.
-- **Do not summarize remaining work and suggest closing.** If there are unchecked items, there is remaining work.
-- **A tempdoc is complete when all its items are implemented**, not when you feel the most impactful ones are done.
+Every item marked for implementation is work the user already judged necessary — you do not get to decide remaining items are "not worth it", "too difficult", or "diminishing returns". Implement every item unless the user explicitly says skip; if an item looks infeasible, explain why and ask rather than silently skipping or summarizing-and-suggesting-closure. A tempdoc is complete when all its items are implemented, not when the impactful ones feel done.
 
 ### Stay Focused on Your Assigned Work <!-- rule:stay-focused-on-assigned-work -->
 
@@ -111,48 +92,23 @@ When you notice an issue outside your current task's scope — pre-existing bug,
   node scripts/agent-analytics/note-observation.mjs "<description> — \`<file:line>\`"
   ```
 
-  It resolves your session id and stamps the date; the shard commits with your work. `fold-observations.mjs --apply` later reconciles shards into the `## Inbox` of `docs/observations.md`.
+  It resolves your session id and stamps the date; the shard commits with your work. `fold-observations.mjs --apply` later folds shards into `docs/observations.md`'s conditions store.
 - **Do not investigate.** Record and return to your task.
 - Issues caused by your current change don't belong here — fix those.
 
 ### Before Appending to CLAUDE.md or `.claude/rules/` <!-- rule:before-appending-to-rules -->
 
-This file is loaded every session. Anthropic's published guidance: *"For each line, ask: 'Would removing this cause Claude to make mistakes?' If not, cut it. Bloated CLAUDE.md files cause Claude to ignore your actual instructions!"*
-
-Before appending a new rule or lesson, run the gate:
-
-1. **Broad applicability** — would a fresh agent on a *different* task need this? If it's specific to one slice / one module / one failure mode, it's not a CLAUDE.md rule. Candidates by destination:
-   - Cross-cutting platform constraint → `.claude/rules/agent-lessons.md`
-   - Named reference case → `docs/reference/contributing/agent-postmortems.md` (one paragraph + one citation)
-   - Domain workflow → existing skill body or new `/skill-name`
-   - Out-of-scope finding → `docs/observations.md` Inbox (one line, don't fix here)
-2. **Already-said test** — grep CLAUDE.md and `.claude/rules/` for the keyword. If the concept is already covered, edit the existing line; don't add a duplicate.
-3. **Enforcement question** — if the rule is "must" / "never" / "always" load-bearing, the right home may be a hook or an ArchUnit test, not more prose. Anthropic: *"hooks enforce rules at 100%"* vs ~70% adherence for prose rules.
-
-If the rule passes all three gates, add it to the smallest scope that holds it.
-
-When you do add a `must`/`never` rule, name its predictable evasion inline — as `structural-defects-no-repeat` (the "wait-for-more-evidence" aliases) and `fix-root-causes-not-symptoms` (its 6 anti-patterns) already do. Agents skip rules by rationalizing in the moment, so pre-empting the specific excuse raises adherence more than restating the rule.
-
-### Ask When Uncertain <!-- rule:ask-when-uncertain -->
-
-- **Unclear tempdoc requirements**: If an item can be interpreted multiple ways, ask which.
-- **Architectural choices**: Multiple valid placements (which module owns a responsibility) — present options, let the user decide.
-- **Cross-module impact**: Flag before proceeding if your change could break callers in other modules.
+This file is loaded every session; the always-loaded-budget ratchet caps its bytes because bloat makes rules *less* followed (Anthropic: *"Bloated CLAUDE.md files cause Claude to ignore your actual instructions!"*). Before adding a rule, gate it: (1) **Broad applicability** — would a fresh agent on a *different* task need it? Otherwise route it: platform constraint → `agent-lessons.md`; named reference case → `agent-postmortems.md`; domain workflow → a skill; out-of-scope finding → the observations inbox. (2) **Already-said** — grep these files first; edit the existing line, don't duplicate. (3) **Enforcement** — a load-bearing must/never belongs in a hook or gate (~100% adherence), not more prose (~70%). Add what passes to the smallest scope that holds it, and name a new must-rule's predictable evasion inline — pre-empting the specific excuse raises adherence more than restating the rule.
 
 ### Delegating to Subagents (Agent Tool) <!-- rule:delegating-to-subagents -->
 
-Subagents do **NOT** inherit this file, `.claude/rules/*.md`, or any of the parent's PreToolUse/PostToolUse hooks. Verified via primary-source subagent prompts (Piebald-AI prompt-leak repo) and live introspection probe. When delegating non-trivial work, briefing in the Agent prompt is mandatory, not optional. Make the brief self-contained — the plan, the tests/acceptance criteria that define "done", and the relevant constraints — since the subagent inherits none of this file. Brief subagents to **cite primary-source `file:line` evidence by default** for any load-bearing claim they return, so re-verification is a glance rather than a re-derivation — subagent findings are a starting point, not a result, and confidently-wrong claims that mis-scope work are a recurring cost (tempdoc 618 §6; the `audit-without-test` reference case).
+Subagents do **NOT** inherit this file, `.claude/rules/*.md`, or any parent hooks (verified — Piebald-AI prompt-leak + live introspection; the `subagent-guide` hook injects only a baseline brief: Hard Invariants, platform, risk profile). So the task-specific brief in the Agent prompt is mandatory and self-contained — plan, acceptance criteria, constraints — and must require primary-source `file:line` evidence for load-bearing claims: subagent findings are a starting point, not a result (`audit-without-test`).
 
-**Implications when you dispatch via the `Agent` tool:**
+No-inheritance consequences: destructive git is **not blocked** for subagents — never delegate it; no repeat-guard/build-counter/Read-limits — don't delegate long iterative refactor loops; no PostToolUse hints — after a subagent edits `SSOT/catalogs/`, canonical docs, `build.gradle.kts`, or `modules/ui-web/src/`, run the relevant regen step yourself; `isolation: "worktree"` base-ref caveats ([claude-code#50850](https://github.com/anthropics/claude-code/issues/50850)) — verify the base (`verify-worktree-base`).
 
-- **Destructive git commands are not blocked.** A subagent can run `git reset --hard`, `git push --force` from worktrees, `git clean -f`, and `git checkout` in the main worktree. Do not delegate destructive git operations.
-- **No repeat-guard, no build-counter, no Read auto-limit.** Subagents can loop on identical calls, thrash on builds, or read large files unbounded. Choose subagent tasks accordingly: research and exploration are well-suited; long iterative refactors are not.
-- **No PostToolUse hints.** A subagent editing `SSOT/catalogs/fields.v1.json` will not be reminded about the dual-copy sync. If a subagent edits anything in `SSOT/catalogs/`, `docs/{explanation,reference,how-to,decisions}/`, `build.gradle.kts`, or `modules/ui-web/src/`, follow up after its return with the relevant regen step yourself.
-- **`isolation: "worktree"`** branches from `origin/main`, not the parent's HEAD ([claude-code#50850](https://github.com/anthropics/claude-code/issues/50850)). A subagent verifying against an isolated worktree may pass while the parent's view fails. Prefer non-isolated subagents unless the work genuinely needs an independent worktree.
+Good subagent tasks: open-ended research, parallel exploration, second-opinion review, batch read-only audits, and bounded, verifiable implementation chunks (see routing below). Risky: shared state, migrations, `.gitignore`/CI edits, anything that could leave the worktree inconsistent.
 
-Good subagent tasks: open-ended research, parallel codebase exploration, second-opinion code review, batch read-only audits.
-
-Risky subagent tasks: anything that writes shared state, runs migrations, edits `.gitignore`, modifies CI config, or could leave the worktree in an inconsistent state.
+**Model routing (delegation economics; owner decision 2026-07-07).** Orchestration — decomposition, briefs, design, judging returned evidence — is the main loop's job; implementation is token-heavy, so delegate bounded, verifiable chunks. **Set `model: "sonnet"` explicitly on implementation subagents** — an unset `model` inherits the parent, silently billing orchestrator-tier for worker-grade work. Sonnet is the floor for findings you'll rely on; haiku only where wrong output is self-evident. Never delegate: brief-writing and evidence judgment, shared resources (dev stack, main checkout, merge/publish), irreversible actions, trivial edits. Chunk long refactors into bounded delegations. If a worker's output misses the bar, redo it with a stronger model without asking — judge the output, not the price tag. Falsifier: cost-per-shipped-merge should improve within ~2 months without rework rising; flat → delete this paragraph; rework up → raise the floor.
 
 ## Architecture
 
@@ -215,9 +171,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `SearchReasonCode.java` / `searchTraceExplain.ts` | `check-search-degradation-reason-codes` |
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
-| **`modules/ui-web/src/**`** (ui-web gate set) | `check-presentation-purity` · `check-observed-state-collapse` · `check-theme-token-closure` · `gen-token-names --check` · `strip-token-fallbacks --check modules/ui-web/src` · `check-color-tokens` · `check-a11y-closure` · `check-controls-a11y` · `check-adaptive-closure` · `check-layout-purity` · `check-surface-composition` · `check-message-single-model` · `check-run-renderers` · `check-inflight-liveness` · `check-composition-surfaces` · `check-declared-surfaces` · `check-live-channels` · `check-contrast-matrix` · `check-accent-as-text`; `--gate ambient-purity,style-literal-ratchet,atom-fork-ratchet,modality-contract,transient-arbitration,modal-arbitration` |
-| `modules/ui-web/src/shell-v0/**` (also) | `check-steering-arbitration` · `check-search-issuance` · `check-verdict-derivation` · `check-ai-verdict-derivation` · `check-message-classes` · `check-capability-availability` · `check-realized-capability` |
-| `shell-v0/views/**` (also) | `check-surface-task-state-retention` · `check-thread-event-kinds` |
+| **`modules/ui-web/src/**`** (ui-web gate set, incl. shell-v0 subsets) | pushed on edit by the consult hook — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` (tempdoc 681 relocation) |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
 
 ## Common Pitfalls
@@ -230,8 +184,8 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | Flaky IPC tests | Use state polling (`awaitPort`), not `Thread.sleep()` |
 | Large files in `models/` | `*.onnx`, `*.gguf`, `*.int8-backup`, `*.fp32-backup`, and `*onnx_data` are Git LFS-tracked. **Do not gitignore model files.** Runtime caches (`*.optimized`, `*.opt-meta`, `*.sha256`) are already excluded by `models/.gitignore`. |
 | Stale index after field changes | Adding fields to `fields.v1.json` or extraction logic in `IndexingDocumentOps` does NOT update existing documents. Existing indices must be rebuilt: `jseval run --reset` (eval mode) or `jseval run --start-backend --clean`. Test corpora indexed before your change will silently lack the new fields. |
-| Classpath catalog drift | The `ssot-catalog-sync` gate (CI, ~100%) + `ssot-hint` enforce the dual-copy sync: `SSOT/catalogs/fields.v1.json` ↔ `adapters-lucene/src/main/resources/SSOT/catalogs/fields.v1.json` (the classpath copy production loads). Load `/ssot-catalog`. |
-| Schema/fixture drift after record changes | After adding/renaming fields on API records (`app-api`), run `./gradlew.bat :modules:app-api:updateSchemas` (regenerates schemas + cross-language fixtures); `test-edit-hint` re-surfaces the affected test. Full recipe: `/api-record` or `docs/reference/contributing/common-workflows.md`. |
+| Classpath catalog drift | `ssot-hint` + the `ssot-catalog-sync` CI gate enforce the SSOT dual-copy sync (`/ssot-catalog`) |
+| Schema/fixture drift after record changes | After field changes on `app-api` records: `./gradlew.bat :modules:app-api:updateSchemas`; `test-edit-hint` re-surfaces the affected test (`/api-record`) |
 | Dev stack runs stale jar after Java edits | The MCP `justsearch_dev_start` doesn't always re-install the worker dist when upstream Gradle tasks report UP-TO-DATE. After editing Java in `modules/app-services/`, `modules/app-agent-api/`, or other modules on the head process classpath, run `./gradlew.bat :modules:ui:installDist` explicitly before `dev_start` / restart so the jar in `modules/ui/build/install/ui/lib/` is fresh. Symptom: wire payload reflects the previous build despite a successful `gradlew build`. Discovered tempdoc 511-followup Track E live-verify. |
 
 ## Skills (load via `/skill-name`)
@@ -254,7 +208,7 @@ Full rules — destructive-command list, worktree lifecycle, merge workflow: `.c
 - **Full agent guide**: `docs/reference/contributing/agent-guide.md`
 - **Docs index**: `docs/llms.txt`
 - **Active work**: `docs/tempdocs/`
-- **Out-of-scope findings**: `docs/observations.md` (Inbox section)
+- **Out-of-scope findings**: `docs/observations.md` (conditions store)
 - **Canonical docs** (must not drift): `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
 - **Reference cases by handle**: `docs/reference/contributing/agent-postmortems.md`
 - **Contribution recipes**: `docs/reference/contributing/common-workflows.md` (relocated from always-loaded; path-triggerable recipes also push via `governance/consult-register.v1.json`)

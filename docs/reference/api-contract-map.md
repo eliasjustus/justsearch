@@ -543,7 +543,7 @@ Coverage invariant: `HealthEventEmitCoverageTest` (in `modules/app-services` tes
 
 `POST /api/library/resolve-hash`:
 
-- **Privacy contract:** the ONLY HTTP endpoint allowed to convert a `pathHash` back to a filename. Diagnostic export endpoints (`/api/diagnostics/ingestion/recent`, `/api/diagnostics/ingestion/summary`, future `/api/diagnostics/export`) MUST NOT call this endpoint or its underlying `IndexingService.resolvePathHash`. Enforced by ArchUnit pin `LibraryResolveHashOnlyCallerPin` in `modules/app-launcher`.
+- **Privacy contract:** the ONLY HTTP endpoint allowed to convert a `pathHash` back to a filename. Diagnostic export endpoints (`/api/diagnostics/ingestion/recent`, `/api/diagnostics/ingestion/summary`, `/api/diagnostics/export` — POST, optional `{ feTelemetry }` body embedded as `frontend/fe-telemetry.json` in the export zip, tempdoc 683) MUST NOT call this endpoint or its underlying `IndexingService.resolvePathHash`. Enforced by ArchUnit pin `LibraryResolveHashOnlyCallerPin` in `modules/app-launcher`.
 - Request body: `{"pathHash": "<64-char SHA-256 hex>"}`.
 - Response (found): `{"found": true, "path": "<normalized absolute path>", "lastSeenAtMs": <epoch>, "removedAtMs": <epoch or 0>}` — the file is still under a watched root and within the `JUSTSEARCH_PATH_RESOLUTION_RETENTION_DAYS` window (default 90).
 - Response (not found): `{"found": false}` — hash never recorded, retention expired, or the watched root was unwatched (immediate prune).

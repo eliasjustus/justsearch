@@ -32,8 +32,11 @@ public final class VramDetector {
   private static final long MINIMUM_VRAM_FOR_VDU =
       io.justsearch.configuration.model.HardwareProfile.MINIMUM_VRAM_FOR_GGUF;
 
-  /** Comfortable VRAM threshold where KV cache quantization is optional (~12 GB). Matches VramFlagsUtil.TWELVE_GB_THRESHOLD. */
-  private static final long COMFORTABLE_VRAM = 11_500_000_000L;  // ~10.7 GiB
+  /**
+   * Comfortable VRAM threshold where KV cache quantization is optional (~12 GB). Authority:
+   * {@link VramRequirements} {@code COMFORTABLE_VRAM_BYTES}.
+   */
+  private static final long COMFORTABLE_VRAM = VramRequirements.COMFORTABLE_VRAM_BYTES;
 
   /** Timeout for nvidia-smi commands in seconds. */
   private static final int NVIDIA_SMI_TIMEOUT_SECONDS = 5;

@@ -16,7 +16,7 @@ export interface HitStage {
   rank?: number;
   score?: number;
 }
-export const hitStageSchema = z.object({
+export const hitStageSchema = z.strictObject({
   "detail": z.record(z.string(), z.number()).optional(),
   "id": z.enum(["query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness"]).optional(),
   "rank": z.number().int().optional(),

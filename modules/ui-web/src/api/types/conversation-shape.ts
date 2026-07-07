@@ -17,8 +17,15 @@
  * `ViewFactory<S>` in `viewFactoryRegistry`, and mounts the typed view.
  */
 
+// `Audience` resolves to the generated `registry-enums.generated.ts` union via the
+// surface.ts re-export (560 §4.1/§4.3 anti-drift).
 import type { Audience } from './surface.js';
 import type { Presentation, Provenance } from './registry.js';
+import type {
+  ExecutionMode as GenExecutionMode,
+  IterationMode as GenIterationMode,
+  PersistenceMode as GenPersistenceMode,
+} from '../generated/registry-enums.generated.js';
 
 /**
  * Stable, namespaced identifier for a `ConversationShape` manifest entry.
@@ -29,32 +36,32 @@ import type { Presentation, Provenance } from './registry.js';
 export type ConversationShapeRef = string;
 
 /**
- * Iteration axis. Mirrors `IterationMode.java`.
+ * Iteration axis. Generated alias of the Java `IterationMode` authority.
  *
  * - `ONE_SHOT` — one LLM call per request.
  * - `WITHIN_TURN_ITERATION` — engine drives a per-iteration loop until the
  *   `IterationController` signals stop.
  */
-export type IterationMode = 'ONE_SHOT' | 'WITHIN_TURN_ITERATION';
+export type IterationMode = GenIterationMode;
 
 /**
- * Persistence axis. Mirrors `PersistenceMode.java`.
+ * Persistence axis. Generated alias of the Java `PersistenceMode` authority.
  *
  * - `EPHEMERAL` — no session-storage; one-shot or one-turn conversation.
  * - `PERSISTENT` — conversation has a session ID and can be resumed
  *   (per-shape `ConversationStore` implementation).
  */
-export type PersistenceMode = 'EPHEMERAL' | 'PERSISTENT';
+export type PersistenceMode = GenPersistenceMode;
 
 /**
- * Execution-mode axis. Mirrors `ExecutionMode.java`.
+ * Execution-mode axis. Generated alias of the Java `ExecutionMode` authority.
  *
  * - `SUBSTRATE_DRIVEN` — engine controls the per-iteration loop and SPI
  *   invocation (default for fresh shapes).
  * - `SHAPE_DRIVEN` — engine delegates to a per-shape runner that owns its
  *   iteration (used to encapsulate the agent loop).
  */
-export type ExecutionMode = 'SUBSTRATE_DRIVEN' | 'SHAPE_DRIVEN';
+export type ExecutionMode = GenExecutionMode;
 
 /**
  * Wire shape of a ConversationShape catalog entry. Mirrors

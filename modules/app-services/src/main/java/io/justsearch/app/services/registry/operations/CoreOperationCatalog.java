@@ -639,7 +639,9 @@ public final class CoreOperationCatalog implements OperationCatalog {
         EXPORT_DIAGNOSTICS,
         Presentation.forId(EXPORT_DIAGNOSTICS),
         Interface.of(
-            "{\"type\":\"object\",\"properties\":{}}",
+            // feTelemetry: optional FE-supplied telemetry section (e.g. the wire-drift ring
+            // summary), embedded into the export as frontend/fe-telemetry.json (tempdoc 683).
+            "{\"type\":\"object\",\"properties\":{\"feTelemetry\":{\"type\":\"object\"}}}",
             "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}"),
         new OperationPolicy(
             RiskTier.LOW,

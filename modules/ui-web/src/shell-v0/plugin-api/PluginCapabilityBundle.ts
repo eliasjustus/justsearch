@@ -217,18 +217,17 @@ function namespacedCustomElements(
     upgrade(root: Node): void {
       real.upgrade(root);
     },
+    initialize(root: Node): void {
+      // TS 6 DOM lib addition (scoped custom-element registries spec);
+      // forward if the runtime registry supports it, no-op otherwise.
+      const r = real as { initialize?: (root: Node) => void };
+      r.initialize?.(root);
+    },
     getName(constructor: CustomElementConstructor): string | null {
       // Some browsers/tests expose `getName` on CustomElementRegistry;
       // forward if present, otherwise null.
       const r = real as { getName?: (c: CustomElementConstructor) => string | null };
       return r.getName ? r.getName(constructor) : null;
-    },
-    initialize(root: Node): void {
-      // `initialize` (scoped custom element registries) is not yet
-      // implemented everywhere (e.g. jsdom in tests); forward if present,
-      // otherwise no-op.
-      const r = real as { initialize?: (root: Node) => void };
-      r.initialize?.(root);
     },
   };
 }

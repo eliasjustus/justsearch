@@ -59,31 +59,31 @@ export interface OperationWire {
   };
   type: string;
 }
-export const operationWireSchema = z.object({
+export const operationWireSchema = z.strictObject({
   "audience": audienceSchema,
-  "availability": z.object({
+  "availability": z.strictObject({
     "argumentDefaultsJson": z.unknown().optional(),
     "expression": z.unknown().optional(),
   }),
-  "consumers": z.array(z.object({
+  "consumers": z.array(z.strictObject({
     "audience": audienceSchema,
     "consumerId": z.string(),
   })),
   "executors": z.array(z.enum(["UI", "AGENT", "CLI"])),
   "id": z.string(),
-  "intf": z.object({
+  "intf": z.strictObject({
     "errors": z.array(z.string()),
     "inputs": z.unknown(),
     "result": z.unknown(),
     "uiHints": z.record(z.string(), z.unknown()),
   }),
-  "lineage": z.object({
+  "lineage": z.strictObject({
     "affects": z.array(z.string()),
     "supersedes": z.array(z.string()),
   }),
-  "policy": z.object({
+  "policy": z.strictObject({
     "audit": z.enum(["NONE", "METADATA_ONLY", "FULL_PAYLOAD"]),
-    "confirm": z.object({
+    "confirm": z.strictObject({
       "confirmTextKey": z.string().optional(),
       "kind": z.string(),
     }),
@@ -92,13 +92,13 @@ export const operationWireSchema = z.object({
     "risk": z.enum(["LOW", "MEDIUM", "HIGH"]),
     "undoSupported": z.boolean(),
   }),
-  "presentation": z.object({
+  "presentation": z.strictObject({
     "category": z.string().optional(),
     "descriptionKey": z.string(),
     "iconHint": z.string().optional(),
     "labelKey": z.string(),
   }),
-  "provenance": z.object({
+  "provenance": z.strictObject({
     "contributorId": z.string(),
     "tier": z.enum(["CORE", "TRUSTED_PLUGIN", "UNTRUSTED_PLUGIN"]),
     "version": z.string(),

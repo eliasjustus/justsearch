@@ -62,6 +62,9 @@ jobs:
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 
+      - name: Outward benchmark numbers cite the canonical release
+        run: node scripts/ci/check-outward-number-citations.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
@@ -160,7 +163,18 @@ jobs:
         shell: bash
         run: |
           chmod +x ./gradlew 2>/dev/null || true
-          ./gradlew assemble -PskipWebBuild=false --console=plain
+          node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
+
+      - name: Upload build attribution
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-attribution
+          path: |
+            build/ci/build-attribution.json
+            build/ci/build-attribution.md
+            build/ci/build-task-timing.json
+          if-no-files-found: warn
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})

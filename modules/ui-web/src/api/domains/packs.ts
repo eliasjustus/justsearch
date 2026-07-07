@@ -5,6 +5,7 @@
 
 import { request } from '../http';
 import { parseWireContract } from '../schemas';
+import { summarizeWireDrift } from '../wireDriftTelemetry';
 // Tempdoc 564 Phase B (4b): EffectivePolicy + AiPackImportStatus are generated wire-contract
 // projections (record → JSON Schema → {TS, Zod}); the hand types + fail-open `.loose()` Zod are retired.
 import {
@@ -249,7 +250,9 @@ export async function importAiPack(
 // ============================================
 
 /**
- * Exports diagnostics bundle.
+ * Exports diagnostics bundle. Rides the FE wire-drift ring summary along in the body so
+ * production contract-drift observations land in the exported bundle
+ * (frontend/fe-telemetry.json) instead of dying in the console.
  */
 export async function exportDiagnostics(
   baseUrl: string,
@@ -257,7 +260,7 @@ export async function exportDiagnostics(
 ): Promise<{ success: boolean; path: string }> {
   return request<{ success: boolean; path: string }>(baseUrl, '/api/diagnostics/export', {
     method: 'POST',
-    body: {},
+    body: { feTelemetry: { wireDrift: summarizeWireDrift() } },
     signal,
   });
 }

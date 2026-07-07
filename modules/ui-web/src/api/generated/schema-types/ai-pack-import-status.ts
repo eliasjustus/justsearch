@@ -23,7 +23,7 @@ export interface AiPackImportStatus {
   state?: string | null;
   updatedAtEpochMs?: number;
 }
-export const aiPackImportStatusSchema = z.object({
+export const aiPackImportStatusSchema = z.strictObject({
   "bytesDone": z.number().int().optional(),
   "bytesTotal": z.number().int().optional(),
   "errorCode": z.string().nullable().optional(),

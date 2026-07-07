@@ -3,15 +3,15 @@
   "unit": "bytes",
   "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or verifyGovernanceGates once the doc set stabilizes (582 R3: extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
-    "CLAUDE.md": 25051,
-    ".claude/rules/agent-lessons.md": 8906,
-    ".claude/rules/branch-safety.md": 10654,
-    ".claude/rules/context-efficiency.md": 1960,
-    ".claude/rules/hooks-reference.md": 16159,
+    "CLAUDE.md": 22053,
+    ".claude/rules/agent-lessons.md": 9149,
+    ".claude/rules/branch-safety.md": 10204,
+    ".claude/rules/context-efficiency.md": 1955,
+    ".claude/rules/hooks-reference.md": 2740,
     ".claude/rules/slice-execution.md": 4667,
-    ".claude/rules/tier-register.md": 15790
+    ".claude/rules/tier-register.md": 15725
   },
-  "totalCeiling": 83187,
+  "totalCeiling": 66493,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -68,6 +68,20 @@
       "to": 16159,
       "reason": "tempdoc 665: observation-shard-hint catalog entry",
       "ts": "2026-07-01T10:21:26.948Z"
+    },
+    {
+      "file": "CLAUDE.md",
+      "from": 25051,
+      "to": 26101,
+      "reason": "Owner-directed model-routing/delegation-economics rule (2026-07-07, extends rule:delegating-to-subagents; tempdoc 681 ride-along scope — 681's Move 1 relocations will re-ratchet the ceiling down past this)",
+      "ts": "2026-07-07T02:18:12.774Z"
+    },
+    {
+      "file": ".claude/rules/agent-lessons.md",
+      "from": 8906,
+      "to": 9149,
+      "reason": "Time-to-complete architecture-signal lesson (owner-adopted 2026-07-07, same 681 ride-along tranche)",
+      "ts": "2026-07-07T02:18:12.815Z"
     }
   ]
 }

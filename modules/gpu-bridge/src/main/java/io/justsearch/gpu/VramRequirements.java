@@ -24,8 +24,10 @@ public final class VramRequirements {
 
   /**
    * Comfortable VRAM threshold where KV cache quantization is optional (~10.7 GiB).
-   * Mirrors {@code VramDetector.COMFORTABLE_VRAM}; held here as the single source of
-   * truth so the threshold can't drift between the nvidia-smi and NVML paths.
+   * The single authority for the ~11.5 GB threshold (tempdoc 682 Item 3):
+   * {@code VramDetector.COMFORTABLE_VRAM} (nvidia-smi flag selection) and
+   * {@code VramFlagsUtil.DEFAULT_TWELVE_GB} (UI tier-classification default) both
+   * reference this constant, so the threshold can't drift between paths.
    */
   static final long COMFORTABLE_VRAM_BYTES = 11_500_000_000L;
 

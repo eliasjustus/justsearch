@@ -72,20 +72,20 @@ export interface ResourceWire {
   subscriptionMode: "ONE_SHOT" | "SSE_STREAM" | "POLLING";
   type: string;
 }
-export const resourceWireSchema = z.object({
+export const resourceWireSchema = z.strictObject({
   "audience": audienceSchema,
   "category": z.enum(["STATE", "EVENT_STREAM", "HISTORY", "TABULAR", "TIMESERIES"]),
   "collectionOperations": z.array(operationRefSchema),
-  "consumers": z.array(z.object({
+  "consumers": z.array(z.strictObject({
     "audience": audienceSchema,
     "consumerId": z.string(),
   })),
-  "emissionPolicy": z.object({
+  "emissionPolicy": z.strictObject({
     "dedupeWindow": z.string().nullable(),
     "renderHint": z.enum(["EPHEMERAL", "PERSISTED", "REQUIRES_ACK"]),
   }).nullable(),
   "endpoint": z.string(),
-  "history": z.object({
+  "history": z.strictObject({
     "capacity": z.number().int().nullable(),
     "mode": z.enum(["RING_BUFFER", "DURABLE", "EXTERNAL"]),
     "onOverflow": z.enum(["EVICT_OLDEST", "BACKPRESSURE", "DROP_NEWEST"]),
@@ -95,21 +95,21 @@ export const resourceWireSchema = z.object({
   "id": z.string(),
   "itemOperations": z.array(operationRefSchema),
   "kind": z.string(),
-  "presentation": z.object({
+  "presentation": z.strictObject({
     "category": z.string().nullable(),
     "descriptionKey": i18nKeySchema,
     "iconHint": z.string().nullable(),
     "labelKey": i18nKeySchema,
   }),
   "primaryKey": z.string(),
-  "privacy": z.object({
+  "privacy": z.strictObject({
     "loopbackOnly": z.boolean(),
     "pathPolicy": z.enum(["NO_PATHS", "RAW", "HASHED_REQUIRES_RESOLVER"]),
     "resolver": operationRefNullableSchema,
   }),
-  "provenance": z.object({
+  "provenance": z.strictObject({
     "contributorId": z.string(),
-    "identity": z.object({
+    "identity": z.strictObject({
       "signature": z.string().nullable(),
       "verified": z.boolean(),
     }).nullable(),

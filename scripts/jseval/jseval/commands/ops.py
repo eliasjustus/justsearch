@@ -317,16 +317,17 @@ def _gate_coverage() -> dict[str, set[str]]:
     is treated as "gates nothing" rather than crashing this command — `datasets` is meant to be
     safe to run at any time, including before any gate has ever been pinned.
 
-    relevance-gate and perf-gate's committed files are POINTERS (`current_release` +
-    `fallback_baselines`, confirmed empty at HEAD) — their real per-corpus floors are PROJECTED
-    LIVE from `release.v1.json`, not statically listed in the file (tempdoc 623 T-5). Reusing
-    `ratchet_kernel.load_baselines_doc` (the exact function `commands/gates.py` already calls for
-    both) resolves this correctly instead of re-deriving the projection logic here. leak-gate's
-    file has no such pointer (confirmed: a plain static `baselines` dict) and needs no projection.
+    relevance-gate, perf-gate, and (since tempdoc 683) leak-gate's committed files are POINTERS
+    (`current_release` + `fallback_baselines`) — their real per-corpus floors are PROJECTED
+    LIVE from `release.v1.json` where the release carries the section, with the fallback layer
+    covering the rest (tempdoc 623 T-5). Reusing `ratchet_kernel.load_baselines_doc` (the exact
+    function `commands/gates.py` already calls for all three) resolves this correctly instead of
+    re-deriving the projection logic here.
     """
     from .. import ratchet_kernel as _rk
     from .. import relevance_gate as _rgate
     from .. import perf_gate as _pgate
+    from .. import leak_gate as _lgate
 
     root = Path(__file__).resolve().parents[2]
     covered: dict[str, set[str]] = {"relevance-gate": set(), "perf-gate": set(), "leak-gate": set()}
@@ -342,6 +343,15 @@ def _gate_coverage() -> dict[str, set[str]]:
             "perf-ratchet-baselines.v1.json",
             lambda rel, base: _pgate.project_release_to_perf_baselines(rel),
         ),
+        "leak-gate": (
+            "leak-gate-baselines.v1.json",
+            lambda rel, base: _lgate.project_release_to_baselines(
+                rel,
+                tolerance_default_abs=base.get(
+                    "tolerance_default_abs", _lgate.DEFAULT_TOLERANCE_ABS),
+                per_corpus_tolerance=base.get("per_corpus_tolerance"),
+            ),
+        ),
     }
     for gate, (filename, project_release) in projectors.items():
         try:
@@ -349,12 +359,6 @@ def _gate_coverage() -> dict[str, set[str]]:
             covered[gate] = set((doc.get("baselines") or {}).keys())
         except (OSError, json.JSONDecodeError):
             pass  # no file / unreadable / malformed -> "gates nothing", not a crash
-
-    try:
-        leak_doc = json.loads((root / "leak-gate-baselines.v1.json").read_text(encoding="utf-8"))
-        covered["leak-gate"] = set((leak_doc.get("baselines") or {}).keys())
-    except (OSError, json.JSONDecodeError):
-        pass
     return covered
 
 

@@ -3,6 +3,9 @@ package io.justsearch.agent.api.registry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.agent.api.conversation.ExecutionMode;
+import io.justsearch.agent.api.conversation.IterationMode;
+import io.justsearch.agent.api.conversation.PersistenceMode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +42,15 @@ class RegistryEnumsTsGenerationTest {
     m.put("ExecutorTag", ExecutorTag.class);
     m.put("SourceTier", SourceTier.class);
     m.put("GateBehavior", GateBehavior.class);
+    m.put("SubscriptionMode", SubscriptionMode.class);
+    m.put("PathPolicy", PathPolicy.class);
+    m.put("OnOverflow", OnOverflow.class);
+    m.put("AuditPolicy", AuditPolicy.class);
+    m.put("RenderHint", RenderHint.class);
+    m.put("HistoryMode", HistoryPolicy.Mode.class);
+    m.put("IterationMode", IterationMode.class);
+    m.put("PersistenceMode", PersistenceMode.class);
+    m.put("ExecutionMode", ExecutionMode.class);
     return m;
   }
 
@@ -48,8 +60,8 @@ class RegistryEnumsTsGenerationTest {
     sb.append("/* eslint-disable */\n");
     sb.append("// GENERATED — do not edit by hand.\n");
     sb.append(
-        "// Single authority: the Java enums in io.justsearch.agent.api.registry"
-            + " (TrustTier / Audience / RiskTier / Altitude / ExecutorTag / SourceTier / GateBehavior).\n");
+        "// Single authority: the Java enums in io.justsearch.agent.api.registry /"
+            + " io.justsearch.agent.api.conversation (see RegistryEnumsTsGenerationTest.sharedEnums()).\n");
     sb.append(
         "// Regenerate: ./gradlew.bat :modules:app-agent-api:test -PupdateSchemas"
             + " --tests '*RegistryEnumsTsGenerationTest'\n");

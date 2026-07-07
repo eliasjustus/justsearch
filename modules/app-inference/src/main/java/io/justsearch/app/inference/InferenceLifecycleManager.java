@@ -236,6 +236,23 @@ public class InferenceLifecycleManager
     return serverOps.isExternalServerActive();
   }
 
+  /**
+   * Tempdoc 682 Item 2: expected llama-server build tag ({@code bNNNN}) from the staging pin
+   * marker ({@code runtime-version.txt} next to the configured executable); null = unknown (a
+   * supported state — externally-staged binaries carry no pin).
+   */
+  public String expectedLlamaServerBuild() {
+    return serverOps.expectedServerBuild();
+  }
+
+  /**
+   * Tempdoc 682 Item 2: actually-running llama-server build tag observed from {@code /props}
+   * ({@code build_info}); null until a server has been started or adopted and reported one.
+   */
+  public String actualLlamaServerBuild() {
+    return serverOps.actualServerBuild();
+  }
+
   public long getLastStartupDurationMs() {
     return runner.view().lastStartupDurationMs();
   }

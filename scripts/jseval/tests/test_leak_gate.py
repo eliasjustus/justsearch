@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from jseval.leak_gate import DEFAULT_TOLERANCE_ABS, derive_baselines, evaluate
+import json
+
+from jseval.leak_gate import (
+    DEFAULT_TOLERANCE_ABS,
+    derive_baselines,
+    evaluate,
+    project_release_to_baselines,
+)
 
 
 def _proj(leak_rate, status="ok"):
@@ -103,3 +110,99 @@ def test_leak_gate_derive_canonicalizes_bare_beir_slug(tmp_path):
     assert "beir/scifact" in derived["baselines"]
     assert "scifact" not in derived["baselines"]
     assert derived["baselines"]["beir/scifact"]["leak_rate_max"] == 0.02
+
+
+# --- tempdoc 683: current_release pointer + fallback_baselines ---------------
+
+class TestReleaseProjection:
+    def _release(self, leak=None, release_id="rel-test-2026-01-01"):
+        doc = {"schema": "release.v1", "release_id": release_id, "cohort": {"git_sha": "abc123def4"}}
+        if leak is not None:
+            doc["leak"] = leak
+        return doc
+
+    def test_projects_release_leak_section(self):
+        rel = self._release(leak={"beir/scifact": {"leak_rate": 0.02}})
+        out = project_release_to_baselines(rel, tolerance_default_abs=0.05)
+        row = out["baselines"]["beir/scifact"]
+        assert row["leak_rate_max"] == 0.02
+        assert row["tolerance_abs"] == 0.05
+        assert row["src"] == "projected from release rel-test-2026-01-01"
+        assert out["projected_from_release"] is True
+
+    def test_projects_nothing_without_leak_section(self):
+        out = project_release_to_baselines(self._release())
+        assert out["baselines"] == {}
+
+    def test_per_corpus_tolerance_override(self):
+        rel = self._release(leak={"d": {"leak_rate": 0.1}})
+        out = project_release_to_baselines(
+            rel, tolerance_default_abs=0.05, per_corpus_tolerance={"d": 0.01})
+        assert out["baselines"]["d"]["tolerance_abs"] == 0.01
+
+    def test_pointer_falls_back_when_release_has_no_leak_section(self, tmp_path):
+        """The tempdoc 683 migration invariant: with a pointer to a release that carries
+        no `leak` section, the loaded baselines are exactly the fallback values —
+        gate behavior unchanged vs the pre-migration inline file."""
+        from jseval.ratchet_kernel import load_baselines_doc
+
+        fallback = {"mixed/enron-qa": {"leak_rate_max": 0.0467, "tolerance_abs": 0.05}}
+        (tmp_path / "release.v1.json").write_text(
+            json.dumps({"schema": "release.v1", "measured": {}}), encoding="utf-8")
+        bp = tmp_path / "leak-gate-baselines.v1.json"
+        bp.write_text(json.dumps({
+            "schema": "leak-gate-baseline.v1",
+            "current_release": "release.v1.json",
+            "tolerance_default_abs": 0.05,
+            "fallback_baselines": fallback,
+        }), encoding="utf-8")
+        doc = load_baselines_doc(bp, project_release=lambda rel, base:
+                                 project_release_to_baselines(rel, tolerance_default_abs=0.05))
+        assert doc["baselines"] == fallback
+        # And evaluate over the loaded doc behaves exactly like the old inline shape.
+        assert evaluate(doc, _proj(0.09), "mixed/enron-qa")["exit_code"] == 0
+        assert evaluate(doc, _proj(0.10), "mixed/enron-qa")["exit_code"] == 1
+
+    def test_pointer_prefers_release_leak_section_over_fallback(self, tmp_path):
+        from jseval.ratchet_kernel import load_baselines_doc
+
+        (tmp_path / "release.v1.json").write_text(json.dumps({
+            "schema": "release.v1", "release_id": "rel-test-2026-01-01",
+            "leak": {"mixed/enron-qa": {"leak_rate": 0.01}},
+        }), encoding="utf-8")
+        bp = tmp_path / "leak-gate-baselines.v1.json"
+        bp.write_text(json.dumps({
+            "current_release": "release.v1.json",
+            "tolerance_default_abs": 0.05,
+            "fallback_baselines": {
+                "mixed/enron-qa": {"leak_rate_max": 0.4, "tolerance_abs": 0.05},
+                "beir/scifact": {"leak_rate_max": 0.0133, "tolerance_abs": 0.05},
+            },
+        }), encoding="utf-8")
+        doc = load_baselines_doc(bp, project_release=lambda rel, base:
+                                 project_release_to_baselines(rel, tolerance_default_abs=0.05))
+        assert doc["baselines"]["mixed/enron-qa"]["leak_rate_max"] == 0.01  # release wins
+        assert doc["baselines"]["beir/scifact"]["leak_rate_max"] == 0.0133  # fallback survives
+
+
+def test_committed_pointer_file_projects_to_prior_pinned_values():
+    """Pins the tempdoc 683 migration on the REAL committed files: the current
+    release.v1.json carries no `leak` section, so the loaded baselines must equal
+    the file's fallback_baselines verbatim (the pre-migration pinned values).
+    When a future release adds a `leak` section, update this test deliberately."""
+    from pathlib import Path
+
+    from jseval.leak_gate import project_release_to_baselines as _project
+    from jseval.ratchet_kernel import load_baselines_doc
+
+    root = Path(__file__).resolve().parents[1]
+    bp = root / "leak-gate-baselines.v1.json"
+    raw = json.loads(bp.read_text(encoding="utf-8"))
+    release = json.loads((root / "release.v1.json").read_text(encoding="utf-8"))
+    assert "leak" not in release, "release now carries a leak section — update this pin"
+    doc = load_baselines_doc(bp, project_release=lambda rel, base: _project(
+        rel, tolerance_default_abs=base.get("tolerance_default_abs", DEFAULT_TOLERANCE_ABS),
+        per_corpus_tolerance=base.get("per_corpus_tolerance")))
+    assert doc["baselines"] == raw["fallback_baselines"]
+    assert set(doc["baselines"]) == {
+        "golden/needle-burial-v1", "mixed/enron-qa", "beir/scifact", "mixed/legal-clerc-200"}
