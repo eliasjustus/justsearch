@@ -121,6 +121,14 @@ Use `justsearch_ingest` when the user wants new content indexed.
 Use `justsearch_status` to check index health, enrichment coverage,
 and document count before diagnosing empty results.
 
+This same comparative guidance — when to prefer the index over reading
+files directly — is delivered to the agent at connect time through the
+MCP `initialize` response's optional `instructions` field, which
+compatible clients (e.g. Claude Code) inject into the model's context.
+It is advisory guidance, not a contract, and states honestly that
+ordinary file tools are equally good for a small set of files or an
+exact string/filename lookup.
+
 ## Progressive Disclosure
 
 The MCP surface uses response-level hints instead of schema complexity.
@@ -130,6 +138,11 @@ Tools return contextual guidance at decision time:
 - **Many results** → "use facet values as filters to narrow down"
 - **Low enrichment** → "enrichment in progress — semantic search may be limited"
 - **Facet sidecar** → answer tool includes top sources and entities
+- **Comparative hint** → after an `answer` that drew on more than one
+  document, the response states factually how many distinct documents it
+  assembled evidence from in a single call — surfacing the index's
+  multi-document advantage at the moment the agent sees it worked, not only
+  in the tool description (which agents read once and forget)
 
 Advanced parameters (doc_ids, LUCENE syntax, entity filters) work when
 passed but are NOT in the visible schema. This is intentional — eval
