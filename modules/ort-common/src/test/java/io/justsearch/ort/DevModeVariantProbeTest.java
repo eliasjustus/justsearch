@@ -42,6 +42,7 @@ class DevModeVariantProbeTest {
     assertEquals(modelDir.resolve("model.onnx"), variant.modelFile());
     assertEquals(ExecutionProvider.CPU, variant.executionProvider());
     assertEquals(ModelPrecision.FP32, variant.precision());
+    assertFalse(variant.degraded(), "CPU file on CPU is the intended pairing — not degraded");
   }
 
   @Test
@@ -56,6 +57,14 @@ class DevModeVariantProbeTest {
     assertNotNull(variant);
     assertEquals(modelDir.resolve("model.onnx"), variant.modelFile());
     assertEquals(ExecutionProvider.CUDA, variant.executionProvider());
+    // Tempdoc 691 B-5: CPU-variant file on CUDA must be reported as degraded (the CPU variant
+    // may be INT8-quantized, ~10× per-call on the CUDA EP) — mirroring VariantSelector's
+    // contract-path branch. Reporting it as optimal hid the NER regression.
+    assertTrue(variant.degraded(), "CPU-variant file on CUDA must be a degraded selection");
+    assertNotNull(variant.degradationReason());
+    assertTrue(
+        variant.degradationReason().contains("model_fp16.onnx"),
+        "reason should name the missing GPU variant file");
   }
 
   @Test
@@ -68,6 +77,7 @@ class DevModeVariantProbeTest {
     assertEquals(modelDir.resolve("model_fp16.onnx"), variant.modelFile());
     assertEquals(ExecutionProvider.CUDA, variant.executionProvider());
     assertEquals(ModelPrecision.FP16, variant.precision());
+    assertFalse(variant.degraded(), "GPU file on CUDA is the intended pairing — not degraded");
   }
 
   @Test

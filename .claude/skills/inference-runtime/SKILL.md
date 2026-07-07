@@ -122,8 +122,8 @@ Settled empirical facts. Each was an open question that got answered.
 
 - **GPU:** ~2.2s for top-20 documents at seq=512, 2048MB arena, RTX 4070. Default: `gpu=true, mem=2048MB, seq=512`.
 - **CPU:** ~42s for top-20 documents at seq=2048 on RTX 4070 host CPU.
-- **VRAM budget (all ORT consumers):** embed ~2GB + SPLADE ~1GB + NER ~0.5GB + reranker ~2GB = ~5.5GB total (leaves ~6.5GB for LLM on 12GB GPU).
-- **Evidence:** tempdoc 360 (Worker migration), tempdoc 361 I9.
+- **VRAM budget (all ORT consumers):** embed ~2GB + SPLADE ~1GB + NER ~0.5GB + reranker ~2GB = ~5.5GB total (leaves ~6.5GB for LLM on 12GB GPU). *Updated by tempdoc 691:* NER's arena cap is now 2GB (see F-013) — caps are per-session budgets, not pre-allocations, and enrichment backfill yields the GPU when Main claims it, so LLM coexistence is unaffected; measured total VRAM peak during full-corpus enrichment (no LLM): 7.7GB of 12GB.
+- **Evidence:** tempdoc 360 (Worker migration), tempdoc 361 I9; tempdoc 691 Phase C (NER cap update).
 
 ### F-011: JAR-bundled CUDA defeats native-path-based GPU-failure-reproduction
 
@@ -138,6 +138,14 @@ Settled empirical facts. Each was an open question that got answered.
 - **Baseline (RTX 4070, Qwen3VL-8B-Thinking Q4, summarization):** TTFT ~103 ms, e2e ~6.3 s, ~25.5 tokens/sec. Floor: `scripts/jseval/llm-gen-ratchet-baselines.v1.json` (projected from a green bench via `--update-baseline`, never hand-typed; per-machine + per-configured-LLM).
 - **Evidence:** tempdoc 640 L + D (2026-06-24); live-confirmed end-to-end on a real summarization (25.5 t/s).
 - **Conditions/caveats:** Advisory tier (nudged by `search-engine-hint` on inference-path edits, not a CI-blocking gate). The committed baseline pins TTFT + e2e; tokens/sec pins on the next `--update-baseline` (needs a bench run where doc-discovery serves the eval index).
+
+### F-013: A missing fp16 variant silently runs the INT8 CPU model on CUDA at ~10× per-call cost (NER incident, fixed)
+
+- **Answer:** When a model dir has only the quantized CPU `model.onnx` (no `model_fp16.onnx`), dev-mode variant selection loads it on the CUDA EP where dynamic-INT8 QOperator nodes lack native kernels — per-node CPU-fallback round-trips cost ~10-15× per call. For NER this made enrichment backfill ~75% NER (per-call p50 28.8ms vs healthy 3.16ms) and corpus build 2.69× slower end-to-end (battlefield: 333s → 124s after fix). The file went missing via an interrupted `scripts/models/build-ner.py` run (~2026-07-01: `model.onnx` downloaded, fp16 step never completed, no `build.json` written).
+- **Fixes (tempdoc 691):** (1) `model_fp16.onnx` restored with provenance (sha256 `8121A428…DA49`, HF `Xenova/distilbert-base-multilingual-cased-ner-hrl` @ `c2a4dbf5…`); (2) `DevModeVariantProbe` now reports CPU-file-on-CUDA as **degraded** (mirroring `VariantSelector`'s contract branch) and `InferenceCompositionRoot.resolveVariant` WARN-logs every degraded selection — the silent week came from the probe labeling this case `optimal`; (3) NER arena default `justsearch.ner.gpu_mem_mb` 512 → 2048 (the fp16 variant's attention intermediates, O(batch×heads×seq²) ≈ 200MB at batch=16/seq=512, OOM a 512MB arena → continuous batched→per-doc fallback; at 2048: zero OOM).
+- **Metric caveat (open):** `encoder_profiles` NER `ortP50` was recorded only by the batch=1 `infer()` path; the batched `inferBatch()` path now records too (tempdoc 691), but runs before that fix report meaningless NER p50s in batched-healthy conditions — use batch-timing shares for pre-691 NER attribution.
+- **Corrects F-008's frame:** the 2026-era "NER 18% GPU efficiency / per-call overhead" analysis measured the healthy fp16 path; the 2026-07 incident was a different mechanism (INT8-on-CUDA), not that overhead worsening.
+- **Evidence:** tempdoc 691 Phases A-C (attribution runs, root-cause chain, C-series A/B verification, all artifacts + provenance).
 
 ---
 
