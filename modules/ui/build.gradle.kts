@@ -662,6 +662,11 @@ val stageLlamaCudaVariant by tasks.registering(Sync::class) {
   enabled = usePrebuiltLlamaRuntime && includeCudaVariant
   val cudaZipFile = llamaCudaZip.get().asFile
   val cudartZipFile = llamaCudartZip.get().asFile
+  // Tempdoc 682 Item 2: the staged build's ASSERTED version pin (single authority:
+  // llamaPrebuiltVersion above). Written as the machine-readable runtime-version.txt marker
+  // next to the staged exe — same convention as stageLlamaServerFromPrebuilt's CPU stamp —
+  // so the inference lifecycle can compare it against the running server's /props build_info.
+  val cudaRuntimeStamp = "llama.cpp $llamaPrebuiltVersion win-cuda-12.4-x64\n"
   val variantDir = llamaStageDir.get().asFile.resolve("variants").resolve("cuda12")
   outputs.dir(variantDir)
   outputs.upToDateWhen { false }
@@ -694,6 +699,11 @@ val stageLlamaCudaVariant by tasks.registering(Sync::class) {
       logger.warn("CUDA variant staging failed - llama-server.exe not found")
       return@doLast
     }
+
+    // Tempdoc 682 Item 2: stamp the pinned build version next to the staged exe (written as
+    // soon as the exe is verified present — the exe's build is what it is regardless of
+    // whether the cudart DLL check below passes).
+    variantDir.resolve("runtime-version.txt").writeText(cudaRuntimeStamp, Charsets.UTF_8)
 
     // Verify CUDA redistributable DLLs were extracted before writing NOTICE
     val requiredCudaDlls = listOf("cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll")

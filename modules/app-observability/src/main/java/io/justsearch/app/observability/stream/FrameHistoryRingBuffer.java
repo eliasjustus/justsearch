@@ -26,7 +26,13 @@ import java.util.Objects;
  */
 public final class FrameHistoryRingBuffer {
 
-  /** Default capacity (frames) per slice 436 §B.4. */
+  /**
+   * Default capacity (frames) per slice 436 §B.4. Value-coupled to the FE dedup LRU
+   * ({@code DEDUP_LRU_SIZE} in {@code modules/ui-web/src/api/intent/bootIntentStreamBridge.ts});
+   * drift is caught by the cross-language check in {@code bootIntentStreamBridge.test.ts}
+   * ("BE/FE capacity drift") and by {@code FrameHistoryRingBufferTest.defaultCapacity}
+   * (tempdoc 682 Item 3).
+   */
   public static final int DEFAULT_CAPACITY = 9000;
 
   private final int capacity;
