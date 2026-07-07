@@ -225,19 +225,19 @@ overlay mount · `67a5c36` close + Q6 finding.
    the (fixed) cold start; unprofiled.
 
 ### Follow-ups that must not be lost
-- **F1 (confirmed trust bug)**: a dataDir runtime artifact (`.dev-data/agent-history/<uuid>.md`)
+- **F1 (confirmed trust bug)** -> tempdoc 692: a dataDir runtime artifact (`.dev-data/agent-history/<uuid>.md`)
   was ingested UNTAGGED by the generic watcher, bypassing the 585-D4b reserved-collection
   exclusion (doc count 5→6; ranked in results). Structural fix: the worker refuses to ingest
   under its own dataDir (prefix guard at the scanner/watcher).
-- **F2**: bullet-list answers defeat the citation sentence-matcher — sources retrieved but ZERO
+- **F2** -> tempdoc 693: bullet-list answers defeat the citation sentence-matcher — sources retrieved but ZERO
   marks woven, leaving the model's dangling "[n]" unlinked. The weave needs list-item-aware
   segmentation.
 - **F3**: two duration authorities disagree on-screen (run frame wall-clock vs the receipt's
   generation time). One authority, or label both.
-- **F4**: a bare trailing "[n]" line escapes `stripTrailingCitationBlock`'s shape.
+- **F4** -> tempdoc 693: a bare trailing "[n]" line escapes `stripTrailingCitationBlock`'s shape.
 - **F5**: DocumentPane's fetch-failure state renders a raw error string; needs the designed
   disconnected/diagnostic presentation.
-- **F6**: visual-grammar / density: the working surface over-spends space systemically
+- **F6** -> tempdoc 694 (stub): visual-grammar / density: the working surface over-spends space systemically
   (attention inversion, row-per-scrap stratification, metadata-before-content duplication,
   implementation leakage, no alignment spine). An INDEPENDENT visual audit (fresh agent,
   screenshot-based) is planned as the next design input — do not pre-empt it with piecemeal

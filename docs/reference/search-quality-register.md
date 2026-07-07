@@ -348,7 +348,10 @@ What's worth measuring next. Remove rows when filled.
      agent-run searches can now be user-scoped (`docIds` from scope chips flow AgentRequest →
      AgentToolDispatcher.scopeToolCall → SearchTool's PATH filter, overriding tool args; absent →
      unchanged). No analyzer/ranking change; utility-gate relevance: a scoped condition narrows the
-     candidate pool the agent judges, which future agent-utility runs should account for. -->
+     candidate pool the agent judges, which future agent-utility runs should account for.
+     ALSO (687 R3d residue): boot warmup removed the ~870ms first-query cold start, but the
+     STEADY-STATE hybrid query on a 6-doc corpus measures ~350ms end-to-end - unprofiled.
+     Worth a stage-breakdown profile (searchTrace timings) before any design conclusion. -->
 
 | Dataset | encoder | ce | cc | Modes needed | Why |
 |---------|---------|----|----|-------------|-----|
