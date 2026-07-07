@@ -1,8 +1,9 @@
 ---
 title: "Agent session friction retro: phase-3-observability-nightly deletion + merge (git rebase/force-push trap, CI-polling pattern, stale main-checkout policy)"
 type: tempdoc
-status: open — findings only, no implementation planned by the filing agent
+status: "resolved — all four §1/§2 process-fix recommendations implemented in PR #99 (merged as `4322221`); §2.2 stays an observation by design, no rule change (see Resolution); §4's prompt-wording note has no code/doc consequence"
 created: 2026-07-07
+updated: 2026-07-07
 related: [618]
 ---
 
@@ -14,10 +15,13 @@ A filed-from-reflection friction catalogue, in the same spirit as tempdoc 618 ("
 agent developer-velocity"), scoped to one concrete session: deleting a dead GitHub Actions
 workflow (`.github/workflows/phase-3-observability-nightly.yml`, which had never fired
 automatically in its history) and its doc dependents, then merging the result through two
-PRs against a fast-moving `main`. The filing agent did the work described here and is not
-proposing further implementation — this is a findings log for whoever picks up tooling/process
-improvements next. Every claim below is evidence-backed with a public PR/run link or an exact
-command; nothing here depends on the private chat transcript that produced it.
+PRs against a fast-moving `main`. The filing agent did the work described in §1-§4 below, then —
+same session, follow-up — implemented the four "what should change" recommendations from §1.1,
+§1.2, §1.3, and §2.3 as [PR #99](https://github.com/eliasjustus/justsearch/pull/99) (merged as
+`4322221`); see **Resolution (2026-07-07)** below for what changed where, with evidence for each.
+Every claim in this document is evidence-backed with a public PR/run link, an exact command, or
+(where noted) a directly-run verification command whose output is quoted; nothing here depends on
+the private chat transcript that produced it.
 
 **Non-canonical context, called out explicitly so it isn't mistaken for fact:** agent session
 IDs, local worktree directory names (`F:\justsearch-public\.claude\worktrees\...`), and the
@@ -28,17 +32,75 @@ the actual code change is [PR #95](https://github.com/eliasjustus/justsearch/pul
 plus the amendment this session added to
 [ADR-0026](../decisions/0026-manual-ci-triggering.md#amendment-2026-07-07-phase-3-observability-nightlyyml-deleted).
 
+## Resolution (2026-07-07)
+
+Every "What should change" recommendation in §1 and §2.3 was implemented same-session in
+[PR #99](https://github.com/eliasjustus/justsearch/pull/99) (merged as `4322221`). Each row below
+names the exact file changed and the verification evidence for that specific change — not a
+restatement of the finding (see the linked section for that).
+
+| Finding | Implemented where | Verification evidence |
+|---|---|---|
+| §1.1 rebase/force-push trap | `.claude/rules/agent-lessons.md` — new bullet under "Claude Code platform constraints" | `node scripts/governance/run.mjs --gate prose-tier-register --mode gate` → `pass, 0 findings` (run against PR #99's diff); `node scripts/ci/check-always-loaded-budget.mjs` → `pass` after a declared `--bump` (+531 B, reason recorded in `scripts/ci/always-loaded-budget.v1.json`'s `bumps` array, visible in the file's git history) |
+| §1.2 misleading `gh pr merge` error | `docs/reference/contributing/agent-guide.md` §3.7 "History publication" | Same PR #99; additionally **self-demonstrated**: merging PR #99 itself produced the exact documented error (`failed to run git: fatal: 'main' is already used by worktree`), confirmed benign via `gh pr view 99 --json state,mergedAt,mergeCommit` → `{"mergeCommit":{"oid":"4322221..."},"mergedAt":"2026-07-07T20:46:50Z","state":"MERGED"}` |
+| §1.3 stale `branch-safety.md` "allowed" list | `.claude/rules/branch-safety.md` — corrected the "Allowed in the main worktree" line | `node scripts/ci/check-always-loaded-budget.mjs` → `pass` after a declared `--bump` (+377 B, reason recorded). **The underlying branch-protection claim is now independently verified, not operator-hearsay**: `gh api repos/eliasjustus/justsearch/branches/main/protection` (run 2026-07-07 while closing this tempdoc) returns `"enforce_admins":{"enabled":true}` and a populated `"required_pull_request_reviews"` block — both confirm direct pushes to `main` are mechanically rejected for every actor, admins included, independent of anyone's verbal statement. |
+| §2.1 CI-watch polling pattern | `docs/reference/contributing/agent-guide.md` §3.7 (documented alongside §1.2, same paragraph block) | Empirically re-confirmed a second time while merging PR #99 itself: `gh pr checks 99 --watch --interval 30`, backgrounded via `run_in_background: true`, exited 0 on all-green without hitting the sleep-guard or the Bash tool's own timeout |
+| §2.3 PR-body `## Testing` / checklist-syntax convention | `docs/reference/contributing/agent-guide.md` §3.7 (same block) | **Self-validated**: PR #99's own body used a `## Testing` header and plain bullets (no `- [x]`); `node scripts/ci/preview-squash-message.mjs --pr 99` → `OK (#99, 1979 chars, 0 warnings)` — zero warnings on the first attempt, versus two warnings on PR #95's first attempt before the convention was documented |
+
+**§2.2 (manual secret-diff scanning vs. the existing `gitleaks` pre-commit hook) received no code
+or doc change, by design** — it's a judgment call about which existing safeguard to trust, not a
+missing rule. Re-verified while closing this tempdoc: `.githooks/pre-commit` (versioned in the
+repo) runs `gitleaks` against staged changes on every commit, blocking on a real hit — **but it
+only activates per-clone via `git config core.hooksPath .githooks`, a manual one-time setup step
+named in the hook file's own header comment, not something every clone has automatically.** This
+filing agent's checkout had it configured (confirmed via `git config core.hooksPath` returning a
+local path pointing at `.githooks`); a fresh clone without that setup step would commit with no
+local secret-scanning at all until hosted CI's "Secret scan" lane catches it post-push. Separately,
+that hosted "Secret scan" lane is also one of the
+`required_status_checks` contexts per the branch-protection API response above — so the original
+§2.2 claim ("nothing currently runs gitleaks at git push time specifically, only at commit time
+and later in hosted CI") is accurate as written: pre-commit (local, before anything leaves the
+machine) and hosted-CI-on-push (remote, but gated before merge) both exist; there is no dedicated
+pre-push local hook, which is the specific gap §2.2 named. No action taken on that narrower gap
+either — it's a minor, non-blocking finding, not a recommendation.
+
+**§4** (the prompt-wording observation about "your tempdoc" phrasing) has no code or doc
+consequence — it was relayed directly to the operator in chat per their own request, and is
+recorded here only as part of this document's complete record.
+
+## Unverified assumptions carried over from the original findings (now resolved above)
+
+At original filing time, §1.3's branch-protection claim rested on an operator's verbal statement
+in chat (non-canonical, per this document's own rule about not citing the private transcript) —
+that gap is closed above with a direct `gh api` verification. No other claim in this document was
+identified as resting on unverified assumption; every other factual claim either cites a command
+whose output is quoted, or a public PR/run link.
+
 ## Known unrelated dirty work at time of writing (do not treat as this session's output)
 
 - `docs/tempdocs/691-corpus-build-throughput.md` had an uncommitted, in-progress edit from a
-  **different, concurrent agent session** in the shared main checkout at the time this retro was
-  written. It was deliberately left untouched (branch-safety: never edit/discard another agent's
+  **different, concurrent agent session** in the shared main checkout throughout this retro's
+  authorship (still present, unrelated content, at the time this Resolution section was added). It
+  was deliberately left untouched throughout (branch-safety: never edit/discard another agent's
   uncommitted work). If it's still uncommitted when you read this, it is that other session's
   responsibility to land or abandon, not a sign this retro's work is incomplete.
+- A separate concurrent session's work on tempdoc 675 (`docs/tempdocs/675-agent-eval-executor-v2-in-process.md`)
+  landed as real local commits on the shared main checkout, never pushed to `origin`, observed while
+  closing out this tempdoc. Also left untouched — it is committed (not at risk of loss the way
+  uncommitted work would be) and not this retro's to publish. This is itself a live instance of the
+  exact §1.3 risk pattern (unpushed local-`main` commits from concurrent sessions), just with
+  properly-committed content this time rather than dangling working-tree changes.
 - Several `models/onnx/**` and `models/splade/**` `.onnx`/`build.json` files sit untracked in the
   shared main checkout (pre-existing before this session started; not created or touched by this
   work). They are a distribution-policy question already tracked in tempdoc 657 territory (see
   `docs/tempdocs/691-corpus-build-throughput.md` item 4) — not new information from this retro.
+
+**A general note for future readers of this "dirty work" list:** the shared main checkout is
+actively used by multiple concurrent agent sessions at all times; the specific files named above
+will likely no longer be dirty by the time you read this, and different files will be. Treat this
+list as illustrative of the *pattern* (uncommitted or unpushed content from sessions other than the
+one that wrote this document), not as a current inventory — check `git status` yourself for what's
+actually dirty now.
 
 ## §1 — High-cost issues (fix these first)
 
@@ -264,6 +326,13 @@ git diff --numstat <path>   # empty output = byte-identical, safe for single-fil
 
 # Tempdoc-numbering collision check (used to pick 695 for this document)
 node scripts/ci/check-tempdoc-numbers.mjs
+
+# Independently verify the §1.3 branch-protection claim (not operator-hearsay — see Resolution)
+gh api repos/eliasjustus/justsearch/branches/main/protection
+
+# Confirm the pre-commit secret-scan hook is real, and whether THIS clone activated it (§2.2)
+cat .githooks/pre-commit    # runs gitleaks against staged changes — versioned, but opt-in
+git config core.hooksPath   # empty/unset = this clone never ran the one-time setup step
 ```
 
 ## Related
@@ -278,3 +347,6 @@ node scripts/ci/check-tempdoc-numbers.mjs
 - [PR #95](https://github.com/eliasjustus/justsearch/pull/95) — the workflow deletion.
 - [PR #96](https://github.com/eliasjustus/justsearch/pull/96) — the follow-up observation-shard
   fold, opened because direct pushes to `main` are blocked (§1.3).
+- [PR #98](https://github.com/eliasjustus/justsearch/pull/98) — this tempdoc's own filing.
+- [PR #99](https://github.com/eliasjustus/justsearch/pull/99) — implements every §1/§2.3
+  recommendation from this tempdoc; see **Resolution** above for the per-finding mapping.
