@@ -1,40 +1,48 @@
 ---
-title: Recalibrate the Phase 3 Nightly Observability Baseline
+title: Rebase the Phase 3 Drift-Gate Baseline
 type: how-to
 status: stable
-description: "Procedure for accepting genuine infrastructure drift by rebasing the nightly workflow's σ(nDCG@10) guard."
+description: "Procedure for accepting genuine infrastructure drift by rebasing the manual jseval gate's σ(nDCG@10) baseline."
 ---
 
-# Recalibrate the Phase 3 Nightly Observability Baseline
+# Rebase the Phase 3 Drift-Gate Baseline
 
-The `.github/workflows/phase-3-observability-nightly.yml` workflow gates
-on `σ(nDCG@10)` being within ±10% of a hardcoded baseline
-(`PHASE3_BASELINE_NDCG10_STDEV`). The Q1 probe during Phase 2 measured
-0.00108 on scifact/50queries. This is fine until infrastructure drift
-(GPU driver update, ONNX runtime upgrade, model reload) shifts the
-natural variance. At that point the nightly starts filing false-alarm
-issues — the gate is wrong, not the system.
+`jseval gate` checks `σ(nDCG@10)` against a baseline
+(`--baseline-stdev`, current recorded value: **0.00108**, measured on
+scifact/50queries during the Phase 2 Q1 probe). This is fine until
+infrastructure drift (GPU driver update, ONNX runtime upgrade, model
+reload) shifts the natural variance. At that point manual gate runs
+start reporting false-alarm drift — the baseline is wrong, not the
+system.
+
+> This procedure previously rebased a value hardcoded in
+> `.github/workflows/phase-3-observability-nightly.yml`'s env block.
+> That workflow was deleted 2026-07-07 — it never ran automatically in
+> its history (see ADR-0026's 2026-07-07 amendment) — so `jseval
+> gate`/`jseval calibrate` are now invoked manually, and **this
+> document is the sole recorded source of truth for the current
+> baseline value.** Update the bolded value above whenever you rebase.
 
 This document records the procedure for operators who have accepted
 that drift is genuine and want to rebase the gate.
 
-**Do not auto-update** the baseline from a nightly run. Auto-healing
+**Do not auto-update** the baseline from a routine run. Auto-healing
 masks real degradation. Every rebase must be an explicit, reviewed
 operator action.
 
 ## When to rebase
 
-- Nightly workflow has filed >1 drift issue in a week.
-- The auto-opened issue's gate report shows measured σ consistently
-  outside the ±10% band but stable at a new value.
+- A manual gate run has filed >1 drift finding in a week.
+- The gate report shows measured σ consistently outside the ±10% band
+  but stable at a new value.
 - You have traced the drift to a specific infrastructure change
   (driver update, ORT version bump, scifact corpus refresh, etc.) —
   NOT to a regression in search quality.
 
 ## When NOT to rebase
 
-- A single night's gate failure with no identified infrastructure
-  cause. Wait for confirmation across multiple nights.
+- A single gate run's failure with no identified infrastructure cause.
+  Wait for confirmation across multiple runs.
 - Any failure where `sigma(nDCG@10)` increases beyond ~2× the baseline.
   That's genuine instability; investigate before rebasing.
 - Any failure coincident with a code change to the search pipeline,
@@ -44,7 +52,7 @@ operator action.
 
 ### 1. Reproduce the current σ
 
-Trigger a manual calibration with the same parameters the nightly
+Trigger a manual calibration with the same parameters the gate
 uses:
 
 ```bash
@@ -84,23 +92,29 @@ PHASE3_BASELINE_NDCG10_STDEV=0.00142
 
 ### 3. Sanity-check against the current baseline
 
-Compare the new value to the current workflow env value:
-
-```bash
-grep PHASE3_BASELINE_NDCG10_STDEV \
-    .github/workflows/phase-3-observability-nightly.yml
-```
+Compare the new value to the baseline recorded at the top of this
+document (currently 0.00108).
 
 A ≤20% shift is reasonable for driver / ORT changes. A >50% shift
 typically indicates genuine instability — investigate before rebasing.
 
-### 4. Update the workflow
+### 4. Update the recorded baseline
 
-Edit `.github/workflows/phase-3-observability-nightly.yml`, replace the
-`PHASE3_BASELINE_NDCG10_STDEV` value. Commit message template:
+Update the bolded baseline value at the top of this document, and pass
+the new value explicitly on future manual invocations:
+
+```bash
+python -m jseval gate \
+    --data-dir "$JUSTSEARCH_DATA_DIR" \
+    --baseline-stdev 0.00142 \
+    --tolerance-pct 10 \
+    --report-out "$JUSTSEARCH_DATA_DIR/gate-report.json"
+```
+
+Commit message template for the doc update:
 
 ```text
-ci(400): recalibrate Phase 3 nightly σ(nDCG@10) baseline 0.00108 → 0.00142
+docs(400): rebase Phase 3 drift-gate baseline 0.00108 → 0.00142
 
 Trigger: driver update to CUDA 13.5 on 2026-04-22. Natural σ shifted
 from 0.00108 to 0.00142 across 5 calibrations. No quality regression
@@ -109,24 +123,19 @@ Attached calibration evidence: <path to /tmp/nightly-baseline.env> +
 cohort_baselines/<hash>/envelope.json.
 ```
 
-### 5. Close any outstanding drift issues
+### 5. Close any outstanding drift findings
 
-Auto-opened issues for the old baseline should be closed with a
-reference to the rebase commit.
+Any tracked issues opened against the old baseline should be closed
+with a reference to the rebase commit.
 
-## Emergency: disable the nightly gate
+## Emergency: widen the gate tolerance
 
 If the gate is genuinely broken AND an immediate rebase isn't feasible
-(e.g. weekend, limited debugging bandwidth), set the tolerance to a
-wide value temporarily:
-
-```yaml
-PHASE3_STDEV_TOLERANCE_PCT: '100'
-```
-
-…and open an issue to investigate + revert within a working day.
-Disabling the gate entirely (`if: false`) is never appropriate — it
-removes the only automated signal for cross-run variance regressions.
+(e.g. limited debugging bandwidth), pass a wider `--tolerance-pct`
+temporarily (e.g. `--tolerance-pct 100`) on manual invocations, and
+open an issue to investigate + revert within a working day. Skipping
+the gate check entirely is never appropriate — it removes the only
+signal for cross-run variance regressions.
 
 ## Related
 
@@ -139,7 +148,7 @@ removes the only automated signal for cross-run variance regressions.
 - `docs/how-to/calibrate-drift-baseline.md` — the sibling artifact
   (`span_distributions.json`) that should be rotated alongside the
   envelope when infrastructure drifts.
-- `docs/how-to/triage-psi-drift.md` — what to do when the nightly's
+- `docs/how-to/triage-psi-drift.md` — what to do when the gate's
   encoder_drift signal fires (often the first symptom of drift
   before the envelope-gate bands widen).
 - `docs/how-to/interpret-bisect-output.md` — when the drift is a
@@ -147,5 +156,5 @@ removes the only automated signal for cross-run variance regressions.
   axis.
 - `scripts/jseval/jseval/cli.py::cmd_recalibrate_nightly_baseline` —
   the tool.
-- `.github/workflows/phase-3-observability-nightly.yml` — the workflow
-  env block holds the baseline.
+- ADR-0026 (2026-07-07 amendment) — why the gate is manual-only and
+  the recorded baseline above is the sole source of truth.
