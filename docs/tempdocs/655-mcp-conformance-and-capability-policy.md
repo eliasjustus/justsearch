@@ -83,6 +83,17 @@ related:
 - **Unverified assumption:** the adoption-zero finding is haiku-only; frontier-model (Sonnet/Opus)
   adoption was never measured. A single frontier-model cell would cheaply disambiguate "small-model
   artifact" from "real surface problem."
+- **Sequencing (do NOT skip to the paid pilot):** two cheap checks should run *before* the ~$3
+  scale-corpus contrast, because either can obviate or reframe it — (1) the frontier-model cell above;
+  (2) confirming the scale corpus poses genuinely *semantic* (no-exact-keyword) questions. A
+  keyword-findable scale corpus (like battlefield-en's fabricated proper-noun facts) would let grep win
+  on merit and **void the result — and could read as "the surface failed" when it was the corpus**
+  (the corpus-design critique at "External research pass" applies to the *future* corpus, not just the
+  existing one). Rationale in the "Takeover investigation" verdict and the risk register below.
+- **Measurement power:** the Step-1 pilot shape is single-seed / 10-cell / temp-0 — fine for a
+  directional 0.0 read, but a *positive* 0→N adoption move needs adequate power to beat noise. 624's own
+  §M.8 item 4 already requires ≥5 seeds / n≥100 for headline claims; hold to that for the contrast rather
+  than reporting a small pilot delta as a result.
 - **Follow-up (out of scope, logged):** `RemoteDocumentService.mapRetrieveContextResponse` hardcodes
   `docsUsed=0` on the rich-params retrieve path (violates the `ContextResult` javadoc) — recorded in the
   observations inbox; not this tempdoc's to fix.
