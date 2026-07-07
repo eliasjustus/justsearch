@@ -22,7 +22,70 @@ related:
 > NOTE: Noncanonical working tempdoc. Verify against canonical docs and code before
 > treating any claim as current truth.
 
-# 655 - MCP conformance and capability policy
+# 655 - MCP surface: conformance, capability policy, and agent-adoption legibility
+
+## STATUS SUMMARY (2026-07-07) — read this first
+
+> This document has a long dated history below (append-only). This block is the current picture;
+> the older "Current state (as of 2026-07-02)" section further down is **superseded by this one** (it
+> predates the adoption/legibility work). Tempdocs are dated history, not canonical truth — verify
+> against `main` before trusting.
+
+**Three bodies of work live under this tempdoc, in order of recency:**
+
+1. **MCP conformance + capability policy** — SHIPPED earlier (see the 2026-07-02 sections). Mutating
+   tool wired to the real consent mechanism; boundary schema validation; upstream conformance suite
+   adopted; `listChanged` over-declaration fixed; token-vs-gate relationship documented. Only genuinely
+   open item from that era: **client fixture coverage (Q2)** — a deliberate, still-open product decision,
+   not a technical blocker.
+
+2. **Agent-adoption legibility layer** — IMPLEMENTED and live-verified (2026-07-07), committed on branch
+   `worktree-td655-investigation` (not yet a PR). This is the newest work; full detail in "Implementation
+   of the agent-legibility layer" and "Post-implementation refute-first review + fix" at the end. What
+   shipped: the MCP `initialize` `instructions` field (single-sourced comparative tool-selection
+   guidance), comparative response hints on `answer`/`search`, `TOOL_SURFACE_VERSION` 0.1.0→0.2.0, and
+   removal of the orphaned feature-forward `getStatusContext` tail. Backend-only — the consumer is an
+   autonomous agent, so the MCP protocol *is* the surface; there is no UI to browser-check.
+
+   **Verification claims, each with its evidence pointer:**
+   - Unit/logic: `McpProtocolHandlerTest.initialize_returnsCapabilities` (asserts a non-blank comparative
+     `instructions`), `…instructionsAndPromptPath_shareSingleSourcedGuidance` (single-source guard),
+     `…comparativeAnswerHint_countsDistinctDocuments_notChunks` (the review-fix regression) → PASS via
+     `./gradlew.bat :modules:ui:test :modules:app-api:test` → `BUILD SUCCESSFUL`.
+   - Compile gate: `./gradlew.bat build -x test -PskipWebBuild=true` → `BUILD SUCCESSFUL`.
+   - Live surface: `POST http://127.0.0.1:<port>/mcp` `initialize` returned `serverInfo.version:"0.2.0"`
+     and the full comparative `instructions` string; `tools/call justsearch_answer`/`justsearch_search`
+     emitted the comparative hints (command + captured output, this session's dev stack).
+   - Real-agent end-to-end: the stock `claude` CLI v2.1.202 connected to the production HTTP `/mcp`
+     quoted the `instructions` back verbatim (command + output) — closing the stdio-vs-HTTP plumbing
+     residual.
+   - Conformance: `node scripts/ci/check-mcp-conformance.mjs --url …/mcp` → "All 11 protocol-conformance
+     scenarios pass."
+   - Evidence nature: the unit/compile/conformance pointers are re-runnable commands with stable output;
+     the live-surface and real-agent pointers were captured as command+output in-session (no persisted
+     `capture_evidence` bundle — the dev stack was started manually and later held by another session).
+     They are reproducible by re-running the listed commands against a fresh stack of this branch's build.
+
+3. **Adoption measurement (the reason the layer exists)** — NOT yet done; the decisive result is still
+   open. See "next agent" below.
+
+**For the next agent — remaining work, deferred checks, and unverified assumptions:**
+- **Deferred (external dependency, the main open work):** the decisive **two-corpus adoption contrast**
+  — re-run 624's Step-1 pilot on a headroom corpus and show adoption rising where the index wins while
+  staying low on the grep-able corpus. Blocked on **624's ~2–4k-doc "scale member" corpus**, which does
+  not exist (generator `scripts/jseval/jseval/corpus_generate.py` can produce it via `distractor_ratio`/
+  `n_chains`, but there is no built corpus and no CLI wrapper). This is 624-owned; 655's surface is ready.
+- **Deferred check:** a live re-probe of the *corrected* answer hint was not run (the shared dev stack
+  was held by another session and not taken over). The corrected logic is covered by the deterministic
+  unit test above; only the live re-observation is outstanding.
+- **Unverified assumption:** that comparative instructions/hints actually *move* an agent's tool-choice —
+  the plumbing is verified, the behavioral effect is not (it is exactly what the deferred pilot measures).
+- **Unverified assumption:** the adoption-zero finding is haiku-only; frontier-model (Sonnet/Opus)
+  adoption was never measured. A single frontier-model cell would cheaply disambiguate "small-model
+  artifact" from "real surface problem."
+- **Follow-up (out of scope, logged):** `RemoteDocumentService.mapRetrieveContextResponse` hardcodes
+  `docsUsed=0` on the rich-params retrieve path (violates the `ContextResult` javadoc) — recorded in the
+  observations inbox; not this tempdoc's to fix.
 
 ## Purpose
 
@@ -892,7 +955,11 @@ representative as proprietary clients drift, whether the ongoing maintenance is 
 than a promised deliverable. That question is a product decision, not something further codebase
 investigation can resolve — it stays open on purpose.
 
-## Current state (as of 2026-07-02) — read this first if picking this tempdoc back up
+## Current state (as of 2026-07-02) — SUPERSEDED by the STATUS SUMMARY at the top of this file
+
+> This section covers only the conformance + capability-policy era and predates the 2026-07-07
+> agent-adoption legibility work. Read the "STATUS SUMMARY (2026-07-07)" at the top for the current
+> picture; this remains as dated history.
 
 This tempdoc has accumulated many dated passes above; this section is the up-to-date summary so a
 future reader doesn't have to reconstruct it by reading the whole history top to bottom.
