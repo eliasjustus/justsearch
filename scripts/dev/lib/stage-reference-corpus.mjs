@@ -26,7 +26,10 @@ export async function getJson(base, route, opts) {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Spawn `dev-runner start`, resolve with {apiBaseUrl} once the ok:true JSON line is seen. */
-export function startStack({ repoRoot, devRunner, startTimeoutMs = 240000 }) {
+// startTimeoutMs is the OUTER waiter; keep it >= dev-runner's own CI readiness timeout (300s,
+// dev-runner.cjs:1146/1154) so this waiter never kills dev-runner first and mask its specific error
+// behind a generic "stack start timed out" (tempdoc 656 §H timeout-inversion). 330s = 300s + margin.
+export function startStack({ repoRoot, devRunner, startTimeoutMs = 330000 }) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [devRunner, 'start', '--clean', 'hard', '--json'],
       { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });

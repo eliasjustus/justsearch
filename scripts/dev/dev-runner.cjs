@@ -602,6 +602,12 @@ async function fetchConfirmedIndexBasePath(apiPort) {
   return null;
 }
 
+// "Ready" here means the HEAD is up (`/api/status` returns 200) — NOT that the Worker is ready. The
+// Worker connects/warms up a beat later, and until it is available the WorkerCapability before-handler
+// returns 503 ("Knowledge Server not ready") on `/api/knowledge/*`. Consumers that hit worker endpoints
+// immediately after "stack up" must tolerate that transient 503 — see stage-reference-corpus.mjs
+// stageAndVerify's ingest retry (tempdoc 656 §J/§K.5). (The MCP dev server exposes a separate
+// worker-ready readiness level for callers that need it.)
 async function waitForBackendReady(apiPort, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   const url = `http://127.0.0.1:${apiPort}/api/status`;

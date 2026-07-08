@@ -2401,3 +2401,17 @@ recommendation is downgraded to docs/optional. **Difficulty: LOW.** K1(docs)+K2+
 well-specified edits → **Sonnet at low–medium effort**; not Opus (no hard design remains). K3 is an owner
 decision first, then trivial glue; the optional K1 dev-runner worker-gate (not recommended) would be the
 only moderate-care item if ever pursued.
+
+### K.6 Implementation — K1/K2/K4 shipped, K3 deferred (2026-07-08)
+Implemented the warranted §K.5 subset (dev/CI infra only; no product code):
+- **K1 (docs-only):** comment at `dev-runner.cjs::waitForBackendReady` recording "ready = Head up, NOT
+  worker-ready; consumers must tolerate the WorkerCapability 503 gate — see §J retry." No core change (the
+  functional fix shipped in §J; the dev-runner worker-gate stays out, as recommended).
+- **K2:** `stage-reference-corpus.mjs` `startStack` default `startTimeoutMs` 240000 → **330000** (≥ dev-runner
+  CI 300000 + margin) so the outer waiter never masks dev-runner's specific error (§H).
+- **K4:** `test-onramp-first-success.mjs` now measures launch→stack-up and **fails if > `MAX_STACKUP_MS`**
+  (env `JUSTSEARCH_ONRAMP_MAX_STACKUP_MS`, default 90000 — ~18× the observed ~5s, below the ≥120s regression
+  class). Boundary logic unit-sanity-checked; four dev-runner suites green; `node -c` clean.
+- **K3 (deferred):** logged an observation — cadence/surfacing needs a standing external dispatcher, an
+  owner/infra decision (not autonomously implementable). No scheduler added.
+Verified end-to-end by a green `Onramp Smoke` dispatch (latency line present + under budget).
