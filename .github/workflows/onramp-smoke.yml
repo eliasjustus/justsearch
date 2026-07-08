@@ -91,9 +91,12 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          echo "### .dev-data file tree ###"
-          find .dev-data -maxdepth 5 -type f 2>/dev/null | head -100 || echo "(no .dev-data)"
-          echo "### active.json / run.json ###"
-          find .dev-data \( -name active.json -o -name run.json \) 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done || true
-          echo "### *.log (tail 150 each) ###"
-          find .dev-data -name '*.log' 2>/dev/null | while read -r f; do echo "===== $f ====="; tail -150 "$f" 2>/dev/null; echo; done || true
+          # dev-runner's data dir defaults to modules/ui-web/.dev-data (dev-runner.cjs:251), not repo root.
+          DD=$(find . -maxdepth 4 -type d -name .dev-data 2>/dev/null | head -1)
+          echo "dataDir=$DD"
+          if [ -z "$DD" ]; then echo "(.dev-data not found anywhere)"; exit 0; fi
+          echo "### file tree ###"; find "$DD" -maxdepth 5 -type f 2>/dev/null | head -100
+          echo "### run.json / active.json ###"
+          find "$DD" \( -name active.json -o -name run.json \) 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done
+          echo "### logs (tail 200 each) ###"
+          find "$DD" -name '*.log' 2>/dev/null | while read -r f; do echo "===== $f ====="; tail -200 "$f" 2>/dev/null; echo; done
