@@ -1,21 +1,22 @@
 ---
-title: "CodeQL first manual run: alert triage, 5 fixes attempted, only 3 confirmed closed"
+title: "CodeQL first manual run: alert triage, 6 fixes attempted, only 3 confirmed closed"
 type: tempdoc
-status: "in progress — PR #103 (ffa2d2d) + PR #108 (652fd17) merged; final confirmed state: 3/5 claimed fixes auto-closed (20/21/22), alert #24 is fixed-but-CodeQL-won't-recognize (verified safe independently), alert #1 REMAINS OPEN even after a second, root-caused fix — verified safe against the specific attack found, but CodeQL's static analyzer still flags something; do not treat #1 as resolved — see 'Confirmed outcome' below"
+status: "in progress — PR #103 (ffa2d2d) + PR #108 (652fd17) merged, plus an uncommitted-as-of-writing fix for alert #25 (cross-spawn replacing the hand-rolled quoteCmdArg); final confirmed state: 3/6 claimed fixes auto-closed via CodeQL re-scan (20/21/22), alert #24 is fixed-but-CodeQL-won't-recognize (verified safe independently), alert #1 REMAINS OPEN even after a second, root-caused fix (verified safe against the specific attack found, but CodeQL's static analyzer still flags something — do not treat as resolved), alert #25 fixed but not yet re-scanned — see 'Confirmed outcome' below"
 created: 2026-07-08
 updated: 2026-07-08
 related: [695]
 ---
 
-# 698 — CodeQL first manual run: alert triage, 5 fixes attempted, only 3 confirmed closed
+# 698 — CodeQL first manual run: alert triage, 6 fixes attempted, only 3 confirmed closed
 
 ## What this document is
 
 `justsearch/codeql.yml` is `workflow_dispatch`-only (by design, matching ADR-0044's
 "specialty workflows stay manual") and had never been run — zero executions in its history
 before this session. This document records the first-ever manual dispatch of that workflow,
-the resulting alert set, the triage applied to each alert, the 5 code fixes attempted (only 3
-confirmed closed by a post-merge CodeQL re-scan), and the 24 alerts still open on GitHub. It is
+the resulting alert set, the triage applied to each alert, the 6 code fixes attempted (only 3
+confirmed closed by a post-merge CodeQL re-scan; a 6th, alert #25, was fixed after the initial
+triage on request and hasn't been re-scanned yet), and the alerts still open on GitHub. It is
 a triage/fix log, not a design decision — no ADR or canonical doc changed.
 
 **Public-visibility note:** CodeQL alerts on a public repository are visible to anyone who can
@@ -36,7 +37,7 @@ once this session's commit reaches `origin`.
   still open** — only 3 (20/21/22) confirmed closed. See "Confirmed outcome, round 1/2" below for
   the full accounting.
 
-## Code fixes made this session (5 alerts; only 3 confirmed closed on GitHub — see rows for #24, #1)
+## Code fixes made this session (6 alerts; only 3 confirmed closed on GitHub — see rows for #24, #1, #25)
 
 | Alert # | Rule | File:line | Fix | Verification evidence |
 |---|---|---|---|---|
@@ -45,6 +46,7 @@ once this session's commit reaches `origin`.
 | 22 | `js/insecure-randomness` | `modules/ui-web/src/shell-v0/plugin-api/capabilities/ai.ts:152` | `Math.random().toString(36)`-derived session ID replaced with `crypto.randomUUID()`. Traced the usage first: `getSessionTranscript(sessionId)` calls `GET /api/chat/sessions/{sessionId}/transcript` keyed solely by this ID (`ai.ts:183-190`), so a guessable ID was a plausible session-hijack vector for anything else able to reach the loopback API (e.g. another installed plugin). | `cd modules/ui-web && npx vitest run src/shell-v0/plugin-api/HostApiAi.test.ts` → 15/15 passed (the one relevant test, `HostApiAi.test.ts:145-150`, asserts ID uniqueness only, not format, so the change doesn't need a test update). `npm run typecheck` → exit 0 clean (this module is on the [known pre-existing TS5101-red baseline per `expected-state.v1.json`]; this run passed clean, i.e. strictly better than baseline, not regressed). |
 | 24 | `js/prototype-pollution-utility` | `scripts/dev/justsearch-dev-mcp-harness.mjs:60-68` (`setDeep`) | Added an `UNSAFE_KEY_SEGMENTS` guard rejecting `__proto__`/`constructor`/`prototype` path segments, thrown as an error instead of silently polluting. **CodeQL re-scanned this after merge and still shows the alert `open`** (`most_recent_instance` on the merge commit points at the same assignment line, now shifted to line 73) — its taint-tracking query doesn't recognize an early-throw `.some()` + `Set.has()` guard as a sanitizer for this rule. Verified independently of CodeQL's opinion: a direct test calling `setDeep({}, '__proto__.polluted', 'PWNED')` throws before any assignment and `Object.prototype.polluted` stays `undefined` afterward — the guard is genuinely effective, this is a CodeQL static-recognition gap, not an unfixed vulnerability. Left as-is rather than chasing a CodeQL-recognized rewrite (e.g. `Object.create(null)` intermediates) — low value for a script with one hardcoded call site. | `node --check scripts/dev/justsearch-dev-mcp-harness.mjs` → exit 0. Live-attack test: `setDeep({}, '__proto__.polluted', 'PWNED')` → throws `setDeep: refusing unsafe path segment...`; `({}).polluted` → `undefined` (unpolluted) both before and after the attempt. |
 | 1 | `js/redos` | `scripts/ci/verify-test-evidence-policy.mjs:216-224` (`elementAfter`) | **STILL OPEN on GitHub after two merged attempts — do not treat as resolved.** Attempt 1 (PR #103, `ffa2d2d`) bounded the regex's search window to 4000 chars (`ELEMENT_AFTER_WINDOW`). A closer adversarial-timing check (binary-searching input size after the fact) showed this doesn't work: a run of just ~150 whitespace characters — nowhere near the 4000-char bound — still took multiple seconds, because the blowup is exponential in the matched-and-failed substring, not the total input length; slicing the outer input doesn't bound that. Root cause found: the character class `[\w<>\[\], ? extends super.&]` (used twice, for a generic-type signature) contained a literal space, overlapping with the adjacent `\s+`/`\s*` quantifiers — the classic two-quantifiers-matching-the-same-characters ReDoS shape. Attempt 2 (PR #108, `652fd17`) removed the space from both occurrences; the 4000-char bound was kept as defense-in-depth. **This empirically fixed the specific attack found** (see verification column) **but a fresh CodeQL run after merge still shows the alert `open`** — see "Confirmed outcome, round 2" below. Unresolved: either a different backtracking-prone construct remains in the same regex, or this is a static-recognition gap like #24's. Not chased further this session — needs either deeper investigation or a full rewrite away from nested quantifiers. | `node scripts/ci/test-verify-test-evidence-policy.mjs` → `PASS` (existing test suite, unmodified — confirms no behavior change for legitimate input). Adversarial-timing, both patterns, run directly against the fixed regex: whitespace-run input up to 100,000 chars → 0-1ms; `@`-repetition and `"0final @"`-repetition input (CodeQL's own example text for this alert) up to 20,000 chars → 0ms both before and after the fix (neither pattern actually reproduced a hang — the real adversarial input was the whitespace run, found independently). Before attempt 2, the whitespace pattern exceeded 5 seconds at just ~150 chars. |
+| 25 | `js/shell-command-injection-from-environment` | `scripts/ci/report-build-attribution.mjs:334-345` (`runCommand`) | **Investigated and fixed, not just deferred** (was originally triaged "false positive as currently called, deferred hardening" — revisited on request). The hand-rolled `quoteCmdArg()` + manual `cmd.exe /d /s /c` invocation for `.bat`/`.cmd` targets on Windows was removed entirely and replaced with [`cross-spawn`](https://github.com/moxystudio/node-cross-spawn) (`^7.0.6`), already present in the dependency tree as a transitive dependency of `@modelcontextprotocol/sdk` and now promoted to a direct `devDependency`. `cross-spawn` is the same library npm/yarn use internally for exactly this problem; its escaping algorithm implements the reference Windows-quoting rules from qntm.org/cmd and was itself hardened against ReDoS in its own history (`moxystudio/node-cross-spawn#160`) — a validating precedent for choosing it. Investigation also found the previous code path was **dead code with zero coverage**: the only live CI caller (`.github/workflows/ci.yml:166`) invokes `./gradlew` (no `.bat` suffix) on `ubuntu-latest`, so the `.bat`+`cmd.exe` branch never executed in production; the existing test suite covered `buildReport()`'s formatting logic with `.bat`-shaped command arrays but never actually spawned one. Not a live vulnerability today, but a real gap now closed rather than left for "if this script's inputs ever become less trusted." | `node scripts/ci/test-report-build-attribution.mjs` → `PASS`, including two new tests added for this fix (previously zero coverage of the `.bat` path): (1) realistic Gradle-style arguments, including a Windows path containing spaces, round-trip byte-exact through a real `.bat` file spawned via `cross-spawn.sync`; (2) a classic injection payload (`legit-arg & echo INJECTED > "<marker-file>"`) passed as one argument does not create the marker file — confirmed the payload cannot break out of its argument slot to run a second command, and the argument following it still arrives intact. |
 
 **Confirmed outcome, round 1 (PR #103 merged as `ffa2d2d`; CodeQL run
 [actions/runs/28911958085](https://github.com/eliasjustus/justsearch/actions/runs/28911958085),
@@ -75,7 +77,7 @@ from "I edited the flagged line" or even "I found and fixed a real bug at that l
 actual post-merge scan result, and don't stop investigating just because the first re-check looks
 plausible.
 
-## Triaged, not fixed (4 individually-reviewed alerts)
+## Triaged, not fixed (3 individually-reviewed alerts)
 
 Each was checked against its actual call site (not just the rule label) before deciding not to
 fix it this session:
@@ -84,7 +86,6 @@ fix it this session:
 |---|---|---|---|---|
 | 27 | `java/error-message-exposure` | `modules/ui/src/main/java/io/justsearch/ui/api/SseWriter.java:105` | Likely false positive | The flagged catch block (`SseWriter.java:116-121`) only reaches `log.warn(...)` server-side; the exception is never written into the HTTP response. Also mitigated by loopback-only binding (Hard Invariant #2) even if this read were wrong. |
 | 26 | `js/clear-text-logging` | `scripts/agent-analytics/record-merge.mjs:79` | False positive | Logs a local session UUID truncated to 8 chars for merge-attribution telemetry — not a credential, token, or secret. |
-| 25 | `js/shell-command-injection-from-environment` | `scripts/ci/report-build-attribution.mjs:336` | False positive as currently called | Traced `command` back to `opts.command` (`report-build-attribution.mjs:65`), which comes from fixed CLI args in the CI workflow invocation, not PR/branch-derived environment content. **Deferred hardening, not urgent:** `quoteCmdArg` (`report-build-attribution.mjs:217-221`) is a hand-rolled `cmd.exe` argument escaper; this class of custom Windows quoting has a known history of escape bugs (cf. CVE-2024-27980-style Node/Windows issues) and is worth replacing with a vetted escaping library if this script's inputs ever become less trusted. |
 | 23 | `js/insecure-randomness` | `scripts/ci/run-agent-resume-replay-matrix.mjs:310` | False positive | Synthetic test-fixture session ID for a CI replay-matrix test, not a security boundary. |
 
 ## Not fixed — root-caused to one duplicated helper (18 alerts)
@@ -127,9 +128,11 @@ not merely 18 unrelated code-quality nits.
   **resolved, turned out false for 2 of 5.** See "Confirmed outcome" above: only 20/21/22
   closed; #24 won't (CodeQL-recognition gap, code is safe); #1 didn't close even after a
   second, root-caused, re-verified fix — genuinely unresolved, see Remaining work item 1.
-- That alerts 25/26/27's "false positive" assessment holds for *all* call sites, not just the
-  one each was traced to — each function (`runCommand`, the `console.log` in `record-merge.mjs`,
+- That alerts 26/27's "false positive" assessment holds for *all* call sites, not just the
+  one each was traced to — each function (the `console.log` in `record-merge.mjs`,
   `SseWriter.writeResult`) was checked at its actual (single, in each case) call site only.
+  (Alert 25 is no longer in this bucket — it moved from "false positive, deferred" to an
+  actual fix; see its row in the fixes table.)
 - That the `js/incomplete-multi-character-sanitization` root-cause theory (shared duplicated
   helper) is correct for all 16 CodeQL-flagged instances of that specific rule — confirmed for
   `check-atom-fork-ratchet.mjs` by direct read; the other 15 (plus the 2 sibling
@@ -150,12 +153,8 @@ not merely 18 unrelated code-quality nits.
 2. Decide on and schedule the `stripComments` unification (18+ alerts, 46 files) — largest
    remaining item by alert count, needs its own scoped session. (Recommended as a candidate
    future tempdoc when someone's ready to take it on — not opened speculatively here.)
-3. Optional hardening, not urgent: replace the hand-rolled `quoteCmdArg` in
-   `report-build-attribution.mjs` (used by the CI build-attribution script, alert #25) with a
-   vetted Windows-shell-escaping library instead of the current custom quote/escape logic. Not
-   urgent because the function's only current caller passes CI-fixed arguments, not
-   externally-influenced ones — so there's no live exploit today. Worth doing before this
-   script's inputs are ever less trusted (e.g., if it starts taking PR-derived values), since a
-   hand-rolled `cmd.exe` argument escaper is a class of code with a known history of escape bugs
-   (the same category as the CVE-2024-27980-style Node/Windows issues referenced in that alert's
-   row above).
+3. **Done, not yet pushed as of this writing:** alert #25's `quoteCmdArg`/manual-`cmd.exe`
+   replacement with `cross-spawn` (see its row above) — commit this and re-run CodeQL to confirm
+   it closes. Also worth: wiring `scripts/ci/test-report-build-attribution.mjs` into an actual CI
+   job (investigation for this fix found it isn't currently run by any workflow — it was only
+   ever run manually) so its now-meaningful `.bat`-path coverage doesn't silently bit-rot.

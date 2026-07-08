@@ -30,6 +30,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "cross-spawn": "^7.0.6",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
     "madge": "^8.0.0",
