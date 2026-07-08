@@ -735,7 +735,15 @@ this session (NOT a committed artifact — reproduce via the per-fix procedure a
   real-agent re-run of the same `log_dir` skipped the completed cell in **1.7 s** (vs 161 s cold).
   Regression test: `test_run_utility_eval_resumes_on_rerun_same_log_dir`. This is a worked-around
   UPSTREAM Inspect defect — any float task-arg / non-default `GenerateConfig` float would trip it; the
-  solver docstring warns against reintroducing a float into the arg surface.
+  solver docstring warns against reintroducing a float into the arg surface. **External corroboration
+  (2026-07-08 research pass):** the Inspect changelog shows the maintainers actively hardening
+  `task_identifier` against non-canonical fields — `0.3.189` *"task_identifier is now computed using
+  redacted model_args"*, `0.3.241` *"task_identifier now excludes runtime-only GenerateConfig fields
+  from model_roles configs"* — confirming the bug *class* is real and known upstream, though neither
+  entry covers our exact field (`max_budget`, a plain solver kwarg, not `GenerateConfig`/`model_roles`);
+  we're pinned at `0.3.240`, one version behind `0.3.241`, and upgrading would not fix this case. No
+  existing upstream issue matches our specific float→Decimal-via-`ijson` mechanism — worth filing
+  upstream if this becomes a recurring class of bug (not done here; no PR/issue opened without asking).
 - **F2 — timed-out/errored cells now keep their partial tool_calls.** The Context section named
   "timed-out cells lose their partial evidence" as a problem v2 must fix; the first cut still lost it
   (locals lost on `wait_for` cancellation). Fix: `_one_attempt` writes into a **shared `capture` dict**;
@@ -764,6 +772,13 @@ unrelated). Durable proofs of the fixes: `test_run_utility_eval_resumes_on_rerun
 `test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error` (F2). The live numbers
 (1.7 s resume vs 161 s cold, 42 `mcp__justsearch__*` calls, `error_max_turns`) are session observations,
 reproducible via `jseval utility-run --conditions C --seeds 1 --max-queries 1` against a live stack.
+
+**Concurrency-ceiling research note (2026-07-08):** `claude-agent-sdk`'s `ClaudeSDKClient` has no
+documented concurrency ceiling of its own — the real limit is the account's Anthropic API usage tier
+(requests/tokens per minute; Tier 1 ≈ 50 RPM up to Tier 4 ≈ 4,000 RPM). Pilot cells used up to 50
+tool-call turns each, so raising `concurrency` beyond 6 to close the remaining wall-clock gap risks a
+429 rate-limit that would misread as backend saturation — check the account's actual tier before the
+next concurrency pilot.
 
 ### Unverified assumptions / deferred checks / follow-up (2026-07-08)
 
