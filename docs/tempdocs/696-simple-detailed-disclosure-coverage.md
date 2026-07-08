@@ -85,6 +85,25 @@ Simple-mode user" findings; it should be retired if the product ever collapses S
 single always-plain mode. The generalized structure is deliberately not built now — the present
 problem only needs the specific sites wired.
 
+## Proportion/density — the deferred aspect, now measured and activated (→ tempdoc 697)
+
+This tempdoc argued the notification's *size* would "dissolve into the disclosure fix" (collapse it
+to a pill and it's slim). **Live measurement falsified that** (2026-07-08, against the running stack):
+
+- the Simple **collapsed pill** is **~76px** for a single line — ~2× a slim pill — because the
+  remedy renders as a full-size op-button (~42px) inside a one-line row;
+- the **user message bubble** is **~75px** for a 17px one-line message (audit-3's **D1**): the
+  `.message` `white-space: pre-wrap` (`views/unifiedChatStyles.ts`) renders the Lit template's
+  surrounding newlines as ~2 phantom blank lines;
+- the **expanded banner** is ~159px (mostly legitimate content, plus the same oversized button).
+
+These are **distinct root causes** in **distinct components** — not one shared bug, a *class*. That
+is exactly the earn-its-keep trigger the proportion principle was parked behind ("build it only if
+oversize findings recur across multiple distinct chrome atoms after disclosure is fixed"). The
+condition is now met, so the proportion principle activates and its **long-term fix is designed
+separately in tempdoc 697** (a measured size-budget guardrail + per-component root-cause fixes) —
+kept out of this tempdoc because it is a cross-cutting concern, not part of disclosure coverage.
+
 ## Implementation status (2026-07-08)
 
 Shipped in four commits on `worktree-ui-audit-density-review` (unit suite green throughout — 3719):
