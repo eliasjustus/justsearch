@@ -237,4 +237,10 @@ gate's own unit tests green — 10).
   full-size-remedy styling left) and the `.message` container pre-wrap is *moved*, not duplicated; the
   now-redundant `.message.assistant` reset is kept as a documented belt-and-braces with its comment
   updated. The sidecar `workflow-density-lens-proposal`'s review-tier process proposals (#1/#3/#4) are
-  superseded by this ratchet — to be marked closed-superseded in that (private) research trail.
+  marked closed-superseded by this ratchet in that (private) research trail.
+- **Independent review (reviewer ≠ implementer, 2026-07-08).** Passed — every load-bearing claim
+  (pre-wrap scoping to the user leaf only, the remedy custom-property/`::part` reachability, the
+  shrink-only gate's no-false-pass paths, the empty-baseline no-op, type-fix safety) confirmed against
+  primary source + passing tests. No blockers, no should-fix items; three cosmetic/defensive nits
+  accepted as-is (a no-op `min-height:0`, an unscoped-but-single-use class selector, and `regen`'s
+  shrink-only being human-supervised — matching the `ui_a11y_gate` precedent).
