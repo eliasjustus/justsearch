@@ -132,13 +132,13 @@ via virtual threads, then converge at the fusion stage.
 | 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope` per query term; O(1) via IndexReader; forwarded but not yet used for routing                                                      |
 | 4   | **Filter Parsing + Entity Expansion** | gRPC filters → Lucene queries; entity facet filters expanded via disambiguation cluster snapshot                                                                    |
 | 5   | **Staged Retrieval Dispatch**         | Dispatches to enabled legs; standard combos use optimized methods (`searchHybrid`, `searchHybridSplade`); novel combos use pairwise RRF fusion via `fuseLegs()`     |
-| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 3× limit for over-retrieval                                                                                                 |
-| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 2× limit; pre-filtered by runtime filters                                                                                            |
+| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 10× limit for over-retrieval (capped at `candidate_limit_max`, default 100)                                                  |
+| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 10× limit (capped at 100); pre-filtered by runtime filters                                                                           |
 | 8   | **SPLADE Search** ‖                   | `FeatureField` query with learned sparse weights                                                                                                                    |
 | 9   | **CC / RRF Fusion**                   | **CC** (default): min-max normalized convex combination with per-leg weights; **RRF** (alternative): `score = Σ(weight / (K + rank)) + bm25_boost × raw_score` (K=60, vectorWeight=0.75). 3-way variant (`fuseWithCC3`) available when SPLADE is active |
 | 10  | **Low-Signal Gating**                 | Caps vector-only results (default 3) when vector top score <0.40; prevents semantic hijack                                                                          |
 | 11  | **Stop-Word Short-Circuit**           | Skips vector search for trivial queries (<4 chars or single stop words)                                                                                             |
-| 12  | **Fuzzy Correction** (zero-hit retry) | Two-stage: (a) full Levenshtein fuzzy retry, (b) per-term replacement of zero-docFreq terms; only when zero hits on SIMPLE queries                                  |
+| 12  | **Fuzzy Correction**                  | Two-stage on SIMPLE queries: (a) full Levenshtein fuzzy retry fires when the query returns **zero** hits; (b) per-term augmentation of zero-`docFreq` terms fires when the query returns **nonzero** hits (can still change which document ranks first) |
 
 ‖ = parallel execution
 
@@ -152,7 +152,7 @@ RRF chunk merge.
 | #    | Stage                                      | What It Does                                                                                                                                                                                                                                                |
 | ---- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 13a  | **Chunk Branch Retrieval** (Stage 3a)      | Parallel chunk-level BM25 (`searchChunksText`), KNN (`searchChunkVector`), and SPLADE (`searchChunksSplade`) within `executeChunkBranchFusion`. Budget starts at `limit × CHUNK_INITIAL_CANDIDATE_MULTIPLIER`; retries at higher budget if any leg saturates |
-| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 256-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
+| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 512-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
 | 13c  | **Branch Fusion** (Stage 3b)               | Merges whole-doc branch with collapsed chunk-parent branch. Default strategy is CC (`fuseWithCCNamed`): chunk branch weight is modulated by parent length (short docs trust whole branch, long docs trust chunk branch; `chunkMinMultiplier` default 0.25). Alternative: RRF (`fuseWithRRFNamed`) when `branchFusionStrategy=rrf` |
 | 14   | **Match Spans + Excerpts + Facets**        | Character-offset spans for UI highlighting; IDF-weighted excerpt regions (top 3); DocValues facets first page only; entity canonical merge                                                                                                                 |
 
@@ -175,8 +175,9 @@ share the same Lucene index but have their own orchestration:
 **RAG Retrieval** (`RagContextOps`, `indexer-worker`): Used by AI chat.
 Retrieves chunks using BM25 or hybrid (BM25 + vector) search, then
 optionally reranks with a cross-encoder (GPU-aware, with deadline and VRAM
-arbitration). Applies MMR diversification to avoid redundant passages, then
-assembles context within a token budget. Falls back to full-document
+arbitration). Optionally applies MMR diversification (opt-in via
+`rag.diversify.mode=mmr`; positional diversification is the default) to reduce
+redundant passages, then assembles context within a token budget. Falls back to full-document
 retrieval with virtual chunking when no indexed chunks exist. Unlike the
 interactive pipeline, RAG retrieval is chunk-first (optimized for passage
 extraction) and runs entirely in the Worker process.

@@ -272,7 +272,7 @@ come from the neural encoder, not BM25 TF-IDF).
 
 | Search Path | IS_CHUNK Filter | Owner |
 |-------------|-----------------|-------|
-| Whole-doc SPLADE | `MUST_NOT is_chunk=true` | `LuceneIndexRuntime` |
+| Whole-doc SPLADE | `MUST_NOT is_chunk=true` | `TextQueryOps.buildSpladeQuery` (via `SearchExecutor.searchSplade`) |
 | Chunk SPLADE | `FILTER is_chunk=true` | `ChunkSearchOps` |
 
 Both paths share the same `FeatureField` query building logic. The chunk
@@ -282,8 +282,9 @@ document length (see [23-search-pipeline-overview.md § Stage 13b](23-search-pip
 
 ### 4B.4 Known Limitation
 
-SPLADE-v3 uses a BERT-base encoder with a 256-token max sequence length.
-Documents longer than ~256 tokens lose body terms from the SPLADE
+SPLADE-v3 uses a BERT-base encoder with a 512-token max sequence length
+(configurable via `JUSTSEARCH_SPLADE_MAX_SEQ_LEN`, default 512).
+Documents longer than ~512 tokens lose body terms from the SPLADE
 representation. The search pipeline compensates via parent-length
 modulation in `HybridFusionUtils.spladeParentLengthMultiplier()`, which
 tapers SPLADE weight linearly based on parent token count. For current
