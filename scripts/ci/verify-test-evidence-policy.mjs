@@ -213,8 +213,14 @@ function lineNumberAt(text, index) {
   return line;
 }
 
+// Bounded to a generous window rather than the rest of the file: the declaration this
+// looks for always follows shortly after `index` in real source, and unbounding it over
+// an entire large file lets the nested-quantifier regex below backtrack catastrophically
+// on adversarial input (js/redos, tempdoc 698 alert #1).
+const ELEMENT_AFTER_WINDOW = 4000;
+
 function elementAfter(cleanText, index) {
-  const tail = cleanText.slice(index);
+  const tail = cleanText.slice(index, index + ELEMENT_AFTER_WINDOW);
   const match = /(?:^|[\r\n])\s*(?:(?:@\w+(?:\([^)]*\))?\s*)|(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed|default|synchronized)\s+))*([\w<>\[\], ? extends super.&]+?\s+)?(class|interface|enum|record|void|[\w<>[\], ? extends super.&]+)\s+([A-Za-z_]\w*)\s*(?:[({]|extends|implements)/s.exec(tail);
   if (!match) return '<unknown>';
   const kind = match[2];

@@ -57,8 +57,13 @@ async function writeJson(filePath, obj) {
   await fsp.writeFile(filePath, JSON.stringify(obj, null, 2) + '\n', 'utf8');
 }
 
+const UNSAFE_KEY_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function setDeep(obj, dottedPath, value) {
   const parts = dottedPath.split('.');
+  if (parts.some((p) => UNSAFE_KEY_SEGMENTS.has(p))) {
+    throw new Error(`setDeep: refusing unsafe path segment in "${dottedPath}"`);
+  }
   let cur = obj;
   for (let i = 0; i < parts.length - 1; i += 1) {
     const p = parts[i];

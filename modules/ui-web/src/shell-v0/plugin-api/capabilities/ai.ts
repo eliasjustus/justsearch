@@ -149,7 +149,7 @@ export function createPluginAI(tier: PluginTrustTier, apiBase: string): PluginAI
   }
 
   function openSession(shapeId: string, sessionId?: string): AISession {
-    const id = sessionId ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = sessionId ?? `s-${crypto.randomUUID()}`;
     let closed = false;
     return {
       id,

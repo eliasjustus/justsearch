@@ -17,6 +17,9 @@ const net = require('net');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile } = require('child_process');
+// Tempdoc 696: resolve a >= 24 JDK (target Temurin 25) so a stale JDK-8 JAVA_HOME
+// can't break the assemble/head/worker JVMs. Injected into every JVM spawn's env below.
+const { resolveJdkHome } = require(path.join(__dirname, 'lib', 'resolve-jdk.cjs'));
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const uiWebDir = path.resolve(repoRoot, 'modules', 'ui-web');
@@ -1011,7 +1014,13 @@ async function cmdStart(opts) {
     const buildResult = spawnSync(
       gradlePath,
       ['assemble', '-PskipWebBuild=true'],
-      { cwd: repoRoot, shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'inherit'] },
+      // Tempdoc 696: pin a >= 24 JDK so a stale JDK-8 JAVA_HOME can't fail the assemble.
+      {
+        cwd: repoRoot,
+        shell: process.platform === 'win32',
+        stdio: ['ignore', 'pipe', 'inherit'],
+        env: { ...process.env, JAVA_HOME: resolveJdkHome() },
+      },
     );
     if (buildResult.status !== 0) {
       throw new Error(`Gradle assemble failed with exit code ${buildResult.status}`);
@@ -1079,6 +1088,9 @@ async function cmdStart(opts) {
       env: {
         ...process.env,
         ...aiEnv,
+        // Tempdoc 696: pin a >= 24 JDK for the Head JVM (ui.bat prefers JAVA_HOME); the
+        // Worker and inference processes the Head spawns inherit this env.
+        JAVA_HOME: resolveJdkHome(),
         JUSTSEARCH_API_PORT: String(apiPortRequested),
         JUSTSEARCH_DATA_DIR: dataDir,
         JUSTSEARCH_HOME: dataDir,

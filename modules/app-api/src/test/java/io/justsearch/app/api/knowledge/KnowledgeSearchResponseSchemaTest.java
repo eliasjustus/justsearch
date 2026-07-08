@@ -58,17 +58,19 @@ final class KnowledgeSearchResponseSchemaTest {
   @DisplayName("knowledge-search-response.v1.json matches baseline (facets typed map-of-map)")
   void schemaMatchesBaseline() throws IOException {
     JsonNode current = schemaGenerator.generateSchema(KnowledgeSearchResponse.class);
-    String currentJson = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    String currentJson =
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current).replace("\r\n", "\n");
     Path path = repoRoot.resolve("SSOT/schemas/knowledge-search-response.v1.json");
 
     if ("true".equals(System.getProperty("updateSchemas"))) {
       Files.createDirectories(path.getParent());
-      Files.writeString(path, currentJson + System.lineSeparator());
+      Files.writeString(path, currentJson + "\n");
       return;
     }
     if (!Files.exists(path)) {
       Files.createDirectories(path.getParent());
-      Files.writeString(path, currentJson + System.lineSeparator());
+      Files.writeString(path, currentJson + "\n");
       fail("Schema captured at " + path + ". Re-run to verify (expected on first run).");
     }
     assertEquals(
