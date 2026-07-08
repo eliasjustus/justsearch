@@ -2257,11 +2257,39 @@ the correct path, the CI stack logs show the stack **fully comes up** on the GPU
 
 **Significance.** This is *not* a CI-config tweak — it is the proof-lane doing its job: it caught that
 the model-less onramp does not reach a "ready" verdict on a stock GPU-less runner, despite search
-working. The `publishMode … realized=retrieval-only` line is from **657**, which merged (2026-07-02)
-*after* the fifteenth pass last validated this smoke locally (2026-07-01, empty models, 18s, with a GPU
-present) — so a **654/657-era regression in the degraded-mode readiness/status contract** is a live
-hypothesis. This changes the §E verdict's "only a small CI fix remains": the CI-config half (assemble
-pre-build) is done, but a real readiness-contract question remains and needs an owner decision (fix
-dev-runner's degraded-readiness gate / align the timeouts / lower the smoke's readiness bar to
-"search-capable"). Not resolved autonomously — stopped here for direction rather than burning more CI.
+working. [Both degraded-503 and the 654/657-regression hypotheses below were subsequently FALSIFIED —
+see §I for the proven root cause.]
+
+### I. PROVEN root cause — a latent port-wait loop bug in dev-runner (2026-07-08, run `28909380542`)
+A decisive diagnostic run (force dev-runner's own timeouts to 120s < the smoke's 240s; `cat manifest.json`)
+**passed** — and a *shorter* timeout making a hang "pass" is the signature of a loop that always runs to
+its deadline. Passing timeline: launch 01:00:15 → "stack up" 01:02:17 (**~122s**, i.e. exactly the injected
+120s), then query → 1 result, TEXT, tier 0. Traced to source, airtight:
+
+- `apiPortRequested = opts.apiPort` = **0** (ephemeral; the smoke requests no `--api-port`).
+  `apiPortActual` inits to 0 (`dev-runner.cjs:1063`).
+- The port-wait loop (`:1198`): `while ((apiPortRequested <= 0 || apiPortActual <= 0) && Date.now() <
+  waitForPortDeadline)`. `apiPortRequested` is a `const 0`, so **`apiPortRequested <= 0` is permanently
+  true** → the loop can never exit early. It *does* discover the real port mid-loop (`apiPortActual = p`,
+  `:1204`) but ignores it and spins until `portEmitTimeoutMs` elapses.
+
+**So dev-runner always burns the entire `portEmitTimeoutMs` before emitting ready whenever an ephemeral
+port is used (the default).** Effect by env (`:1146`/`:1154`): local non-CI = 15s (this is exactly why the
+fifteenth pass measured "18s" — startup was never fast, the loop wasted 15s); **CI = 300s**, which exceeds
+the smoke's 240s `startStack` budget (`stage-reference-corpus.mjs:29`) → killed first → "stack start timed
+out", deterministically, every run.
+
+**Falsified:** degraded-503 (`/api/status` is always 200; `/api/health` maps DEGRADED→200); the 654/657
+regression (the bug predates them — it's just masked locally as "~15s startup"); flakiness (it's fully
+deterministic). GPU/model-less-ness is irrelevant except that CI happens to set `CI=1` (→ the 300s branch).
+
+**Fix (one line, real):** `:1198` → `while (apiPortActual <= 0 && Date.now() < waitForPortDeadline)` —
+drop the wrong `apiPortRequested <= 0` term; exit the moment the actual port is discovered. This makes
+every dev-stack start ~10s faster (exit at ~4s, not the full timeout) *and* makes the smoke pass on CI
+comfortably under budget — a strict improvement, shared dev-runner core (verify no other caller depends
+on the full-wait behavior; none should — the loop's purpose is "wait until the port is known"). The §H
+timeout-inversion is then moot, but aligning them (smoke budget ≥ dev-runner's) is worth doing as defence.
+NOT yet implemented — dev-runner is shared infra; awaiting go-ahead. The workflow currently carries
+diagnostic cruft (120s-timeout env, `manifest.json` dump, the `if:failure()` log step) to remove when the
+real fix lands.
 
