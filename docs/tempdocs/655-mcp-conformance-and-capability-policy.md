@@ -1896,3 +1896,47 @@ the CLI injects a server's `instructions`, not a repo artifact.
 ~1800 lines), a **top-of-file "STATUS SUMMARY … read this first"** block — carrying current state, per-claim
 evidence pointers, and forward-looking risks — is what makes it usable on handoff. Treat that as the
 convention for any tempdoc past a few passes, not an ad-hoc addition.
+
+---
+
+# Scale-corpus re-test of the agent-legibility layer (2026-07-08) — answer-first usage moved off zero; adoption still low+late (joint effect with scale)
+
+> Source: tempdoc 624 pass 26 (scale-corpus matrix, battlefield-en-scale-v1, 2736 docs / 380 queries).
+> Success metric this section is accountable for (pre-registered in "Adoption-zero finding"): the
+> before/after adoption delta on a re-run of the pilot through the shipped legibility layer.
+
+| Metric | Before (390-doc, pre-655, pilot pass 25) | After (2736-doc, post-655, pass 26) |
+|---|---|---|
+| `instructions` field + comparative hints | absent | present (TOOL_SURFACE_VERSION 0.2.0) |
+| `adoption_rate` (B, offered) | **0.0** | **16.7%** (5/30) |
+| `first_mcp_call_index` (median, B) | null (no calls) | **21st tool call** (late) |
+| `justsearch_answer` calls (any arm, any run on record) | **0 — never** | **27 cells** (4 B + 23 C) |
+| answer-first usage rate (C, forced) | undefined | **76.7%** |
+| habit-prior signal | not measured | **18/30 C cells** attempted a disallowed file tool (blocked) |
+
+## Reading
+
+The shipped agent-legibility layer's designated primary tool, `justsearch_answer`, went from
+**never called in the campaign's entire history** to called in 27 cells — and when the agent is forced
+onto the MCP surface (C), it uses answer-first 76.7% of the time. That is the clearest evidence to date
+that the connect-time `instructions` + answer-first steering reached the model. **But offered-arm
+adoption is still only 16.7% and arrives on the ~21st tool call** — the agent grep-flails first and
+reaches for the tool late, and 18/30 forced cells still reflexively try grep. So the layer moved
+*answer-tool choice once retrieval is used*, but did **not** close the *decision-to-retrieve* gap.
+
+## The confound, stated honestly
+
+Both the corpus scale AND the 655 layer changed between the two measurement points, so the adoption
+delta (0.0→16.7%) is a **joint effect**, not an isolated 655 effect — more docs to grep raises the
+brute-force cost independent of any wording change. No ablation (post-655 code on the 390-doc corpus, or
+pre-655 code on the scale corpus) was run, so the two are not separable from this run alone. What *is*
+attributable more cleanly to 655: `justsearch_answer` usage (the layer specifically promotes it, and it
+was never called pre-655 across many runs on other corpora).
+
+## Next lever (owned here)
+
+The decision-to-retrieve gap is now quantified (adoption 16.7%, median 21st call, 18/30 habit-prior
+grep attempts) — this is the concrete target for the still-open 655 steering candidates (tool
+naming/annotations, `initialize.instructions` strengthening, an answer-first framing that fires before
+the agent commits to grep). The model-tier sweep (624 Step-2) discriminates whether the residual gap is
+capability-driven or rational.
