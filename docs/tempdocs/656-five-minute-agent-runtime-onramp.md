@@ -35,6 +35,12 @@ related:
 
 > NOTE: Noncanonical working tempdoc. Verify against canonical docs and code before
 > treating any claim as current truth.
+>
+> **Handoff (2026-07-08 takeover):** the onramp CI proof-lane (`onramp-smoke.yml`) was red-since-inception;
+> it is now root-caused, fixed, and green, and the §K follow-ons **K1/K2/K4 shipped** (K3 deferred). The
+> **frontmatter `status:` blob predates this takeover** — a continuing agent should read **§17 onward**, and
+> start from **§K.7 (Handoff)** at the foot of this doc for current state, verification evidence pointers,
+> unverified assumptions, and remaining work.
 
 # 656 - Five-minute agent/runtime onramp
 
@@ -2414,4 +2420,65 @@ Implemented the warranted §K.5 subset (dev/CI infra only; no product code):
   class). Boundary logic unit-sanity-checked; four dev-runner suites green; `node -c` clean.
 - **K3 (deferred):** logged an observation — cadence/surfacing needs a standing external dispatcher, an
   owner/infra decision (not autonomously implementable). No scheduler added.
-Verified end-to-end by a green `Onramp Smoke` dispatch (latency line present + under budget).
+
+Verification evidence (per claim):
+- `node -c` on the three edited scripts → clean (command run 2026-07-08).
+- Four dev-runner suites green → `test-dev-runner-{admission,gate-integration,pruning,runtime-resolution}.mjs`
+  all PASS (command run 2026-07-08).
+- K4 boundary logic → isolated `node -e` check: `5.0s→pass`, `89.999s→pass`, `90.001s→FAIL`, `130s→FAIL`.
+- **End-to-end green `Onramp Smoke` dispatch → run `28950317619` (see §K.7 for outcome; PENDING at the time
+  this line was written).** The K4 *failure path* (assertion actually fires in a live run with the env set
+  low) was NOT exercised end-to-end — only the isolated arithmetic above.
+
+## §K.7 Handoff — current state, evidence, unverified assumptions, remaining work (2026-07-08)
+
+Written for a continuing agent who has NOT read the takeover chat. Everything below points to durable,
+public artifacts (public-repo `file:line`; public GitHub Actions run-ids under
+`github.com/eliasjustus/justsearch/actions/runs/<id>`) — no private/internal-only context is required.
+
+### Current state (one paragraph)
+The onramp CI proof-lane (`.github/workflows/onramp-smoke.yml`) had never passed since it was added. This
+takeover root-caused and fixed it (three layered defects — §G/H assemble timeout, §I dev-runner port-wait
+loop, §J worker-warmup ingest 503), then shipped the §K.5-warranted follow-ons K1/K2/K4 and deferred K3.
+All work is on branch **`worktree-656-onramp-takeover`** (pushed; **NOT merged** — awaiting owner go-ahead).
+656's original feature scope was already shipped/merged pre-takeover; nothing in the original scope was
+reopened.
+
+### What shipped this takeover (with evidence pointers)
+| Change | File | Evidence |
+|---|---|---|
+| §I port-wait loop exits on discovery (root fix) | `scripts/dev/dev-runner.cjs:1203` | run `28909380542` (green); 4 dev-runner suites PASS |
+| §J ingest retry (worker-warmup 503) | `scripts/dev/lib/stage-reference-corpus.mjs` `stageAndVerify` | run `28910511992` (green, 1 result TEXT tier 0) |
+| assemble pre-build | `.github/workflows/onramp-smoke.yml` | build step green in runs `28906396989`+ |
+| K1 docs comment (ready≠worker-ready) | `scripts/dev/dev-runner.cjs:605` | code + §K.5 trace (`KnowledgeSearchController` ~223/~714 = 503 gate) |
+| K2 startStack budget 240→330s | `scripts/dev/lib/stage-reference-corpus.mjs:29` | code; rationale §H |
+| K4 stack-up latency assertion | `scripts/dev/test-onramp-first-success.mjs` | `node -e` boundary check (§K.6); e2e = run `28950317619` |
+
+### Unverified assumptions / deferred checks (do NOT treat as done)
+1. **End-to-end green run for K1/K2/K4: run `28950317619` was PENDING at session end.** Confirm it went
+   green (latency line ~5s, "OK onramp first-success"). If red, read its `if:failure()` log-dump step.
+2. **K4 failure-path never exercised live** — only isolated arithmetic (§K.6). A real run with
+   `JUSTSEARCH_ONRAMP_MAX_STACKUP_MS=1` to confirm the assertion actually fires was not done.
+3. **K4 90s threshold rests on two CI data points (~5s each)** — cold-runner variance not swept. If a
+   legitimate cold runner ever nears 90s, raise the env/default (do not tighten).
+4. **K1 worker-available signal is code-traced, not live-probed.** The live 503→200 experiment (planned in
+   T1) was skipped as low-value once the code answered it; the WorkerCapability-gate reading
+   (`KnowledgeSearchController.isWorkerReady()` → `WorkerCapability.available()`) is high-confidence but not
+   empirically observed this session.
+
+### Remaining / follow-up work (must not be forgotten)
+- **K3 (freshness cadence) — OWNER DECISION.** `scripts/ci/workflow-signal-health.mjs` reports staleness but
+  nothing runs it; real cadence needs a standing external dispatcher (a scheduled cloud agent), a billing/infra
+  call. Logged to the observations inbox this session. Not autonomously implementable.
+- **Optional K1 dev-runner worker-gate — deliberately NOT done** (recommended against, §K.5: unnecessary +
+  shared-infra blast radius). Only revisit if a non-smoke consumer trips the same 503 race.
+- **Merge:** the branch is green-and-ready (pending check #1 above); squash-merge collapses the iteration/
+  diagnostic commits per ADR-0045. Do not merge without owner go-ahead.
+- **Deferred tier-projection (fourteenth pass)** remains correctly gated on a second tier-renderer; re-verified
+  this session that `deriveTier` is still single-consumer (`scripts/dev/doctor.mjs`) even after 654/657 merged.
+
+### Stale-doc note
+The frontmatter `status:` blob still reads "IMPLEMENTED … 2026-07-01" and does not mention the proof-lane
+saga — it predates this takeover. Left as dated history (per the append-only convention); the top-of-doc
+Handoff note + §17→§K.7 supersede it. No canonical (`docs/{explanation,reference,how-to,decisions}`) doc was
+found stale or edited by this takeover — all changes were to `scripts/dev/**` + this tempdoc + the workflow.
