@@ -1,23 +1,23 @@
 ---
-title: "CodeQL first manual run: alert triage, 6 fixes attempted, only 3 confirmed closed"
+title: "CodeQL first manual run: alert triage — 18 of 27 alerts have code fixes, only 3 confirmed closed"
 type: tempdoc
-status: "in progress — PR #103 (ffa2d2d) + PR #108 (652fd17) merged, plus an uncommitted-as-of-writing fix for alert #25 (cross-spawn replacing the hand-rolled quoteCmdArg); final confirmed state: 3/6 claimed fixes auto-closed via CodeQL re-scan (20/21/22), alert #24 is fixed-but-CodeQL-won't-recognize (verified safe independently), alert #1 REMAINS OPEN even after a second, root-caused fix (verified safe against the specific attack found, but CodeQL's static analyzer still flags something — do not treat as resolved), alert #25 fixed but not yet re-scanned — see 'Confirmed outcome' below"
+status: "in progress — PR #103 (ffa2d2d) + PR #108 (652fd17) merged; plus two uncommitted-as-of-writing fixes: alert #25 (cross-spawn) and the stripComments unification (12 alerts across 11 files, corrected from an original mis-scoped '18 alerts / 46 files' claim — see that section). Final CodeQL-confirmed state so far: 3/27 auto-closed (20/21/22); alert #24 fixed-but-CodeQL-won't-recognize; alert #1 fixed (root-caused, re-verified) but still shows open for an unexplained reason — do not treat as resolved; alerts #25 and the 12 stripComments alerts fixed but not yet re-scanned; 6 alerts wrongly folded into the original stripComments story still need individual triage; 3 alerts are false positives, left as-is"
 created: 2026-07-08
 updated: 2026-07-08
 related: [695]
 ---
 
-# 698 — CodeQL first manual run: alert triage, 6 fixes attempted, only 3 confirmed closed
+# 698 — CodeQL first manual run: alert triage — 18 of 27 alerts have code fixes, only 3 confirmed closed
 
 ## What this document is
 
 `justsearch/codeql.yml` is `workflow_dispatch`-only (by design, matching ADR-0044's
 "specialty workflows stay manual") and had never been run — zero executions in its history
 before this session. This document records the first-ever manual dispatch of that workflow,
-the resulting alert set, the triage applied to each alert, the 6 code fixes attempted (only 3
-confirmed closed by a post-merge CodeQL re-scan; a 6th, alert #25, was fixed after the initial
-triage on request and hasn't been re-scanned yet), and the alerts still open on GitHub. It is
-a triage/fix log, not a design decision — no ADR or canonical doc changed.
+the resulting alert set, the triage applied to each alert, and the fixes made across several
+passes (including two corrections caught only on revisit, not before merge — see the alert #1
+and stripComments sections). It is a triage/fix log, not a design decision — no ADR or canonical
+doc changed.
 
 **Public-visibility note:** CodeQL alerts on a public repository are visible to anyone who can
 see the repo (unlike Dependabot/secret-scanning alerts, which stay restricted to write-access
@@ -88,56 +88,110 @@ fix it this session:
 | 26 | `js/clear-text-logging` | `scripts/agent-analytics/record-merge.mjs:79` | False positive | Logs a local session UUID truncated to 8 chars for merge-attribution telemetry — not a credential, token, or secret. |
 | 23 | `js/insecure-randomness` | `scripts/ci/run-agent-resume-replay-matrix.mjs:310` | False positive | Synthetic test-fixture session ID for a CI replay-matrix test, not a security boundary. |
 
-## Not fixed — root-caused to one duplicated helper (18 alerts)
+## Fixed — the duplicated `stripComments` helper, unified (originally mis-scoped as 18 alerts / 46 files; corrected below)
 
-Alerts 2–19 (16 tagged `js/incomplete-multi-character-sanitization`, 2 tagged
-`js/incomplete-sanitization`) all trace to variants of the same `stripComments`-style chained
-regex helper (strip `<!-- -->`, then `/* */`, then doc-comment lines, then `//` line comments,
-in that fixed order) — see e.g. `scripts/ci/check-atom-fork-ratchet.mjs:42-48` for one instance.
+**Correction to the original triage in this section (caught on revisit, not before):** the
+original pass claimed all 18 `js/incomplete-(multi-character-)sanitization` alerts traced to one
+duplicated helper across "46 files," found via a loose search
+(`rg -l "stripComments|const norm = |replace\\(/<!--<"  scripts/`). Both numbers were wrong:
 
-**This is broader than the 18 flagged alerts.** A repo-wide search
-(`rg -l "stripComments|const norm = |replace\\(/<!--<"  scripts/`) found the same pattern
-independently reimplemented in **46 files** under `scripts/ci/`, `scripts/governance/`,
-`scripts/agent-analytics/`, and `scripts/dev/justsearch-dev-mcp/`. CodeQL only flags the 18 (of
-46) whose stripped output feeds into a security-relevant decision (a governance gate's
-pass/fail) — the other 28 uses of the same pattern were not analyzed as reaching a CodeQL sink,
-not because they're safe.
+- The loose `rg` pattern over-matched on the generic `const norm = ` fragment (used by unrelated
+  path-normalization code, e.g. `scripts/agent-analytics/hooks/intervene.mjs`) and on bare
+  mentions of the word "stripComments". The **precise** match count (files containing the actual
+  4-step or 3-step chained-regex body) was **20 files**, not 46.
+- Of the original 18 CodeQL alerts, only **12** (across 11 distinct files — `check-controls-a11y.mjs`
+  has 2 flagged lines) actually trace to this duplicated helper. The other **6** alerts
+  (`textHelpers.ts:7`'s `stripHtml`, `sarif-to-markdown.mjs:91`'s markdown pipe-escaper,
+  `check-shape-view-coverage.mjs:92`'s dynamic-regex-metachar escaper, and
+  `prose-tier-register/{scanner,enforcer}.mjs`'s simpler one-line `<!--[^>]*-->` anchor-comment
+  strip) are **unrelated, individually-distinct sanitization issues** that happen to share the
+  same CodeQL rule family — they were incorrectly folded into this story and still need their own
+  individual triage (not attempted this session; see Remaining work).
+- A further repo-wide sweep (beyond the 20 CodeQL-visible files) found **5 more files** using
+  variant shapes of the identical bug (a 2-step "block comment, then line comment" chain, with no
+  `://`-guard on the line-comment step, in `check-modality-contract.mjs`, `check-thread-event-kinds.mjs`,
+  `check-realized-capability.mjs`, `check-capability-availability.mjs`, `check-ambient-purity.mjs`) —
+  none of these were CodeQL-flagged (their output apparently doesn't reach a CodeQL-recognized
+  sink), but they're the same defect. **Total files actually fixed this pass: 25** (20 + 5), not
+  46 and not 18.
 
-**Why this matters beyond CodeQL's specific complaint:** a fixed-order chained strip can be
-defeated by adversarially nested delimiters (e.g. content crafted so that stripping `/* */`
-first leaves behind a reconstituted `//` sequence, or vice versa) — for a governance gate that
-exists specifically to *detect real usage of something in source*, a bypassable comment-stripper
-means a crafted source file could hide real usage from the gate. This is a "wrong-gate"-class
-concern (per this repo's own `docs/reference/contributing/agent-postmortems.md` vocabulary),
-not merely 18 unrelated code-quality nits.
+**Also corrected: the original recommended fix was wrong.** The first framing of this problem
+recommended "extract one canonical shared regex-based helper." That's not the right fix — the
+user pushed back (rightly): this is a well-known, already-solved problem, and a real single-pass
+scanner is not a novel invention needed here. It was inline-invented anyway *because* nobody
+checked first — a textbook instance of this repo's own `explore-before-implementing` rule (the
+repo's dependency tree already carries the TypeScript compiler, Babel's parser, Acorn, and Espree
+— any of which trivially and unambiguously locates JS/TS comments via a real grammar, not text
+matching). Since this corpus mixes JS/TS scanning with Java-source scanning (which those parsers
+don't cover) and Markdown/HTML-comment scanning, the pragmatic fix landed on: a small, correct,
+**single-pass, mode-tracked character scanner** (`scripts/lib/strip-comments.mjs`) — the same
+technique already used elsewhere in this exact repo for the identical problem (see below) —
+rather than either a four-pass regex chain or pulling in a full language parser per call site.
 
-**Follow-up, not attempted this session (scope too large for one sitting):**
-1. Extract one canonical `stripComments`/`stripCommentsForSourceScan` helper (module location
-   TBD — a `scripts/lib/` or similar shared location) with an order/algorithm that isn't
-   defeatable by nested delimiters (e.g. a single-pass tokenizer rather than four sequential
-   `.replace()` calls).
-2. Migrate the 46 call sites to import it instead of reimplementing it locally.
-3. Re-run CodeQL after the migration and confirm alerts 2–19 close.
-4. This is exactly the class of "helper reimplemented instead of reused" this repo's own
-   `explore-before-implementing` rule warns about — worth noting as a concrete instance the
-   next time that rule needs a real example.
+**The correct pattern already existed in this codebase, unused by the 25 duplicated copies:**
+`scripts/ci/verify-test-evidence-policy.mjs`'s own `stripCommentsAndStrings()` (used to produce
+`clean` text for `discoverEvidenceSubjects`, in the very same file whose `elementAfter` regex
+was this tempdoc's alert #1) is *already* a correct single-pass, mode-tracked scanner — proof
+that the safe pattern was one file-read away the whole time.
+
+**The concrete bug, demonstrated (not just asserted):** the chained-regex version processes
+comment kinds in a fixed order, and each `.replace()` call scans the *output* of the previous
+call — so removing one comment kind can bring previously non-adjacent characters together into
+a brand-new comment-looking sequence that never existed in the original text, hiding real code:
+
+```
+stripComments('/<!-- hide -->* REAL_USAGE_X */')
+// original chained-regex version: ''                       (REAL_USAGE_X silently erased)
+// scripts/lib/strip-comments.mjs: '/* REAL_USAGE_X */'      (REAL_USAGE_X preserved)
+```
+
+For a governance gate whose entire job is "does this source actually use symbol X", an
+attacker (or an accident) that erases `REAL_USAGE_X` from the gate's view defeats the gate
+outright — a "wrong-gate"-class concern (this repo's own
+`docs/reference/contributing/agent-postmortems.md` vocabulary), not a cosmetic nit.
+
+**Verification, not just a differential-test claim:**
+- `node scripts/lib/strip-comments.test.mjs` → `PASS` — 25 representative + edge-case inputs
+  (unterminated comments, division operators, `://` URLs, empty comments, etc.) produce
+  byte-identical output to the original chained-regex implementation, for both the
+  `withHtml: true` (11 files) and `withHtml: false` (9 files) variants — plus the bypass
+  demonstration above, confirming the original is vulnerable and the replacement is not.
+- All **25** migrated gate scripts run clean (`exit 0`) against the real repository tree
+  post-migration.
+- The two pre-existing dedicated tests that import a migrated file's `stripComments` export
+  directly (`check-realized-capability.test.mjs`, `check-capability-availability.test.mjs`) →
+  both `PASS`.
+- **4 direct before/after spot-checks** (`check-atom-fork-ratchet`, `check-language-agnostic-analysis`,
+  `check-ambient-purity`, `check-realized-capability` — spanning all three variant shapes: 4-step,
+  3-step, and the 2-step block+line variant) via `git stash push -- <file>` isolating one file at a
+  time: byte-identical stdout/stderr and identical exit code before and after migration, confirming
+  the fix is behavior-preserving for real, legitimate repository content — not just for
+  synthetic test cases.
+
+**Not attempted this session — the 6 individually-distinct alerts wrongly folded into this
+story originally** (see Remaining work): `textHelpers.ts`, `sarif-to-markdown.mjs`,
+`check-shape-view-coverage.mjs`, and `prose-tier-register/{scanner,enforcer}.mjs` each need
+their own individual triage, unrelated to this fix.
 
 ## Unverified assumptions (explicit)
 
 - ~~That the 5 fixes will make their corresponding GitHub alerts auto-close once pushed~~ —
   **resolved, turned out false for 2 of 5.** See "Confirmed outcome" above: only 20/21/22
   closed; #24 won't (CodeQL-recognition gap, code is safe); #1 didn't close even after a
-  second, root-caused, re-verified fix — genuinely unresolved, see Remaining work item 1.
+  second, root-caused, re-verified fix — genuinely unresolved, see Remaining work's alert-#1 item.
 - That alerts 26/27's "false positive" assessment holds for *all* call sites, not just the
   one each was traced to — each function (the `console.log` in `record-merge.mjs`,
   `SseWriter.writeResult`) was checked at its actual (single, in each case) call site only.
   (Alert 25 is no longer in this bucket — it moved from "false positive, deferred" to an
   actual fix; see its row in the fixes table.)
-- That the `js/incomplete-multi-character-sanitization` root-cause theory (shared duplicated
-  helper) is correct for all 16 CodeQL-flagged instances of that specific rule — confirmed for
-  `check-atom-fork-ratchet.mjs` by direct read; the other 15 (plus the 2 sibling
-  `js/incomplete-sanitization` alerts) were inferred from the shared `rg` match, not
-  individually read line-by-line.
+- ~~That the `js/incomplete-multi-character-sanitization` root-cause theory (shared duplicated
+  helper) is correct for all 16 CodeQL-flagged instances... inferred, not individually read~~ —
+  **resolved.** All 25 files with the actual duplicated pattern (not 46 — that count was also an
+  artifact of a loose search) were individually read and migrated; 4 spot-checked directly
+  against their pre-migration behavior. The theory held for 12 of the original 18 alerts; the
+  other 6 turned out to be unrelated issues incorrectly folded in (see the stripComments
+  section above) — that was the actual gap in the original assumption, not under-verification of
+  the ones that *were* real.
 
 ## Remaining work / do not forget
 
@@ -150,11 +204,28 @@ not merely 18 unrelated code-quality nits.
    the existing regex and rewrite `elementAfter` as a manual character-scan loop instead of one
    large regex, which sidesteps nested-quantifier backtracking by construction rather than
    patching around it.
-2. Decide on and schedule the `stripComments` unification (18+ alerts, 46 files) — largest
-   remaining item by alert count, needs its own scoped session. (Recommended as a candidate
-   future tempdoc when someone's ready to take it on — not opened speculatively here.)
-3. **Done, not yet pushed as of this writing:** alert #25's `quoteCmdArg`/manual-`cmd.exe`
+2. **Done, not yet pushed as of this writing:** the `stripComments` unification (see its section
+   above) — 25 files migrated to `scripts/lib/strip-comments.mjs`, differential-tested,
+   spot-checked. Commit and re-run CodeQL to confirm the 12 previously-flagged alerts
+   (3/4/5/6/7/8/9/10/11/12/13/14) close.
+3. **New from the stripComments correction:** 6 alerts wrongly folded into the original
+   "stripComments" story still need their own individual triage — `textHelpers.ts:7` (`stripHtml`,
+   a naive single-pass HTML-tag stripper, different concern entirely), `sarif-to-markdown.mjs:91`
+   (markdown pipe-escaping), `check-shape-view-coverage.mjs:92` (regex-metachar escaping for a
+   dynamically-built `RegExp`), and `prose-tier-register/{scanner,enforcer}.mjs` (a simpler,
+   single-step `<!--[^>]*-->` anchor-comment strip — related in spirit but not the same bug, and
+   not migrated to the shared helper since its call sites are line-scoped, not full-file).
+4. **Done, not yet pushed as of this writing:** alert #25's `quoteCmdArg`/manual-`cmd.exe`
    replacement with `cross-spawn` (see its row above) — commit this and re-run CodeQL to confirm
    it closes. Also worth: wiring `scripts/ci/test-report-build-attribution.mjs` into an actual CI
    job (investigation for this fix found it isn't currently run by any workflow — it was only
    ever run manually) so its now-meaningful `.bat`-path coverage doesn't silently bit-rot.
+5. **Alert #1 is still the one open item that actually needs work.** Two merged attempts, the
+   second root-caused and empirically re-verified against the specific attack found, and the
+   GitHub alert *still* shows `open` after both a normal wait and an extended ~4-minute poll
+   (ruling out simple recomputation lag — compare: 20/21/22 flipped within that kind of window in
+   round 1). Next step is not "wait longer" — it's either (a) find what CodeQL's static analyzer
+   is still seeing in the regex that the empirical testing hasn't reproduced, or (b) stop trying
+   to patch the existing regex and rewrite `elementAfter` as a manual character-scan loop instead
+   of one large regex, which sidesteps nested-quantifier backtracking by construction rather than
+   patching around it.

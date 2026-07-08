@@ -17,16 +17,13 @@
  * such surface is a discovery-step register row). A local pre-merge check, not a kernel gate.
  */
 import { readFileSync } from 'node:fs';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/realized-capability-surfaces.v1.json';
 
 /** Strip // and block comments so a doc mention of the field doesn't satisfy/trip the scan. */
 export function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((l) => l.replace(/\/\/.*$/, ''))
-    .join('\n');
+  return stripCommentsShared(src, { withHtml: false });
 }
 
 /** Does the (comment-stripped) source CONSUME the projected field (e.g. `.realized`)? */

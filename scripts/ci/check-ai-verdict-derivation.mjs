@@ -21,17 +21,14 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/ai-verdict-derivation.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
 
 const norm = (p) => p.replace(/\\/g, '/');
 
-const stripComments = (s) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 
 const predicate = new RegExp(reg.predicatePattern);
 const failures = [];
