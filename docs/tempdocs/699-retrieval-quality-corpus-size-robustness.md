@@ -524,3 +524,129 @@ Five experiments turned the static "artifact, park it" inference into a measured
 corpora (measured 3k→10k), the 624 collapse is a synthetic-corpus pathology, ANN is not the cause."** The
 only forward work is optional: a cross-size ratchet (Milestone D) as a low-priority standing guard, and a
 one-line hand-off of the fusion-splice robustness note to 636. No engine fix is warranted now.
+
+## Theorization & open directions (2026-07-08 — NOT design; ideas to weigh before anything hardens)
+
+> The narrow question is settled, but the experiments exposed structure worth thinking about before a
+> Milestone-D design (or a decision to build nothing) is locked. This section is deliberately exploratory:
+> reframings, hidden assumptions, solution *directions* with tradeoffs, and a candidate broader principle.
+> None of it is a committed design; several ideas may prove not worth building. Recorded so the reasoning
+> survives, not to pre-empt the design phase.
+
+### 1. Reframe: the causal axis is corpus *pathology*, not corpus *size*
+
+The whole doc — title, north star, Milestone D — is framed on **N (document count)**. The experiments say N
+is a **proxy, not the cause.** What actually degraded retrieval was two corpus *properties* that happen to
+correlate with size in the synthetic generator but not in general:
+- **Semantic confusability density** (how many near-identical items compete for one query) → drives LEG_MISS.
+- **Per-leg reliability asymmetry** (one leg's signal is degenerate while another's is strong) → drives
+  CASCADE_LEAK through mis-weighted fusion.
+
+Realistic MIRACL grew N 3×→ with both properties held low, and stayed flat. The synthetic corpus grew *those
+properties* (via head-count / broken lexical), and collapsed — at trivial N. **Consequence:** a ratchet keyed
+on raw N risks measuring the wrong variable — it could read flat forever (false comfort) while a corpus whose
+*pathology* rose went unguarded. A guard should ratchet the **failure-stage rates** (leg_union_recall,
+CASCADE_LEAK) under a corpus that deliberately exercises the causal properties — not nDCG-vs-N on a benign
+fixture. This is a general methodology point: *when testing "robustness to X," find the property X is a proxy
+for and test that; ratcheting the proxy can pass while the cause regresses.*
+
+### 2. Candidate invariant: funnel non-abandonment (no silent truncation of an un-scored candidate)
+
+The staged_recall instrument (`LEG_MISS → CASCADE_LEAK → JUDGE_RANK_LOW → OK`) is really a statement that
+retrieval is a **narrowing cascade** where recall can only be *lost* downstream, never regained. That frames
+two sub-properties worth stating as invariants (candidate, not adopted):
+- **Representation completeness** — if a document is representable by some leg, the leg-union retrieves it
+  (`leg_union_recall ≈ 1`). Corpus-size-agnostic; a property of encoders + index, not of N.
+- **Funnel non-abandonment** — no narrowing stage may drop a candidate that an upstream stage surfaced
+  *unless a scoring stage has examined and demoted it*. CASCADE_LEAK is exactly a violation: CC-fusion
+  silently drops a *retrieved* gold that **no reranker ever scored**. The fix-family is "carry the
+  recall-complete set until a stage with positive evidence prunes it" (the splice, generalized) or "widen the
+  examined window until it covers the leg-union top-m."
+
+The transferable shape: *a series of narrowing selection stages must account for recall survival per stage
+and must not truncate un-examined candidates.* This recurs well beyond search — candidate-generation→ranking
+in recommenders, optimization passes that must preserve semantics, agent tool-shortlisting. Whether JustSearch
+should elevate "funnel non-abandonment" to a named engine invariant (with a gate) is a real question for
+636/639, not this doc — but the phrasing is the reusable artifact.
+
+### 3. Repurpose the "artifact" as a fault-injection instrument (leg-failure graceful degradation)
+
+The synthetic corpus was dismissed as a broken measuring stick. Inverted, it is a **precise fault injector**:
+confusability kills the lexical leg while dense stays informative (E3), so it *tests what happens when one leg
+fails*. That is a legitimate, valuable robustness axis the engine does not currently own: **when one retrieval
+leg is degraded, do the healthy legs + fusion still surface the answer, or does fusion bury it?** E3 says it
+buries it (BM25-dominant CC dilutes the good dense signal). Real corpora rarely break a leg on *average* — but
+specific real regimes do: code (lexical dominates, dense weak), heavy OCR/scans (lexical is garbage), heavily
+multilingual mixes, near-duplicate-dense folders. So "leg-failure graceful degradation" is a sharper, more
+defensible robustness target than "size robustness," and the generators already exist to stress it. A standing
+**fault-injection suite** (deliberately degrade each leg; assert leg-union survival through fusion) is a
+direction worth weighing against, or instead of, the size ratchet.
+
+### 4. Hidden assumptions & risks (things that could re-open the verdict)
+
+- **"Realistic" = MIRACL ≠ realistic *personal files*.** MIRACL is clean Wikipedia-passage QA: short,
+  well-separated, single-language, no duplication. JustSearch's actual target — a person's Documents folder —
+  has *pockets* of exactly the synthetic pathologies: near-duplicate email threads and forwarded copies,
+  versioned drafts, templated invoices/boilerplate, OCR noise, mixed languages. So the artifact verdict is
+  sound for *average realistic difficulty* but **the worst-case pockets of a real corpus can still trigger
+  LEG_MISS / CASCADE_LEAK locally.** The honest claim is "size-robust on clean diverse IR corpora," not
+  "robust on all personal corpora." A more representative fixture (duplication + templating + OCR + multiling
+  *mixed in*) would test the actual product surface — and might not stay flat.
+- **Metric unit — recall@10 vs recall-under-iteration.** Everything measured *single-query* recall@10. But
+  the agentic use case (624) has the agent iterate (search → rerank → read → re-query), and even at
+  out-of-band retrieval it answered 60% by iterating. So the product-binding quantity may be "is the answer
+  findable within an agent's *session* budget," not "is it in one query's top-10." A CASCADE_LEAK that a
+  second query recovers is far less costly than one that no query recovers. Framing the north star in
+  recall-under-iteration terms reconnects 699 to 624 and could change what's worth fixing.
+- **Non-redundancy — the untouched half of 639.** 639 named *two* candidate-set gaps: completeness (recall,
+  which this doc measured) **and non-redundancy** (a top-N dominated by near-duplicates). This investigation
+  did nothing on the second, which 639 argues is *the common-case* experience on personal files (many
+  near-identical hits crowding out genuine alternatives). It may matter more day-to-day than the rare
+  buried-needle case, and it is orthogonal to size. Worth explicitly scoping out here and leaving to 639.
+- **Measurement rigor for any guard.** The live runs are single-seed at n=100–130 with a ~±0.05 noise floor
+  (visible when an ef-invariant leg moved as much as the treated leg in E2). The verdict survives because
+  effects are large — but a *ratchet* would need the non-determinism envelope (`jseval calibrate`) and
+  multi-seed floors, or it will false-fire.
+
+### 5. Solution directions (sketches + tradeoffs — none chosen)
+
+- **A. Staged-recall ratchet (not a size ratchet).** Guard `leg_union_recall` and CASCADE_LEAK rate on a
+  fault-injection corpus. *Pro:* tests a cause that can actually regress; mechanism-specific. *Con:* needs a
+  fault-injection fixture + calibrated floors. *Vs Milestone D:* strictly more informative than nDCG-vs-N.
+- **B. Recall-preserving fusion (close the funnel-non-abandonment violation at the source).** Guarantee the
+  union of each leg's top-m survives into the examined/rerank window (the 636 splice, wired into the shipped
+  3-way CC path; SPLADE currently unprotected). *Pro:* makes CASCADE_LEAK structurally impossible for the
+  top-m per leg — a correctness property, not a tuning. *Con:* the verdict says it doesn't bite on healthy
+  corpora → YAGNI tension (see §6). *Cheap insurance framing:* low cost, closes a demonstrated silent-loss
+  path.
+- **C. Reliability-weighted fusion.** Down-weight a leg whose per-query score distribution is *degenerate*
+  (all-similar ⇒ uninformative — exactly BM25 on confusable docs). The existing `AdaptiveWeightSelector` is
+  off and keyed on doc length; a distribution-entropy signal would auto-correct the E3 failure without a
+  static re-weight. *Pro:* addresses the cause (mis-weighting), self-tuning. *Con:* more moving parts;
+  interacts with 636/643 ranking work; needs its own eval.
+- **D. Query-time retrieval-confidence signal (the north star's "graceful + visible" clause).** The north
+  star asked to *tell the user* when retrieval confidence is low. The instrument gives a substrate:
+  inter-leg agreement + whether the top hit survived all stages are observable at query time (`SearchTrace`
+  already records per-hit stage provenance). A derived "retrieval confidence" could drive a UI hint or an
+  agent signal to iterate/broaden. *Pro:* turns an unavoidable-at-extreme-scale degradation into an honest,
+  visible one — a product feature, not just a guard. *Con:* presentation-authority work (own audit
+  discipline); calibration of the confidence signal is itself a project.
+
+### 6. The YAGNI ↔ structural-defect tension (name it, don't resolve it here)
+
+CASCADE_LEAK is a *demonstrated, silent* recall loss with a clear mechanism (E3) — which reads like a "known
+structural defect" (fix it; don't wait for a repeat). Yet it *doesn't fire on healthy realistic corpora* —
+which reads like a speculative edge case (YAGNI). Both framings are honestly available, and the §4 "MIRACL ≠
+personal files" caveat is what tips it: if real personal corpora have pathology pockets, CASCADE_LEAK is
+latent-but-reachable, not hypothetical. The decision (fix now as insurance vs park until a representative
+personal-corpus fixture shows it biting) belongs to 636's owner with that caveat in hand — this doc's job is
+to make the tension legible, not to pick.
+
+### 7. Possible reframe of 699 itself (flagged, not done)
+
+Given all the above, 699's durable centre of gravity may be less "retrieval quality vs corpus size" (largely
+answered: artifact) and more **"retrieval-funnel recall-survival and graceful degradation under leg failure."**
+That is a broader, longer-lived framing that subsumes the size question and connects cleanly to 636 (bounded
+recall), 639 (candidate-set integrity), and 643 (ranking). Whether to retitle/re-scope 699 to that, fold it
+into 639, or keep 699 as the closed size-investigation and open the broader thread elsewhere, is a
+scoping decision for the owner — recorded here as an option, not taken.
