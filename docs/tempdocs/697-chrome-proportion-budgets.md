@@ -1,7 +1,7 @@
 ---
 title: "697 — Chrome proportion budgets: make oversized persistent chrome a measured gate failure, not a recurring review miss"
 type: tempdoc
-status: design (proposed)
+status: exploration — problem + evidence settled; solution direction OPEN (see §Before this settles)
 created: 2026-07-08
 related:
   - 696 (Simple/Detailed disclosure — where this was deferred; §Proportion/density)
@@ -45,7 +45,85 @@ On record from earlier audits (not re-measured here, flagged as such): result ro
 (These numbers are cited to a specific live measurement run; they are working evidence, not
 public-facing claims — nothing here should propagate into README/marketing copy.)
 
-## Approach — two parts
+## Before this settles — reframings, alternatives, and the broader shape
+
+The "size-budget gate" below is *one* direction and should not be treated as decided. Several
+framings could change it materially; recording them so the design is chosen with eyes open.
+
+### Reframe A (the strongest one): proportion is the **density authority's coverage gap**, not a new problem
+
+The app already has a **density authority**: `state/adaptationProfile.ts` applies *"the 'one
+authority, every surface' pattern to the user-selectable adaptation axes: density, contrast, and
+motion"* — density is `compact | comfortable | spacious`, persisted on `userConfig.density`, threaded
+to renderers via a `DensityController` (the `adaptiveDensity` primitive, tempdoc 565 §19 / 559
+Authority VI). But the chat styles hardcode spacing (~200 raw `rem` literals in
+`views/unifiedChatStyles.ts`) rather than projecting from it.
+
+That is the **same drift shape as 696**: an authority exists, and chrome doesn't project from it
+(incomplete coverage — the tempdoc-553 class). So the durable fix for the *spacing/gap* dimension of
+oversize may be "**bring chrome under the density authority**" (replace hardcoded spacing with
+density-scaled tokens so the `DensityController` actually drives it, and a Compact user gets compact
+chrome), enforced like the existing `style-literal-ratchet` (no raw spacing literals) rather than by
+capping rendered heights. **Caveat:** density-scaling addresses padding/gaps, *not* the two specific
+structural bugs (the bubble's `pre-wrap` phantom lines, the full-size remedy button) — those are not
+"too much spacing," they are wrong structure, and would remain component-level fixes. So this reframe
+splits the problem into (i) density-coverage (systemic, authority-shaped) and (ii) two structural
+bugs, which the current single "size-budget" framing conflates.
+
+### Reframe B: "**hug your content**" vs "cap your height"
+
+A `max-height` budget is a crude proxy. The real invariant is *chrome ≈ its content's intrinsic
+size*. A "hug" rule is more correct and content-aware (a 3-cause banner is *legitimately* taller than
+a 1-cause one, which an absolute cap can't tell apart) but is harder to measure (you need the
+intrinsic content height, not just the rendered box). Audit-2's **content-to-chrome ratio** is a
+middle option — content-aware without needing a per-state absolute number.
+
+### Enforcement alternatives (if a guardrail is wanted at all)
+
+- **Ratchet, not authored budgets.** Authoring absolute px budgets encodes one person's taste and is
+  brittle across viewport/theme/density. A **proportion ratchet** — baseline the current measured
+  heights, then fail only on *growth* (the shrinking-baseline idiom of `atom-fork-ratchet` /
+  `suppression-ratchet`) — avoids taste-encoding and matches an existing codebase pattern.
+- **Enforce projection, not pixels** (pairs with Reframe A): gate "chrome uses density tokens, not
+  raw spacing" — closer to the cause than the symptom.
+- **Push the clear cases to Collapse.** A *single-line-pill layout primitive* that is structurally
+  unable to exceed one row would lift the notice-pill case above Gate to Unrepresentable (doc 27's
+  top rung), where the honest ceiling says most CSS can't go — but a narrow, well-chosen primitive
+  can. Worth asking which few proportion invariants are structurally enforceable vs. which only a
+  gate can hold.
+
+### Hidden assumptions & risks in the current (budget-gate) direction
+
+- **Per-state blindness:** a budget is per rendered state; a state not in a ui-shot step is
+  unbudgeted — proportion coverage silently inherits ui-shot's coverage gaps.
+- **Content-blindness of absolute caps** (see Reframe B).
+- **Config dependence:** a height that passes at 1× desktop/dark/comfortable may fail at
+  narrow/compact — one measured config is not the whole space.
+- **Taste as a gate:** "oversized" is sometimes intentional (touch targets, emphasis, breathing
+  room). A gate can fight a legitimate future design; who sets the budget matters.
+- **YAGNI / maintenance:** a registry + measure-extension + gate is infrastructure. If Part A (plus
+  Reframe A's density coverage) makes oversize rare, the gate may never bite — the honest test is the
+  observed regression rate, and building the gate *before* that evidence risks over-engineering the
+  very thing 696 was criticized for under-doing.
+
+### The broader shape this points to
+
+696 (disclosure) and 697 (density/proportion) are **the same system shape**: a *cross-cutting
+presentation dimension* that ought to be one authority with full coverage, currently expressed
+ad-hoc per component; the fix is coverage + a self-covering gate. doc 27's authorities table already
+names several of these (tone, originator, display-name/fact, availability). **Disclosure** and
+**density/proportion** look like two more rows of the same table — which suggests the recurring
+invariant worth naming (not building): *every cross-cutting presentation dimension is an authority;
+chrome projects from it; incomplete coverage is the drift.* Motion and visual-hierarchy/emphasis
+(audit-2 B3's "emphasis inversion") are plausible further instances to watch.
+
+Two enforcement substrates also recur and could generalize beyond this tempdoc: the **`.measure.json`
+harness** (615) is becoming a general *presentation-invariant* gate layer (it already backs axe +
+overflow; proportion would be a third consumer), and the **shrinking-baseline ratchet** is becoming
+the codebase's default answer to "prevent a metric from regressing." Naming these, not building the
+generalized versions now.
+
+## A provisional approach — two parts (see §Before this settles for what could change it)
 
 ### Part A — root-cause the current instances (the immediate fixes)
 
