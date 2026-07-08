@@ -2298,3 +2298,16 @@ lane. Verified locally: `node -c` clean; **all four** dev-runner test suites gre
 (the loop lives inside the big async `start()`; the proof-lane exercises it end-to-end). Final green CI run
 recorded at commit time.
 
+
+### J. Second latent bug the fix uncovered — ingest races worker warmup (2026-07-08, run `28910099366`)
+With the §I port-wait fix in, the stack now reports "stack up" in **~5s** (was 122s+ / never) — which
+immediately surfaced the *next* masked issue: `POST /api/knowledge/ingest → HTTP 503`. Cause: dev-runner's
+"stack up" fires when the **Head** answers `/api/status` (200), but the **Worker** that serves ingest is
+still warming up and 503s for a beat. The old full-timeout startup (§I) masked this by handing the worker
+~minutes before the smoke ever ingested; the diagnostic 120s run passed for the same accidental reason.
+Fix: `stage-reference-corpus.mjs::stageAndVerify` now **retries the ingest on transient failure** within
+its existing bounded poll budget (shared with the 669 demo-corpus staging — both get the robustness).
+This is a genuine masked-by-slowness race, not a product defect (ingest works model-less once the worker
+is ready — proven by the 120s run's 1-result pass). Noted follow-up (not done here): dev-runner's readiness
+(`waitForBackendReady`, Head `/api/status` 200 only) arguably should include worker-ready — a broader
+dev-runner change left for its own scope.
