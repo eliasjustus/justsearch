@@ -4284,3 +4284,16 @@ stated per item 2c.
 ## Cost
 
 ~$1.9 pilot + ~$0.6 calibrate + ~$0.2 probes/smoke ≈ **$2.7** (within the ~$3 Step-1 envelope).
+
+## Executor-substrate note (2026-07-08) — informational, does not reopen the 655-gated Step-2 decision
+
+675 (the executor this and every future run here executes on) is now implemented, review-fixed, and
+merged (`docs/tempdocs/675-agent-eval-executor-v2-in-process.md`). Two facts relevant to planning
+whenever Step-2 does resume (after 655's adoption work, per the interpretation above — this note does
+not authorize or advance that gate): (1) a contention-matched pilot projects the full 520-cell matrix at
+≈2.2h/≈$72 @ concurrency 6, a substantial cut from the ~3h baseline this tempdoc's own certified-run
+session (2026-07-03) measured; (2) `eval_set` resume is reliable across a clean process exit but does
+**not** survive a hard process kill regardless of how much progress was made (an upstream Inspect
+limitation, live-verified, not fixable at the jseval layer) — a future Step-2 run must complete without
+interruption or be restarted from scratch, not resumed, after any hard crash. See 675 §Review fixes and
+§Unverified assumptions for the full evidence.
