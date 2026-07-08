@@ -497,7 +497,11 @@ cheap enough to run at the cadence decisions need.
   `eval_set_id`** (pinned from a config hash precisely so a crash-restart resumes; `agent_utility_inspect.py:355-374`)
   → resume is *satisfied*; v2 preserves it, only adjusting the sample-id shape to carry `condition`
   (e.g. `"{condition}|q{i}"`) so ids stay unique inside one task. Adaptive concurrency, epochs-as-
-  seeds, schema-valid EvalLog — all retained.
+  seeds, schema-valid EvalLog — all retained. **CORRECTED 2026-07-08: this pre-implementation claim
+  was FALSE as implemented** — resume was actually broken (a pre-existing upstream Inspect defect,
+  not caused by this restructure) and needed a real fix; see §Review fixes F0 for the root cause, the
+  fix, and its live evidence. Left here unedited (only annotated) so the plan-vs-actual gap stays
+  visible rather than silently smoothed over.
 - **624's "one identity, three roles" seam.** Sample id = cell identity = resume key = pairing key =
   record key. v2 conforms; it does **not** introduce a new identity or a parallel resume mechanism.
 - **The record + composer.** `utility-comparison.v1` is unchanged, and `compose_utility` is decoupled
@@ -543,6 +547,30 @@ orphaned, and some neighbours must **relocate first** so the orphan deletes clea
    (`run_retrieval_eval`, `run_tier2_eval`, `load_queries`, formatters) which are **not** 675's to
    touch. Leaving a "retired" module alive purely as a helper-import target is the anti-pattern the
    relocation avoids.
+
+**Completion status (verified 2026-07-08 by direct grep against the shipped tree, not recalled from
+memory):**
+- Items 1, 2, 4, 5, 5b — **confirmed deleted.** Zero live definitions of `run_agent_eval`,
+  `_get_reflection`, `_build_agent_cmd`, `_build_argv`, `parse_claude_stream_json`,
+  `parse_claude_init_event`, or `cmd_agent_eval` anywhere under `scripts/jseval/jseval/`; only
+  historical docstring/comment mentions remain (e.g. "the classic `run_agent_eval`…", explaining
+  history, not calling it). `test_agent_retrieval_eval.py` no longer calls `run_agent_eval`.
+  `max_tasks=1` likewise has zero live occurrences (comment-only, explaining its removal).
+- Item 3 — **deliberately NOT deleted**, a recorded deviation from this plan (see §Review fixes
+  2026-07-08's "Deviation recorded"): `build_disallowed_tools` was kept and reused to build the Agent
+  SDK's `disallowed_tools` denylist directly (the SDK does expose a real denylist, not only the
+  allowlist the 2026-07-07 external-research pass had found — see §Pre-implementation verification's
+  "Doc-research corrections"). The plan's premise (SDK offers only `allowed_tools`) was superseded by
+  a later, more accurate finding before implementation; keeping the helper was the correct call, not
+  a missed deletion.
+- Item 6 — **NOT executed as planned; the divergence is benign, not a gap.** The shared helpers
+  (`stage_corpus_dir`, `_score_answer`, `find_disallowed_tool_calls`, `find_leak_suspect_tool_calls`)
+  still live in `agent_retrieval_eval.py`, never relocated to a neutral module. The plan's stated
+  reason to relocate — "leaving a retired module alive purely as a helper-import target" — does not
+  apply in practice: the module was never *purely* retired, since it has always also hosted the
+  **independent Tier-1/Tier-2 retrieval runners** this tempdoc explicitly excludes from its own scope.
+  A relocation remains a legitimate future tidy-up (smaller blast radius per file) but is not owed by
+  this tempdoc's own completion bar.
 
 ### Scope boundary — what 675 does NOT own (handed to owners, recognized-not-built)
 
@@ -615,7 +643,8 @@ candidate shapes, not new apparatus.
   leaked in. Cleaner than the CLI's isolated-tempdir trick.
 - **Concurrency — real.** 8 concurrent SDK cells: **7/8 clean**, total **39.3 s** vs **129.3 s** serial
   (**~3.3×**); the 1 error was a max-turns straggler (handled as an excluded cell, parity with today).
-  No races/crashes. (Reproduce: `$CLAUDE_JOB_DIR`-local probe; backend `battlefield-en-v1`.)
+  No races/crashes. (Reproduce: a throwaway script launching N concurrent `ClaudeSDKClient` sessions
+  against a live `battlefield-en-v1` backend; not committed to the repo.)
 
 **Doc-research corrections (verified against the installed SDK, authoritative over §External research):**
 - `ClaudeAgentOptions` HAS **`disallowed_tools`** (1:1 with `--disallowedTools` — no allowlist rewrite
