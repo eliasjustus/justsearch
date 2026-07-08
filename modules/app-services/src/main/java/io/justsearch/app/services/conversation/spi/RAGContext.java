@@ -34,10 +34,13 @@ import org.slf4j.LoggerFactory;
  * {@code formatDocuments}. Reads {@code {question, docIds[], topK?}} from the request body,
  * runs {@link DocumentService#retrieveContextWithMeta}, falls back to
  * {@link DocumentService#fetchBatch} when chunked retrieval is unavailable, applies token
- * truncation, filters citations to match kept sections, emits a {@code rag.meta} event
- * (namespaced per §C3 plan), and persists citations + chunks-used + docIds into
- * {@link ConversationContext#attributes} for {@code CitationMatcher} +
- * {@code RAGDoneEnricher} to consume.
+ * truncation as a safety net, emits a {@code rag.meta} event (namespaced per §C3 plan), and
+ * persists citations + chunks-used + docIds into {@link ConversationContext#attributes} for
+ * {@code CitationMatcher} + {@code RAGDoneEnricher} to consume. After truncation, all RAG
+ * citations are retained as-is (kept = every citation when chunk retrieval was used, none
+ * otherwise) — citations are NOT filtered down to the sections the truncation actually kept.
+ * Section-aware citation filtering is not implemented; it would require a section-boundary-aware
+ * truncation redesign in {@link TokenEstimation}.
  *
  * <p>Missing {@code question} or {@code docIds} → {@link InjectorResult#terminalError} with
  * code {@code NO_QUESTION} / {@code NO_FILES}; engine aborts before LLM call.
