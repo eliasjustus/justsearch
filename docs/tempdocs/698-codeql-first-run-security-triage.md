@@ -75,9 +75,9 @@ in that fixed order) — see e.g. `scripts/ci/check-atom-fork-ratchet.mjs:42-48`
 **This is broader than the 18 flagged alerts.** A repo-wide search
 (`rg -l "stripComments|const norm = |replace\\(/<!--<"  scripts/`) found the same pattern
 independently reimplemented in **46 files** under `scripts/ci/`, `scripts/governance/`,
-`scripts/agent-analytics/`, and `scripts/dev/justsearch-dev-mcp/`. CodeQL only flags the 13 (of
+`scripts/agent-analytics/`, and `scripts/dev/justsearch-dev-mcp/`. CodeQL only flags the 18 (of
 46) whose stripped output feeds into a security-relevant decision (a governance gate's
-pass/fail) — the other 33 uses of the same pattern were not analyzed as reaching a CodeQL sink,
+pass/fail) — the other 28 uses of the same pattern were not analyzed as reaching a CodeQL sink,
 not because they're safe.
 
 **Why this matters beyond CodeQL's specific complaint:** a fixed-order chained strip can be
@@ -86,7 +86,7 @@ first leaves behind a reconstituted `//` sequence, or vice versa) — for a gove
 exists specifically to *detect real usage of something in source*, a bypassable comment-stripper
 means a crafted source file could hide real usage from the gate. This is a "wrong-gate"-class
 concern (per this repo's own `docs/reference/contributing/agent-postmortems.md` vocabulary),
-not merely 13 unrelated code-quality nits.
+not merely 18 unrelated code-quality nits.
 
 **Follow-up, not attempted this session (scope too large for one sitting):**
 1. Extract one canonical `stripComments`/`stripCommentsForSourceScan` helper (module location
@@ -107,9 +107,10 @@ not merely 13 unrelated code-quality nits.
   one each was traced to — each function (`runCommand`, the `console.log` in `record-merge.mjs`,
   `SseWriter.writeResult`) was checked at its actual (single, in each case) call site only.
 - That the `js/incomplete-multi-character-sanitization` root-cause theory (shared duplicated
-  helper) is correct for all 13 CodeQL-flagged instances — confirmed for
-  `check-atom-fork-ratchet.mjs` by direct read; the other 12 were inferred from the shared
-  `rg` match, not individually read line-by-line.
+  helper) is correct for all 16 CodeQL-flagged instances of that specific rule — confirmed for
+  `check-atom-fork-ratchet.mjs` by direct read; the other 15 (plus the 2 sibling
+  `js/incomplete-sanitization` alerts) were inferred from the shared `rg` match, not
+  individually read line-by-line.
 
 ## Remaining work / do not forget
 
@@ -123,8 +124,13 @@ not merely 13 unrelated code-quality nits.
    insurance.
 5. Optional hardening, not urgent: replace the hand-rolled `quoteCmdArg` in
    `report-build-attribution.mjs` with a vetted Windows-shell-escaping approach (alert #25).
-6. Separately from CodeQL: this session also found `main`'s `license-and-notices` CI check
-   (`.github/workflows/ci.yml:92-120`, `checkLicense` Gradle task) got cancelled after running
-   25 minutes against a 20-minute job timeout, and — as of this writing — is being investigated
-   by a separate, already-in-progress effort (not tracked in this document; see whichever
-   tempdoc that effort files under its own number).
+6. Separately from CodeQL: earlier this session, `main`'s `license-and-notices` CI check
+   (`.github/workflows/ci.yml:92-120`, `checkLicense` Gradle task) was found cancelled on commit
+   `8cacb20` after running 25 minutes against a 20-minute job timeout. Re-checked at the time of
+   writing: on the current `main` tip (`156088d`), the same check completed in 6 minutes with
+   `conclusion: success` (`started_at` 23:24:23, `completed_at` 23:30:09 UTC) — no change to
+   `.github/workflows/ci.yml` or the license-check logic happened in between (`git log` on that
+   path shows nothing since `06a4c67`), so this reads as a one-off slow/flaky run rather than a
+   persistent defect. **Follow-up:** no action needed unless it recurs; if it does, worth adding
+   retry logic or investigating why `checkLicense --no-configuration-cache --no-parallel` runs
+   slow on some CI invocations but not others.
