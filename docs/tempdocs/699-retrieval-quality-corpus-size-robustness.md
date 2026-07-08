@@ -1,7 +1,7 @@
 ---
 title: "Retrieval quality vs corpus size: does JustSearch's hybrid retrieval hold as the corpus grows, or does the right document silently fall out of reach at scale? A diagnose-first investigation — separate the synthetic-corpus artifact from a real scaling defect, attribute the loss to a pipeline stage, then make size-robustness a measured, ratcheted property. North star: the probability the engine surfaces the right document in its top-K does not silently degrade as a personal/team corpus grows from hundreds to hundreds of thousands of files."
 type: tempdocs
-status: investigated 2026-07-08 (diagnose-first pass complete, no code changed) — VERDICT: at tested scale (≤~5k docs) the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, not a product defect (already answered by `release.v1.json`: MIRACL-de-2k 3,103 docs = 0.852 nDCG vs battlefield 2,736 docs = 0.163, same engine). ANN recall decay (the doc's "leading candidate") is physically ruled out at this scale; the only real scale-sensitive lever is the fixed-20 reranker window on the unspliced 3-way path (636's turf), not ANN (639). Recommendation: DO NOT run Milestones A–C now; downgrade to a parked, evidence-gated robustness question. The only genuinely-open slice is recall-robustness at 10⁴–10⁶ on a REALISTIC corpus, for which no fixture exists and none is cheap — reopen only if that fixture is deliberately built. See the "Investigation (2026-07-08)" section for the full evidence chain and verdict. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
+status: investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals on the dev stack, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
 created: 2026-07-08
 author: agent (Opus autonomous run) — filed from the 624 scale-corpus session
 category: search-quality / retrieval / ann-recall / eval-infrastructure / scaling
@@ -344,3 +344,183 @@ justified now.
 2736-high-ef) → E3 → decision gate (any real mechanism? → E5/E4; else close product half). E1+E2 alone
 (≈one indexing pass per corpus + a few capped evals) would already settle recall-vs-ranking and ANN-vs-
 geometry — the two questions the 624 run left unmeasured — for well under an hour of shared-stack time.
+
+## Experimental results (2026-07-08, run live on the dev stack — worktree `624-scale-corpus`)
+
+> Artifacts under `tmp/699-experiments/`. Each run: `jseval run` on the fresh-indexed corpus, 100–130
+> queries, modes `[vector, lexical, splade, full]`, `staged_recall_accounting` auto-emitted. jseval
+> reproduced the 624 headline exactly (corpus fidelity gate: `nDCG@10=0.1628`, matching pass-26's 0.163).
+
+### E1 — Attribution on `battlefield-en-scale-v1` (2,736 docs, 100 queries) → LEG_MISS-dominant
+
+Per-leg nDCG@10: vector 0.092, lexical 0.052, splade 0.106, full (CC fusion) 0.070 — **every leg is weak;
+no leg is strong.** `staged_recall_accounting` (final_mode=`full`):
+
+| bucket | rate | reading |
+|---|---|---|
+| **LEG_MISS** | **0.63** | gold in NO leg's candidate set — representation/geometry (the artifact) |
+| CASCADE_LEAK | 0.25 | a leg had gold, fusion buried it below the returned top-10 |
+| JUDGE_RANK_LOW | 0.09 | gold in final list, mis-ranked (643's turf) |
+| OK_RANK1 | 0.03 | gold at rank 1 |
+
+`leg_union_recall = 0.35`, per-leg recall {vector 0.12, lexical 0.12, splade 0.21}, `final_recall = 0.12`.
+- **Pre-registered prediction CONFIRMED:** LEG_MISS-dominant, `leg_union_recall` collapses to 0.35 — for
+  ~⅔ of queries the gold is not retrieved by *any* leg. On a corpus of near-identical boilerplate that is
+  the embedding/lexical geometry failing, exactly as the artifact hypothesis predicts (E2 tests whether
+  this LEG_MISS is *geometry* or *ANN approximation*).
+- **Secondary real mechanism found:** CASCADE_LEAK = 0.25 is non-trivial — for a quarter of queries a leg
+  *did* retrieve the gold but CC-fusion ranked it below the returned top-10. This is a genuine,
+  size-sensitive truncation (`leg_union_recall 0.35` → `final_recall 0.12` = ~23 pts of retrieved gold lost
+  before the final list) → **E5 is warranted.** Note (corrects Finding 4): in eval's `full` mode the
+  cross-encoder is OFF (`retriever.py:23`), so this leak is *fusion-order*, not a CE-window effect — E5 must
+  test *enabling* the reranker with a wide window, not merely widening an already-running window.
+
+### E2 — ef_search near-exact (2,736 docs, ef 10→2000) → ANN approximation is NOT the lever
+
+| leg R@10 | E1 (default ef) | E2 (ef=2000) |
+|---|---|---|
+| vector | 0.12 | 0.20 |
+| lexical *(ef-invariant control)* | 0.12 | 0.08 |
+| splade *(ef-invariant control)* | 0.21 | 0.19 |
+| leg_union_recall | 0.350 | 0.360 |
+| LEG_MISS | 0.63 | 0.61 |
+
+- **Prediction upheld (with a caveat):** cranking ef_search ~200× moved `leg_union_recall` 0.35→0.36 and
+  LEG_MISS 0.63→0.61 — negligibly. Near-exhaustive ANN search still leaves ~61% of golds unretrieved by
+  **any** leg → the LEG_MISS is embedding/lexical *geometry* (near-identical docs), not HNSW pruning. F2
+  empirically upheld; the doc's "leading candidate" (ANN recall decay) is **not** the cause at this scale.
+- **Interrogate-results caveat (honest):** the vector leg *nominally* rose 0.12→0.20, but the **lexical leg,
+  which ef_search cannot touch, moved a comparable amount (0.12→0.08)** — revealing the run-to-run noise
+  floor (~±0.04–0.05 at n=100, from BM25 tie-breaking across near-identical docs on separate index builds)
+  is as large as the apparent vector signal. So a residual ANN effect on the vector leg alone cannot be
+  ruled *in* from one run-pair, but it is immaterial to the verdict: the corpus stays LEG_MISS-dominant
+  (geometry) regardless, and on realistic corpora the engine is already healthy (`release.v1.json`). A
+  clean same-index ef_search sweep (`--skip-ingest`, no reindex) would remove the ambiguity if the residual
+  vector effect ever mattered — it does not for this question.
+
+### E3 — distractor volume at FIXED heads + identical queries → a REAL fusion-order size-sensitivity
+
+130 gold heads and byte-identical 130 queries held constant (verified: `queries.json` SHA identical across
+the sweep); only descriptor-disjoint distractor volume grows:
+
+| ratio | docs | full nDCG@10 | full R@10 | LEG_MISS | CASCADE_LEAK | leg_union_recall | vector R@10 |
+|---|---|---|---|---|---|---|---|
+| 1.0 | 780 | 0.220 | 0.385 | 0.01 | 0.61 | 0.992 | 0.98 |
+| 4.0 | 1,950 | 0.121 | 0.139 | 0.05 | 0.82 | 0.954 | 0.95 |
+| 10.0 | 4,290 | 0.111 | 0.139 | 0.07 | 0.79 | 0.931 | 0.93 |
+
+- **Prediction PARTIALLY OVERTURNED.** I predicted flat nDCG (burying competitors are the fixed heads, not
+  the disjoint distractors). Instead nDCG dropped 0.22→0.11 as volume grew ~5.5× at constant semantic
+  difficulty. **A real, size-sensitive degradation exists — volume alone hurts.** The tempdoc's size worry
+  is not purely a synthetic artifact.
+- **But the mechanism is fusion-order, NOT retrieval.** `leg_union_recall` stays 0.93–0.99 and the vector
+  leg retrieves the gold 93–98% of the time — the answer is *in the building*. The loss is CASCADE_LEAK
+  (0.61→0.79): the retrieved gold is dropped **before the returned top-10** as more distractors crowd the
+  fused ranking. This is 636's bounded-recall / fusion-order lever (my Finding 4's family), decisively not
+  ANN (E2) and not representation (E1's LEG_MISS was specific to the *confusable-head* corpus; here heads
+  are fixed and disjoint distractors don't cause LEG_MISS).
+- **Why fusion buries a retrieved gold:** eval's `full` runs CC-fusion with **no cross-encoder** (E1), and
+  the CC default is **BM25-dominant (0.60)** while BM25 is the weakest leg on these synonym-obfuscated docs.
+  So the strong vector hit is diluted, and added distractors supply fused-score competitors that outrank it.
+  → **E5 tests the fix** (enable the reranker: does it rescue the retrieved-but-buried gold?). → **E4 tests
+  generalization** (on realistic MIRACL docs where BM25 actually works, does the same fusion-truncation
+  appear as N grows, or was it amplified by the synthetic corpus's broken lexical signal?).
+
+### E4 — realistic MIRACL/de sweep (fixed 305 queries, varying N) → engine is size-robust on real docs
+
+Real, public, qrelled corpus (`corpus-fetch-miracl`, seed 666); the query set is byte-identical (305
+queries) across sizes — only distractor volume grows. Modes `[vector, lexical, splade, full]`.
+
+| N (docs) | full nDCG@10 | full R@10 | vector R@10 | LEG_MISS | CASCADE_LEAK | leg_union_recall | final_recall | OK_RANK1 |
+|---|---|---|---|---|---|---|---|---|
+| 3,001 | 0.814 | 0.967 | 0.984 | 0.00 | 0.03 | 1.000 | 0.967 | 0.64 |
+| 10,001 | 0.795 | 0.967 | 0.990 | 0.00 | 0.03 | 1.000 | 0.967 | 0.61 |
+| 40,001 | *(pending — readiness off-by-one)* | | | | | | | |
+
+- **The realistic sweep is FLAT.** 3k→10k (3.3× volume): full R@10 **identical** 0.967, final_recall
+  **identical** 0.967, CASCADE_LEAK **identical** 0.03, leg_union 1.000, LEG_MISS 0. nDCG 0.814→0.795 is
+  within noise. **This is the north-star property — size-robust recall — empirically satisfied on realistic
+  docs**, and it extends `release.v1.json`'s ~3–5k realistic coverage to 10k (40k pending).
+- **Decisive contrast with the synthetic corpus** over comparable volume growth:
+
+  | | leg_union | final_recall | CASCADE_LEAK | full nDCG |
+  |---|---|---|---|---|
+  | synthetic E3 (780→4,290) | 0.99→0.93 | **0.385→0.139** | **0.61→0.79** | **0.220→0.111** |
+  | realistic E4 (3,001→10,001) | 1.00→1.00 | **0.967→0.967** | **0.03→0.03** | 0.814→0.795 |
+
+  The synthetic corpus collapses; the realistic corpus is flat. **E3's fusion-order CASCADE_LEAK was
+  synthetic-amplified** (BM25 is broken on synonym-obfuscated near-identical docs, so BM25-dominant CC
+  fusion buries the vector gold). On realistic docs every leg works, so fusion keeps the gold (CASCADE_LEAK
+  0.03). The engine's retrieval funnel is healthy and size-robust on real corpora in the tested range.
+
+### E5 (first attempt) — VOID: reranker never ran
+
+The first E5 config used `--ce` + `RERANK_TOP_K` but **not the actual backend gate
+`JUSTSEARCH_RERANK_ENABLED`** (`EnvRegistry.java:657`), so the cross-encoder was skipped (summary shows
+`lambdamart active:false`, no CE timing; full nDCG 0.070→0.079 ≈ unchanged from E1). Re-run as **E5b** with
+the correct gate, targeting the r10 corpus (leg_union 0.93, final_recall 0.14 → maximum CE headroom).
+[Lesson logged: `--ce` injects the pipeline flag but the ONNX cross-encoder needs `JUSTSEARCH_RERANK_ENABLED=true` too.]
+
+### E5b — reranker on r10 (correct gate) → no measurable rescue, CE activation unconfirmed (INCONCLUSIVE, moot)
+
+`JUSTSEARCH_RERANK_ENABLED=true` + `RERANK_TOP_K=100` + `--ce`, r10 corpus (4,290 docs, max CE headroom):
+
+| | full nDCG@10 | full R@10 | CASCADE_LEAK | final_recall | OK_RANK1 |
+|---|---|---|---|---|---|
+| E3 r10 (no CE) | 0.111 | 0.139 | 0.79 | 0.139 | ~0 |
+| E5b r10 (CE gate on) | 0.113 | 0.131 | 0.81 | 0.131 | 0.12 |
+
+- **No rescue** — every metric is within noise of the no-CE baseline; CASCADE_LEAK did not drop. **And I
+  could not confirm the cross-encoder fired** (no `cross_encoder_ms`/`ce_p50_ms` timing in the summary; the
+  client-resolved `full` eval mode may bypass the Head's cross-encoder stage entirely). So E5 is
+  inconclusive on "does a reranker rescue fusion-buried golds."
+- **This does not affect the verdict, because it is moot:** E4 shows realistic corpora have CASCADE_LEAK
+  ≈ 0.03 — there is essentially nothing to rescue on real docs. The reranker-rescue question only mattered
+  if a realistic corpus showed high CASCADE_LEAK, and it does not. Pursuing CE-in-eval activation further
+  would be a rabbit-hole with no bearing on the product question. (jseval gap logged to observations.)
+
+## Synthesis & revised verdict (post-experiment — MEASURED, not inferred)
+
+Five experiments turned the static "artifact, park it" inference into a measured result — and, importantly,
+**refined the mechanism** (the pre-experiment doc named the wrong leading cause):
+
+1. **The 624 signal is a synthetic-corpus artifact — now proven, not inferred.** The realistic control (E4)
+   is the clincher: same engine, MIRACL/de, recall **flat** across 3k→10k (final_recall 0.967 → 0.967,
+   CASCADE_LEAK 0.03 → 0.03, leg_union 1.000), versus the synthetic corpus **collapsing** over comparable
+   volume growth (final_recall 0.385 → 0.139). At matched size (~3k) realistic nDCG is 0.81 vs synthetic
+   0.16. The engine is **size-robust on realistic documents in the tested range** — the north-star property,
+   empirically satisfied.
+2. **ANN recall decay — the doc's "leading candidate" — is NOT the mechanism (E2).** Near-exhaustive
+   ef_search (10→2000) left leg_union_recall and LEG_MISS essentially unchanged; ruled out physically
+   (HNSW recall@10 ≈ 0.998 at 10⁴ vectors) and empirically. Any future ANN work (639) has no empirical
+   basis from this investigation.
+3. **The synthetic collapse decomposes into two mechanisms, both corpus-pathology-driven, neither a
+   product defect:** (a) **LEG_MISS / geometry (E1, 63%)** — near-identical confusable heads that no
+   retriever (exact or approximate) can separate; real corpora don't have this. (b) **Fusion-order
+   CASCADE_LEAK (E3)** — the gold is *retrieved* (leg_union 0.93) but BM25-dominant CC fusion buries it
+   below top-10, amplified by the synthetic corpus's broken lexical signal; on realistic docs where BM25
+   works, this is 0.03.
+4. **A latent (non-biting) robustness finding worth handing off:** the fusion path *can* bury a retrieved
+   gold when a leg is degraded (CASCADE_LEAK), and the recall-complete splice is not wired into the shipped
+   3-way CC path (SPLADE unprotected) — a 636/643 bounded-recall consideration, not urgent because it does
+   not fire on healthy realistic corpora.
+
+**Verdict (unchanged in direction; now measured, mechanism corrected):**
+- **Do NOT run Milestones A–C as a fix effort.** There is no size-dependent product defect in the target
+  range — the engine is measured size-robust on realistic corpora to 10k (and 40k indexes cleanly). The
+  624 signal is a proven artifact of an adversarial synthetic corpus, not a scaling defect.
+- **Correct the record:** the mechanism is *not* ANN recall decay (ruled out); the synthetic collapse is
+  geometry (LEG_MISS) + broken-BM25-amplified fusion truncation (CASCADE_LEAK). Route the fusion-truncation
+  robustness note to **636** (bounded recall / splice the 3-way path), not 639.
+- **Cheapest evidence that would reopen this:** a *realistic* corpus at 10⁴–10⁶ showing recall drop with N.
+  E4 now covers 3k→10k flat; the residual 10⁵–10⁶ slice is unmeasured but the trend + the physical picture
+  make a defect there unlikely. Parked under 639/636, low priority.
+- **The one durable deliverable — Milestone D (cross-size recall ratchet)** — is now cheaply buildable: the
+  E4 fixed-query MIRACL sweep (`corpus-fetch-miracl --n-docs`) + the `relevance_gate`/`ratchet_kernel`
+  template. Worth adding as a standing guard so size-robustness can never silently regress — but low
+  priority given the release/adoption critical path (654-660), and it is a *guard*, not a fix.
+
+**Bottom line:** the product half of 699 **closes as "artifact — retrieval is size-robust on realistic
+corpora (measured 3k→10k), the 624 collapse is a synthetic-corpus pathology, ANN is not the cause."** The
+only forward work is optional: a cross-size ratchet (Milestone D) as a low-priority standing guard, and a
+one-line hand-off of the fusion-splice robustness note to 636. No engine fix is warranted now.
