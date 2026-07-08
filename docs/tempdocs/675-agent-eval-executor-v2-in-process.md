@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely, but see §Post-pilot theorization H/I — the ceiling may be a shared Anthropic rate limit, not just the backend). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions + §Post-pilot theorization (2026-07-08, exploratory) FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
 updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
@@ -814,3 +814,116 @@ Recorded so a later agent need not reconstruct them from the working session:
   this session (it captured only api-status/health, run-id `c57e1b65-…`), so the live-check outputs
   exist only in the session's throwaway driver, not a durable bundle. Re-run the per-fix procedures to
   regenerate.
+
+---
+
+## Post-pilot theorization (2026-07-08) — broad framing before the concurrency design settles
+
+> **Status: exploratory, not decided** — same posture as §Theorization & open directions (2026-07-07,
+> §A–G above), which this section extends rather than repeats. New inputs since that pass: the executor
+> is implemented and review-fixed, a live 24-cell pilot exists (≈2.2h/≈$72 projected @ concurrency 6, 0
+> exclusions), and a targeted external-research pass found the Agent SDK has no concurrency ceiling of
+> its own — the account's Anthropic API rate-limit tier is the real constraint (§As-built, §Review
+> fixes). The projected 2.2h is still felt as too long, and the natural next lever is "raise
+> concurrency" — this section asks whether that's actually the right next question before a pilot ramp
+> is run. Several ideas below conflict with each other on purpose, as before.
+
+### H. Two (or three) ceilings, not one — sharpen §D before ramping concurrency
+
+§D (2026-07-07) measured the search backend's own ceiling directly: `bench-concurrency` fires
+back-to-back queries with no agent in between and finds ~6.7 qps, GPU-saturated on the reranker
+semaphore. But the throughput pilot runs **agents**, not bare queries — and an agent cell's wall-clock
+is mostly Anthropic API round-trips and reasoning between tool calls, not backend time. A cell with
+9–50 turns spread over 90–160s (pilot data) may issue only a handful of actual JustSearch calls in that
+window (and condition A issues **zero** — it has no search tool at all). So "6 concurrent agent
+sessions" is very likely a much smaller number of concurrent *backend requests* than 6 — the pilot's
+clean 0-exclusion result at concurrency 6 is consistent with this but does not prove it, because
+backend request-rate during the pilot was never measured directly.
+
+This means there are at least **two independent ceilings**, and a naive "ramp concurrency until
+something breaks" pilot conflates them:
+
+1. **The backend's GPU semaphore** (§D) — ~6.7 qps, saturates regardless of how the load arrives.
+2. **The Anthropic API rate-limit tier** (2026-07-08 research pass) — RPM/TPM, account-level, shared
+   with every *other* Claude Code session on the same account (see §I).
+
+A third, softer ceiling — local process/RAM/CPU overhead of N concurrent `ClaudeSDKClient` sessions
+(each still spawns a CLI subprocess, per the 2026-07-07 external-research premise correction) — may
+bind before either of the above on a single dev machine.
+
+**The open attribution question this implies** (one level deeper than the 2026-07-07 matrix-level
+attribution, which asked "where does the 3h go across 520 cells" but never "where does *one* cell's
+~130s go"): what fraction of a single cell's wall-clock is Anthropic-API time vs. JustSearch-backend
+time vs. orchestration/idle time? Measuring this — e.g. summing tool-result timestamps against total
+cell duration, already available in the forensic record the executor now captures — would say whether
+concurrency headroom is bounded by the GPU semaphore, the rate limit, or neither, before spending a
+pilot ramp finding out empirically the more expensive way. Attribute before allocating (691's method,
+per §A), applied one layer further in.
+
+### I. The CPU-offload rejection has a rate-limit-shaped twin one layer up
+
+§Owner framing (2026-07-07) rejected CPU-inference offload because it contends with the same box's CPU
+that interactive development needs — a faster-but-contending lever is not a clean win. The 2026-07-08
+research pass surfaces the same *shape* of argument one layer up, for a resource that wasn't on the
+radar before: the Anthropic API rate-limit budget is shared across **the whole account**, not just this
+eval — every interactive Claude Code session (including agents working in the other parallel worktrees
+this repo's multi-agent setup runs) draws from the same RPM/TPM pool. Raising eval concurrency to shave
+wall-clock could throttle *other* concurrent work the same way CPU-offload would have, just through a
+different shared resource. This was invisible in the 2026-07-07 pass because nobody had checked whether
+the Agent SDK had its own ceiling; it does not, so the rate limit is now a live consideration whenever
+concurrency is raised, not only a comment on this eval's own runtime. Whether it actually binds depends
+on the account's tier and how much headroom other concurrent work leaves — unverified, but the framing
+generalizes past this tempdoc's boundary; see §Candidate principle below.
+
+### J. Corpus-level horizontal sharding — an unnamed lever, orthogonal to §Lever ranking
+
+The two corpora (EN/DE) share nothing — unlike conditions A/B/C, which the settled design deliberately
+interleaves within one pool to remove the temporal confound (§Attribution item 1), the corpora were
+never a confound to begin with. Running each corpus's half of the matrix against its own backend+worker
+instance is embarrassingly parallel and additive to every lever already named (single pool,
+in-process cell, turn-tail cap, tiering). It was not considered in the 2026-07-07 lever ranking because
+that pass was about removing an accidental 2× (the condition serialization), not about multiplying
+further. The real cost: this repo's shared-dev-stack model is explicitly "one instance at a time"
+(GPU-bound, one dev stack per machine) — running two backends simultaneously would need either a second
+GPU/box or an ephemeral cloud instance, which is close in shape to the decoupling option the Owner
+framing already rejected for a *different* reason (CPU contention). Whether corpus-sharding avoids that
+same objection (it doesn't touch inference placement, only instance count) is worth a fresh look rather
+than assuming the prior rejection covers it — recorded as a possibility, not evaluated.
+
+### K. Time-to-first-signal vs. total-wall-clock — a cheap idea distinct from §B's harder direction
+
+§B (2026-07-07) names sequential/anytime-valid stopping as a statistically rigorous way to cut *total*
+wall-clock. There's a cheaper, lower-risk sibling that doesn't touch the statistics at all: Inspect
+already writes each sample's result to disk as it completes, so a running partial view ("N of 520 done,
+provisional effect estimate so far, no formal stopping guarantee") is buildable today with existing
+summarization code, with zero design risk to the certified result. This targets a *different* problem
+than raw throughput: "still too long" could mean the total duration blocks the shared stack for too
+long (the throughput problem §Lever ranking already addresses), or it could mean there is no visibility
+into how the run is going until it's over (a latency-to-insight problem, unaddressed by any lever named
+so far). These want different fixes, and it's worth being explicit about which one is actually the
+binding complaint before investing further engineering into raw concurrency.
+
+### L. The 2.19h pilot projection is cell-time only — a gap worth naming plainly
+
+The pilot projection (`520 × 363s / 24 ≈ 2.19h`) extrapolates purely from *per-cell* time. It does not
+include the **~40 min calibration/ingest fixed cost** that §Attribution (2026-07-07) already named as a
+real, if smaller, waste term in the original ~3h estimate. A from-scratch full run's actual door-to-door
+wall-clock is therefore closer to **≈2.19h + some fixed setup/calibration overhead** (not fully
+re-measured post-v2), not a literal 2.19h. Naming this so the projected number isn't quoted as the
+complete answer in any future public account of this work.
+
+### Candidate principle refinement (extends, does not replace, §Reach)
+
+§Reach already names **"Amdahl ceiling of a shared serial resource"** as a candidate principle
+(diagnostic: a saturated shared resource caps throughput regardless of client parallelism). §H and §I
+above suggest a refinement worth recording as a candidate, not yet promoted to §Reach's earn/retire
+form: **a pipeline can have more than one such ceiling, and they do not necessarily bind at the same
+concurrency or belong to the same owner** — here, a GPU semaphore inside this repo's backend and an
+Anthropic account-level rate limit shared with unrelated interactive work are both candidate ceilings,
+and a single "ramp concurrency until something breaks" pilot cannot tell them apart after the fact,
+because both fail in ways that can look similar (elevated latency, timeouts, exclusions) from the
+client's vantage point. The generalization — measure each shared resource's utilization independently
+before attributing a concurrency ceiling to "the" bottleneck — would extend beyond this tempdoc to any
+lever that fans out client-side load against more than one shared backend. Not yet worth a formal
+earn/retire entry; would earn one if a future concurrency pilot is misattributed to the wrong resource
+and costs real debugging time to untangle.
