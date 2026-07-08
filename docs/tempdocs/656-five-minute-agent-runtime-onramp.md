@@ -2455,8 +2455,9 @@ reopened.
 | K4 stack-up latency assertion | `scripts/dev/test-onramp-first-success.mjs` | `node -e` boundary check (§K.6); e2e = run `28950317619` |
 
 ### Unverified assumptions / deferred checks (do NOT treat as done)
-1. **End-to-end green run for K1/K2/K4: run `28950317619` was PENDING at session end.** Confirm it went
-   green (latency line ~5s, "OK onramp first-success"). If red, read its `if:failure()` log-dump step.
+1. **RESOLVED — end-to-end green.** Run `28950317619` passed: `stack up … in 10.6s` (K4 latency line present,
+   under the 90s budget), `OK onramp first-success … 1 result(s) TEXT tier 0`. (The 5.1s→10.6s spread across
+   runs confirms cold-runner variance exists but the 90s threshold keeps ~8× margin.)
 2. **K4 failure-path never exercised live** — only isolated arithmetic (§K.6). A real run with
    `JUSTSEARCH_ONRAMP_MAX_STACKUP_MS=1` to confirm the assertion actually fires was not done.
 3. **K4 90s threshold rests on two CI data points (~5s each)** — cold-runner variance not swept. If a
