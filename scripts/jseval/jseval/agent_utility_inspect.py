@@ -343,6 +343,17 @@ def substring_scorer():
     return score
 
 
+def _assert_no_float_task_args(bound_locals: dict) -> None:
+    """Inspect's JSON recorder reads persisted floats back as Decimal (`ijson` without
+    `use_float=True`), so a `float` in a task's identity args breaks `eval_set` resume
+    (tempdoc 675 F0 — see the docstring note on `max_budget` below). Guard against
+    reintroducing one; call with `locals()` at the top of `agent_utility_task`."""
+    floats = {k: v for k, v in bound_locals.items() if isinstance(v, float)}
+    assert not floats, (
+        f"float value(s) in agent_utility_task identity args break eval_set resume: "
+        f"{floats!r} — pass as str/int instead")
+
+
 @task
 def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir: str = "",
                        mcp_config: str | None = None, model: str = "haiku",
@@ -358,6 +369,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
     field (`Sample.metadata`), `sample.id = "{c}|q{i}"` (unique across conditions so
     Inspect resume stays keyed on the cell). The cohort-identity args are what
     `eval_set` segregates logs by."""
+    _assert_no_float_task_args(locals())
     rows = json.load(open(queries_path, encoding="utf-8"))
     if max_queries:
         rows = rows[:max_queries]

@@ -617,6 +617,36 @@ def test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_e
     assert state.metadata["error"] == "per-cell wall-clock budget exhausted"  # not clobbered
 
 
+def test_agent_utility_task_rejects_a_float_identity_arg(tmp_path):
+    """Regression guard (tempdoc 675 F0 follow-up): a float anywhere in
+    `agent_utility_task`'s bound args must raise, not silently ship — Inspect's JSON
+    recorder reads a persisted float back as Decimal, which breaks eval_set resume
+    (the root cause of F0). Converts the prior prose-only docstring warning into an
+    enforced check."""
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t1"}]), encoding="utf-8")
+    with pytest.raises(AssertionError, match="float"):
+        aui.agent_utility_task(
+            conditions=("A",), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+            mcp_config=None, model="haiku", max_budget=0.5,  # float, not the required str
+            corpus_dataset="ds", corpus_signature="sig",
+        )
+
+
+def test_agent_utility_task_happy_path_has_no_float_args(tmp_path):
+    """Sibling to the raise-on-float test above: the real call shape (all current
+    default/str/int/None/tuple args) must NOT trip the guard."""
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t1"}]), encoding="utf-8")
+    t = aui.agent_utility_task(
+        conditions=("A",), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+        mcp_config=None, model="haiku", corpus_dataset="ds", corpus_signature="sig",
+    )
+    assert isinstance(t, Task)
+
+
 def test_run_utility_eval_resumes_on_rerun_same_log_dir(tmp_path, monkeypatch):
     """F0 (tempdoc 675 review): re-invoking `run_utility_eval` with the same `log_dir` RESUMES
     (skips the completed sample) instead of raising Inspect's `PrerequisiteError`. Regression for
@@ -650,3 +680,44 @@ def test_run_utility_eval_resumes_on_rerun_same_log_dir(tmp_path, monkeypatch):
     assert calls["n"] == 1
     aui.run_utility_eval(**kw)  # RESUME: must not raise, must not re-run the completed cell
     assert calls["n"] == 1
+
+
+def test_run_utility_eval_resumes_a_multi_sample_full_completion(tmp_path, monkeypatch):
+    """Strengthens the single-sample resume test above to N=3 samples across 2 conditions
+    (tempdoc 675 review follow-up): proves resume isn't a degenerate single-sample-only
+    behavior — a full N-sample completion, re-invoked with IDENTICAL args, must not
+    re-run ANY of the N cells. (A genuinely partial/interrupted-mid-run resume needs an
+    actual process kill to be faithful — covered by a live, non-unit-test check per the
+    675 tempdoc's §Unverified assumptions, not simulated here: eval_set's retry/
+    fail-on-error semantics for an in-process raised exception are a different, untested
+    code path and changing `max_queries` between invocations would change task identity,
+    defeating resume entirely — neither is a safe basis for a deterministic unit test.)"""
+    from inspect_ai.solver import solver as _solver_dec
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "d.txt").write_text("hello", encoding="utf-8")
+    queries = tmp_path / "q.json"
+    queries.write_text(json.dumps([
+        {"query": f"q{i}", "answer": f"a{i}", "question_type": "t"} for i in range(3)
+    ]), encoding="utf-8")
+    log_dir = str(tmp_path / "logs")
+    calls = {"n": 0}
+
+    @_solver_dec
+    def trivial(*a, **k):
+        async def solve(state, generate):
+            calls["n"] += 1
+            state.output.completion = "a"
+            state.metadata.update({"cost_usd": 0.0, "unique_tokens": 0, "num_turns": 1})
+            return state
+        return solve
+
+    monkeypatch.setattr(aui, "claude_agent_solver", trivial)
+    kw = dict(queries_path=str(queries), corpus_dir=str(corpus), mcp_config=None, model="haiku",
+              conditions=("A", "C"), seeds=1, concurrency=2, log_dir=log_dir, max_queries=3,
+              corpus_dataset="d", corpus_signature="s")
+    aui.run_utility_eval(**kw)
+    assert calls["n"] == 6  # 3 queries x 2 conditions, all completed
+    aui.run_utility_eval(**kw)  # RESUME: none of the 6 completed cells re-run
+    assert calls["n"] == 6
