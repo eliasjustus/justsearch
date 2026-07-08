@@ -355,9 +355,9 @@ def _gate_coverage() -> dict[str, set[str]]:
                 per_corpus_tolerance=base.get("per_corpus_tolerance"),
             ),
         ),
-        # tempdoc 699: the file is derived by `union-recall-gate-derive` and may not exist yet on
-        # a fresh checkout -- the try/except OSError below already treats a missing file as
-        # "gates nothing" rather than crashing, same as the other three.
+        # tempdoc 699: the file is committed (floors derived by `union-recall-gate-derive`); the
+        # try/except OSError below still treats a missing/malformed file as "gates nothing" rather
+        # than crashing on a partial checkout, same as the other three.
         "union-recall-gate": (
             "union-recall-gate-baselines.v1.json",
             lambda rel, base: _urgate.project_release_to_baselines(

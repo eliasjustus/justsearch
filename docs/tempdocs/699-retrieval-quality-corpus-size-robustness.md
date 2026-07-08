@@ -1,7 +1,7 @@
 ---
 title: "Retrieval quality vs corpus size — resolved: the 624 collapse is a synthetic-corpus artifact (the engine is measured size-robust on realistic corpora 3k→10k; ANN is not the cause), and the durable deliverable is a representation-completeness (leg_union_recall) FLOOR gate that completes the recall-survival guard triad (quality floor · completeness floor · leak ceiling), superseding the original cross-size 'Milestone D' ratchet as the wrong instrument. Began as a diagnose-first size-robustness investigation; ended as a per-stage recall-survival guard design conforming to the 636/D-005 instrument + 640 metric-family SSOT."
 type: tempdocs
-status: IMPLEMENTED + validated 2026-07-08 (worktree 624-scale-corpus, NOT merged — no PR) — the representation-completeness `leg_union_recall` FLOOR gate (`jseval union-recall-gate`, sibling of `leak_gate`) is built, unit-tested (47 pass), and live-validated (PASS at floor 0.96 scifact / 0.931 e3-r10; FAIL on a regressed 0.50 projection); `gated_by` + the search-engine-hint surface it; gradle build green; Milestone D tombstoned. See §Implemented. Prior phases (unchanged) — investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. DESIGN SETTLED 2026-07-08 (see "Design" + "Principle & reach"): the durable deliverable is a representation-completeness (`leg_union_recall`) FLOOR gate — the symmetric sibling of the shipped `leak_gate` ceiling — completing the recall-survival guard triad and enforcing the LEG_MISS stage that dominated E1 but no current gate can catch. This SUPERSEDES the original "Milestone D" cross-size ratchet, retired as the wrong instrument (a size-delta gate is insensitive to uniform recall regressions). Extends the 636 machinery + 640 metric-family SSOT; not an engine fix (verdict: none warranted now). Design not yet implemented — awaiting go-ahead. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
+status: IMPLEMENTED + validated 2026-07-08 (worktree 624-scale-corpus, NOT merged — no PR) — the representation-completeness `leg_union_recall` FLOOR gate (`jseval union-recall-gate`, sibling of `leak_gate`) is built, unit-tested (48 pass incl. a committed-baselines lock test), and live-validated (PASS at floor 0.96 scifact / 1.0 needle-burial-v1; FAIL on regressed projections); pins only REPRODUCIBLE corpora (scifact + committed needle-burial-v1) after a review caught+fixed a non-reproducible pin; `gated_by` + the search-engine-hint surface it; gradle build green; Milestone D tombstoned. See §Implemented + §"Review + fix". Prior phases (unchanged) — investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. DESIGN SETTLED 2026-07-08 (see "Design" + "Principle & reach"): the durable deliverable is a representation-completeness (`leg_union_recall`) FLOOR gate — the symmetric sibling of the shipped `leak_gate` ceiling — completing the recall-survival guard triad and enforcing the LEG_MISS stage that dominated E1 but no current gate can catch. This SUPERSEDES the original "Milestone D" cross-size ratchet, retired as the wrong instrument (a size-delta gate is insensitive to uniform recall regressions). Extends the 636 machinery + 640 metric-family SSOT; not an engine fix (verdict: none warranted now). Design not yet implemented — awaiting go-ahead. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
 created: 2026-07-08
 author: agent (Opus autonomous run) — filed from the 624 scale-corpus session
 category: search-quality / retrieval / ann-recall / eval-infrastructure / scaling
@@ -908,22 +908,33 @@ browser validation applies.** All numbers below trace to the live runs recorded 
   `union-recall-gate-derive` CLI (registered via each group's `COMMANDS` list).
 - `jseval/commands/ops.py` — `union-recall-gate` added to the `_gate_coverage()` baseline-file map, so the
   `datasets` command derives `gated_by: union-recall-gate` (tolerant of an absent baselines file).
-- `tests/test_union_recall_gate.py` (new) + committed-surface lock tests (`test_metric_families`,
-  `test_datasets_command`) updated to include the new gate — *expanded*, not weakened.
+- `tests/test_union_recall_gate.py` (new, incl. a committed-baselines lock test) + committed-surface lock
+  tests (`test_metric_families`, `test_datasets_command`) updated to include the new gate — *expanded*, not weakened.
 - `union-recall-gate-baselines.v1.json` (new) — pointer + `fallback_baselines` shape (mirrors leak's, tempdoc
-  683), measured via `union-recall-gate-derive`: **`beir/scifact` floor 0.96**, **`golden/699-e3-r10_0` floor
-  0.931** (both < 1.0 → meaningful floors), tolerance 0.05.
+  683), measured via `union-recall-gate-derive`, pinning only **REPRODUCIBLE** corpora: **`beir/scifact` floor
+  0.96** (BEIR auto-fetch) + **`golden/needle-burial-v1` floor 1.0** (committed `635-corpora` source), both in
+  leak-gate's pin set; tolerance 0.05.
 - `scripts/agent-analytics/hooks/search-engine-hint.mjs` — the engine nudge now surfaces FOUR ratchets
   (relevance / perf / leak / **union-recall**).
 
 **Validation (live, this worktree):**
 - Unit: `pytest tests/test_union_recall_gate.py tests/test_leak_gate.py tests/test_metric_families.py
-  tests/test_datasets_command.py` → **47 passed**; full jseval suite 1575 passed / 2 pre-existing red
-  (`test_correction_probe`, unrelated — expected-state.v1.json).
-- Live PASS: real scifact run (`leg_union_recall` 0.96) vs floor 0.91 → **exit 0**.
-- Live FAIL: a regressed projection (`leg_union_recall` 0.50) vs floor 0.91 → **exit 1** (gate fires).
-- `jseval datasets` shows `scifact → …, union-recall-gate` and `golden/699-e3-r10_0 → union-recall-gate`.
+  tests/test_datasets_command.py` → **48 passed** (incl. the new committed-baselines lock test); full jseval
+  suite pass minus the 2 pre-existing `test_correction_probe` red (unrelated — expected-state.v1.json).
+- Live PASS: real needle-burial-v1 run (`leg_union_recall` 1.0) vs floor 0.95 → **exit 0**; real scifact run
+  (0.96) vs floor 0.91 → **exit 0**.
+- Live FAIL: a regressed needle-burial projection (`leg_union_recall` 0.80) vs floor 0.95 → **exit 1** (fires);
+  earlier scifact-regression demo (0.50 vs 0.91) → **exit 1**.
+- `jseval datasets` shows `scifact → …, union-recall-gate` and `golden/needle-burial-v1 → …, union-recall-gate`.
 - `./gradlew.bat build -x test` → **BUILD SUCCESSFUL** (no JVM surface touched).
+
+**Review + fix (2026-07-08).** A critical review + an independent refute-first subagent audited commit
+`a3e6556`; the gate's logic/tests/wiring were confirmed correct, but three issues were fixed in a follow-up:
+(1) **[high]** the first cut pinned `golden/699-e3-r10_0`, a **non-reproducible** git-ignored experiment corpus
+(generator in `tmp/`) — repinned onto the committed, reproducible `golden/needle-burial-v1` (all pinned corpora
+are now regenerable from git; verified `git ls-files scripts/jseval/635-corpora/needle-burial-v1` + `datasets`
+shows `699-e3-r10_0 → UNGATED`); (2) **[med]** added the committed-baselines lock test; (3) **[low]** corrected
+stale "not yet committed" comments in `ops.py` / `test_datasets_command.py`.
 
 **Teardown (rode along):** the original "Milestone D" cross-size ratchet is tombstoned in §Plan (⚰️ SUPERSEDED
 → §Design). No code existed to delete (never built).

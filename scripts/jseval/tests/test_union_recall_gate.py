@@ -178,3 +178,29 @@ class TestReleaseProjection:
                                  project_release_to_baselines(rel, tolerance_default_abs=0.05))
         assert doc["baselines"]["mixed/enron-qa"]["leg_union_recall_min"] == 0.95  # release wins
         assert doc["baselines"]["beir/scifact"]["leg_union_recall_min"] == 0.93  # fallback survives
+
+
+def test_committed_pointer_file_projects_to_prior_pinned_values():
+    """tempdoc 699 (review fix): pin the real committed union-recall-gate-baselines.v1.json on the
+    real release.v1.json. The release carries no `union_recall` section, so the loaded baselines
+    must equal the file's fallback_baselines verbatim (the measured floors). Both pinned corpora
+    are REPRODUCIBLE (beir/scifact BEIR-fetch + golden/needle-burial-v1 committed 635-corpora
+    source). When a future release adds a `union_recall` section or the pin set changes, update
+    this test deliberately."""
+    from pathlib import Path
+
+    from jseval.ratchet_kernel import load_baselines_doc
+    from jseval.union_recall_gate import project_release_to_baselines as _project
+
+    root = Path(__file__).resolve().parents[1]
+    bp = root / "union-recall-gate-baselines.v1.json"
+    raw = json.loads(bp.read_text(encoding="utf-8"))
+    release = json.loads((root / "release.v1.json").read_text(encoding="utf-8"))
+    assert "union_recall" not in release, "release now carries a union_recall section — update this pin"
+    doc = load_baselines_doc(bp, project_release=lambda rel, base: _project(
+        rel, tolerance_default_abs=base.get("tolerance_default_abs", DEFAULT_TOLERANCE_ABS),
+        per_corpus_tolerance=base.get("per_corpus_tolerance")))
+    assert doc["baselines"] == raw["fallback_baselines"]
+    # Reproducibility invariant (the review finding): every pinned corpus must be regenerable from
+    # git — beir/scifact (BEIR) + golden/needle-burial-v1 (committed source). No ephemeral corpus.
+    assert set(doc["baselines"]) == {"beir/scifact", "golden/needle-burial-v1"}
