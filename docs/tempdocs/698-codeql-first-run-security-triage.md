@@ -1,7 +1,7 @@
 ---
 title: "CodeQL first manual run: alert triage, 5 fixes landed, 22 alerts remaining"
 type: tempdoc
-status: "in progress — 5 of 27 alerts fixed and verified locally; 22 remain (18 same-root-cause duplication, 4 individually triaged); pushed as PR #103"
+status: "in progress — PR #103 merged (ffa2d2d); post-merge CodeQL re-scan confirmed only 3/5 fixes auto-closed (20/21/22); alert #24 is fixed-but-CodeQL-won't-recognize, alert #1's first fix was insufficient and needed a follow-up commit (not yet pushed as of this writing) — see 'Confirmed outcome' below"
 created: 2026-07-08
 updated: 2026-07-08
 related: [695]
@@ -44,15 +44,20 @@ once this session's commit reaches `origin`.
 | 21 | `js/reflected-xss` | `modules/ui-web/dev-examples/plugin-scaffold/dev-server.cjs:54` | 404 handler now sets `Content-Type: text/plain; charset=utf-8` + `X-Content-Type-Options: nosniff` before echoing the request path, so the reflected path can no longer be MIME-sniffed as HTML/script. | `node --check modules/ui-web/dev-examples/plugin-scaffold/dev-server.cjs` → exit 0 (syntax only; this is a standalone dev script with no test harness) |
 | 20 | `js/reflected-xss` | `modules/ui-web/dev-examples/checklist-tracker/dev-server.cjs:49` | Identical fix — both files share the same copy-pasted 404-handler template. | `node --check modules/ui-web/dev-examples/checklist-tracker/dev-server.cjs` → exit 0 |
 | 22 | `js/insecure-randomness` | `modules/ui-web/src/shell-v0/plugin-api/capabilities/ai.ts:152` | `Math.random().toString(36)`-derived session ID replaced with `crypto.randomUUID()`. Traced the usage first: `getSessionTranscript(sessionId)` calls `GET /api/chat/sessions/{sessionId}/transcript` keyed solely by this ID (`ai.ts:183-190`), so a guessable ID was a plausible session-hijack vector for anything else able to reach the loopback API (e.g. another installed plugin). | `cd modules/ui-web && npx vitest run src/shell-v0/plugin-api/HostApiAi.test.ts` → 15/15 passed (the one relevant test, `HostApiAi.test.ts:145-150`, asserts ID uniqueness only, not format, so the change doesn't need a test update). `npm run typecheck` → exit 0 clean (this module is on the [known pre-existing TS5101-red baseline per `expected-state.v1.json`]; this run passed clean, i.e. strictly better than baseline, not regressed). |
-| 24 | `js/prototype-pollution-utility` | `scripts/dev/justsearch-dev-mcp-harness.mjs:60-68` (`setDeep`) | Added an `UNSAFE_KEY_SEGMENTS` guard rejecting `__proto__`/`constructor`/`prototype` path segments, thrown as an error instead of silently polluting. The one real call site (`justsearch-dev-mcp-harness.mjs:420`, now line ~425) passes a hardcoded literal containing none of those segments, so behavior is unchanged for existing usage — this is pure insurance against a future call site passing dynamic input. | `node --check scripts/dev/justsearch-dev-mcp-harness.mjs` → exit 0 (no test harness for this standalone script; verified the one call site's literal path doesn't hit the new guard). |
-| 1 | `js/redos` | `scripts/ci/verify-test-evidence-policy.mjs:216-220` (`elementAfter`) | Bounded the regex's search window to 4000 characters from `index` (`ELEMENT_AFTER_WINDOW`) instead of the rest of the file, since the declaration this looks for always follows shortly after `index` in real source — semantics-preserving for legitimate input, but caps the adversarial-input search space that was enabling catastrophic backtracking. | `node scripts/ci/test-verify-test-evidence-policy.mjs` → `PASS` (existing test suite, unmodified, confirms no behavior change for legitimate input). Adversarial-timing check: the same regex run directly against a 50,000-character crafted non-matching input hung indefinitely (had to be killed after several seconds with no completion) when unbounded, versus completing quickly when pre-sliced to the same 4000-char window — confirms both that the ReDoS is real and that the bound neutralizes it. |
+| 24 | `js/prototype-pollution-utility` | `scripts/dev/justsearch-dev-mcp-harness.mjs:60-68` (`setDeep`) | Added an `UNSAFE_KEY_SEGMENTS` guard rejecting `__proto__`/`constructor`/`prototype` path segments, thrown as an error instead of silently polluting. **CodeQL re-scanned this after merge and still shows the alert `open`** (`most_recent_instance` on the merge commit points at the same assignment line, now shifted to line 73) — its taint-tracking query doesn't recognize an early-throw `.some()` + `Set.has()` guard as a sanitizer for this rule. Verified independently of CodeQL's opinion: a direct test calling `setDeep({}, '__proto__.polluted', 'PWNED')` throws before any assignment and `Object.prototype.polluted` stays `undefined` afterward — the guard is genuinely effective, this is a CodeQL static-recognition gap, not an unfixed vulnerability. Left as-is rather than chasing a CodeQL-recognized rewrite (e.g. `Object.create(null)` intermediates) — low value for a script with one hardcoded call site. | `node --check scripts/dev/justsearch-dev-mcp-harness.mjs` → exit 0. Live-attack test: `setDeep({}, '__proto__.polluted', 'PWNED')` → throws `setDeep: refusing unsafe path segment...`; `({}).polluted` → `undefined` (unpolluted) both before and after the attempt. |
+| 1 | `js/redos` | `scripts/ci/verify-test-evidence-policy.mjs:216-224` (`elementAfter`) | **Two attempts — the first (merged in PR #103) was insufficient and was caught afterward, not before.** Attempt 1 bounded the regex's search window to 4000 chars (`ELEMENT_AFTER_WINDOW`). A closer adversarial-timing check (binary-searching input size after the fact) showed this doesn't work: a run of just ~150 whitespace characters — nowhere near the 4000-char bound — still took multiple seconds, because the blowup is exponential in the matched-and-failed substring, not the total input length; slicing the outer input doesn't bound that. Root cause: the character class `[\w<>\[\], ? extends super.&]` (used twice, for a generic-type signature) contained a literal space, overlapping with the adjacent `\s+`/`\s*` quantifiers — the classic two-quantifiers-matching-the-same-characters ReDoS shape. **Attempt 2 (follow-up commit, not yet merged as of this writing):** removed the space from both occurrences of that character class. The 4000-char bound was kept as defense-in-depth but is no longer the load-bearing fix. | `node scripts/ci/test-verify-test-evidence-policy.mjs` → `PASS` (existing test suite, unmodified — confirms no behavior change for legitimate input). Adversarial-timing, both patterns, run directly against the fixed regex: whitespace-run input up to 100,000 chars → 0-1ms; `@`-repetition input (CodeQL's own example for this alert) up to 20,000 chars → 0ms. Before attempt 2, the whitespace pattern exceeded 5 seconds at just ~150 chars, confirming attempt 1's "PASS" wasn't false — the existing tests just don't exercise pathological input, only correctness on real Java source. |
 
-**Unverified assumption carried by these 5 fixes:** the alerts will actually flip to `closed` on
-GitHub once a subsequent CodeQL run analyzes the pushed commit. Not yet confirmed — no new
-CodeQL run has been triggered against the fixed code as of this writing. **Follow-up:** after
-PR #103 merges to `main`, re-run `gh workflow run codeql.yml --ref main` and confirm alerts
-20/21/22/24/1 move to `state: fixed` via
-`gh api repos/eliasjustus/justsearch/code-scanning/alerts/20`.
+**Confirmed outcome (PR #103 merged as `ffa2d2d`; fresh CodeQL run
+[actions/runs/28911958085](https://github.com/eliasjustus/justsearch/actions/runs/28911958085),
+`conclusion: success`, analyzed commit `ffa2d2d`):** only 3 of the 5 auto-closed —
+`gh api repos/eliasjustus/justsearch/code-scanning/alerts/{20,21,22}` → `state: fixed`. Alerts
+`24` and `1` came back `state: open`, each for a different, now-understood reason (see their
+rows above): #24 is CodeQL not recognizing the sanitizer idiom (code is actually safe); #1 was a
+genuinely insufficient fix, corrected in a follow-up commit (not yet re-scanned as of this
+writing — do not assume it closes without re-running CodeQL against the follow-up commit).
+**Lesson:** "the alerts will auto-close once pushed" was itself an assumption that turned out
+false for 2 of 5 — don't take an alert's open/fixed state as self-evident from "I edited the
+flagged line"; check the actual post-merge scan result.
 
 ## Triaged, not fixed (4 individually-reviewed alerts)
 
@@ -115,7 +120,9 @@ not merely 18 unrelated code-quality nits.
 
 ## Remaining work / do not forget
 
-1. Merge PR #103 and re-run CodeQL to confirm alerts 20/21/22/24/1 close (see above).
+1. Push the follow-up `elementAfter` regex fix (attempt 2, see alert #1 above) and re-run
+   CodeQL to confirm it closes. Confirmed already: alerts 20/21/22 closed; alert 24 will very
+   likely stay open indefinitely (CodeQL-recognition gap, not a real issue — see its row).
 2. Decide on and schedule the `stripComments` unification (18+ alerts, 46 files) — largest
    remaining item by alert count, needs its own scoped session.
 3. Optional hardening, not urgent: replace the hand-rolled `quoteCmdArg` in
