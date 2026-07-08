@@ -15,7 +15,46 @@ from unittest.mock import patch
 import pytest
 
 from jseval import corpus_build, corpus_certify, corpus_fidelity, corpus_identity, corpora
+from jseval import corpus_generate
 from jseval.types import CorpusMeta, QueryRecord
+
+
+# ---------------------------------------------------------------------------
+# gold-chain ceiling — the (type, place, qualifier) triple-injectivity bound
+# (tempdoc 624 scale-corpus: lifted from the over-conservative place-pool cap so a
+# scale corpus can carry hundreds of distinct queries, not 26)
+# ---------------------------------------------------------------------------
+
+def test_max_semantic_chains_is_the_triple_lcm():
+    import math
+    # en and de pools are both 12 types x 26 places x 20 quals -> lcm = 780, an order of
+    # magnitude above the old len(places)=26 cap.
+    assert corpus_generate._max_semantic_chains("en") == math.lcm(12, 26, 20) == 780
+    assert corpus_generate._max_semantic_chains("de") == 780
+
+
+def test_gold_triples_distinct_and_queries_unambiguous_above_old_cap(tmp_path):
+    """The load-bearing correctness claim behind lifting the cap: at n_chains=130 (5x the old
+    26 ceiling) every gold head is uniquely identified by its query's (type, place, qualifier)
+    synonym triple — no two gold heads share a title, and the descriptor-collision gate finds
+    zero gold-involved collisions."""
+    n = 130
+    corpus_generate.generate(tmp_path, axis="prose", lang="en", n_chains=n, hops=2,
+                             distractor_ratio=1, doc_words=60, suite="test", seed=7,
+                             semantic=True)
+    queries = json.loads((tmp_path / "queries.json").read_text(encoding="utf-8"))
+    # cap no longer clamps to 26 — all n gold chains (hence n distinct queries) are emitted.
+    assert len(queries) == n
+    # gold reservations are all distinct triples (the injectivity the cap now permits).
+    reserved = corpus_generate._gold_descriptor_reservations(n, "en")
+    assert len(reserved) == n
+    # and no gold head title collides with any other doc's (the qrel-corrupting failure the
+    # old cap prevented by brute-force uniqueness of place alone).
+    docs = [json.loads(line) for line in (tmp_path / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    gold_ids = {e for q in queries for e in q["evidence_ids"]}
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["n_gold_involved"] == 0, report
+    assert report["passed"] is True, report
 
 
 def _summary(ndcg, mode="bm25_splade", comparable=True):

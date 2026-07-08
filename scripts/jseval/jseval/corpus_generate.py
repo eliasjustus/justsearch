@@ -27,6 +27,7 @@ import base64
 import hashlib
 import io
 import json
+import math
 import random
 import subprocess
 import sys
@@ -88,11 +89,12 @@ _SEM_PLACE = [
 # Third combinatorial descriptor axis (tempdoc 624 T.1): a numbered/ordinal qualifier,
 # synonym-paired like type/place — the doc surface uses the cardinal ("unit seven"), the
 # query synonym uses the ordinal ("the seventh installation"), zero token overlap per pair.
-# This exists purely to widen the achievable non-colliding descriptor space (12 types x 26
-# places = 312 combos was measured to already produce 43-94% distractor-descriptor
-# duplication at realistic corpus scale/distractor_ratio) — it is NOT needed for gold-chain
-# uniqueness, which the place axis alone already guarantees (generate()'s semantic-mode cap
-# limits n_chains <= len(sem_places)).
+# It widens the achievable non-colliding descriptor space (12 types x 26 places = 312 combos
+# was measured to produce 43-94% distractor-descriptor duplication at realistic corpus
+# scale/distractor_ratio). Tempdoc 624 scale-corpus: it ALSO now carries gold-chain uniqueness
+# jointly with type+place — the query references the full (type, place, qualifier) synonym
+# triple, so the gold-chain ceiling is the triple-injectivity period lcm(T,P,Q) (see
+# `_max_semantic_chains`), NOT the place-pool size the original single-axis cap used.
 _SEM_QUAL = [
     ("unit one", "the first installation"), ("unit two", "the second installation"),
     ("unit three", "the third installation"), ("unit four", "the fourth installation"),
@@ -147,6 +149,25 @@ _SEM_PLACE_DE = [
 ]
 
 
+def _max_semantic_chains(lang="en"):
+    """The largest gold-chain count for which every chain's (type, place, qualifier) index-triple
+    is distinct — hence its synonym query identifies exactly one head.
+
+    `_sem_for`'s gold branch assigns chain ``g`` the triple ``(g % T, g % P, g % Q)``. By the CRT
+    that combined residue map is injective on ``[0, lcm(T, P, Q))``, so ``lcm`` is the EXACT ceiling.
+    Tempdoc 624 scale-corpus: this replaces the old ``len(places)`` cap, which predated the query
+    referencing the *full* triple — back then only the place index needed to be unique per gold, so
+    the ceiling was the place-pool size (26). The rendered query now disambiguates a head by all
+    three synonyms (`_render_prose`: "the {type} in the {place}, {qual}"), so two gold chains sharing
+    one descriptor axis (e.g. the same place at ``g`` and ``g+P``) still differ on the other two and
+    stay unambiguous — the true ceiling is the triple period lcm(T, P, Q), an order of magnitude
+    larger, which is what lets a scale corpus carry hundreds of distinct queries."""
+    types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
+    places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
+    return math.lcm(len(types), len(places), len(quals))
+
+
 def _gold_descriptor_reservations(n_chains, lang="en"):
     """The (type_idx, place_idx, qual_idx) index-triples the gold chains in a `generate()` call
     will occupy — mirrors `_sem_for`'s gold branch exactly. Used to EXCLUDE those combinations
@@ -162,10 +183,10 @@ def _gold_descriptor_reservations(n_chains, lang="en"):
 def _sem_for(idx, rng, *, gold, lang="en", exclude=None):
     """Build a (doc_noun, query_noun, doc_place, query_place, doc_qual, query_qual) tuple.
 
-    Gold chains get a deterministic (type, place, qualifier) triple cycled by index. Place
-    alone already guarantees uniqueness across gold chains within one `generate()` call
-    (`generate()`'s semantic-mode cap limits `n_chains <= len(sem_places)`) — the qualifier
-    axis exists to widen the combinatorial descriptor space, not to carry uniqueness itself.
+    Gold chains get a deterministic (type, place, qualifier) triple cycled by index. The full
+    triple carries uniqueness across gold chains within one `generate()` call — the rendered query
+    references all three synonyms, so `generate()`'s semantic-mode cap is the triple-injectivity
+    period `lcm(T, P, Q)` (`_max_semantic_chains`), not the place-pool size alone.
 
     Distractors draw UNIFORMLY AT RANDOM from the full type x place x qualifier space,
     EXCLUDING any index-triple already reserved by a gold chain this call (``exclude`` — see
@@ -548,7 +569,10 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     sem_active = bool(semantic)
     sem_places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     if sem_active:
-        n_chains = min(n_chains, len(sem_places))  # one unique descriptor place per gold
+        # Cap at the (type, place, qualifier) triple-injectivity period, not the place-pool size:
+        # the query disambiguates a gold head by the full synonym triple, so uniqueness holds up to
+        # lcm(T, P, Q) chains (tempdoc 624 scale-corpus; see `_max_semantic_chains`).
+        n_chains = min(n_chains, _max_semantic_chains(lang))
     # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
     # will occupy, so the distractor draw can EXCLUDE them — a gold/distractor descriptor
     # collision becomes structurally impossible rather than merely detected after the fact.
