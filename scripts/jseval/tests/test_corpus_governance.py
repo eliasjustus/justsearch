@@ -27,10 +27,11 @@ from jseval.types import CorpusMeta, QueryRecord
 
 def test_max_semantic_chains_is_the_triple_lcm():
     import math
-    # en and de pools are both 12 types x 26 places x 20 quals -> lcm = 780, an order of
-    # magnitude above the old len(places)=26 cap.
-    assert corpus_generate._max_semantic_chains("en") == math.lcm(12, 26, 20) == 780
-    assert corpus_generate._max_semantic_chains("de") == 780
+    # tempdoc 624 scale-corpus (pool-growth follow-up): en and de pools are both 21 types x
+    # 44 places x 25 quals -> lcm = 23100 (pairwise coprime: 21=3*7, 44=2^2*11, 25=5^2), an
+    # order of magnitude above the old len(places)=26 cap and above the prior 780 triple-lcm.
+    assert corpus_generate._max_semantic_chains("en") == math.lcm(21, 44, 25) == 23100
+    assert corpus_generate._max_semantic_chains("de") == 23100
 
 
 def test_gold_triples_distinct_and_queries_unambiguous_above_old_cap(tmp_path):

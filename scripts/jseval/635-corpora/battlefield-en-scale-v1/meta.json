@@ -9,10 +9,10 @@
     "lang": "en",
     "seed": 6240,
     "hops": 2,
-    "distractor_ratio": 7,
+    "distractor_ratio": 1.4,
     "semantic": true,
     "templated": true,
-    "n_chains": 130,
+    "n_chains": 380,
     "doc_words": 2500
   }
 }

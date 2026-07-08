@@ -69,6 +69,13 @@ _SEM_TYPE = [
     ("tramway", "streetcar line"), ("aqueduct", "water channel"),
     ("printing house", "publishing works"), ("lighthouse", "coastal beacon"),
     ("vineyard", "wine estate"), ("bathhouse", "thermal spa"),
+    # -- tempdoc 624 scale-corpus: appended 12->21 to widen the triple space (append-only,
+    # existing indices/entries above are untouched so committed corpora regenerate identically).
+    ("granary", "grain depot"), ("shipyard", "vessel works"),
+    ("brewery", "ale house"), ("tannery", "hide-processing works"),
+    ("mint", "coin-striking works"), ("smithy", "blacksmith works"),
+    ("greenhouse", "glasshouse nursery"), ("chapel", "small place of worship"),
+    ("windmill", "grain-milling tower"),
 ]
 _SEM_PLACE = [
     ("northern marshlands", "upper wetlands"), ("eastern ridge", "ridge to the east"),
@@ -84,6 +91,16 @@ _SEM_PLACE = [
     ("copper mine", "ore working"), ("windswept moor", "blustery heath"),
     ("river delta", "estuary fan"), ("mountain pass", "high col"),
     ("fishing wharf", "angling quay"), ("orchard slope", "fruit-grove hillside"),
+    # -- tempdoc 624 scale-corpus: appended 26->44 to widen the triple space (append-only).
+    ("limestone caverns", "chalky underground hollows"), ("iron bridge", "metal river crossing"),
+    ("floodplain village", "lowland riverside settlement"), ("terraced hillside plots", "layered slope embankments"),
+    ("abandoned rail yard", "disused switching grounds"), ("chalk downs", "white escarpment hills"),
+    ("tidal flats", "mudflat shallows"), ("border checkpoint", "frontier crossing post"),
+    ("derelict airstrip", "disused landing ground"), ("underground cistern", "buried water reservoir"),
+    ("shipwreck cove", "sunken-vessel inlet"), ("thermal spring basin", "hot-water hollow"),
+    ("sandstone crags", "reddish rock escarpment"), ("ferry landing", "boat crossing point"),
+    ("collapsed mineshaft", "caved-in excavation shaft"), ("sunlit overlook", "sun-facing viewing ledge"),
+    ("brackish lagoon", "salt-tinged inlet"), ("derelict watchtower", "abandoned lookout post"),
 ]
 
 # Third combinatorial descriptor axis (tempdoc 624 T.1): a numbered/ordinal qualifier,
@@ -95,6 +112,12 @@ _SEM_PLACE = [
 # jointly with type+place — the query references the full (type, place, qualifier) synonym
 # triple, so the gold-chain ceiling is the triple-injectivity period lcm(T,P,Q) (see
 # `_max_semantic_chains`), NOT the place-pool size the original single-axis cap used.
+# Tempdoc 624 scale-corpus (pool-growth follow-up): the 12x26x20=6240-triple space was in turn
+# too crowded at ~3000 docs (distractors sharing 2-of-3 descriptors with a gold query buried it
+# below the retrieval-fidelity floor). Pools grown append-only to 21 types x 44 places x 25 quals
+# = 23100 triples; math.lcm(21,44,25) == 23100 exactly since the three sizes are pairwise coprime
+# (21=3*7, 44=2^2*11, 25=5^2), so the CRT injectivity argument in `_max_semantic_chains` still
+# gives an exact (not just a lower-bound) gold-chain ceiling.
 _SEM_QUAL = [
     ("unit one", "the first installation"), ("unit two", "the second installation"),
     ("unit three", "the third installation"), ("unit four", "the fourth installation"),
@@ -106,6 +129,10 @@ _SEM_QUAL = [
     ("unit fifteen", "the fifteenth installation"), ("unit sixteen", "the sixteenth installation"),
     ("unit seventeen", "the seventeenth installation"), ("unit eighteen", "the eighteenth installation"),
     ("unit nineteen", "the nineteenth installation"), ("unit twenty", "the twentieth installation"),
+    # -- tempdoc 624 scale-corpus: appended 20->25 (append-only).
+    ("unit twenty-one", "the twenty-first installation"), ("unit twenty-two", "the twenty-second installation"),
+    ("unit twenty-three", "the twenty-third installation"), ("unit twenty-four", "the twenty-fourth installation"),
+    ("unit twenty-five", "the twenty-fifth installation"),
 ]
 _SEM_QUAL_DE = [
     ("Einheit eins", "die erste Anlage"), ("Einheit zwei", "die zweite Anlage"),
@@ -118,6 +145,10 @@ _SEM_QUAL_DE = [
     ("Einheit fünfzehn", "die fünfzehnte Anlage"), ("Einheit sechzehn", "die sechzehnte Anlage"),
     ("Einheit siebzehn", "die siebzehnte Anlage"), ("Einheit achtzehn", "die achtzehnte Anlage"),
     ("Einheit neunzehn", "die neunzehnte Anlage"), ("Einheit zwanzig", "die zwanzigste Anlage"),
+    # -- tempdoc 624 scale-corpus: appended 20->25 (append-only), index-aligned with _SEM_QUAL above.
+    ("Einheit einundzwanzig", "die einundzwanzigste Anlage"), ("Einheit zweiundzwanzig", "die zweiundzwanzigste Anlage"),
+    ("Einheit dreiundzwanzig", "die dreiundzwanzigste Anlage"), ("Einheit vierundzwanzig", "die vierundzwanzigste Anlage"),
+    ("Einheit fünfundzwanzig", "die fünfundzwanzigste Anlage"),
 ]
 
 # German synonym pools — the Invariant-#6 (ADR-0043) showcase: the doc descriptor and the
@@ -131,6 +162,12 @@ _SEM_TYPE_DE = [
     ("Straßenbahn", "Trambahn"), ("Aquädukt", "Wasserleitung"),
     ("Druckerei", "Verlagshaus"), ("Leuchtturm", "Küstenfeuer"),
     ("Weingut", "Weinanbaugebiet"), ("Badehaus", "Thermalbad"),
+    # -- tempdoc 624 scale-corpus: appended 12->21 (append-only), index-aligned with _SEM_TYPE.
+    ("Kornspeicher", "Getreidelager"), ("Werft", "Schiffsbauanlage"),
+    ("Brauerei", "Bierhaus"), ("Gerberei", "Lederwerk"),
+    ("Münzstätte", "Prägeanstalt"), ("Schmiede", "Eisenwerkstatt"),
+    ("Gewächshaus", "Pflanzenhalle"), ("Kapelle", "kleines Gotteshaus"),
+    ("Windmühle", "Getreidemahlturm"),
 ]
 _SEM_PLACE_DE = [
     ("nördliches Marschland", "oberes Feuchtgebiet"), ("östlicher Bergrücken", "Höhenzug im Osten"),
@@ -146,6 +183,16 @@ _SEM_PLACE_DE = [
     ("Kupfermine", "Erzgrube"), ("windige Heide", "stürmisches Moor"),
     ("Flussdelta", "Mündungsfächer"), ("Gebirgspass", "hohes Joch"),
     ("Fischerkai", "Anglersteg"), ("Obsthang", "Obstgarten am Hang"),
+    # -- tempdoc 624 scale-corpus: appended 26->44 (append-only), index-aligned with _SEM_PLACE.
+    ("Kalksteinhöhlen", "unterirdische Hohlräume"), ("Eisenbrücke", "Flussübergang aus Metall"),
+    ("Überschwemmungsdorf", "tiefliegende Siedlung am Fluss"), ("terrassierte Hanglage", "gestufte Böschungsflächen"),
+    ("stillgelegter Rangierbahnhof", "aufgegebenes Verschiebegelände"), ("Kreidehügel", "weiße Steilhänge"),
+    ("Gezeitenwatt", "schlammige Untiefen"), ("Grenzposten", "Kontrollpunkt am Übergang"),
+    ("verlassene Rollbahn", "ungenutztes Landefeld"), ("unterirdische Zisterne", "verborgener Wasserspeicher"),
+    ("Wrackbucht", "Einbuchtung mit versunkenen Schiffen"), ("Thermalquellenbecken", "heiße Wassermulde"),
+    ("Sandsteinfelsen", "rötliche Steilkante"), ("Fähranleger", "Übersetzstelle für Boote"),
+    ("eingestürzter Schacht", "verschüttete Grabungsstätte"), ("sonniger Aussichtspunkt", "sonnenzugewandte Terrassenkante"),
+    ("brackige Lagune", "salzige Meeresbucht"), ("verfallener Wachturm", "aufgegebener Beobachtungsposten"),
 ]
 
 
@@ -161,7 +208,11 @@ def _max_semantic_chains(lang="en"):
     three synonyms (`_render_prose`: "the {type} in the {place}, {qual}"), so two gold chains sharing
     one descriptor axis (e.g. the same place at ``g`` and ``g+P``) still differ on the other two and
     stay unambiguous — the true ceiling is the triple period lcm(T, P, Q), an order of magnitude
-    larger, which is what lets a scale corpus carry hundreds of distinct queries."""
+    larger, which is what lets a scale corpus carry hundreds of distinct queries.
+
+    Tempdoc 624 scale-corpus (pool-growth follow-up): pools are now 21 types x 44 places x 25
+    quals = 23100 triples, chosen pairwise-coprime (21=3*7, 44=2^2*11, 25=5^2) so
+    lcm(21, 44, 25) == 23100 == the full triple-space size — no combination is wasted."""
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
