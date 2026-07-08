@@ -55,6 +55,12 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
     Attaches a cohort identity to each run (agent_manifest), pairs the with/without
     -tool arms on condition, aggregates seeds, and emits the canonical record plus
     an Inspect-EvalLog projection. Pure composition over existing run artifacts.
+
+    DEPRECATION NOTE (tempdoc 675): this command composes result files produced by
+    the now-retired classic `claude -p` shell-out runner (`agent_retrieval_eval.
+    run_agent_eval`, no longer callable via the CLI). The record-grade path is now
+    `utility-run` (`cmd_utility_run`), which drives the in-process SDK executor
+    directly. Kept working for any pre-existing run artifacts still on disk.
     """
     import datetime as _dt
 
@@ -138,6 +144,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--max-queries", default=None, type=int)
 @click.option("--max-budget", default=0.50, show_default=True, help="Max USD per cell.")
 @click.option("--timeout-s", default=180, show_default=True, type=int, help="Per-cell timeout (calibrate sets ~2x contended-p95).")
+@click.option("--max-turns", default=100, show_default=True, type=int, help="Per-cell agent turn cap (safety net for the pathological tail; the wall-clock timeout is the primary bound).")
 @click.option("--calibration", default=None, type=click.Path(exists=True), help="calibration.json from `utility-calibrate` (overrides timeout/concurrency/search-key + filters queries).")
 @click.option("--dataset", required=True, help="Corpus slug, e.g. mixed/multihop-rag.")
 @click.option("--corpus-signature", default=None)
@@ -151,7 +158,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--output-dir", default=None, type=click.Path())
 @click.pass_context
 def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, seeds, concurrency,
-                    max_queries, max_budget, timeout_s, calibration, dataset, corpus_signature,
+                    max_queries, max_budget, timeout_s, max_turns, calibration, dataset, corpus_signature,
                     mcp_tool_surface_hash, search_config_key, contamination_class, confidence_tier,
                     log_dir, output_dir):
     """Run the agent-utility matrix THROUGH Inspect AI (resumable) and compose (tempdoc 624).
@@ -199,6 +206,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         mcp_config=(os.path.abspath(mcp_config) if mcp_config else None),
         model=model, conditions=conds, seeds=seeds, concurrency=concurrency,
         log_dir=log_dir, max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
+        max_turns=max_turns,
         cli_version=cli_version, mcp_tool_surface_hash=mcp_tool_surface_hash,
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
     )
