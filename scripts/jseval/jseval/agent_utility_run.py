@@ -168,19 +168,24 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
         if not getattr(log, "eval", None):
             continue
         meta = (log.eval.metadata or {})
-        condition = meta.get("condition")
         model = meta.get("model")
         corpus = meta.get("corpus") or {}
         cohort = meta.get("cohort") or {}
-        with_tool = condition in _WITH_TOOL
 
         overlay_scores = (judge_overlay or {}).get("scores", {})
-        by_seed: dict = {}
+        by_cond_seed: dict = {}
         for s in (log.samples or []):
-            if (s.metadata or {}).get("error"):
+            # Exclude on EITHER our own metadata.error OR Inspect's sample-level error
+            # (a cell that crashed before stashing metadata still carries s.error;
+            # never let it enter the paired stats — tempdoc 675 review hardening).
+            if (s.metadata or {}).get("error") or getattr(s, "error", None):
                 continue  # excluded cell
+            # tempdoc 675 single pool: condition is a SAMPLE field now (one task holds
+            # every condition); sample.id is "{cond}|q{i}" — strip to the bare qid so
+            # cross-condition pairing keys (`{cond}|{seed}|{qid}`) stay aligned.
+            condition = (s.metadata or {}).get("condition")
             seed = int(s.epoch or 1) - 1  # Inspect epochs are 1-based; seed 0-based
-            qid = str(s.id)
+            qid = str(s.id).split("|", 1)[-1]
             score = (s.scores or {}).get("substring_scorer")
             correct = bool(score and score.value == "C")
             ov = overlay_scores.get(f"{condition}|{seed}|{qid}")
@@ -204,7 +209,7 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
             # whose surface assertion FAILED already set `error` and was excluded by
             # the `continue` above, so anything reaching here is either surface-clean,
             # surface-unverified, or condition A (exempt, both fields absent -> None).
-            by_seed.setdefault(seed, {})[qid] = {
+            by_cond_seed.setdefault((condition, seed), {})[qid] = {
                 "correct": correct,
                 "cost_usd": (s.metadata or {}).get("cost_usd"),
                 "unique_tokens": (s.metadata or {}).get("unique_tokens"),
@@ -221,7 +226,8 @@ def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None
                 "mcp_tools_deferred": (s.metadata or {}).get("mcp_tools_deferred"),
             }
 
-        for seed, per_query in sorted(by_seed.items()):
+        for (condition, seed), per_query in sorted(by_cond_seed.items()):
+            with_tool = condition in _WITH_TOOL
             manifest = {
                 "git_sha": git_sha,
                 "cli_version": cohort.get("cli_version"),
@@ -307,13 +313,13 @@ def scan_leaked_cells(log_dir) -> dict[str, dict]:
             continue
         if not getattr(log, "eval", None):
             continue
-        meta = log.eval.metadata or {}
-        condition = meta.get("condition")
         for s in (log.samples or []):
-            if (s.metadata or {}).get("error"):
+            if (s.metadata or {}).get("error") or getattr(s, "error", None):
                 continue  # excluded cell already, not part of any paired stat
+            # tempdoc 675 single pool: condition is a sample field; sample.id carries it.
+            condition = (s.metadata or {}).get("condition")
             seed = int(s.epoch or 1) - 1
-            qid = str(s.id)
+            qid = str(s.id).split("|", 1)[-1]
             text = _completion_text(s)
             matches = _LEAK_NEEDLE_RE.findall(text)
             if matches:

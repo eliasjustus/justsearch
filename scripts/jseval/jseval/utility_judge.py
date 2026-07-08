@@ -122,12 +122,14 @@ def _iter_eval_records(log_dir: str):
             continue
         if not getattr(log, "eval", None):
             continue
-        cond = (log.eval.metadata or {}).get("condition")
         for s in (log.samples or []):
-            if (s.metadata or {}).get("error"):
+            if (s.metadata or {}).get("error") or getattr(s, "error", None):
                 continue
+            # tempdoc 675 single pool: condition is a sample field; sample.id is
+            # "{cond}|q{i}" — read cond per-sample and strip to the bare qid.
+            cond = (s.metadata or {}).get("condition")
             seed = int(s.epoch or 1) - 1
-            qid = str(s.id)
+            qid = str(s.id).split("|", 1)[-1]
             ref = _target_text(s)
             cand = (getattr(s.output, "completion", "") if s.output else "") or ""
             question = s.input if isinstance(s.input, str) else ""

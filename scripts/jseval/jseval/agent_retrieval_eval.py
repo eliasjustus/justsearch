@@ -9,13 +9,21 @@ Phase 2: Agent comparison (requires Claude Code CLI, costs API tokens).
   ground truth. Three conditions: A (file tools only), B (file + JustSearch),
   C (JustSearch only).
 
-``run_agent_eval`` (this module's Phase-2 shell-out runner) is SMOKE-ONLY /
-NON-RECORD-GRADE (tempdoc 624 §M.8 amendment, Step 0 item 6): it predates the
-cohort-identity + composer substrate and has no resumable/durable-log story.
-Records intended for publication come from the Inspect-AI path
-(``jseval.agent_utility_inspect`` / ``jseval.agent_utility_run.eval_logs_to_summaries``)
--- this module stays useful for a quick manual sanity check, not for a
-composed ``utility-comparison.v1`` record.
+``run_agent_eval`` (this module's former Phase-2 `claude -p` shell-out runner)
+was RETIRED in tempdoc 675: the classic subprocess-based agent-eval runner is
+dead, replaced by the in-process SDK executor
+(``jseval.agent_utility_inspect.run_utility_eval``). Records intended for
+publication come from that Inspect-AI path
+(``jseval.agent_utility_inspect`` / ``jseval.agent_utility_run.eval_logs_to_summaries``).
+
+This module now holds the surviving Tier-1/Tier-2 retrieval runners --
+``run_retrieval_eval`` (Phase 1: deterministic retrieve-context quality, $0
+cost) and ``run_tier2_eval`` (single-shot RAG eval against a local LLM, $0
+cost) -- plus shared helpers used by the Inspect-AI runner
+(``stage_corpus_dir``, ``build_disallowed_tools``,
+``find_disallowed_tool_calls``, ``find_leak_suspect_tool_calls``,
+``_score_answer``, ``load_queries``) and the console formatters for all of
+the above.
 """
 
 from __future__ import annotations
@@ -39,7 +47,8 @@ log = logging.getLogger(__name__)
 _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
 
 
-def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-") -> str:
+def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-",
+                     stable_key: str | None = None) -> str:
     """Copy `corpus_dir`'s contents into a fresh, answer-key-free temp directory.
 
     `--add-dir corpus_dir` hands the Claude Code CLI's Read/Glob tools a directory
@@ -53,12 +62,29 @@ def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-") -
     Staging a copy into its own isolated temp root instead of passing the
     persistent `corpus-dir/` makes `queries.json` structurally absent from
     anywhere reachable by traversal from the staged path — a construction-time
-    guarantee, not a permission workaround. Shared by both eval runners
-    (`agent_retrieval_eval.run_agent_eval`, `agent_utility_inspect.run_utility_eval`)
-    so the fix lives in one place, not two forks of the same `--add-dir` wiring.
+    guarantee, not a permission workaround. Used by the surviving Inspect-AI
+    runner (`agent_utility_inspect.run_utility_eval`) -- the classic shell-out
+    runner (`agent_retrieval_eval.run_agent_eval`) that formerly shared this
+    helper was retired in tempdoc 675.
+
+    `stable_key` (tempdoc 675 F0 resume fix): when given, stage to a DETERMINISTIC
+    path keyed by a hash of `stable_key` (idempotent copy) instead of a random
+    `mkdtemp`. The staged path is part of Inspect's `eval_set` task identity, so a
+    resume must re-stage to the SAME path or the recomputed task-id won't match the
+    persisted log (→ `PrerequisiteError`). Default (None) keeps the volatile per-call
+    behavior for the other (Tier-1/2) callers.
 
     Callers own cleanup: `shutil.rmtree(Path(staged_dir).parent, ignore_errors=True)`.
     """
+    if stable_key is not None:
+        import hashlib
+        digest = hashlib.sha256(str(stable_key).encode()).hexdigest()[:16]
+        staging_root = str(Path(tempfile.gettempdir()) / f"{prefix}{digest}")
+        staged_dir = str(Path(staging_root) / "corpus-dir")
+        if not Path(staged_dir).exists():
+            Path(staging_root).mkdir(parents=True, exist_ok=True)
+            shutil.copytree(corpus_dir, staged_dir)
+        return staged_dir
     staging_root = tempfile.mkdtemp(prefix=prefix)
     staged_dir = str(Path(staging_root) / "corpus-dir")
     shutil.copytree(corpus_dir, staged_dir)
@@ -89,14 +115,6 @@ class RetrievalResult:
     hit_at_5: bool = False
     hit_at_10: bool = False
     reciprocal_rank: float = 0.0   # 1/rank of first evidence doc, 0 if not found
-
-
-REFLECTION_PROMPT = (
-    "Reflect on your experience answering the previous question using the tools available to you. "
-    "What specific actions did you try that didn't work or produced unexpected results? "
-    "What filter values, parameters, or query patterns did you attempt that failed? "
-    "Be specific about exact tool calls and error conditions, not aspirational features."
-)
 
 
 _ABSTENTION_PHRASES = [
@@ -1013,349 +1031,6 @@ def find_leak_suspect_tool_calls(
         if needle_lower in haystack:
             flagged.append(tc)
     return flagged
-
-
-def _build_agent_cmd(
-    claude_bin: str,
-    prompt: str,
-    model: str,
-    corpus_dir: str,
-    condition: str,
-    mcp_config_path: str | None,
-    empty_mcp_path: str,
-    max_budget_per_query: float,
-) -> list[str]:
-    """Build the `claude -p` argv for one eval query (mirrors agent_utility_inspect's
-    `_build_argv`). Split out of `_run_single_query`'s closure so the actual
-    subprocess-facing wiring — not just `build_disallowed_tools` in isolation — is
-    directly unit-testable (tempdoc 624 confidence pass).
-    """
-    cmd = [
-        claude_bin, "-p", prompt,
-        "--model", model,
-        "--output-format", "stream-json",
-        "--verbose",
-        "--max-budget-usd", str(max_budget_per_query),
-        "--permission-mode", "bypassPermissions",
-        "--add-dir", corpus_dir,
-    ]
-
-    if condition == "A":
-        cmd.extend(["--strict-mcp-config", "--mcp-config", str(empty_mcp_path)])
-    elif condition in ("B", "C"):
-        if mcp_config_path:
-            cmd.extend(["--strict-mcp-config", "--mcp-config", mcp_config_path])
-
-    cmd.extend(["--disallowedTools", ",".join(build_disallowed_tools(condition))])
-    return cmd
-
-
-def parse_claude_stream_json(stdout: str) -> tuple[list[dict], dict | None, str]:
-    """Parse `claude -p --output-format stream-json --verbose` line-delimited
-    stdout into ``(tool_calls, result_event, session_id)``.
-
-    Shared by the classic runner (``run_agent_eval`` below) and the Inspect-AI
-    runner (``agent_utility_inspect.claude_agent_solver``, tempdoc 624 §As-built
-    #5 residual-gap close) so both parse the identical event shape from the
-    identical argv (`--output-format stream-json --verbose`) instead of forking
-    the parsing logic — this capture IS what ``find_disallowed_tool_calls`` /
-    ``find_leak_suspect_tool_calls`` scan.
-
-    ``tool_calls``: ``[{"tool": name, "input": {...summarized args...},
-    "response_preview": str}]`` in call order (params over 100 chars / non-
-    scalar params are summarized for compact storage).
-    ``result_event``: the parsed ``{"type": "result", ...}`` event carrying
-    ``is_error`` / ``result`` / ``total_cost_usd`` / ``usage`` / ``num_turns``,
-    or ``None`` if the stream never emitted one (crash/timeout/malformed output).
-    ``session_id``: from the result event, or ``""`` if absent.
-    """
-    tool_calls: list[dict] = []
-    data: dict | None = None
-    session_id = ""
-    for line in stdout.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        etype = event.get("type", "")
-        if etype == "assistant":
-            msg = event.get("message", {})
-            for block in msg.get("content", []):
-                if block.get("type") == "tool_use":
-                    tool_name = block.get("name", "")
-                    tool_input = block.get("input", {})
-                    # Summarize params (keep it compact for storage)
-                    summary = {}
-                    for k, v in tool_input.items():
-                        if isinstance(v, str) and len(v) > 100:
-                            summary[k] = v[:100] + "..."
-                        elif isinstance(v, (dict, list)):
-                            summary[k] = json.dumps(v)[:100]
-                        else:
-                            summary[k] = v
-                    tool_calls.append({"tool": tool_name, "input": summary})
-                elif block.get("type") == "tool_result":
-                    # Attach response summary to last tool call
-                    if tool_calls:
-                        content = block.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(
-                                c.get("text", "")[:200] for c in content if isinstance(c, dict)
-                            )
-                        elif isinstance(content, str):
-                            content = content[:200]
-                        preview = str(content)[:200]
-                        tool_calls[-1]["response_preview"] = preview
-                        # Per-call outcome capture (tempdoc 624 §M.8 amendment, Step
-                        # 0 item 2): bypass verification must never rest on the
-                        # agent's self-reported reflection (the classic runner's
-                        # `_get_reflection` asks the agent itself whether it used
-                        # its tools correctly -- a self-report, not evidence). The
-                        # `tool_result` block's own `is_error` flag is the CLI's
-                        # empirical verdict on THIS call, independent of anything
-                        # the agent says afterward.
-                        is_error = bool(block.get("is_error"))
-                        tool_calls[-1]["is_error"] = is_error
-                        if is_error:
-                            tool_calls[-1]["error_snippet"] = preview
-        elif etype == "result":
-            data = event
-            session_id = event.get("session_id", "")
-    return tool_calls, data, session_id
-
-
-def parse_claude_init_event(stdout: str) -> dict | None:
-    """Parse the `{"type":"system","subtype":"init",...}` event from `claude -p
-    --output-format stream-json --verbose` stdout — the FIRST event in the stream,
-    disclosing which MCP servers actually connected and which tools were actually
-    offered for THIS invocation (tempdoc 624 battlefield retrospective, 2026-07-03).
-
-    Distinct from `parse_claude_stream_json` (which extracts `tool_use` calls and
-    the terminal `result` event): a dead/silently-dropped `--mcp-config` entry
-    (`{"url": "..."}` without `"type": "http"` — see
-    `utility_calibrate.McpConfigMissingTypeError`) shows up HERE as an empty
-    `mcp_servers` list and no `mcp__`-prefixed tool name, even though the CLI
-    process still exits 0 and answers (from file tools) as if nothing were wrong.
-    This is exactly the gap that left all 260 certified condition-B battlefield
-    cells with zero MCP tool calls, undetected by every other check.
-
-    :returns: ``{"mcp_servers": [{"name": str, "status": str}, ...], "tools":
-        [str, ...]}`` from the init event, or ``None`` if the stream never emitted
-        a `system`/`init` event (crash/timeout/malformed output before the CLI
-        even got that far).
-    """
-    for line in stdout.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") == "system" and event.get("subtype") == "init":
-            servers = event.get("mcp_servers") or []
-            return {
-                "mcp_servers": [
-                    {"name": s.get("name"), "status": s.get("status")}
-                    for s in servers if isinstance(s, dict)
-                ],
-                "tools": list(event.get("tools") or []),
-            }
-    return None
-
-
-def run_agent_eval(
-    queries: list[dict],
-    corpus_dir: str,
-    mcp_config_path: str | None = None,
-    model: str = "haiku",
-    condition: str = "A",
-    max_queries: int | None = None,
-    max_budget_per_query: float = 0.50,
-    question_types: list[str] | None = None,
-    isolated: bool = True,
-    parallel: int = 1,
-) -> dict:
-    """Run Phase 2 agent eval using Claude Code CLI.
-
-    When isolated=True (default), runs from a temp directory outside
-    the repo to avoid CLAUDE.md contamination. The agent sees no
-    project-specific config — just a vanilla Claude Code instance.
-
-    When parallel > 1, runs up to N queries concurrently via ThreadPoolExecutor.
-    Each query gets its own temp directory. Results are logged as they complete.
-    """
-    filtered = queries
-    if question_types:
-        filtered = [q for q in queries if q["question_type"] in question_types]
-    if max_queries:
-        filtered = filtered[:max_queries]
-
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        return {"error": "claude CLI not found in PATH"}
-
-    # Watched-roots safety gate (tempdoc 624 As-built #7 follow-up): this is the actual
-    # eval-executing path, so — unlike the optional `utility-calibrate` CLI — a stray/
-    # broader watched root must abort the run, not just get reported. Only meaningful
-    # when a search backend is actually in play (mcp_config_path given); condition A
-    # never touches the backend.
-    if mcp_config_path:
-        watched_roots_base_url = base_url_from_mcp_config(mcp_config_path)
-        if watched_roots_base_url:
-            assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
-
-    log.info("Running agent eval: %d queries, model=%s, condition=%s, parallel=%d",
-             len(filtered), model, condition, parallel)
-
-    # Stage an isolated, answer-key-free copy of corpus_dir ONCE for the whole run
-    # (reused across every query/condition in this call) — see stage_corpus_dir's
-    # docstring for why `--add-dir corpus_dir` cannot pass the persistent, gold-
-    # answer-key-sibling `corpus-dir/` directly.
-    corpus_dir = stage_corpus_dir(corpus_dir)
-
-    def _run_single_query(i: int, q: dict) -> AgentResult:
-        """Run a single eval query — self-contained, safe for concurrent execution."""
-        query_cwd = tempfile.mkdtemp(prefix=f"jseval-agent-{i}-") if isolated else corpus_dir
-
-        # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1) --
-        # kept byte-identical to agent_utility_inspect._PROMPT's wording (same
-        # confound rationale documented there); the two runners format it
-        # differently ({corpus_dir}/{query} vs. an f-string) but the TEXT must
-        # not drift between them, since prompt_template_hash is a cohort field.
-        prompt = (
-            f"Answer the following question about the document collection at {corpus_dir}. "
-            f"You may use any tools available to you. "
-            f"Do not use prior knowledge. Be concise. "
-            f"Question: {q['query']}"
-        )
-
-        empty_mcp = Path(query_cwd) / "_empty_mcp.json"
-        if condition == "A":
-            empty_mcp.write_text('{"mcpServers":{}}', encoding="utf-8")
-
-        disallowed_tools = build_disallowed_tools(condition)
-
-        cmd = _build_agent_cmd(
-            claude_bin, prompt, model, corpus_dir, condition,
-            mcp_config_path, str(empty_mcp), max_budget_per_query,
-        )
-
-        result = AgentResult(
-            query=q["query"], answer=q["answer"],
-            question_type=q["question_type"],
-            condition=condition, model=model,
-        )
-
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=180,
-                cwd=query_cwd, encoding="utf-8", errors="replace",
-            )
-            stdout = proc.stdout.strip()
-            stderr = proc.stderr.strip() if proc.stderr else ""
-
-            # Parse stream-json: extract tool calls and final result from line-delimited JSON
-            tool_calls, data, session_id = parse_claude_stream_json(stdout)
-
-            result.tool_calls = tool_calls
-            result.disallowed_tool_calls = find_disallowed_tool_calls(tool_calls, disallowed_tools)
-            result.leak_suspect_tool_calls = find_leak_suspect_tool_calls(tool_calls)
-
-            if data is None:
-                result.error = stderr[:500] if stderr else f"exit code {proc.returncode}"
-            elif data.get("is_error"):
-                result.error = data.get("result", "unknown error")
-                result.agent_answer = data.get("result", "")
-                result.cost_usd = data.get("total_cost_usd", 0.0)
-                result.duration_ms = data.get("duration_ms", 0)
-                result.num_turns = data.get("num_turns", 0)
-                usage = data.get("usage", {})
-                result.input_tokens = usage.get("input_tokens", 0)
-                result.cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
-                result.cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                result.output_tokens = usage.get("output_tokens", 0)
-            else:
-                result.agent_answer = data.get("result", "")
-                result.cost_usd = data.get("total_cost_usd", 0.0)
-                result.duration_ms = data.get("duration_ms", 0)
-                result.num_turns = data.get("num_turns", 0)
-                usage = data.get("usage", {})
-                result.input_tokens = usage.get("input_tokens", 0)
-                result.cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
-                result.cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                result.output_tokens = usage.get("output_tokens", 0)
-                result.correct = _score_answer(q["answer"], result.agent_answer)
-
-                # Reflection: run synchronously within this query's thread
-                if condition in ("B", "C") and not result.error and session_id:
-                    result.reflection = _get_reflection(claude_bin, session_id, query_cwd)
-
-        except subprocess.TimeoutExpired:
-            result.error = "timeout (180s)"
-        except Exception as e:
-            result.error = str(e)
-
-        log.info("  [%d/%d] %s model=%s correct=%s cost=$%.3f turns=%d",
-                 i + 1, len(filtered), condition, model,
-                 result.correct, result.cost_usd, result.num_turns)
-        if result.reflection:
-            log.info("    reflection: %s", result.reflection[:150])
-        return result
-
-    # Execute queries: sequential (parallel=1) or concurrent (parallel>1)
-    try:
-        if parallel <= 1:
-            results = [_run_single_query(i, q) for i, q in enumerate(filtered)]
-        else:
-            import concurrent.futures
-            results = [None] * len(filtered)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as executor:
-                future_to_idx = {
-                    executor.submit(_run_single_query, i, q): i
-                    for i, q in enumerate(filtered)
-                }
-                for future in concurrent.futures.as_completed(future_to_idx):
-                    idx = future_to_idx[future]
-                    try:
-                        results[idx] = future.result()
-                    except Exception as e:
-                        results[idx] = AgentResult(
-                            query=filtered[idx]["query"],
-                            answer=filtered[idx]["answer"],
-                            question_type=filtered[idx]["question_type"],
-                            condition=condition, model=model, error=str(e),
-                        )
-    finally:
-        shutil.rmtree(Path(corpus_dir).parent, ignore_errors=True)
-
-    return _aggregate_agent(results, condition, model)
-
-
-def _get_reflection(claude_bin: str, session_id: str, cwd: str) -> str:
-    """Resume the agent session and ask for reflection on tool usage."""
-    try:
-        proc = subprocess.run(
-            [claude_bin, "-p", REFLECTION_PROMPT,
-             "--resume", session_id,
-             "--output-format", "json",
-             "--max-budget-usd", "0.50",
-             "--permission-mode", "bypassPermissions"],
-            capture_output=True, text=True, timeout=60, cwd=cwd,
-        )
-        stdout = proc.stdout.strip()
-        if stdout:
-            data = json.loads(stdout)
-            return data.get("result", "")
-        else:
-            stderr = proc.stderr.strip() if proc.stderr else ""
-            log.debug("Reflection empty output (rc=%d): %s", proc.returncode, stderr[:200])
-    except Exception as e:
-        log.debug("Reflection failed: %s", e)
-    return ""
 
 
 def _aggregate_agent(results: list[AgentResult], condition: str, model: str) -> dict:

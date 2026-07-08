@@ -166,7 +166,8 @@ def _leak_scan_logs_for_corpus(tmp_path, dataset, *, conditions=("A", "C")):
     @solver
     def fixed():
         async def solve(state, generate):
-            qid = str(state.sample_id)
+            # tempdoc 675 single pool: sample.id is now "{cond}|q{i}" -> strip prefix.
+            qid = str(state.sample_id).split("|", 1)[-1]
             state.output.completion = completions[qid]
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 500, "num_turns": 2})
             return state
@@ -174,9 +175,11 @@ def _leak_scan_logs_for_corpus(tmp_path, dataset, *, conditions=("A", "C")):
 
     @task
     def ct(condition="A"):
-        samples = [Sample(id=qid, input=qid, target=f"ANS{qid[1:]}") for qid in completions]
+        # condition is a SAMPLE field now; sample.id carries it for a unique resume key.
+        samples = [Sample(id=f"{condition}|{qid}", input=qid, target=f"ANS{qid[1:]}",
+                          metadata={"condition": condition}) for qid in completions]
         return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": dataset, "signature": "sig"},
                               "cohort": cohort})
 
