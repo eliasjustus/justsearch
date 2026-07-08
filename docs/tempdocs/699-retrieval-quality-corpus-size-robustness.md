@@ -714,7 +714,9 @@ The 624 scare required a bespoke artifact-vs-defect investigation because **retr
 standing, enforced property** (639/580: "unowned and unmeasured"). The experiments localized the dominant
 failure to the **first funnel stage** — *representation completeness* (E1: LEG_MISS was 63% of the synthetic
 drop; the gold was in *no* leg's candidate set). The design's job is narrow: make that stage a guarded
-property, so the next regression there is caught in CI instead of by a from-scratch investigation.
+property (a standing **local-first advisory** ratchet, like its siblings — see the confidence check on why
+eval gates are not CI-blocking in this repo), so the next regression there is caught by the standing ratchet
+instead of by a from-scratch investigation.
 
 ### What already exists (extend, do not replace)
 The 636 lineage already shipped most of the recall-survival stack, and the design conforms to it:
@@ -817,3 +819,70 @@ claim to fix a present defect (there is none in that range), nor to guarantee ro
   relevance_gate — i.e. every stage regression is also an nDCG regression already caught — the per-stage gates
   are redundant with the aggregate and should be **collapsed back into relevance_gate**. A per-stage gate that
   never fires on its own is self-justifying apparatus and should be retired rather than kept for symmetry.
+
+## Pre-implementation confidence check (2026-07-08 — read-only investigation + existing-artifact analysis)
+
+> Ran before committing to implement, to test the design's load-bearing assumptions. Method: codebase reads +
+> analysis of the existing E1–E4 run artifacts under `tmp/699-experiments/` — **no new eval runs, no feature
+> code.** Each finding cites `file:line` or a measured artifact.
+
+- **U1 — [LINCHPIN] Does the completeness gate earn its keep (non-redundancy vs nDCG)? → CONFIRMED
+  non-redundant.** Across the existing runs, `leg_union_recall` and nDCG@10 diverge sharply: `e1`
+  battlefield-scale (`leg_union_recall` 0.35, nDCG 0.070) vs `e3-r10` (0.93, 0.111) — a **0.58** completeness
+  difference maps to only a **0.041** nDCG difference (~14× sensitivity gap). Mechanism: nDCG@10 is *compressed
+  near zero on hard corpora*, so a completeness collapse that moves nDCG ≈0.04 (within the ±0.05 noise floor,
+  so `relevance_gate` may not fire) moves `leg_union_recall` ≈0.5 (a completeness floor fires cleanly). The
+  reverse divergence also appears (E3 sweep: nDCG craters 0.22→0.11 while union holds 0.99→0.93 — the
+  CASCADE_LEAK regime). So the three signals cover distinct failure modes; the completeness gate is not
+  ballast. *(The empirical "earns its keep" proof — firing on a real code change nDCG missed — still awaits a
+  live regression; the retirement condition above governs that.)*
+- **U2 — Signal stability / tolerance → RESOLVED.** `leg_union_recall` across two independent index-builds of
+  the same corpus (`e1` vs `e2`): 0.350 vs 0.360, spread **0.010** — comfortably under `leak_gate`'s fixed
+  `tolerance_abs=0.05`. A fixed tolerance (leak-style) is adequate; no calibrate envelope needed. Caveat: n=2
+  repeats on one corpus — a proper `jseval calibrate` pass at implementation time would firm the number.
+- **U3 — Machinery coupling → RESOLVED; it's a clone, not a refactor.** The release composer sources the leak
+  section by a hardcoded per-metric block (`commands/release.py:103-121`), not a family-generic loop; the gates
+  read only the tolerance constant from `metric_families`. So the implementation is: clone `leak_gate.py` →
+  `union_recall_gate.py` (floor: fail when `current < baseline − tolerance`), register a `union-recall`
+  `MetricFamily` (`projection` + `abs_tolerance`), add a CLI command + a `*-baselines.v1.json`, wire the
+  `search-engine-hint`, add unit tests (clone `test_leak_gate`), and optionally a ~5-line union block in the
+  release composer (the projected-baseline upgrade). No engine code.
+- **U4 — CI enforcement reality → RESOLVED; framing corrected.** `.github/**` references **no** eval gate
+  (grep for jseval/eval/ratchet/staged_recall/relevance = zero): all eval ratchets (relevance/perf/leak) are
+  **local-first advisory**, surfaced by the `search-engine-hint` hook, *by design* — they need GPU + models +
+  a full eval run that public hosted CI can't do. So the completeness gate is a standing local-first advisory
+  ratchet, **not** a CI-blocking gate; the doc wording was corrected accordingly. (Making eval ratchets
+  CI-blocking would be a separate, broader decision applying equally to the existing three.)
+- **U5 — Baselines & corpus set → RESOLVED; no new runs needed.** The current `release.v1.json` carries no
+  leak/union section yet, so leak_gate runs off *derived* `fallback_baselines`; a union gate follows the same
+  derive-from-runs path. Crucially, `leg_union_recall` lives in the **same** `staged_recall_accounting`
+  projection already used to derive leak baselines — so pinning union floors reuses the existing pinned-corpus
+  runs (needle-burial / enron / scifact / legal-clerc) with **no new eval runs**. Those corpora already have
+  `leg_union_recall < 1.0` (legal-clerc leak 0.205 ⇒ union < 1), so the floor is a meaningful mid-range value,
+  not a trivial 1.0.
+- **U6 — Metric semantics → RESOLVED.** `leg_union_recall = leg_union_hits / n` (`staged_recall_accounting.py:314`)
+  is a proper [0,1] recall, the ~complement of `leg_miss_rate` (exact for single-gold queries; e3-r10:
+  0.931+0.069=1.000). Gate the **floor on `leg_union_recall`** (finer, D-005-aligned) rather than a ceiling on
+  `leg_miss_rate`.
+
+### Verdict of the confidence check
+No blocker surfaced; the linchpin (U1) held up empirically, and the one wrong assumption (U4 "CI-enforced")
+was a framing error now corrected, not a design flaw. The implementation is a bounded clone of a well-tested
+existing gate, touches ~5–6 files, needs no engine changes and no new eval runs (reuses existing projections),
+with the only live step being a routine `derive` pass to pin floors from the corpora leak_gate already uses.
+
+**Confidence for the remaining (implementation) work: 8 / 10.** Held back from 9–10 only by: the earns-its-keep
+proof is empirically *plausible* but not yet demonstrated on a real regression (retirement condition covers
+it); the tolerance rests on n=2 repeats (a calibrate pass would firm it); and pin-corpus selection + measured
+floors need the routine derive run.
+
+### Implementation difficulty & recommended model/effort
+**Difficulty: low–moderate.** It is pattern-conformance work — cloning `leak_gate` (ceiling) into a
+`union_recall_gate` (floor) and mirroring its family/CLI/baselines/tests — with no engine code, no new eval
+infrastructure, and no new corpus runs. The hard part (deciding *what* to guard and *why not* the cross-size
+ratchet) is done and recorded above. Residual judgment at implementation time is small and local: tolerance
+value, which corpora to pin, and running the `derive` pass.
+**Recommendation: Sonnet, medium effort**, briefed with this tempdoc's Design + this confidence check. Bump to
+Sonnet high effort only if the same task also bundles the release-composer projection upgrade + the calibrate
+pass. Opus is not warranted for the implementation — the orchestration/judgment tier of this work is already
+complete; what remains is mechanical conformance to an existing, tested pattern.
