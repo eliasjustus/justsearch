@@ -2225,6 +2225,43 @@ the branch — which usefully corrected a wrong first guess (interrogate-results
 - **Attempt 2** (corrected): pre-run `./gradlew.bat assemble :modules:ui:installDist
   :modules:indexer-worker:installDist -PskipWebBuild=true` — the whole-project `assemble` (same
   task+flag dev-runner runs, so its later check is UP-TO-DATE ~seconds) plus installDist for the launch
-  dir. No `startTimeoutMs` bump needed. `check-workflow-triggers` green; YAML well-formed.
-  Result recorded below once the run completes.
+  dir. **This fixed the assemble timeout** (run `28906396989`: dev-runner's `assemble` UP-TO-DATE in
+  ~6s) — but the smoke *still* failed "stack start timed out", exposing a **deeper, previously-hidden
+  problem**.
+
+### H. Deeper root cause — the model-less stack comes up but dev-runner never reports it ready (2026-07-08)
+Added an `if:failure()` log-dump step (runs `28906957740`/`28907510627`; first dump looked at repo-root
+`.dev-data` — wrong: dev-runner's data dir is `modules/ui-web/.dev-data`, `dev-runner.cjs:251`). With
+the correct path, the CI stack logs show the stack **fully comes up** on the GPU-less/model-less runner:
+- `publishHead apiPort=53091`, `publishWorkerReady grpcPort=53097 lifecycle=DEGRADED`,
+  `publishAi phase=PENDING`, `publishMode intent=full-desktop realized=retrieval-only`, and the worker
+  **indexed 5 docs** — all within ~4s of launch. Search is fully functional; `/api/status` route is up.
+- Yet the smoke's `startStack` never saw dev-runner's `{"ok":true,"apiPort":…}` stdout line (emitted at
+  `dev-runner.cjs:1376`) and timed out at 240s. So dev-runner launched a working stack but **hung in its
+  own readiness gate** — before line 1376 — for the whole window.
+
+**Two concrete defects, both real:**
+1. **Timeout inversion.** The smoke's `startStack` hardcodes `startTimeoutMs = 240000`
+   (`stage-reference-corpus.mjs:29`), but dev-runner's *own* CI readiness timeouts are **300 000**
+   (`process.env.CI ? 300_000`, `dev-runner.cjs:1146`/`1154`). The outer waiter is shorter than the
+   inner one, so the smoke kills dev-runner before dev-runner's own specific error can surface — which
+   is also why every failure reads as the generic "stack start timed out".
+2. **A genuine readiness-gate stall in full degradation.** dev-runner hangs in either the port-wait
+   (`:1198`, discovers the port from `runtime/manifest.json` — which *is* present with the port) or the
+   HTTP-200 gate on `/api/status` (`waitForBackendReady`, `:1220`). Because the stack was up + indexed
+   at ~4s but dev-runner still hadn't emitted readiness at 240s, it is **stuck, not merely slow** — the
+   likeliest cause is `/api/status` not returning 200 under `lifecycle=DEGRADED` (GPU-less, model-less).
+   The exact gate (port-wait vs status-200) is **not yet pinned** — one more diagnostic run (raise the
+   smoke timeout >300s so dev-runner's own error surfaces, or curl `/api/status` in the failure dump)
+   would settle it.
+
+**Significance.** This is *not* a CI-config tweak — it is the proof-lane doing its job: it caught that
+the model-less onramp does not reach a "ready" verdict on a stock GPU-less runner, despite search
+working. The `publishMode … realized=retrieval-only` line is from **657**, which merged (2026-07-02)
+*after* the fifteenth pass last validated this smoke locally (2026-07-01, empty models, 18s, with a GPU
+present) — so a **654/657-era regression in the degraded-mode readiness/status contract** is a live
+hypothesis. This changes the §E verdict's "only a small CI fix remains": the CI-config half (assemble
+pre-build) is done, but a real readiness-contract question remains and needs an owner decision (fix
+dev-runner's degraded-readiness gate / align the timeouts / lower the smoke's readiness bar to
+"search-capable"). Not resolved autonomously — stopped here for direction rather than burning more CI.
 
