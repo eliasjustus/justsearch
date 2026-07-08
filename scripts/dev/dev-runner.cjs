@@ -1195,7 +1195,12 @@ async function cmdStart(opts) {
   // HeadlessApp, which writes both files); removing it tightens the
   // closure ("one mechanism per concern").
   const waitForPortDeadline = Date.now() + portEmitTimeoutMs;
-  while ((apiPortRequested <= 0 || apiPortActual <= 0) && Date.now() < waitForPortDeadline) {
+  // Exit the moment the ACTUAL bound port is known. The old guard also OR'd in
+  // `apiPortRequested <= 0`, which is permanently true for an ephemeral request (`--api-port 0`,
+  // the default) — so the loop discovered the port (below) but ignored it and spun the FULL
+  // `portEmitTimeoutMs` regardless (15s local / 300s CI). On CI that 300s exceeded the onramp
+  // smoke's 240s startStack budget → deterministic "stack start timed out" (tempdoc 656 §I).
+  while (apiPortActual <= 0 && Date.now() < waitForPortDeadline) {
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 100));
     if (!portEmitted && apiPortActual <= 0) {

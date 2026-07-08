@@ -2289,7 +2289,12 @@ every dev-stack start ~10s faster (exit at ~4s, not the full timeout) *and* make
 comfortably under budget — a strict improvement, shared dev-runner core (verify no other caller depends
 on the full-wait behavior; none should — the loop's purpose is "wait until the port is known"). The §H
 timeout-inversion is then moot, but aligning them (smoke budget ≥ dev-runner's) is worth doing as defence.
-NOT yet implemented — dev-runner is shared infra; awaiting go-ahead. The workflow currently carries
-diagnostic cruft (120s-timeout env, `manifest.json` dump, the `if:failure()` log step) to remove when the
-real fix lands.
+**APPLIED (2026-07-08, on go-ahead).** Fixed `dev-runner.cjs:1198` to `while (apiPortActual <= 0 && …)`
+(the specific-port case is unchanged — `apiPortActual` inits to the requested port, so the loop is skipped
+as before; only the ephemeral default is corrected). Removed the diagnostic cruft from `onramp-smoke.yml`
+(the forced-timeout env vars), keeping a slim failure-only log-dump as standing diagnostics for this heavy
+lane. Verified locally: `node -c` clean; **all four** dev-runner test suites green
+(`runtime-resolution`/`admission`/`gate-integration`/`pruning`). The live smoke run is the regression test
+(the loop lives inside the big async `start()`; the proof-lane exercises it end-to-end). Final green CI run
+recorded at commit time.
 

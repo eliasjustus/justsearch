@@ -81,19 +81,12 @@ jobs:
       - name: Onramp first-success smoke (Tier 0)
         env:
           JUSTSEARCH_MODELS_DIR: ${{ runner.temp }}\empty-models
-          # DIAGNOSTIC (temporary, tempdoc 656 §H): force dev-runner's own readiness timeouts BELOW the
-          # smoke's 240s startStack budget so dev-runner fails first with its SPECIFIC error
-          # ("did not emit JUSTSEARCH_API_PORT" = port-discovery gate, vs "did not become ready" =
-          # /api/status gate) instead of being killed by the generic outer timeout. Remove once pinned.
-          JUSTSEARCH_DEV_RUNNER_BACKEND_PORT_TIMEOUT_MS: "120000"
-          JUSTSEARCH_DEV_RUNNER_BACKEND_READY_TIMEOUT_MS: "120000"
         run: node scripts/dev/test-onramp-first-success.mjs
 
-      # Diagnostics only (does not change the proof): on failure, surface the Head/worker logs the
-      # dev-runner writes to files — the workflow stream only shows dev-runner's own stderr, so a stack
-      # that launches but never reports ready looks silent here. Temporary aid for the takeover
-      # investigation (tempdoc 656 §17/§G); trim once the lane is reliably green.
-      - name: Dump stack logs (diagnostics on failure)
+      # On failure, surface the Head/worker logs dev-runner writes to files — the workflow stream only
+      # shows dev-runner's own stderr, so a stack that launches but never reports ready would otherwise
+      # look silent here. Failure-only; kept as standing diagnostics for this heavy, otherwise-opaque lane.
+      - name: Dump stack logs (on failure)
         if: failure()
         shell: bash
         run: |
@@ -101,10 +94,7 @@ jobs:
           DD=$(find . -maxdepth 4 -type d -name .dev-data 2>/dev/null | head -1)
           echo "dataDir=$DD"
           if [ -z "$DD" ]; then echo "(.dev-data not found anywhere)"; exit 0; fi
-          echo "### file tree ###"; find "$DD" -maxdepth 5 -type f 2>/dev/null | head -100
-          echo "### run.json / active.json ###"
-          find "$DD" \( -name active.json -o -name run.json \) 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done
-          echo "### manifest.json (FULL — the port-discovery source dev-runner reads) ###"
-          find "$DD" -name manifest.json 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done
+          echo "### run.json / active.json / manifest.json ###"
+          find "$DD" \( -name active.json -o -name run.json -o -name manifest.json \) 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done
           echo "### logs (tail 200 each) ###"
           find "$DD" -name '*.log' 2>/dev/null | while read -r f; do echo "===== $f ====="; tail -200 "$f" 2>/dev/null; echo; done
