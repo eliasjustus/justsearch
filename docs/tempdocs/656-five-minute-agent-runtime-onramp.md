@@ -2311,3 +2311,59 @@ This is a genuine masked-by-slowness race, not a product defect (ingest works mo
 is ready — proven by the 120s run's 1-result pass). Noted follow-up (not done here): dev-runner's readiness
 (`waitForBackendReady`, Head `/api/status` 200 only) arguably should include worker-ready — a broader
 dev-runner change left for its own scope.
+
+## §K. Post-implementation research — what to do with the proof-lane + startup fixes (2026-07-08)
+
+Docs-only research round on the takeover's implemented changes (§I port-wait fix, §J ingest-retry, §G/H
+assemble pre-build). Every item names its **evidence of need**; ideas without evidence are quarantined in
+the speculative list. Public alpha, **no real users yet** → user-friction evidence is thin; the honest
+beneficiaries are developers/agents (as the thirteenth pass already found). External research (k8s readiness
+probes; CI smoke-test hygiene) was **confirmatory-only** — those patterns are settled and already cited in
+this tempdoc; the real signal is this session's live-debugging evidence.
+
+### K.1 Evidence-backed (recommendation candidates)
+- **K1 — Readiness should mean "worker ready," not just "Head up."** *Evidence:* the §J HTTP 503 (ingest
+  raced worker warmup on CI). dev-runner's `waitForBackendReady` gates on Head `/api/status` 200 only —
+  a *liveness/process-up* check, not a *readiness* check (k8s: readiness verifies dependencies). The smoke
+  is patched (retry); the general gap remains for any consumer that immediately hits worker endpoints. Fix
+  path is cheap — `/api/status` already exposes `worker.core.indexState`. *Practicality:* removes a class of
+  flaky "worker not ready" startup errors for all dev-stack users. Shared-infra change — verify scope.
+- **K2 — Align outer/inner startup timeouts (smoke budget ≥ dev-runner's).** *Evidence:* the inversion
+  (smoke 240s < dev-runner CI 300s) masked dev-runner's *specific* error behind the generic
+  "stack start timed out," costing a diagnostic cycle to disambiguate. Cheap defence-in-depth for
+  debuggability.
+- **K3 — The proof-lane rots silently; add a freshness-surfacing loop (external routine, NOT a cron —
+  ADR-0026).** *Evidence:* the lane was red-since-inception and unnoticed ~5 days — the exact silent rot O4
+  exists to prevent, happening to the proof *itself*. `workflow-signal-health.mjs` + `staleDays:7` exist but
+  nothing runs/surfaces them. External literature has no named fix (confirmed). *Practicality:* a proof
+  nobody runs isn't a guarantee — this is what makes O4 *real* rather than theoretical. Most consequential
+  candidate to the tempdoc's own intent.
+- **K4 — Assert stack-up *latency* in the smoke, not just an eventual timeout.** *Evidence:* the §I bug hid
+  for a long time because nothing asserted startup *speed* — 15s locally sailed under any budget; only CI's
+  300s tipped it into failure. A "stack up in <N s" assertion catches this silent-regression class that a
+  generous 240s budget misses. Cheap; guards exactly what was just fixed.
+
+### K.2 Evidence-backed negatives (deliberately don't do)
+- **K5 — No generalized wait-loop guard/lint.** *Evidence:* audit of all three deadline-loops in
+  `dev-runner.cjs` — the §I bug is a **singleton** (`:608` returns on success; `:1635` re-evaluates and exits
+  on port-close). One instance ≠ a class; YAGNI.
+- **K6 — Don't extend the CI lane to Tier 1/2.** No evidence of need; real cost (GPU runners, multi-GB model
+  downloads); the tempdoc deliberately scoped the CI lane to Tier 0 (fifteenth pass).
+
+### K.3 Speculative (no current evidence of need — no real users)
+- **K7 — Extend the proof-lane to prove the MCP/agent onramp** (the named "wedge"). Coupled to 655; the MCP
+  spec finalizes 2026-07-28 (~3 weeks out) — premature to bake in.
+- **K8 — User-facing onramp UX** (empty-state onboarding, in-UI tier panel — the thirteenth pass's C-group).
+  654 has since shipped (which *unblocks* it), but with no real users there is no evidence of need. The
+  tier-projection promotion trigger is **still unfired** (`deriveTier` remains single-consumer, re-verified
+  this session even after 654/657 merged), so the substrate correctly stays deferred.
+
+### K.4 Net
+The one clearly-worthwhile, **already-delivered** outcome is the §I port-wait fix: every dev-stack start
+~10s faster, daily, for all developers/agents — the highest-practicality result of the whole takeover, and
+it benefits everyone regardless of the onramp. Of the *new* candidates: K3 (rot-surfacing) matters most to
+O4's intent; K1/K2/K4 are small, evidence-backed robustness/debuggability wins. Everything user-facing (K7,
+K8) stays speculative — consistent with "no real users yet." **"Nothing more is strictly required" is a
+defensible read:** 656's scope is delivered and the proof-lane is green; K1–K4 are improvements, not gaps —
+worth doing only if/when a developer actually trips over them (K1/K2 already have one trip each: this
+session).
