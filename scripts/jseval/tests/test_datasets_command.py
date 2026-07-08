@@ -24,7 +24,9 @@ def test_gate_coverage_reads_real_committed_files():
     """No mocking -- reads the actual committed baseline files in this repo, confirming the
     parents[2] path resolution (mirroring the sixth pass's gates.py fix) is correct here too."""
     coverage = _gate_coverage()
-    assert set(coverage) == {"relevance-gate", "perf-gate", "leak-gate"}
+    # tempdoc 699: union-recall-gate joins the three pre-existing ratchets; its baselines file
+    # is derived (not yet committed at HEAD), so its coverage set is legitimately empty here.
+    assert set(coverage) == {"relevance-gate", "perf-gate", "leak-gate", "union-recall-gate"}
     # beir/scifact is committed as gated (canonical slug) in ALL THREE baseline files at HEAD.
     # tempdoc 664 (twelfth pass): leak-gate-baselines.v1.json's bare-name key was fixed at its
     # source (cmd_leak_gate_derive now canonicalizes) rather than worked around downstream.
@@ -39,7 +41,9 @@ def test_gate_coverage_missing_file_is_gates_nothing_not_a_crash(tmp_path, monke
     # Point `Path(__file__)` resolution at an empty dir with none of the three files present.
     monkeypatch.setattr(ops_mod, "__file__", str(tmp_path / "nested" / "commands" / "ops.py"))
     coverage = _gate_coverage()
-    assert coverage == {"relevance-gate": set(), "perf-gate": set(), "leak-gate": set()}
+    assert coverage == {
+        "relevance-gate": set(), "perf-gate": set(), "leak-gate": set(), "union-recall-gate": set(),
+    }
 
 
 def test_cmd_datasets_reports_gated_and_ungated(tmp_path, monkeypatch):

@@ -252,6 +252,14 @@
     "group": "ui"
   },
   {
+    "name": "union-recall-gate",
+    "group": "gates"
+  },
+  {
+    "name": "union-recall-gate-derive",
+    "group": "gates"
+  },
+  {
     "name": "utility-calibrate",
     "group": "utility"
   },

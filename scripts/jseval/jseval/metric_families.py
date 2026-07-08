@@ -153,6 +153,22 @@ LEAK = MetricFamily(
     calibrate=False,
 )
 
+# Leak's floor sibling (tempdoc 699 / register D-005 recall-survival): the same
+# staged_recall_accounting projection also emits leg_union_recall — the fraction of judged-relevant
+# documents ANY retrieval leg found before fusion/ranking, i.e. representation-completeness. Higher
+# is better, so this gates as a FLOOR (abs_tolerance, like QUALITY), not a ceiling (like LEAK) — the
+# two metrics are read from the same artifact but move in opposite directions.
+UNION_RECALL = MetricFamily(
+    name="union-recall",
+    source_class="projection",
+    source_path="staged_recall_accounting.json",
+    metric_keys=("leg_union_recall",),
+    lower_is_better={"leg_union_recall": False},
+    comparator="abs_tolerance",
+    tolerance_abs=0.05,
+    calibrate=False,
+)
+
 # Tempdoc 643 (E3, T6-a "dominant-count ≠ dominant-cost"): a [0,1] cost-weighted severity over
 # the JUDGE_RANK_LOW rank distribution — same projection source as LEAK, so it shares that
 # family's shape. Higher is worse (a bucket dominated by rank-6-10 mis-ranks vs near-free rank-2).
@@ -184,7 +200,8 @@ LLM_GEN = MetricFamily(
 )
 
 REGISTRY: tuple[MetricFamily, ...] = (
-    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, JUDGE_LOW_COST_WEIGHT, LLM_GEN,
+    QUALITY, PERF_LATENCY, PERF_THROUGHPUT, PERF_FOOTPRINT, LEAK, UNION_RECALL,
+    JUDGE_LOW_COST_WEIGHT, LLM_GEN,
 )
 BY_NAME: dict[str, MetricFamily] = {f.name: f for f in REGISTRY}
 

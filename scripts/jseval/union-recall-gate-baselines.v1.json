@@ -1,0 +1,24 @@
+{
+  "schema": "union-recall-gate-baseline.v1",
+  "tempdoc": 699,
+  "note": "POINTER + fallback (mirrors leak-gate-baselines.v1.json / tempdoc 683). Per-corpus leg_union_recall FLOORS project from `current_release` when the release carries a per-corpus `union_recall` section (composed by `jseval release` from runs with staged_recall_accounting projections). Until a release carries union_recall sections, `fallback_baselines` — measured via `union-recall-gate-derive` from staged_recall_accounting projections — governs. `jseval union-recall-gate` loads this via ratchet_kernel.load_baselines_doc + union_recall_gate.project_release_to_baselines; `union-recall-gate-derive` re-pins fallback_baselines. This is the representation-completeness FLOOR sibling of leak-gate's cascade-leak CEILING (tempdoc 699).",
+  "current_release": "release.v1.json",
+  "tolerance_default_abs": 0.05,
+  "per_corpus_tolerance": {
+    "beir/scifact": 0.05,
+    "golden/699-e3-r10_0": 0.05
+  },
+  "derived_from_runs": true,
+  "fallback_baselines": {
+    "beir/scifact": {
+      "leg_union_recall_min": 0.96,
+      "src": "measured from staged_recall_accounting projection",
+      "tolerance_abs": 0.05
+    },
+    "golden/699-e3-r10_0": {
+      "leg_union_recall_min": 0.9307692307692308,
+      "src": "measured from staged_recall_accounting projection",
+      "tolerance_abs": 0.05
+    }
+  }
+}
