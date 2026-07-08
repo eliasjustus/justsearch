@@ -650,3 +650,54 @@ That is a broader, longer-lived framing that subsumes the size question and conn
 recall), 639 (candidate-set integrity), and 643 (ranking). Whether to retitle/re-scope 699 to that, fold it
 into 639, or keep 699 as the closed size-investigation and open the broader thread elsewhere, is a
 scoping decision for the owner — recorded here as an option, not taken.
+
+## Prior art & research landscape (2026-07-08 web pass — the §5/§2 directions are named research areas)
+
+The theorization above coined several ideas that turn out to be established, actively-researched concepts. A
+short literature pass (public sources; citations only — **no external code or text was copied**, so this has
+no license/notices impact; if a future design *adapts* a published algorithm's implementation, check its
+license first) maps our terms to the field's, so the design phase starts from prior art rather than
+reinventing it. Claims below are paraphrased from the cited sources, not verbatim.
+
+- **"Funnel non-abandonment" / CASCADE_LEAK (§2) is the *bounded recall problem*.** The IR literature already
+  names this exactly: a retrieve-then-rerank cascade cannot recover a document the first stage dropped —
+  reranker recall is upper-bounded by retriever Recall@k. Our `staged_recall` doc already nods to it (and to
+  the *Seven Failure Points of RAG*, arXiv 2401.05856, whose FP2 it maps to). Named mitigations we should
+  evaluate rather than invent: a **recall-preserving cascade** (score the top-m with the cross-encoder, leave
+  the tail order untouched → Recall@m is exactly the first stage's — this is precisely the 636 "splice"), and
+  **corpus-graph / adaptive reranking** that pulls neighbours of top-k into later windows (GAR; *SlideGar* —
+  "Guiding Retrieval using LLM-based Listwise Rankers", arXiv 2501.09186). Direction **B** = adopt a
+  recall-preserving cascade / bounded-recall mitigation, not a new mechanism.
+- **Reliability-weighted fusion (§5-C) and retrieval-confidence (§5-D) are *Query Performance Prediction*
+  (QPP).** The exact intuition we proposed — a leg whose score distribution is *degenerate/all-similar* is
+  uninformative — is the classical post-retrieval QPP signal: **NQC** (Normalized Query Commitment = std-dev
+  of top scores), **WIG** (Weighted Information Gain), **Clarity**, **SMV**, **UEF**; "well-separated score
+  distributions ⇒ easier query." So "reliability-weighted fusion" = per-leg QPP feeding fusion weights, and
+  "retrieval-confidence signal" = QPP as a confidence/abstention trigger. **Important caveat for direction D:**
+  QPP is not solved — its reliability for neural IR has documented limits (*Uncovering the Limitations of
+  QPP*, arXiv 2504.01101), and QPP-for-RAG is itself an open thread (*Can QPP Choose the Right Query Variant
+  for RAG Pipelines*, arXiv 2604.22661). A confidence signal built on QPP inherits QPP's noise.
+- **Query-adaptive fusion (§5-C) is a hot 2025 area.** Learning a per-query dense/sparse mix is active:
+  dynamic alpha tuning (DAT, Hsu et al. 2025), query-driven alpha prediction (QDAP — infer the fusion weight
+  from the query embedding at low latency), and query-specificity weighting (survey: *Query-Adaptive Hybrid
+  Search*, MDPI MAKE, doi 10.3390/make8040091). Our `AdaptiveWeightSelector` (off; keyed on doc length) is a
+  primitive version; the field has moved to query-representation- and QPP-driven weights.
+- **The recall-under-iteration reframe (§4) matches where agentic-retrieval eval is heading.** The field is
+  actively moving from single-query recall to *multi-step / session* metrics: "search-during-think", multi-hop
+  decomposition, and query-reformulation-then-fuse (RAG-Fusion, RQ-RAG). Evaluation is following —
+  *factorised* metrics for deep/agentic search (*Demystifying deep search*, arXiv 2510.05137) and benchmarks
+  like BRIGHT. Notably relevant to 624: reports that **stronger generators tolerate more distractor knowledge
+  while weaker models benefit most from agentic selection/filtering** — i.e. iteration compensates for
+  single-query recall loss, which is exactly why the 624 haiku agent recovered under out-of-band retrieval.
+  There is even fresh debate on whether lexical-only suffices for agentic search (*Rethinking Agentic Search
+  with Pi-Serini*, arXiv 2605.10848) — directly relevant to our leg-reliability framing.
+
+**What this changes for the (future) design.** Three of our four solution directions are "adopt/adapt a named
+method + evaluate on our corpora", not "invent": B → recall-preserving cascade (bounded-recall lit); C →
+QPP-driven adaptive fusion (DAT/QDAP family); D → QPP-as-confidence (with its documented reliability caveat).
+The **fault-injection robustness axis (§3)** and the **corpus-pathology-not-size methodology (§1)** are the
+parts I did *not* find pre-packaged — those look like the genuinely differentiated contributions, if 699's
+broader thread is pursued. **Recommendation:** if/when the owner opens the broader thread, do a proper
+literature review of bounded-recall mitigations and QPP-for-hybrid-fusion before designing, and treat the
+fault-injection suite + pathology-axis guard as the novel piece. Nothing here changes the closed verdict (no
+fix warranted now); it de-risks the *optional* forward work and gives it citable footing.
