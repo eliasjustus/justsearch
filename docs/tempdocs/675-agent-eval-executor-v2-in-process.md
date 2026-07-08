@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). END-TO-END THROUGHPUT STILL UNMEASURED — the ~3 h→? win needs the next certified run. Read §Review fixes (2026-07-08) + §Unverified assumptions FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
 updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
@@ -769,18 +769,20 @@ reproducible via `jseval utility-run --conditions C --seeds 1 --max-queries 1` a
 
 Recorded so a later agent need not reconstruct them from the working session:
 
-- **The end-to-end throughput win is UNMEASURED.** v2's whole point — cutting the ~3 h matrix
-  wall-clock via the single concurrency pool — has NOT been measured; only a 5-cell (essentially
-  uncontended) smoke + the targeted live checks above ran, and per-cell time at 1 agent is the *best
-  case* (the backend has a measured ~6.7 qps ceiling, so cells slow under load). **You do NOT need the
-  full 520-cell run to estimate the time** — a contention-matched pilot at the target concurrency does
-  it: `projected ≈ ceil(n_cells / concurrency) × per-cell-p95-under-contention`, and jseval's
-  `utility-calibrate` already measures that contended-p95. A pilot of ~1 seed × both conditions × both
-  corpora (~50–100 cells) gives a defensible estimate (±~25%; the pilot under-samples the straggler/
-  timeout tail and may not fully saturate). The FULL certified run is needed for the statistical A/B/C
-  result and the exact number with real variance — it produces the wall-clock as a byproduct. **Open
-  item: run the calibration pilot for a projected number; do not claim a measured speedup until a
-  contended pilot or the certified run exists.**
+- **End-to-end throughput — PILOT-MEASURED 2026-07-08 (≈ 2.2 h projected @ concurrency 6).** A
+  contention-matched pilot ran the real v2 executor over **24 cells** (conditions A+C interleaved in
+  ONE pool, `battlefield-en-v1`, 12 queries × 1 seed, concurrency 6, timeout 300 s, max_turns 100)
+  against a live stack: **363 s wall, 0 exclusions** (no timeouts / max_turns errors / crashes),
+  mean per-cell cost $0.139, per-cell turns A 9–50 / C 5–41 (max 50 — validates the max_turns=100
+  cap; at the old 40 the 46/50-turn cells would have clipped). Projection `520 × 363 s / 24` →
+  **≈ 7 870 s ≈ 2.19 h**, **≈ $72** for the full 26q × 2cond × 5seed × 2corpora matrix. **Caveats:**
+  ±~25% (a 24-cell pilot under-samples the straggler tail + tail-wave concurrency under-use); scales
+  ~inversely with concurrency UP TO the backend ~6.7 qps ceiling — the 0-exclusion result suggests
+  headroom to raise concurrency above 6 and cut the time further (untested). Reproduce: the pilot
+  driver logic = `run_utility_eval(conditions=("A","C"), max_queries=12, seeds=1, concurrency=6,
+  timeout_s=300, max_turns=100)` timed end-to-end. This is a projection, NOT a full certified run —
+  the certified statistical A/B/C result still requires the full matrix (which produces the exact
+  wall-clock + real variance as a byproduct).
 - **Upstream Inspect float-drift is worked around, not fixed.** The guard against reintroducing a float
   into the task/solver arg surface is a docstring comment (prose-tier, ~70% adherence), not a test or
   gate. Follow-up: a cheap unit test asserting no float in the resolved `task_args`/solver params, or an
