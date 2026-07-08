@@ -124,6 +124,24 @@ by rendering the toggle from the live authority.
 - **C8 budget-gate live check** — the plain/technical budget string is unit-tested; a live budget-gate
   is hard to trigger deterministically and was not exercised in-browser.
 
+## Independent review round (2026-07-08)
+
+An independent review (reviewer ≠ implementer) surfaced real gaps, all addressed:
+
+- **Two additional raw-path leak sites** were closed: the document reading-pane header
+  (`DocumentPane`) rendered the raw path unconditionally (C4 one click from a result), and the
+  `ResultsCard` breadcrumb had a raw-path fallback that re-leaked for a drive-root file in Simple.
+  Both now gate/behave correctly.
+- **The Settings "Interface mode" toggle** (a second control over the same preference) desynced from
+  the new topbar toggle and used a divergent label. Live validation corrected the review's file
+  pointer: the *visible* control renders through the **declared-surface option-group**
+  (`themes/builtinPresentations.ts`), not the hand-authored `renderInterface`. Fixed there — the
+  label reads "Detailed", and a `uiMode` subscription keeps `this.ui.mode` (the declared binding) in
+  sync so a topbar change updates the Settings toggle. Both live-validated in-browser.
+- **Regression tests added** for the previously-untested gated sites (C8 budget, meta latency,
+  result path/breadcrumb wiring + root-file no-leak, DocumentPane breadcrumb, and a Shell toggle test
+  guarding the live-`getUiMode` boot-desync fix), per `audit-driven-fixes-need-test`.
+
 ## Rollout / verification
 
 Ship behind the existing `uiMode` preference, reversible per surface. Verify with unit tests over
