@@ -287,3 +287,60 @@ any `ef_search` change (640's perf ratchet). Its **only distinct durable deliver
 and that evidence does not exist, is not cheap, and the cheap evidence we *do* have points the other way
 (artifact). No fix is warranted; the product half of 699 closes as "artifact, at tested scale," with the
 high-N robustness question parked under 639/636 until a large realistic fixture is deliberately built.**
+
+## Proposed experiments (diagnose-first; cheapest-decisive-first; pre-registered)
+
+The verdict above is inference from static code + literature + one same-size on-disk comparison. Before
+closing, it is worth *measuring* the mechanism with cheap runs on existing tooling/corpora — and, per
+`interrogate-results`, each experiment below carries a **pre-registered prediction** and states which
+result would **overturn** the artifact verdict (not just confirm it). All costs are local GPU + dev-stack
+time (no LLM/$ — these are retrieval evals, not agent-utility runs). Ordering is chosen so the expensive
+realistic-corpus build (E4) is only reached if a real mechanism survives the cheap synthetic isolators.
+
+**E1 — Attribution (the missing measurement).** Run a retrieval eval with `modes: [vector, lexical,
+splade, full]` on BOTH `battlefield-en-v1` (390) and `battlefield-en-scale-v1` (2,736), cap ~100 queries,
+and read the **auto-generated** `staged_recall_accounting` buckets + `leg_union_recall` + `final_recall`.
+- *Isolates:* LEG_MISS (no leg had gold → embedding/lexical geometry) vs CASCADE_LEAK (a leg had it, the
+  window dropped it before rerank → the real fixable mechanism, 636) vs JUDGE_RANK_LOW (present, mis-ranked
+  → 643).
+- *Prediction (artifact):* at 2,736 `leg_union_recall` itself falls (LEG_MISS-dominant) — the near-identical
+  embeddings collapse, the answer is not in ANY leg's set.
+- *Overturns verdict if:* `leg_union_recall` stays high but `final_recall` drops (CASCADE_LEAK-dominant) →
+  the gold IS retrieved but the fixed-20 window drops it → a real, generalizable engine fix, not an artifact.
+- *Cost:* 2 eval runs (index each corpus once). Low.
+
+**E2 — ANN isolation (empirically kill/keep the doc's "leading candidate").** Re-run E1's 2,736 eval with
+`index.vector.ef_search` set near-exhaustive (~1000–2000 for a ~15–30k-vector index) vs the default.
+- *Isolates:* dense-leg recall limited by ANN *approximation* (→ ef_search recovers it) vs by embedding
+  *geometry* (→ no change).
+- *Prediction (verdict):* no meaningful change — ANN approximation is not the bottleneck at 10³–10⁴ vectors.
+- *Overturns F2 if:* high ef_search materially lifts vector-leg recall → ANN matters even at this scale
+  (surprising; would be a genuine finding and would re-list 639 as live).
+- *Cost:* 1 extra eval arm (env knob only). Low.
+
+**E3 — Size-vs-confusability isolation (the most decisive, most able to overturn).** Generate battlefield
+variants at **fixed `n_chains`** (fixed query set + gold-head count) with `distractor_ratio ∈ {1.4, 4, 10,
+20}` → N grows ~3–15× at constant semantic difficulty (distractors are descriptor-disjoint hard negatives,
+`corpus_generate.py:654-668`). Measure nDCG@10 / recall@10 vs N.
+- *Isolates:* does raw *volume* of same-genre docs bury the gold (size-sensitive — would generalize to a real
+  corpus of 10⁴ similar notes) or not (the drop is purely head-count confusability → artifact)?
+- *Prediction (artifact):* roughly **flat** — the burying competitors are the gold heads (fixed here), not
+  the descriptor-disjoint distractors.
+- *Overturns verdict if:* nDCG drops steeply with `distractor_ratio` at fixed heads → volume-of-similar-docs
+  alone degrades retrieval → validates the tempdoc's size worry on a controlled variable.
+- *Cost:* generate 3–4 corpora (fast) + eval each (capped). Moderate.
+
+**E5 — Reranker-window confirm (conditional on E1 = CASCADE_LEAK).** Set `crossEncoderWindow`≈100 (and/or
+wire `spliceRecallComplete` into the 3-way CC path) and re-run; does nDCG@10 recover? Confirms the lever
+before any real fix. *Cost:* 1 eval arm. Low. (Design/impl only if E1 warrants — not now.)
+
+**E4 — Realistic size sweep (the north-star test; expensive; DEFERRED).** Fixed MIRACL query set against a
+growing realistic doc pool (5k → 50k → 500k via `corpus_fetch` / ir_datasets). Measure recall@K(N). This is
+the only experiment that answers the product question, and the expensive Milestone A. **Reach it only if
+E1/E3 surface a real, generalizable mechanism** — otherwise the artifact verdict stands and E4 is not
+justified now.
+
+**Recommended run order:** E1+E2 as one dev-stack session (three eval configs: 390-default, 2736-default,
+2736-high-ef) → E3 → decision gate (any real mechanism? → E5/E4; else close product half). E1+E2 alone
+(≈one indexing pass per corpus + a few capped evals) would already settle recall-vs-ranking and ANN-vs-
+geometry — the two questions the 624 run left unmeasured — for well under an hour of shared-stack time.
