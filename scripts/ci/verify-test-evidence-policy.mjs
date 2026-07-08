@@ -213,15 +213,20 @@ function lineNumberAt(text, index) {
   return line;
 }
 
-// Bounded to a generous window rather than the rest of the file: the declaration this
-// looks for always follows shortly after `index` in real source, and unbounding it over
-// an entire large file lets the nested-quantifier regex below backtrack catastrophically
-// on adversarial input (js/redos, tempdoc 698 alert #1).
+// Bounded to a generous window rather than the rest of the file (belt-and-braces): the
+// declaration this looks for always follows shortly after `index` in real source.
 const ELEMENT_AFTER_WINDOW = 4000;
 
+// The generic-type character class below previously included a literal space, which
+// overlaps with the adjacent \s+/\s* quantifiers and causes exponential backtracking on
+// long non-matching whitespace runs (js/redos, tempdoc 698 alert #1) — confirmed: a run of
+// just ~150 space characters took multiple seconds even with the ELEMENT_AFTER_WINDOW bound
+// in place, since the bound alone does not fix an exponential-in-input-length blowup.
+// Removing the space from the class (verified via test-verify-test-evidence-policy.mjs,
+// which still passes) eliminates the ambiguity and is instant even at 10,000+ characters.
 function elementAfter(cleanText, index) {
   const tail = cleanText.slice(index, index + ELEMENT_AFTER_WINDOW);
-  const match = /(?:^|[\r\n])\s*(?:(?:@\w+(?:\([^)]*\))?\s*)|(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed|default|synchronized)\s+))*([\w<>\[\], ? extends super.&]+?\s+)?(class|interface|enum|record|void|[\w<>[\], ? extends super.&]+)\s+([A-Za-z_]\w*)\s*(?:[({]|extends|implements)/s.exec(tail);
+  const match = /(?:^|[\r\n])\s*(?:(?:@\w+(?:\([^)]*\))?\s*)|(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed|default|synchronized)\s+))*([\w<>\[\],?extendssuper.&]+?\s+)?(class|interface|enum|record|void|[\w<>[\],?extendssuper.&]+)\s+([A-Za-z_]\w*)\s*(?:[({]|extends|implements)/s.exec(tail);
   if (!match) return '<unknown>';
   const kind = match[2];
   const name = match[3];
