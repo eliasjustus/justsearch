@@ -423,12 +423,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing (base HEAD, not 627): `./gradlew build` fails at `:ssotValidateExec` — field-catalog.schema.json requires 'analyzer' but 58/68 fields in SSOT/catalogs/fields.v1.json lack it (mid-flight ADR-0043 analyzer migration). Blocks full-build pre-merge gate for all worktrees off this HEAD. (2026-06-21)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 5` `first: 2026-06-21` `last: 2026-07-07`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 6` `first: 2026-06-21` `last: 2026-07-08`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
 - [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
 - [ ] remove-worktree.cjs record-merge misattribution RE-OBSERVED 2026-07-07 (681 teardown): linked session 20097c0b (neighbour's id in main checkout's current-session-id) to a local merge commit instead of the tearing-down session 06f94413 -> squash f604144; backfilled manually in session-merges.ndjson — `scripts/dev/remove-worktree.cjs` (2026-07-07)
 - [ ] reportHolders (scripts/dev/remove-worktree.cjs, added by 684/#82) still self-matches: its Win32_Process CommandLine -like '*<base>*' filter (excluding only its own powershell $PID) STILL matches the removal script's OWN node process and bash wrapper, because the target worktree path is in THEIR argv (observed live 2026-07-07: 'PID 536: node.exe ... remove-worktree.cjs .claude/worktrees/obs-cleanup'). Cheap fix for a future dev-tooling batch: also exclude the removal process tree (e.g. CommandLine -notlike '*remove-worktree*' and the parent node/bash PIDs). Fundamental cwd-holder limit (Win32_Process has no cwd) remains separate/out-of-scope. — scripts/dev/remove-worktree.cjs:94-113 (2026-07-07)
 - [ ] Process gap: no cleanup path for worktree-* branches on closed-but-unmerged PRs — delete_branch_on_merge only fires on actual merge; scripts/dev/remove-worktree.cjs:158-216 only deletes local branch/worktree, never touches origin (2026-07-07)
+- [ ] scripts/dev/remove-worktree.cjs intermittently fails to delete a worktree directory with EPERM/'used by another process' even with no obviously-holding process (retry usually succeeds, but not always — hit a case this session requiring git worktree prune + manual rmdir fallback) — scripts/dev/remove-worktree.cjs (2026-07-08)
 
 ### obs:tikaocrruntime — Pre-existing (untracked, another agent's 607 OCR work): IndexerWorkerGuardrailsTest fails — TikaOcrR
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/extract/TikaOcrRuntime.java` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
@@ -1864,6 +1865,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:workflow-signal-health — Onramp Smoke proof-lane has no freshness-surfacing (workflow-signal-health.mjs runs nowhere) — it ro
 `kind: defect?` `anchor: scripts/ci/workflow-signal-health.mjs` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
 - [ ] Onramp Smoke proof-lane has no freshness-surfacing (workflow-signal-health.mjs runs nowhere) — it rotted red-unnoticed ~5 days. Cadence needs a standing external dispatcher = owner/infra decision (tempdoc 656 §K3/§K.5) — `scripts/ci/workflow-signal-health.mjs` (2026-07-08)
+
+### obs:unanchored-general-69 — License-and-notices CI job failed 2x this session with different transient causes (Gradle-distributi
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] License-and-notices CI job failed 2x this session with different transient causes (Gradle-distribution download timeout, then Maven Central 403) before succeeding on 3rd attempt — checkLicense runs with --no-configuration-cache --no-parallel and no caching, worth investigating whether enabling caching would reduce exposure to network flakes — .github/workflows/ci.yml:92-120 (2026-07-08)
+
+### obs:unanchored-general-70 — gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree w
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree while another checkout has main checked out — gh's local branch-deletion step tries to checkout the base branch locally. Workaround: omit --delete-branch, merge succeeds via API regardless, then clean up local/remote branches separately. (2026-07-08)
 
 ## Parked
 
