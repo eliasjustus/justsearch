@@ -605,6 +605,12 @@ async function fetchConfirmedIndexBasePath(apiPort) {
   return null;
 }
 
+// "Ready" here means the HEAD is up (`/api/status` returns 200) — NOT that the Worker is ready. The
+// Worker connects/warms up a beat later, and until it is available the WorkerCapability before-handler
+// returns 503 ("Knowledge Server not ready") on `/api/knowledge/*`. Consumers that hit worker endpoints
+// immediately after "stack up" must tolerate that transient 503 — see stage-reference-corpus.mjs
+// stageAndVerify's ingest retry (tempdoc 656 §J/§K.5). (The MCP dev server exposes a separate
+// worker-ready readiness level for callers that need it.)
 async function waitForBackendReady(apiPort, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   const url = `http://127.0.0.1:${apiPort}/api/status`;
@@ -1207,7 +1213,12 @@ async function cmdStart(opts) {
   // HeadlessApp, which writes both files); removing it tightens the
   // closure ("one mechanism per concern").
   const waitForPortDeadline = Date.now() + portEmitTimeoutMs;
-  while ((apiPortRequested <= 0 || apiPortActual <= 0) && Date.now() < waitForPortDeadline) {
+  // Exit the moment the ACTUAL bound port is known. The old guard also OR'd in
+  // `apiPortRequested <= 0`, which is permanently true for an ephemeral request (`--api-port 0`,
+  // the default) — so the loop discovered the port (below) but ignored it and spun the FULL
+  // `portEmitTimeoutMs` regardless (15s local / 300s CI). On CI that 300s exceeded the onramp
+  // smoke's 240s startStack budget → deterministic "stack start timed out" (tempdoc 656 §I).
+  while (apiPortActual <= 0 && Date.now() < waitForPortDeadline) {
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 100));
     if (!portEmitted && apiPortActual <= 0) {

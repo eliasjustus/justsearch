@@ -26,7 +26,10 @@ export async function getJson(base, route, opts) {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Spawn `dev-runner start`, resolve with {apiBaseUrl} once the ok:true JSON line is seen. */
-export function startStack({ repoRoot, devRunner, startTimeoutMs = 240000 }) {
+// startTimeoutMs is the OUTER waiter; keep it >= dev-runner's own CI readiness timeout (300s,
+// dev-runner.cjs:1146/1154) so this waiter never kills dev-runner first and mask its specific error
+// behind a generic "stack start timed out" (tempdoc 656 §H timeout-inversion). 330s = 300s + margin.
+export function startStack({ repoRoot, devRunner, startTimeoutMs = 330000 }) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [devRunner, 'start', '--clean', 'hard', '--json'],
       { cwd: repoRoot, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -66,11 +69,29 @@ export async function stageAndVerify({
   base, corpusPath, query, resultLimit = 5,
   pollAttempts = 30, pollIntervalMs = 1000, failLabel = 'STAGING FAILED',
 }) {
-  const ing = await getJson(base, '/api/knowledge/ingest', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths: [corpusPath] }),
-  });
-  if (!(ing.accepted > 0)) throw new Error(`ingest accepted ${ing.accepted} docs (expected > 0)`);
+  // dev-runner reports "stack up" once the Head answers /api/status (200), but the Worker that serves
+  // /api/knowledge/ingest may still be warming up and returns a transient 503 for a beat (tempdoc 656
+  // §J — surfaced once the port-wait fix made stack-up fast; the old full-timeout startup masked it by
+  // giving the worker ~minutes). Retry the ingest on transient failure until the worker accepts it,
+  // within the same bounded poll budget.
+  let ing;
+  let lastErr;
+  for (let i = 0; i < pollAttempts; i++) {
+    try {
+      ing = await getJson(base, '/api/knowledge/ingest', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: [corpusPath] }),
+      });
+      if (ing.accepted > 0) break;
+      lastErr = new Error(`ingest accepted ${ing.accepted} docs (expected > 0)`);
+    } catch (e) {
+      lastErr = e; // worker warming up (e.g. HTTP 503) — retry
+    }
+    await sleep(pollIntervalMs);
+  }
+  if (!ing || !(ing.accepted > 0)) {
+    throw new Error(`${failLabel}: ingest never accepted docs within ${Math.round((pollAttempts * pollIntervalMs) / 1000)}s (last: ${lastErr?.message}); worker did not become ready`);
+  }
 
   // Fail LOUDLY if indexing never settles — a silent fallthrough here previously surfaced as a
   // misleading "query returned 0 results" failure later, hiding the real cause (settle timeout,
