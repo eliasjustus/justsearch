@@ -944,6 +944,23 @@ stale "not yet committed" comments in `ops.py` / `test_datasets_command.py`.
 `current_release` pointer so the floors auto-project once a release is recomposed with projections. And the
 pinned set can grow (enron-qa / legal-clerc / needle-burial) via further `union-recall-gate-derive` runs.
 
+### Follow-up (2026-07-09) — R1 done (release plumbing), R2 deferred (fetch unavailable)
+- **R1 — release-projection plumbing: DONE.** Mirrored leak's plumbing end-to-end so a future release
+  recompose auto-emits a `union_recall` section: `release.py compose()` gained a `union_recall_by_dataset`
+  param + a `union_recall` section (keyed `leg_union_recall`); `commands/release.py` sources it from the same
+  `staged_recall_accounting` projections the leak loop reads and adds the anti-fork recompose guard
+  (`lower_is_better=False` — lowering a floor is the relaxation); `tests/test_release.py` gained 4 mirrored
+  tests. This closes the one integration gap (union was absent from `release.py compose`). It is **inert until
+  a deliberate recompose** — the committed `release.v1.json` is untouched and carries no `union_recall`/`leak`
+  section (verified; the lock test's `assert "union_recall" not in release` stays green). Validation: 92 unit
+  tests pass across the release + gate suite; `./gradlew.bat build -x test` SUCCESSFUL.
+- **R2 — pin-set parity (legal-clerc-200): DEFERRED, fetch unavailable.** `corpus-fetch-clerc` (direct
+  HuggingFace CLERC download) stalled in this environment (~15 min, zero output/cache), so the third corpus
+  was not added; the fallback stands — the pin set remains the two reproducible corpora **scifact (0.96) +
+  needle-burial-v1 (1.0)**, which is valid and sufficient. `legal-clerc-200` (and enron-qa) can be added later
+  via `corpus-fetch-clerc` + `union-recall-gate-derive` when the fetch succeeds; no code change is needed to
+  add a corpus, only a derive run. This does not affect R1 or the shipped gate.
+
 Status: **implemented + validated in the `624-scale-corpus` worktree; not merged (no PR opened per instruction).**
 
 ## Remaining-work confidence check (2026-07-09 — read-only scoping pass, no feature code)

@@ -314,6 +314,7 @@ def compose(
     external_baselines: dict | None = None,
     require_comparable: bool = True,
     leak_by_dataset: dict | None = None,
+    union_recall_by_dataset: dict | None = None,
 ) -> dict:
     """Compose cohort-identical run summaries into one benchmark release.
 
@@ -329,6 +330,11 @@ def compose(
         which has the run dirs; tempdoc 683). When non-empty, written as the
         release's ``leak`` section so leak-gate's ``current_release`` pointer can
         project ceilings from it.
+    :param union_recall_by_dataset: optional ``{dataset_slug: leg_union_recall}`` measured
+        from the runs' ``staged_recall_accounting`` projections (sourced by the compose CLI,
+        which has the run dirs; recall-survival sibling of ``leak_by_dataset``, tempdoc 699).
+        When non-empty, written as the release's ``union_recall`` section so
+        union-recall-gate's ``current_release`` pointer can project floors from it.
     :raises ComposeError: if the runs don't all share one ``config_cohort_key``,
         or (when ``require_comparable``) a default-mode run isn't ``comparable``.
     :returns: the release document (``release.v1`` schema).
@@ -416,6 +422,15 @@ def compose(
         if isinstance(rate, (int, float))
     }
 
+    union_recall_section = {
+        canonical_dataset_slug(ds): {
+            "leg_union_recall": float(rate),
+            "src": "staged_recall_accounting projection",
+        }
+        for ds, rate in (union_recall_by_dataset or {}).items()
+        if isinstance(rate, (int, float))
+    }
+
     return {
         "schema": RELEASE_SCHEMA,
         "schema_version": RELEASE_SCHEMA_VERSION,
@@ -426,6 +441,7 @@ def compose(
         "measured": measured,
         "ablations": ablations,
         **({"leak": leak_section} if leak_section else {}),
+        **({"union_recall": union_recall_section} if union_recall_section else {}),
         "external_baselines": external_baselines or {},
         # First-class negative-space statement (tempdoc 623 T-3 / §F): a release
         # must never imply the extraction front-half is measured.
