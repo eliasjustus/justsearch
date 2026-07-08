@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval concurrency ceiling: a single cell's wall-clock is ~90% Anthropic API time, not backend time — the GPU semaphore is not what raising concurrency would hit"
 type: tempdocs
-status: "measured (2026-07-08) — a live, corrected-after-a-real-bug timing-breakdown experiment (4 cells @ concurrency 1, 6 cells @ concurrency 6) confirms 675's Post-pilot theorization §H hypothesis. Not yet a design or an implementation; a measurement + a flagged next-step decision. No PR opened."
+status: "measured (2026-07-08) — a live, corrected-after-a-real-bug timing-breakdown experiment (4 cells @ concurrency 1, 6 cells @ concurrency 6) confirms 675's Post-pilot theorization §H hypothesis: backend share of wall-clock is 2.7%/8.0%, implying ~0.48 concurrent backend requests at agent-concurrency 6, far below the ~6.7 qps backend ceiling. Read §Unverified assumptions before citing the exact percentages (small single-run sample, condition-C-only scope = an upper bound on backend load, account rate-limit tier unconfirmed) — the qualitative conclusion (backend is not the ceiling) is solid; the precise numbers are one data point. Not yet a design or an implementation; a measurement + a flagged, authorization-gated next-step recommendation. No PR opened."
 created: 2026-07-08
 updated: 2026-07-08
 category: agent-eval / jseval / performance
@@ -120,6 +120,38 @@ of cells each) specifically watching for `429`/rate-limit errors in the SDK's `R
 directly and cheaply — but should be scheduled at a moment when contention with other active sessions on
 the account is low, and the person running it should know in advance it might visibly slow other
 concurrent Claude Code usage for its duration.
+
+## Unverified assumptions / limitations (2026-07-08)
+
+Recorded so a later agent need not reconstruct them from the working session:
+
+- **Small sample, single run, not repeated.** n=4 (concurrency 1) and n=6 (concurrency 6), one run each,
+  no repeats across time-of-day or multiple sessions. The per-cell spread within each table (87–95%
+  Anthropic share; 0–11% justsearch share) is consistent enough that the qualitative conclusion
+  (backend ≪ ceiling) is not in doubt, but the exact percentages should be read as one data point, not a
+  tight statistical estimate — a genuinely rigorous version would run more cells across more sessions.
+- **Condition C only — an upper bound on backend load, not the average across all conditions.** Condition
+  C disallows file tools, so the agent is *forced* through JustSearch every time it needs information.
+  Condition B (file tools + JustSearch both available) would very plausibly show a *lower*
+  justsearch-time share, since the agent can and does sometimes reach for file tools instead (per 675's
+  own pilot data, condition A issues zero JustSearch calls by construction). So "8.0% backend share at
+  concurrency 6" is a worst-case-for-backend-load number, not a matrix-wide average — the true aggregate
+  backend load across a real A+B+C run is likely lower than this tempdoc's number, which if anything
+  strengthens (does not weaken) the "backend is not the ceiling" conclusion.
+- **Sequential-duration-summing algorithm CHECKED, not merely assumed, for this data.** The method sums
+  each JustSearch tool call's own start-to-result duration; if a single model turn ever issued **more
+  than one tool call in parallel**, naively summing their durations could double-count real wall-clock
+  time (two 2s parallel calls would wrongly show as 4s of "backend time"). This was verified directly
+  against the raw per-cell timelines saved during this session: **zero turns, across all 10 cells in
+  both runs, issued more than one tool call at once** — every turn was single-tool, so the summing
+  method is exact for the data actually collected. This is a property of what these particular cells
+  did, not a proof the SDK never does parallel tool calls; a future run with a prompt or corpus that
+  induces multi-tool turns should re-check this before trusting the same method.
+- **The account's actual Anthropic API rate-limit tier remains unknown** (§Interpretation item 3) — no
+  tool access to Anthropic Console account settings from this session. The ~160 RPM aggregate figure at
+  concurrency 6 is real but its significance (comfortably under the tier ceiling vs. already close to
+  it) cannot be determined without either checking the account setting directly or the authorization-
+  gated concurrency ramp named in §Recommended next step.
 
 ## Evidence / reproduction
 
