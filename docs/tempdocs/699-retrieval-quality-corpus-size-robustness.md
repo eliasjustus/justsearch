@@ -945,3 +945,50 @@ stale "not yet committed" comments in `ops.py` / `test_datasets_command.py`.
 pinned set can grow (enron-qa / legal-clerc / needle-burial) via further `union-recall-gate-derive` runs.
 
 Status: **implemented + validated in the `624-scale-corpus` worktree; not merged (no PR opened per instruction).**
+
+## Remaining-work confidence check (2026-07-09 — read-only scoping pass, no feature code)
+
+> After the core gate shipped, "remaining work" became ambiguous. This pass scopes what actually remains and
+> prices the parked items so a scope decision is informed. Findings carry `file:line`/command pointers.
+
+- **U1 — Is 699 complete? → Effectively YES; no unowned obligation is unbuilt.** The core deliverable
+  (completeness FLOOR gate) is shipped + validated. Every remaining candidate is either 699-owned-and-deferred
+  (R1/R2 below) or legitimately parked to another owner (P1/P2) — none is a silently-dropped 699 obligation.
+- **U2 — Release-projection compose upgrade (R1): correctly deferred; bounded when done.** `release.py`
+  `compose()` (`:308`) takes `leak_by_dataset` and emits a `leak` section (`:415,:428`); a `union_recall`
+  mirror is ~15–25 lines across `release.py` + `commands/release.py` + a union analogue of the anti-fork
+  recompose guard (`commands/release.py:185-196`). Crucially the committed `release.v1.json` carries **neither
+  a `leak` nor a `union_recall` section** (grep count 0), so leak's *own* release-projection is inert today and
+  `fallback_baselines` governs both gates. Building union's projection now — before leak's is even exercised —
+  is premature asymmetric work; the symmetric-defer decision holds. When a release is next recomposed with
+  projections, do leak + union together (and the lock test's `assert "union_recall" not in release` is the
+  deliberate trip-wire to update then).
+- **U3 — Pin-set parity (R2): optional; full parity not achievable here anyway.** enron-qa / legal-clerc-200
+  are not materialized (`jseval datasets`); legal-clerc-200 has a `666-corpora` recipe (cheap fetch), **enron-qa
+  has none** — so even leak-gate's enron pin is inert in this worktree. union pinning the two reproducible
+  corpora runnable here (scifact + needle-burial-v1) is sound; adding legal-clerc-200 is a cheap optional
+  nicety, not a coverage gap relative to what leak can actually run here.
+- **U4 — Large-N guard (P1): impractical as a *standing* guard; parking justified.** At the measured
+  ~27 docs/s realistic-corpus indexing rate, 10⁵ docs ≈ ~1 h and 10⁶ ≈ ~10 h to index — fine as a periodic
+  one-off measurement (appropriately 639's ANN-at-scale turf), impractical as a CI-cadence ratchet. The cheap
+  per-corpus completeness floor is the right *standing* instrument; the 10⁵–10⁶ question stays a parked one-off.
+- **U5 — Integration completeness: no gap.** `union-recall-gate` appears in every enumerator the other three
+  ratchets use — the `COMMANDS` list (`commands/gates.py`), `_gate_coverage` (`commands/ops.py`),
+  `baseline_shift`/derive, and `search-engine-hint.mjs`. The only place it is absent is `release.py compose` —
+  where leak is also effectively absent/inert (the deferred R1). No aggregate "run-all-gates" runner and no CI
+  eval lane exist to miss (confirmed: `.github/**` has no eval gate).
+
+### Verdict, confidence & model recommendation
+**There is no mandatory remaining work.** 699's core is complete and consistent; the only remaining candidates
+are optional/deferred and low-value-now: R1 (release-projection mirror — do it *with* leak's at the next
+release recompose, not before) and R2 (add legal-clerc-200 for a little more coverage — a cheap
+fetch+run+derive, no code judgment). P1/P2 are correctly parked (639 / a product tempdoc).
+
+**Confidence for the remaining work: 9/10.** High because what remains is minimal, well-scoped, and low-risk;
+the −1 is that R1's recompose anti-fork-guard analogue and R2's legal-clerc fetch haven't been exercised (mild
+unknowns, not blockers).
+
+**Difficulty: low.** R1 is a mechanical mirror of an existing block + a guard analogue; R2 is operational
+(fetch/run/derive, no code). Neither needs design judgment — that tier is done.
+**Recommendation: do nothing now (close 699 as complete); if R1/R2 are later wanted, Sonnet at low effort is
+sufficient.** Opus is not warranted for either.
