@@ -576,6 +576,30 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-028: recall-survival's completeness half now has a FLOOR gate — the guard triad is complete (tempdoc 699, 2026-07-08)
+
+- **Finding:** F-025 gated the recall funnel's *leak* half (`leak-gate`, a ceiling on cascade-leak). Its
+  first stage — **representation completeness** (`leg_union_recall`: did ANY retrieval leg surface the gold
+  before fusion/ranking; the LEG_MISS bucket) — was measured by `staged_recall_accounting` and profiled by
+  `recall-profile`, but **gated by nothing**; `leak-gate` structurally cannot catch it (fewer golds retrieved
+  does not *raise* `leak_rate` — it can lower it). Tempdoc 699 added **`jseval union-recall-gate`**: the
+  floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
+  same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
+  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  like leak's), pinned on reproducible corpora **beir/scifact 0.96 + golden/needle-burial-v1 1.0** (tol 0.05).
+  Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
+  (~14× sensitivity gap, tempdoc 699 §U1), so `relevance-gate` can miss what `union-recall-gate` catches.
+- **Provenance / context:** the 624 "retrieval collapses at scale" signal was investigated and resolved as a
+  **synthetic-corpus artifact** — the engine is *measured* size-robust on realistic corpora 3k→10k (MIRACL/de
+  recall flat, `final_recall` 0.967→0.967) while only the adversarial near-identical synthetic corpus collapses
+  — so no size-dependent product defect exists in the tested range; the completeness gate is the durable
+  standing-guard deliverable, not a fix. ANN recall decay was empirically ruled out as the mechanism (§E2).
+- **Deferred (documented in 699):** growing the pin set (legal-clerc / enron-qa) via further
+  `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
+  release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
+  parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
 - **INVALIDATION (2026-07-03, 624 twenty-third pass — read first):** a five-agent mechanism

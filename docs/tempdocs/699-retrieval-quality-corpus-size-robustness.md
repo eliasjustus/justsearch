@@ -961,6 +961,57 @@ pinned set can grow (enron-qa / legal-clerc / needle-burial) via further `union-
   via `corpus-fetch-clerc` + `union-recall-gate-derive` when the fetch succeeds; no code change is needed to
   add a corpus, only a derive run. This does not affect R1 or the shipped gate.
 
+## Handoff (2026-07-09) — state for a fresh agent (continue without this chat)
+
+**Shipped (commits `a3e6556` feat, `19655bc` fix, `8fda843` R1, on branch `worktree-624-scale-corpus`; NOT
+merged, no PR):** `jseval union-recall-gate` — a per-corpus FLOOR on `leg_union_recall` from the
+`staged_recall_accounting` projection; the completeness sibling of `leak-gate`. Code:
+`jseval/union_recall_gate.py`, `metric_families.UNION_RECALL`, `commands/gates.py` (`union-recall-gate` +
+`-derive`), `commands/ops.py` (gated_by), `union-recall-gate-baselines.v1.json`, `search-engine-hint.mjs`;
+R1 release plumbing in `release.py`/`commands/release.py`. Register updated: search-quality F-028.
+
+### Verified claims (each with its evidence pointer)
+- **Unit tests green (92):** `cd scripts/jseval && python -m pytest tests/test_union_recall_gate.py
+  tests/test_leak_gate.py tests/test_release.py tests/test_metric_families.py tests/test_datasets_command.py -q`
+  → `92 passed` (the 2 pre-existing `test_correction_probe` reds are unrelated, per `expected-state.v1.json`).
+- **Gate FLOOR logic correct:** `union_recall_gate.py:164-165` (`floor = baseline − tolerance; regressed =
+  current < floor`); independent refute-first subagent CONFIRMED (this session).
+- **Live PASS/FAIL (reproduce, artifacts are ephemeral under gitignored `tmp/`):** with the committed
+  baselines, `jseval union-recall-gate --dataset golden/needle-burial-v1` on a fresh run → exit 0 (1.0 ≥ floor
+  0.95); a projection with `leg_union_recall` below floor → exit 1. Re-derive/re-run via
+  `jseval corpus-build --source scripts/jseval/635-corpora/needle-burial-v1 --name needle-burial-v1` →
+  `jseval run --dataset golden/needle-burial-v1 --modes vector,lexical,splade,full --pipeline --start-backend`.
+- **Reproducible pins only:** `git ls-files scripts/jseval/635-corpora/needle-burial-v1` (3 tracked files) +
+  `beir/scifact` (BEIR fetch); `jseval datasets` shows both `→ …, union-recall-gate`.
+- **R1 inert-safe:** `python -c "import json;d=json.load(open('scripts/jseval/release.v1.json'));assert
+  'union_recall' not in d and 'leak' not in d"` passes; lock test `test_committed_pointer_file_...` green.
+- **Build:** `./gradlew.bat build -x test` → BUILD SUCCESSFUL (no JVM surface touched).
+
+### Unverified assumptions / deferred checks (do NOT treat as verified)
+- **R1's *active* release-projection path was never exercised end-to-end.** Only compose-emits-section + the
+  recompose guard were unit-tested on synthetic data; a real `jseval release` recompose that populates a
+  `union_recall` section AND `union-recall-gate` then projecting a floor *from the release* (not fallback) has
+  not been run. Assumed correct by symmetry with leak (whose release section is also empty/unexercised).
+  → verify at the next deliberate release recompose.
+- **needle-burial floor (1.0) rests on 20 queries** (granularity 0.05; a 2-query drop trips it) and the
+  **tolerance 0.05 rests on n=2 rerun variance** (spread 0.01, §Pre-implementation confidence check U2), not a
+  full `jseval calibrate` envelope.
+- **The gate is local-first ADVISORY, not CI-enforced** — no eval gate runs in `.github` CI (by design: eval
+  gates need GPU/models). A union-recall regression only fails loudly if the gate is run locally / prompted by
+  `search-engine-hint`. Do not assume CI catches it.
+
+### Remaining / follow-up work (owner)
+- **R2 (699):** add `legal-clerc-200` (+ `enron-qa` when its recipe exists) to the pin set — the CLERC
+  HuggingFace fetch stalled this session; retry `corpus-fetch-clerc --name legal-clerc-200 --seed 666
+  --n-queries 200` then `union-recall-gate-derive`. No code change; update the lock test's expected pin set.
+- **R1 activation (699/623):** populate + live-verify the `union_recall` release section at the next release
+  recompose (do it alongside leak's, which is equally unpopulated today).
+- **P1 (639):** realistic large-N (10⁵–10⁶) recall — a periodic one-off, impractical as a standing ratchet.
+- **P2 (product tempdoc):** the user-visible low-confidence signal (north-star bullet 2, never built).
+
+No private/internal-only context is relied on here — all references are tempdoc numbers, corpus/metric names,
+commands, and `file:line`s in this public repo.
+
 Status: **implemented + validated in the `624-scale-corpus` worktree; not merged (no PR opened per instruction).**
 
 ## Remaining-work confidence check (2026-07-09 — read-only scoping pass, no feature code)
