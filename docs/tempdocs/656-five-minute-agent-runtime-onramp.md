@@ -2367,3 +2367,37 @@ K8) stays speculative — consistent with "no real users yet." **"Nothing more i
 defensible read:** 656's scope is delivered and the proof-lane is green; K1–K4 are improvements, not gaps —
 worth doing only if/when a developer actually trips over them (K1/K2 already have one trip each: this
 session).
+
+### K.5 Confidence pass — K1–K4 surprise-reduction (2026-07-08, read-only)
+Pre-implementation investigation only (no feature code). Closed the K1–K4 uncertainties:
+
+- **K1 signal + necessity — RESOLVED, and reframed *down*.** The ingest 503 is a **deliberate gate**, not a
+  bug: `KnowledgeSearchController.handleIngest`/`handleSearch` sit behind a WorkerCapability before-handler
+  that returns `503 "Knowledge Server not ready"` when `WorkerCapability.available()` is false (line ~223,
+  ~714). The readiness signal is simply "worker available." The correct consumer behaviour is to *wait for
+  the gate to open* — which the §J smoke retry already does. The MCP dev server **already** treats
+  "worker ready" as a distinct readiness level ("~15s HTTP / ~40s worker ready … blocks until readiness
+  level reached"). ⇒ **A dev-runner readiness change is NOT necessary** (the necessary fix shipped in §J).
+  Remaining K1 is at most a one-line docs note (Head-ready ≠ worker-ready); the dev-runner worker-gate is
+  optional polish with shared-infra blast radius — recommend *not* doing it.
+- **K2 — RESOLVED (trivial).** `startStack` 240s vs dev-runner CI 300s confirmed. With the §I fix dev-runner
+  reports ready in ~5s, so 300s is essentially never hit — K2 is pure defence-in-depth (align the two;
+  1-line).
+- **K3 — RESOLVED as a *decision*, not code.** `workflow-signal-health.mjs` produces a fresh/stale report
+  but **nothing runs it** (no scheduler, no consumer). Surfacing needs a periodic external dispatcher.
+  ADR-0026's no-schedule rule targets the *self-hosted* runner's uptime; onramp-smoke is GitHub-hosted, so
+  an external routine is policy-consistent and carries no boot-execution risk — but standing up a scheduled
+  agent is an **owner/infra/billing decision**, not something to implement autonomously. The code glue is
+  small once that decision is made.
+- **K4 — RESOLVED (easy, low flake risk).** Post-fix CI stack-up latency measured ~5s (two consistent runs:
+  `28910099366`, `28910511992`). A threshold of ~60–90s clears 5s by 12–18× yet still trips on the
+  regression class (timeout-burning ≥120s). Only residual: two data points, cold-runner variance not swept —
+  but the margin absorbs it.
+
+**Confidence for the remaining K1–K4 work: 8/10.** No technical surprises left; the biggest unknown (K1's
+signal + whether a core change is needed) resolved *favourably* (already fixed; signal known). The only
+residuals are non-technical: K3 is decision-gated (owner must choose the scheduling mechanism), and K1's
+recommendation is downgraded to docs/optional. **Difficulty: LOW.** K1(docs)+K2+K4 are small, mechanical,
+well-specified edits → **Sonnet at low–medium effort**; not Opus (no hard design remains). K3 is an owner
+decision first, then trivial glue; the optional K1 dev-runner worker-gate (not recommended) would be the
+only moderate-care item if ever pursued.
