@@ -135,6 +135,9 @@ import {
 import { createRequire } from 'node:module';
 const _ownReq = createRequire(import.meta.url);
 const { computeOwnershipVerdict, readSessionActivity, computeDisplacedNotice, recommendedTakeoverFor } = _ownReq('../lib/ownership-verdict.cjs');
+// Tempdoc 696: resolve a >= 24 JDK (Temurin 25) for hot-swap's java + gradle compile,
+// so a stale JDK-8 JAVA_HOME/PATH can't break `--source 25` hot-swap. Reuses _ownReq (CJS interop).
+const { resolveJavaExe, resolveJdkHome } = _ownReq('../lib/resolve-jdk.cjs');
 
 function _pidAlive(pid) {
   if (typeof pid !== 'number' || pid <= 0) return false;
@@ -2542,7 +2545,9 @@ export async function main() {
       const debugPort = input.debugPort || 5005;
       const skipCompile = input.skipCompile === true;
       const gradleCmd = path.join(repoRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-      const javaCmd = 'java';
+      // Tempdoc 696: absolute >= 24 java (not bare PATH `java`, which may be JDK 8) for `--source 25`.
+      const javaCmd = resolveJavaExe();
+      const jdkEnv = { ...process.env, JAVA_HOME: resolveJdkHome() };
 
       const result = { ok: true, compileMs: null, hotSwapOutput: null, hotSwapOk: null, structuralChangeDetected: false, signalWritten: false };
 
@@ -2568,7 +2573,7 @@ export async function main() {
           const compileResult = await execFileP(
             gradleCmd,
             [`:modules:${module}:compileJava`],
-            { cwd: repoRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32' },
+            { cwd: repoRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32', env: jdkEnv },
           );
           result.compileMs = Date.now() - compileStart;
           // Check for compilation errors in output
@@ -2586,7 +2591,7 @@ export async function main() {
         const hsResult = await execFileP(
           javaCmd,
           ['--add-modules', 'jdk.jdi', '--source', '25', hotSwapScript, String(debugPort), classesDir],
-          { cwd: repoRoot, timeout: 15_000, windowsHide: true },
+          { cwd: repoRoot, timeout: 15_000, windowsHide: true, env: jdkEnv },
         );
         result.hotSwapOutput = (hsResult.stdout || '').trim();
         result.hotSwapOk = true;

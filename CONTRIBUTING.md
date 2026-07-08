@@ -51,7 +51,10 @@ readable while contributors can work naturally on branches.
 
 - Windows 10/11
 - A JDK to bootstrap Gradle — **the Gradle toolchain auto-resolves the required JDK 25**, so any recent JDK to
-  launch the wrapper is enough
+  launch the wrapper is enough. "Recent" means 17+ (24+ to run the build's JVM args); an old JDK on
+  `JAVA_HOME`/`PATH` (e.g. JDK 8) will fail with "Gradle requires JVM 17 or later" — point `JAVA_HOME` at a
+  JDK 25. (The dev-runner resolves this automatically for the dev stack; direct `./gradlew` calls inherit
+  your ambient `JAVA_HOME`.)
 - Node.js 20+ (for the `modules/ui-web` frontend) — `scripts/setup/bootstrap-node-win.ps1` can install it for you
 
 That's it. `./gradlew build` (compile + unit tests) does **not** require the Rust/Tauri toolchain (the desktop
