@@ -488,9 +488,10 @@ export class ResultsCard extends JfElement {
             : nothing}
         </div>
         <div class="path" title=${hit.path}>
-          ${isAdvancedMode()
-            ? formatDisplayPath(hit.path)
-            : formatLocationBreadcrumb(hit.path) || formatDisplayPath(hit.path)}
+          ${/* Tempdoc 696 (C4) — Simple shows the humanized breadcrumb (empty for a root file, which is
+                fine — the filename is already the row title); Detailed shows the full path. No raw-path
+                fallback in Simple, so a drive-root file can't re-leak the raw path (696 review §1). */ ''}
+          ${isAdvancedMode() ? formatDisplayPath(hit.path) : formatLocationBreadcrumb(hit.path)}
         </div>
         ${view.snippet
           ? html`<div class="snippet" data-snippet-source=${view.snippetSource}>

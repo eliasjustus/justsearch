@@ -31,7 +31,7 @@ import { icon } from '../components/Icon.js';
 // authority — never the raw `core.*-surface` id.
 import { present } from '../display/present.js';
 import { applyAppearance, getSurfaceMode, setSurfaceMode } from '../state/themeState.js';
-import { setUiMode } from '../state/uiModeState.js';
+import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
 // 569 Move 1/3 — the body-tier apply path: a real region rendered from a declaration.
 import {
   subscribePresentation,
@@ -581,8 +581,14 @@ export class SettingsSurface extends JfElement {
   `,
   ];
 
+  private uiModeUnsub: (() => void) | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
+    // Tempdoc 696 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
+    // same uiModeState store) in the Interface section's selected state; the section renders from the
+    // live getUiMode() so the two controls cannot disagree.
+    this.uiModeUnsub = subscribeUiMode(() => this.requestUpdate());
     // Tempdoc 571 §11 / 578 — if reached via a member deep-link (Skins/Editor → redirected here),
     // open that member's Appearance tab. Drain a pending intent (mounting now) AND subscribe (member
     // deep-link while THIS host is already active still switches the tab).
@@ -716,6 +722,8 @@ export class SettingsSurface extends JfElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.uiModeUnsub?.();
+    this.uiModeUnsub = null;
     this.themeUnsub?.();
     this.userConfigUnsub?.();
     this.catalogUnsub?.();
@@ -914,7 +922,9 @@ export class SettingsSurface extends JfElement {
   }
 
   private renderInterface(): TemplateResult {
-    const mode: 'simple' | 'advanced' = this.ui.mode === 'advanced' ? 'advanced' : 'simple';
+    // Tempdoc 696 — render the selected state from the live uiMode authority (not the local
+    // this.ui.mode snapshot) so this control stays in sync with the topbar Simple/Detailed toggle.
+    const mode: 'simple' | 'advanced' = getUiMode();
     return html`
       <div class="section">
         <h3>${icon({ name: 'layers', size: 12 })} Interface</h3>
@@ -934,13 +944,13 @@ export class SettingsSurface extends JfElement {
             @click=${() => void this.patch({ mode: 'advanced' })}
           >
             ${icon({ name: 'maximize-2', size: 18 })}
-            <div class="option-label">Advanced</div>
+            <div class="option-label">Detailed</div>
             <div class="option-desc">Full controls + diagnostics</div>
           </button>
         </div>
         <p class="help">
-          Advanced mode unlocks AI runtime configuration, GPU controls, Lucene search syntax,
-          and library management tools.
+          Detailed mode shows technical detail and unlocks AI runtime configuration, GPU controls,
+          Lucene search syntax, and library management tools.
         </p>
       </div>
     `;

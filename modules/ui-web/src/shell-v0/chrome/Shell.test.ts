@@ -33,6 +33,7 @@ import {
 } from '../router/storeRegistry.js';
 import { __resetBootstrapForTest } from '../router/bootstrap.js';
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
+import { setUiMode, getUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
 import { deactivateProjection } from '../router/URLProjector.js';
 import {
   restoreSearch,
@@ -136,6 +137,27 @@ describe('Shell — slice 492 substrate integration', () => {
     deactivateProjection();
     window.location.hash = '';
     vi.unstubAllGlobals();
+    __resetUiModeForTest();
+  });
+
+  it('Tempdoc 696 — the topbar Simple/Detailed toggle reflects the live uiMode and drives it on click', async () => {
+    __resetUiModeForTest();
+    const shell = await renderShell();
+    const opts = () =>
+      Array.from(shell.shadowRoot?.querySelectorAll('.ui-mode-opt') ?? []) as HTMLButtonElement[];
+    expect(opts().map((b) => b.textContent?.trim())).toEqual(['Simple', 'Detailed']);
+    // Default: Simple active.
+    expect(opts()[0].getAttribute('aria-pressed')).toBe('true');
+    expect(opts()[1].getAttribute('aria-pressed')).toBe('false');
+    // An external mode change (e.g. the async settings seed) is reflected LIVE — the boot-desync fix.
+    setUiMode('advanced');
+    await shell.updateComplete;
+    expect(opts()[1].getAttribute('aria-pressed')).toBe('true');
+    expect(opts()[0].getAttribute('aria-pressed')).toBe('false');
+    // Clicking a segment drives the authority back.
+    opts()[0].click();
+    await shell.updateComplete;
+    expect(getUiMode()).toBe('simple');
   });
 
   describe('connectedCallback bootstrap', () => {

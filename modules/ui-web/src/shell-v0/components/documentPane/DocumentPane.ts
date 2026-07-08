@@ -46,7 +46,8 @@ import { html, css, nothing, type TemplateResult, type PropertyValues } from 'li
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
-import { formatDisplayPath } from '../searchResults/resultRowPresentation.js';
+import { formatDisplayPath, formatLocationBreadcrumb } from '../searchResults/resultRowPresentation.js';
+import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import '../ErrorAlert.js';
 import '../Button.js';
 import { icon } from '../Icon.js';
@@ -165,8 +166,18 @@ export class DocumentPane extends JfElement {
     error: null,
   };
 
+  /** Tempdoc 696 — re-render the disclosure-gated path header on Simple/Detailed change. */
+  private uiModeUnsubscribe: (() => void) | null = null;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.uiModeUnsubscribe?.();
+    this.uiModeUnsubscribe = null;
     if (this.scrollDebounceTimer) {
       clearTimeout(this.scrollDebounceTimer);
       this.scrollDebounceTimer = null;
@@ -693,7 +704,11 @@ export class DocumentPane extends JfElement {
       <div class="header">
         ${/* Search Thread Round-2 R5c — the shared formatDisplayPath authority (filename-preserving
               middle truncation), not CSS end-truncation; the full path stays reachable via title. */ ''}
-        <div class="path" title=${this.docPath}>${formatDisplayPath(this.docPath)}</div>
+        <div class="path" title=${this.docPath}>
+          ${/* Tempdoc 696 (C4) — Simple shows the humanized folder breadcrumb; Detailed the full path
+                (the full path stays reachable via the title tooltip in both). */ ''}
+          ${isAdvancedMode() ? formatDisplayPath(this.docPath) : formatLocationBreadcrumb(this.docPath)}
+        </div>
         <jf-button class="icon" variant="ghost" size="icon" label="Close" .onActivate=${this.handleClose}
           >${icon({ name: 'x', size: 14 })}</jf-button
         >

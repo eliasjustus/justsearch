@@ -26,7 +26,7 @@
  * here unchanged because it directly guards the per-hit rationale grammar the
  * Why-disclosure renders from.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import './ResultsCard.js';
 import type { ResultsCard, CardSnapshot, CardHit } from './ResultsCard.js';
 import { traceChipsFor } from './whyThisResult.js';
@@ -58,6 +58,10 @@ async function mount(snapshot: CardSnapshot): Promise<ResultsCard> {
 function trace(effectiveMode: string): unknown {
   return { version: 1, decisionKind: 'multi_leg', effectiveMode, stages: [] };
 }
+
+// Tempdoc 696 — uiMode is a module-level store; reset after every test so a Detailed-mode test cannot
+// leak into a later block (696 review §6 hygiene).
+afterEach(() => __resetUiModeForTest());
 
 describe('ResultsCard — retrieval-mode indicator (ported from SearchSurface.retrievalMode.test, tempdoc 598 R1)', () => {
   beforeEach(() => __resetUiModeForTest());
@@ -101,6 +105,47 @@ describe('ResultsCard — retrieval-mode indicator (ported from SearchSurface.re
   it('renders nothing when no trace is present', async () => {
     const el = await mount({ ...BASE, results: [hit('a')] });
     expect(el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')).toBeNull();
+  });
+
+  // Tempdoc 696 (C2) — the latency form: plain "found in Xs" in Simple, raw "Nms" in Detailed.
+  it('Simple (default): renders a plain latency ("found in …s"), never raw ms', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')], processingTimeMs: 62 });
+    const meta = el.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
+    expect(meta).toContain('found in 0.06s');
+    expect(meta).not.toContain('62ms');
+  });
+
+  it('Detailed: renders the raw ms latency', async () => {
+    setUiMode('advanced');
+    const el = await mount({ ...BASE, results: [hit('a')], processingTimeMs: 62 });
+    const meta = el.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
+    expect(meta).toContain('62ms');
+  });
+
+  // Tempdoc 696 (C4) — the result location: a humanized breadcrumb in Simple, the full path in Detailed;
+  // a drive-root file never re-leaks the raw path in Simple (696 review §1).
+  it('Simple (default): a result location renders as a folder breadcrumb, not the raw path', async () => {
+    const p = 'f:\\proj\\ssot\\docs\\help\\getting-started.md';
+    const el = await mount({ ...BASE, results: [hit('a', { path: p })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent?.trim()).toBe('ssot › docs › help');
+    expect(pathEl?.getAttribute('title')).toBe(p);
+  });
+
+  it('Detailed: a result location renders the full path', async () => {
+    setUiMode('advanced');
+    const p = 'f:\\proj\\ssot\\docs\\help\\getting-started.md';
+    const el = await mount({ ...BASE, results: [hit('a', { path: p })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent).toContain('getting-started.md');
+    expect(pathEl?.getAttribute('title')).toBe(p);
+  });
+
+  it('Simple: a drive-root file shows an empty location (no raw-path re-leak — 696 review §1)', async () => {
+    const el = await mount({ ...BASE, results: [hit('a', { path: 'C:\\readme.txt' })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent?.trim()).toBe('');
+    expect(pathEl?.textContent).not.toContain('C:');
   });
 });
 

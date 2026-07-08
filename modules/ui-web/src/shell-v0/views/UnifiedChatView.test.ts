@@ -526,6 +526,26 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAutonomyForTest();
   });
 
+  it('C8 (Tempdoc 696) — the run budget-gate state is plain in Simple, technical in Detailed', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    await view.updateComplete; // ensureAgentCtrl creates the real controller
+    const ctrl = (view as unknown as { agentCtrl: { budgetGate: unknown } | null }).agentCtrl;
+    if (ctrl) ctrl.budgetGate = { promptTokens: 200, contextWindow: 4096 };
+    view.requestUpdate();
+    await view.updateComplete;
+    const summary = () => view.shadowRoot?.querySelector('.activity-rail > summary')?.textContent ?? '';
+    // Simple (default): plain language, no "budget"/"tokens" jargon in the always-visible summary.
+    expect(summary()).toContain('Paused — waiting to continue');
+    expect(summary()).not.toContain('awaiting budget');
+    // Detailed: the technical phrasing returns.
+    setUiMode('advanced');
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(summary()).toContain('Paused — awaiting budget');
+  });
+
   it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
     const view = mountView();
     await view.updateComplete;
