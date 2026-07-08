@@ -1,7 +1,7 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely, but see §Post-pilot theorization H/I — the ceiling may be a shared Anthropic rate limit, not just the backend). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions + §Post-pilot theorization (2026-07-08, exploratory) FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely, but see §Post-pilot theorization H/I — the ceiling may be a shared Anthropic rate limit, not just the backend). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions + §Post-pilot theorization (2026-07-08, exploratory) + §Process retrospective (2026-07-08, practice lessons for this lineage) FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
 updated: 2026-07-07
 author: agent retrospective (624 certified-run session), filed by agent — STUB
@@ -956,3 +956,116 @@ before attributing a concurrency ceiling to "the" bottleneck — would extend be
 lever that fans out client-side load against more than one shared backend. Not yet worth a formal
 earn/retire entry; would earn one if a future concurrency pilot is misattributed to the wrong resource
 and costs real debugging time to untangle.
+
+---
+
+## Process retrospective (2026-07-08) — practice lessons for future agent work on this lineage
+
+> Written for a reader with no access to the working conversation this tempdoc came out of — an
+> external contributor, or a future agent picking this branch up cold. Scope: **process and tooling**,
+> not engineering findings (those are §Review fixes / §Post-pilot theorization / §Unverified
+> assumptions above). Applies to this tempdoc and its siblings 624/673, which share the same executor,
+> the same Windows dev environment, and the same jseval/Inspect toolchain.
+
+**Location of the work at time of writing:** branch `worktree-675-executor-v2`, no PR opened yet (by
+deliberate instruction — implementation and review-fixing were authorized, publication was not). There
+is no public PR/CI-run link to cite here; once a PR opens against this repository, this line should be
+updated with it.
+
+**Known unrelated dirty state, not part of this tempdoc — do not attribute to 675's work.** At the time
+this section was written, the shared main checkout carried uncommitted changes to
+`docs/tempdocs/691-corpus-build-throughput.md` and three `modules/ui-web/**` files, belonging to other,
+unrelated in-progress work in other worktrees. 675's own work is fully contained in the
+`worktree-675-executor-v2` branch; nothing above should be read as this tempdoc's output, and a future
+agent should not assume main was clean before this tempdoc's branch diverged from it.
+
+### The one real risk found: an infrastructure claim was verified by architecture-reading, not by running it
+
+The original as-built (2026-07-07) asserted "Inspect resume … PRESERVED" on the strength of reading how
+`eval_set`'s deterministic `eval_set_id` is *supposed* to work, without an actual two-invocation resume
+test. A later critical review (2026-07-08, hardened by an adversarial refute-first pass) found this
+claim **false** — resume was actually broken by a real, pre-existing upstream defect (§Review fixes F0).
+Had this claim gone out uncorrected, it would have misrepresented the eval's own credibility guarantee
+(whether a crash-restarted run can be trusted not to silently re-run or silently skip cells) — exactly
+the kind of claim this repo's `audit-without-test` and `static-green ≠ live-working` discipline exists
+to catch (`docs/reference/contributing/agent-postmortems.md`), and exactly what caught it here. **This
+is not a new lesson — it's a concrete, real-cost confirmation that those two named principles are
+earning their keep**, worth citing as evidence the next time someone questions whether that discipline
+is worth the friction. A second, smaller instance of the same pattern: a unit test guarding the
+`permission_denials` crash fix used a mock shaped as strings instead of the SDK's real list-of-dicts
+shape — a textbook `unreachable-seed-green` (same reference doc) that a live-shaped mock would have
+caught immediately. **Recommendation:** any claim of the form "X is preserved/works because the
+surrounding system is designed to do that" needs a runnable test that actually exercises X before it is
+stated as fact, not as a plan. Consider adding this exact resume case to
+`docs/reference/contributing/agent-postmortems.md` as a fresh named reference case (not done here —
+would need its own tier-register row per `.claude/rules/tier-register.md`'s gate; a follow-up, not a
+drive-by edit from a retrospective).
+
+### Recurring tooling friction — worth a durable fix, not a repeated workaround
+
+Two Windows/jseval environment quirks recurred across many separate command invocations this session,
+each requiring the same non-obvious fix re-applied by hand every time: (1) `jseval` is normally
+pip-installed editable against the checkout it was installed from, so running it against a *worktree's*
+copy needs `PYTHONPATH` pointed at the worktree's `scripts/jseval`, or the wrong copy silently runs; (2)
+Inspect AI's rich display crashes with `UnicodeEncodeError` on Windows when stdout is redirected/backgrounded
+(cp1252 can't encode its braille spinner glyphs), needing `PYTHONUTF8=1 INSPECT_DISPLAY=none` on every
+backgrounded invocation. Both are already logged as individual observations (pending fold into
+`docs/observations.md`'s Inbox at the usual merge-time point per `.claude/rules/branch-safety.md`), but
+neither is yet in a place a new agent would find *before* hitting them. **Recommendation:** a single
+`CLAUDE.md` "Common Pitfalls" row (or a short jseval-specific note) giving the exact env-var incantation
+for "running jseval against a worktree, backgrounded, on Windows" would save this from being
+independently rediscovered by every future session that runs an Inspect eval from a worktree — this
+tempdoc's own review-fix and pilot work needed it upward of half a dozen times. Separately: this
+session's live-verification work (§Pre-implementation verification, §Review fixes' live checks, the
+throughput pilot) each hand-wrote a fresh throwaway Python driver against `run_utility_eval` for a
+slightly different question (concurrency, resume, max-turns, throughput). A small, explicitly-throwaway,
+parameterized live-probe harness (conditions/queries/concurrency/max-turns as flags) reusable across
+sessions would cut this repeated-authoring cost for whichever tempdoc needs the next one — 624 and 673
+hit the identical need. Also worth noting plainly: `capture_evidence` failed on a libuv assertion during
+this session's live checks, so their results exist only as reproducible procedures (commands + expected
+output), not as a committed evidence bundle — a real, tool-level gap in the evidentiary trail, not a
+choice.
+
+### A structural cost of long-lived append-only tempdocs
+
+This tempdoc grew from a stub to ~960 lines across roughly a dozen dated passes in 36 hours. Each new
+theorization or audit pass had to read a large fraction of the existing document first to avoid
+duplicating prior analysis (`docs/tempdocs/` is deliberately append-only per this repo's own dating
+convention) — a re-orientation cost that grows with the document and is paid again by every future
+reader, human or agent. **Recommendation:** for any tempdoc expected to accumulate many dated passes,
+consider a short, maintained index near the top (one line per major dated section, updated as sections
+are added) — not a summary of content, just a map of *where* each decision/finding lives — so a new pass
+can jump to what's relevant instead of reading linearly. Not done retroactively here (would itself cost
+a pass to build and maintain correctly); recorded as a structural observation for whoever next
+authors a tempdoc expected to run long.
+
+### What worked well — worth preserving as practice
+
+- **Post-compaction continuity.** A mid-session context compaction preserved the active plan file and a
+  structured state block (worktree/branch, files touched, in-flight task); the session resumed directly
+  into the correct next step with no re-derivation of intent. This is exactly what the mechanism is for,
+  and it worked.
+- **Refute-first adversarial review** (an independent pass explicitly tasked with trying to disprove the
+  first reviewer's own conclusions, not just extend them) is what overturned two wrong initial
+  conclusions (an incorrect resume root-cause; an overreaching "asymmetric bias" framing on `max_turns`)
+  before either shipped as a fix. Cheaper to run than to discover in production.
+- **Check-before-touch discipline around shared state.** Every dev-stack start checked ownership via
+  `quick_health` first; uncommitted files in the main checkout belonging to other in-progress work were
+  identified and explicitly left untouched rather than assumed safe to include. No collisions occurred
+  this session, and this is why.
+- **A standing "before ending this session" hygiene prompt** (git status in both trees + a critical pass
+  over the tempdoc's evidence pointers) caught real, otherwise-easy-to-miss issues **twice** in this
+  session alone — a leaked ephemeral path, an unconfirmed cleanup plan, and a stale pre-implementation
+  claim left uncorrected nearby a later correction. Worth keeping as a standard closing step for any
+  substantive agent session, not just this one.
+
+### On prompt wording this session
+
+Reviewed for a wording change that would have prevented a wrong or confusing outcome: **none found.**
+The errors that occurred this session (the false resume claim; an initially overstated "the full run is
+needed" framing later self-corrected on direct challenge; an incomplete first pass on the closing
+hygiene check) all trace to gaps in the work itself, not to ambiguous or underspecified instructions —
+each direct, skeptical question ("why do we need the full run", "what remains now") was answered
+correctly once asked, and in one case caught a real overclaim. No process change to prompt wording is
+recommended from this session; direct, specific challenge questions were consistently the fastest way to
+surface a real gap and are worth continuing to ask.
