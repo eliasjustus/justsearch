@@ -570,8 +570,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] always-loaded budget: .claude/rules/branch-safety.md is 622 B over its ratchet ceiling on origin/main (10385 > 9763) — a 653 docs-ride-along addition grew the file without bumping the ceiling; pre-existing, not from tempdoc 618 — `scripts/ci/always-loaded-budget.v1.json` (2026-07-01)
 
 ### obs:branch-safety — branch-safety.md claims '.claude/settings.local.json is tracked' but it is gitignored (seeded from s
-`kind: defect?` `anchor: .claude/rules/branch-safety.md` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
+`kind: defect?` `anchor: .claude/rules/branch-safety.md` `seen: 2` `first: 2026-07-01` `last: 2026-07-07`
 - [ ] branch-safety.md claims '.claude/settings.local.json is tracked' but it is gitignored (seeded from settings.local.json.example) — doc drift — `.claude/rules/branch-safety.md:20` (2026-07-01)
+- [ ] Pre-existing markdownlint MD031/MD040 violations (7x, fenced code blocks) in .claude/rules/branch-safety.md — `.claude/rules/branch-safety.md:26-67`, predates the session-695-retro-followup docs work (2026-07-07)
 
 ### obs:test-pipeline — test-pipeline.mjs fails at line 361 (JSON.parse of empty intervene output for realLargeFile large-fi
 `kind: environment?` `anchor: scripts/agent-analytics/test-pipeline.mjs` `seen: 2` `first: 2026-07-01` `last: 2026-07-06`
@@ -777,8 +778,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Latent right-drawer overlap: jf-agent-activity-panel / jf-interaction-retrospective-panel / jf-advisory-inbox-drawer share one `flex-direction:column` right-drawer slot with NO mutual-exclusion; two open at once stack/overlap, and AdvisoryInboxDrawer stays `display:flex` (translateX) when closed (residual slot). Needs a single-drawer arbiter — `OverlayHost.ts`/`Shell.ts` (2026-06-03)
 
 ### obs:lambdamartbenchmarktest — Environmental flake: LambdaMartBenchmarkTest p50 latency >5ms threshold under heavy machine load (mu
-`kind: environment?` `anchor: modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` `seen: 1` `first: 2026-06-03` `last: 2026-06-03`
+`kind: environment?` `anchor: modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` `seen: 2` `first: 2026-06-03` `last: 2026-07-07`
 - [ ] Environmental flake: LambdaMartBenchmarkTest p50 latency >5ms threshold under heavy machine load (multiple dev stacks + GPU). Passes on unloaded machine; unrelated to 565. `modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` (2026-06-03)
+- [ ] LambdaMartBenchmarkTest (app-services integrationTest) is load-flaky: 'p50 under 5ms' threshold failed at 5.79ms under concurrent-build load, passed cleanly in isolation (--rerun-tasks). A 5ms p50 latency assertion on a shared CI/dev machine is inherently machine-load-sensitive; consider widening the threshold or marking it @Tag("benchmark") excluded from the gating build — `modules/app-services/src/integrationTest/.../gpl/LambdaMartBenchmarkTest.java` (2026-07-07)
 
 ### obs:autonomydial — a11y: axe color-contrast fail (serious, WCAG AA) on the active affordance/autonomy-dial button — whi
 `kind: defect?` `anchor: AutonomyDial.ts` `seen: 1`
@@ -1573,8 +1575,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Agent-eval concurrency lever (624 certified runs): local resources are not the binder -- calibration data shows per-cell latency inflates ~1.8x at 8-way vs sequential (shared per-account API token throughput), so raising concurrency past saturation mostly slows cells rather than the run, and pushes the latency tail into the calibrated timeout (the exclusion/comparability failure mode). Before the DE corpus or any future re-certification run, a ~$3 'utility-calibrate --concurrency 12' pilot vs the 8-way baseline would empirically settle whether the account has headroom (if contended-p95 barely moves, higher concurrency is safe AND correctly timeout-sized by construction). Do not change concurrency mid-run (splits the record across contention regimes). — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-03)
 
 ### obs:agent-utility-inspect-error — New agent-eval leak class found + cleaned (624 DE cycle): an earlier run with direct write access to
-`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
+`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 3` `first: 2026-07-03` `last: 2026-07-07`
 - [ ] New agent-eval leak class found + cleaned (624 DE cycle): an earlier run with direct write access to the canonical corpus-dir left agent-authored solver artifacts (connections.txt = the corpus's full entity-link map; trace_chain.txt = a chain-tracing bash script) inside datasets/golden/battlefield-de-v1/corpus-dir — carried into the archive and re-ingested into the MCP index (394 docs vs 390+sentinel). Removed + clean re-ingest before the DE certified run. EN v4 verified unaffected via per-cell tool-call scan (0 genuine write commands / 5,862 calls). Residual structural gap: run_utility_eval stages ONE shared corpus copy per run, so within-run cross-cell writes remain possible — per-cell staging or a read-only staged dir would close it. — `scripts/jseval/jseval/agent_utility_inspect.py:stage_corpus_dir` (2026-07-03)
+- [ ] jseval agent-utility eval (Inspect eval_set) crashes with UnicodeEncodeError on the rich-display braille spinner (⠿) when stdout is redirected/non-tty on Windows (cp1252) — set INSPECT_DISPLAY=none or PYTHONUTF8=1 for backgrounded runs. Pre-existing (default display), but more relevant post-675 (long non-blocking runs) — `jseval/agent_utility_inspect.py:run_utility_eval` calls eval_set with default display (2026-07-07)
+- [ ] Upstream Inspect defect: any float task-arg (or non-default GenerateConfig float) breaks eval_set resume — the JSON recorder reads persisted floats back as Decimal (ijson without use_float), so task_identifier re-hashes to a different id than the persisted log → PrerequisiteError. Worked around in jseval by threading max_budget as str — `scripts/jseval/jseval/agent_utility_inspect.py` claude_agent_solver (2026-07-07)
 
 ### obs:unanchored-general-48 — synth-scan-v1 corpus-dir is polluted with agent-authored OCR-processing artifacts (aggressive_thresh
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-03` `last: 2026-07-03`
@@ -1833,7 +1837,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Dependabot Updates run 28888923884 fails inside GitHub's updater infra ('Failed to parse GITHUB_REGISTRIES_PROXY environment variable', then record_update_job_error) while refreshing gradle-deps PR #61 — not a repo-code failure; recheck whether subsequent Dependabot runs recover or PR #61 is stuck (2026-07-07)
 
-### obs:unanchored-error-9 — Search results can surface a raw internal file with a GUID-shaped name and no title/summary/context 
+### obs:unanchored-error-9 — Search results can surface a raw internal file with a GUID-shaped name and no title/summary/context
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Search results can surface a raw internal file with a GUID-shaped name and no title/summary/context (e.g. `ba54e809-7654-4c3d-bd8a-ffa51f223c16.md`) — likely eval/test tooling residue leaking into the live index; needs investigation into why it's indexed and surfaced unlabeled — noticed during a UI design-comparison pass, not yet root-caused. (2026-07-07)
 
@@ -1848,6 +1852,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-68 — Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) i
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
 - [ ] Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) in .claude/skills/ci-triage/SKILL.md — `.claude/skills/ci-triage/SKILL.md:45-101`, predates the phase-3-observability-nightly deletion work (2026-07-07)
+
+### obs:bench — jseval `bench-concurrency --output-dir` doubles as the corpus base_dir (passed to corpora.load) — po
+`kind: defect?` `anchor: scripts/jseval/jseval/commands/bench.py` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] jseval `bench-concurrency --output-dir` doubles as the corpus base_dir (passed to corpora.load) — pointing it anywhere but the datasets/ parent makes it fail with FileNotFoundError, and results get written into datasets/ — `scripts/jseval/jseval/commands/bench.py:62-63` (2026-07-07)
+
+### obs:unanchored-gate-red-7 — Pre-existing Gradle bug: `project.hasProperty("updateSchemas")` in app-api/app-observability/app-age
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+- [ ] Pre-existing Gradle bug: `project.hasProperty("updateSchemas")` in app-api/app-observability/app-agent-api build.gradle.kts always returns true because Gradle exposes task names as dynamic project properties, and each module registers a task literally named `updateSchemas` — so the -PupdateSchemas gate is a no-op and every plain `./gradlew test` run silently takes the schema-baseline-rewrite branch (confirmed via isolated --init-script probe: findProperty(updateSchemas) resolves to the task object). This is the actual root mechanism behind tempdoc 696's CRLF churn, not just System.lineSeparator() — `build.gradle.kts` (all three modules, ~line 66-67 pattern) — not fixed here (out of scope: task 696 only touches src/test/** Java line-ending sites). — RESOLVED by 696 follow-up (2026-07-08): the gate in `app-api:66` + `app-observability:91` now checks `gradle.startParameter.projectProperties.containsKey("updateSchemas")` (the -P map only, immune to task-name shadowing); the `updateSchemas` tasks are kept (docs-referenced entry points). CORRECTION to the above: **app-agent-api is NOT affected** — it registers `updateRegistryEnums` (not `updateSchemas`), so its gate already worked. Verified: perturbing a committed schema now FAILS the test (compare mode active), while `-PupdateSchemas` / the `updateSchemas` task still regenerate. (2026-07-07)
 
 ## Parked
 
