@@ -1,0 +1,8 @@
+{
+  "$schema": "./ui-proportion-baseline.schema.json",
+  "version": 1,
+  "description": "Chrome proportion shrink-only ratchet baseline (tempdoc 697). ONE authority for the per-ui-shot-step persistent-chrome elements whose rendered HEIGHT must not GROW beyond a recorded ceiling (maxHeightPx). Shrinking is always allowed; growth beyond maxHeightPx + tolerancePx is a violation, enforced by `jseval ui-proportion-gate` (which reuses the ui-shot `.measure.json` geometry — see scripts/jseval/jseval/ui_measure.py). Regenerate via scripts/jseval/experiments/regen_proportion_baseline.py. ACTIVATION STATUS (tempdoc 697): the two target elements are DATA-DEPENDENT — the collapsed degradation pill (.degradation-banner-collapsed, measured 42px post-fix, intended ceiling 44) needs a degraded readiness verdict, and the one-line user bubble (.message.user, measured 36px post-fix, intended ceiling 38) needs a rendered turn. The gate captures via ui-shot's deterministic --fixtures state, where neither renders yet. `steps` is therefore intentionally empty (a green no-op) until a seeded fixture (degraded verdict + a user turn) makes chat-mode / qa-response render them deterministically; the fixes themselves are already live-validated (see tempdoc 697 §Verification) and the gate machinery is unit-tested (scripts/jseval/tests/test_ui_proportion_gate.py). Once the fixture exists, register the two elements above and re-baseline via regen.",
+  "captureState": "ui-shot --fixtures (deterministic); pending a seeded degraded-verdict + user-turn fixture — see tempdoc 697",
+  "tolerancePx": 2,
+  "steps": []
+}

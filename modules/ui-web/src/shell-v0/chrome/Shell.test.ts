@@ -147,15 +147,15 @@ describe('Shell — slice 492 substrate integration', () => {
       Array.from(shell.shadowRoot?.querySelectorAll('.ui-mode-opt') ?? []) as HTMLButtonElement[];
     expect(opts().map((b) => b.textContent?.trim())).toEqual(['Simple', 'Detailed']);
     // Default: Simple active.
-    expect(opts()[0].getAttribute('aria-pressed')).toBe('true');
-    expect(opts()[1].getAttribute('aria-pressed')).toBe('false');
+    expect(opts()[0]!.getAttribute('aria-pressed')).toBe('true');
+    expect(opts()[1]!.getAttribute('aria-pressed')).toBe('false');
     // An external mode change (e.g. the async settings seed) is reflected LIVE — the boot-desync fix.
     setUiMode('advanced');
     await shell.updateComplete;
-    expect(opts()[1].getAttribute('aria-pressed')).toBe('true');
-    expect(opts()[0].getAttribute('aria-pressed')).toBe('false');
+    expect(opts()[1]!.getAttribute('aria-pressed')).toBe('true');
+    expect(opts()[0]!.getAttribute('aria-pressed')).toBe('false');
     // Clicking a segment drives the authority back.
-    opts()[0].click();
+    opts()[0]!.click();
     await shell.updateComplete;
     expect(getUiMode()).toBe('simple');
   });

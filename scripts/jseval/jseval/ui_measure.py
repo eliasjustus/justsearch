@@ -58,6 +58,33 @@ def _find_a11y_baseline() -> dict[str, list[str]]:
 _A11Y_BASELINE = _find_a11y_baseline()
 
 
+def _find_proportion_baseline() -> dict[str, list[str]]:
+    """Load the shared chrome-proportion baseline register (tempdoc 697): the ONE
+    authority for which persistent-chrome element selectors are tracked per ui-shot
+    step. Returns {uiShotStep -> [selector]}. Best-effort: an absent/garbled register
+    yields an empty map (geometry capture is unaffected — the extra selectors are
+    simply not unioned in, mirroring `_find_a11y_baseline`'s fail-open contract)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "governance" / "ui-proportion-baseline.v1.json"
+        if cand.exists():
+            try:
+                reg = json.loads(cand.read_text(encoding="utf-8"))
+                return {
+                    s["uiShotStep"]: [
+                        el["selector"] for el in (s.get("elements") or []) if el.get("selector")
+                    ]
+                    for s in reg.get("steps", [])
+                    if s.get("uiShotStep")
+                }
+            except Exception:
+                return {}
+    return {}
+
+
+_PROPORTION_BASELINE_SELECTORS = _find_proportion_baseline()
+
+
 def split_new_vs_known(
     axe_violations: list[dict[str, Any]], known: list[str] | None,
 ) -> tuple[list[str] | None, int | None]:
@@ -208,7 +235,10 @@ _JS_DEEP = """
 
 # Geometry + computed-style facts for a generic key set (landmarks, stage, rail,
 # inspector, h1, the focused element) + document overflow flags. Shadow-piercing.
-_JS_GEOMETRY = """() => {
+# Takes `extraSels` (tempdoc 697): the current step's registered chrome-proportion
+# baseline selectors, unioned in so their heights land in the same `elements` map
+# under their own selector key — one geometry probe, no second capture path.
+_JS_GEOMETRY = """(extraSels) => {
 """ + _JS_DEEP + """
     const pick = (el) => {
         if (!el) return null;
@@ -223,7 +253,7 @@ _JS_GEOMETRY = """() => {
         };
     };
     const sels = ['[role="banner"]','[role="navigation"]','[role="main"]','main','.zone-stage','h1',
-                  '[data-surface-id]','jf-rail','jf-stage','jf-inspector-pane'];
+                  '[data-surface-id]','jf-rail','jf-stage','jf-inspector-pane'].concat(extraSels || []);
     const elements = {};
     for (const s of sels) { const e = deepQuery(s); if (e) elements[s] = pick(e); }
     const de = document.documentElement;
@@ -299,7 +329,11 @@ async def capture_measure(
 
     geometry = None
     try:
-        geometry = await page.evaluate(_JS_GEOMETRY)
+        # tempdoc 697: union this step's registered chrome-proportion baseline
+        # selectors into the fixed geometry probe (fail-open — an empty/absent
+        # baseline degrades to the original fixed-selector capture).
+        extra_sels = _PROPORTION_BASELINE_SELECTORS.get(name, [])
+        geometry = await page.evaluate(_JS_GEOMETRY, extra_sels)
     except Exception:
         pass
 

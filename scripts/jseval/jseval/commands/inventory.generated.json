@@ -248,6 +248,10 @@
     "group": "ui"
   },
   {
+    "name": "ui-proportion-gate",
+    "group": "ui"
+  },
+  {
     "name": "ui-shot",
     "group": "ui"
   },

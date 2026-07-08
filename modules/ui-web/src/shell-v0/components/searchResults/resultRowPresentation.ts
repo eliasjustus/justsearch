@@ -48,7 +48,8 @@ export function formatDisplayPath(p: string): string {
 export function formatLocationBreadcrumb(p: string): string {
   if (!p) return '';
   const parts = p.split(/[/\\]+/).filter(Boolean);
-  if (parts.length > 0 && /^[a-zA-Z]:$/.test(parts[0])) parts.shift(); // drop a drive letter ("f:")
+  const first = parts[0];
+  if (first && /^[a-zA-Z]:$/.test(first)) parts.shift(); // drop a drive letter ("f:")
   parts.pop(); // drop the filename (already the row title); a root file yields no folders → ''
   return parts.slice(-3).join(' › ');
 }

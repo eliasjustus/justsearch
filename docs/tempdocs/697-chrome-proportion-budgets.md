@@ -1,7 +1,7 @@
 ---
 title: "697 — Oversized persistent chrome: root-cause the bugs + a measured shrink-only ratchet so it can't regress"
 type: tempdoc
-status: design (settled) — problem, evidence, and direction settled; implementation not started
+status: Part A implemented + live-validated; Part B machinery implemented + unit-tested; gate activation on the two data-dependent elements is a documented follow-up (seeded fixture)
 created: 2026-07-08
 updated: 2026-07-08
 related:
@@ -201,3 +201,40 @@ them the baseline ratchets down, so a later re-inflation fails the build. Plus: 
 height reductions for each fixed instance (cited to a run), the full ui-web unit + gate suite green,
 and a live in-browser re-check that the pill and bubble hug their content in both `uiMode` states and
 at narrow width. Independent review (reviewer ≠ implementer) before merge, per the standing rules.
+
+## Implementation status (2026-07-08)
+
+Implemented on `worktree-ui-audit-density-review` (full ui-web unit suite green — 3727; the proportion
+gate's own unit tests green — 10).
+
+- **Part A — root-cause fixes (done + live-validated).** All CSS in `views/unifiedChatStyles.ts`.
+  (1) pre-wrap moved off the `.message` container onto the `.message-body` leaf, completing the
+  tempdoc-565 §12.3.B fix that had handled `.message.assistant` but left the user container inflated;
+  (2) the notice remedy slimmed via the `--justsearch-shell-action-button-padding` /
+  `--justsearch-shell-form-control-spacing` custom properties (which cross the shadow boundary into
+  `ActionButton`) plus a reduced collapsed-pill `padding-block`. **Measured against the running stack**
+  (shadow-piercing `getBoundingClientRect`, the method that found the originals): the collapsed
+  **degradation pill 76px → 42px**, the **user bubble 75px → 36px** (hugging its 17px line), the
+  remedy affordance ~42–54px → ~29px. The expanded banner stays ~158px — content-dominated, by design.
+  *(Numbers cited to a specific live run — working evidence, not public-facing claims.)* Live capture
+  used a standalone Playwright script (the claude-in-chrome extension had disconnected).
+- **Part B — the ratchet (machinery done + unit-tested; activation is a follow-up).** The full
+  `ui_a11y_gate` family is mirrored: `governance/ui-proportion-baseline.v1.json` (+ schema),
+  `scripts/jseval/jseval/ui_proportion_gate.py` (shrink-only: exit 1 on growth beyond
+  `maxHeightPx + tolerancePx`, exit 2 on a missing capture so a silent miss is never a false pass),
+  `ui_measure.py` extended to union the baseline's selectors into its geometry probe,
+  `regen_proportion_baseline.py`, and `test_ui_proportion_gate.py` (10 tests proving the ratchet
+  logic). **Honest activation gap:** the two target elements are *data-dependent* (the pill needs a
+  degraded readiness verdict; the bubble needs a rendered turn), and the gate captures via ui-shot's
+  deterministic `--fixtures` state where neither renders — and the ui-shot chat/search chain steps
+  additionally failed to capture against the worktree FE this session. So `steps` ships **empty** (a
+  green no-op) with the intended registrations + measured ceilings (pill ≤ 44px, bubble ≤ 38px)
+  recorded in the baseline `description`. **Follow-up to activate:** seed a fixture that renders a
+  degraded verdict + a user turn so `chat-mode`/`qa-response` show the pill/bubble deterministically,
+  then register the two elements and re-baseline via regen. The machinery + unit tests are the interim
+  guarantee; the fixes are already live-validated above.
+- **Teardown (rode along).** The full-size remedy op-button is slimmed in place (no dead
+  full-size-remedy styling left) and the `.message` container pre-wrap is *moved*, not duplicated; the
+  now-redundant `.message.assistant` reset is kept as a documented belt-and-braces with its comment
+  updated. The sidecar `workflow-density-lens-proposal`'s review-tier process proposals (#1/#3/#4) are
+  superseded by this ratchet — to be marked closed-superseded in that (private) research trail.
