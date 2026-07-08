@@ -588,7 +588,12 @@ export class SettingsSurface extends JfElement {
     // Tempdoc 696 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
     // same uiModeState store) in the Interface section's selected state; the section renders from the
     // live getUiMode() so the two controls cannot disagree.
-    this.uiModeUnsub = subscribeUiMode(() => this.requestUpdate());
+    this.uiModeUnsub = subscribeUiMode((m) => {
+      // Keep this.ui.mode (which the declared Interface option-group binds to) in sync with the store,
+      // so a topbar Simple/Detailed change updates the Settings toggle's selected state too.
+      if (this.ui.mode !== m) this.ui = { ...this.ui, mode: m };
+      this.requestUpdate();
+    });
     // Tempdoc 571 §11 / 578 — if reached via a member deep-link (Skins/Editor → redirected here),
     // open that member's Appearance tab. Drain a pending intent (mounting now) AND subscribe (member
     // deep-link while THIS host is already active still switches the tab).

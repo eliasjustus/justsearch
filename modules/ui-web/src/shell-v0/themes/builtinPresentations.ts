@@ -35,7 +35,9 @@ const SETTINGS_INTERFACE_SCHEMA = {
       enum: ['simple', 'advanced'],
       title: 'Interface mode',
       'x-ui-renderer': 'option-button-group',
-      'x-enum-labels': { simple: 'Simple', advanced: 'Advanced' },
+      // Tempdoc 696 — "Detailed" is the user-facing label for the `advanced` mode, matching the
+      // surfaced topbar Simple/Detailed toggle (the underlying mode value stays `advanced`).
+      'x-enum-labels': { simple: 'Simple', advanced: 'Detailed' },
       'x-enum-descriptions': {
         simple: 'Standard view',
         advanced: 'Full controls + diagnostics',
