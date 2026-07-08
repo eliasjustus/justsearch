@@ -753,12 +753,13 @@ def test_inspect_path_roundtrip(tmp_path):
     # also what gives A2 config-change log segregation).
     @task
     def mock_task(condition="A", wrong_q0=False, cost=0.10, tok=4000):
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}",
-                          metadata={"echo": ("WRONG" if (wrong_q0 and i == 0) else f"ANS{i}"),
+        samples = [Sample(id=f"{condition}|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": condition,
+                                    "echo": ("WRONG" if (wrong_q0 and i == 0) else f"ANS{i}"),
                                     "cost": cost, "tokens": tok})
                    for i in range(4)]
         return Task(dataset=samples, solver=mock_solver(), scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
                               "cohort": cohort})
 
@@ -828,10 +829,11 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
 
     @task
     def mock_task(condition="A"):
-        samples = [Sample(id="q0", input="Q0", target="ANS0", metadata={"echo": "ANS0"})]
+        samples = [Sample(id=f"{condition}|q0", input="Q0", target="ANS0",
+                          metadata={"condition": condition, "echo": "ANS0"})]
         return Task(dataset=samples, solver=mock_solver_with_suspicious_response(),
                     scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
                               "cohort": cohort})
 
@@ -972,10 +974,11 @@ def _graded_logs(tmp_path, conds_through):
 
     @task
     def gt(condition="A", correct_through=99):
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}",
-                          metadata={"idx": i, "tgt": f"ANS{i}"}) for i in range(4)]
+        samples = [Sample(id=f"{condition}|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": condition, "idx": i, "tgt": f"ANS{i}"})
+                   for i in range(4)]
         return Task(dataset=samples, solver=graded(correct_through), scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "s"},
                               "cohort": _COHORT})
 
@@ -1027,16 +1030,18 @@ def test_judge_hybrid_overlay_dual_order(tmp_path, monkeypatch):
     @solver
     def fixed():
         async def solve(state, generate):
-            state.output.completion = answers[str(state.sample_id)]
+            qid = str(state.sample_id).split("|", 1)[-1]
+            state.output.completion = answers[qid]
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
             return state
         return solve
 
     @task
     def ct():
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}") for i in range(4)]
+        samples = [Sample(id=f"C|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": "C"}) for i in range(4)]
         return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
-                    metadata={"condition": "C", "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "d", "signature": "s"}, "cohort": _COHORT})
 
     log = (tmp_path / "j").as_posix()
