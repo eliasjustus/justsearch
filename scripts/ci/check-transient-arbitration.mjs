@@ -18,16 +18,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/transients.v1.json';
 
 const norm = (p) => p.replace(/\\/g, '/');
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 /**
  * Pure detection: every `adopters` entry MUST compose the one TransientController

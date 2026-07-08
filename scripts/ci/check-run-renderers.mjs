@@ -26,6 +26,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/run-renderers.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
@@ -111,14 +112,6 @@ const files = [];
     }
   }
 })(SRC);
-
-// Scan code, not prose — a doc-comment naming the tag/symbol is not a use.
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 const failures = [];
 

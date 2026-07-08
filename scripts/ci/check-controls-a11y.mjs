@@ -32,6 +32,7 @@
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const SRC = 'modules/ui-web/src';
 
@@ -83,12 +84,6 @@ const ARIA_HIDDEN = /aria-hidden=["'`]true["'`]/;
 const HANDLER_TAG =
   /<([a-zA-Z][a-zA-Z0-9-]*)\b([^>]*?@(?:click|mousedown|pointerdown)=[^>]*?)>/gs;
 
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 // Inside `${…}` interpolations, replace `<` and `>` with spaces (brace-balanced),
 // keeping the rest of the body. A `>` inside an arrow handler (`@click=${() => …}`)

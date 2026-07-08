@@ -26,6 +26,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const SRC = 'modules/ui-web/src';
 const OWNER = 'shell-v0/chrome/OverlayHost.ts'; // the slot authority
@@ -80,12 +81,6 @@ for (const f of files) {
 
 // (2) overlay placement. Strip comments first so a prose mention of
 // "position:fixed" in a doc-comment is not a false positive.
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '') // HTML comments inside html`` templates
-    .replace(/\/\*[\s\S]*?\*\//g, '') // block comments (incl. CSS /* */)
-    .replace(/^\s*\*.*$/gm, '') // jsdoc continuation lines
-    .replace(/(^|[^:])\/\/.*$/gm, '$1'); // line comments (keep ://)
 const FIXED = /position:\s*fixed/;
 for (const f of files) {
   const r = rel(f);
