@@ -1,7 +1,7 @@
 ---
-title: "Retrieval quality vs corpus size: does JustSearch's hybrid retrieval hold as the corpus grows, or does the right document silently fall out of reach at scale? A diagnose-first investigation — separate the synthetic-corpus artifact from a real scaling defect, attribute the loss to a pipeline stage, then make size-robustness a measured, ratcheted property. North star: the probability the engine surfaces the right document in its top-K does not silently degrade as a personal/team corpus grows from hundreds to hundreds of thousands of files."
+title: "Retrieval quality vs corpus size — resolved: the 624 collapse is a synthetic-corpus artifact (the engine is measured size-robust on realistic corpora 3k→10k; ANN is not the cause), and the durable deliverable is a representation-completeness (leg_union_recall) FLOOR gate that completes the recall-survival guard triad (quality floor · completeness floor · leak ceiling), superseding the original cross-size 'Milestone D' ratchet as the wrong instrument. Began as a diagnose-first size-robustness investigation; ended as a per-stage recall-survival guard design conforming to the 636/D-005 instrument + 640 metric-family SSOT."
 type: tempdocs
-status: investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals on the dev stack, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
+status: investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals on the dev stack, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. DESIGN SETTLED 2026-07-08 (see "Design" + "Principle & reach"): the durable deliverable is a representation-completeness (`leg_union_recall`) FLOOR gate — the symmetric sibling of the shipped `leak_gate` ceiling — completing the recall-survival guard triad and enforcing the LEG_MISS stage that dominated E1 but no current gate can catch. This SUPERSEDES the original "Milestone D" cross-size ratchet, retired as the wrong instrument (a size-delta gate is insensitive to uniform recall regressions). Extends the 636 machinery + 640 metric-family SSOT; not an engine fix (verdict: none warranted now). Design not yet implemented — awaiting go-ahead. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
 created: 2026-07-08
 author: agent (Opus autonomous run) — filed from the 624 scale-corpus session
 category: search-quality / retrieval / ann-recall / eval-infrastructure / scaling
@@ -701,3 +701,119 @@ broader thread is pursued. **Recommendation:** if/when the owner opens the broad
 literature review of bounded-recall mitigations and QPP-for-hybrid-fusion before designing, and treat the
 fault-injection suite + pathology-axis guard as the novel piece. Nothing here changes the closed verdict (no
 fix warranted now); it de-risks the *optional* forward work and gives it citable footing.
+
+## Design (settled 2026-07-08) — the durable deliverable, *superseding* the original "Milestone D"
+
+> Design-level, not implementation. It matches scope to the problem the investigation actually found, extends
+> the existing 636 recall-survival machinery rather than replacing it, and explicitly retires the original
+> cross-size "Milestone D" as the wrong instrument (see *What this supersedes*). All numbers cited trace to
+> the reproducible runs in *Experimental results*; no new unmeasured quantities are introduced.
+
+### The problem, scoped precisely
+The 624 scare required a bespoke artifact-vs-defect investigation because **retrieval recall-survival was not a
+standing, enforced property** (639/580: "unowned and unmeasured"). The experiments localized the dominant
+failure to the **first funnel stage** — *representation completeness* (E1: LEG_MISS was 63% of the synthetic
+drop; the gold was in *no* leg's candidate set). The design's job is narrow: make that stage a guarded
+property, so the next regression there is caught in CI instead of by a from-scratch investigation.
+
+### What already exists (extend, do not replace)
+The 636 lineage already shipped most of the recall-survival stack, and the design conforms to it:
+- **`staged_recall_accounting`** — the D-005 instrument; auto-runs after every eval; computes the four funnel
+  buckets **plus `leg_union_recall`** and per-leg recall.
+- **`leak_gate`** — a per-corpus **ceiling** on `leak_rate` (CASCADE_LEAK), baselines projected from the
+  release (never hand-typed), exit 0/1/2, wired to the `search-engine-hint` trigger. The bounded-recall /
+  fusion-survival stage is already guarded.
+- **`recall_profile`** — reports `leg_union_recall` per corpus, but is explicitly "a profile, not a gate."
+- **`ratchet_kernel` + `metric_families`** — the shared gate kernel and the metric-family SSOT (640): each
+  family declares source (`per_mode`/`per_run`/`projection`), metric keys, and comparator
+  (`abs_tolerance` floor / `ceiling`). `QUALITY` is a floor; `LEAK` is a projection-sourced ceiling.
+
+So the funnel already has an **aggregate quality floor** (relevance_gate/nDCG) and a **fusion-survival ceiling**
+(leak_gate). **The one stage measured everywhere but gated nowhere is `leg_union_recall` — representation
+completeness — exactly the stage E1 found dominant.** `leak_gate` cannot cover it: fewer golds retrieved does
+not *raise* leak_rate (it can lower it), so a completeness regression slips through every existing gate except
+diffusely via nDCG.
+
+### The design: a representation-completeness FLOOR gate — the symmetric sibling of `leak_gate`
+- Register a **`union-recall` metric family** (source `projection` = `staged_recall_accounting.json`, metric
+  `leg_union_recall`, comparator `abs_tolerance` → **floor** = baseline − tolerance; higher-is-better). This is
+  a new but natural cell in the existing comparator × source matrix (projection + floor), mirroring `QUALITY`'s
+  floor and `LEAK`'s projection source.
+- Gate it as `leak_gate` gates `leak_rate`, but as a **floor** (fail when current < baseline − tolerance).
+  Per-corpus floors **projected from `release.v1`** (add a `union_recall` section composed by `jseval release`
+  from the same projections) under the 623/683 anti-fork discipline, with fallback baselines like leak-gate's,
+  wired to `search-engine-hint`. Pin across the eval corpora — **a floor is never ballast**: a floor at the
+  measured value catches *any* downward move, including the uniform regressions a cross-size delta-gate misses.
+- **Conformance over cloning.** `leak_gate` and this gate differ only in (metric key, comparator direction) —
+  both already encoded in `metric_families`. The principled shape is a **registry-driven projection-metric
+  gate** (one reader: ceiling → limit = base+tol, floor → limit = base−tol) serving `leak`, `union-recall`,
+  and the already-registered-but-ungated `judge_low_cost_weight`. Whether to generalize `leak_gate` or clone
+  it is an implementation choice; the design-level commitment is to conform to 640's metric-family SSOT, not
+  add a third parallel near-duplicate.
+
+This completes the **recall-survival guard triad** — quality floor (nDCG) · **completeness floor
+(`leg_union_recall`)** · leak ceiling (CASCADE_LEAK) — one guard per funnel stage the instrument already
+measures.
+
+### What this supersedes / orphans (this tempdoc's cleanup, not a later sweep)
+- **The original "Milestone D — cross-size recall ratchet" (recall/nDCG-vs-N) is retired as the WRONG
+  instrument.** It was never built (no code to delete); it is tombstoned here. The experiments make the reason
+  concrete: a gate on the *delta between corpus sizes* is **insensitive to the common regression** — a worse
+  encoder or fusion degrades recall *uniformly* across sizes, so the size-delta stays ≈0 and the delta-gate
+  passes while recall collapsed. It would catch only the exotic "recall became size-*dependent*" failure while
+  missing the ones that actually happen. Size is a proxy (Theorization §1); the completeness **floor** guards
+  the cause (per-stage recall) and catches uniform and non-uniform regressions alike. *Wherever the earlier
+  sections of this doc call Milestone D "the one durable deliverable," read it as superseded by this section.*
+- **The size-specific residual is parked under 639, not built here.** "Does completeness hold at 10⁵–10⁶?"
+  needs a large realistic fixture that does not exist and is not warranted now (E2 already ruled out ANN as the
+  mechanism; 639 owns the ANN-recall-at-scale question).
+- Nothing else is orphaned: `staged_recall_accounting`, `leak_gate`, `recall_profile`, `ratchet_kernel`,
+  `metric_families`, and the corpus generators are all reused/extended.
+
+### Explicit scope boundaries (structure the problem does NOT require — deliberately not built)
+- **Not an engine fix.** Wiring `spliceRecallComplete` into the 3-way CC path (SPLADE currently unprotected) is
+  636's runtime turf; the verdict is that no fix is warranted now (E4: realistic corpora are size-robust,
+  CASCADE_LEAK ≈ 0.03). The gate is a standing regression sentinel, not a remedy.
+- **Not ANN / dedup guards** (639's charter; ANN empirically ruled out, E2). **Not a JUDGE_RANK_LOW ranking
+  gate** (643's turf). **Not a fault-injection suite** (a broader robustness program, Theorization §3 —
+  recorded as a future direction, not required by this problem). **Not QPP confidence / adaptive fusion**
+  (engine features, Prior-art §, not guards).
+
+### Honest framing (public-history-safe)
+The engine is **already measured size-robust on realistic IR corpora in the tested 3k→10k range** (E4). This
+design adds a **standing regression sentinel** so the completeness stage cannot silently regress; it does not
+claim to fix a present defect (there is none in that range), nor to guarantee robustness at unmeasured
+10⁵–10⁶ scale.
+
+## Principle & reach (recognize the shape; do not build the general structure now)
+
+**Conforms to existing seams — this design is an *instance*, not a new principle:**
+- **636 / register D-005** — "capability is measured by recall-survival *per stage*, not by an aggregate
+  score." The completeness gate is the missing *enforcement* of the first stage the instrument already
+  measures; it does not invent a parallel notion of recall.
+- **640 metric-family SSOT** — gates read one family definition; the design adds a *family*, not a parallel
+  gate vocabulary.
+- **623/683 anti-fork projection** — baselines projected from a measured release, never hand-typed.
+- **This doc's own "funnel non-abandonment" invariant** — now enforced at three tiers: measurement
+  (`staged_recall`), runtime (the `spliceRecallComplete` splice, 2-way path), and CI (leak_gate + the new
+  completeness gate). The remaining hole (splice not wired into the 3-way path) is named and owned by 636 —
+  not fixed here.
+
+**Candidate broader principle (named + scoped, deliberately NOT generalized into structure now):**
+> **Instrument-then-ratchet** — *a per-stage property that is measured but not gated is a latent regression
+> surface.* Measuring a stage tells you it regressed *after the fact*; only a ratchet stops the regression
+> shipping. `leg_union_recall` was the retrieval funnel's instance (measured by the projection, surfaced by
+> `recall_profile`, gated by nothing).
+
+- **Where else it may already apply / be violated (candidate scope — observed, not acted on):** the
+  **enrichment/indexing pipeline** exposes coverage metrics (embedding / SPLADE / NER coverage %) via
+  `/api/status` that are *measured* but, as far as this investigation saw, not gated by a standing CI ratchet
+  on a fixture; and `judge_low_cost_weight` is *registered* as a metric family yet appears ungated. Both are
+  candidate instances of the same measured-but-ungated shape. **Neither is built here** — neither is required
+  by 699's problem; recorded so the pattern is visible to whoever picks up 639/643 or the enrichment work.
+- **Evidence it earns its keep:** the completeness gate fires on **≥1 real change where the aggregate
+  relevance_gate (nDCG) passed** — proving the per-stage signal is non-redundant with the aggregate.
+- **Retirement condition:** if across ~10 releases no completeness (or leak) gate *ever* fires independently of
+  relevance_gate — i.e. every stage regression is also an nDCG regression already caught — the per-stage gates
+  are redundant with the aggregate and should be **collapsed back into relevance_gate**. A per-stage gate that
+  never fires on its own is self-justifying apparatus and should be retired rather than kept for symmetry.
