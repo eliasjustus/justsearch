@@ -933,6 +933,18 @@ concurrency headroom is bounded by the GPU semaphore, the rate limit, or neither
 pilot ramp finding out empirically the more expensive way. Attribute before allocating (691's method,
 per §A), applied one layer further in.
 
+**RESOLVED (2026-07-08) — see `docs/tempdocs/699-agent-eval-concurrency-ceiling.md`.** A live
+timing-breakdown measurement (4 cells @ concurrency 1, 6 cells @ concurrency 6, condition C) confirms
+this hypothesis directly: **~90–93% of a cell's wall-clock is Anthropic API time**; JustSearch backend
+time is **2.7% at concurrency 1, 8.0% at concurrency 6** — implying only **~0.48 concurrent backend
+requests** on average at agent-concurrency 6, far below the ~6.7 qps / 8-way GPU-semaphore saturation
+point. **The backend ceiling (§D) is confirmed NOT currently binding.** The Anthropic rate-limit tier
+remains the more likely real ceiling (turn-rate math implies ~160 RPM aggregate at concurrency 6) but
+was deliberately NOT probed further — doing so risks throttling other concurrent Claude Code sessions on
+the same account, a real shared-resource action, not a default next step. See 699 for the full method
+(including a real double-counting measurement bug found and fixed before trusting the numbers) and the
+recommended, authorization-gated next step.
+
 ### I. The CPU-offload rejection has a rate-limit-shaped twin one layer up
 
 §Owner framing (2026-07-07) rejected CPU-inference offload because it contends with the same box's CPU

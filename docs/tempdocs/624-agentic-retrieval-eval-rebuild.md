@@ -4297,3 +4297,11 @@ session (2026-07-03) measured; (2) `eval_set` resume is reliable across a clean 
 limitation, live-verified, not fixable at the jseval layer) — a future Step-2 run must complete without
 interruption or be restarted from scratch, not resumed, after any hard crash. See 675 §Review fixes and
 §Unverified assumptions for the full evidence.
+
+**Update (2026-07-08):** a follow-up live measurement (`docs/tempdocs/699-agent-eval-concurrency-ceiling.md`)
+confirms the JustSearch search backend is **not** the concurrency ceiling for this eval — at
+agent-concurrency 6 the backend carries only ~0.48 concurrent requests on average, far below its own
+measured ~6.7 qps saturation point. If Step-2 concurrency is ever raised above 6 to shave more
+wall-clock, the backend is not what would be stressed; the account's Anthropic API rate-limit tier is
+the more likely real ceiling (unconfirmed — see 699's own flagged, authorization-gated next step before
+anyone deliberately ramps concurrency further).
