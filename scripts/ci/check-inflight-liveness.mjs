@@ -23,6 +23,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/inflight-liveness-projections.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
@@ -60,11 +61,7 @@ const files = [];
 })(SRC);
 
 // Scan code, not prose — a doc-comment naming the states is not a use.
-const stripComments = (s) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 
 // The phantom assertion: the indexing-job state literal 'PROCESSING' near a 'running' presentation
 // literal (either order, within ~80 chars) — the raw state→running mapping the authority replaces.

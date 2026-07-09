@@ -32,20 +32,13 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, extname, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 export const SRC = 'modules/ui-web/src/shell-v0';
 export const BASELINE = 'scripts/ci/atom-fork-ratchet-baseline.v1.json';
 const REBALANCE = process.argv.includes('--rebalance');
 
 const norm = (p) => p.replace(/\\/g, '/');
-
-/** Strip comments so a doc-comment naming a class is not counted as a use. */
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 // §22.F — the detection vocabulary + authority exclusions are PROJECTED from the atom-facet catalog,
 // so a new atom row + its fork-classes auto-extends coverage (coverage-projects-from-catalog, 557 §5.2).

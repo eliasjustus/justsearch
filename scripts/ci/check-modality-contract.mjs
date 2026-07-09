@@ -23,10 +23,15 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const ROOT = 'modules/ui-web/src/shell-v0';
 
-const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+// Was a 2-step chain (block comments, then line comments) with no ://-guard on the line-comment
+// step — vulnerable to the same cross-pass reconstitution as the other ~20 stripComments copies
+// (tempdoc 698), and additionally mis-truncated content containing a URL. The shared helper fixes
+// both in one pass.
+const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 
 /**
  * Pure detection: whole-tree scan — any file that calls `.showModal()` without

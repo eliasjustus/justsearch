@@ -6,7 +6,7 @@
  * the command exit code while emitting JSON/Markdown evidence when possible.
  */
 
-import { spawnSync } from 'node:child_process';
+import crossSpawn from 'cross-spawn';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -214,12 +214,6 @@ function formatCommand(command) {
   return command.map((part) => (/\s/.test(part) ? `"${part.replaceAll('"', '\\"')}"` : part)).join(' ');
 }
 
-function quoteCmdArg(arg) {
-  const normalized = String(arg).replace(/^\.\//, '.\\');
-  if (!/[ \t&()^;!'+,`~[\]{}]/.test(normalized)) return normalized;
-  return `"${normalized.replaceAll('"', '\\"')}"`;
-}
-
 function fmtSeconds(ms) {
   const seconds = Math.round(ms / 1000);
   if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
@@ -332,13 +326,12 @@ export function renderMarkdown(report) {
 }
 
 function runCommand(command) {
-  if (process.platform === 'win32' && /\.bat$/i.test(command[0])) {
-    return spawnSync('cmd.exe', ['/d', '/s', '/c', command.map(quoteCmdArg).join(' ')], {
-      stdio: 'inherit',
-      windowsHide: true,
-    });
-  }
-  return spawnSync(command[0], command.slice(1), {
+  // cross-spawn handles the Windows .bat/.cmd cmd.exe-quoting problem internally, using a
+  // vetted, actively-maintained escaping algorithm (github.com/moxystudio/node-cross-spawn) —
+  // the previous hand-rolled quoteCmdArg()+manual cmd.exe invocation here was flagged by
+  // CodeQL (js/shell-command-injection-from-environment) and replaced rather than patched
+  // (tempdoc 698 alert #25).
+  return crossSpawn.sync(command[0], command.slice(1), {
     stdio: 'inherit',
     windowsHide: true,
   });
