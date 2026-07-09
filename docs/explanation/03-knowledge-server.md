@@ -58,7 +58,7 @@ We use **SQLite** as a persistent Job Queue (`jobs.db`, stored under the Worker 
 *   **Why SQLite?** It survives crashes. An in-memory queue would lose thousands of pending files if the worker was killed by the "Suicide Pact."
 *   **Schema (conceptual):** jobs are durable rows with a `state` machine (`PENDING`/`PROCESSING`/`DONE`/`FAILED`) and retry/backoff metadata.
 *   **States:** `PENDING`, `PROCESSING`, `DONE`, `FAILED`.
-*   **Retry Logic:** Exponential backoff ($1s \times 2^{n-1}$, capped at ~17 min) with capped additive jitter (`[0, min(1s, backoff)]`) to prevent synchronized retry bursts.
+*   **Retry Logic:** Exponential backoff ($1s \times 2^{n-1}$, formula-capped at ~17 min) with capped additive jitter (`[0, min(1s, backoff)]`) to prevent synchronized retry bursts. At the production `maxAttempts=3`, only two backoffs actually occur (~1s, ~2s) before a job reaches terminal `FAILED`; the ~17 min ceiling is reachable only if `maxAttempts` is raised well beyond the shipped value.
 
 ### Concurrency & configuration
 
