@@ -30,18 +30,11 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 export const SRC = 'modules/ui-web/src';
 export const BASELINE = 'scripts/ci/style-literal-ratchet-baseline.v1.json';
 const REBALANCE = process.argv.includes('--rebalance');
-
-/** Strip comments so a doc-comment naming a literal is not counted as a use. */
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 /** A CSS declaration value is "tokenized" when it routes through the named custom-property family. */
 const usesVar = (value, family) => new RegExp(`var\\(\\s*--${family}`).test(value);
