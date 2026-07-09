@@ -596,7 +596,8 @@ above)*
   same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
   **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
   `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
-  like leak's), pinned on reproducible corpora **beir/scifact 0.96 + golden/needle-burial-v1 1.0** (tol 0.05).
+  like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
+  golden/needle-burial-v1 1.0** (tol 0.05).
   Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
   (~14× sensitivity gap, tempdoc 699 §U1), so `relevance-gate` can miss what `union-recall-gate` catches.
 - **Provenance / context:** the 624 "retrieval collapses at scale" signal was investigated and resolved as a

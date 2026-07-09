@@ -202,5 +202,7 @@ def test_committed_pointer_file_projects_to_prior_pinned_values():
         per_corpus_tolerance=base.get("per_corpus_tolerance")))
     assert doc["baselines"] == raw["fallback_baselines"]
     # Reproducibility invariant (the review finding): every pinned corpus must be regenerable from
-    # git — beir/scifact (BEIR) + golden/needle-burial-v1 (committed source). No ephemeral corpus.
-    assert set(doc["baselines"]) == {"beir/scifact", "golden/needle-burial-v1"}
+    # git — beir/scifact (BEIR), golden/needle-burial-v1 (committed source), mixed/legal-clerc-200
+    # (public CLERC, re-fetchable via corpus-fetch-clerc). No ephemeral corpus.
+    assert set(doc["baselines"]) == {
+        "beir/scifact", "golden/needle-burial-v1", "mixed/legal-clerc-200"}

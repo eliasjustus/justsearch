@@ -1,7 +1,7 @@
 ---
 title: "Retrieval quality vs corpus size — resolved: the 624 collapse is a synthetic-corpus artifact (the engine is measured size-robust on realistic corpora 3k→10k; ANN is not the cause), and the durable deliverable is a representation-completeness (leg_union_recall) FLOOR gate that completes the recall-survival guard triad (quality floor · completeness floor · leak ceiling), superseding the original cross-size 'Milestone D' ratchet as the wrong instrument. Began as a diagnose-first size-robustness investigation; ended as a per-stage recall-survival guard design conforming to the 636/D-005 instrument + 640 metric-family SSOT."
 type: tempdocs
-status: IMPLEMENTED + validated 2026-07-08 (worktree 624-scale-corpus, NOT merged — no PR) — the representation-completeness `leg_union_recall` FLOOR gate (`jseval union-recall-gate`, sibling of `leak_gate`) is built, unit-tested (48 pass incl. a committed-baselines lock test), and live-validated (PASS at floor 0.96 scifact / 1.0 needle-burial-v1; FAIL on regressed projections); pins only REPRODUCIBLE corpora (scifact + committed needle-burial-v1) after a review caught+fixed a non-reproducible pin; `gated_by` + the search-engine-hint surface it; gradle build green; Milestone D tombstoned. See §Implemented + §"Review + fix". Prior phases (unchanged) — investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. DESIGN SETTLED 2026-07-08 (see "Design" + "Principle & reach"): the durable deliverable is a representation-completeness (`leg_union_recall`) FLOOR gate — the symmetric sibling of the shipped `leak_gate` ceiling — completing the recall-survival guard triad and enforcing the LEG_MISS stage that dominated E1 but no current gate can catch. This SUPERSEDES the original "Milestone D" cross-size ratchet, retired as the wrong instrument (a size-delta gate is insensitive to uniform recall regressions). Extends the 636 machinery + 640 metric-family SSOT; not an engine fix (verdict: none warranted now). Design not yet implemented — awaiting go-ahead. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
+status: IMPLEMENTED + validated 2026-07-08 (worktree 624-scale-corpus, NOT merged — no PR) — the representation-completeness `leg_union_recall` FLOOR gate (`jseval union-recall-gate`, sibling of `leak_gate`) is built, unit-tested (48 pass incl. a committed-baselines lock test), and live-validated (PASS at floor 0.96 scifact / 1.0 needle-burial-v1; FAIL on regressed projections); pins 3 REPRODUCIBLE corpora (legal-clerc-200 0.87 / scifact 0.96 / needle-burial-v1 1.0) after a review caught+fixed a non-reproducible pin; `gated_by` + the search-engine-hint surface it; gradle build green; Milestone D tombstoned. See §Implemented + §"Review + fix". Prior phases (unchanged) — investigated + EXPERIMENTALLY MEASURED 2026-07-08 (5 live retrieval evals, no engine code changed) — VERDICT: the 624 signal is a SYNTHETIC-CORPUS ARTIFACT, now PROVEN (not just inferred) by a realistic control: MIRACL/de is size-robust — recall FLAT across 3k→10k (final_recall 0.967→0.967, CASCADE_LEAK 0.03→0.03), while the synthetic battlefield corpus COLLAPSES over the same volume growth (final_recall 0.385→0.139, nDCG 0.22→0.11). E1 attribution: synthetic drop is 63% LEG_MISS (confusable-head geometry no retriever can fix) + fusion-order CASCADE_LEAK amplified by the synthetic corpus's broken BM25. E2: ANN recall decay (the doc's "leading candidate") is NOT the mechanism — near-exhaustive ef_search doesn't move recall. Mechanism correction: route the fusion-truncation robustness note to 636 (bounded recall / 3-way splice), NOT 639 (ANN). Recommendation: DO NOT run Milestones A–C as a fix — no size-dependent product defect exists in the target range. The only forward work is optional + low-priority: Milestone D (a cross-size recall ratchet, now cheaply buildable from the E4 MIRACL sweep + relevance_gate template) as a standing guard. Residual unmeasured slice: realistic 10⁵–10⁶ (parked under 639/636; a defect there is unlikely given the flat 3k→10k trend). Full evidence chain: "Experimental results" + "Synthesis & revised verdict" sections. DESIGN SETTLED 2026-07-08 (see "Design" + "Principle & reach"): the durable deliverable is a representation-completeness (`leg_union_recall`) FLOOR gate — the symmetric sibling of the shipped `leak_gate` ceiling — completing the recall-survival guard triad and enforcing the LEG_MISS stage that dominated E1 but no current gate can catch. This SUPERSEDES the original "Milestone D" cross-size ratchet, retired as the wrong instrument (a size-delta gate is insensitive to uniform recall regressions). Extends the 636 machinery + 640 metric-family SSOT; not an engine fix (verdict: none warranted now). Design not yet implemented — awaiting go-ahead. [was: open — investigation request; surfaced by 624 pass-26 on an ADVERSARIAL SYNTHETIC corpus.]
 created: 2026-07-08
 author: agent (Opus autonomous run) — filed from the 624 scale-corpus session
 category: search-quality / retrieval / ann-recall / eval-infrastructure / scaling
@@ -954,12 +954,16 @@ pinned set can grow (enron-qa / legal-clerc / needle-burial) via further `union-
   a deliberate recompose** — the committed `release.v1.json` is untouched and carries no `union_recall`/`leak`
   section (verified; the lock test's `assert "union_recall" not in release` stays green). Validation: 92 unit
   tests pass across the release + gate suite; `./gradlew.bat build -x test` SUCCESSFUL.
-- **R2 — pin-set parity (legal-clerc-200): DEFERRED, fetch unavailable.** `corpus-fetch-clerc` (direct
-  HuggingFace CLERC download) stalled in this environment (~15 min, zero output/cache), so the third corpus
-  was not added; the fallback stands — the pin set remains the two reproducible corpora **scifact (0.96) +
-  needle-burial-v1 (1.0)**, which is valid and sufficient. `legal-clerc-200` (and enron-qa) can be added later
-  via `corpus-fetch-clerc` + `union-recall-gate-derive` when the fetch succeeds; no code change is needed to
-  add a corpus, only a derive run. This does not affect R1 or the shipped gate.
+- **R2 — pin-set parity (legal-clerc-200): DONE (2026-07-09).** The `corpus-fetch-clerc` HuggingFace fetch is
+  a slow *silent* bulk stream (it scans the whole CLERC `collection.doc.tsv.gz` for ~200 sampled docs, no
+  progress output — ~25 min, looks stalled but isn't; logged to observations). It completed on retry, so
+  `mixed/legal-clerc-200` (198 docs) was added to the pin set. The union pin set is now **three reproducible
+  corpora spanning the completeness range: legal-clerc-200 0.87 · scifact 0.96 · needle-burial-v1 1.0** (tol
+  0.05) — legal-clerc adds a realistic mid-range floor (< 1.0), the strongest sensitivity point. Validation:
+  38 gate/lock tests pass (incl. the 3-corpus committed-baselines lock test); live PASS legal-clerc
+  (`leg_union_recall` 0.87 ≥ floor 0.82) → exit 0; live FAIL (regressed 0.70 < 0.82) → exit 1; `jseval datasets`
+  shows `mixed/legal-clerc-200 → …, union-recall-gate`. Only `enron-qa` remains unpinned (no recipe in-tree);
+  addable later via a derive run, no code change. This did not affect R1 or the rest of the shipped gate.
 
 ## Handoff (2026-07-09) — state for a fresh agent (continue without this chat)
 
@@ -981,8 +985,9 @@ R1 release plumbing in `release.py`/`commands/release.py`. Register updated: sea
   0.95); a projection with `leg_union_recall` below floor → exit 1. Re-derive/re-run via
   `jseval corpus-build --source scripts/jseval/635-corpora/needle-burial-v1 --name needle-burial-v1` →
   `jseval run --dataset golden/needle-burial-v1 --modes vector,lexical,splade,full --pipeline --start-backend`.
-- **Reproducible pins only:** `git ls-files scripts/jseval/635-corpora/needle-burial-v1` (3 tracked files) +
-  `beir/scifact` (BEIR fetch); `jseval datasets` shows both `→ …, union-recall-gate`.
+- **Reproducible pins only (3 corpora):** `git ls-files scripts/jseval/635-corpora/needle-burial-v1` (3 tracked
+  files) + `beir/scifact` (BEIR fetch) + `mixed/legal-clerc-200` (public CLERC, `corpus-fetch-clerc --seed 666
+  --n-queries 200`); `jseval datasets` shows all three `→ …, union-recall-gate`. Floors 0.87 / 0.96 / 1.0.
 - **R1 inert-safe:** `python -c "import json;d=json.load(open('scripts/jseval/release.v1.json'));assert
   'union_recall' not in d and 'leak' not in d"` passes; lock test `test_committed_pointer_file_...` green.
 - **Build:** `./gradlew.bat build -x test` → BUILD SUCCESSFUL (no JVM surface touched).
@@ -1001,9 +1006,9 @@ R1 release plumbing in `release.py`/`commands/release.py`. Register updated: sea
   `search-engine-hint`. Do not assume CI catches it.
 
 ### Remaining / follow-up work (owner)
-- **R2 (699):** add `legal-clerc-200` (+ `enron-qa` when its recipe exists) to the pin set — the CLERC
-  HuggingFace fetch stalled this session; retry `corpus-fetch-clerc --name legal-clerc-200 --seed 666
-  --n-queries 200` then `union-recall-gate-derive`. No code change; update the lock test's expected pin set.
+- **R2 (699): DONE** — `legal-clerc-200` added (pin set now 3 reproducible corpora, floors 0.87/0.96/1.0).
+  Only `enron-qa` remains unpinned (no recipe in-tree); addable later via a derive run when a recipe exists,
+  no code change.
 - **R1 activation (699/623):** populate + live-verify the `union_recall` release section at the next release
   recompose (do it alongside leak's, which is equally unpopulated today).
 - **P1 (639):** realistic large-N (10⁵–10⁶) recall — a periodic one-off, impractical as a standing ratchet.
