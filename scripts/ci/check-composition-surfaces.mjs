@@ -24,20 +24,13 @@
  * CLAUDE.md pre-merge list.
  */
 import { readFileSync } from 'node:fs';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/composition-surfaces.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
 
 const norm = (p) => p.replace(/\\/g, '/');
 const SYMBOL = new RegExp(`\\b${reg.primitive.symbol}\\b`);
-
-// Scan code, not prose — a doc-comment naming the symbol is not a use.
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 const failures = [];
 

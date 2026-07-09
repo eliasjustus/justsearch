@@ -17,16 +17,13 @@
  * is a discovery-step register row), nor adjudicate free-text wording (prose-tier, 613 §8).
  */
 import { readFileSync } from 'node:fs';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/capability-availability-surfaces.v1.json';
 
-/** Strip // and /* *​/ comments so a doc mention of the symbol doesn't satisfy/trip the scan. */
+/** Strip // and block comments so a doc mention of the symbol doesn't satisfy/trip the scan. */
 export function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((l) => l.replace(/\/\/.*$/, ''))
-    .join('\n');
+  return stripCommentsShared(src, { withHtml: false });
 }
 
 /** Does the (comment-stripped) source CALL the authority symbol (a real consumer, not a re-export)? */

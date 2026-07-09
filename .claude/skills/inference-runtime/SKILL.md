@@ -608,7 +608,7 @@ JustSearch uses a **two-pronged citation strategy** (see ADR-0006) to attribute 
 
 ### Prong 1: LLM-generated citations (primary)
 
-RAG prompts instruct the LLM to place `[N]` markers inline. Source chunks are wrapped in numbered `<passage id="N" source="file">` XML (Q&A) or prefixed with `[N]` (summarization). The `meta` SSE event delivers `ContextCitation[]` with rich metadata:
+RAG Q&A prompts inject the retrieved source chunks as a plain `Documents:` / `Question:` user message (`RAGContext`), and instruct the LLM to place `[N]` citation markers inline. (The earlier numbered `<passage id="N" source="file">` XML wrapper is retired.) The `rag.citations` SSE event delivers the citation metadata (`ContextCitation[]`):
 
 - `parentDocId`, `chunkIndex`, `chunkTotal` — chunk identity
 - `startChar`, `endChar` — character offsets for click-to-jump

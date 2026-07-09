@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import crossSpawn from 'cross-spawn';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -157,5 +158,47 @@ withTempRoot((root) => {
   assert.match(fs.readFileSync(summary, 'utf8'), /Build attribution/);
   assert.equal(JSON.parse(res.stdout).runner.imageOs, 'win25-vs2026');
 });
+
+// Regression coverage for tempdoc 698 alert #25 (js/shell-command-injection-from-environment):
+// runCommand() previously invoked a hand-rolled cmd.exe quoter for .bat/.cmd targets on
+// Windows; that was replaced with cross-spawn, which had zero prior test coverage here.
+// Covers both: (a) realistic arguments — including a path with spaces — survive a real .bat
+// invocation unmangled, and (b) a classic injection payload cannot break out of its argument
+// slot to run a second command.
+if (process.platform === 'win32') {
+  withTempRoot((root) => {
+    const echoArgvBat = path.join(root, 'echo-argv.bat');
+    fs.writeFileSync(
+      echoArgvBat,
+      `@echo off\r\n"${process.execPath}" -e "console.log(JSON.stringify(process.argv.slice(1)))" %*\r\n`,
+      'utf8',
+    );
+
+    const realistic = [
+      'assemble',
+      '-PskipWebBuild=false',
+      '--console=plain',
+      `-PjustsearchBuildAttributionTasksJson=${path.join(root, 'some path with spaces', 'build-task-timing.json')}`,
+    ];
+    const res = crossSpawn.sync(echoArgvBat, realistic, { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr);
+    assert.deepEqual(JSON.parse(res.stdout), realistic, 'realistic Gradle-style arguments must round-trip exactly through a .bat target');
+  });
+
+  withTempRoot((root) => {
+    const echoArgBat = path.join(root, 'echo-arg.bat');
+    fs.writeFileSync(echoArgBat, '@echo off\r\necho ARG1:%~1\r\necho ARG2:%~2\r\n', 'utf8');
+    const marker = path.join(root, 'injection-marker.txt');
+    const payload = `legit-arg & echo INJECTED > "${marker}"`;
+
+    const res = crossSpawn.sync(echoArgBat, [payload, 'second'], { encoding: 'utf8' });
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      'an injection-payload argument must not break out of its argument slot and execute a second command',
+    );
+    assert.match(res.stdout, /ARG2:second/, 'the argument after the payload must still arrive intact');
+  });
+}
 
 console.log('test-report-build-attribution: PASS');

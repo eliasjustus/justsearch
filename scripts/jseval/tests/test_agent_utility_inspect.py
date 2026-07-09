@@ -1,14 +1,20 @@
-"""Tests for jseval.agent_utility_inspect's `_build_argv` — the actual
-subprocess-argv wiring used by the Inspect-AI-based executor (the executor
-used for real eval runs, per tempdoc 624).
+"""Tests for jseval.agent_utility_inspect — the Inspect-AI-based executor.
 
-`build_disallowed_tools` (in agent_retrieval_eval) is unit-tested directly
-and correctly, but nothing previously exercised the code path where
-`_build_argv` joins its output into the real `claude -p ... --disallowedTools
-...` argv that `claude_agent_solver` hands to `subprocess.run`. These tests
-fail if that wiring breaks (wrong join, wrong variable, wrong flag name)
-even if `build_disallowed_tools` itself is untouched and still passes its
-own tests.
+Executor v2 (tempdoc 675): each cell now runs as an in-process Claude Agent SDK
+session (`ClaudeSDKClient`), not a `claude -p` subprocess, so there is no argv
+to build and no stdout stream-json to parse. These tests unit-test the PURE
+LOGIC that sits around the SDK call:
+
+- `agent_utility_task` — the single-pool `condition × query` cross-product
+  construction (one Inspect task for the whole matrix, not one per condition).
+- `_record_cell` — the executed-vs-blocked projection of the SDK's own
+  objects (tool-use blocks, tool-result blocks, `ResultMessage`) into
+  `state.metadata`, plus the offered-MCP-surface tri-state assertion.
+- `run_utility_eval` — corpus-dir isolation, cleanup-on-raise, the
+  watched-roots safety gate, and the no-mcp gate skip.
+
+`ClaudeSDKClient`/the async SDK session itself is NOT mocked here — a live
+smoke test covers the SDK-integration path separately.
 
 `inspect_ai` is an opt-in extra (`pip install jseval[agent]`); skipped if
 not installed.
@@ -18,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import types
 from pathlib import Path
 
 import pytest
@@ -25,101 +32,345 @@ import pytest
 pytest.importorskip("inspect_ai")
 
 import inspect_ai  # noqa: E402
+from inspect_ai import Task  # noqa: E402
+from inspect_ai.model import ChatMessageUser, ModelName  # noqa: E402
+from inspect_ai.solver import TaskState  # noqa: E402
 
-from jseval.agent_retrieval_eval import build_disallowed_tools  # noqa: E402
-from jseval.agent_utility_inspect import _build_argv  # noqa: E402
 from jseval import agent_utility_inspect as aui  # noqa: E402
+from jseval.agent_retrieval_eval import (  # noqa: E402
+    build_disallowed_tools,
+    find_disallowed_tool_calls,
+    find_leak_suspect_tool_calls,
+)
 
 
-def _disallowed_tools_arg(cmd: list[str]) -> str:
-    idx = cmd.index("--disallowedTools")
-    return cmd[idx + 1]
-
-
-def test_build_argv_condition_a_disallowed_tools_matches_helper():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "A",
-        mcp_config=None, empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
+def _state(input_text="what is x?", sample_id="q0"):
+    return TaskState(
+        model=ModelName("mockllm/model"), sample_id=sample_id, epoch=0,
+        input=input_text, messages=[ChatMessageUser(content=input_text)],
     )
-    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("A"))
 
 
-def test_build_argv_condition_b_disallowed_tools_matches_helper():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "B",
-        mcp_config="/mcp.json", empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
+def _rmsg(**overrides):
+    """A minimal stand-in for `claude_agent_sdk.ResultMessage` (tests only need
+    the attributes `_record_cell` reads off it, not the real SDK class)."""
+    defaults = dict(
+        total_cost_usd=0.02, usage={}, num_turns=1, is_error=False,
+        permission_denials=[], result="the answer",
     )
-    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("B"))
+    defaults.update(overrides)
+    return types.SimpleNamespace(**defaults)
 
 
-def test_build_argv_condition_c_disallowed_tools_matches_helper():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "C",
-        mcp_config="/mcp.json", empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
+# --- agent_utility_task: single-pool condition x query cross-product
+# (tempdoc 675 -- replaces the old per-condition-task construction). ---
+
+def test_agent_utility_task_builds_one_task_over_the_full_cross_product(tmp_path):
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(json.dumps([
+        {"query": "q1", "answer": "a1", "question_type": "t1"},
+        {"query": "q2", "answer": "a2", "question_type": "t2"},
+    ]), encoding="utf-8")
+
+    t = aui.agent_utility_task(
+        conditions=("A", "B"), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+        mcp_config=None, model="haiku", corpus_dataset="ds", corpus_signature="sig",
     )
-    assert _disallowed_tools_arg(cmd) == ",".join(build_disallowed_tools("C"))
+
+    assert isinstance(t, Task)
+    samples = list(t.dataset)
+    # ONE task; its dataset is the flat condition x query cross-product.
+    assert len(samples) == 4  # 2 conditions x 2 queries
+
+    by_id = {s.id: s for s in samples}
+    assert set(by_id) == {"A|q0", "A|q1", "B|q0", "B|q1"}
+    for cond in ("A", "B"):
+        for i in (0, 1):
+            sample = by_id[f"{cond}|q{i}"]
+            assert sample.metadata["condition"] == cond
+
+    # Task metadata carries the cohort identity, but NOT a top-level condition
+    # (condition lives on the sample, not the task -- one task, many conditions).
+    assert "model" in t.metadata
+    assert "corpus" in t.metadata
+    assert "cohort" in t.metadata
+    assert "condition" not in t.metadata
 
 
-def test_build_argv_condition_a_uses_empty_mcp_strict_config():
-    """Condition A (file tools only, baseline) must wire in the empty MCP
-    config regardless of what mcp_config was passed — no MCP tools at all."""
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "A",
-        mcp_config="/should-be-ignored-mcp.json", empty_mcp="/tmp/empty_mcp.json",
-        max_budget=0.50,
+def test_agent_utility_task_respects_max_queries(tmp_path):
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(json.dumps([
+        {"query": "q1", "answer": "a1"},
+        {"query": "q2", "answer": "a2"},
+        {"query": "q3", "answer": "a3"},
+    ]), encoding="utf-8")
+
+    t = aui.agent_utility_task(
+        conditions=("A", "B", "C"), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+        mcp_config=None, model="haiku", max_queries=1,
     )
-    assert "--strict-mcp-config" in cmd
-    mcp_idx = cmd.index("--mcp-config")
-    assert cmd[mcp_idx + 1] == "/tmp/empty_mcp.json"
+
+    samples = list(t.dataset)
+    assert len(samples) == 3  # 3 conditions x 1 query
 
 
-def test_build_argv_condition_b_uses_real_mcp_config():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "B",
-        mcp_config="/mcp.json", empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
-    )
-    assert "--strict-mcp-config" in cmd
-    mcp_idx = cmd.index("--mcp-config")
-    assert cmd[mcp_idx + 1] == "/mcp.json"
+# --- _record_cell: executed-vs-blocked tool-call projection (tempdoc 675
+# finding 3 -- the SDK reports a *blocked* disallowed-tool attempt too, so
+# only ACTUALLY EXECUTED tools may feed the leak/disallowed assertions). ---
+
+def test_record_cell_splits_executed_from_blocked_tool_calls():
+    state = _state()
+    got = {
+        "attempts": {
+            "t1": {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+            "t2": {"tool": "Bash", "input": {"command": "ls"}},   # errored result -> blocked
+            "t3": {"tool": "WebSearch", "input": {"query": "x"}},  # no result at all -> blocked
+        },
+        "results": {
+            "t1": {"is_error": False},
+            "t2": {"is_error": True},
+        },
+        "texts": ["the answer"],
+        "rmsg": _rmsg(),
+        "mcp_servers": None,
+        "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["tool_calls"] == [
+        {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+    ]
+    blocked_tools = {tc["tool"] for tc in state.metadata["tool_calls_blocked"]}
+    assert blocked_tools == {"Bash", "WebSearch"}
 
 
-def test_build_argv_condition_c_uses_real_mcp_config():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "C",
-        mcp_config="/mcp.json", empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
-    )
-    assert "--strict-mcp-config" in cmd
-    mcp_idx = cmd.index("--mcp-config")
-    assert cmd[mcp_idx + 1] == "/mcp.json"
+def test_record_cell_treats_permission_denied_tool_as_blocked_not_executed():
+    """A tool_use whose name IS in `rmsg.permission_denials` counts as blocked
+    even if a (spurious) non-error result entry exists for it.
+
+    Uses the REAL SDK dict shape for `permission_denials`
+    (`{"tool_name", "tool_use_id", "tool_input"}`) — a prior version of this test
+    used bare strings, which cannot occur from the live SDK and masked a
+    `set([{...}])` TypeError crash in `_record_cell` (tempdoc 675 review finding)."""
+    state = _state()
+    got = {
+        "attempts": {"t1": {"tool": "WebFetch", "input": {"url": "http://x"}}},
+        "results": {"t1": {"is_error": False}},
+        "texts": [],
+        "rmsg": _rmsg(permission_denials=[
+            {"tool_name": "WebFetch", "tool_use_id": "t1", "tool_input": {"url": "http://x"}}]),
+        "mcp_servers": None,
+        "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["tool_calls"] == []
+    assert [tc["tool"] for tc in state.metadata["tool_calls_blocked"]] == ["WebFetch"]
 
 
-def test_build_argv_condition_b_without_mcp_config_omits_mcp_flags():
-    cmd = _build_argv(
-        "claude", "prompt", "haiku", "/corpus", "B",
-        mcp_config=None, empty_mcp="/tmp/empty_mcp.json", max_budget=0.50,
-    )
-    assert "--strict-mcp-config" not in cmd
-    assert "--mcp-config" not in cmd
+def test_record_cell_disallowed_and_leak_suspect_computed_over_executed_only():
+    """A blocked disallowed/leak-suspect tool must NOT be flagged; an executed
+    one IS flagged -- reuses the real `find_disallowed_tool_calls` /
+    `find_leak_suspect_tool_calls` helpers, not reimplemented logic."""
+    state = _state()
+    disallowed = build_disallowed_tools("C")  # Bash is disallowed under C
+    got = {
+        "attempts": {
+            "t1": {"tool": "Bash", "input": {"command": "cat /eval/queries.json"}},  # executes
+            "t2": {"tool": "Bash", "input": {"command": "cat /corpus/secret"}},       # blocked
+            "t3": {"tool": "Read", "input": {"file_path": "/eval/queries.json"}},     # executes, leak-suspect
+        },
+        "results": {
+            "t1": {"is_error": False},
+            "t3": {"is_error": False},
+            # t2 has no result entry at all -> blocked.
+        },
+        "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": None,
+        "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", disallowed, None)
+
+    executed = state.metadata["tool_calls"]
+    assert {tc["tool"] for tc in executed} == {"Bash", "Read"}
+
+    # Sanity: the projection matches calling the real helpers directly on the
+    # executed list (i.e. _record_cell isn't reimplementing this logic).
+    assert state.metadata["disallowed_tool_calls"] == find_disallowed_tool_calls(executed, disallowed)
+    assert state.metadata["leak_suspect_tool_calls"] == find_leak_suspect_tool_calls(executed)
+
+    # The blocked Bash call must not leak into either assertion list (Read is also
+    # disallowed under C, so both executed calls are flagged -- only check the
+    # Bash entries specifically).
+    disallowed_bash_commands = [
+        tc["input"]["command"] for tc in state.metadata["disallowed_tool_calls"]
+        if tc["tool"] == "Bash"
+    ]
+    assert disallowed_bash_commands == ["cat /eval/queries.json"]  # the EXECUTED Bash call only
 
 
-def test_build_argv_carries_model_prompt_and_budget():
-    cmd = _build_argv(
-        "claude", "what is X?", "opus", "/corpus", "B",
-        mcp_config="/mcp.json", empty_mcp="/tmp/empty_mcp.json", max_budget=1.25,
-    )
-    assert cmd[0] == "claude"
-    assert "-p" in cmd
-    assert cmd[cmd.index("-p") + 1] == "what is X?"
-    assert cmd[cmd.index("--model") + 1] == "opus"
-    assert cmd[cmd.index("--max-budget-usd") + 1] == "1.25"
+def test_record_cell_stashes_cost_turns_and_tokens_from_rmsg():
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": ["ok"],
+        "rmsg": _rmsg(total_cost_usd=0.1234, num_turns=5,
+                       usage={"cache_creation_input_tokens": 77}, result="ok"),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["cost_usd"] == 0.1234
+    assert state.metadata["num_turns"] == 5
+    assert state.metadata["unique_tokens"] == 77
+    assert state.output.completion == "ok"
+    assert "error" not in state.metadata
 
 
-# --- run_utility_eval: the corpus-dir isolation fix must apply to the Inspect
-# executor too, not just the bespoke `agent_retrieval_eval.run_agent_eval` path
-# (one shared `stage_corpus_dir` helper, not two independent forks of the same
-# `--add-dir` leak). ---
+def test_record_cell_result_error_sets_error_and_stops():
+    state = _state()
+    got = {
+        "attempts": {"t1": {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}}},
+        "results": {"t1": {"is_error": False}},
+        "texts": [],
+        "rmsg": _rmsg(is_error=True, result="budget exceeded"),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
 
-def test_run_utility_eval_builds_tasks_with_staged_not_original_corpus_dir(tmp_path, monkeypatch):
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    # Credibility bar (tempdoc 624 sec M.8 item 2, preserved under v2): tool
+    # calls are stashed UNCONDITIONALLY, before the error short-circuit.
+    assert state.metadata["tool_calls"] == [
+        {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
+    ]
+    assert "budget exceeded" in state.metadata["error"]
+    assert "cost_usd" not in state.metadata  # short-circuited before usage stash
+
+
+def test_record_cell_no_result_message_sets_error():
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": None, "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert "no ResultMessage" in state.metadata["error"]
+
+
+# --- _record_cell: offered MCP tool-surface tri-state (tempdoc 675 finding 2
+# -- replaces the CLI init-event parse with the SDK's own `get_mcp_status()`
+# result, already captured into `got["mcp_servers"]`/`got["justsearch_tools"]`
+# by the solver before `_record_cell` runs). ---
+
+def test_record_cell_condition_a_exempt_from_surface_assertion():
+    """Condition A never carries a real mcp_config -- and even if a caller
+    passed one through, A must not be held to the with-tool surface assertion."""
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), "/mcp.json")
+
+    assert "error" not in state.metadata
+    assert "mcp_surface_unverified" not in state.metadata
+
+
+def test_record_cell_condition_b_unverified_when_status_unavailable():
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
+
+    assert state.metadata["mcp_surface_unverified"] is True
+    assert "error" not in state.metadata
+
+
+def test_record_cell_condition_b_healthy_surface_no_error():
+    state = _state()
+    servers = [{"name": "justsearch", "status": "connected",
+                "tools": [{"name": "search_query"}]}]
+    justsearch_tools = ["mcp__justsearch__search_query"]
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": servers, "justsearch_tools": justsearch_tools,
+    }
+
+    aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
+
+    assert state.metadata["mcp_tools_offered"] == len(justsearch_tools)
+    assert "error" not in state.metadata
+    assert "mcp_surface_unverified" not in state.metadata
+
+
+def test_record_cell_condition_b_connected_but_no_tools_errors_and_deferred():
+    """Server connected (unlike a genuinely dead config) but no mcp__justsearch
+    tool was offered -- the ToolSearch-deferred surfacing shape (tempdoc 624
+    Step 0 item 4, preserved under v2)."""
+    state = _state()
+    servers = [{"name": "justsearch", "status": "connected"}]
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": servers, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
+
+    assert "expected MCP tool surface not offered" in state.metadata["error"]
+    assert state.metadata["mcp_tools_deferred"] is True
+
+
+def test_record_cell_condition_b_dead_config_not_misread_as_deferred():
+    """The server never connected at all -- must NOT be misread as 'deferred'."""
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": [], "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
+
+    assert "expected MCP tool surface not offered" in state.metadata["error"]
+    assert state.metadata["mcp_tools_deferred"] is False
+
+
+def test_record_cell_with_tool_condition_without_mcp_config_is_exempt():
+    """B/C with mcp_config=None (no real config in play, e.g. a negative
+    control) must not be held to the offered-surface assertion."""
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": [], "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "B", build_disallowed_tools("B"), None)
+
+    assert "error" not in state.metadata
+
+
+# --- run_utility_eval: the corpus-dir isolation fix, cleanup-on-raise, the
+# watched-roots safety gate, and the no-mcp gate skip. run_utility_eval now
+# builds exactly ONE task for the whole matrix (tempdoc 675 single pool), so
+# `eval_set` is called WITHOUT `max_tasks=1`. ---
+
+def test_run_utility_eval_builds_one_task_with_staged_not_original_corpus_dir(tmp_path, monkeypatch):
     """Mocks `agent_utility_task` (the Inspect `@task` factory) and `eval_set`
     (the actual multi-hour agent runner) so this stays a fast unit test, while
     still exercising run_utility_eval's real staging + cleanup wiring."""
@@ -134,32 +385,43 @@ def test_run_utility_eval_builds_tasks_with_staged_not_original_corpus_dir(tmp_p
     queries_for_eval.write_text(
         json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
 
-    captured = {}
+    task_calls = []
 
-    def fake_agent_utility_task(*, corpus_dir, **kwargs):
-        captured["used_corpus_dir"] = corpus_dir
+    def fake_agent_utility_task(*, corpus_dir, conditions, **kwargs):
+        task_calls.append({"corpus_dir": corpus_dir, "conditions": conditions})
         # capture the staged dir's parent listing NOW -- before run_utility_eval's
         # cleanup (which fires once the mocked eval_set below returns) removes it.
-        captured["staged_parent_listing"] = sorted(os.listdir(Path(corpus_dir).parent))
+        task_calls[-1]["staged_parent_listing"] = sorted(os.listdir(Path(corpus_dir).parent))
         return object()  # eval_set is mocked too, so any placeholder Task works
 
+    eval_set_calls = []
     monkeypatch.setattr(aui, "agent_utility_task", fake_agent_utility_task)
-    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+    monkeypatch.setattr(inspect_ai, "eval_set",
+                         lambda tasks, **k: eval_set_calls.append((tasks, k)))
 
     original_corpus_dir = str(corpus_dir)
     aui.run_utility_eval(
         queries_path=str(queries_for_eval), corpus_dir=original_corpus_dir, mcp_config=None,
-        conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+        conditions=("A", "C"), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
     )
 
-    assert "used_corpus_dir" in captured, "agent_utility_task should have been invoked"
-    used_corpus_dir = captured["used_corpus_dir"]
+    # ONE task built for the whole matrix (tempdoc 675) -- not one per condition.
+    assert len(task_calls) == 1
+    call = task_calls[0]
+    assert call["conditions"] == ("A", "C")
+    used_corpus_dir = call["corpus_dir"]
     assert used_corpus_dir != original_corpus_dir
     assert Path(used_corpus_dir).name == "corpus-dir"
-    assert captured["staged_parent_listing"] == ["corpus-dir"]  # no queries.json sibling
+    assert call["staged_parent_listing"] == ["corpus-dir"]  # no queries.json sibling
 
     # the staging directory is a temp artifact -- must be cleaned up after the run
     assert not Path(used_corpus_dir).parent.exists()
+
+    # ONE task handed to eval_set, and no per-condition max_tasks=1 serialization.
+    assert len(eval_set_calls) == 1
+    tasks_arg, kwargs = eval_set_calls[0]
+    assert len(tasks_arg) == 1
+    assert "max_tasks" not in kwargs
 
 
 def test_run_utility_eval_cleans_up_staged_dir_when_task_construction_raises(tmp_path, monkeypatch):
@@ -182,8 +444,8 @@ def test_run_utility_eval_cleans_up_staged_dir_when_task_construction_raises(tmp
     captured = {}
     real_stage = aui.stage_corpus_dir
 
-    def spying_stage_corpus_dir(cdir):
-        staged = real_stage(cdir)
+    def spying_stage_corpus_dir(cdir, **kwargs):
+        staged = real_stage(cdir, **kwargs)
         captured["staged_dir"] = staged
         return staged
 
@@ -338,294 +600,124 @@ def test_run_utility_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):
         MockClient.assert_not_called()
 
 
-# --- claude_agent_solver: stream-json tool-call capture (tempdoc 624 §As-built
-# #5 residual-gap close). The solver now runs `claude -p --output-format
-# stream-json --verbose` (mirroring agent_retrieval_eval.run_agent_eval's exact
-# argv) instead of the single-shot `json` format, so it can stash real
-# per-tool-call data into `state.metadata` for the empirical --disallowedTools
-# check and the answer-key-leak backstop -- these tests exercise the solver's
-# `solve` closure directly (a monkeypatched `subprocess.run` returns canned
-# stream-json stdout), no live `claude` CLI or `eval_set` needed. ---
+def test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error():
+    """F2 (tempdoc 675 review): a timed-out cell — `solve()` pre-set the timeout error and the
+    SDK loop was cancelled so there is NO ResultMessage — must STILL record its partial
+    `tool_calls`, and `_record_cell` must NOT overwrite the timeout error with 'no ResultMessage'.
+    Regression for 'timed-out cells lose their partial evidence', the failure v2 exists to fix."""
+    state = _state()
+    state.metadata["error"] = "per-cell wall-clock budget exhausted"  # solve() set this on timeout
+    capture = {
+        "attempts": {"t1": {"tool": "Grep", "input": {"pattern": "x"}}},
+        "results": {"t1": {"is_error": False}},
+        "texts": [], "rmsg": None, "mcp_servers": None, "justsearch_tools": [],
+    }
+    aui._record_cell(state, capture, "A", build_disallowed_tools("A"), None)
+    assert [tc["tool"] for tc in state.metadata["tool_calls"]] == ["Grep"]  # partial evidence preserved
+    assert state.metadata["error"] == "per-cell wall-clock budget exhausted"  # not clobbered
 
-import asyncio  # noqa: E402
 
-from inspect_ai.model import ChatMessageUser, ModelName  # noqa: E402
-from inspect_ai.solver import TaskState  # noqa: E402
+def test_agent_utility_task_rejects_a_float_identity_arg(tmp_path):
+    """Regression guard (tempdoc 675 F0 follow-up): a float anywhere in
+    `agent_utility_task`'s bound args must raise, not silently ship — Inspect's JSON
+    recorder reads a persisted float back as Decimal, which breaks eval_set resume
+    (the root cause of F0). Converts the prior prose-only docstring warning into an
+    enforced check."""
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t1"}]), encoding="utf-8")
+    with pytest.raises(AssertionError, match="float"):
+        aui.agent_utility_task(
+            conditions=("A",), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+            mcp_config=None, model="haiku", max_budget=0.5,  # float, not the required str
+            corpus_dataset="ds", corpus_signature="sig",
+        )
 
 
-def _state(input_text="what is x?", sample_id="q0"):
-    return TaskState(
-        model=ModelName("mockllm/model"), sample_id=sample_id, epoch=0,
-        input=input_text, messages=[ChatMessageUser(content=input_text)],
+def test_agent_utility_task_happy_path_has_no_float_args(tmp_path):
+    """Sibling to the raise-on-float test above: the real call shape (all current
+    default/str/int/None/tuple args) must NOT trip the guard."""
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t1"}]), encoding="utf-8")
+    t = aui.agent_utility_task(
+        conditions=("A",), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+        mcp_config=None, model="haiku", corpus_dataset="ds", corpus_signature="sig",
     )
+    assert isinstance(t, Task)
 
 
-class _FakeCompletedProcess:
-    def __init__(self, stdout, returncode=0, stderr=""):
-        self.stdout = stdout
-        self.stderr = stderr
-        self.returncode = returncode
+def test_run_utility_eval_resumes_on_rerun_same_log_dir(tmp_path, monkeypatch):
+    """F0 (tempdoc 675 review): re-invoking `run_utility_eval` with the same `log_dir` RESUMES
+    (skips the completed sample) instead of raising Inspect's `PrerequisiteError`. Regression for
+    the task-identity drift (a float `max_budget` read back as Decimal + a random staged-corpus
+    path). Uses a trivial instant solver — no real agent/backend. This test FAILS pre-fix."""
+    from inspect_ai.solver import solver as _solver_dec
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "d.txt").write_text("hello", encoding="utf-8")
+    queries = tmp_path / "q.json"
+    queries.write_text(
+        json.dumps([{"query": "q", "answer": "a", "question_type": "t"}]), encoding="utf-8")
+    log_dir = str(tmp_path / "logs")
+    calls = {"n": 0}
+
+    @_solver_dec
+    def trivial(*a, **k):
+        async def solve(state, generate):
+            calls["n"] += 1
+            state.output.completion = "a"
+            state.metadata.update({"cost_usd": 0.0, "unique_tokens": 0, "num_turns": 1})
+            return state
+        return solve
+
+    monkeypatch.setattr(aui, "claude_agent_solver", trivial)
+    kw = dict(queries_path=str(queries), corpus_dir=str(corpus), mcp_config=None, model="haiku",
+              conditions=("A",), seeds=1, concurrency=1, log_dir=log_dir, max_queries=1,
+              corpus_dataset="d", corpus_signature="s")
+    aui.run_utility_eval(**kw)
+    assert calls["n"] == 1
+    aui.run_utility_eval(**kw)  # RESUME: must not raise, must not re-run the completed cell
+    assert calls["n"] == 1
 
 
-def _stream_json(*events: dict) -> str:
-    return "\n".join(json.dumps(e) for e in events)
+def test_run_utility_eval_resumes_a_multi_sample_full_completion(tmp_path, monkeypatch):
+    """Strengthens the single-sample resume test above to N=3 samples across 2 conditions
+    (tempdoc 675 review follow-up): proves resume isn't a degenerate single-sample-only
+    behavior — a full N-sample completion, re-invoked with IDENTICAL args, must not
+    re-run ANY of the N cells. (A genuinely partial/interrupted-mid-run resume needs an
+    actual process kill to be faithful — covered by a live, non-unit-test check per the
+    675 tempdoc's §Unverified assumptions, not simulated here: eval_set's retry/
+    fail-on-error semantics for an in-process raised exception are a different, untested
+    code path and changing `max_queries` between invocations would change task identity,
+    defeating resume entirely — neither is a safe basis for a deterministic unit test.)"""
+    from inspect_ai.solver import solver as _solver_dec
 
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "d.txt").write_text("hello", encoding="utf-8")
+    queries = tmp_path / "q.json"
+    queries.write_text(json.dumps([
+        {"query": f"q{i}", "answer": f"a{i}", "question_type": "t"} for i in range(3)
+    ]), encoding="utf-8")
+    log_dir = str(tmp_path / "logs")
+    calls = {"n": 0}
 
-def _run_solver(monkeypatch, tmp_path, *, condition, stdout, model="haiku", mcp_config=None):
-    monkeypatch.setattr(aui.shutil, "which", lambda name: "/usr/bin/claude")
-    monkeypatch.setattr(aui.subprocess, "run", lambda *a, **k: _FakeCompletedProcess(stdout))
-    solve = aui.claude_agent_solver(
-        condition=condition, corpus_dir=str(tmp_path), mcp_config=mcp_config, model=model)
-    return asyncio.run(solve(_state(), generate=None))
+    @_solver_dec
+    def trivial(*a, **k):
+        async def solve(state, generate):
+            calls["n"] += 1
+            state.output.completion = "a"
+            state.metadata.update({"cost_usd": 0.0, "unique_tokens": 0, "num_turns": 1})
+            return state
+        return solve
 
-
-class TestClaudeAgentSolverStreamJsonMetadata:
-    def test_uses_stream_json_verbose_argv(self, monkeypatch, tmp_path):
-        """The argv the solver actually hands to subprocess.run must carry the
-        stream-json + verbose flags -- not just _build_argv in isolation."""
-        captured_cmd = {}
-
-        def fake_run(cmd, **kw):
-            captured_cmd["cmd"] = cmd
-            return _FakeCompletedProcess(_stream_json(
-                {"type": "result", "is_error": False, "result": "ok"}))
-
-        monkeypatch.setattr(aui.shutil, "which", lambda name: "/usr/bin/claude")
-        monkeypatch.setattr(aui.subprocess, "run", fake_run)
-        solve = aui.claude_agent_solver(condition="A", corpus_dir=str(tmp_path), model="haiku")
-        asyncio.run(solve(_state(), generate=None))
-
-        cmd = captured_cmd["cmd"]
-        idx = cmd.index("--output-format")
-        assert cmd[idx + 1] == "stream-json"
-        assert "--verbose" in cmd
-
-    def test_stashes_tool_calls_and_flags_disallowed_call(self, monkeypatch, tmp_path):
-        stdout = _stream_json(
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Bash", "input": {"command": "cat /eval/queries.json"}},
-            ]}},
-            {"type": "result", "is_error": False, "result": "the answer",
-             "total_cost_usd": 0.03, "num_turns": 2, "session_id": "s1",
-             "usage": {"cache_creation_input_tokens": 42}},
-        )
-        result = _run_solver(monkeypatch, tmp_path, condition="C", stdout=stdout)
-
-        assert result.metadata["tool_calls"] == [
-            {"tool": "Bash", "input": {"command": "cat /eval/queries.json"}},
-        ]
-        # condition C additionally disallows Bash -- empirical check must catch it
-        assert [tc["tool"] for tc in result.metadata["disallowed_tool_calls"]] == ["Bash"]
-        assert result.metadata["leak_suspect_tool_calls"] == []  # Bash isn't a leak-suspect tool
-        assert result.output.completion == "the answer"
-        assert result.metadata["cost_usd"] == 0.03
-        assert result.metadata["unique_tokens"] == 42
-        assert result.metadata["num_turns"] == 2
-        assert "error" not in result.metadata
-
-    def test_flags_leak_suspect_read_of_queries_json(self, monkeypatch, tmp_path):
-        stdout = _stream_json(
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Read", "input": {"file_path": "/eval/queries.json"}},
-            ]}},
-            {"type": "result", "is_error": False, "result": "leaked answer"},
-        )
-        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
-
-        assert [tc["tool"] for tc in result.metadata["leak_suspect_tool_calls"]] == ["Read"]
-        assert result.metadata["disallowed_tool_calls"] == []  # Read is allowed under A
-
-    def test_no_tool_calls_when_agent_answers_directly(self, monkeypatch, tmp_path):
-        stdout = _stream_json({"type": "result", "is_error": False, "result": "no tools needed"})
-        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
-
-        assert result.metadata["tool_calls"] == []
-        assert result.metadata["disallowed_tool_calls"] == []
-        assert result.metadata["leak_suspect_tool_calls"] == []
-
-    def test_tool_calls_captured_even_on_error_result(self, monkeypatch, tmp_path):
-        """Credibility bar (tempdoc 624 §M.8 item 2) is 'every cell actually
-        run' -- a cell whose claude subprocess errored out mid-run must still
-        carry whatever tool calls it made before failing, not silently lose them."""
-        stdout = _stream_json(
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "WebSearch", "input": {"query": "x"}},
-            ]}},
-            {"type": "result", "is_error": True, "result": "budget exceeded"},
-        )
-        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
-
-        # The error string now carries forensics (exit code, stderr, stdout tail)
-        # around the CLI's own message — assert the message survives within it.
-        assert "budget exceeded" in result.metadata["error"]
-        assert result.metadata["tool_calls"] == [{"tool": "WebSearch", "input": {"query": "x"}}]
-        assert [tc["tool"] for tc in result.metadata["disallowed_tool_calls"]] == ["WebSearch"]
-
-    def test_no_result_event_sets_error_but_still_captures_tool_calls(self, monkeypatch, tmp_path):
-        """Crash/timeout-shaped stdout (no `result` event at all)."""
-        stdout = _stream_json({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
-        ]}})
-        result = _run_solver(monkeypatch, tmp_path, condition="A", stdout=stdout)
-
-        assert "error" in result.metadata
-        assert result.metadata["tool_calls"] == [
-            {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
-        ]
-
-
-# --- Offered MCP tool-surface capture + assertion (tempdoc 624 battlefield
-# retrospective, 2026-07-03): every certified condition-B battlefield cell ran
-# with a dead `mcp_config` (a `url`-only `mcpServers` entry the `claude` CLI
-# silently drops) -- 0 MCP tool calls, indistinguishable from a healthy run by
-# exit code alone. These tests exercise the solver's empirical assertion that
-# the offered tool surface actually included `mcp__justsearch*` tools. ---
-
-class TestClaudeAgentSolverMcpSurfaceAssertion:
-    def test_condition_b_with_healthy_mcp_surface_passes(self, monkeypatch, tmp_path):
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init",
-             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
-             "tools": ["Read", "Grep", "mcp__justsearch__search_query"]},
-            {"type": "result", "is_error": False, "result": "the answer",
-             "total_cost_usd": 0.02, "num_turns": 1,
-             "usage": {"cache_creation_input_tokens": 10}},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_servers"] == [{"name": "justsearch", "status": "connected"}]
-        assert result.metadata["mcp_tools_offered"] == 1
-        assert "error" not in result.metadata
-        assert "mcp_surface_unverified" not in result.metadata
-        assert result.output.completion == "the answer"
-
-    def test_condition_b_with_dead_mcp_surface_errors(self, monkeypatch, tmp_path):
-        """The exact battlefield signature: init event fires (CLI connected fine),
-        but mcp_servers is empty and no mcp__justsearch tool was offered -- the
-        underlying claude call itself still "succeeds" (is_error False)."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init", "mcp_servers": [],
-             "tools": ["Read", "Grep", "Glob", "Bash"]},
-            {"type": "result", "is_error": False, "result": "answered from files anyway"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert "expected MCP tool surface not offered" in result.metadata["error"]
-        assert "mcp_servers=[]" in result.metadata["error"]
-        assert result.metadata["mcp_tools_offered"] == 0
-        assert "mcp_surface_unverified" not in result.metadata
-        # Deterministic config problem -- must not burn the bounded retry.
-        assert result.metadata["attempts"] == 1
-
-    def test_condition_c_with_dead_mcp_surface_errors(self, monkeypatch, tmp_path):
-        """Same assertion applies to condition C (JustSearch-only substitution)."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
-            {"type": "result", "is_error": False, "result": "answered anyway"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="C", stdout=stdout, mcp_config="/mcp.json")
-
-        assert "expected MCP tool surface not offered" in result.metadata["error"]
-
-    def test_no_init_event_flags_unverified_without_erroring(self, monkeypatch, tmp_path):
-        """No init event could be parsed (e.g. an older/nonstandard stream shape) but
-        the run otherwise completed cleanly -- an unknown must not be conflated with
-        a known-bad cell, so no `error` may be set on this basis."""
-        stdout = _stream_json(
-            {"type": "result", "is_error": False, "result": "the answer"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_surface_unverified"] is True
-        assert result.metadata["mcp_servers"] is None
-        assert result.metadata["mcp_tools_offered"] is None
-        assert "error" not in result.metadata
-
-    def test_condition_a_exempt_from_assertion_even_with_zero_mcp_tools(self, monkeypatch, tmp_path):
-        """Condition A intentionally never carries a real mcp_config in its argv
-        (_build_argv always substitutes the empty config) -- the assertion must not
-        fire for it even if a caller passed mcp_config through to the solver."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
-            {"type": "result", "is_error": False, "result": "the answer"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="A", stdout=stdout, mcp_config="/mcp.json")
-
-        assert "error" not in result.metadata
-        assert "mcp_surface_unverified" not in result.metadata
-        # Capture fields are still stashed regardless of condition/assertion.
-        assert result.metadata["mcp_servers"] == []
-        assert result.metadata["mcp_tools_offered"] == 0
-
-    def test_deferred_tools_stamped_true_when_server_connected_but_no_justsearch_tools(
-        self, monkeypatch, tmp_path,
-    ):
-        """tempdoc 624 §M.8 amendment (Step 0 item 4): the justsearch server
-        actually CONNECTED (unlike the dead-config case), but no mcp__justsearch
-        tool is listed in the init event's `tools` -- the ToolSearch-deferred
-        surfacing shape. This still hits the same 'not offered' assertion (Step 0
-        does not change that gate), but mcp_tools_deferred must distinguish it
-        from a genuinely dead config in the stashed metadata."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init",
-             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
-             "tools": ["Read", "Grep"]},
-            {"type": "result", "is_error": False, "result": "answered from files anyway"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_tools_deferred"] is True
-        assert "expected MCP tool surface not offered" in result.metadata["error"]
-
-    def test_deferred_tools_stamped_false_for_genuinely_dead_config(self, monkeypatch, tmp_path):
-        """The dead-config case: the server never connected at all -- must NOT
-        be misread as 'deferred' (justsearch_connected is False)."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init", "mcp_servers": [],
-             "tools": ["Read", "Grep", "Glob", "Bash"]},
-            {"type": "result", "is_error": False, "result": "answered from files anyway"},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_tools_deferred"] is False
-
-    def test_deferred_tools_false_when_justsearch_tools_offered_eagerly(self, monkeypatch, tmp_path):
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init",
-             "mcp_servers": [{"name": "justsearch", "status": "connected"}],
-             "tools": ["Read", "Grep", "mcp__justsearch__search_query"]},
-            {"type": "result", "is_error": False, "result": "the answer",
-             "total_cost_usd": 0.02, "num_turns": 1,
-             "usage": {"cache_creation_input_tokens": 10}},
-        )
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_tools_deferred"] is False
-        assert "error" not in result.metadata
-
-    def test_deferred_tools_none_when_no_init_event(self, monkeypatch, tmp_path):
-        stdout = _stream_json({"type": "result", "is_error": False, "result": "the answer"})
-        result = _run_solver(
-            monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config="/mcp.json")
-
-        assert result.metadata["mcp_tools_deferred"] is None
-
-    def test_with_tool_condition_without_mcp_config_is_exempt(self, monkeypatch, tmp_path):
-        """B/C with mcp_config=None (no real config in play at all, e.g. a
-        negative-control run) must not be held to the offered-surface assertion."""
-        stdout = _stream_json(
-            {"type": "system", "subtype": "init", "mcp_servers": [], "tools": ["Read"]},
-            {"type": "result", "is_error": False, "result": "the answer"},
-        )
-        result = _run_solver(monkeypatch, tmp_path, condition="B", stdout=stdout, mcp_config=None)
-
-        assert "error" not in result.metadata
-        assert "mcp_surface_unverified" not in result.metadata
+    monkeypatch.setattr(aui, "claude_agent_solver", trivial)
+    kw = dict(queries_path=str(queries), corpus_dir=str(corpus), mcp_config=None, model="haiku",
+              conditions=("A", "C"), seeds=1, concurrency=2, log_dir=log_dir, max_queries=3,
+              corpus_dataset="d", corpus_signature="s")
+    aui.run_utility_eval(**kw)
+    assert calls["n"] == 6  # 3 queries x 2 conditions, all completed
+    aui.run_utility_eval(**kw)  # RESUME: none of the 6 completed cells re-run
+    assert calls["n"] == 6

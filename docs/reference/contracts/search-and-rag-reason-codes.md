@@ -63,6 +63,9 @@ Allowlisted `retrieval_mode_reason` values:
 - `EMBEDDING_EMPTY`: embedding returned an empty vector
 - `EMBEDDING_GENERATION_FAILED`: embedding generation failed/errored
 - `CHUNK_VECTOR_COVERAGE_INCOMPLETE`: chunk vectors enabled but coverage < 95%; falls back to doc-first hybrid (`HYBRID`)
+- `CHUNKS_BELOW_THRESHOLD`: chunk search found hits but the assembled chunk context was blank; falls back to `FULLTEXT_FALLBACK`
+- `FILTERED_EMPTY` / `NO_MATCHING_PARENTS`: document-level filters matched no parent documents
+- `FULL_DOCUMENT_REQUESTED` / `FULL_DOCUMENT`: the `return_full_documents` request path returned whole-document context
 
 ## Head-side fallback reasons (REST/SSE callers)
 

@@ -106,9 +106,10 @@ class StrayWatchedRootError(RuntimeError):
     """A live eval run detected a watched root broader than its own `corpus_dir`.
 
     Raised by `assert_watched_roots_scoped` — the automatic-prevention call site wired
-    directly into `run_utility_eval` (agent_utility_inspect.py) and `run_agent_eval`
-    (agent_retrieval_eval.py), the two functions that actually EXECUTE an eval. Before
-    this, `check_watched_roots_scoped` was only reachable via the separate, optional
+    directly into `run_utility_eval` (agent_utility_inspect.py), the record-grade
+    function that actually EXECUTEs an eval (the classic `run_agent_eval` that also
+    shared this gate was retired in tempdoc 675). Before this,
+    `check_watched_roots_scoped` was only reachable via the separate, optional
     `utility-calibrate` CLI — an eval could run (and silently leak) without ever going
     through it. See `check_watched_roots_scoped`'s docstring for the underlying
     mechanism (tempdoc 624 As-built #7).
@@ -130,9 +131,9 @@ def assert_watched_roots_scoped(base_url: str, corpus_dir: str, *, timeout_sec: 
 def base_url_from_mcp_config(mcp_config_path: str) -> str | None:
     """Derive the JustSearch backend's base_url from an eval's `--mcp-config` file.
 
-    Neither `run_utility_eval` nor `run_agent_eval` takes its own `--base-url` option —
-    the backend address they actually need for the watched-roots safety check is already
-    carried by the `--mcp-config` file the `claude` subprocess uses for its own MCP
+    `run_utility_eval` does not take its own `--base-url` option — the backend address
+    it actually needs for the watched-roots safety check is already
+    carried by the `--mcp-config` file the agent session uses for its own MCP
     transport: `{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:PORT/mcp"}}}`
     (see `util-smoke/README.md`). **The `"type":"http"` field is mandatory** — a `url`-only
     entry is silently DROPPED by the `claude` CLI (see `assert_mcp_config_http_typed`), so an

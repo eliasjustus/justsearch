@@ -18,6 +18,7 @@
  * script only needs to pass standalone: `node scripts/ci/check-thread-event-kinds.mjs`.
  */
 import { readFileSync } from 'node:fs';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const JAVA_ENUM_FILE =
   'modules/app-agent-api/src/main/java/io/justsearch/agent/api/interaction/InteractionEventKind.java';
@@ -25,7 +26,7 @@ const FE_CLIENT_FILE = 'modules/ui-web/src/shell-v0/views/unifiedThreadClient.ts
 
 /** Strip Java block/line comments so enum-constant extraction can't false-positive on prose. */
 function stripJavaComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  return stripComments(src, { withHtml: false });
 }
 
 /** Extract the bare `IDENT,` enum-constant names from `enum InteractionEventKind { ... }`. */
