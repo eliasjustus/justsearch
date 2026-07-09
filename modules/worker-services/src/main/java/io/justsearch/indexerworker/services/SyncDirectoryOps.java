@@ -281,6 +281,7 @@ final class SyncDirectoryOps {
           public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
             if (!attrs.isRegularFile()) return FileVisitResult.CONTINUE;
             if (!Files.isReadable(file)) return FileVisitResult.CONTINUE;
+            if (IngestionSkipPolicy.shouldSkip(file)) return FileVisitResult.CONTINUE;
             if (isCloudPlaceholder(file)) {
               recordCloudPlaceholderObservation(file);
               return FileVisitResult.CONTINUE;

@@ -380,14 +380,16 @@ public final class SearchInputCapture {
         .build();
   }
 
-  private static List<String> expandFilterList(
+  // visible for testing
+  static List<String> expandFilterList(
       List<String> values, String entityType, EntityClusterSnapshot snapshot) {
     if (values == null || values.isEmpty()) {
       return values;
     }
     Set<String> expanded = new HashSet<>(values);
     for (String value : values) {
-      expanded.addAll(snapshot.expandCanonical(entityType, value));
+      expanded.addAll(
+          snapshot.expandCanonical(entityType, snapshot.getCanonical(entityType, value)));
     }
     if (expanded.size() > MAX_EXPANDED_FILTER_TERMS) {
       log.warn(
