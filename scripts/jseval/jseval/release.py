@@ -332,7 +332,7 @@ def compose(
         project ceilings from it.
     :param union_recall_by_dataset: optional ``{dataset_slug: leg_union_recall}`` measured
         from the runs' ``staged_recall_accounting`` projections (sourced by the compose CLI,
-        which has the run dirs; recall-survival sibling of ``leak_by_dataset``, tempdoc 699).
+        which has the run dirs; recall-survival sibling of ``leak_by_dataset``, tempdoc 701).
         When non-empty, written as the release's ``union_recall`` section so
         union-recall-gate's ``current_release`` pointer can project floors from it.
     :raises ComposeError: if the runs don't all share one ``config_cohort_key``,

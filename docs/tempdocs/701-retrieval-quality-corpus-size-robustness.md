@@ -18,7 +18,7 @@ related:
 > has a retrieval scaling defect — it asserts that we have a *signal* and no measurement that would
 > confirm or refute it, and it lays out how to find out.
 
-# 699 — Retrieval quality vs corpus size
+# 701 — Retrieval quality vs corpus size
 
 ## The observation (what was actually seen)
 
@@ -189,7 +189,7 @@ Real personal files do not share ~90% identical text — the tempdoc itself conc
 - Corollary: because the docs are near-identical, even an *exact* KNN would collapse the gold into its
   look-alikes — the loss (if any leg misses) is **embedding geometry**, not the ANN approximation. The
   synthetic corpus therefore cannot implicate the ANN leg even where it shows a miss. **The tempdoc bets
-  on the wrong leading mechanism.** (639's "do not open by tuning ANN" instinct is right; but 699 still
+  on the wrong leading mechanism.** (639's "do not open by tuning ANN" instinct is right; but 701 still
   frames ANN as the leading candidate, which mis-primes the next agent.)
 
 ## Finding 3 — DECISIVE: the tested-scale artifact-vs-defect question is **already answered on disk → artifact**
@@ -238,15 +238,15 @@ artifact, not by N per se — which is why a **realistic large corpus** is the o
   was an **agent-utility** run (`out/utility-comparison.v1.json` only), not a retrieval eval — so the
   recall-vs-ranking split that would attribute the drop was never computed. Also note the 624 evidence is
   **nDCG@10** (a ranking metric); "gold outside top-10" ≠ "gold outside the candidate set." The whole
-  recall-framing of 699 rests on a set-membership claim that has not actually been measured.
+  recall-framing of 701 rests on a set-membership claim that has not actually been measured.
 - The generator already has the clean isolator 624 didn't use: hold `n_chains` fixed (query set + head-count
   constant) and raise `distractor_ratio` — distractors are never referenced by any query
   (`corpus_generate.py:654-668`), so this grows `N` at **constant semantic difficulty**, separating pure
   index-growth from cluster-collapse. The ratchet template for Milestone D also exists
   (`relevance_gate.py`, `ratchet_kernel.py`, `*-ratchet-baselines.v1.json`).
 
-## Finding 6 — What 699 duplicates / displaces
-699 is largely a **synthesis/coordination layer** over already-owned work: ANN recall (639, "unowned,
+## Finding 6 — What 701 duplicates / displaces
+701 is largely a **synthesis/coordination layer** over already-owned work: ANN recall (639, "unowned,
 measurement-first"), the reranker-window bounded-recall + the `staged_recall` projection (636), ranking of a
 present answer (643 = `JUDGE_RANK_LOW`), realistic-corpus construction (635), and the latency/recall trade of
 any `ef_search` change (640's perf ratchet). Its **only distinct durable deliverable** is Milestone D — a
@@ -275,13 +275,13 @@ any `ef_search` change (640's perf ratchet). Its **only distinct durable deliver
      a long-horizon robustness property, not a present defect.
 
 3. **What it displaces/duplicates:** 639 (ANN), 636 (window + `staged_recall`), 643 (ranking), 635 (corpus),
-   640 (perf). 699's only non-duplicative piece is the cross-size ratchet (Milestone D).
+   640 (perf). 701's only non-duplicative piece is the cross-size ratchet (Milestone D).
 
-4. **Recommendation.** Downgrade 699 from "investigation with a live trigger" to a **parked, evidence-gated
+4. **Recommendation.** Downgrade 701 from "investigation with a live trigger" to a **parked, evidence-gated
    robustness question**, and record the three corrections above so the trigger isn't mistaken for a defect:
    (a) 624's drop is the synthetic artifact — settled at tested scale by `release.v1.json`; (b) the real
    scale-sensitive lever, *if one is ever needed*, is the fixed-20 reranker window on the unspliced 3-way path
-   (636), **not** ANN (639); (c) the only work that would justify reopening 699 is building a **genuinely
+   (636), **not** ANN (639); (c) the only work that would justify reopening 701 is building a **genuinely
    large realistic fixture** (10⁴–10⁶) and running the cross-size recall ratchet on it — a deliberate,
    non-urgent investment, out of step with the current release/adoption critical path (654-660; 624's own
    "next lever = 655 steering / powered adoption run"). **Do not run Milestones A–C now; Milestone D is the
@@ -289,7 +289,7 @@ any `ef_search` change (640's perf ratchet). Its **only distinct durable deliver
 
 **Bottom line: this should wait for evidence X = "a realistic corpus at 10⁴–10⁶ docs shows a recall drop" —
 and that evidence does not exist, is not cheap, and the cheap evidence we *do* have points the other way
-(artifact). No fix is warranted; the product half of 699 closes as "artifact, at tested scale," with the
+(artifact). No fix is warranted; the product half of 701 closes as "artifact, at tested scale," with the
 high-N robustness question parked under 639/636 until a large realistic fixture is deliberately built.**
 
 ## Proposed experiments (diagnose-first; cheapest-decisive-first; pre-registered)
@@ -351,7 +351,7 @@ geometry — the two questions the 624 run left unmeasured — for well under an
 
 ## Experimental results (2026-07-08, run live on the dev stack — worktree `624-scale-corpus`)
 
-> Artifacts under `tmp/699-experiments/`. Each run: `jseval run` on the fresh-indexed corpus, 100–130
+> Artifacts under `tmp/699-experiments/` (sic — artifacts predate the 699→701 renumber). Each run: `jseval run` on the fresh-indexed corpus, 100–130
 > queries, modes `[vector, lexical, splade, full]`, `staged_recall_accounting` auto-emitted. jseval
 > reproduced the 624 headline exactly (corpus fidelity gate: `nDCG@10=0.1628`, matching pass-26's 0.163).
 
@@ -524,7 +524,7 @@ Five experiments turned the static "artifact, park it" inference into a measured
   template. Worth adding as a standing guard so size-robustness can never silently regress — but low
   priority given the release/adoption critical path (654-660), and it is a *guard*, not a fix.
 
-**Bottom line:** the product half of 699 **closes as "artifact — retrieval is size-robust on realistic
+**Bottom line:** the product half of 701 **closes as "artifact — retrieval is size-robust on realistic
 corpora (measured 3k→10k), the 624 collapse is a synthetic-corpus pathology, ANN is not the cause."** The
 only forward work is optional: a cross-size ratchet (Milestone D) as a low-priority standing guard, and a
 one-line hand-off of the fusion-splice robustness note to 636. No engine fix is warranted now.
@@ -601,7 +601,7 @@ direction worth weighing against, or instead of, the size ratchet.
   out-of-band retrieval it answered 60% by iterating. So the product-binding quantity may be "is the answer
   findable within an agent's *session* budget," not "is it in one query's top-10." A CASCADE_LEAK that a
   second query recovers is far less costly than one that no query recovers. Framing the north star in
-  recall-under-iteration terms reconnects 699 to 624 and could change what's worth fixing.
+  recall-under-iteration terms reconnects 701 to 624 and could change what's worth fixing.
 - **Non-redundancy — the untouched half of 639.** 639 named *two* candidate-set gaps: completeness (recall,
   which this doc measured) **and non-redundancy** (a top-N dominated by near-duplicates). This investigation
   did nothing on the second, which 639 argues is *the common-case* experience on personal files (many
@@ -646,13 +646,13 @@ latent-but-reachable, not hypothetical. The decision (fix now as insurance vs pa
 personal-corpus fixture shows it biting) belongs to 636's owner with that caveat in hand — this doc's job is
 to make the tension legible, not to pick.
 
-### 7. Possible reframe of 699 itself (flagged, not done)
+### 7. Possible reframe of 701 itself (flagged, not done)
 
-Given all the above, 699's durable centre of gravity may be less "retrieval quality vs corpus size" (largely
+Given all the above, 701's durable centre of gravity may be less "retrieval quality vs corpus size" (largely
 answered: artifact) and more **"retrieval-funnel recall-survival and graceful degradation under leg failure."**
 That is a broader, longer-lived framing that subsumes the size question and connects cleanly to 636 (bounded
-recall), 639 (candidate-set integrity), and 643 (ranking). Whether to retitle/re-scope 699 to that, fold it
-into 639, or keep 699 as the closed size-investigation and open the broader thread elsewhere, is a
+recall), 639 (candidate-set integrity), and 643 (ranking). Whether to retitle/re-scope 701 to that, fold it
+into 639, or keep 701 as the closed size-investigation and open the broader thread elsewhere, is a
 scoping decision for the owner — recorded here as an option, not taken.
 
 ## Prior art & research landscape (2026-07-08 web pass — the §5/§2 directions are named research areas)
@@ -700,7 +700,7 @@ reinventing it. Claims below are paraphrased from the cited sources, not verbati
 method + evaluate on our corpora", not "invent": B → recall-preserving cascade (bounded-recall lit); C →
 QPP-driven adaptive fusion (DAT/QDAP family); D → QPP-as-confidence (with its documented reliability caveat).
 The **fault-injection robustness axis (§3)** and the **corpus-pathology-not-size methodology (§1)** are the
-parts I did *not* find pre-packaged — those look like the genuinely differentiated contributions, if 699's
+parts I did *not* find pre-packaged — those look like the genuinely differentiated contributions, if 701's
 broader thread is pursued. **Recommendation:** if/when the owner opens the broader thread, do a proper
 literature review of bounded-recall mitigations and QPP-for-hybrid-fusion before designing, and treat the
 fault-injection suite + pathology-axis guard as the novel piece. Nothing here changes the closed verdict (no
@@ -816,7 +816,7 @@ claim to fix a present defect (there is none in that range), nor to guarantee ro
   `/api/status` that are *measured* but, as far as this investigation saw, not gated by a standing CI ratchet
   on a fixture; and `judge_low_cost_weight` is *registered* as a metric family yet appears ungated. Both are
   candidate instances of the same measured-but-ungated shape. **Neither is built here** — neither is required
-  by 699's problem; recorded so the pattern is visible to whoever picks up 639/643 or the enrichment work.
+  by 701's problem; recorded so the pattern is visible to whoever picks up 639/643 or the enrichment work.
 - **Evidence it earns its keep:** the completeness gate fires on **≥1 real change where the aggregate
   relevance_gate (nDCG) passed** — proving the per-stage signal is non-redundant with the aggregate.
 - **Retirement condition:** if across ~10 releases no completeness (or leak) gate *ever* fires independently of
@@ -1006,10 +1006,10 @@ R1 release plumbing in `release.py`/`commands/release.py`. Register updated: sea
   `search-engine-hint`. Do not assume CI catches it.
 
 ### Remaining / follow-up work (owner)
-- **R2 (699): DONE** — `legal-clerc-200` added (pin set now 3 reproducible corpora, floors 0.87/0.96/1.0).
+- **R2 (701): DONE** — `legal-clerc-200` added (pin set now 3 reproducible corpora, floors 0.87/0.96/1.0).
   Only `enron-qa` remains unpinned (no recipe in-tree); addable later via a derive run when a recipe exists,
   no code change.
-- **R1 activation (699/623):** populate + live-verify the `union_recall` release section at the next release
+- **R1 activation (701/623):** populate + live-verify the `union_recall` release section at the next release
   recompose (do it alongside leak's, which is equally unpopulated today).
 - **P1 (639):** realistic large-N (10⁵–10⁶) recall — a periodic one-off, impractical as a standing ratchet.
 - **P2 (product tempdoc):** the user-visible low-confidence signal (north-star bullet 2, never built).
@@ -1024,9 +1024,9 @@ Status: **implemented + validated in the `624-scale-corpus` worktree; not merged
 > After the core gate shipped, "remaining work" became ambiguous. This pass scopes what actually remains and
 > prices the parked items so a scope decision is informed. Findings carry `file:line`/command pointers.
 
-- **U1 — Is 699 complete? → Effectively YES; no unowned obligation is unbuilt.** The core deliverable
-  (completeness FLOOR gate) is shipped + validated. Every remaining candidate is either 699-owned-and-deferred
-  (R1/R2 below) or legitimately parked to another owner (P1/P2) — none is a silently-dropped 699 obligation.
+- **U1 — Is 701 complete? → Effectively YES; no unowned obligation is unbuilt.** The core deliverable
+  (completeness FLOOR gate) is shipped + validated. Every remaining candidate is either 701-owned-and-deferred
+  (R1/R2 below) or legitimately parked to another owner (P1/P2) — none is a silently-dropped 701 obligation.
 - **U2 — Release-projection compose upgrade (R1): correctly deferred; bounded when done.** `release.py`
   `compose()` (`:308`) takes `leak_by_dataset` and emits a `leak` section (`:415,:428`); a `union_recall`
   mirror is ~15–25 lines across `release.py` + `commands/release.py` + a union analogue of the anti-fork
@@ -1052,7 +1052,7 @@ Status: **implemented + validated in the `624-scale-corpus` worktree; not merged
   eval lane exist to miss (confirmed: `.github/**` has no eval gate).
 
 ### Verdict, confidence & model recommendation
-**There is no mandatory remaining work.** 699's core is complete and consistent; the only remaining candidates
+**There is no mandatory remaining work.** 701's core is complete and consistent; the only remaining candidates
 are optional/deferred and low-value-now: R1 (release-projection mirror — do it *with* leak's at the next
 release recompose, not before) and R2 (add legal-clerc-200 for a little more coverage — a cheap
 fetch+run+derive, no code judgment). P1/P2 are correctly parked (639 / a product tempdoc).
@@ -1063,5 +1063,5 @@ unknowns, not blockers).
 
 **Difficulty: low.** R1 is a mechanical mirror of an existing block + a guard analogue; R2 is operational
 (fetch/run/derive, no code). Neither needs design judgment — that tier is done.
-**Recommendation: do nothing now (close 699 as complete); if R1/R2 are later wanted, Sonnet at low effort is
+**Recommendation: do nothing now (close 701 as complete); if R1/R2 are later wanted, Sonnet at low effort is
 sufficient.** Opus is not warranted for either.

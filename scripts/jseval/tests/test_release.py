@@ -416,7 +416,7 @@ def test_compose_omits_leak_section_when_unsourced():
     assert "leak" not in r
 
 
-# --- tempdoc 699: optional union_recall section (leak's recall-survival sibling) --
+# --- tempdoc 701: optional union_recall section (leak's recall-survival sibling) --
 
 def test_compose_writes_union_recall_section_from_measured_rates():
     s = _summary(dataset="scifact")

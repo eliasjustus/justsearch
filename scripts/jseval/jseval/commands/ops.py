@@ -355,7 +355,7 @@ def _gate_coverage() -> dict[str, set[str]]:
                 per_corpus_tolerance=base.get("per_corpus_tolerance"),
             ),
         ),
-        # tempdoc 699: the file is committed (floors derived by `union-recall-gate-derive`); the
+        # tempdoc 701: the file is committed (floors derived by `union-recall-gate-derive`); the
         # try/except OSError below still treats a missing/malformed file as "gates nothing" rather
         # than crashing on a partial checkout, same as the other three.
         "union-recall-gate": (

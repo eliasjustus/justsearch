@@ -153,7 +153,7 @@ LEAK = MetricFamily(
     calibrate=False,
 )
 
-# Leak's floor sibling (tempdoc 699 / register D-005 recall-survival): the same
+# Leak's floor sibling (tempdoc 701 / register D-005 recall-survival): the same
 # staged_recall_accounting projection also emits leg_union_recall — the fraction of judged-relevant
 # documents ANY retrieval leg found before fusion/ranking, i.e. representation-completeness. Higher
 # is better, so this gates as a FLOOR (abs_tolerance, like QUALITY), not a ceiling (like LEAK) — the

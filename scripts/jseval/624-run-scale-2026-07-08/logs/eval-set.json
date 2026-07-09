@@ -1,0 +1,74 @@
+{
+  "eval_set_id": "b9f321e23c77ecacf500e1",
+  "tasks": [
+    {
+      "name": "jseval/agent_utility_task",
+      "task_id": "nwsQ4B3SFEnTXHVYKm9bmC",
+      "task_args": {
+        "condition": "A",
+        "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
+        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "mcp_config": null,
+        "model": "haiku",
+        "max_queries": 30,
+        "max_budget": 0.5,
+        "timeout_s": 600,
+        "cli_version": "2.1.204 (Claude Code)",
+        "mcp_tool_surface_hash": null,
+        "judge_kind": "substring-em",
+        "prompt_template_hash": "c6835f2fc85da3a7adeb1c68e64b8b292be9eca00cde4360c39f652b2de4bd29",
+        "corpus_dataset": "golden/battlefield-en-scale-v1",
+        "corpus_signature": "golden/battlefield-en-scale-v1"
+      },
+      "model": "mockllm/model",
+      "model_args": {},
+      "sequence": 0
+    },
+    {
+      "name": "jseval/agent_utility_task",
+      "task_id": "aVJzyNLuTfaH7EmWGgLBRe",
+      "task_args": {
+        "condition": "B",
+        "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
+        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
+        "model": "haiku",
+        "max_queries": 30,
+        "max_budget": 0.5,
+        "timeout_s": 600,
+        "cli_version": "2.1.204 (Claude Code)",
+        "mcp_tool_surface_hash": null,
+        "judge_kind": "substring-em",
+        "prompt_template_hash": "c6835f2fc85da3a7adeb1c68e64b8b292be9eca00cde4360c39f652b2de4bd29",
+        "corpus_dataset": "golden/battlefield-en-scale-v1",
+        "corpus_signature": "golden/battlefield-en-scale-v1"
+      },
+      "model": "mockllm/model",
+      "model_args": {},
+      "sequence": 1
+    },
+    {
+      "name": "jseval/agent_utility_task",
+      "task_id": "bcDA5ZRCtNivSs2ZBw6XYR",
+      "task_args": {
+        "condition": "C",
+        "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
+        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
+        "model": "haiku",
+        "max_queries": 30,
+        "max_budget": 0.5,
+        "timeout_s": 600,
+        "cli_version": "2.1.204 (Claude Code)",
+        "mcp_tool_surface_hash": null,
+        "judge_kind": "substring-em",
+        "prompt_template_hash": "c6835f2fc85da3a7adeb1c68e64b8b292be9eca00cde4360c39f652b2de4bd29",
+        "corpus_dataset": "golden/battlefield-en-scale-v1",
+        "corpus_signature": "golden/battlefield-en-scale-v1"
+      },
+      "model": "mockllm/model",
+      "model_args": {},
+      "sequence": 2
+    }
+  ]
+}

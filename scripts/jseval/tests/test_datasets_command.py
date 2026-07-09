@@ -24,7 +24,7 @@ def test_gate_coverage_reads_real_committed_files():
     """No mocking -- reads the actual committed baseline files in this repo, confirming the
     parents[2] path resolution (mirroring the sixth pass's gates.py fix) is correct here too."""
     coverage = _gate_coverage()
-    # tempdoc 699: union-recall-gate joins the three pre-existing ratchets; its baselines file is
+    # tempdoc 701: union-recall-gate joins the three pre-existing ratchets; its baselines file is
     # committed with populated corpora, so it appears in the coverage key set below like the others.
     assert set(coverage) == {"relevance-gate", "perf-gate", "leak-gate", "union-recall-gate"}
     # beir/scifact is committed as gated (canonical slug) in ALL FOUR baseline files at HEAD.
@@ -33,7 +33,7 @@ def test_gate_coverage_reads_real_committed_files():
     assert "beir/scifact" in coverage["relevance-gate"]
     assert "beir/scifact" in coverage["perf-gate"]
     assert "beir/scifact" in coverage["leak-gate"]
-    assert "beir/scifact" in coverage["union-recall-gate"]  # tempdoc 699
+    assert "beir/scifact" in coverage["union-recall-gate"]  # tempdoc 701
 
 
 def test_gate_coverage_missing_file_is_gates_nothing_not_a_crash(tmp_path, monkeypatch):

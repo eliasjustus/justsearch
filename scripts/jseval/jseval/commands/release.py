@@ -104,7 +104,7 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
     # staged_recall_accounting projections (compose() only sees summaries; the run
     # dirs — and thus projections/ — are only known here). Best-effort: a run
     # without an ok projection simply contributes no leak row.
-    # tempdoc 699: same loop also sources the union_recall (leg_union_recall) sibling —
+    # tempdoc 701: same loop also sources the union_recall (leg_union_recall) sibling —
     # the recall-survival floor counterpart of leak's ceiling, read from the same projection.
     leak_by_dataset: dict[str, float] = {}
     union_recall_by_dataset: dict[str, float] = {}
@@ -204,7 +204,7 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
                 gate="release", dataset=f"{ds}:leak_rate",
                 changesets_dir=changesets_dir,
             )
-        # tempdoc 699: the union_recall section is a projected ratchet source too
+        # tempdoc 701: the union_recall section is a projected ratchet source too
         # (union-recall-gate's current_release pointer) — a recompose LOWERING a corpus's
         # union-recall floor is a relaxation (union-recall is higher-is-better) and needs the
         # same justified changeset.

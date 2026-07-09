@@ -1,4 +1,4 @@
-"""Recall-completeness ratchet (tempdoc 699 / register D-005 recall-survival sibling).
+"""Recall-completeness ratchet (tempdoc 701 / register D-005 recall-survival sibling).
 
 The floor-shaped twin of :mod:`jseval.leak_gate`. Where the leak ratchet fails when a corpus's
 **recall-leak rate** rises above a pinned *ceiling*, this fails when a corpus's
@@ -25,7 +25,7 @@ from typing import Any
 
 from . import metric_families as _mf
 
-# The union-recall family is registered in the metric-family registry (tempdoc 640/699) as a
+# The union-recall family is registered in the metric-family registry (tempdoc 640/701) as a
 # cross-mode *projection* metric — registered so the family concept is unified across all the
 # ratchet gates, but (like leak) its gate stays projection-sourced (NOT migrated into the
 # per-mode/per-run record).

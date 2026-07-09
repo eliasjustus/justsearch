@@ -311,7 +311,7 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
 @click.pass_context
 def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
                           allow_engine_mismatch):
-    """Recall-completeness ratchet (tempdoc 699 / register D-005) — fail on a union-recall drop.
+    """Recall-completeness ratchet (tempdoc 701 / register D-005) — fail on a union-recall drop.
 
     Reads the latest eval-results run's staged_recall_accounting projection for DATASET and
     compares its leg_union_recall against the per-corpus *floor* in

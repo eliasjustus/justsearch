@@ -1,4 +1,4 @@
-"""Tests for the recall-completeness ratchet (tempdoc 699 / D-005 recall-survival sibling)."""
+"""Tests for the recall-completeness ratchet (tempdoc 701 / D-005 recall-survival sibling)."""
 
 from __future__ import annotations
 
@@ -181,7 +181,7 @@ class TestReleaseProjection:
 
 
 def test_committed_pointer_file_projects_to_prior_pinned_values():
-    """tempdoc 699 (review fix): pin the real committed union-recall-gate-baselines.v1.json on the
+    """tempdoc 701 (review fix): pin the real committed union-recall-gate-baselines.v1.json on the
     real release.v1.json. The release carries no `union_recall` section, so the loaded baselines
     must equal the file's fallback_baselines verbatim (the measured floors). Both pinned corpora
     are REPRODUCIBLE (beir/scifact BEIR-fetch + golden/needle-burial-v1 committed 635-corpora
