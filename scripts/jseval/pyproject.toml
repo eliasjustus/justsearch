@@ -27,7 +27,7 @@ scan = ["Pillow>=10.1"]
 # Agent-utility eval (tempdoc 624): runs the cell matrix THROUGH Inspect AI
 # (claude -p solver, condition-as-task, seed-as-epoch). Opt-in so core jseval
 # stays lean — the ~80 transitive deps only land for `pip install jseval[agent]`.
-agent = ["inspect-ai>=0.3.240"]
+agent = ["inspect-ai>=0.3.240", "claude-agent-sdk>=0.2.111"]
 dev = ["pytest>=7.0", "pyyaml>=6.0", "hypothesis>=6.0"]
 
 [project.scripts]

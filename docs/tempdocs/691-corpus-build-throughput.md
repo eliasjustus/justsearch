@@ -395,11 +395,21 @@ observation is also logged in the observations shard.)
 3. **encoder_profiles batched-path blind spot:** `BertNerInference.inferBatch`
    (ORT run ~line 391) records nothing into `EncoderProfileAccumulator` —
    healthy runs report meaningless NER ortP50 from stray batch=1 calls.
-4. **Model-file distribution decision (owner):** commit
-   `models/onnx/ner/model_fp16.onnx` (270 MB, LFS) + `build.json`? — several
-   model files across `models/` are currently untracked; whether they belong
-   in LFS or in a fetch-at-setup flow is a distribution-policy question
-   (tempdoc 657 territory).
+4. **Model-artifact integrity + distribution → route to tempdoc 657, not a
+   new tempdoc.** Two coupled questions: (a) the distribution-policy decision
+   (owner) — commit `models/onnx/ner/model_fp16.onnx` (270 MB, LFS) +
+   `build.json`, or fetch-at-setup? several `models/` files are untracked
+   today; (b) the class-fix this incident exposed — the `models-v1` registry
+   pack shipped the CPU/INT8 variant with **no fp16 sibling** (§Addendum in
+   647; §Unverified-assumptions #7), so any fresh GPU environment reproduces
+   the silent INT8-on-CUDA degradation. Candidate work: pack ships both
+   variants; wire the existing `scripts/models/check-integrity.py` into CI or
+   startup; `build.json`-presence assertion. All of this is model-pack
+   composition + install-flow, which **tempdoc 657
+   (install-modes-and-model-pack-decomposition) already owns** — add it there
+   as an item with F-013 + this tempdoc as the evidence trail. No new tempdoc:
+   the runtime finding lives in the inference-runtime register (F-013), the
+   pack/install work is 657's subject.
 5. **build-ner.py incremental/fp16-only mode** (friction item; also the
    repair path for its interrupted-run failure mode).
 6. **Next throughput lever: embedding** (62% share, GPU 52% util) — candidate
@@ -525,7 +535,8 @@ is inline in the phase sections above. Durable evidence pointers:
   chunk embedding (E-5).
 - Model distribution decision covers more than NER: `model.onnx`/`model_fp16.onnx`
   for gte-multilingual-base, reranker, and naver-splade-v3 are ALSO untracked
-  on the dev machine despite the LFS policy — same decision, one policy.
+  on the dev machine despite the LFS policy — same decision, one policy. Owned
+  by tempdoc 657 (see Remaining-item #4) — no separate tempdoc.
 - jseval tooling wishlist accumulated across §A-5/§B-4/§C/§E friction lists
   (abort-keep-partial, chunk-aware ETA, `--gpu-trace`, batches-vs-calls
   metric units, dataset regeneration pointers) — route to the jseval owner

@@ -35,12 +35,14 @@ final class UIOperationViewConformanceTest {
   void coreOperationWireMatchesGolden() throws IOException {
     List<Map<String, Object>> entries =
         new UIOperationEmitter().emit(new CoreOperationCatalog(), List.of());
-    String currentJson = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(entries);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    String currentJson =
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(entries).replace("\r\n", "\n");
 
     Path goldenPath = goldenDir().resolve(GOLDEN);
     if (!Files.exists(goldenPath)) {
       Files.createDirectories(goldenPath.getParent());
-      Files.writeString(goldenPath, currentJson + System.lineSeparator());
+      Files.writeString(goldenPath, currentJson + "\n");
       fail("Golden captured at " + goldenPath + ". Re-run to verify (expected on first run).");
     }
 

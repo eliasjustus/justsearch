@@ -222,11 +222,13 @@ final class SearchPlannerApprovalCorpusTest {
 
   private static void captureDecision(String fileName, SearchDecision decision) throws IOException {
     JsonNode current = MAPPER.valueToTree(canonicalize(decision));
-    String currentJson = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    String currentJson =
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current).replace("\r\n", "\n");
     Path path = schemasDir.resolve(fileName);
     if (!Files.exists(path)) {
       Files.createDirectories(path.getParent());
-      Files.writeString(path, currentJson + System.lineSeparator());
+      Files.writeString(path, currentJson + "\n");
       fail("Decision captured at " + path + ". Re-run to verify (expected on first run).");
     }
     String baselineJson = Files.readString(path);

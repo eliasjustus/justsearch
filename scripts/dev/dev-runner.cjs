@@ -17,6 +17,9 @@ const net = require('net');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn, spawnSync, execFile } = require('child_process');
+// Tempdoc 696: resolve a >= 24 JDK (target Temurin 25) so a stale JDK-8 JAVA_HOME
+// can't break the assemble/head/worker JVMs. Injected into every JVM spawn's env below.
+const { resolveJdkHome } = require(path.join(__dirname, 'lib', 'resolve-jdk.cjs'));
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const uiWebDir = path.resolve(repoRoot, 'modules', 'ui-web');
@@ -602,6 +605,12 @@ async function fetchConfirmedIndexBasePath(apiPort) {
   return null;
 }
 
+// "Ready" here means the HEAD is up (`/api/status` returns 200) — NOT that the Worker is ready. The
+// Worker connects/warms up a beat later, and until it is available the WorkerCapability before-handler
+// returns 503 ("Knowledge Server not ready") on `/api/knowledge/*`. Consumers that hit worker endpoints
+// immediately after "stack up" must tolerate that transient 503 — see stage-reference-corpus.mjs
+// stageAndVerify's ingest retry (tempdoc 656 §J/§K.5). (The MCP dev server exposes a separate
+// worker-ready readiness level for callers that need it.)
 async function waitForBackendReady(apiPort, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   const url = `http://127.0.0.1:${apiPort}/api/status`;
@@ -1011,7 +1020,13 @@ async function cmdStart(opts) {
     const buildResult = spawnSync(
       gradlePath,
       ['assemble', '-PskipWebBuild=true'],
-      { cwd: repoRoot, shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'inherit'] },
+      // Tempdoc 696: pin a >= 24 JDK so a stale JDK-8 JAVA_HOME can't fail the assemble.
+      {
+        cwd: repoRoot,
+        shell: process.platform === 'win32',
+        stdio: ['ignore', 'pipe', 'inherit'],
+        env: { ...process.env, JAVA_HOME: resolveJdkHome() },
+      },
     );
     if (buildResult.status !== 0) {
       throw new Error(`Gradle assemble failed with exit code ${buildResult.status}`);
@@ -1079,6 +1094,9 @@ async function cmdStart(opts) {
       env: {
         ...process.env,
         ...aiEnv,
+        // Tempdoc 696: pin a >= 24 JDK for the Head JVM (ui.bat prefers JAVA_HOME); the
+        // Worker and inference processes the Head spawns inherit this env.
+        JAVA_HOME: resolveJdkHome(),
         JUSTSEARCH_API_PORT: String(apiPortRequested),
         JUSTSEARCH_DATA_DIR: dataDir,
         JUSTSEARCH_HOME: dataDir,
@@ -1195,7 +1213,12 @@ async function cmdStart(opts) {
   // HeadlessApp, which writes both files); removing it tightens the
   // closure ("one mechanism per concern").
   const waitForPortDeadline = Date.now() + portEmitTimeoutMs;
-  while ((apiPortRequested <= 0 || apiPortActual <= 0) && Date.now() < waitForPortDeadline) {
+  // Exit the moment the ACTUAL bound port is known. The old guard also OR'd in
+  // `apiPortRequested <= 0`, which is permanently true for an ephemeral request (`--api-port 0`,
+  // the default) — so the loop discovered the port (below) but ignored it and spun the FULL
+  // `portEmitTimeoutMs` regardless (15s local / 300s CI). On CI that 300s exceeded the onramp
+  // smoke's 240s startStack budget → deterministic "stack start timed out" (tempdoc 656 §I).
+  while (apiPortActual <= 0 && Date.now() < waitForPortDeadline) {
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 100));
     if (!portEmitted && apiPortActual <= 0) {

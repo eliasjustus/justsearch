@@ -1,9 +1,9 @@
 ---
 title: "Agent-eval executor v2: replace the claude-CLI subprocess shellout with an in-process Agent-SDK cell run in one concurrency pool — cells become observable/resumable/forensically complete, and the same substrate change removes the run's structural wall-clock waste (per-condition serialization + unbounded retry/turn budgets) so the measurement runs at cadence"
 type: tempdocs
-status: "open — DESIGN SETTLED (2026-07-07), no implementation yet. Read §Settled design first (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
+status: "IMPLEMENTED + REVIEW-FIXED (2026-07-08) on branch worktree-675-executor-v2 — after a critical + refute-first review, CLEAN-RESTART resume (was PRE-EXISTING BROKEN; my earlier 'resume works' claim was FALSE), partial-forensics-on-timeout, and max_turns are fixed + live-verified; full jseval suite green (1522 pass, 2 pre-existing unrelated reds). HARD-KILL resume is a SEPARATE, CONFIRMED-STILL-BROKEN finding (live-verified 2026-07-08, §Unverified assumptions) — an upstream Inspect limitation the F0 fix does not and cannot address; a certified run must complete without interruption or be restarted from scratch, not resumed, after a hard crash. THROUGHPUT PILOT-MEASURED (2026-07-08): a contention-matched 24-cell pilot projects the full 520-cell matrix at ≈ 2.2 h / ≈ $72 @ concurrency 6, 0 exclusions (±~25%; concurrency headroom likely, but see §Post-pilot theorization H/I — the ceiling may be a shared Anthropic rate limit, not just the backend). A full CERTIFIED run (statistical A/B/C result) is still owed. Read §Review fixes (2026-07-08) + §Unverified assumptions + §Post-pilot theorization (2026-07-08, exploratory) + §Process retrospective (2026-07-08, practice lessons for this lineage) FIRST, then §As-built (2026-07-07) for the delivered change + validation. Read §Settled design for the design intent (current truth); §Design pass (attribution + bench-backed lever ranking), §External research (Agent SDK parity — one premise corrected: the Python Agent SDK still spawns a CLI subprocess per cell, so the win is forensics/retry-fix/max_turns, NOT subprocess removal — moot for wall-clock since the backend's measured ~6.7 qps ceiling + the max_tasks=1 2× bind first), and §Theorization (open reframes) precede it as dated history. Settled v2 = an in-process Agent-SDK cell + ONE concurrency pool (matrix folded from one-task-per-condition into one task, cells as samples, condition a sample field) + per-cell wall-clock budget + generous max_turns; Inspect resume, 624's cell-identity seam, and the utility-comparison.v1 record are PRESERVED not rebuilt. Owner priority (2026-07-07): CUT WALL-CLOCK; CPU-inference offload / dedicated-CPU-backend REJECTED (slower CPU run holds the box longer + contends the CPU dev needs). §Settled design names the exact ORPHANS whose deletion/tombstoning is THIS tempdoc's work (classic run_agent_eval + _get_reflection + _build_agent_cmd + _build_argv + build_disallowed_tools + the max_tasks=1 construct + cmd_agent_eval; shared helpers relocate first) and hands the statistical/cadence reframes to 624/673 (recognized, not built here). Reach: v2 instantiates a candidate 'two-tier/continuous measurement' shape (+ Amdahl-ceiling, attribute-signal, memoize-invariant-arm), each recorded with an earn/retire condition. Trigger (still valid): the next certified agent-utility run or re-certification event. Spun out of tempdoc 624's certified-run session (2026-07-03), which hardened the subprocess executor enough to finish but demonstrated its structural ceiling."
 created: 2026-07-03
-updated: 2026-07-07
+updated: 2026-07-08
 author: agent retrospective (624 certified-run session), filed by agent — STUB
 category: agent-eval / jseval / execution-infrastructure
 related:
@@ -19,6 +19,25 @@ principle: "a measurement cell whose failures are forensically blind cannot vouc
 > evidence below existed) and evaluate it against alternatives on its merits.
 
 # 675 — Agent-eval executor v2 (in-process)
+
+## Index (added 2026-07-08 — a map of where things live, not a summary; read the section itself for content)
+
+This tempdoc grew across ~12 dated passes; this index exists so a later pass can jump to what's relevant
+instead of reading linearly (§Process retrospective names why).
+
+| Section | Date | One-line takeaway |
+|---|---|---|
+| §Goal / §Context / §Direction | 2026-07-03 | Original stub: the executor is a forensically-blind subprocess shell-out; scope the replacement. |
+| §Design pass | 2026-07-07 | Measured attribution of the ~3h; single-pool + in-process cell is the settled lever ranking. |
+| §Theorization & open directions (A–G) | 2026-07-07 | Exploratory: objective framing, cadence reframes, structural reuse, the backend's Amdahl ceiling, named candidate principles. |
+| §Settled design | 2026-07-07 | The actual engineering design: what's extended/preserved, the orphans list, the scope boundary. |
+| §Pre-implementation verification | 2026-07-07 | Live SDK probes that de-risked implementation before writing it. |
+| §As-built | 2026-07-07 | What shipped, first pass — **contains a claim later found FALSE** (see §Review fixes F0). |
+| §Review fixes | 2026-07-08 | Critical + refute-first review found and fixed 3 real bugs (resume, partial-forensics, max_turns). |
+| §Unverified assumptions | 2026-07-08, updated 2026-07-08 | Open/deferred items — **includes the hard-kill-resume finding: confirmed still broken**, a real, separate limitation. |
+| §Post-pilot theorization (H–L) | 2026-07-08 | Exploratory: why "raise concurrency" may hit a rate-limit ceiling before the backend does. |
+| §Process retrospective | 2026-07-08 | Session-level practice lessons — verification-gap risk, tooling friction, doc-structure cost. |
+| §Follow-up implementation | 2026-07-08 | This plan's own delivery: the float-drift guard, the hard-kill live check, this index, a `CLAUDE.md` pitfalls row. |
 
 ## Goal
 
@@ -497,7 +516,11 @@ cheap enough to run at the cadence decisions need.
   `eval_set_id`** (pinned from a config hash precisely so a crash-restart resumes; `agent_utility_inspect.py:355-374`)
   → resume is *satisfied*; v2 preserves it, only adjusting the sample-id shape to carry `condition`
   (e.g. `"{condition}|q{i}"`) so ids stay unique inside one task. Adaptive concurrency, epochs-as-
-  seeds, schema-valid EvalLog — all retained.
+  seeds, schema-valid EvalLog — all retained. **CORRECTED 2026-07-08: this pre-implementation claim
+  was FALSE as implemented** — resume was actually broken (a pre-existing upstream Inspect defect,
+  not caused by this restructure) and needed a real fix; see §Review fixes F0 for the root cause, the
+  fix, and its live evidence. Left here unedited (only annotated) so the plan-vs-actual gap stays
+  visible rather than silently smoothed over.
 - **624's "one identity, three roles" seam.** Sample id = cell identity = resume key = pairing key =
   record key. v2 conforms; it does **not** introduce a new identity or a parallel resume mechanism.
 - **The record + composer.** `utility-comparison.v1` is unchanged, and `compose_utility` is decoupled
@@ -543,6 +566,30 @@ orphaned, and some neighbours must **relocate first** so the orphan deletes clea
    (`run_retrieval_eval`, `run_tier2_eval`, `load_queries`, formatters) which are **not** 675's to
    touch. Leaving a "retired" module alive purely as a helper-import target is the anti-pattern the
    relocation avoids.
+
+**Completion status (verified 2026-07-08 by direct grep against the shipped tree, not recalled from
+memory):**
+- Items 1, 2, 4, 5, 5b — **confirmed deleted.** Zero live definitions of `run_agent_eval`,
+  `_get_reflection`, `_build_agent_cmd`, `_build_argv`, `parse_claude_stream_json`,
+  `parse_claude_init_event`, or `cmd_agent_eval` anywhere under `scripts/jseval/jseval/`; only
+  historical docstring/comment mentions remain (e.g. "the classic `run_agent_eval`…", explaining
+  history, not calling it). `test_agent_retrieval_eval.py` no longer calls `run_agent_eval`.
+  `max_tasks=1` likewise has zero live occurrences (comment-only, explaining its removal).
+- Item 3 — **deliberately NOT deleted**, a recorded deviation from this plan (see §Review fixes
+  2026-07-08's "Deviation recorded"): `build_disallowed_tools` was kept and reused to build the Agent
+  SDK's `disallowed_tools` denylist directly (the SDK does expose a real denylist, not only the
+  allowlist the 2026-07-07 external-research pass had found — see §Pre-implementation verification's
+  "Doc-research corrections"). The plan's premise (SDK offers only `allowed_tools`) was superseded by
+  a later, more accurate finding before implementation; keeping the helper was the correct call, not
+  a missed deletion.
+- Item 6 — **NOT executed as planned; the divergence is benign, not a gap.** The shared helpers
+  (`stage_corpus_dir`, `_score_answer`, `find_disallowed_tool_calls`, `find_leak_suspect_tool_calls`)
+  still live in `agent_retrieval_eval.py`, never relocated to a neutral module. The plan's stated
+  reason to relocate — "leaving a retired module alive purely as a helper-import target" — does not
+  apply in practice: the module was never *purely* retired, since it has always also hosted the
+  **independent Tier-1/Tier-2 retrieval runners** this tempdoc explicitly excludes from its own scope.
+  A relocation remains a legitimate future tidy-up (smaller blast radius per file) but is not owed by
+  this tempdoc's own completion bar.
 
 ### Scope boundary — what 675 does NOT own (handed to owners, recognized-not-built)
 
@@ -615,7 +662,8 @@ candidate shapes, not new apparatus.
   leaked in. Cleaner than the CLI's isolated-tempdir trick.
 - **Concurrency — real.** 8 concurrent SDK cells: **7/8 clean**, total **39.3 s** vs **129.3 s** serial
   (**~3.3×**); the 1 error was a max-turns straggler (handled as an excluded cell, parity with today).
-  No races/crashes. (Reproduce: `$CLAUDE_JOB_DIR`-local probe; backend `battlefield-en-v1`.)
+  No races/crashes. (Reproduce: a throwaway script launching N concurrent `ClaudeSDKClient` sessions
+  against a live `battlefield-en-v1` backend; not committed to the repo.)
 
 **Doc-research corrections (verified against the installed SDK, authoritative over §External research):**
 - `ClaudeAgentOptions` HAS **`disallowed_tools`** (1:1 with `--disallowedTools` — no allowlist rewrite
@@ -627,8 +675,11 @@ candidate shapes, not new apparatus.
   `toggle_mcp_server` / `disconnect`.
 
 **Integration details discovered (handle in implementation; none invalidate the design):**
-1. **`max_turns` exhaustion raises an exception** (not a `ResultMessage`) — the executor must catch it
-   and mark the cell errored (parity with today's timeout handling).
+1. **`max_turns` exhaustion returns an errored `ResultMessage`** — subtype `error_max_turns`,
+   `is_error=True`, `errors=["Reached maximum number of turns (N)"]` (CORRECTED 2026-07-08 by the review's
+   live check; the pre-implementation guess that it *raises* was wrong — see §As-built review fixes F1).
+   The executor's `_record_cell` marks the cell errored from that `ResultMessage`; partial tool_calls
+   are preserved (F2).
 2. **`query()`'s `SystemMessage` init does not list the offered tools/mcp_servers** — the offered-MCP-
    surface assertion moves from init-event parsing to `ClaudeSDKClient.get_mcp_status()`.
 3. **The leak assertion must distinguish attempted-but-blocked from executed** — a blocked disallowed
@@ -649,3 +700,482 @@ all confirmed. The residual is well-understood *integration*: the single-pool re
 exercised end-to-end (only the SDK cell in isolation); the assertion-porting and max-turns-exception
 handling are new-but-bounded; and the orphan deletion touches a grab-bag file with unrelated Tier-1/2
 consumers (relocate-first mitigates). None of these is an unknown that risks the shape.
+
+---
+
+## As-built (2026-07-07) — implemented on `worktree-675-executor-v2`, live-validated
+
+Delivered the settled design. The full unit suite is green (1503 tests; the only REDs are the two
+pre-existing `test_correction_probe` cases, missing data file, unrelated). A live end-to-end smoke
+(A+B × 3 queries × 1 seed, real haiku agents against a live JustSearch `/mcp` backend) produced a
+valid `utility-comparison.v1` record. An independent second-agent review (reviewer ≠ implementer)
+found one **confirmed** measurement-validity bug that the smoke had missed — fixed and regression-tested.
+
+**What shipped**
+- **Cell interior → in-process `ClaudeSDKClient`** (`agent_utility_inspect.py`): tool calls, tool
+  *results*, usage/cost, and the offered MCP surface come back as objects; no stdout parsing.
+  Per-cell **`asyncio.wait_for` wall-clock budget** wraps the whole cell incl. the disclosed retry;
+  a generous **`max_turns`** cap; `disallowed_tools` / `add_dirs` / `setting_sources=None`
+  (verified-clean isolation) / `permission_mode` set from the sample's condition.
+- **Single concurrency pool**: ONE Inspect task, samples = the flat `condition × query`
+  cross-product, `condition` a sample field, `sample.id = "{cond}|q{i}"`; `eval_set` without
+  `max_tasks=1`. 624's cell-identity seam and `utility-comparison.v1` are preserved. (Inspect's
+  durable resume was ASSUMED preserved here but was in fact **broken** — a pre-existing upstream
+  Inspect defect; the review found and FIXED it, see §Review fixes F0 below.)
+- **Object-based assertions**: `tool_calls` (composer-facing) = only tools that ACTUALLY executed
+  (non-error result, not in `permission_denials`); blocked attempts stashed separately as forensics;
+  offered-surface via `ClaudeSDKClient.get_mcp_status()` with the tri-state (`unverified` never
+  conflated with healthy) preserved.
+- **Readers** (`agent_utility_run.eval_logs_to_summaries` + `scan_leaked_cells`,
+  `utility_judge._iter_eval_records`): read `condition` from sample metadata + strip the `sample.id`
+  prefix; exclude on either `metadata.error` OR Inspect's own `s.error`.
+- **Teardown (same PR)**: deleted the classic runner (`run_agent_eval`, `_get_reflection`,
+  `_build_agent_cmd`), the subprocess argv/stdout parsers (`_build_argv`, `parse_claude_stream_json`,
+  `parse_claude_init_event`) and the `--disallowedTools` CLI formatting, `cmd_agent_eval` (+ its
+  tests), and regenerated `inventory.generated.json`. `cmd_utility_compose` (compose-from-classic-
+  result-files) is **tombstoned** (deprecation note → `utility-run`), not deleted, as a format-coupled
+  utility beyond the executor's scope. `claude-agent-sdk>=0.2.111` added to the `[agent]` extra.
+
+**Load-bearing implementation findings (empirically verified, worth recording)**
+- Under `permission_mode="bypassPermissions"`, a disallowed tool is **removed from the agent's
+  toolset** — it usually never appears as an attempt at all; `permission_denials` is empirically
+  **empty**. A tool that runs and fails has `is_error=True`; a successful tool has `is_error=None` (not
+  `False`). The executed-vs-blocked split therefore rests on the tool_result's `is_error`, with
+  `permission_denials` a belt-and-suspenders cross-check.
+- **Review-caught bug (fixed):** `ResultMessage.permission_denials` is a raw pass-through of
+  **dicts** (`{"tool_name", ...}`); the first cut did `set(permission_denials)` → a latent
+  `TypeError: unhashable type: 'dict'` in the measurement path, and its unit test used bare strings (an
+  `unreachable-seed-green` false green). Fixed to extract `tool_name` robustly; the cell projection is
+  now wrapped so ANY error marks the cell excluded rather than fabricating an included one; the test
+  now uses the real dict shape.
+- `max_turns` exhaustion surfaces as an errored `ResultMessage` (subtype `error_max_turns`) → excluded
+  cell (parity with a timeout; the earlier "or a raised exception" hedge was disproven by the review's
+  live check — it is always a `ResultMessage`). Cross-condition pairing keys stay aligned because all
+  three readers apply the identical prefix-strip.
+
+**Operational note** (logged to the observations shard): Inspect's rich display crashes with a
+`UnicodeEncodeError` on the braille spinner when stdout is redirected/non-tty on Windows (cp1252) —
+set `INSPECT_DISPLAY=none` (and/or `PYTHONUTF8=1`) for backgrounded eval runs. Pre-existing (default
+display), but more relevant now that runs are long and non-interactive.
+
+**Not done here** (out of scope, per §Scope boundary): the statistical/cadence reframes (624/673), the
+backend rerank/query-cache ceiling (648). No PR opened yet.
+
+### Review fixes (2026-07-08) — critical review + refute-first pass
+
+A critical review of the 2026-07-07 commit, hardened by a refute-first adversarial subagent (which
+overturned two of my initial conclusions before I could ship the wrong fix), found real issues. The
+durable evidence for each fix is a named regression test + the reproducible full-suite command (see
+Validation below); the live numbers quoted per fix were one-time observations from a throwaway driver
+this session (NOT a committed artifact — reproduce via the per-fix procedure against a live dev stack).
+
+- **F0 — resume was BROKEN, now FIXED.** Re-invoking with the same `log_dir` raised
+  `PrerequisiteError: … not associated with a task passed to eval_set`. Root cause (isolated by a
+  dedicated subagent): `max_budget` was the only **`float`** in the Inspect task/solver IDENTITY, and
+  Inspect's JSON recorder reads persisted floats back via `ijson` without `use_float`
+  (`inspect_ai/log/_recorders/json.py`), so `0.5`→`Decimal('0.5')`; `to_json(Decimal('0.5'))` → `"0.5"`
+  (quoted) ≠ `to_json(0.5)` → `0.5`, so the resumed task-id never matched the persisted one. A random
+  `mkdtemp` staged-corpus path was a SECOND necessary factor. **Both pre-existing** (the old
+  per-condition code + 624 had the same latent bug; my as-built's "resume works" claim was false and is
+  corrected above). Fix: thread `max_budget` as a **str** through the identity args (`float()` at use)
+  + a **deterministic staged path** keyed by `eval_set_id` (`stage_corpus_dir(..., stable_key=)`).
+  `eval_set_id`, answer-key isolation, and cohort identity are all unaffected. **Live-verified:** a
+  real-agent re-run of the same `log_dir` skipped the completed cell in **1.7 s** (vs 161 s cold).
+  Regression test: `test_run_utility_eval_resumes_on_rerun_same_log_dir`. This is a worked-around
+  UPSTREAM Inspect defect — any float task-arg / non-default `GenerateConfig` float would trip it; the
+  solver docstring warns against reintroducing a float into the arg surface. **External corroboration
+  (2026-07-08 research pass):** the Inspect changelog shows the maintainers actively hardening
+  `task_identifier` against non-canonical fields — `0.3.189` *"task_identifier is now computed using
+  redacted model_args"*, `0.3.241` *"task_identifier now excludes runtime-only GenerateConfig fields
+  from model_roles configs"* — confirming the bug *class* is real and known upstream, though neither
+  entry covers our exact field (`max_budget`, a plain solver kwarg, not `GenerateConfig`/`model_roles`);
+  we're pinned at `0.3.240`, one version behind `0.3.241`, and upgrading would not fix this case. No
+  existing upstream issue matches our specific float→Decimal-via-`ijson` mechanism — worth filing
+  upstream if this becomes a recurring class of bug (not done here; no PR/issue opened without asking).
+- **F2 — timed-out/errored cells now keep their partial tool_calls.** The Context section named
+  "timed-out cells lose their partial evidence" as a problem v2 must fix; the first cut still lost it
+  (locals lost on `wait_for` cancellation). Fix: `_one_attempt` writes into a **shared `capture` dict**;
+  `solve()` always projects it (partial or complete), and `_record_cell` stashes tool_calls
+  unconditionally + `setdefault`s its errors so a timeout error is not clobbered. **Live-verified:** a
+  max_turns-3 cell recorded 3 partial tool_calls alongside its error. Test:
+  `test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error`.
+- **F1 — max_turns raised + exposed + failure-mode corrected.** 40 sat INSIDE the observed useful
+  range (live cells hit 36–39), so it clipped valid cells; raised to **100** (the wall-clock budget
+  stays the primary bound) and exposed as `--max-turns`. The pre-impl guess that exhaustion *raises*
+  was disproven live — it returns an errored `ResultMessage` (subtype `error_max_turns`); the tempdoc's
+  integration-detail #1 is corrected accordingly.
+- **With-tool path oversell — closed.** The original smoke never exercised a real retrieval round-trip
+  (every B cell used file tools). A live **condition-C** cell (file tools disallowed → agent must use
+  justsearch) executed **42 `mcp__justsearch__*` calls** captured through the object path
+  (`mcp_offered=6`, `disallowed=0`, `leak=False`) — the with-tool path is now live-verified, not
+  unit-test-only.
+- **Deviation recorded:** `build_disallowed_tools` was KEPT (not deleted as the §Settled-design orphan
+  list planned) — it is reused to build the SDK's `disallowed_tools` denylist. Stale `run_agent_eval`
+  references in `utility_calibrate.py` docstrings were also cleaned up.
+
+**Validation (durable + reproducible).** `cd scripts/jseval && PYTHONUTF8=1 INSPECT_DISPLAY=none python
+-m pytest -q` → **1522 passed, 2 failed**; the 2 are the pre-existing `test_correction_probe::TestLoadManifest`
+(missing `scripts/jseval/jseval/data/correction-eval-queries.v1.json`, absent from git history —
+unrelated). Durable proofs of the fixes: `test_run_utility_eval_resumes_on_rerun_same_log_dir` (F0) and
+`test_record_cell_preserves_partial_tool_calls_and_does_not_clobber_timeout_error` (F2). The live numbers
+(1.7 s resume vs 161 s cold, 42 `mcp__justsearch__*` calls, `error_max_turns`) are session observations,
+reproducible via `jseval utility-run --conditions C --seeds 1 --max-queries 1` against a live stack.
+
+**Concurrency-ceiling research note (2026-07-08):** `claude-agent-sdk`'s `ClaudeSDKClient` has no
+documented concurrency ceiling of its own — the real limit is the account's Anthropic API usage tier
+(requests/tokens per minute; Tier 1 ≈ 50 RPM up to Tier 4 ≈ 4,000 RPM). Pilot cells used up to 50
+tool-call turns each, so raising `concurrency` beyond 6 to close the remaining wall-clock gap risks a
+429 rate-limit that would misread as backend saturation — check the account's actual tier before the
+next concurrency pilot.
+
+### Unverified assumptions / deferred checks / follow-up (2026-07-08)
+
+Recorded so a later agent need not reconstruct them from the working session:
+
+- **End-to-end throughput — PILOT-MEASURED 2026-07-08 (≈ 2.2 h projected @ concurrency 6).** A
+  contention-matched pilot ran the real v2 executor over **24 cells** (conditions A+C interleaved in
+  ONE pool, `battlefield-en-v1`, 12 queries × 1 seed, concurrency 6, timeout 300 s, max_turns 100)
+  against a live stack: **363 s wall, 0 exclusions** (no timeouts / max_turns errors / crashes),
+  mean per-cell cost $0.139, per-cell turns A 9–50 / C 5–41 (max 50 — validates the max_turns=100
+  cap; at the old 40 the 46/50-turn cells would have clipped). Projection `520 × 363 s / 24` →
+  **≈ 7 870 s ≈ 2.19 h**, **≈ $72** for the full 26q × 2cond × 5seed × 2corpora matrix. **Caveats:**
+  ±~25% (a 24-cell pilot under-samples the straggler tail + tail-wave concurrency under-use); scales
+  ~inversely with concurrency UP TO the backend ~6.7 qps ceiling — the 0-exclusion result suggests
+  headroom to raise concurrency above 6 and cut the time further (untested). Reproduce: the pilot
+  driver logic = `run_utility_eval(conditions=("A","C"), max_queries=12, seeds=1, concurrency=6,
+  timeout_s=300, max_turns=100)` timed end-to-end. This is a projection, NOT a full certified run —
+  the certified statistical A/B/C result still requires the full matrix (which produces the exact
+  wall-clock + real variance as a byproduct).
+- **Upstream Inspect float-drift is worked around, not fixed.** The guard against reintroducing a float
+  into the task/solver arg surface is a docstring comment (prose-tier, ~70% adherence), not a test or
+  gate. Follow-up: a cheap unit test asserting no float in the resolved `task_args`/solver params, or an
+  upstream Inspect issue (`use_float=True` in `json.py`'s `ijson` read-back). Logged in this session's
+  observations shard.
+- **Mid-run crash resume — LIVE-VERIFIED 2026-07-08, and CONFIRMED STILL BROKEN. This is a genuine,
+  separate finding, not the F0 bug, and F0 does not fix it.** Two independent live checks: (a) a child
+  process running `run_utility_eval` (3 samples, `concurrency=1`, a 1s-per-sample trivial solver, no
+  live backend needed) was hard-killed (`Popen.kill()` → `TerminateProcess` on Windows) right after its
+  1st sample completed; (b) the identical setup with an added 2 s delay before the kill, by which point
+  all 3 samples had completed. **Both attempts produced the identical failure** — a parent-process
+  re-invocation on the same `log_dir` raised
+  `PrerequisiteError: … not associated with a task passed to eval_set`. Inspecting the killed run's own
+  persisted log (attempt b) ruled out the obvious explanations: `status: "success"`, all 3 samples
+  present, and the log's `task_args` (including the F0-fixed `max_budget: "0.5"` string and the
+  deterministic staged `corpus_dir`) match exactly what a fresh invocation with identical arguments
+  recomputes — so this is **not** a recurrence of F0's identity-hashing drift, and it is **not** a
+  write-flush timing issue (the 2 s-delay variant, which let the run reach a clean `status: success`
+  before the kill, failed identically). The most likely mechanism, not fully isolated here (judged out
+  of this check's scope — see below): `eval_set`'s "is this log directory clean/resumable" check
+  reads more than a single log's own content — likely `eval_set`'s own run-level bookkeeping
+  (`eval-set.json`/`logs.json`) or a finalization step that only runs on a *normal* `eval_set()` return,
+  which a hard kill always skips regardless of how much underlying work finished. **Separately, a hard
+  kill also leaves the deterministic staged corpus directory uncleaned** (the `finally: shutil.rmtree(...)`
+  in `run_utility_eval` never runs on `TerminateProcess`), though this did not by itself explain the
+  failure (the parent's freshly-computed staged path is deterministic and match the log's regardless).
+  Inspect's own error message names `--log-dir-allow-dirty` as a possible escape hatch — **not evaluated
+  here**, its semantics ("allow logs from OTHER eval sets") sound aimed at a different scenario and it
+  was not tested for correctness/safety. **Net: resume is reliable across a clean two-invocation
+  sequence (F0, live-verified, unit-tested) but does NOT survive a hard process kill, regardless of how
+  much progress was made before the kill — an upstream Inspect limitation, out of 675's scope to fix.**
+  A future certified run must be run to completion without interruption, or restarted from scratch (not
+  resumed) after any hard crash — this is a real operational constraint worth carrying into 624's
+  planning, not just a footnote here.
+- **The executed-vs-blocked "blocked" branch is unit-test-only.** Under `bypassPermissions` a disallowed
+  tool is removed from the toolset, so it never appears as an attempt — the `_blocked()` blocked branch
+  is near-unreachable live; its coverage is the `test_record_cell_*` unit tests, not a live denial.
+- **No committed evidence bundle for the live checks.** `capture_evidence` crashed on a libuv assertion
+  this session (it captured only api-status/health, run-id `c57e1b65-…`), so the live-check outputs
+  exist only in the session's throwaway driver, not a durable bundle. Re-run the per-fix procedures to
+  regenerate.
+
+---
+
+## Post-pilot theorization (2026-07-08) — broad framing before the concurrency design settles
+
+> **Status: exploratory, not decided** — same posture as §Theorization & open directions (2026-07-07,
+> §A–G above), which this section extends rather than repeats. New inputs since that pass: the executor
+> is implemented and review-fixed, a live 24-cell pilot exists (≈2.2h/≈$72 projected @ concurrency 6, 0
+> exclusions), and a targeted external-research pass found the Agent SDK has no concurrency ceiling of
+> its own — the account's Anthropic API rate-limit tier is the real constraint (§As-built, §Review
+> fixes). The projected 2.2h is still felt as too long, and the natural next lever is "raise
+> concurrency" — this section asks whether that's actually the right next question before a pilot ramp
+> is run. Several ideas below conflict with each other on purpose, as before.
+
+### H. Two (or three) ceilings, not one — sharpen §D before ramping concurrency
+
+§D (2026-07-07) measured the search backend's own ceiling directly: `bench-concurrency` fires
+back-to-back queries with no agent in between and finds ~6.7 qps, GPU-saturated on the reranker
+semaphore. But the throughput pilot runs **agents**, not bare queries — and an agent cell's wall-clock
+is mostly Anthropic API round-trips and reasoning between tool calls, not backend time. A cell with
+9–50 turns spread over 90–160s (pilot data) may issue only a handful of actual JustSearch calls in that
+window (and condition A issues **zero** — it has no search tool at all). So "6 concurrent agent
+sessions" is very likely a much smaller number of concurrent *backend requests* than 6 — the pilot's
+clean 0-exclusion result at concurrency 6 is consistent with this but does not prove it, because
+backend request-rate during the pilot was never measured directly.
+
+This means there are at least **two independent ceilings**, and a naive "ramp concurrency until
+something breaks" pilot conflates them:
+
+1. **The backend's GPU semaphore** (§D) — ~6.7 qps, saturates regardless of how the load arrives.
+2. **The Anthropic API rate-limit tier** (2026-07-08 research pass) — RPM/TPM, account-level, shared
+   with every *other* Claude Code session on the same account (see §I).
+
+A third, softer ceiling — local process/RAM/CPU overhead of N concurrent `ClaudeSDKClient` sessions
+(each still spawns a CLI subprocess, per the 2026-07-07 external-research premise correction) — may
+bind before either of the above on a single dev machine.
+
+**The open attribution question this implies** (one level deeper than the 2026-07-07 matrix-level
+attribution, which asked "where does the 3h go across 520 cells" but never "where does *one* cell's
+~130s go"): what fraction of a single cell's wall-clock is Anthropic-API time vs. JustSearch-backend
+time vs. orchestration/idle time? Measuring this — e.g. summing tool-result timestamps against total
+cell duration, already available in the forensic record the executor now captures — would say whether
+concurrency headroom is bounded by the GPU semaphore, the rate limit, or neither, before spending a
+pilot ramp finding out empirically the more expensive way. Attribute before allocating (691's method,
+per §A), applied one layer further in.
+
+**RESOLVED (2026-07-08) — see `docs/tempdocs/699-agent-eval-concurrency-ceiling.md`.** A live
+timing-breakdown measurement (4 cells @ concurrency 1, 6 cells @ concurrency 6, condition C) confirms
+this hypothesis directly: **~90–93% of a cell's wall-clock is Anthropic API time**; JustSearch backend
+time is **2.7% at concurrency 1, 8.0% at concurrency 6** — implying only **~0.48 concurrent backend
+requests** on average at agent-concurrency 6, far below the ~6.7 qps / 8-way GPU-semaphore saturation
+point. **The backend ceiling (§D) is confirmed NOT currently binding.** The Anthropic rate-limit tier
+remains the more likely real ceiling (turn-rate math implies ~160 RPM aggregate at concurrency 6) but
+was deliberately NOT probed further — doing so risks throttling other concurrent Claude Code sessions on
+the same account, a real shared-resource action, not a default next step. See 699 for the full method
+(including a real double-counting measurement bug found and fixed before trusting the numbers) and the
+recommended, authorization-gated next step.
+
+### I. The CPU-offload rejection has a rate-limit-shaped twin one layer up
+
+§Owner framing (2026-07-07) rejected CPU-inference offload because it contends with the same box's CPU
+that interactive development needs — a faster-but-contending lever is not a clean win. The 2026-07-08
+research pass surfaces the same *shape* of argument one layer up, for a resource that wasn't on the
+radar before: the Anthropic API rate-limit budget is shared across **the whole account**, not just this
+eval — every interactive Claude Code session (including agents working in the other parallel worktrees
+this repo's multi-agent setup runs) draws from the same RPM/TPM pool. Raising eval concurrency to shave
+wall-clock could throttle *other* concurrent work the same way CPU-offload would have, just through a
+different shared resource. This was invisible in the 2026-07-07 pass because nobody had checked whether
+the Agent SDK had its own ceiling; it does not, so the rate limit is now a live consideration whenever
+concurrency is raised, not only a comment on this eval's own runtime. Whether it actually binds depends
+on the account's tier and how much headroom other concurrent work leaves — unverified, but the framing
+generalizes past this tempdoc's boundary; see §Candidate principle below.
+
+### J. Corpus-level horizontal sharding — an unnamed lever, orthogonal to §Lever ranking
+
+The two corpora (EN/DE) share nothing — unlike conditions A/B/C, which the settled design deliberately
+interleaves within one pool to remove the temporal confound (§Attribution item 1), the corpora were
+never a confound to begin with. Running each corpus's half of the matrix against its own backend+worker
+instance is embarrassingly parallel and additive to every lever already named (single pool,
+in-process cell, turn-tail cap, tiering). It was not considered in the 2026-07-07 lever ranking because
+that pass was about removing an accidental 2× (the condition serialization), not about multiplying
+further. The real cost: this repo's shared-dev-stack model is explicitly "one instance at a time"
+(GPU-bound, one dev stack per machine) — running two backends simultaneously would need either a second
+GPU/box or an ephemeral cloud instance, which is close in shape to the decoupling option the Owner
+framing already rejected for a *different* reason (CPU contention). Whether corpus-sharding avoids that
+same objection (it doesn't touch inference placement, only instance count) is worth a fresh look rather
+than assuming the prior rejection covers it — recorded as a possibility, not evaluated.
+
+### K. Time-to-first-signal vs. total-wall-clock — a cheap idea distinct from §B's harder direction
+
+§B (2026-07-07) names sequential/anytime-valid stopping as a statistically rigorous way to cut *total*
+wall-clock. There's a cheaper, lower-risk sibling that doesn't touch the statistics at all: Inspect
+already writes each sample's result to disk as it completes, so a running partial view ("N of 520 done,
+provisional effect estimate so far, no formal stopping guarantee") is buildable today with existing
+summarization code, with zero design risk to the certified result. This targets a *different* problem
+than raw throughput: "still too long" could mean the total duration blocks the shared stack for too
+long (the throughput problem §Lever ranking already addresses), or it could mean there is no visibility
+into how the run is going until it's over (a latency-to-insight problem, unaddressed by any lever named
+so far). These want different fixes, and it's worth being explicit about which one is actually the
+binding complaint before investing further engineering into raw concurrency.
+
+### L. The 2.19h pilot projection is cell-time only — a gap worth naming plainly
+
+The pilot projection (`520 × 363s / 24 ≈ 2.19h`) extrapolates purely from *per-cell* time. It does not
+include the **~40 min calibration/ingest fixed cost** that §Attribution (2026-07-07) already named as a
+real, if smaller, waste term in the original ~3h estimate. A from-scratch full run's actual door-to-door
+wall-clock is therefore closer to **≈2.19h + some fixed setup/calibration overhead** (not fully
+re-measured post-v2), not a literal 2.19h. Naming this so the projected number isn't quoted as the
+complete answer in any future public account of this work.
+
+### Candidate principle refinement (extends, does not replace, §Reach)
+
+§Reach already names **"Amdahl ceiling of a shared serial resource"** as a candidate principle
+(diagnostic: a saturated shared resource caps throughput regardless of client parallelism). §H and §I
+above suggest a refinement worth recording as a candidate, not yet promoted to §Reach's earn/retire
+form: **a pipeline can have more than one such ceiling, and they do not necessarily bind at the same
+concurrency or belong to the same owner** — here, a GPU semaphore inside this repo's backend and an
+Anthropic account-level rate limit shared with unrelated interactive work are both candidate ceilings,
+and a single "ramp concurrency until something breaks" pilot cannot tell them apart after the fact,
+because both fail in ways that can look similar (elevated latency, timeouts, exclusions) from the
+client's vantage point. The generalization — measure each shared resource's utilization independently
+before attributing a concurrency ceiling to "the" bottleneck — would extend beyond this tempdoc to any
+lever that fans out client-side load against more than one shared backend. Not yet worth a formal
+earn/retire entry; would earn one if a future concurrency pilot is misattributed to the wrong resource
+and costs real debugging time to untangle.
+
+---
+
+## Process retrospective (2026-07-08) — practice lessons for future agent work on this lineage
+
+> Written for a reader with no access to the working conversation this tempdoc came out of — an
+> external contributor, or a future agent picking this branch up cold. Scope: **process and tooling**,
+> not engineering findings (those are §Review fixes / §Post-pilot theorization / §Unverified
+> assumptions above). Applies to this tempdoc and its siblings 624/673, which share the same executor,
+> the same Windows dev environment, and the same jseval/Inspect toolchain.
+
+**Location of the work at time of writing:** branch `worktree-675-executor-v2`, no PR opened yet (by
+deliberate instruction — implementation and review-fixing were authorized, publication was not). There
+is no public PR/CI-run link to cite here; once a PR opens against this repository, this line should be
+updated with it.
+
+**Known unrelated dirty state, not part of this tempdoc — do not attribute to 675's work.** At the time
+this section was written, the shared main checkout carried uncommitted changes to
+`docs/tempdocs/691-corpus-build-throughput.md` and three `modules/ui-web/**` files, belonging to other,
+unrelated in-progress work in other worktrees. 675's own work is fully contained in the
+`worktree-675-executor-v2` branch; nothing above should be read as this tempdoc's output, and a future
+agent should not assume main was clean before this tempdoc's branch diverged from it.
+
+### The one real risk found: an infrastructure claim was verified by architecture-reading, not by running it
+
+The original as-built (2026-07-07) asserted "Inspect resume … PRESERVED" on the strength of reading how
+`eval_set`'s deterministic `eval_set_id` is *supposed* to work, without an actual two-invocation resume
+test. A later critical review (2026-07-08, hardened by an adversarial refute-first pass) found this
+claim **false** — resume was actually broken by a real, pre-existing upstream defect (§Review fixes F0).
+Had this claim gone out uncorrected, it would have misrepresented the eval's own credibility guarantee
+(whether a crash-restarted run can be trusted not to silently re-run or silently skip cells) — exactly
+the kind of claim this repo's `audit-without-test` and `static-green ≠ live-working` discipline exists
+to catch (`docs/reference/contributing/agent-postmortems.md`), and exactly what caught it here. **This
+is not a new lesson — it's a concrete, real-cost confirmation that those two named principles are
+earning their keep**, worth citing as evidence the next time someone questions whether that discipline
+is worth the friction. A second, smaller instance of the same pattern: a unit test guarding the
+`permission_denials` crash fix used a mock shaped as strings instead of the SDK's real list-of-dicts
+shape — a textbook `unreachable-seed-green` (same reference doc) that a live-shaped mock would have
+caught immediately. **Recommendation:** any claim of the form "X is preserved/works because the
+surrounding system is designed to do that" needs a runnable test that actually exercises X before it is
+stated as fact, not as a plan. Consider adding this exact resume case to
+`docs/reference/contributing/agent-postmortems.md` as a fresh named reference case (not done here —
+would need its own tier-register row per `.claude/rules/tier-register.md`'s gate; a follow-up, not a
+drive-by edit from a retrospective).
+
+### Recurring tooling friction — worth a durable fix, not a repeated workaround
+
+Two Windows/jseval environment quirks recurred across many separate command invocations this session,
+each requiring the same non-obvious fix re-applied by hand every time: (1) `jseval` is normally
+pip-installed editable against the checkout it was installed from, so running it against a *worktree's*
+copy needs `PYTHONPATH` pointed at the worktree's `scripts/jseval`, or the wrong copy silently runs; (2)
+Inspect AI's rich display crashes with `UnicodeEncodeError` on Windows when stdout is redirected/backgrounded
+(cp1252 can't encode its braille spinner glyphs), needing `PYTHONUTF8=1 INSPECT_DISPLAY=none` on every
+backgrounded invocation. Both are already logged as individual observations (pending fold into
+`docs/observations.md`'s Inbox at the usual merge-time point per `.claude/rules/branch-safety.md`), but
+neither is yet in a place a new agent would find *before* hitting them. **Recommendation:** a single
+`CLAUDE.md` "Common Pitfalls" row (or a short jseval-specific note) giving the exact env-var incantation
+for "running jseval against a worktree, backgrounded, on Windows" would save this from being
+independently rediscovered by every future session that runs an Inspect eval from a worktree — this
+tempdoc's own review-fix and pilot work needed it upward of half a dozen times. Separately: this
+session's live-verification work (§Pre-implementation verification, §Review fixes' live checks, the
+throughput pilot) each hand-wrote a fresh throwaway Python driver against `run_utility_eval` for a
+slightly different question (concurrency, resume, max-turns, throughput). A small, explicitly-throwaway,
+parameterized live-probe harness (conditions/queries/concurrency/max-turns as flags) reusable across
+sessions would cut this repeated-authoring cost for whichever tempdoc needs the next one — 624 and 673
+hit the identical need. Also worth noting plainly: `capture_evidence` failed on a libuv assertion during
+this session's live checks, so their results exist only as reproducible procedures (commands + expected
+output), not as a committed evidence bundle — a real, tool-level gap in the evidentiary trail, not a
+choice.
+
+### A structural cost of long-lived append-only tempdocs
+
+This tempdoc grew from a stub to ~960 lines across roughly a dozen dated passes in 36 hours. Each new
+theorization or audit pass had to read a large fraction of the existing document first to avoid
+duplicating prior analysis (`docs/tempdocs/` is deliberately append-only per this repo's own dating
+convention) — a re-orientation cost that grows with the document and is paid again by every future
+reader, human or agent. **Recommendation:** for any tempdoc expected to accumulate many dated passes,
+consider a short, maintained index near the top (one line per major dated section, updated as sections
+are added) — not a summary of content, just a map of *where* each decision/finding lives — so a new pass
+can jump to what's relevant instead of reading linearly. Not done retroactively here (would itself cost
+a pass to build and maintain correctly); recorded as a structural observation for whoever next
+authors a tempdoc expected to run long.
+
+### What worked well — worth preserving as practice
+
+- **Post-compaction continuity.** A mid-session context compaction preserved the active plan file and a
+  structured state block (worktree/branch, files touched, in-flight task); the session resumed directly
+  into the correct next step with no re-derivation of intent. This is exactly what the mechanism is for,
+  and it worked.
+- **Refute-first adversarial review** (an independent pass explicitly tasked with trying to disprove the
+  first reviewer's own conclusions, not just extend them) is what overturned two wrong initial
+  conclusions (an incorrect resume root-cause; an overreaching "asymmetric bias" framing on `max_turns`)
+  before either shipped as a fix. Cheaper to run than to discover in production.
+- **Check-before-touch discipline around shared state.** Every dev-stack start checked ownership via
+  `quick_health` first; uncommitted files in the main checkout belonging to other in-progress work were
+  identified and explicitly left untouched rather than assumed safe to include. No collisions occurred
+  this session, and this is why.
+- **A standing "before ending this session" hygiene prompt** (git status in both trees + a critical pass
+  over the tempdoc's evidence pointers) caught real, otherwise-easy-to-miss issues **twice** in this
+  session alone — a leaked ephemeral path, an unconfirmed cleanup plan, and a stale pre-implementation
+  claim left uncorrected nearby a later correction. Worth keeping as a standard closing step for any
+  substantive agent session, not just this one.
+
+### On prompt wording this session
+
+Reviewed for a wording change that would have prevented a wrong or confusing outcome: **none found.**
+The errors that occurred this session (the false resume claim; an initially overstated "the full run is
+needed" framing later self-corrected on direct challenge; an incomplete first pass on the closing
+hygiene check) all trace to gaps in the work itself, not to ambiguous or underspecified instructions —
+each direct, skeptical question ("why do we need the full run", "what remains now") was answered
+correctly once asked, and in one case caught a real overclaim. No process change to prompt wording is
+recommended from this session; direct, specific challenge questions were consistently the fastest way to
+surface a real gap and are worth continuing to ask.
+
+---
+
+## Follow-up implementation (2026-07-08) — closing the retrospective's own named items
+
+A plan-mode pass over exactly the items the §Process retrospective named as still-open (not new scope —
+the retrospective's own text is this section's brief). Investigation before implementation: re-read the
+identity-surface code and the existing resume-test fixture; grepped `jseval/` for an existing
+"reject-a-float" guard pattern (none — confirmed genuinely new code, not a duplicate) and for an
+existing "spawn-and-kill-a-real-process" test convention (`tests/test_backend.py` is the only file
+touching `subprocess.Popen`, and it always mocks it — confirmed there is no existing convention to
+extend for a live kill test, informing the decision below to keep that check a one-off, not a permanent
+pytest).
+
+**Delivered:**
+1. **Float-drift regression guard.** `_assert_no_float_task_args()` (`agent_utility_inspect.py`, called
+   as the first line of `agent_utility_task`) converts the prior docstring-only warning against F0's
+   root cause into an enforced runtime check. Tests:
+   `test_agent_utility_task_rejects_a_float_identity_arg`,
+   `test_agent_utility_task_happy_path_has_no_float_args`.
+2. **Multi-sample resume strengthening.** `test_run_utility_eval_resumes_a_multi_sample_full_completion`
+   proves resume holds for N=6 cells (3 queries × 2 conditions), not just the degenerate N=1 case the
+   original F0 test used. Deliberately does **not** attempt to simulate a genuinely partial/interrupted
+   run via an in-process exception — `eval_set`'s `fail_on_error`/`retry_on_error` semantics for that
+   path are unverified here, and it would be testing a different, unconfirmed code path. That honest
+   limit is exactly why item 3 exists.
+3. **Live mid-run-crash-kill check — real finding, recorded in §Unverified assumptions above.** Not a
+   pass: hard-killing the executor process at any point (even after all samples had already logically
+   completed) makes the subsequent resume attempt fail identically to before the F0 fix, with the
+   killed run's own log showing `status: "success"` and task_args matching what a fresh invocation
+   recomputes — ruling out both a recurrence of F0's bug and a flush-timing explanation. This is a real,
+   separate, still-open limitation (most likely in `eval_set`'s own run-finalization/bookkeeping, not
+   isolated further here — out of this check's scope), not something this follow-up fixes. Recorded
+   plainly rather than folded into a false "resume works" claim — see the corrected §Unverified
+   assumptions entry and the status frontmatter above.
+4. **This index**, added at the top of the document (§Index).
+5. **`CLAUDE.md` Common Pitfalls row** for the jseval-in-worktree `PYTHONPATH` + Windows
+   `INSPECT_DISPLAY=none`/`PYTHONUTF8=1` requirement (repo root `CLAUDE.md`, "Common Pitfalls" table).
+   The file was already exactly at its always-loaded byte ceiling with zero headroom
+   (`scripts/ci/always-loaded-budget.v1.json`); the addition used that gate's own sanctioned
+   `--bump --reason` mechanism (an auditable ceiling raise, not silent growth), consistent with every
+   prior legitimate addition to that file recorded in the same baseline's `bumps` history.
+
+**Validation:** `cd scripts/jseval && PYTHONUTF8=1 INSPECT_DISPLAY=none python -m pytest -q` — full suite
+green except the 2 pre-existing `test_correction_probe::TestLoadManifest` reds (unrelated, per the
+repo's known-expected-state file). `node scripts/ci/check-always-loaded-budget.mjs` — pass. No UI/browser
+surface exists in this follow-up (pure Python executor internals + docs), so no browser validation
+applies.
+
+**Deliberately not done, per the retrospective's own gating call (restated, not re-litigated):** a new
+`agent-postmortems.md` reference case for the resume false-claim (needs its own
+`.claude/rules/tier-register.md` row — a governance action, not a docs tweak) and a reusable
+cross-tempdoc live-probe driver (net-new tooling with no consumer inside 675 itself). Both remain
+recommendations for the user's explicit call.

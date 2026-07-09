@@ -45,7 +45,9 @@ final class SettingsV2ContractTest {
         "read_write");
 
     // Serialize
-    String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(original);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
+    String json =
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(original).replace("\r\n", "\n");
 
     // Write fixture for TypeScript test
     Files.createDirectories(FIXTURE_PATH.getParent());

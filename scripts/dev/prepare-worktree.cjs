@@ -29,6 +29,9 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+// Tempdoc 696: resolve a >= 24 JDK (Temurin 25) for the installDist gradle step so a
+// stale JDK-8 JAVA_HOME can't break worktree prep. Resolved lazily (only for gradle).
+const { resolveJdkHome } = require(path.join(__dirname, 'lib', 'resolve-jdk.cjs'));
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const noDist = process.argv.includes('--no-dist');
@@ -39,9 +42,10 @@ const npm = isWin ? 'npm.cmd' : 'npm';
 // recognized" — tempdoc 684), even with cwd set correctly.
 const gradle = isWin ? path.join(repoRoot, 'gradlew.bat') : path.join(repoRoot, 'gradlew');
 
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, extraEnv) {
   console.error(`[prepare-worktree] $ ${cmd} ${args.join(' ')}  (cwd: ${cwd})`);
-  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: true });
+  const env = extraEnv ? { ...process.env, ...extraEnv } : process.env;
+  const r = spawnSync(cmd, args, { cwd, stdio: 'inherit', shell: true, env });
   if (r.status !== 0) {
     console.error(`[prepare-worktree] FAILED (${r.status}): ${cmd} ${args.join(' ')}`);
     process.exit(r.status || 1);
@@ -73,7 +77,17 @@ run(npm, ['ci'], path.join(repoRoot, 'modules', 'ui-web'));
 
 // 2. Dists the dev stack launches from (skippable for FE-only work).
 if (!noDist) {
-  run(gradle, [':modules:ui:installDist', ':modules:indexer-worker:installDist'], repoRoot);
+  let devJdkHome;
+  try {
+    devJdkHome = resolveJdkHome();
+  } catch (e) {
+    // Report via this file's convention (a clean one-liner), not a raw Node stack trace.
+    console.error(`[prepare-worktree] ${e.message}`);
+    process.exit(1);
+  }
+  run(gradle, [':modules:ui:installDist', ':modules:indexer-worker:installDist'], repoRoot, {
+    JAVA_HOME: devJdkHome,
+  });
 }
 
 console.error('[prepare-worktree] done — models + the shared cuda12 GPU runtime resolve automatically via the dev-runner (run `./gradlew :modules:ui:stageLlamaCudaVariant` once at the main checkout to provision the GPU runtime; GPU-only by design — tempdoc 656).');

@@ -63,7 +63,11 @@ testing {
 tasks.named("check") { dependsOn(tasks.named("integrationTest")) }
 
 tasks.withType<Test>().configureEach {
-  if (project.hasProperty("updateSchemas")) {
+  // Tempdoc 696 follow-up: check the actual -P properties, NOT project.hasProperty("updateSchemas"),
+  // which is ALWAYS true here because the `updateSchemas` task (registered below) shadows the property
+  // name — that silently forced every test run into regenerate mode instead of compare, defeating the
+  // schema-drift guard. startParameter.projectProperties is the -P map only, immune to task-name shadowing.
+  if (gradle.startParameter.projectProperties.containsKey("updateSchemas")) {
     systemProperty("updateSchemas", "true")
   }
 }

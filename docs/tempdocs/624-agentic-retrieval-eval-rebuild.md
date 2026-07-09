@@ -4284,3 +4284,24 @@ stated per item 2c.
 ## Cost
 
 ~$1.9 pilot + ~$0.6 calibrate + ~$0.2 probes/smoke ≈ **$2.7** (within the ~$3 Step-1 envelope).
+
+## Executor-substrate note (2026-07-08) — informational, does not reopen the 655-gated Step-2 decision
+
+675 (the executor this and every future run here executes on) is now implemented, review-fixed, and
+merged (`docs/tempdocs/675-agent-eval-executor-v2-in-process.md`). Two facts relevant to planning
+whenever Step-2 does resume (after 655's adoption work, per the interpretation above — this note does
+not authorize or advance that gate): (1) a contention-matched pilot projects the full 520-cell matrix at
+≈2.2h/≈$72 @ concurrency 6, a substantial cut from the ~3h baseline this tempdoc's own certified-run
+session (2026-07-03) measured; (2) `eval_set` resume is reliable across a clean process exit but does
+**not** survive a hard process kill regardless of how much progress was made (an upstream Inspect
+limitation, live-verified, not fixable at the jseval layer) — a future Step-2 run must complete without
+interruption or be restarted from scratch, not resumed, after any hard crash. See 675 §Review fixes and
+§Unverified assumptions for the full evidence.
+
+**Update (2026-07-08):** a follow-up live measurement (`docs/tempdocs/699-agent-eval-concurrency-ceiling.md`)
+confirms the JustSearch search backend is **not** the concurrency ceiling for this eval — at
+agent-concurrency 6 the backend carries only ~0.48 concurrent requests on average, far below its own
+measured ~6.7 qps saturation point. If Step-2 concurrency is ever raised above 6 to shave more
+wall-clock, the backend is not what would be stressed; the account's Anthropic API rate-limit tier is
+the more likely real ceiling (unconfirmed — see 699's own flagged, authorization-gated next step before
+anyone deliberately ramps concurrency further).

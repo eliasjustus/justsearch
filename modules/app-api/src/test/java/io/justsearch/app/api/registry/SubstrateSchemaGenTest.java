@@ -109,20 +109,21 @@ final class SubstrateSchemaGenTest {
 
   private static void captureOrVerify(Class<?> type, String fileName) throws IOException {
     JsonNode current = schemaGenerator.generateSchema(type);
+    // tempdoc 696: force LF so Windows System.lineSeparator() doesn't churn committed files
     String currentJson =
-        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current);
+        MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(current).replace("\r\n", "\n");
     Path path = schemasDir.resolve(fileName);
 
     // Tempdoc 564: under -PupdateSchemas=true (the `:updateSchemas` task), rewrite the baseline.
     if ("true".equals(System.getProperty("updateSchemas"))) {
       Files.createDirectories(path.getParent());
-      Files.writeString(path, currentJson + System.lineSeparator());
+      Files.writeString(path, currentJson + "\n");
       return;
     }
 
     if (!Files.exists(path)) {
       Files.createDirectories(path.getParent());
-      Files.writeString(path, currentJson + System.lineSeparator());
+      Files.writeString(path, currentJson + "\n");
       fail(
           "Schema captured at "
               + path
