@@ -102,7 +102,7 @@ def test_fetch_miracl_sample_only_keeps_queries_with_a_positive_qrel(tmp_path):
     assert queries_out[0]["query"] == "query one"
 
 
-def _fake_clerc_urlopen(url, **_kwargs):
+def _fake_clerc_urlopen(url, *, n_distractor_docs=1, **_kwargs):
     """Route CLERC's three fetch URLs to small, fixed fixture content."""
     if url.endswith("qrels-doc.test.direct.tsv"):
         body = "q1\t0\tdocA\t1\nq2\t0\tdocB\t1\nq3\t0\tdocC\t1\n"
@@ -113,7 +113,8 @@ def _fake_clerc_urlopen(url, **_kwargs):
         return MagicMock(__enter__=lambda s: MagicMock(read=lambda: body.encode("utf-8")),
                           __exit__=lambda *a: None)
     if url.endswith("collection.doc.tsv.gz"):
-        raw = "docA\ttext for doc A\ndocB\ttext for doc B\ndocC\ttext for doc C\ndocD\tirrelevant\n"
+        raw = "docA\ttext for doc A\ndocB\ttext for doc B\ndocC\ttext for doc C\n"
+        raw += "".join(f"docD{i}\tirrelevant {i}\n" for i in range(n_distractor_docs))
         gz_bytes = gzip.compress(raw.encode("utf-8"))
         # Return the still-*compressed* bytes stream -- fetch_clerc_sample wraps this itself in
         # gzip.GzipFile(fileobj=...) to decompress, exactly like the real urlopen() response would be.
@@ -122,11 +123,21 @@ def _fake_clerc_urlopen(url, **_kwargs):
     raise AssertionError(f"unexpected URL: {url}")
 
 
-def test_fetch_clerc_sample_deterministic_and_uses_only_direct_qrels(tmp_path):
-    class _FakeReq:
-        def __init__(self, url, headers=None):
-            self.url = url
+class _FakeReq:
+    def __init__(self, url, headers=None):
+        self.url = url
 
+
+def _patched_clerc(*, n_distractor_docs=1):
+    return (
+        patch("jseval.corpus_fetch.Request", _FakeReq),
+        patch("jseval.corpus_fetch.urlopen",
+              side_effect=lambda req, timeout=None: _fake_clerc_urlopen(
+                  req.url, n_distractor_docs=n_distractor_docs)),
+    )
+
+
+def test_fetch_clerc_sample_deterministic_and_uses_only_direct_qrels(tmp_path):
     with patch("jseval.corpus_fetch.Request", _FakeReq), \
          patch("jseval.corpus_fetch.urlopen", side_effect=lambda req, timeout=None: _fake_clerc_urlopen(req.url)):
         prov = corpus_fetch.fetch_clerc_sample(tmp_path, seed=7, n_queries=2)
@@ -135,11 +146,85 @@ def test_fetch_clerc_sample_deterministic_and_uses_only_direct_qrels(tmp_path):
     queries_out = json.loads((tmp_path / "queries.json").read_text(encoding="utf-8"))
     docs_out = [json.loads(l) for l in (tmp_path / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     doc_ids = {d["_id"] for d in docs_out}
-    # docD is never referenced by any qrel -> must not be pulled in, confirming the filter works.
-    assert "docD" not in doc_ids
+    # docD0 is never referenced by any qrel -> must not be pulled in, confirming the filter works.
+    assert "docD0" not in doc_ids
+    assert "n_docs_requested" not in prov  # n_docs=None byte-compatibility: no new keys added
+    assert "n_distractors" not in prov
 
     # tempdoc 666 fourth-pass regression guard (same as the MIRACL test above).
     written_meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
     assert written_meta["generation_provenance"] == prov
     assert "suite" not in written_meta
     assert all(qid in {"docA", "docB", "docC"} for q in queries_out for qid in q["evidence_ids"])
+
+
+def test_fetch_clerc_sample_n_docs_none_is_byte_compatible_with_prior_behavior(tmp_path):
+    """The exact provenance shape (keys + values) that existed before n_docs was added -- guards the
+    committed `666-corpora/legal-clerc-200/recipe.json` reproduction path (tempdoc 624 R-scale-corpus)."""
+    with patch("jseval.corpus_fetch.Request", _FakeReq), \
+         patch("jseval.corpus_fetch.urlopen", side_effect=lambda req, timeout=None: _fake_clerc_urlopen(req.url)):
+        prov = corpus_fetch.fetch_clerc_sample(tmp_path, seed=7, n_queries=2)
+
+    assert set(prov.keys()) == {"method", "source", "seed", "n_docs", "n_queries"}
+    assert prov["method"] == "huggingface-direct-sample"
+    assert prov["seed"] == 7
+    assert prov["n_docs"] == 2  # only qrelled docs for the 2 sampled queries
+
+
+def test_fetch_clerc_sample_keeps_all_qrelled_docs_and_samples_distractors(tmp_path):
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        prov = corpus_fetch.fetch_clerc_sample(tmp_path, seed=7, n_queries=2, n_docs=5)
+
+    assert prov["n_queries"] == 2
+    assert prov["n_docs"] == 5  # qrelled + sampled distractors
+    assert prov["n_docs_requested"] == 5
+    assert prov["n_distractors"] == 3  # 5 - 2 qrelled
+
+    docs_out = [json.loads(l) for l in (tmp_path / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    doc_ids = {d["_id"] for d in docs_out}
+    assert len(docs_out) == 5
+    queries_out = json.loads((tmp_path / "queries.json").read_text(encoding="utf-8"))
+    qrelled_ids = {did for q in queries_out for did in q["evidence_ids"]}
+    assert qrelled_ids <= doc_ids
+    distractor_ids = doc_ids - qrelled_ids
+    assert len(distractor_ids) == 3
+    assert all(did.startswith("docD") for did in distractor_ids)  # distractors exclude qrelled docs
+
+
+def test_fetch_clerc_sample_qrel_set_is_invariant_to_n_docs(tmp_path):
+    """Same seed + same n_queries must select the same qrelled doc set (and query set) regardless of
+    n_docs -- distractor reservoir sampling uses its own rng instance so it can never perturb query
+    sampling, which runs first and only draws from `rng`."""
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        prov_none = corpus_fetch.fetch_clerc_sample(tmp_path / "none", seed=7, n_queries=2)
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        prov_5 = corpus_fetch.fetch_clerc_sample(tmp_path / "five", seed=7, n_queries=2, n_docs=5)
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        prov_10 = corpus_fetch.fetch_clerc_sample(tmp_path / "ten", seed=7, n_queries=2, n_docs=10)
+
+    queries_none = json.loads((tmp_path / "none" / "queries.json").read_text(encoding="utf-8"))
+    queries_5 = json.loads((tmp_path / "five" / "queries.json").read_text(encoding="utf-8"))
+    queries_10 = json.loads((tmp_path / "ten" / "queries.json").read_text(encoding="utf-8"))
+
+    def _qrel_shape(queries_out):
+        return sorted((q["query"], tuple(sorted(q["evidence_ids"]))) for q in queries_out)
+
+    assert _qrel_shape(queries_none) == _qrel_shape(queries_5) == _qrel_shape(queries_10)
+    assert prov_none["n_queries"] == prov_5["n_queries"] == prov_10["n_queries"] == 2
+
+
+def test_fetch_clerc_sample_distractors_deterministic_across_two_runs(tmp_path):
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        corpus_fetch.fetch_clerc_sample(tmp_path / "run1", seed=13, n_queries=1, n_docs=4)
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        corpus_fetch.fetch_clerc_sample(tmp_path / "run2", seed=13, n_queries=1, n_docs=4)
+
+    docs1 = (tmp_path / "run1" / "docs.jsonl").read_text(encoding="utf-8")
+    docs2 = (tmp_path / "run2" / "docs.jsonl").read_text(encoding="utf-8")
+    assert docs1 == docs2
