@@ -22,6 +22,8 @@ Contract tests live in `KnowledgeHttpApiAdapterHarmfulCombinationsTest.java`.
 | Entity/metadata filters | Chunk documents | Never applied to chunks directly | Two-stage pre-filter: parent-doc ID lookup first, then chunk search scoped to matching parent IDs. `buildChunkFilterQuery()` excludes these; `buildFilterQueryOnly()` includes them (362) |
 | Entity facet keys | MCP layer | `_raw` suffix stripped before agent response | Backend uses `_raw`-suffixed field names; MCP server strips `_raw` suffix before returning to agents (366) |
 
+> **Note on "stemming":** the "stemming fallback" row above is a legacy label for the SIMPLE-syntax BM25 text-query path, **not** a linguistic stemmer. The analyzer chain is `ICUTokenizer → ICUNormalizer2Filter → LowerCaseFilter` with no stemming step (ADR-0043: locale-invariant analysis — no per-language stemmer exists in the codebase).
+
 ### Why HYBRID blocks expansion
 
 Query expansion (AI translation) generates morphological variants for BM25.
