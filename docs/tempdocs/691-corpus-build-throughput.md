@@ -1,7 +1,7 @@
 ---
 title: "Corpus-build throughput: increase indexing/enrichment throughput and decrease total corpus-build time — the indexing-side sibling of 648 that its stub explicitly reserved ('a separate target… spin a sibling stub'). Purpose kept deliberately GENERAL for now: make building an enrichment-complete (dense-searchable) index over a multi-thousand-file corpus fast enough that repeated agentic-utility eval runs (624/673) stop monopolizing the shared dev stack for hours. Method inherited from 647: attribution before allocation before optimization — no lever is chosen until measurement says which cost dominates."
 type: tempdocs
-status: "open — Phases A-E complete (2026-07-07), durable fixes SHIPPED on PR #90 (branch worktree-691-corpus-throughput). Headline: NER's missing fp16 variant silently ran the INT8 CPU model on CUDA (~10× per-call); with the model restored + arena 512→2048, battlefield corpus build 333.4s → 124.0s (2.69×). Batch-size tuning measured as a dead end (Phase E); the remaining embed lever is DUPLICATE chunk embedding (E-5, ~20% of build) — retrieval-semantics-affecting, decision point recorded, NOT implemented. See §Evidence index and §Unverified assumptions before continuing."
+status: "open — Phases A-E complete (2026-07-07), durable fixes SHIPPED on PR #90 (branch worktree-691-corpus-throughput). Headline: NER's missing fp16 variant silently ran the INT8 CPU model on CUDA (~10× per-call); with the model restored + arena 512→2048, battlefield corpus build 333.4s → 124.0s (2.69×). Batch-size tuning measured as a dead end (Phase E); the remaining embed lever is DUPLICATE chunk embedding (E-5, ~20% of build) — retrieval-semantics-affecting, decision point recorded, NOT implemented. See §Evidence index and §Unverified assumptions before continuing. TAKEOVER 2026-07-10 (§Phase F/G): chunk-pacing cap measured a compute-bound red herring; E-5 dedup is the density-scaling lever; §Phase G settles the DESIGN (whole-doc VECTOR = projection/mean-pool of CHUNK_VECTORs; search-quality register Q-016; principle: whole-object-as-projection-of-parts). Design only — NOT implemented, search-quality-gated + authorization-gated."
 created: 2026-07-07
 author: agent session 2026-07-07 (Fable orientation pass; three-subagent tempdoc/code survey + targeted source verification)
 category: performance / indexing / eval-infrastructure
@@ -718,3 +718,94 @@ search-quality-gated (register + nDCG ratchet + live A/B) and authorization-gate
 session. Remaining genuine open measurement: a `realdocs-v1` build to confirm the F-3 extrapolation
 at true density. Artifacts: session scratchpad `691-chunk-tail/` (run.ndjson, timeline.tsv,
 worker.log-derived `bf.txt` per-cycle table).
+
+## Phase G — E-5 dedup DESIGN (2026-07-10, /design; /search-quality register loaded)
+
+Design only; no code. The measurement (F) named the lever; this settles the correct shape. Grounded
+in the search-quality register (23-search-pipeline-overview, F-023/F-029/F-030, D-005, stage 13c).
+
+**The duplication, source-exact.** The combined backfill embeds via
+`EmbeddingService.embedDocumentBatch` (`:340`), which keeps only the pooled `.vector()` (`:379`) and
+**discards** the per-window vectors the encoder computed internally. So a chunked parent
+(content > `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS = 2000`) is embedded **twice** over ~the same
+text: (1) parent content → encoder 512-token windows → mean-pool → `VECTOR` (windows discarded);
+(2) each `CHUNK_CONTENT` doc → its own embed → `CHUNK_VECTOR` (`CombinedEnrichmentBackfillOps:305`).
+F-2 measured the cost: parent-cycle embed is 52.8 ms/doc-unit vs 7.23 for chunks; on ~138-chunk/doc
+corpora the discarded parent-internal pass ≈ the chunk pass ≈ **~½ of all embed work**.
+
+**Design: the whole-doc vector is a PROJECTION (mean-pool) of the document's chunk vectors, not an
+independent re-derivation.** For a document that has chunk docs, compute each chunk once (its
+`CHUNK_VECTOR`, via the canonical RAG chunker `ChunkSplitter` — UNCHANGED) and derive `VECTOR` as the
+mean-pool of that document's `CHUNK_VECTOR`s. Drop the separate encoder-internal chunk-and-pool pass
+over the parent content. Documents with no chunk docs (≤2000 chars, plus the CJK/dense-token band
+that is long-in-tokens yet short-in-chars) keep today's direct/whole-doc path unchanged.
+
+**Direction is forced (chunk→parent, never parent→chunk).** Option (b) — reuse the encoder's 512-token
+windows as the chunk vectors — is rejected: it desynchronizes `CHUNK_VECTOR` from `CHUNK_CONTENT`
+(different text spans) and degrades the chunk-branch dense leg, which the register shows is the
+*load-bearing* dense leg on exactly the long docs this touches (stage 13c "long docs trust chunk
+branch"; F-029/F-030). The RAG chunks are what chunk-dense retrieval and RAG actually serve; they stay
+canonical. Only the whole-doc `VECTOR` — a derived view — changes.
+
+**Why the retrieval risk is structurally bounded (register-grounded, not asserted).** The change
+touches only `VECTOR`, only for chunked (long) docs, and three register facts align risk *against*
+harm: (a) whole-doc mean-pool dilution is a KNOWN liability that grows with length (F-023; F-029/F-030
+"maximal whole-doc mean-pool dilution") — the whole-doc vector is the WEAKER signal on long docs;
+(b) branch fusion already de-weights the whole-doc branch on long docs (13c parent-length modulation,
+`chunkMinMultiplier` 0.25); (c) the change is largest where the whole-doc dense leg matters least
+(long/dense docs) and smallest where it matters most (short docs). Benefit and risk are inversely
+aligned. Net *expectation*: retrieval-neutral with ~2× less embed on dense corpora — but per D-005
+this is a hypothesis to MEASURE, not a claim to ship on.
+
+**Validation (instruments already shipped; no new measurement tech).** Ship default-off → measure →
+default-on (D-004 template). Gate on the recall-survival triad + relevance on the pinned corpora,
+weighting long-doc corpora (legal-clerc-200, enron-qa): `jseval relevance-gate` (nDCG floor),
+`jseval union-recall-gate` (leg_union_recall floor — the direct test of whether the whole-doc dense
+leg still surfaces the gold; F-028, pinned legal-clerc-200 0.87 / scifact 0.96 / needle-burial 1.0),
+`jseval leak-gate` (cascade-leak ceiling), plus a shared-index OFF-vs-ON A/B (build once — the method
+D-004 used to avoid embedding-rebuild noise).
+
+**What this orphans (teardown belongs to THIS tempdoc).** Nothing wholesale — a NARROWING. The
+parent's use of the encoder-internal chunk-and-pool path (`OnnxEmbeddingEncoder.createChunks` +
+`meanPoolChunks` reached via `embedDocumentBatch`) shrinks to the no-chunk-docs fallback.
+`embedBatchWithChunking` and the `ChunkedEmbedding.chunkVectors` return stay live (consumers: the
+single-doc `embed` path, `OnnxEmbeddingBackend`, `LocalIntentTranslatorV2`). At implementation time,
+run a consumer scan and tombstone only what it proves unreachable — do not pre-emptively delete.
+
+**Scheduling consequence (stated, not designed to implementation level).** `VECTOR` now depends on the
+document's `CHUNK_VECTOR`s, inverting today's parent-first enrichment order for the vector field: a
+chunked parent's `VECTOR` can only be pooled once its chunks are embedded (e.g. pool the parent when
+its last chunk completes). The exact mechanism is an implementation choice; the invariant is the
+dependency edge.
+
+**Deliberately out of scope (named, deferred).** Whether the whole-doc `VECTOR` is worth keeping AT
+ALL for chunked docs (given F-023 dilution + 13c de-weighting) is a larger retrieval-representation
+question — removing the whole-doc dense branch for long docs is a /search-quality investigation, not a
+throughput dedup. Matching scope to 691's actual problem: keep the branch, remove the duplicate
+compute. Recorded for the register (Q-016).
+
+### Reach & principle
+
+**Principle (recognized, not built general): whole-object-as-projection-of-parts.** A composite
+representation of a whole object should be a projection (here mean-pool) of its canonical part
+representations, not a second independent derivation over the whole. This is the projection-not-fork
+discipline (CLAUDE.md `explore-before-implementing`; 553 one-canonical-record; D-005
+one-canonical-authority) applied to the dense-vector layer: chunk vectors are the canonical
+per-passage dense representation; the whole-doc vector is a derived view. Today it is a *fork*
+(independent encoder-window chunk-and-pool), which is why it both duplicates compute AND can silently
+drift from the chunk representation.
+
+**Candidate scope beyond embed (named, NOT built).** The SPLADE leg has the analogous shape: the
+whole-doc SPLADE representation is a 512-token *truncation* of the doc (register: SPLADE truncates at
+512 tokens, weight modulated by `parent_token_count` to compensate), while `chunk_splade` is
+per-chunk. A pooled/union projection of chunk SPLADEs would conform to this principle AND fix the
+whole-doc SPLADE truncation loss — but that is its own retrieval-quality change with its own A/B;
+`structural-defects-no-repeat` says build the next instance only when its own evidence demands it. NER
+does not apply (chunks skip NER — no duplication).
+
+**Evidence the principle earns its keep:** the embed dedup cuts enrichment embedding compute ~½ on
+dense corpora (F-2 measured the duplicate) with neutral relevance/union-recall/leak gates.
+**Retirement condition:** if a measured case shows the whole-doc vector needs a global signal that no
+pool of its chunks can carry (pool-of-parts ≠ whole is retrieval-meaningful), the projection identity
+is false for that leg — retire the principle there and justify an independent whole-object derivation,
+rather than force-fit it.
