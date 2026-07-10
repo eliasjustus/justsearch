@@ -548,3 +548,99 @@ is inline in the phase sections above. Durable evidence pointers:
   machine state that no longer exists (different NER model file state,
   regenerated corpus); treat 691's C2 as the current reference until the
   perf-gate recompose refreshes floors.
+
+## Takeover investigation (2026-07-10) — VERDICT: CLOSE, do not continue
+
+A fresh-session takeover re-read the whole tempdoc and verified its shipped
+state against `main` + the newer tempdoc corpus (692–706). No code changes; no
+new experiments run (the decisive evidence already existed — see below).
+
+**Shipped state confirmed in `main` (not just claimed):**
+- PR #90 merged (`3bd9078`); follow-up docs PRs #92/#94/#104 merged.
+- Item 1 — NER arena `2048` live at `ResolvedConfigBuilder.java:1098` with the
+  691 rationale comment.
+- Item 2 — degraded-variant surfacing live at `DevModeVariantProbe.java:86`
+  (`VariantSelection.degraded(...)`, "CPU model on CUDA" reason).
+- Item 3 — batched-path profiler in `BertNerInference.java` (worker-core).
+- Item 4 (model distribution) is owned by **657**, which bakes NER **INT8+FP16**
+  into the full-desktop bundle (`657 …:151-152`). `model_fp16.onnx` is on disk
+  in the main checkout but git-untracked — the fresh-checkout INT8-on-CUDA
+  reproduction persists **until 657 lands**, which is 657's charge, not 691's.
+
+**Why CLOSE and not continue — the motivating consumer no longer bottlenecks on
+corpus build.** 691's purpose was to stop eval builds from monopolizing the dev
+stack for hours. Two independent facts, both now durable, retire that purpose:
+- 691's own **E-4**: post-NER-fix a 1,000-doc build is ~6–7 min; further build
+  optimization is third-order vs the agent-cell matrix (~3 h).
+- **699** (2026-07-08) *measured* it: a single agent-eval cell is **~90%
+  Anthropic API time**, backend share only 2.7–8% — so ~0.48 concurrent backend
+  requests at agent-concurrency 6. Shaving the build cannot move the eval
+  schedule; the API wall dominates by an order of magnitude.
+
+This is the cheapest validating evidence, and it **already exists** (699's
+timing breakdown). No 691 experiment can change that arithmetic, so none is
+warranted.
+
+**Disposition of each remaining item:**
+- **Item 6 / E-5 (embed duplicate-chunk dedup, ~20% of build) — DECLINE now.**
+  It is retrieval-semantics-affecting (changes parent/chunk vectors), so it
+  needs the /search-quality register + a relevance ratchet + a live A/B — real
+  cost and real risk — to buy ~1.3 min on a build that is no longer on the eval
+  critical path (699). Classic "correctness argument vs cost-benefit" inversion
+  in reverse: the cost-benefit here is clearly negative. Keep the E-5 analysis
+  as recorded design history; do not implement without a *new* motivating
+  consumer that is build-bound. The duplicate-embedding observation is already
+  in the observations shard for independent pickup.
+- **Assumption #6 (primary indexing -35%) — DECLINE.** Primary is <15% of build
+  (~30 s/enron); suspects are non-code (regenerated corpus, machine state);
+  both candidate commits cleared in B-6. Not worth the decisive 640-era-code
+  rerun.
+- **Item 5 (build-ner.py incremental/fp16-only mode) — DROP as a 691 item.**
+  Its repair-path motivation (recover from an interrupted download) is
+  subsumed once 657 ships both variants in the pack; the friction itself is a
+  jseval/model-tooling wish, already listed in the §Follow-up ledger batch.
+- **Item 4 (model distribution) — already routed to 657.** No 691 action.
+- **Assumption #2 (post-merge live-verify of shipped defaults) — LOW-STAKES,
+  ride-along.** Never run as an env-var-free post-merge battlefield build, but
+  indirectly corroborated: ~dozens of subsequent battlefield/enron eval builds
+  (678, 701, 702) ran on the same machine (fp16 present on disk) across ~30 PRs
+  with no NER-regression report. A clean one-run confirmation (memLimit=2048 in
+  the init line, zero OOM fallbacks, ~124 s, batched-path profiler records ≈docs
+  calls, no NER degraded-WARN) is worth folding into the *next* eval cycle's
+  build, not worth reopening 691 as active work.
+
+**What 691 displaces/duplicates:** the real-PDF/scan **extraction** throughput
+leg 691 explicitly disowned is now shipped by **686/706** (6.9× on scanned
+PDFs); the model-pack/fp16 distribution is **657**; the embed lever would cross
+into **701/702/704** search-quality territory. 691 owns none of these going
+forward.
+
+**Two same-day (2026-07-10) direction docs still name 691 — as owner-of-record,
+not as pending work.** Checked explicitly (they post-date every 691 file edit,
+so they are the only place new 691 charge could hide):
+- **704 §Pillar 4 (measurement economics):** "Enrichment throughput (691) is the
+  same pillar's other face: iteration speed bounds how much correct data is
+  affordable." But 704's Boundary lists 691 under **"routed not absorbed"**, and
+  Pillar 4 is **4th of 6** in its sequence (`5 → 1 → 3+2 → 4 → 6`), with Pillar 5
+  the sole first pickup — 691 is not on 704's critical path.
+- **705 §routing:** 691 is "the COST-tax side any quality change trades against"
+  and "has a baseline"; 705 also "routes already-owned pieces … rather than
+  absorbing them," and 705's own verdict is WAIT-FOR-EVIDENCE (686/677 first).
+
+Neither adds a concrete new *item* — both lean on 691 as the **shipped
+baseline / owner-of-record** for enrichment-cost attribution, for work that is
+itself deferred. So closing 691 orphans nothing.
+
+**Recommendation to founder — DORMANT OWNER (not hard-close).** 691's chartered
+work (the throughput optimization pass) is **done**: headline 2.69× shipped +
+verified in `main`, residual levers third-order and declined with reasons above.
+But keep 691 as the **named owner-of-record for enrichment-throughput /
+cost-tax attribution** that 704-Pillar-4 and 705 point at — do not delete or
+fully retire it. **Reopen triggers (concretely build-bound only):** (a) 705's
+extraction-quality work adds enrichment cost that needs re-attribution; (b) 704
+sequences Pillar 4 in and iteration speed becomes binding; (c) a new consumer
+appears whose wall-clock is genuinely dominated by corpus build (699 says
+today's eval consumer is ~90% Anthropic API time, so this is not currently
+true). Absent a trigger: no further design or implementation on 691. Keep the
+§Follow-up ledger open items where they already live (657 for distribution;
+jseval owner for the tooling batch; observations shard for the dedup note).
