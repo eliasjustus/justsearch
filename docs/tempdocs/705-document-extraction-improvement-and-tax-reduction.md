@@ -217,6 +217,66 @@ and has not started. Q3 (candidate enumeration) is the only question actionable 
 sibling direction frame (704) reaches the same conclusion for the whole measurement program: "the
 engine is not the bottleneck; knowing the truth about the engine is."
 
+### Sidegoal (founder-added 2026-07-10): make scanned-PDF baseline OCR fast — evidence + design
+
+The 686 run showed the extraction cost tax concentrates in scanned PDFs (minutes/doc, serial).
+Founder directed a speedup investigation. Three evidence legs (code map with `file:line`, external
+research, local micro-benchmark on corpus scans) produced a converging picture:
+
+**Where the time actually goes (measured + code-confirmed):**
+
+1. **The dominant OCR path is Tika's internal `OCR_ONLY` strategy, not JustSearch's own loop.**
+   `tryOcr` → `StructuredContentExtractor.extractWithOcr` → Tika `PDFParser`/`TesseractOCRParser`
+   renders EVERY page at 300 DPI GRAY and spawns tesseract per page, strictly serially — opaque to
+   JustSearch, **no page cap, no dimension guard, no parallelism possible** (`PDFParserConfig`
+   defaults confirmed from jar bytecode: `ocrDPI=300`, `ocrRenderingStrategy=ALL`; JustSearch never
+   sets `setOcrDPI`). The observed `tika-pdfbox-rendering-*.png` temp files are this path.
+   JustSearch's own `tryRenderedPdfOcr` (160 DPI RGB, hardcoded) fires only as fallback when Tika's
+   pass returns blank.
+2. **Raw tesseract is NOT the bottleneck**: local bench (tessdata_fast, 300 DPI gray, corpus scan
+   `govdocs1-000--000164.pdf`): **~1.1s/page OCR, ~0.1s/page render, spawn+init only ~0.1s**. A
+   65-page mixed PDF at ~1.2-3s/page serial ≈ 80-200s — matches the observed 35-350s stalls.
+3. **Two code-confirmed redundant invocations**: (a) after Tika OCR succeeds, `tryOcr:292` runs a
+   whole-file tesseract confidence pass on the raw PDF (fast-fail at best, full re-scan at worst);
+   (b) in JustSearch's own fallback loops each page is OCR'd TWICE (text pass + TSV confidence
+   pass = 2 spawns/page).
+4. **The 60s timebox is advisory**: `TimeboxedContentExtractor` submits the whole extraction to a
+   single shared single-thread executor; `future.cancel(true)` can't interrupt CPU-bound render or
+   non-blocking work, interrupted tesseract children are NOT `destroyForcibly`'d (orphan leak), and
+   the next document queues behind the stuck one — so logged per-doc times include inherited queue
+   wait and the true ceiling is unbounded. (This is the live confirmation of the extraction-sandbox
+   liveness observation.)
+5. **Config duality**: `application.yaml` ships `per_file_timeout_ms: 5000, max_pages: 10`, but the
+   code fallback `OcrRoutingConfig.defaults()` is `30s/50 pages`; the eval run OCR'd a 29+-page doc,
+   implying the code fallback was active. Which default is authoritative needs deciding.
+6. **Benchmarked levers**: 8-way parallel page OCR = **3.98×** on only 10 pages (20 logical cores);
+   list-file batching = 0.94× (worthless — init is ~10% of a page); DPI reduction = modest speed
+   gain with unverified quality effects (word-count anomaly) — rejected without an accuracy eval.
+   External practice corroborates: process-pool-per-core, `OMP_THREAD_LIMIT=1` defensively (UB-
+   Mannheim Windows builds ship OpenMP-disabled), 300 DPI GRAY PNG, tessdata_fast/OEM1.
+
+**Design (proposed, not yet implemented):**
+
+1. **Bypass Tika's internal OCR for PDFs entirely** (set `OCR_STRATEGY = NO_OCR` on the OCR pass
+   too) and make JustSearch's own render+OCR loop the single authoritative OCR path — it is the
+   only place page caps, dimension guards, parallelism, and honest budgets CAN live. Routing
+   decisions (`evaluateOcrAttempt`) and reason-code semantics (671) unchanged; this changes the
+   execution engine of the OCR tier, not which tier a document takes (607 untouched).
+2. In the owned loop: render at **300 DPI GRAY** (up from 160 RGB fallback quality, matching the
+   quality of the Tika path being replaced); **parallelize page OCR** across a bounded pool
+   (~min(cores/2, 8) workers, `OMP_THREAD_LIMIT=1` per child); **one spawn per page** emitting
+   `txt tsv` together (text + confidence from a single invocation — kills both double-OCR
+   patterns); enforce **maxPages inside the loop** (truncate + record) and an **aggregate
+   per-document OCR budget** (elapsed-time circuit breaker).
+3. **Fix the orphan/queue-pileup class**: `destroyForcibly()` on interrupt in
+   `OcrConfidenceExtractor`; timebox cancellation must kill the child process tree.
+4. Resolve the config duality (yaml 5s/10p vs code 30s/50p) explicitly.
+
+**Expected effect**: 65-page scan ≈ 65×1.2s/8 workers + render ≈ **~15-20s vs the current
+80-350s** (>10× on the documents that matter); fast docs unaffected. Quality expected neutral-to-
+better (same engine, same-or-higher DPI/colorspace than each replaced path) — verify with
+before/after on the corpus scan sample + `VduEligibilityPdfFixturesTest`.
+
 ### Verdict
 
 **Should this be done at all?** Yes — the question is real (15.1% full-pipeline extraction tax on
