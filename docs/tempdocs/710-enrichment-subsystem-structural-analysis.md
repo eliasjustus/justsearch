@@ -1,7 +1,7 @@
 ---
 title: "Enrichment/embedding subsystem — structural analysis and long-term design. Founder-directed scope increase out of 691 §Phase L: 691's campaign kept unearthing the same structural defect classes (representation forks, memory-blind batching, undeclared model capabilities, bare-literal pacing, implicit scheduling dependencies, metrics that can lie); this tempdoc runs the evidence-scoped structural analysis and produces a design + migration order. Analysis is READ-ONLY; no restructuring is authorized by this tempdoc — the deliverable is a defect-class → code-site → design-move map for founder review."
 type: tempdocs
-status: "open — chartered 2026-07-10 (Fable session, second 691 takeover). Phase S-A/S-B surveys launched (four parallel read-only subagent audits: history mining, representation/dataflow, resource/config/capability census, observability/test seams). Nothing designed yet; nothing implemented; implementation NOT authorized."
+status: "open — ANALYSIS + DESIGN COMPLETE 2026-07-10, READY FOR FOUNDER REVIEW (S-E). Full pipeline ran same-day: S-A/S-B (four parallel read-only audits: 33-instance history inventory, representation/dataflow map, resource/config/capability census, observability/test-seam audit) → S-C synthesis (6 design moves, 4 migration waves, explicit restraint list; dominant class = undeclared-model-capabilities, 12 instances) → S-D adversarial review (all 5 spot-checked facts held; 1 BLOCKER + 4 corrections found and APPLIED — Move 1 backward-compat plan, Move 4 re-sequenced after 691+702, honest sizing on Moves 1/2, escalation/test-fragility dispositions, Move 3 claim precision). Wave 0 feeds back into 691 Phase 2 (runHidden profiler gap would corrupt the A/B). Notable live-bug candidate found: BgeM3BackfillOps writes VECTOR on chunk docs (observations-logged, needs triage). Nothing implemented; implementation NOT authorized."
 created: 2026-07-10
 author: agent session 2026-07-10 (Fable; founder-directed scope increase from 691)
 category: architecture / indexing / long-term-structure
@@ -218,21 +218,36 @@ One cross-cutting policy retires the dominant class, plus five scoped moves. Eac
 incidents it retires and its enforcement tier (structural > gate > hook > prose).
 
 **Move 1 — Model Capability Contract (retires the 12-instance dominant class; the north star).**
-Promote `ModelManifest` from optional sidecar to a REQUIRED, validated, typed per-model contract:
-pooling mode, trained context length, embedding dimension, per-variant precision, prefixes,
-label config, tokenizer identity. Three rules: (a) **no silent capability defaults** — a missing
-or unparseable declared fact is a startup failure in contract mode and a WARN+degraded in dev
-mode, never a silent guess (today's worst: absent `pooling_config.json` silently mean-pools a
-CLS model); (b) **probe what the artifact can prove** — extend the existing graph-probe pattern
+Honest sizing (S-D correction #3): this is NOT a schema toggle on `ModelManifest` — today's
+manifest is a five-field FILE-ROUTING record (filenames only, `ModelManifest.java:32-33`); the
+capability facts live in four independently-evolved mechanisms across two modules (pooling
+substring-parse in `OnnxEmbeddingEncoder:736-755`; precision filename-substring in
+`DevModeVariantProbe:70,77`; dimension reactive-detection at `OnnxEmbeddingEncoder:345-347`;
+context length as a bare config int with no manifest tie-in). The move is a four-mechanism
+unification into one typed contract (pooling mode, trained context length, embedding dimension,
+per-variant precision, prefixes, label config, tokenizer identity) PLUS authoring net-new
+manifests for the lanes that have none (ner, reranker; splade/bgem3 to verify). Three rules:
+(a) **no silent capability defaults** — a missing or unparseable declared fact is a WARN+degraded
+today and a startup failure only in contract mode (see compatibility plan below), never a silent
+guess (today's worst: absent `pooling_config.json` silently mean-pools a CLS model);
+(b) **probe what the artifact can prove** — extend the existing graph-probe pattern
 (`needsTokenTypeIds`, SPLADE output format — the in-repo existence proof) to dimension (one boot
 probe vs today's reactive detection) and precision (ONNX tensor element types vs filename
 substring); (c) **config validates against capability** — `embed.context_length` must be ≤ the
-manifest's trained context; exceeding it is an explicit, logged decision. Enforcement:
-structural (typed contract consumed at `InferenceCompositionRoot`) + startup validation + a CI
-check that every `models/**` dir carries a manifest. Retires: F-013/INT8-on-CUDA (row 4), the
-CLS mid-flight discovery (13), context-vs-capacity blindness (14), prefix surprise (15),
-dimension drift, manifest-absent lanes, stale GGUF prerequisite (28). Acceptance test: an
-encoder swap = write one manifest; everything downstream adapts or refuses loudly.
+manifest's trained context; exceeding it is an explicit, logged decision.
+**Backward-compatibility plan (S-D BLOCKER #1 — mandatory):** `models/onnx/ner/` and
+`models/onnx/reranker/` have NO manifest today and work only via `ModelManifest.loadOrDefault`'s
+silent convention fallback (`:89-96`) — an unqualified fail-fast default would hard-kill both
+lanes on every existing install. Therefore: fail-fast ("contract mode") stays FLAG-GATED OFF
+until tempdoc 657 ships manifests with every model distribution; until then the sole behavior
+change is silent→WARN+degraded (strictly more information, zero availability change); repo-side
+manifests for all lanes are authored as part of this move; the flip to fail-fast-by-default is
+its own later, 657-coordinated decision. Enforcement: structural (typed contract consumed at
+`InferenceCompositionRoot`) + startup validation + a CI check that every `models/**` dir carries
+a manifest. Retires: F-013/INT8-on-CUDA (row 4), the CLS mid-flight discovery (13),
+context-vs-capacity blindness (14), prefix surprise (15), dimension drift, manifest-absent
+lanes, stale GGUF prerequisite (28). Acceptance test: an encoder swap = write one manifest;
+everything downstream adapts or refuses loudly.
 
 **Move 2 — instrumentation at the choke point (retires metrics-that-can-lie).** Recording moves
 to where the ORT run happens — one wrapper at the session/Lease layer records every inference
@@ -249,8 +264,12 @@ NER (`inferBatch`) — same bound, same regression-test shape (`SpladeEncoderBou
 precedent). Give embed SPLADE's sub-batch-level OOM fallback (CPU retry of the failed sub-batch)
 instead of discarding the whole 100-doc batch. Keep the typed-OOM string match in its single
 choke point but add a canary test pinning the ORT message format. Enforcement: structural +
-regression tests. This is the highest-urgency safety item: the docs themselves call it the same
-unexploded landmine (686 §Unverified #2, 691 seed item 4) and it blocks raising any chunk cap.
+regression tests. Claim precision (S-D correction #5): the fallback preserves **coverage/count**
+by construction, not bit-identical vectors — a CPU-retried sub-batch may differ numerically from
+its GPU siblings (precedented: SPLADE's fallback already mixes regimes today; not a new risk,
+but not "identical results" either). This is the highest-urgency safety item: the docs
+themselves call it the same unexploded landmine (686 §Unverified #2, 691 seed item 4) and it
+blocks raising any chunk cap.
 
 **Move 4 — pacing gets a config surface (retires bare-literal-pacing).** `LoopPacingPolicy`
 constants + `chunkSlotsPerBatch` + the BGE-M3 strays become a typed pacing config record with
@@ -270,8 +289,12 @@ prose+register now, structural later if the class grows.
 **Move 6 — test-seam repairs (enables all other moves).** Pure-Java unit tests for
 `poolSpan`/`pool` (they are pure functions today — no extraction needed, only tests);
 `LateChunkingEmbedBackfillOpsTest` via the existing mock seam; a scheduler mode-selection test;
-fix the model-dir walk-depth inconsistency so asset-gated tests stop silently skipping in
-worktrees. Enforcement: tests are the enforcement.
+fix the model-dir walk-depth inconsistency AND the `@Tag("evidence")` invisibility (both halves
+of the test-harness-fragility class — S-D correction #4) so asset-gated/evidence-tagged encoder
+regression tests stop silently skipping. Adopt "every new `*BackfillOps` ships with an
+escalation test using the shared pure failure helpers" as the checked convention for the
+missing-failure-escalation class (700 fixed the per-doc instances; the convention prevents the
+next omission). Enforcement: tests are the enforcement.
 
 **Explicit restraint decisions (AHA / under-evidenced):**
 - NO dependency-graph scheduler — implicit-scheduling-dependencies has zero observed incidents;
@@ -284,6 +307,11 @@ worktrees. Enforcement: tests are the enforcement.
   `structural-defects-no-repeat` critique discipline, its own evidence must demand it.
 - NO wholesale rewrite of the six-path VECTOR write fan-in — the dead sync path (D.7) and dead
   fallback branch (D.2) are deletions/simplifications inside other moves, not a redesign.
+- NO systemic whole-batch backoff for the combined path (the remaining missing-failure-escalation
+  instance, 700 §Secondary) — 700 already evaluated and explicitly deferred it; the per-doc
+  poison-pill escalation it shipped bounds the damage; revisit on an observed
+  repeated-systemic-failure incident. (Named here per S-D correction #4 — deferred with a
+  trigger, not silently dropped.)
 
 ## Migration waves (respects live lanes: 691 Phase 2 ships first; 702 merges; 708 restarts after)
 
@@ -292,12 +320,20 @@ worktrees. Enforcement: tests are the enforcement.
   ORT calls, the ON arm doesn't); add timing fields + all-deferred visibility to the
   late-chunking log; `LateChunkingEmbedBackfillOpsTest`; pure-Java `poolSpan`/`pool` tests.
   Cheap, in-scope for 691's own correctness.
-- **Wave 1 — independent, behavior-preserving, land any time:** Move 3 (bounded tokenization +
-  fallback parity — first, it gates everything that raises embed load), Move 2 (choke-point
-  instrumentation + reranker lane + mode observability), Move 4 (pacing config), BGE-M3 bug fix
-  + Move 6 seams.
+- **Wave 1 — independent, behavior-preserving:** Move 3 (bounded tokenization + fallback
+  parity — first, it gates everything that raises embed load), Move 2 (choke-point
+  instrumentation + reranker lane + mode observability; honest sizing per S-D: requires adding a
+  `run()`-shaped method to `SessionHandle`/`Lease` and migrating ~6 files of call sites off raw
+  `session.run` — one-time, mechanical, but not "one wrapper"), BGE-M3 bug fix + Move 6 seams.
+  These touch ort-common/encoder classes, NOT the contended config files.
+- **Wave 1.5 — Move 4 (pacing config) AFTER both 691 and 702 merge** (S-D MAJOR #2): its env
+  wiring necessarily touches `EnvRegistry.java`/`ResolvedConfigBuilder.java` — the exact
+  collision surface 691 §L-2 flagged between the two unmerged branches; landing it earlier
+  creates a three-way conflict. Fold into whichever of 691/702 merges last, or land immediately
+  after.
 - **Wave 2 — before/with the 708 decision:** Move 1 (capability contract) — sequenced so an
   encoder swap consumes the contract rather than re-learning every capability the hard way.
+  Fail-fast flip additionally gated on 657 shipping manifests (see Move 1's compatibility plan).
 - **Wave 3 — evidence-gated:** Move 5's register/gate machinery only if the SPLADE projection
   instance is built; batcher unification only on a fourth lane.
 
@@ -305,8 +341,36 @@ Every wave lands as independent PRs judged by the existing relevance/union-recal
 gates; none changes retrieval semantics (Move 3's sub-batch fallback preserves results by
 construction — same inputs, smaller batches).
 
+## S-D adversarial review (2026-07-10, independent subagent ≠ designer) — verdict: fit-with-corrections; corrections APPLIED above
+
+The reviewer spot-checked all five load-bearing factual claims against source — **all five held
+at file:line, none exaggerated** (silent-MEAN pooling default; unrecorded `runHidden`; unbounded
+embed/NER upfront tokenization; BGE-M3 chunk-doc mis-write — "if anything, understated"; embed's
+whole-batch OOM discard). Design-layer findings, all incorporated into S-C/waves above:
+
+1. **BLOCKER (fixed in Move 1):** unqualified fail-fast would hard-kill NER/reranker on every
+   existing install — both lanes have no manifest and live off `loadOrDefault`'s silent
+   convention fallback. → Compatibility plan added: WARN+degraded is the sole behavior until 657
+   ships manifests; fail-fast stays flag-gated.
+2. **MAJOR (fixed in waves):** Move 4's env wiring recreates the exact
+   `EnvRegistry`/`ResolvedConfigBuilder` collision 691 §L-2 flagged vs 702. → Re-sequenced to
+   Wave 1.5, after both merges.
+3. **MAJOR (fixed in Move 1):** "promote ModelManifest" undersold scope — it's a file-routing
+   record today; the real work is unifying four detection mechanisms across two modules +
+   authoring net-new manifests. → Honest sizing added.
+4. **MINOR (fixed in Move 6 + restraint list):** missing-failure-escalation and the
+   `@Tag("evidence")` fragility half had silently vanished between S-A and S-C. → Escalation-test
+   convention added to Move 6; whole-batch backoff added to the restraint list with a trigger.
+5. **MINOR (fixed in Move 3):** "preserves results by construction" softened to coverage/count
+   (CPU-retried sub-batches aren't bit-identical; precedented by SPLADE's existing fallback).
+
+Surviving unmodified: Move 2's architectural core (with honest ~6-file migration sizing), Move
+5's restraint calibration, Move 6, Wave 0's cheapness, all Axis-1 facts.
+
 ## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
 - 2026-07-10: all four surveys returned; condensed evidence + S-C synthesis recorded above.
-  S-D adversarial review next; then S-E founder review. Implementation remains unauthorized.
+- 2026-07-10: S-D adversarial review completed (verdict: fit-with-corrections); all five
+  corrections applied to S-C/waves. Status: READY FOR S-E FOUNDER REVIEW. Implementation
+  remains unauthorized.
