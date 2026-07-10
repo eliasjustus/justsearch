@@ -293,6 +293,67 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
     )
 
 
+@click.command("union-recall-gate")
+@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Data dir containing eval-results/ (the latest run's projection is checked).")
+@click.option("--dataset", required=True,
+              help="Dataset slug to gate (e.g. mixed/enron-qa).")
+@click.option("--baselines", type=click.Path(exists=True, resolve_path=True), default=None,
+              help="Path to union-recall-gate-baselines.v1.json "
+                   "(default: jseval/union-recall-gate-baselines.v1.json).")
+@click.option("--run-dir", type=click.Path(exists=True, resolve_path=True), default=None,
+              help="Specific run dir (with projections/). Default: latest under data-dir/eval-results.")
+@click.option("--report-out", type=click.Path(), default=None,
+              help="Write the full gate decision JSON to this path.")
+@click.option("--allow-engine-mismatch", is_flag=True,
+              help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
+                   "set differ — e.g. cross-encoder on vs off).")
+@click.pass_context
+def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
+                          allow_engine_mismatch):
+    """Recall-completeness ratchet (tempdoc 701 / register D-005) — fail on a union-recall drop.
+
+    Reads the latest eval-results run's staged_recall_accounting projection for DATASET and
+    compares its leg_union_recall against the per-corpus *floor* in
+    union-recall-gate-baselines.v1.json. The completeness sibling of ``leak-gate`` (same
+    projection artifact, opposite direction — leak-gate is a ceiling, this is a floor). Exit 0 =
+    no regression (or un-pinned dataset), 1 = regression, 2 = projection missing.
+    """
+    from .. import union_recall_gate as _urgate
+    from .. import ratchet_kernel as _rk
+
+    if baselines is None:
+        baselines = Path(__file__).resolve().parents[2] / "union-recall-gate-baselines.v1.json"
+
+    def _read_projection(rd: Path):
+        # Union-recall's source is a projection artifact (not the run summary) — exit 2 if absent.
+        pp = rd / "projections" / "staged_recall_accounting.json"
+        if not pp.is_file():
+            click.echo(json.dumps(
+                {"exit_code": 2, "error": f"no staged_recall_accounting projection in {rd}"},
+                indent=2), err=True)
+            sys.exit(2)
+        return json.loads(pp.read_text(encoding="utf-8"))
+
+    # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
+    # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
+    _rk.assert_cohort_engines(
+        _rk.resolve_run_dir(run_dir, data_dir), baselines, allow_mismatch=allow_engine_mismatch)
+    # Mirrors leak-gate's tempdoc 683 pattern: floors project from the release's optional
+    # per-corpus `union_recall` section, with `fallback_baselines` governing any corpus the
+    # release doesn't carry.
+    _rk.run_gate(
+        baselines_path=baselines, data_dir=data_dir, run_dir=run_dir, dataset=dataset,
+        read_inputs=_read_projection, evaluate=_urgate.evaluate,
+        project_release=lambda rel, base: _urgate.project_release_to_baselines(
+            rel,
+            tolerance_default_abs=base.get("tolerance_default_abs", _urgate.DEFAULT_TOLERANCE_ABS),
+            per_corpus_tolerance=base.get("per_corpus_tolerance"),
+        ),
+        report_out=report_out, summary_fields=("current", "baseline", "floor"),
+    )
+
+
 @click.command("llm-gate")
 @click.option("--bench-file", required=True, type=click.Path(exists=True, resolve_path=True),
               help="llm-bench.json produced by `jseval llm-bench` (with AI active).")
@@ -410,6 +471,93 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
     # tempdoc 683: when the existing file is a pointer file (`current_release`), the derived
     # measured values are its FALLBACK layer — preserve the pointer + top-level metadata so a
     # derive never silently strips the release projection.
+    if old_doc.get("current_release"):
+        merged_doc = {**old_doc,
+                      "tolerance_default_abs": derived["tolerance_default_abs"],
+                      "fallback_baselines": derived["baselines"]}
+        merged_doc.pop("baselines", None)
+    else:
+        merged_doc = derived
+    out_path.write_text(
+        json.dumps(merged_doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    click.echo(json.dumps(
+        {"out": str(out_path), "pinned": derived["baselines"]}, indent=2), err=True)
+
+
+@click.command("union-recall-gate-derive")
+@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+              help="Data dir containing eval-results/ (each dataset's latest run projection is read).")
+@click.option("--datasets", required=True, help="Comma-separated dataset slugs to pin (e.g. beir/scifact,mixed/enron-qa).")
+@click.option("--out", type=click.Path(), default=None,
+              help="Write the baselines JSON here (default: jseval/union-recall-gate-baselines.v1.json).")
+@click.option("--tolerance", type=float, default=None,
+              help="Default tolerance_abs subtracted from the measured floor (else "
+                   "union_recall_gate.DEFAULT_TOLERANCE_ABS).")
+@click.pass_context
+def cmd_union_recall_gate_derive(ctx, data_dir, datasets, out, tolerance):
+    """Derive union-recall-gate floors from each dataset's latest run projection (measured, not
+    hand-typed).
+
+    The completeness analogue of ``leak-gate-derive`` (tempdoc 623 anti-fork): a corpus's pinned
+    ``leg_union_recall_min`` is its *measured* union-recall in the latest multi-mode run, so there
+    is no table of numbers to drift. ``evaluate`` subtracts ``tolerance_abs`` from it.
+    """
+    from .. import union_recall_gate as _urgate
+    from .. import release as _release
+
+    eval_results = Path(data_dir) / "eval-results"
+    raw_slugs = [s.strip() for s in datasets.split(",") if s.strip()]
+    projections: dict = {}
+    for raw_slug in raw_slugs:
+        # Directory lookup MUST use the raw, operator-typed slug: run directories are named from
+        # `jseval run --dataset`'s literal argument (e.g. bare "scifact"), never canonicalized —
+        # confirmed via artifacts.py's `dataset_slug = summary["dataset"].replace("/", "_")`.
+        suffix = "_" + raw_slug.replace("/", "_")
+        cands = sorted(
+            (p for p in eval_results.iterdir()
+             if p.is_dir() and p.name.endswith(suffix)
+             and (p / "projections" / "staged_recall_accounting.json").is_file()),
+            key=lambda p: p.name, reverse=True)
+        if not cands:
+            click.echo(f"WARN: no run with a staged_recall_accounting projection for {raw_slug}", err=True)
+            continue
+        # Canonicalize only the OUTPUT key (e.g. "scifact" -> "beir/scifact") to match
+        # relevance-gate/perf-gate/leak-gate's convention (tempdoc 664 twelfth pass lesson).
+        slug = _release.canonical_dataset_slug(raw_slug)
+        projections[slug] = json.loads(
+            (cands[0] / "projections" / "staged_recall_accounting.json").read_text(encoding="utf-8"))
+
+    kwargs = {} if tolerance is None else {"tolerance_default_abs": tolerance}
+    derived = _urgate.derive_baselines(projections, **kwargs)
+    out_path = Path(out) if out else (
+        Path(__file__).resolve().parents[2] / "union-recall-gate-baselines.v1.json")
+
+    # A lower leg_union_recall_min floor is a relaxation (higher-is-better metric) — refuse to
+    # derive over a prior pin without a classified, justified changeset (mirrors leak-gate-derive).
+    from .. import baseline_shift as _bshift
+    old_doc = json.loads(out_path.read_text(encoding="utf-8")) if out_path.is_file() else {}
+    # Mirrors leak-gate-derive's tempdoc 683 pointer handling: previously pinned values live in
+    # `fallback_baselines`; inline `baselines` (pre-migration files) still wins if present.
+    old_baselines = {**(old_doc.get("fallback_baselines") or {}), **(old_doc.get("baselines") or {})}
+    changesets_dir = out_path.resolve().parent / ".changesets"
+    try:
+        for slug, entry in derived.get("baselines", {}).items():
+            old_floor = (old_baselines.get(slug) or {}).get("leg_union_recall_min")
+            new_floor = entry.get("leg_union_recall_min")
+            if not isinstance(old_floor, (int, float)) or not isinstance(new_floor, (int, float)):
+                continue
+            _bshift.assert_baseline_not_relaxed(
+                old_floor, new_floor, lower_is_better=False,
+                gate="union-recall-gate", dataset=slug, changesets_dir=changesets_dir,
+            )
+    except _bshift.BaselineRelaxedWithoutJustificationError as e:
+        click.echo(json.dumps({"exit_code": 1, "error": str(e)}, indent=2), err=True)
+        sys.exit(1)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # When the existing file is a pointer file (`current_release`), the derived measured values
+    # are its FALLBACK layer — preserve the pointer + top-level metadata so a derive never
+    # silently strips the release projection.
     if old_doc.get("current_release"):
         merged_doc = {**old_doc,
                       "tolerance_default_abs": derived["tolerance_default_abs"],
@@ -931,4 +1079,4 @@ def cmd_extraction_gate(ctx, baseline_run, candidate_run, mode, guard_modes,
     sys.exit(report["exit_code"])
 
 
-COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_utility_gate, cmd_utility_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]
+COMMANDS = [cmd_gate, cmd_relevance_gate, cmd_perf_gate, cmd_leak_gate, cmd_union_recall_gate, cmd_llm_gate, cmd_leak_gate_derive, cmd_union_recall_gate_derive, cmd_utility_gate, cmd_utility_gate_derive, cmd_changeset_new, cmd_recall_profile, cmd_ce_replay, cmd_judge_ceiling, cmd_judge_arbitration_report, cmd_extraction_gate]

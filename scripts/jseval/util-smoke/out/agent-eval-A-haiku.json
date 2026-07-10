@@ -32,7 +32,7 @@
         {
           "tool": "Bash",
           "input": {
-            "command": "ls -la \"C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\"",
+            "command": "ls -la \"C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\"",
             "description": "List files in corpus directory"
           }
         },
@@ -40,14 +40,14 @@
           "tool": "Grep",
           "input": {
             "pattern": "Great Cinnamon Heist|1823",
-            "path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
+            "path": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
             "output_mode": "content"
           }
         },
         {
           "tool": "Read",
           "input": {
-            "file_path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\cinnamon.md"
+            "file_path": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\cinnamon.md"
           }
         }
       ],
@@ -75,14 +75,14 @@
         {
           "tool": "Glob",
           "input": {
-            "path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
+            "path": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir",
             "pattern": "**/*"
           }
         },
         {
           "tool": "Read",
           "input": {
-            "file_path": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\telescope.md"
+            "file_path": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-_smamrxd\\corpus-dir\\telescope.md"
           }
         }
       ],

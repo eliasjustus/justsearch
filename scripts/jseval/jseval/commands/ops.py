@@ -328,9 +328,12 @@ def _gate_coverage() -> dict[str, set[str]]:
     from .. import relevance_gate as _rgate
     from .. import perf_gate as _pgate
     from .. import leak_gate as _lgate
+    from .. import union_recall_gate as _urgate
 
     root = Path(__file__).resolve().parents[2]
-    covered: dict[str, set[str]] = {"relevance-gate": set(), "perf-gate": set(), "leak-gate": set()}
+    covered: dict[str, set[str]] = {
+        "relevance-gate": set(), "perf-gate": set(), "leak-gate": set(), "union-recall-gate": set(),
+    }
     projectors = {
         "relevance-gate": (
             "relevance-ratchet-baselines.v1.json",
@@ -349,6 +352,18 @@ def _gate_coverage() -> dict[str, set[str]]:
                 rel,
                 tolerance_default_abs=base.get(
                     "tolerance_default_abs", _lgate.DEFAULT_TOLERANCE_ABS),
+                per_corpus_tolerance=base.get("per_corpus_tolerance"),
+            ),
+        ),
+        # tempdoc 701: the file is committed (floors derived by `union-recall-gate-derive`); the
+        # try/except OSError below still treats a missing/malformed file as "gates nothing" rather
+        # than crashing on a partial checkout, same as the other three.
+        "union-recall-gate": (
+            "union-recall-gate-baselines.v1.json",
+            lambda rel, base: _urgate.project_release_to_baselines(
+                rel,
+                tolerance_default_abs=base.get(
+                    "tolerance_default_abs", _urgate.DEFAULT_TOLERANCE_ABS),
                 per_corpus_tolerance=base.get("per_corpus_tolerance"),
             ),
         ),

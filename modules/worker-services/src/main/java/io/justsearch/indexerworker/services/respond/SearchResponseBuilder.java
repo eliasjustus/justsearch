@@ -368,7 +368,8 @@ public final class SearchResponseBuilder {
   // Helpers (moved verbatim from SearchOrchestrator)
   // ============================================================
 
-  private SearchResponse.Builder toGrpcResponseBuilder(
+  // visible for testing
+  SearchResponse.Builder toGrpcResponseBuilder(
       LuceneRuntimeTypes.SearchResult result,
       long tookMs,
       String queryString,
@@ -387,7 +388,6 @@ public final class SearchResponseBuilder {
                 TextAnalysisUtils.analyzeTerms(analyzer, SchemaFields.CONTENT, queryString))
             : Map.of();
 
-    int resultIndex = 0;
     for (LuceneRuntimeTypes.SearchHit hit : result.hits()) {
       SearchResult.Builder resultBuilder = SearchResult.newBuilder().setScore(hit.score());
 
@@ -410,7 +410,11 @@ public final class SearchResponseBuilder {
         resultBuilder.putFields(entry.getKey(), entry.getValue());
       }
 
-      if (isChunkHit && resultIndex < 10) {
+      // Enrich every returned hit (not just the first 10 in pre-rerank order): the Head reranks
+      // the full returned pool (up to searchLimit) and then trims, so any hit may surface into
+      // the visible page — capping enrichment at the pre-rerank top-10 left reranked-up hits
+      // (e.g. rank 11-20 promoted into view) with a blank title/filename/excerpt.
+      if (isChunkHit) {
         resolveParentMetadata(parentDocId, resultBuilder);
       }
 
@@ -475,7 +479,7 @@ public final class SearchResponseBuilder {
         }
       }
 
-      if (includeExcerpts && resultIndex < 10 && analyzer != null && hasLexicalTerms) {
+      if (includeExcerpts && analyzer != null && hasLexicalTerms) {
         org.apache.lucene.search.Query excerptQuery =
             queryForSpans != null
                 ? queryForSpans
@@ -508,7 +512,6 @@ public final class SearchResponseBuilder {
           }
         }
       }
-      resultIndex++;
 
       responseBuilder.addResults(resultBuilder.build());
     }

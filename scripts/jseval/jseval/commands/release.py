@@ -104,7 +104,10 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
     # staged_recall_accounting projections (compose() only sees summaries; the run
     # dirs — and thus projections/ — are only known here). Best-effort: a run
     # without an ok projection simply contributes no leak row.
+    # tempdoc 701: same loop also sources the union_recall (leg_union_recall) sibling —
+    # the recall-survival floor counterpart of leak's ceiling, read from the same projection.
     leak_by_dataset: dict[str, float] = {}
+    union_recall_by_dataset: dict[str, float] = {}
     for rd, s in zip(run_dirs, summaries):
         pp = rd / "projections" / "staged_recall_accounting.json"
         if not pp.is_file():
@@ -115,10 +118,14 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             continue
         if proj.get("status") != "ok":
             continue
-        rate = (proj.get("aggregate") or {}).get("leak_rate")
+        aggregate = proj.get("aggregate") or {}
+        rate = aggregate.get("leak_rate")
+        union_recall = aggregate.get("leg_union_recall")
         ds = _release.canonical_dataset_slug(s.get("dataset"))
         if ds and isinstance(rate, (int, float)):
             leak_by_dataset[ds] = float(rate)
+        if ds and isinstance(union_recall, (int, float)):
+            union_recall_by_dataset[ds] = float(union_recall)
 
     ext = None
     if external_baselines:
@@ -134,6 +141,7 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             external_baselines=ext,
             require_comparable=not allow_incomparable,
             leak_by_dataset=leak_by_dataset or None,
+            union_recall_by_dataset=union_recall_by_dataset or None,
         )
     except _release.ComposeError as e:
         click.echo(f"compose refused: {e}", err=True)
@@ -194,6 +202,21 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             _bshift.assert_baseline_not_relaxed(
                 old_value, new_value, lower_is_better=True,
                 gate="release", dataset=f"{ds}:leak_rate",
+                changesets_dir=changesets_dir,
+            )
+        # tempdoc 701: the union_recall section is a projected ratchet source too
+        # (union-recall-gate's current_release pointer) — a recompose LOWERING a corpus's
+        # union-recall floor is a relaxation (union-recall is higher-is-better) and needs the
+        # same justified changeset.
+        old_union_recall = old_doc.get("union_recall") or {}
+        for ds, entry in (release_doc.get("union_recall") or {}).items():
+            old_value = (old_union_recall.get(ds) or {}).get("leg_union_recall")
+            new_value = entry.get("leg_union_recall")
+            if not isinstance(old_value, (int, float)) or not isinstance(new_value, (int, float)):
+                continue
+            _bshift.assert_baseline_not_relaxed(
+                old_value, new_value, lower_is_better=False,
+                gate="release", dataset=f"{ds}:leg_union_recall",
                 changesets_dir=changesets_dir,
             )
     except _bshift.BaselineRelaxedWithoutJustificationError as e:

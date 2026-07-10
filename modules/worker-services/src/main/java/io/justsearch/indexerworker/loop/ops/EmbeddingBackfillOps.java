@@ -102,9 +102,18 @@ public final class EmbeddingBackfillOps {
       }
       long t2 = System.nanoTime();
 
-      // Phase 3: Update docs with results (fallback to sequential if batch failed)
-      if (vectors == null) {
-        context.log().warn("Backfill: Batch embedding returned null, falling back to per-doc");
+      // Phase 3: Update docs with results (fallback to sequential if batch failed or
+      // misaligned — trusting a batch result's length to match the request is what caused
+      // the chunk-backfill AIOOBE crash-loop below; guard both null and size-mismatch here too).
+      if (vectors == null || vectors.size() != batchDocIds.size()) {
+        if (vectors == null) {
+          context.log().warn("Backfill: Batch embedding returned null, falling back to per-doc");
+        } else {
+          context.log().warn(
+              "Backfill: Batch embedding size mismatch (expected {}, got {}), falling back to per-doc",
+              batchDocIds.size(),
+              vectors.size());
+        }
         for (int i = 0; i < batchDocIds.size(); i++) {
           int[] counts =
               embedAndUpdateSingle(
@@ -351,9 +360,20 @@ public final class EmbeddingBackfillOps {
       // Phase 2: Batch embed
       List<float[]> vectors = embeddingProvider.embedDocumentBatch(batchContents);
 
-      // Phase 3: Update chunks with results
-      if (vectors == null) {
-        context.log().warn("Chunk backfill: Batch embedding returned null, falling back to per-chunk");
+      // Phase 3: Update chunks with results (fallback to sequential if batch failed or
+      // misaligned — a null-only guard here let a short/empty `vectors` result reach the
+      // index-aligned loop below and throw AIOOBE before any chunk was marked failed, which
+      // crash-looped the whole enrichment cycle forever since the scheduler just refetched
+      // the same still-PENDING batch).
+      if (vectors == null || vectors.size() != batchChunkIds.size()) {
+        if (vectors == null) {
+          context.log().warn("Chunk backfill: Batch embedding returned null, falling back to per-chunk");
+        } else {
+          context.log().warn(
+              "Chunk backfill: Batch embedding size mismatch (expected {}, got {}), falling back to per-chunk",
+              batchChunkIds.size(),
+              vectors.size());
+        }
         for (int i = 0; i < batchChunkIds.size(); i++) {
           String chunkId = batchChunkIds.get(i);
           try {

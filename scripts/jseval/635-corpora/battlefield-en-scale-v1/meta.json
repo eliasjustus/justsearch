@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "624-battlefield-scale-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "en",
+    "seed": 6240,
+    "hops": 2,
+    "distractor_ratio": 1.4,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 380,
+    "doc_words": 2500
+  }
+}

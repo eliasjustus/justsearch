@@ -585,6 +585,56 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-029: size-robustness is CORPUS-DEPENDENT — repetitive-real legal text degrades where diverse Wikipedia is flat; dense+SPLADE near-dead on CLERC at every size (tempdoc 701 probe, 2026-07-10)
+
+- **Finding:** an E4-style fixed-query volume sweep on REAL legal text (CLERC, byte-identical 200
+  queries, 198 → 4,000 docs via the new `corpus-fetch-clerc --n-docs` distractor sampling) measured
+  `leg_union_recall` **0.875 → 0.705** (LEG_MISS 0.10 → 0.295), final_recall 0.865 → 0.685, full nDCG
+  0.681 → 0.507. This **scopes F-028's provenance claim**: "size-robust on realistic corpora" holds for
+  *diverse* text (MIRACL flat 3k→10k) but NOT for repetitive/domain boilerplate — the paying-ICP shape.
+  Mechanism differs from both synthetic mechanisms: fusion holds (leak ≤0.035); the loss is
+  **completeness decay via BM25 dilution**, because on this corpus the engine de facto rides the lexical
+  leg alone — **dense R@10 0.10→0.03, SPLADE 0.15→0.005 at BOTH sizes** ("hybrid" is effectively
+  BM25-only on CLERC-shaped legal retrieval). Working hypothesis for the dead semantic legs: CLERC's
+  long citing-sentence queries = FW-003/678's verbose-query dilution at its extreme, compounded by very
+  long case docs — needs its own attribution pass (678-adjacent; deliberately not opened in 701).
+  Caveat: the 4k full-mode number is `comparable=False` (`ann_proof` dense-evidence 0.455), but the drop
+  is carried by the lexical leg (no vectors involved) and the 198-doc point is fully comparable.
+- **Gate significance:** legal-clerc-200 pins the union floor at 0.87; the same family at 4k measures
+  0.705 — live proof of the completeness-floor's sensitivity design (F-028).
+- **Bycatch (fixed on the 701 branch):** first contact with this corpus at 4k live-reproduced a worker
+  enrichment **crash-loop** — `EmbeddingBackfillOps` + 4 sibling batch paths trusted batch-result
+  length; an empty result (backfill racing provider init after a worker restart) threw AIOOBE before
+  any failure-marking → eternal batch refetch, 199/199 doc embeddings starved. Guarded (null-or-mismatch
+  → per-item fallback), 5 sites, new test fixture, module suite green.
+- **Runs:** `tmp/eval-results/20260709T235522_mixed_legal-clerc-200` + `20260710T001438_mixed_legal-clerc-4k`
+  (regenerable; recipes committed). Probe design + full table: tempdoc 701 §Repetitive-real probe.
+
+### F-028: recall-survival's completeness half now has a FLOOR gate — the guard triad is complete (tempdoc 701, 2026-07-08)
+
+- **Finding:** F-025 gated the recall funnel's *leak* half (`leak-gate`, a ceiling on cascade-leak). Its
+  first stage — **representation completeness** (`leg_union_recall`: did ANY retrieval leg surface the gold
+  before fusion/ranking; the LEG_MISS bucket) — was measured by `staged_recall_accounting` and profiled by
+  `recall-profile`, but **gated by nothing**; `leak-gate` structurally cannot catch it (fewer golds retrieved
+  does not *raise* `leak_rate` — it can lower it). Tempdoc 701 added **`jseval union-recall-gate`**: the
+  floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
+  same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
+  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
+  golden/needle-burial-v1 1.0** (tol 0.05).
+  Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
+  (~14× sensitivity gap, tempdoc 701 §U1), so `relevance-gate` can miss what `union-recall-gate` catches.
+- **Provenance / context:** the 624 "retrieval collapses at scale" signal was investigated and resolved as a
+  **synthetic-corpus artifact** — the engine is *measured* size-robust on realistic corpora 3k→10k (MIRACL/de
+  recall flat, `final_recall` 0.967→0.967) while only the adversarial near-identical synthetic corpus collapses
+  — so no size-dependent product defect exists in the tested range; the completeness gate is the durable
+  standing-guard deliverable, not a fix. ANN recall decay was empirically ruled out as the mechanism (§E2).
+- **Deferred (documented in 701):** growing the pin set (legal-clerc / enron-qa) via further
+  `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
+  release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
+  parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
 - **INVALIDATION (2026-07-03, 624 twenty-third pass — read first):** a five-agent mechanism
@@ -1334,13 +1384,13 @@ via virtual threads, then converge at the fusion stage.
 | 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope` per query term; O(1) via IndexReader; forwarded but not yet used for routing                                                      |
 | 4   | **Filter Parsing + Entity Expansion** | gRPC filters → Lucene queries; entity facet filters expanded via disambiguation cluster snapshot                                                                    |
 | 5   | **Staged Retrieval Dispatch**         | Dispatches to enabled legs; standard combos use optimized methods (`searchHybrid`, `searchHybridSplade`); novel combos use pairwise RRF fusion via `fuseLegs()`     |
-| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 3× limit for over-retrieval                                                                                                 |
-| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 2× limit; pre-filtered by runtime filters                                                                                            |
+| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 10× limit for over-retrieval (capped at `candidate_limit_max`, default 100)                                                  |
+| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 10× limit (capped at 100); pre-filtered by runtime filters                                                                           |
 | 8   | **SPLADE Search** ‖                   | `FeatureField` query with learned sparse weights                                                                                                                    |
 | 9   | **CC / RRF Fusion**                   | **CC** (default): min-max normalized convex combination with per-leg weights; **RRF** (alternative): `score = Σ(weight / (K + rank)) + bm25_boost × raw_score` (K=60, vectorWeight=0.75). 3-way variant (`fuseWithCC3`) available when SPLADE is active |
 | 10  | **Low-Signal Gating**                 | Caps vector-only results (default 3) when vector top score <0.40; prevents semantic hijack                                                                          |
 | 11  | **Stop-Word Short-Circuit**           | Skips vector search for trivial queries (<4 chars or single stop words)                                                                                             |
-| 12  | **Fuzzy Correction** (zero-hit retry) | Two-stage: (a) full Levenshtein fuzzy retry, (b) per-term replacement of zero-docFreq terms; only when zero hits on SIMPLE queries                                  |
+| 12  | **Fuzzy Correction**                  | Two-stage on SIMPLE queries: (a) full Levenshtein fuzzy retry fires when the query returns **zero** hits; (b) per-term augmentation of zero-`docFreq` terms fires when the query returns **nonzero** hits (can still change which document ranks first) |
 
 ‖ = parallel execution
 
@@ -1354,7 +1404,7 @@ RRF chunk merge.
 | #    | Stage                                      | What It Does                                                                                                                                                                                                                                                |
 | ---- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 13a  | **Chunk Branch Retrieval** (Stage 3a)      | Parallel chunk-level BM25 (`searchChunksText`), KNN (`searchChunkVector`), and SPLADE (`searchChunksSplade`) within `executeChunkBranchFusion`. Budget starts at `limit × CHUNK_INITIAL_CANDIDATE_MULTIPLIER`; retries at higher budget if any leg saturates |
-| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 256-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
+| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 512-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
 | 13c  | **Branch Fusion** (Stage 3b)               | Merges whole-doc branch with collapsed chunk-parent branch. Default strategy is CC (`fuseWithCCNamed`): chunk branch weight is modulated by parent length (short docs trust whole branch, long docs trust chunk branch; `chunkMinMultiplier` default 0.25). Alternative: RRF (`fuseWithRRFNamed`) when `branchFusionStrategy=rrf` |
 | 14   | **Match Spans + Excerpts + Facets**        | Character-offset spans for UI highlighting; IDF-weighted excerpt regions (top 3); DocValues facets first page only; entity canonical merge                                                                                                                 |
 
@@ -1377,8 +1427,9 @@ share the same Lucene index but have their own orchestration:
 **RAG Retrieval** (`RagContextOps`, `indexer-worker`): Used by AI chat.
 Retrieves chunks using BM25 or hybrid (BM25 + vector) search, then
 optionally reranks with a cross-encoder (GPU-aware, with deadline and VRAM
-arbitration). Applies MMR diversification to avoid redundant passages, then
-assembles context within a token budget. Falls back to full-document
+arbitration). Optionally applies MMR diversification (opt-in via
+`rag.diversify.mode=mmr`; positional diversification is the default) to reduce
+redundant passages, then assembles context within a token budget. Falls back to full-document
 retrieval with virtual chunking when no indexed chunks exist. Unlike the
 interactive pipeline, RAG retrieval is chunk-first (optimized for passage
 extraction) and runs entirely in the Worker process.
@@ -1480,6 +1531,8 @@ Contract tests live in `KnowledgeHttpApiAdapterHarmfulCombinationsTest.java`.
 | FilterNormalization | Search vs answer path | Fires on both paths when enabled | `FilterNormalizationService` runs async on both `KnowledgeHttpApiAdapter` (search) and `RetrieveContextController` (answer) when `JUSTSEARCH_FILTER_NORM_ENABLED=true` (366) |
 | Entity/metadata filters | Chunk documents | Never applied to chunks directly | Two-stage pre-filter: parent-doc ID lookup first, then chunk search scoped to matching parent IDs. `buildChunkFilterQuery()` excludes these; `buildFilterQueryOnly()` includes them (362) |
 | Entity facet keys | MCP layer | `_raw` suffix stripped before agent response | Backend uses `_raw`-suffixed field names; MCP server strips `_raw` suffix before returning to agents (366) |
+
+> **Note on "stemming":** the "stemming fallback" row above is a legacy label for the SIMPLE-syntax BM25 text-query path, **not** a linguistic stemmer. The analyzer chain is `ICUTokenizer → ICUNormalizer2Filter → LowerCaseFilter` with no stemming step (ADR-0043: locale-invariant analysis — no per-language stemmer exists in the codebase).
 
 ### Why HYBRID blocks expansion
 
