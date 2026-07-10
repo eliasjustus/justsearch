@@ -184,3 +184,99 @@ benchmark exists for this task shape, which is *why* the bake-off is warranted r
 **Candidate shortlist:** an internet research pass (general multilingual, permissive-license, ONNX-availability,
 legal/MMTEB evidence) is in flight and will seed /theorize; candidate selection is theorize/design material,
 not a gate on this GO verdict.
+
+---
+
+## Theorization pass (2026-07-10, same session)
+
+### The candidate landscape (internet research pass, 2026-07-10)
+
+A third-party benchmark exists that is *close* to this doc's question: **MLEB** (Massive Legal
+Embedding Benchmark, Isaacus, arXiv:2510.19365 — 10 expert-annotated legal retrieval datasets,
+NDCG@10). It is not CLERC's citation-shape task and is English-heavy, so it ranks *candidates*, it
+does not decide FIX/SCOPE. The eligible shortlist it produces (all general multilingual; license and
+ONNX-path from the research pass; sizes are fp16 estimates):
+
+| Candidate | Params / dim / ctx | fp16 | License | ONNX | Legal signal (MLEB, 3rd-party) |
+|---|---|---|---|---|---|
+| `Qwen/Qwen3-Embedding-0.6B` | 0.6B / 1024 (MRL) / 32k | ≈1.2 GB | Apache-2.0 | community only | **77.13** (rank 11) — best eligible |
+| `Snowflake/snowflake-arctic-embed-l-v2.0` | 568M / 1024 / 8192 | ≈1.1 GB | Apache-2.0 | **official** | 74.08 |
+| `Snowflake/snowflake-arctic-embed-m-v2.0` | 305M / 768 / 8192 | ≈610 MB | Apache-2.0 | **official** | 73.94 |
+| `BAAI/bge-m3` (dense path) | 568M / 1024 / 8192 | ≈1.1 GB | MIT | community (dense only) | 69.44 |
+| `intfloat/multilingual-e5-large` | 560M / 1024 / **512** | ≈1.1 GB | MIT | community | 68.11 (instruct variant) — weakest |
+| `ibm-granite/granite-embedding-278m-multilingual` | 278M / 768 | ≈556 MB | Apache-2.0 | **official** | unverified (only English-R2 siblings scored) |
+| Incumbent `gte-multilingual-base` | 305M / 768 / 8192 | 628 MB | Apache-2.0 | shipped | **unverified on MLEB** — no published number |
+
+Named-and-excluded (cite as considered): `jinaai/jina-embeddings-v3` (CC-BY-NC-4.0) and v4 (Qwen
+Research License; MLEB 78.62) — license-ineligible; `voyage-law-2` (MLEB 79.63) and Isaacus Kanon 2
+(MLEB **86.03**, #1) — legal-specialized AND proprietary-API, doubly ineligible under D-003;
+`Alibaba-NLP/gte-Qwen2-1.5B-instruct` (Apache but no ONNX path found, ≈3.3 GB fp16, stretch tier
+only); granite English-R2 + legal-BERT lineage (`nlpaueb/legal-bert`, `law-ai/InLegalBERT`) —
+English-only/legal-only, D-003-ineligible.
+
+Two structurally interesting facts in that table: **(a)** `arctic-embed-m-v2.0` is *built on the
+incumbent's own architecture* (mGTE, same 305M/768 class) — the cleanest "same architecture, different
+training" A/B; if IT lifts legal where the incumbent doesn't, the mismatch is training-distribution,
+not capacity. **(b)** the legal-specialized proprietary models (Kanon 86.0, voyage-law 79.6) sit only
+~9-12 pts above the best *eligible* generalist (Qwen3 77.1) on MLEB — the "you need a legal encoder"
+premium is measurable but not categorical, which keeps Branch FIX plausible for a generalist.
+
+### Alternative framings considered (kept or discarded)
+
+1. **"Task-shape limit" framing (supports Branch SCOPE).** CLERC's query IS a citing passage — long,
+   in-register legal prose whose *lexical* overlap with the gold case is enormous (BM25 0.855,
+   monotonic in verbosity, F-030). "Which specific precedent does this sentence cite" is plausibly an
+   *identity/entity*-matching task, not a *topicality* task — and single-vector cosine topicality may be
+   the wrong geometry regardless of encoder quality. This framing predicts: every candidate improves
+   modestly, none approaches lexical → exactly the ≤~0.3 SCOPE band. The bake-off distinguishes it cleanly.
+2. **Instruction-conditioned embedding as a *uniform* lever (kept, one extra condition).**
+   Qwen3-Embedding and arctic accept task instructions. A single, corpus-independent query instruction
+   is NOT per-domain routing (one uniform recipe — D-003 bucket-C), and costs one extra bake-off
+   condition for instruction-capable candidates. A *per-corpus* instruction switch WOULD be routing →
+   forbidden; only a globally-uniform instruction could ever ship.
+3. **Learned-sparse candidates (mostly discarded).** The title says "and/or learned-sparse", but the
+   eligible multilingual learned-sparse field is effectively one model deep (the incumbent opensearch
+   multilingual-v1); no alternative with legal evidence surfaced. BGE-M3's sparse head is the one cheap
+   rider (same forward pass as its dense probe). Decision: dense-first screen; M3-sparse optional; a
+   dedicated SPLADE bake-off is NOT warranted by the field's thinness.
+4. **Reranker-recovery framing (kept as a metric, not a candidate).** The engine is funnel-and-judge
+   (D-005): a dense leg that gets gold into the *CE window* is useful even at weak R@10, because the CE
+   may rank it. The bake-off must therefore record **R@100 and R@20**, not only R@10 — a candidate at
+   R@10 0.3 / R@100 0.7 is a different (partially recoverable) animal than 0.3 / 0.35. This bounds what
+   "recovers the leg" means: the leg's job is candidate supply.
+5. **Scale-stress condition (kept, cheap).** F-029: dense R@10 decays 0.10→0.03 from 198→4k docs and
+   `corpus-fetch-clerc --n-docs 4000` exists. Any candidate clearing the 198-doc screen gets re-scored
+   against the 4k distractor pool offline (same query embeddings + more doc vectors; exact NN stays
+   trivial). Without this the screen over-states real-corpus performance.
+6. **Fine-tune-the-incumbent framing (discarded).** A legal-tuned artifact IS a per-domain lever in
+   spirit (D-003), adds training infra, and answers "can we specialize", not this doc's question. Out.
+7. **"Bigger model" framing (bounded, not discarded).** The ≥1.5B tier (gte-Qwen2, jina-v4-class) hints
+   the legal gap narrows with scale — but ≈3+ GB fp16 breaks 657 tier economics (today's whole bundled
+   ONNX stack ≈3.5 GB) and the missing ONNX path breaks the ORT runtime. The eligible ceiling is the
+   ~0.6B / 1.2 GB tier; if even that stays ≤~0.3, the SCOPE claim gains its honest size-axis caveat:
+   "at locally-shippable scale".
+
+### Hidden assumptions the design must not paper over
+
+- **Offline exact-NN ≈ engine dense leg** — only if the anchor control (takeover §B) reproduces
+  F-030's 0.10/0.145 with the production recipe. If offline comes out materially *higher* than the
+  engine's leg, the delta is engine-side (ANN/truncation/pooling drift — a 639-adjacent finding, not
+  this doc's), and candidate deltas would inherit the confound.
+- **Chunk-probe fidelity.** Production chunking is 500-token windows with 50-token overlap
+  (`ChunkDocumentWriter`); the offline chunk condition must mirror that, not invent its own.
+- **MLEB rank ≠ CLERC rank.** MLEB is statute/QA-shaped and English-heavy; CLERC is citation-shaped.
+  Ordering may not transfer — which is why all shortlisted candidates run, not just the MLEB-top one.
+- **Community-ONNX fidelity** (Qwen3-0.6B has no first-party export). For the bake-off, run candidates
+  in torch/sentence-transformers (recipe-correct by construction) and treat ONNX-parity as a Branch-FIX
+  integration concern — don't let export bugs contaminate the science.
+- **n=200 statistics.** Adjacent-candidate deltas of a few points won't be significant; decision bands
+  stay coarse (≤0.3 / ≥0.6), and any "clear winner" claim needs a paired bootstrap or sign test.
+
+### Broader shape this points at (recorded, not designed)
+
+If Branch SCOPE closes this doc, the scoped claim ("semantic legs contribute on diverse/multilingual
+content; legal-shaped retrieval is lexical-carried and measurably well-served") becomes a *public
+product claim* (659/RESEARCH.md) — the first instance of a **capability-boundary statement** derived
+from measurement rather than marketing. The reusable shape: any future corpus-family dead-leg finding
+should land as a scoped claim + register finding, not silent scorecard variance. One instance so far —
+name it, don't build a framework (AHA/C-018).
