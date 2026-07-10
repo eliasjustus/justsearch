@@ -248,3 +248,21 @@ built measurement-ready rather than retrofitted.
 mechanics 691's, output honesty 677's, routing 607's, model pinning 374's. If executed *now* as an
 investigation, it would duplicate 252 Phase 5/6 and 607 §20's recorded declines. The stub's claim
 of a "genuinely-unowned decision" should be read as "unowned *reopen* decision" (F1).
+
+### F7 — Addendum (2026-07-10, same day): private-sidecar cross-check corroborates the verdict
+
+A follow-up pass over the founder's private strategy sidecar (not published; contents summarized
+here public-safely) found nothing that overturns the verdict and three things that sharpen it:
+
+- **Same missing prerequisite, independently:** every extraction/layout discussion there names "a
+  table/PDF corpus" as the still-missing gate — the same gap 686 owns. No real binary-document
+  corpus exists anywhere.
+- **Independent corroboration of F4:** the 624 agent-utility campaign (different harness, different
+  metric than OHR-Bench) hit the same VLM-confabulation defect on its scan/OCR arm and had to rule
+  that arm unmeasurable — the 677 blocker is confirmed from a second angle.
+- **One more candidate for the eventual enumeration (Q3):** an internal competitive-research pass
+  recommends evaluating **DeepDoc** (RAGFlow's ONNX-based OCR + layout + table-structure engine;
+  local, permissive license — notably *not* Docling/MinerU/ColPali) once a table/PDF corpus exists.
+  Carry it on the candidate list next to F5's PaddleOCR-VL — both are contingent on exactly the
+  two reopen triggers above. Priority signals in the same material rank layout/table extraction
+  below cheaper already-identified search-quality levers, consistent with WAIT-FOR-EVIDENCE.
