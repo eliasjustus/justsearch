@@ -251,7 +251,15 @@ public record ResolvedConfig(
         boolean gpuEnabled,
         int gpuDeviceId,
         int gpuMemMb,
-        int contextLength) {}
+        int contextLength,
+        // Tempdoc 691 Phase 1: late-chunking embed pass (single forward pass for a chunked
+        // parent + its chunk docs) — default off.
+        boolean lateChunkingEnabled,
+        // Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for the late-chunking path
+        // (independent of contextLength — the base batch path OOMs at this length; the
+        // late-chunking path is batch-1 by construction). Default 8192, clamped to
+        // [contextLength, 8192].
+        int lateChunkingContextLength) {}
 
     public record Splade(
         Boolean enabled,

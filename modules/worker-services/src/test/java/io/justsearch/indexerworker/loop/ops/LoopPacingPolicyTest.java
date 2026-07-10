@@ -25,6 +25,11 @@ final class LoopPacingPolicyTest {
       @Override public int dimension() { return 0; }
       @Override public boolean isAvailable() { return true; }
       @Override public boolean isUsingGpu() { return usingGpu; }
+      @Override
+      public io.justsearch.indexerworker.embed.EmbeddingService.ChunkedEmbedding embedWithSpans(
+          String content, int[][] charSpans) {
+        return null;
+      }
     };
   }
 
