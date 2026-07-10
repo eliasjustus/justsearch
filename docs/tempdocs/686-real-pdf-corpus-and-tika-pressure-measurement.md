@@ -210,3 +210,35 @@ passes the real file count as the indexing floor. Ingest-only runs
 (`jseval run --max-queries 0`) already skip queries/qrels by design, so no query set is needed
 for this tempdoc's runs. The unused-but-designed `corpus_signature(files=...)` seam was noted
 for identity work later; v1 identity is the committed sha256 manifest.
+
+## Evidence durability + unverified assumptions (2026-07-10 closeout)
+
+**Durable (re-derivable from repo/commits):** the corpus manifest + rebuild script
+(`scripts/jseval/666-corpora/realdocs-v1/`, `scripts/search/fetch-realdocs-corpus.py --verify`);
+all run commands verbatim in this doc; the SPLADE fix + its regression tests by name
+(`SpladeEncoderBoundedTokenizeTest`, `SpladeTokenizerSurrogateSafetyTest`, and the manual replay
+harness `SpladeIndexContentCrashHarnessTest` — re-runnable against any future index dir by
+editing its INDEX_DIR constant); the hs_err key numbers (heap occupancy 99.7-99.9% at all three
+crashes, crash stack) transcribed above.
+
+**Local-only (this machine, gitignored — will not survive a clean checkout):** the crashed run's
+index (`tmp/headless-eval-data/`), GC logs (`tmp/worker-gc-686-full.log` — truncated per
+crash-restart, `tmp/worker-gc-686-resume.log`), the raw hs_err dumps and harvested document
+texts (session scratchpad archive).
+
+**Session-output-grade (recorded numbers only; not re-derivable):** the run-2 progress curve
+(615/620 at ~33 min; watchdog observations), the extraction_method distribution harvest
+(commands described above; re-derivable only while an index of this corpus exists), and the
+crash-fix validation curve (enrichment resume: 100→328/615 docs across ~15 min, zero crash
+dumps, past the ≤193 death zone).
+
+**Unverified assumptions / deferred checks (do not treat as facts):**
+1. The SPLADE fix is validated to 53% doc-level enrichment on the resumed index, NOT to full
+   corpus enrichment completion — the chunk-embedding backlog (~85k chunks at ~50/cycle pacing,
+   691's domain) makes a full drain impractical until pacing changes; no crash is *expected*
+   beyond the validated zone (same code path, smaller inputs), but it was not observed.
+2. The heap raise-vs-bound general decision remains open; this session answered one instance
+   (bound the SPLADE consumer). Other unbounded consumers may exist (embedding/NER tokenize
+   paths were NOT audited for the same upfront-materialization pattern — cheap follow-up).
+3. `max_pages: 200` behavior on a packaged install remains unprobed (config-resolution trace
+   only, inherited caveat from 706's S2).
