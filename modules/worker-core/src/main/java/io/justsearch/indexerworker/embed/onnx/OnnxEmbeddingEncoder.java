@@ -61,6 +61,10 @@ public final class OnnxEmbeddingEncoder implements Closeable {
   // --- Tokenizer ---
   private final HuggingFaceTokenizer tokenizer;
   private final int maxSeqLen;
+  // Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for embedWithSpans, independent of
+  // maxSeqLen. Falls back to maxSeqLen when the shape's value is <= 0 (defensive — DISABLED /
+  // test paths that don't wire the late-chunking config).
+  private final int lateChunkingMaxSeqLen;
   private final boolean needsTokenTypeIds;
 
   // --- Chunking ---
@@ -98,6 +102,8 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       SessionHandle sessions, EmbeddingShape shape, HuggingFaceTokenizer tokenizer) {
     this.sessions = sessions;
     this.maxSeqLen = shape.maxSequenceLength();
+    this.lateChunkingMaxSeqLen =
+        shape.lateChunkingMaxSequenceLength() > 0 ? shape.lateChunkingMaxSequenceLength() : maxSeqLen;
     this.chunkSize = Math.min(512, maxSeqLen);
     this.chunkOverlap = 128;
     this.needsTokenTypeIds = shape.needsTokenTypeIds();
@@ -105,8 +111,10 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     this.poolingStrategy = shape.poolingStrategy();
 
     log.info(
-        "OnnxEmbeddingEncoder initialized: maxSeqLen={}, tokenTypeIds={}, poolingStrategy={}",
+        "OnnxEmbeddingEncoder initialized: maxSeqLen={}, lateChunkingMaxSeqLen={}, tokenTypeIds={},"
+            + " poolingStrategy={}",
         maxSeqLen,
+        lateChunkingMaxSeqLen,
         needsTokenTypeIds,
         poolingStrategy);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
@@ -119,11 +127,14 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * {@code InferenceCompositionRoot.composeEmbedAssembly} (variant-driven path) and by test
    * harnesses + the worker-embed service lazy-init path.
    *
+   * @param lateChunkingMaxSeqLen single-pass whole-doc token limit for {@link #embedWithSpans}
+   *     (tempdoc 691 Phase 2); {@code <= 0} falls back to {@code maxSeqLen}
    * @throws OrtException if session input-name probe fails
    * @throws UncheckedIOException if tokenizer load fails
    */
   public static EmbeddingAssembly buildAssembly(
-      SessionHandle sessions, Path modelDir, int maxSeqLen) throws OrtException {
+      SessionHandle sessions, Path modelDir, int maxSeqLen, int lateChunkingMaxSeqLen)
+      throws OrtException {
     // Tempdoc 397 §14.24 FD-ProbeDeletion: probe input names via the assembler helper.
     // Tempdoc 374 sandbox round 4 issue H: previously hardcoded model.onnx, which
     // broke when Install AI only downloaded model_fp16.onnx on a CUDA-functional
@@ -146,7 +157,9 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     }
     PoolingStrategy poolingStrategy = detectPoolingStrategy(modelDir, "pooling_config.json");
     return new EmbeddingAssembly(
-        sessions, new EmbeddingShape(maxSeqLen, needsTokenTypeIds, poolingStrategy), tokenizer);
+        sessions,
+        new EmbeddingShape(maxSeqLen, needsTokenTypeIds, poolingStrategy, lateChunkingMaxSeqLen),
+        tokenizer);
   }
 
   /**
@@ -540,25 +553,28 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * derives both the whole-document vector and one vector per character span from the same
    * token-level forward pass, instead of running a separate ORT pass per chunk.
    *
-   * <p>Returns {@code null} if {@code content} exceeds the model's context window ({@link
-   * #maxSeqLen} tokens) — Phase-1 scope excludes long documents; the caller falls back to the
-   * existing per-chunk {@link #embed} path for those. The length check runs before any per-token
-   * character-offset materialization: {@code getCharTokenSpans()} on an unbounded {@link Encoding}
-   * previously caused a native OOM crash for very large documents (tempdoc 686, {@code
-   * SpladeEncoder}), so this primitive only touches it once the token count is confirmed small.
+   * <p>Returns {@code null} if {@code content} exceeds {@link #lateChunkingMaxSeqLen} tokens — the
+   * raised single-pass ceiling for this path (tempdoc 691 Phase 2; independent of {@link
+   * #maxSeqLen}, the base batch path's limit). Docs beyond it fall back to the existing per-chunk
+   * {@link #embed} path. The length check runs before any per-token character-offset
+   * materialization: {@code getCharTokenSpans()} on an unbounded {@link Encoding} previously
+   * caused a native OOM crash for very large documents (tempdoc 686, {@code SpladeEncoder}), so
+   * this primitive only touches it once the token count is confirmed small.
    *
    * @param content the full document text
    * @param charSpans {@code [startCharInclusive, endCharExclusive)} ranges into {@code content}
-   *     (e.g. from {@code CHUNK_START_CHAR}/{@code CHUNK_END_CHAR}); one output vector per span
+   *     (e.g. from {@code CHUNK_START_CHAR}/{@code CHUNK_END_CHAR}); one output vector per span.
+   *     An empty array embeds the whole doc in one pass and returns zero chunk vectors (tempdoc
+   *     691 Phase 2 VECTOR-only mode).
    * @return the doc vector plus one chunk vector per span, or {@code null} if {@code content}
-   *     exceeds {@link #maxSeqLen} tokens
+   *     exceeds {@link #lateChunkingMaxSeqLen} tokens
    * @throws OrtException if ONNX inference fails
    */
   public EmbedResult embedWithSpans(String content, int[][] charSpans) throws OrtException {
     Encoding encoding = tokenizer.encode(content);
     long[] ids = encoding.getIds();
 
-    if (ids.length > maxSeqLen) {
+    if (ids.length > lateChunkingMaxSeqLen) {
       return null;
     }
 

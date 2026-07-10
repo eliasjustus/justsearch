@@ -1010,6 +1010,7 @@ public final class ResolvedConfigBuilder {
   }
 
   private ResolvedConfig.Ai.Embedding buildEmbedding() {
+    int contextLength = resolveInt("justsearch.embed.context_length", 2048);
     return new ResolvedConfig.Ai.Embedding(
         resolveNullableBoolean("justsearch.ai.embed.enabled"),
         resolveString("justsearch.embed.backend", "auto"),
@@ -1021,9 +1022,23 @@ public final class ResolvedConfigBuilder {
         // (10 BFCArena failures observed in 391's 2026-04-19 re-measurement).
         // Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB.
         resolveInt("justsearch.embed.gpu_mem_mb", 3072),
-        resolveInt("justsearch.embed.context_length", 2048),
+        contextLength,
         // Tempdoc 691 Phase 1: late-chunking embed pass — default off (D-004 template).
-        resolveBoolean("justsearch.embed.late_chunking_enabled", false));
+        resolveBoolean("justsearch.embed.late_chunking_enabled", false),
+        resolveLateChunkingContextLength(contextLength));
+  }
+
+  /**
+   * Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for the late-chunking path. Clamped
+   * to a max of 8192 — gte-multilingual-base's trained context ceiling (checkpoint
+   * {@code config.json max_position_embeddings}; {@code sentence_bert_config.json
+   * max_seq_length}) is hardcoded here until the model-capability contract (tempdoc 710 Move 1)
+   * owns it — and to a min of {@code contextLength} so the late-chunking path is never MORE
+   * restrictive than the base batch path.
+   */
+  private int resolveLateChunkingContextLength(int contextLength) {
+    int raw = resolveInt("justsearch.embed.late_chunking_context_length", 8192);
+    return Math.max(Math.min(raw, 8192), contextLength);
   }
 
   /**

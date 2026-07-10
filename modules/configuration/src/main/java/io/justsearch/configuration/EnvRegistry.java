@@ -326,6 +326,17 @@ public enum EnvRegistry {
         "JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED",
         "false"),
 
+    /**
+     * Single-pass whole-doc VECTOR limit for the late-chunking path — tempdoc 691 Phase 2. Raises
+     * the eligibility ceiling for the batch-1 {@code embedWithSpans} long-doc pass independently of
+     * the base {@code justsearch.embed.context_length} (whose batch path would OOM at this length).
+     * Default 8192, clamped to the model's trained context ceiling.
+     */
+    EMBED_LATE_CHUNKING_CONTEXT_LENGTH(
+        "justsearch.embed.late_chunking_context_length",
+        "JUSTSEARCH_EMBED_LATE_CHUNKING_CONTEXT_LENGTH",
+        "8192"),
+
     /** Enable GPU acceleration for SPLADE inference (default false). */
     SPLADE_GPU_ENABLED("justsearch.splade.gpu_enabled", "JUSTSEARCH_SPLADE_GPU_ENABLED"),
 

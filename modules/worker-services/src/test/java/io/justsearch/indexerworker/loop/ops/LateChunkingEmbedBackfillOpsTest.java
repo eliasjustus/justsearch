@@ -27,10 +27,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 /**
- * Dedicated coverage for {@link LateChunkingEmbedBackfillOps} (tempdoc 691 Wave 0): the happy
- * path, the long-doc-deferred path, a chunk-vector-count mismatch, failure escalation parity, and
- * the flag-off strict no-op — plus the tempdoc 691 Wave 0 log-visibility change (the final log now
- * fires on {@code longDocDeferred > 0} alone, not just {@code processed > 0 || failed > 0}).
+ * Dedicated coverage for {@link LateChunkingEmbedBackfillOps} (tempdoc 691 §Phase M/L-8: VECTOR-
+ * only mode) — the happy path (parent VECTOR only, chunk docs untouched), proof that chunk-span
+ * data is never even read, the long-doc-deferred path, parent-only failure escalation, and the
+ * flag-off strict no-op.
+ *
+ * <p>§Phase M's offline CLS check found the earlier design's per-span {@code CHUNK_VECTOR}
+ * derivation REGRESSES retrieval quality on this CLS-pooled model (nDCG@10 −0.2329) — the pass now
+ * embeds the whole doc in one pass and writes ONLY the parent {@code VECTOR}; chunk docs keep their
+ * existing separate per-chunk CLS embed path untouched. This is a requirement CHANGE driven by
+ * measurement, not a test-weakening (see CLAUDE.md's fix-root-causes rule) — the removed
+ * span-count-mismatch test in particular is obsolete because the pass no longer reads chunk span
+ * fields at all.
  *
  * <p>Uses the same {@code fakeIndex}-backed mock seam as {@code CombinedEnrichmentBackfillOpsTest}
  * (in-memory map behind {@code DocumentFieldOps}/{@code IndexingCoordinator} stubs, not fixed
@@ -149,9 +157,9 @@ class LateChunkingEmbedBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "flag ON, happy path: chunked parent embeds once, VECTOR + both CHUNK_VECTORs written,"
-          + " statuses COMPLETED, retry counts reset, SPLADE/NER never touched")
-  void happyPath_writesAllVectors_resetsRetryCounts_leavesSpladeNerAlone() {
+      "flag ON, happy path: chunked parent embeds once (whole doc, VECTOR-only), parent VECTOR"
+          + " written, chunk docs NOT touched, SPLADE/NER never touched")
+  void happyPath_writesParentVectorOnly_leavesChunksAndSpladeNerAlone() {
     seedDoc(
         "parent-1",
         "parent content long enough to be chunked",
@@ -164,14 +172,16 @@ class LateChunkingEmbedBackfillOpsTest {
     seedChunkDoc("chunk-2", "parent-1", 1, 10, 20, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     float[] docVector = {1f, 2f};
-    List<float[]> chunkVectors = List.of(new float[] {3f, 4f}, new float[] {5f, 6f});
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
-        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, chunkVectors, 2));
+        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
 
     boolean didWork =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
 
     assertTrue(didWork);
+
+    // embedWithSpans called with an EMPTY span array — VECTOR-only, no chunk spans derived.
+    verify(embeddingProvider).embedWithSpans(anyString(), argThat(spans -> spans.length == 0));
 
     Map<String, Object> parentState = fakeIndex.get("parent-1");
     assertArrayEquals(docVector, (float[]) parentState.get(SchemaFields.VECTOR));
@@ -180,38 +190,57 @@ class LateChunkingEmbedBackfillOpsTest {
     assertEquals(SchemaFields.SPLADE_STATUS_PENDING, parentState.get(SchemaFields.SPLADE_STATUS));
     assertEquals(SchemaFields.NER_STATUS_PENDING, parentState.get(SchemaFields.NER_STATUS));
 
+    // Chunk docs are completely untouched — no CHUNK_VECTOR, status stays PENDING.
     Map<String, Object> chunk1State = fakeIndex.get("chunk-1");
-    assertArrayEquals(chunkVectors.get(0), (float[]) chunk1State.get(SchemaFields.CHUNK_VECTOR));
+    assertNull(chunk1State.get(SchemaFields.CHUNK_VECTOR));
     assertEquals(
-        SchemaFields.EMBEDDING_STATUS_COMPLETED, chunk1State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
-    assertEquals("0", chunk1State.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
-
+        SchemaFields.EMBEDDING_STATUS_PENDING, chunk1State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
     Map<String, Object> chunk2State = fakeIndex.get("chunk-2");
-    assertArrayEquals(chunkVectors.get(1), (float[]) chunk2State.get(SchemaFields.CHUNK_VECTOR));
+    assertNull(chunk2State.get(SchemaFields.CHUNK_VECTOR));
     assertEquals(
-        SchemaFields.EMBEDDING_STATUS_COMPLETED, chunk2State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
-    assertEquals("0", chunk2State.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+        SchemaFields.EMBEDDING_STATUS_PENDING, chunk2State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
 
+    // Only the parent doc is in the write batch — single-entry batched write.
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-1")));
     verify(commitOps, times(1)).commitAndTrack(any());
     verify(log, times(1))
-        .info(
-            anyString(),
-            eq(1),
-            eq(0),
-            eq(0),
-            anyLong(),
-            anyLong());
+        .info(anyString(), eq(1), eq(0), eq(0), anyLong(), anyLong());
   }
 
   @Test
   @DisplayName(
-      "flag ON, long-doc deferred: embedWithSpans returns null -> nothing written, statuses stay"
-          + " PENDING, counted as deferred, and the summary log fires even though"
-          + " processed=failed=0 (tempdoc 691 Wave 0 visibility fix)")
+      "flag ON: chunk-span metadata (CHUNK_INDEX/CHUNK_START_CHAR/CHUNK_END_CHAR) is never read —"
+          + " the VECTOR-only pass doesn't consult chunk internals at all (tempdoc 691 §Phase M)")
+  void neverReadsChunkSpanMetadata() {
+    seedDoc(
+        "parent-1",
+        "parent content long enough to be chunked",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-1", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    seedChunkDoc("chunk-2", "parent-1", 1, 10, 20, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    float[] docVector = {1f, 2f};
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
+
+    LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
+
+    // getDocumentFieldsBatch (the only seam that could read CHUNK_START_CHAR/CHUNK_END_CHAR/
+    // CHUNK_INDEX) is never called on the success path — only the failure-escalation path reads
+    // it, and only for the parent's own EMBEDDING_RETRY_COUNT.
+    verify(documentFieldOps, never()).getDocumentFieldsBatch(anyList(), anySet());
+  }
+
+  @Test
+  @DisplayName(
+      "flag ON, long-doc deferred: embedWithSpans returns null -> nothing written, parent status"
+          + " stays PENDING, counted as deferred, and the summary log fires even though"
+          + " processed=failed=0")
   void longDoc_embedWithSpansReturnsNull_deferredAndLoggedDespiteZeroWork() {
     seedDoc(
         "parent-long",
-        "content that exceeds the model's context window",
+        "content that exceeds the raised single-pass limit",
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
     seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
@@ -232,66 +261,18 @@ class LateChunkingEmbedBackfillOpsTest {
         SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
     assertNull(chunkState.get(SchemaFields.CHUNK_VECTOR));
 
-    // The core of the change-2 regression: before tempdoc 691 Wave 0 the log only fired on
-    // processed>0||failed>0, so an all-deferred cycle was invisible. Now it fires with
-    // longDocDeferred=1 and processed=failed=0.
+    // The core of the tempdoc 691 Wave 0 visibility fix: the log fires with longDocDeferred=1 and
+    // processed=failed=0, so an all-deferred cycle is not invisible.
     verify(log, times(1))
-        .info(
-            anyString(),
-            eq(0),
-            eq(0),
-            eq(1),
-            anyLong(),
-            anyLong());
+        .info(anyString(), eq(0), eq(0), eq(1), anyLong(), anyLong());
   }
 
   @Test
   @DisplayName(
-      "flag ON, chunk-vector count mismatch: leaves parent and chunks PENDING, no partial writes")
-  void spanCountMismatch_leavesEverythingPending_noPartialWrites() {
-    seedDoc(
-        "parent-mismatch",
-        "parent content long enough to be chunked",
-        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
-    seedChunkDoc("chunk-1", "parent-mismatch", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
-    seedChunkDoc("chunk-2", "parent-mismatch", 1, 10, 20, SchemaFields.EMBEDDING_STATUS_PENDING);
-
-    // 2 chunks expected but only 1 chunk vector returned.
-    float[] docVector = {1f, 2f};
-    List<float[]> onlyOneChunkVector = List.of(new float[] {3f, 4f});
-    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
-        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, onlyOneChunkVector, 1));
-
-    boolean didWork =
-        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
-
-    assertFalse(didWork, "a span-count mismatch must not be counted as work done");
-    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
-    verify(commitOps, never()).commitAndTrack(any());
-
-    Map<String, Object> parentState = fakeIndex.get("parent-mismatch");
-    assertEquals(SchemaFields.EMBEDDING_STATUS_PENDING, parentState.get(SchemaFields.EMBEDDING_STATUS));
-    assertNull(parentState.get(SchemaFields.VECTOR));
-    Map<String, Object> chunk1State = fakeIndex.get("chunk-1");
-    assertEquals(
-        SchemaFields.EMBEDDING_STATUS_PENDING, chunk1State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
-    assertNull(chunk1State.get(SchemaFields.CHUNK_VECTOR));
-    Map<String, Object> chunk2State = fakeIndex.get("chunk-2");
-    assertEquals(
-        SchemaFields.EMBEDDING_STATUS_PENDING, chunk2State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
-    assertNull(chunk2State.get(SchemaFields.CHUNK_VECTOR));
-
-    // Neither processed, failed, nor long-doc-deferred fired for this parent, so the summary log
-    // must not fire either.
-    verify(log, never()).info(anyString(), any(), any(), any(), any(), any());
-  }
-
-  @Test
-  @DisplayName(
-      "flag ON, embedWithSpans throws: parent AND all its chunks get retry-count escalation"
-          + " together (tempdoc 700 parity via the shared compute*FailureUpdate helpers), not"
-          + " marked FAILED below EMBEDDING_MAX_RETRIES")
-  void embedWithSpansThrows_escalatesParentAndChunksTogether() {
+      "flag ON, embedWithSpans throws: PARENT ONLY gets retry-count escalation (tempdoc 700"
+          + " parity via the shared computeEmbeddingFailureUpdate helper); chunk docs are"
+          + " untouched — VECTOR-only mode never embedded them in the first place")
+  void embedWithSpansThrows_escalatesParentOnly() {
     seedDoc(
         "parent-bad",
         "poison parent content",
@@ -309,12 +290,8 @@ class LateChunkingEmbedBackfillOpsTest {
 
     assertTrue(didWork, "a failure-escalation write is still recorded as work");
 
-    // computeEmbeddingFailureUpdate/computeChunkEmbeddingFailureUpdate parity: retryCount+1,
-    // no *_STATUS=FAILED yet since EMBEDDING_MAX_RETRIES=3.
     Map<String, Object> expectedParentUpdate =
         EmbeddingBackfillOps.computeEmbeddingFailureUpdate(0);
-    Map<String, Object> expectedChunkUpdate =
-        EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(0);
 
     Map<String, Object> parentState = fakeIndex.get("parent-bad");
     assertEquals(
@@ -326,19 +303,17 @@ class LateChunkingEmbedBackfillOpsTest {
         parentState.get(SchemaFields.EMBEDDING_STATUS),
         "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
 
+    // Chunk docs are untouched — no CHUNK_EMBEDDING_RETRY_COUNT bump, status stays PENDING.
     for (String chunkId : List.of("chunk-1", "chunk-2")) {
       Map<String, Object> chunkState = fakeIndex.get(chunkId);
-      assertEquals(
-          expectedChunkUpdate.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT),
-          chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
-      assertEquals("1", chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+      assertNull(chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
       assertEquals(
           SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
     }
 
-    // Parent + both chunks escalate together, in the SAME batched write (this pass embeds them
-    // as one unit, so they fail together).
-    verify(indexingCoordinator, times(1)).updateDocumentsBatch(argThat(list -> list.size() == 3));
+    // Only the parent is in the failure-escalation write — parent-only, not parent+chunks.
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-bad")));
     verify(commitOps, times(1)).commitAndTrack(any());
   }
 

@@ -201,7 +201,11 @@ public final class InferenceCompositionRoot {
               arbiter,
               events);
       EmbeddingAssembly assembly =
-          OnnxEmbeddingEncoder.buildAssembly(sessions, embedCfg.modelPath(), embedCfg.contextLength());
+          OnnxEmbeddingEncoder.buildAssembly(
+              sessions,
+              embedCfg.modelPath(),
+              embedCfg.contextLength(),
+              embedCfg.lateChunkingContextLength());
       handles.add(assembly.sessions());
       policies.put(
           EncoderRole.EMBEDDING,

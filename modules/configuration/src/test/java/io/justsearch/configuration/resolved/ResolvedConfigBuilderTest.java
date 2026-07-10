@@ -275,6 +275,51 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName(
+        "late-chunking defaults from EnvRegistry: disabled, context length defaults to 8192"
+            + " (tempdoc 691 Phase 2)")
+    void lateChunkingDefaultsFromEnvRegistry() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+
+      assertEquals(
+          Boolean.parseBoolean(EnvRegistry.EMBED_LATE_CHUNKING_ENABLED.defaultValue()),
+          config.ai().embedding().lateChunkingEnabled());
+      assertFalse(config.ai().embedding().lateChunkingEnabled());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.EMBED_LATE_CHUNKING_CONTEXT_LENGTH.defaultValue()),
+          config.ai().embedding().lateChunkingContextLength());
+      assertEquals(8192, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
+    @DisplayName(
+        "late-chunking context length clamps to a max of 8192 (gte-multilingual-base's trained"
+            + " context ceiling)")
+    void lateChunkingContextLengthClampsToMax8192() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.embed.late_chunking_context_length", "32000");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(8192, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
+    @DisplayName(
+        "late-chunking context length never falls below the base embed.context_length")
+    void lateChunkingContextLengthClampsToMinContextLength() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.embed.context_length", "6000");
+      builder.putDefault("justsearch.embed.late_chunking_context_length", "2048");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(6000, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
     @DisplayName("indexBasePath is derived from dataDir when not explicitly set")
     void indexBasePathDerived() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();

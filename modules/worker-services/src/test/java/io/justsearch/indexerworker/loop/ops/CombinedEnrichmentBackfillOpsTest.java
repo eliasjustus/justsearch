@@ -27,7 +27,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -446,16 +445,20 @@ class CombinedEnrichmentBackfillOpsTest {
   }
 
   // ---------------------------------------------------------------------------------------
-  // Tempdoc 691 Phase 1: LateChunkingEmbedBackfillOps — additive, flag-gated late-chunking
-  // embed pass. Reuses this file's fakeIndex/mocks harness since the late pass reads/writes
-  // through the same DocumentFieldOps/IndexingCoordinator surface as the combined path above.
+  // Tempdoc 691 Phase 2: LateChunkingEmbedBackfillOps — additive, flag-gated, VECTOR-only
+  // long-doc single-pass embed. Reuses this file's fakeIndex/mocks harness since the late pass
+  // reads/writes through the same DocumentFieldOps/IndexingCoordinator surface as the combined
+  // path above. §Phase M measured the earlier per-span CHUNK_VECTOR half REGRESSING on this
+  // CLS-pooled model (nDCG@10 -0.2329) and dropped it — this pass now writes ONLY the parent
+  // VECTOR; chunk docs keep their existing separate per-chunk CLS embed path untouched. Test
+  // rewrite driven by that measurement, not weakening (fix-root-causes-not-symptoms).
   // ---------------------------------------------------------------------------------------
 
   @Test
   @DisplayName(
-      "late-chunking flag ON: chunked parent + its chunks get VECTOR/CHUNK_VECTOR from a single"
-          + " embedWithSpans call; SPLADE/NER are left untouched")
-  void lateChunking_flagOn_chunkedParent_embedsOnceWritesAllVectorsAndLeavesSpladeNerAlone() {
+      "late-chunking flag ON: chunked parent embeds once (whole doc, empty span array); parent"
+          + " VECTOR is written, chunk docs are NOT touched, SPLADE/NER are left untouched")
+  void lateChunking_flagOn_chunkedParent_writesParentVectorOnlyAndLeavesChunksAndSpladeNerAlone() {
     seedDoc(
         "parent-1",
         "parent content here, long enough to be chunked",
@@ -467,22 +470,18 @@ class CombinedEnrichmentBackfillOpsTest {
     seedChunkDoc("chunk-2", "parent-1", 1, 10, 20, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     float[] docVector = {1f, 2f};
-    List<float[]> chunkVectors = List.of(new float[] {3f, 4f}, new float[] {5f, 6f});
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
-        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, chunkVectors, 2));
+        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
 
     boolean didWork =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
 
     assertTrue(didWork);
 
-    ArgumentCaptor<int[][]> spansCaptor = ArgumentCaptor.forClass(int[][].class);
     verify(embeddingProvider, times(1))
-        .embedWithSpans(eq("parent content here, long enough to be chunked"), spansCaptor.capture());
-    int[][] capturedSpans = spansCaptor.getValue();
-    assertEquals(2, capturedSpans.length);
-    assertArrayEquals(new int[] {0, 10}, capturedSpans[0], "chunk-1 (index 0) span first");
-    assertArrayEquals(new int[] {10, 20}, capturedSpans[1], "chunk-2 (index 1) span second");
+        .embedWithSpans(
+            eq("parent content here, long enough to be chunked"),
+            argThat(spans -> spans.length == 0));
 
     Map<String, Object> parentState = fakeIndex.get("parent-1");
     assertArrayEquals(docVector, (float[]) parentState.get(SchemaFields.VECTOR));
@@ -492,16 +491,15 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals(SchemaFields.SPLADE_STATUS_PENDING, parentState.get(SchemaFields.SPLADE_STATUS));
     assertEquals(SchemaFields.NER_STATUS_PENDING, parentState.get(SchemaFields.NER_STATUS));
 
+    // Chunk docs are untouched — VECTOR-only mode never derives a CHUNK_VECTOR.
     Map<String, Object> chunk1State = fakeIndex.get("chunk-1");
-    assertArrayEquals(chunkVectors.get(0), (float[]) chunk1State.get(SchemaFields.CHUNK_VECTOR));
+    assertNull(chunk1State.get(SchemaFields.CHUNK_VECTOR));
     assertEquals(
-        SchemaFields.EMBEDDING_STATUS_COMPLETED, chunk1State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
-    assertEquals("0", chunk1State.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
-
+        SchemaFields.EMBEDDING_STATUS_PENDING, chunk1State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
     Map<String, Object> chunk2State = fakeIndex.get("chunk-2");
-    assertArrayEquals(chunkVectors.get(1), (float[]) chunk2State.get(SchemaFields.CHUNK_VECTOR));
+    assertNull(chunk2State.get(SchemaFields.CHUNK_VECTOR));
     assertEquals(
-        SchemaFields.EMBEDDING_STATUS_COMPLETED, chunk2State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
+        SchemaFields.EMBEDDING_STATUS_PENDING, chunk2State.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
 
     verify(commitOps, times(1)).commitAndTrack(any());
   }
@@ -537,12 +535,12 @@ class CombinedEnrichmentBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "late-chunking flag ON: embedWithSpans returns null (doc exceeds context window) — leaves"
-          + " both parent and chunks PENDING for the existing fallback path")
+      "late-chunking flag ON: embedWithSpans returns null (doc exceeds the raised single-pass"
+          + " limit) — leaves both parent and chunks PENDING for the existing fallback path")
   void lateChunking_longDoc_embedWithSpansReturnsNull_leavesEverythingPending() {
     seedDoc(
         "parent-long",
-        "content that exceeds the model's context window",
+        "content that exceeds the raised single-pass limit",
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
     seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
@@ -567,9 +565,10 @@ class CombinedEnrichmentBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "late-chunking flag ON: embedWithSpans throws — parent AND all its chunks get retry-count"
-          + " escalation (tempdoc 700 parity), not marked complete, SPLADE/NER untouched")
-  void lateChunking_embedWithSpansThrows_escalatesParentAndChunks() {
+      "late-chunking flag ON: embedWithSpans throws — PARENT ONLY gets retry-count escalation"
+          + " (tempdoc 700 parity), not marked complete; chunk docs are untouched (VECTOR-only"
+          + " mode never embedded them), SPLADE/NER untouched")
+  void lateChunking_embedWithSpansThrows_escalatesParentOnly() {
     seedDoc(
         "parent-bad",
         "poison parent content",
@@ -592,7 +591,7 @@ class CombinedEnrichmentBackfillOpsTest {
         "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
 
     Map<String, Object> chunkState = fakeIndex.get("chunk-1");
-    assertEquals("1", chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+    assertNull(chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
     assertEquals(
         SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
   }

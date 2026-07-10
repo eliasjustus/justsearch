@@ -67,7 +67,10 @@ final class OnnxEmbeddingEncoderLateChunkingTest {
     io.justsearch.ort.SessionHandle sessions =
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
             "embed-late-chunking-test", modelDir);
-    EmbeddingAssembly assembly = OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN);
+    // lateChunkingMaxSeqLen=0 falls back to MAX_SEQ_LEN — these tests exercise embedWithSpans'
+    // limit-check semantics at the base maxSeqLen boundary, not the raised Phase-2 ceiling.
+    EmbeddingAssembly assembly =
+        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0);
     encoder = new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());
   }
 
