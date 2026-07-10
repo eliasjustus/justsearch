@@ -143,7 +143,45 @@ essentially equal to its post-fusion contribution. Gate/fusion capping is NOT th
 on CLERC; the loss is in the leg's own retrieval.** E5-B side-verdict: the 702 recalibration does NOT
 recover legal hybrid (0.517 ≈ 0.521) — consistent with 702 §B.6's prediction and completing 702's
 exoneration as the F-029 mechanism (the miscalibration was latent on every corpus measured, four of
-four). **Next: E5-C (query-shape sweep) is now the live discriminator** between (a) verbose-query
-embedding dilution (this doc's lever) and doc-side representation (E5-D → 636/686). E5-C needs the
-query-variant datasets built (same corpus + qrels, reduced/keyword query files — LLM variant
-generate-once-committed per 704's determinism rule); not run this session.
+four).
+
+### E5-C RESULTS — keyword-control variant (2026-07-10, same session, branch 678-e5c-query-variants)
+
+Tooling: new `jseval corpus-query-variant` (deterministic keyword extraction: corpus-DF-ranked top-8
+query terms, original order; pure function of the source dataset — licensing-clean, nothing
+CLERC-derived committed; 14 unit tests). Variant `mixed/legal-clerc-200-kw`: 200/200 queries
+transformed, 0 fallbacks; corpus + qrels byte-identical to source. Run
+`20260710T071731_mixed_legal-clerc-200-kw`, four modes, all `comparable=True`.
+
+| Leg (raw pre-fusion R@10) | E5-A verbose originals | E5-C keyword top-8 | Δ |
+|---|---|---|---|
+| lexical | 0.855 | **0.630** | **−0.225** |
+| vector (dense) | 0.100 | 0.145 | +0.045 |
+| splade | 0.150 | 0.165 | +0.015 |
+| hybrid (final) | 0.670 | 0.470 | −0.200 |
+
+**Verdict (pre-registered tree, "dense stays dead" row): dense does NOT recover under query
+shortening — 0.10 → 0.145 is marginal, nowhere near lexical levels. Query LENGTH alone is ruled out
+as the dense-death mechanism at this operating point; attribution shifts to DOC-SIDE (E5-D:
+long-case-doc representation/chunking → routes 636/686).** Honest scope limit: the mechanical
+keyword-bag control rules out length, not *naturalness* — a rare-term bag is the query shape
+embedding encoders handle worst, so the LLM-reduced natural-phrase variant (E5-C variant 2, the
+`llm-reduced` slot in the new subcommand's registry) remains informative before doc-side is declared
+the sole mechanism. (The original 69→90% descriptor-phrase evidence used coherent phrases, not
+keyword bags.)
+
+**Sharp secondary finding: verbosity HELPS lexical on CLERC (−22.5 points under keyword reduction).**
+The citing sentence's full context is load-bearing for BM25 on this corpus shape — so "reduce the
+query" is NOT a free lever here; any query-side mechanism must be leg-aware (reduced variant for
+dense, full text for lexical — a per-leg query policy, not a global rewrite). This materially
+constrains this doc's eventual lever design AND pillar-1's query construction: realistic professional
+corpora need queries evaluated at multiple verbosity operating points, not one "realistic" length.
+
+**Pillar-1 fork consequence (for the corpus tempdoc):** do not assume dense contributes on
+legal-shaped documents until E5-D attribution lands; the ratified substrate choice (real legal+email
+distractor mass, EN+DE, injected fabricated gold) stands, with doc-length/chunking as an explicit
+design dimension and query verbosity as a controlled variable.
+
+Remaining in this lane: E5-C variant 2 (`llm-reduced` — local LLM, generate-once, recipe-committed,
+content not committed), then E5-D (chunk-level probe: gold-chunk embedding ranks, chunk-length stats
+vs the 2000-char floor).

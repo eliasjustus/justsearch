@@ -316,6 +316,47 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
                    f"shortcut_leaks={result['shortcut_leak_rate']} -> {verdict}")
 
 
+@click.command("corpus-query-variant")
+@click.option("--source", required=True,
+              help="Existing local dataset name, e.g. mixed/legal-clerc-200 or golden/needle-burial-v1.")
+@click.option("--variant", required=True,
+              type=click.Choice(("keyword",), case_sensitive=False),
+              help="Query transform to apply. Only 'keyword' (deterministic, LLM-free) exists today; "
+                   "the registry in corpus_query_variant.py is the extension point for e.g. 'llm-reduced'.")
+@click.option("--top-k", default=8, show_default=True, type=int,
+              help="Number of query terms kept by the keyword transform.")
+@click.option("--suffix", default=None,
+              help="Output dataset name suffix (default: the variant's shorthand, e.g. 'kw' for 'keyword') "
+                   "-> datasets/<source>-<suffix>/.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.pass_context
+def cmd_corpus_query_variant(ctx, source, variant, top_k, suffix, datasets_dir):
+    """Derive a query-variant dataset from --source (tempdoc 678 §Pillar-5 E5-C).
+
+    Same corpus.jsonl + qrels/ as --source (copied verbatim), transformed queries.jsonl (and
+    queries.json, if present) -> datasets/<source>-<suffix>/. The E5-C query-shape sweep's
+    licensing-clean control: a pure function of the source dataset, no randomness/seed/LLM."""
+    from .. import corpus_query_variant as cqv
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
+    source_dir = base / source
+    if not source_dir.is_dir():
+        raise click.UsageError(f"Source dataset directory not found: {source_dir}")
+
+    variant = variant.lower()
+    resolved_suffix = suffix or cqv.VARIANT_SUFFIXES.get(variant, variant)
+    dest_name = f"{source}-{resolved_suffix}"
+    dest_dir = base / dest_name
+
+    meta = cqv.build_query_variant(source_dir, dest_dir, variant=variant, top_k=top_k)
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(meta, indent=2))
+    else:
+        click.echo(f"Built {dest_name}: variant={variant} top_k={top_k} "
+                   f"{meta['total_queries']} queries ({meta['fallback_count']} fallback) -> {dest_dir}")
+
+
 @click.command("corpus-probe")
 @click.option("--dataset", required=True, help="Golden dataset name (e.g. synth-code-v1).")
 @click.option("--base-url", default="http://127.0.0.1:33221", show_default=True,
@@ -414,4 +455,4 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
 
 
 COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
-            cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc]
+            cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]
