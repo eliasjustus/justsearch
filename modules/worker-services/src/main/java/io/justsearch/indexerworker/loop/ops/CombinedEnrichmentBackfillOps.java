@@ -177,14 +177,27 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 1b: Batch status + chunk_content fetch (single searcher, all docs).
       // Replaces 300-400 individual getDocumentField() calls with one batched read.
       // All status fields are DocValues-backed (O(1) per read). CHUNK_CONTENT is stored.
+      // Tempdoc 700: also fetch *_RETRY_COUNT for every enrichment in play, so the failure
+      // branches below can make an escalation decision (increment + FAILED-at-max) from
+      // already-fetched data, without a per-doc read.
       Set<String> fieldsToFetch = new LinkedHashSet<>();
-      if (embedAvailable) fieldsToFetch.add(SchemaFields.EMBEDDING_STATUS);
+      if (embedAvailable) {
+        fieldsToFetch.add(SchemaFields.EMBEDDING_STATUS);
+        fieldsToFetch.add(SchemaFields.EMBEDDING_RETRY_COUNT);
+      }
       if (spladeAvailable) {
         fieldsToFetch.add(SchemaFields.SPLADE_STATUS);
+        fieldsToFetch.add(SchemaFields.SPLADE_RETRY_COUNT);
         fieldsToFetch.add(SchemaFields.CHUNK_CONTENT);
       }
-      if (nerAvailable) fieldsToFetch.add(SchemaFields.NER_STATUS);
-      if (!chunkDocIds.isEmpty()) fieldsToFetch.add(SchemaFields.CHUNK_EMBEDDING_STATUS);
+      if (nerAvailable) {
+        fieldsToFetch.add(SchemaFields.NER_STATUS);
+        fieldsToFetch.add(SchemaFields.NER_RETRY_COUNT);
+      }
+      if (!chunkDocIds.isEmpty()) {
+        fieldsToFetch.add(SchemaFields.CHUNK_EMBEDDING_STATUS);
+        fieldsToFetch.add(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT);
+      }
 
       Map<String, Map<String, String>> batchedFields =
           fieldsToFetch.isEmpty()
@@ -300,9 +313,23 @@ public final class CombinedEnrichmentBackfillOps {
                   "0");
               embedProcessed++;
             } else {
-              updates.put(
-                  isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
-                  SchemaFields.EMBEDDING_STATUS_PENDING);
+              // Tempdoc 700: escalate instead of silently resetting to PENDING forever. Look up
+              // the retry count already fetched in the batched pre-fetch, delegate the
+              // increment/FAILED-at-max decision to the same pure helper the individual
+              // EmbeddingBackfillOps siblings use, and merge the result into this doc's entry in
+              // updatesByDocId — never a direct updateDocument call (preserves the single-batched-
+              // write invariant, tempdoc 312 BUG-1).
+              Map<String, String> eidFields = batchedFields.getOrDefault(eid, Map.of());
+              int currentRetryCount =
+                  parseRetryCountOrZero(
+                      eidFields.get(
+                          isChunk
+                              ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                              : SchemaFields.EMBEDDING_RETRY_COUNT));
+              updates.putAll(
+                  isChunk
+                      ? EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount)
+                      : EmbeddingBackfillOps.computeEmbeddingFailureUpdate(currentRetryCount));
               embedFailed++;
             }
           }
@@ -333,7 +360,23 @@ public final class CombinedEnrichmentBackfillOps {
           }
         } catch (Exception e) {
           context.log().warn("Combined backfill: SPLADE batch encode failed: {}", e.getMessage());
-          spladeFailed = spladeDocIds.size();
+          // Tempdoc 700: escalate the docs that did NOT already get a successful write above
+          // (a short/partial sparseVecs result can leave some earlier indices already marked
+          // COMPLETED in updatesByDocId before the exception fired — don't clobber those).
+          int stillFailed = 0;
+          for (String spladeDocId : spladeDocIds) {
+            Map<String, Object> docUpdates = updatesByDocId.get(spladeDocId);
+            if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(
+                docUpdates.get(SchemaFields.SPLADE_STATUS))) {
+              continue;
+            }
+            Map<String, String> spladeDocFields = batchedFields.getOrDefault(spladeDocId, Map.of());
+            int currentRetryCount =
+                parseRetryCountOrZero(spladeDocFields.get(SchemaFields.SPLADE_RETRY_COUNT));
+            docUpdates.putAll(SpladeBackfillOps.computeSpladeFailureUpdate(currentRetryCount));
+            stillFailed++;
+          }
+          spladeFailed = stillFailed;
         }
       }
       spladeMs = (System.nanoTime() - tSplade) / 1_000_000;
@@ -387,6 +430,15 @@ public final class CombinedEnrichmentBackfillOps {
             context
                 .log()
                 .warn("Combined backfill: NER failed for {}: {}", docId, e.getMessage());
+            // Tempdoc 700: escalate via the same pure helper NerBackfillOps.handleNerFailure
+            // uses. The try block above never touched updatesByDocId before throwing, so it's
+            // safe to write the failure update directly (no partial-success clobber risk, unlike
+            // the SPLADE batch-catch above).
+            int currentRetryCount =
+                parseRetryCountOrZero(docFields.get(SchemaFields.NER_RETRY_COUNT));
+            updatesByDocId
+                .get(docId)
+                .putAll(NerBackfillOps.computeNerFailureUpdate(currentRetryCount));
             nerFailed++;
           }
         }
@@ -473,6 +525,22 @@ public final class CombinedEnrichmentBackfillOps {
     }
     } finally {
       enrichmentSpan.end();
+    }
+  }
+
+  /**
+   * Mirrors the retry-count parsing each individual {@code handle*Failure} does before delegating
+   * to its pure {@code compute*FailureUpdate} helper (tempdoc 700) — kept local to this class
+   * since the combined path parses from a batched pre-fetched field value, not a per-doc read.
+   */
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
+      return 0;
     }
   }
 }

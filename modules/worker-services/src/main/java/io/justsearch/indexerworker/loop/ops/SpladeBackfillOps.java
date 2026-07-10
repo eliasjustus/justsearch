@@ -255,21 +255,11 @@ public final class SpladeBackfillOps {
     try {
       String retryCountStr =
           documentFieldOps.getDocumentField(docId, SchemaFields.SPLADE_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeSpladeFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.SPLADE_MAX_RETRIES) {
-        updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_FAILED);
-        updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.SPLADE_STATUS)) {
         log.warn(
             "SPLADE permanently FAILED for {} after {} retries: {}",
             docId,
@@ -278,7 +268,6 @@ public final class SpladeBackfillOps {
         indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
-        updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "SPLADE retry {}/{} for {}: {}",
             retryCount,
@@ -291,6 +280,37 @@ public final class SpladeBackfillOps {
 
     } catch (Exception e) {
       log.error("Failed to update SPLADE retry count for {}", docId, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a SPLADE failure — no I/O. Shared by
+   * {@link #handleSpladeFailure} (immediate single-doc write) and the combined enrichment path
+   * (merges the result into its own single batched write), so the two stay in escalation-parity
+   * by construction (tempdoc 700).
+   *
+   * @param currentRetryCount the doc's retry count *before* this failure
+   * @return field updates: always {@code SPLADE_RETRY_COUNT}; additionally {@code
+   *     SPLADE_STATUS=FAILED} once the incremented count reaches {@code SPLADE_MAX_RETRIES}
+   */
+  static Map<String, Object> computeSpladeFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.SPLADE_MAX_RETRIES) {
+      updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
       return 0;
     }
   }
