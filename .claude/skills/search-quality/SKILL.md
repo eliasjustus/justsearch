@@ -585,6 +585,22 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
+
+- **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
+  (`PdfOcrEngine`: 300 DPI GRAY, bounded pool, one spawn/page, per-document budget, forceful child
+  kill). Measured on 686-corpus scans: 77p stall doc 113.9s → 16.8s (6.8×) with **100% of the
+  before-run's unique word vocabulary retained** (strict superset — the new path also merges the
+  baseline text layer where the old primary path replaced it, and recovers documents the old
+  Tika-internal pass silently failed on). Config defect fixed alongside: absent OCR config
+  (eval/headless + likely packaged installs) previously meant NO page cap or image guards; now
+  absent = safe defaults (30s/50p), yaml+code unified.
+- **Measurement relevance:** extraction-quality or agent-utility measurements over scanned/mixed
+  PDFs are **not content-comparable across this commit boundary** — OCR'd documents can gain
+  substantial content (text-layer merge + recovered pages). Retrieval-side analysis and
+  `extraction_method`/reason-code semantics are unchanged (671 classifiers green unmodified).
+- **Evidence:** tempdoc 706 §Execution log (before/after harness, word-overlap parity).
+
 ### F-029: size-robustness is CORPUS-DEPENDENT — repetitive-real legal text degrades where diverse Wikipedia is flat; dense+SPLADE near-dead on CLERC at every size (tempdoc 701 probe, 2026-07-10)
 
 - **Finding:** an E4-style fixed-query volume sweep on REAL legal text (CLERC, byte-identical 200

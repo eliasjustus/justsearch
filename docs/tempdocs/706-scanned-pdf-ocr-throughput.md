@@ -1,7 +1,7 @@
 ---
 title: "Scanned-PDF OCR throughput: replace Tika's opaque internal per-page-serial OCR_ONLY path with JustSearch's own parallel, capped, budgeted render+OCR loop — >10x on scanned documents — and fix the advisory-timebox/orphaned-child liveness class the investigation confirmed on the same path"
 type: tempdocs
-status: "open — design SETTLED (2026-07-10, design pass after takeover GO verdict): one owned OCR engine, Tika de-OCR'd everywhere (PDFs and images), corrections A/B resolved (maxPages gate preserved + in-loop defense; tryOcr calls the engine directly, no blank-branch reroute), config unified root-cause, orphans named in §Design. Preceded by: takeover investigation (same day, second session) re-verified all evidence claims at file:line against main. Implementation not started, awaiting go-ahead. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
+status: "IMPLEMENTED + verified (2026-07-10, same day as design): S1 engine+teardown (8e882d1) and S2 config unification (159653d) shipped; full unit suite green; independent refute-first review verdict SHIP (frozen invariants byte-verified, no confirmed defects, two low-severity behavioral notes recorded in §Execution log); measured 6.8× on the 77p stall doc with 100% before-vocabulary retention, plus recovery of a doc the old path lost. Register F-030 records the extraction-content comparability boundary. Remaining: PR/merge (awaiting founder go-ahead) and the optional full-corpus 686 re-run. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
 created: 2026-07-10
 author: agent (Fable, takeover-705 session) — founder-directed sidegoal after the 686 instrumented run showed the extraction cost tax concentrates in scanned PDFs
 category: extraction / ocr / indexing-performance / worker
@@ -278,6 +278,38 @@ Notes for honest reading: 6.8× (not the >10× projection) because the measured 
 baseline parse + serial render alongside the parallelized OCR, and the projection assumed pure
 serial-OCR docs; doc 164 shows the second win class (old-path hard failures recovered). Speedup
 scales with worker count (~2 workers ≈ ~2× on a 4-core machine).
+
+### S2 — config unification (commit 159653d)
+
+Shipped per revised D4: `OcrRoutingConfig.from()` fills absent/non-positive fields with the safe
+defaults (config-absent can never mean unbounded again); yaml and code unified on 30s/50p; the
+headless-config yaml gained its missing `ocr` block (the 686 unbounded-run root cause);
+`render_dpi` (300) and `workers` (0=auto) became config-visible and feed the engine; the worker
+now logs its effective OCR config at extractor construction. New `OcrRoutingConfigTest` covers
+null-fill/auto semantics; `ResolvedConfigBuilderTest.ocrConfig` covers the new keys.
+
+### Verification closeout (2026-07-10)
+
+- Full unit suite (`gradlew test`, run bare): **BUILD SUCCESSFUL** at 159653d.
+- **Independent refute-first review (opus, reviewer ≠ implementers): verdict SHIP.** Frozen
+  invariants byte-verified (`evaluateOcrAttempt` diff-empty vs pre-change; wire strings unchanged;
+  single-terminal-classifier preserved — including a proof that the changed baseline-quality
+  `pages` argument cannot flip the 671 skip label, since the classifier's sign is decided only by
+  the pages-independent hard gates). Concurrency teardown, budget math, evidence arguments,
+  config coherence, and test honesty all examined and reported clean. Two low-severity behavioral
+  notes, accepted without fix:
+  1. *Merge retains poor-but-not-garbage baseline prefixes* on non-mixed PDFs where the old
+     primary path replaced content — the intended merge-vs-replace change; revisit only if an
+     extraction eval shows index-quality regression.
+  2. *A mid-render exception discards already-OCR'd pages* (returns whole-document UNKNOWN) —
+     identical to the old wholesale-failure behavior, i.e. not a regression; partial salvage is a
+     possible future refinement.
+- Search-quality register updated: **F-030** records the extraction-content comparability boundary
+  (scanned/mixed-PDF content not comparable across this commit for extraction-quality or
+  agent-utility measurements) + docs regen (`llms.txt`, skills-sync).
+- Deferred, recorded not silently skipped: the full `mixed/realdocs-v1` ingest re-run (686-style)
+  remains the when-wanted final tier; the per-doc harness above already exercised the real
+  extractor + real tesseract + real corpus end-to-end.
 
 ## Reach (design-pass judgment)
 
