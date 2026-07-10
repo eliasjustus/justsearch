@@ -576,6 +576,56 @@ above)*
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
 
+### F-029: size-robustness is CORPUS-DEPENDENT — repetitive-real legal text degrades where diverse Wikipedia is flat; dense+SPLADE near-dead on CLERC at every size (tempdoc 701 probe, 2026-07-10)
+
+- **Finding:** an E4-style fixed-query volume sweep on REAL legal text (CLERC, byte-identical 200
+  queries, 198 → 4,000 docs via the new `corpus-fetch-clerc --n-docs` distractor sampling) measured
+  `leg_union_recall` **0.875 → 0.705** (LEG_MISS 0.10 → 0.295), final_recall 0.865 → 0.685, full nDCG
+  0.681 → 0.507. This **scopes F-028's provenance claim**: "size-robust on realistic corpora" holds for
+  *diverse* text (MIRACL flat 3k→10k) but NOT for repetitive/domain boilerplate — the paying-ICP shape.
+  Mechanism differs from both synthetic mechanisms: fusion holds (leak ≤0.035); the loss is
+  **completeness decay via BM25 dilution**, because on this corpus the engine de facto rides the lexical
+  leg alone — **dense R@10 0.10→0.03, SPLADE 0.15→0.005 at BOTH sizes** ("hybrid" is effectively
+  BM25-only on CLERC-shaped legal retrieval). Working hypothesis for the dead semantic legs: CLERC's
+  long citing-sentence queries = FW-003/678's verbose-query dilution at its extreme, compounded by very
+  long case docs — needs its own attribution pass (678-adjacent; deliberately not opened in 701).
+  Caveat: the 4k full-mode number is `comparable=False` (`ann_proof` dense-evidence 0.455), but the drop
+  is carried by the lexical leg (no vectors involved) and the 198-doc point is fully comparable.
+- **Gate significance:** legal-clerc-200 pins the union floor at 0.87; the same family at 4k measures
+  0.705 — live proof of the completeness-floor's sensitivity design (F-028).
+- **Bycatch (fixed on the 701 branch):** first contact with this corpus at 4k live-reproduced a worker
+  enrichment **crash-loop** — `EmbeddingBackfillOps` + 4 sibling batch paths trusted batch-result
+  length; an empty result (backfill racing provider init after a worker restart) threw AIOOBE before
+  any failure-marking → eternal batch refetch, 199/199 doc embeddings starved. Guarded (null-or-mismatch
+  → per-item fallback), 5 sites, new test fixture, module suite green.
+- **Runs:** `tmp/eval-results/20260709T235522_mixed_legal-clerc-200` + `20260710T001438_mixed_legal-clerc-4k`
+  (regenerable; recipes committed). Probe design + full table: tempdoc 701 §Repetitive-real probe.
+
+### F-028: recall-survival's completeness half now has a FLOOR gate — the guard triad is complete (tempdoc 701, 2026-07-08)
+
+- **Finding:** F-025 gated the recall funnel's *leak* half (`leak-gate`, a ceiling on cascade-leak). Its
+  first stage — **representation completeness** (`leg_union_recall`: did ANY retrieval leg surface the gold
+  before fusion/ranking; the LEG_MISS bucket) — was measured by `staged_recall_accounting` and profiled by
+  `recall-profile`, but **gated by nothing**; `leak-gate` structurally cannot catch it (fewer golds retrieved
+  does not *raise* `leak_rate` — it can lower it). Tempdoc 701 added **`jseval union-recall-gate`**: the
+  floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
+  same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
+  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
+  golden/needle-burial-v1 1.0** (tol 0.05).
+  Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
+  (~14× sensitivity gap, tempdoc 701 §U1), so `relevance-gate` can miss what `union-recall-gate` catches.
+- **Provenance / context:** the 624 "retrieval collapses at scale" signal was investigated and resolved as a
+  **synthetic-corpus artifact** — the engine is *measured* size-robust on realistic corpora 3k→10k (MIRACL/de
+  recall flat, `final_recall` 0.967→0.967) while only the adversarial near-identical synthetic corpus collapses
+  — so no size-dependent product defect exists in the tested range; the completeness gate is the durable
+  standing-guard deliverable, not a fix. ANN recall decay was empirically ruled out as the mechanism (§E2).
+- **Deferred (documented in 701):** growing the pin set (legal-clerc / enron-qa) via further
+  `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
+  release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
+  parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
 - **INVALIDATION (2026-07-03, 624 twenty-third pass — read first):** a five-agent mechanism

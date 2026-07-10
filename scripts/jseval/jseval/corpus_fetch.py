@@ -166,11 +166,22 @@ def _fetch_text(url: str) -> str:
         return resp.read().decode("utf-8")
 
 
-def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dict:
+def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs: int | None = None) -> dict:
     """Fetch CLERC's test-split qrels + queries + document collection via plain HTTP (CLERC is not
-    `ir_datasets`-registered), sample `n_queries` deterministically, and pull only their qrelled documents
+    `ir_datasets`-registered), sample `n_queries` deterministically, and pull their qrelled documents
     from the (large — several GB) document collection via a single streaming decompress pass, never
     materializing the full collection to disk or holding it fully in memory.
+
+    `n_docs=None` (default) keeps the original qrelled-only behavior byte-compatible (including the
+    early `break` once every wanted doc is found) so existing callers and the committed
+    `666-corpora/legal-clerc-200/recipe.json` reproduction path are unaffected. When `n_docs` is set,
+    mirrors `fetch_miracl_sample`'s pattern: the qrelled docs are kept, and `n_docs - len(wanted)`
+    additional distractor documents are deterministically reservoir-sampled from the rest of the same
+    streaming pass (so the early break must NOT fire — the full collection needs to be seen for the
+    reservoir sample to be uniform). Distractor sampling uses its own `random.Random(seed)` instance,
+    separate from the `rng` used for query sampling above, so the sampled qrelled-doc set is identical
+    across every `n_docs` value at a given `(seed, n_queries)` — verified in
+    `test_fetch_clerc_sample_qrel_set_is_invariant_to_n_docs`.
 
     Uses the "single-removed/direct" task variant (the citing sentence with its citation redacted, as
     the query text; direct citation as the qrel) — the most standard of CLERC's four retrieval-task
@@ -200,19 +211,47 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dic
     sampled_qids = set(rng.sample(eligible, min(n_queries, len(eligible))))
     wanted_doc_ids = {did for qid in sampled_qids for did in qrels_by_query[qid]}
 
+    # A separate rng instance (not `rng` above) so distractor reservoir sampling never perturbs the
+    # query-sampling draw -- the qrelled-doc set stays byte-identical across every `n_docs` value.
+    distractor_rng = random.Random(seed)
+    n_distractors = max(0, n_docs - len(wanted_doc_ids)) if n_docs is not None else 0
+    target_pool = max(n_distractors, 1)
+    seen_candidates = 0
+    reservoir: list[str] = []
+    reservoir_texts: dict[str, str] = {}
+
     docs_by_id: dict[str, str] = {}
     req = Request(f"{base}/collection/collection.doc.tsv.gz", headers={"User-Agent": _USER_AGENT})
     with urlopen(req, timeout=None) as raw, gzip.GzipFile(fileobj=raw) as gz:  # noqa: S310
         text_stream = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
         for line in text_stream:
-            if len(docs_by_id) >= len(wanted_doc_ids):
+            # The early break only applies to the qrelled-only (n_docs=None) path -- distractor
+            # reservoir sampling needs the full stream to be uniform.
+            if n_docs is None and len(docs_by_id) >= len(wanted_doc_ids):
                 break
             tab = line.find("\t")
             if tab < 0:
                 continue
             doc_id = line[:tab]
+            text = line[tab + 1:].rstrip("\n")
             if doc_id in wanted_doc_ids:
-                docs_by_id[doc_id] = line[tab + 1:].rstrip("\n")
+                docs_by_id[doc_id] = text
+                continue
+            if not n_distractors:
+                continue
+            seen_candidates += 1
+            if len(reservoir) < target_pool:
+                reservoir.append(doc_id)
+                reservoir_texts[doc_id] = text
+            else:
+                j = distractor_rng.randrange(seen_candidates)
+                if j < target_pool:
+                    del reservoir_texts[reservoir[j]]
+                    reservoir[j] = doc_id
+                    reservoir_texts[doc_id] = text
+
+    for did in reservoir:
+        docs_by_id[did] = reservoir_texts[did]
 
     missing = wanted_doc_ids - docs_by_id.keys()
     if missing:
@@ -227,12 +266,19 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dic
         for qid in sorted(sampled_qids)
     ]
 
+    provenance = {
+        "method": "huggingface-direct-sample",
+        "source": "jhu-clsp/CLERC (test split, single-removed/direct task variant)",
+        "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
+    }
+    if n_docs is not None:
+        # Only added when n_docs is set -- keeps the n_docs=None provenance dict (and thus any
+        # committed recipe.json reproducing it, e.g. 666-corpora/legal-clerc-200) byte-compatible.
+        provenance["n_docs_requested"] = n_docs
+        provenance["n_distractors"] = len(reservoir)
+
     return _write_source(out_dir, docs=doc_list, queries=query_list, meta={
         "version": "1.0", "type_axis": "legal",
         "contamination_class": "public-benchmark",
-        "generation_provenance": {
-            "method": "huggingface-direct-sample",
-            "source": "jhu-clsp/CLERC (test split, single-removed/direct task variant)",
-            "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
-        },
+        "generation_provenance": provenance,
     })

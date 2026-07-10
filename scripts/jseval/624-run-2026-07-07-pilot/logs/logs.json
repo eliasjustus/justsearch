@@ -16,8 +16,8 @@
       "task_args": {
         "condition": "B",
         "queries_path": "scripts\\jseval\\624-run-2026-07-07-pilot\\_calibrated_queries.json",
-        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
-        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
+        "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
+        "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
         "model": "haiku",
         "max_queries": 10,
         "max_budget": "0.5",
@@ -32,8 +32,8 @@
       "task_args_passed": {
         "condition": "B",
         "queries_path": "scripts\\jseval\\624-run-2026-07-07-pilot\\_calibrated_queries.json",
-        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
-        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
+        "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
+        "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
         "model": "haiku",
         "max_queries": 10,
         "max_budget": "0.5",
@@ -127,16 +127,16 @@
           "solver": "jseval/claude_agent_solver",
           "params": {
             "condition": "B",
-            "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
-            "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
+            "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
+            "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
             "model": "haiku",
             "max_budget": "0.5",
             "timeout_s": 273
           },
           "params_passed": {
             "condition": "B",
-            "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
-            "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
+            "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-ybwf221m\\corpus-dir",
+            "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp.json",
             "model": "haiku",
             "max_budget": "0.5",
             "timeout_s": 273

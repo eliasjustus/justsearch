@@ -102,9 +102,12 @@ def cmd_corpus_fetch_miracl(ctx, name, lang, seed, n_docs, split, datasets_dir):
 @click.option("--name", required=True, help="Mixed dataset name (-> datasets/mixed/<name>/).")
 @click.option("--seed", required=True, type=int, help="Deterministic sampling seed (recorded in the recipe).")
 @click.option("--n-queries", required=True, type=int, help="Target sampled query count.")
+@click.option("--n-docs", default=None, type=int,
+              help="Target total document count (qrelled + sampled distractors). "
+                   "Omit to keep the qrelled-only behavior (no distractors).")
 @click.option("--datasets-dir", default=None, type=click.Path())
 @click.pass_context
-def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, datasets_dir):
+def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, n_docs, datasets_dir):
     """Fetch + deterministically sample a CLERC-based legal corpus into mixed/ (tempdoc 666).
 
     Public data (no access gate, unlike COLIEE) via a direct HTTP fetch — CLERC is not `ir_datasets`-
@@ -113,7 +116,8 @@ def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, datasets_dir):
     from .. import corpus_fetch as cf
 
     meta = _fetch_and_build_mixed(
-        name, datasets_dir, lambda td: cf.fetch_clerc_sample(td, seed=seed, n_queries=n_queries))
+        name, datasets_dir,
+        lambda td: cf.fetch_clerc_sample(td, seed=seed, n_queries=n_queries, n_docs=n_docs))
     if ctx.obj.get("json"):
         click.echo(json.dumps(meta, indent=2))
     else:

@@ -4285,6 +4285,87 @@ stated per item 2c.
 
 ~$1.9 pilot + ~$0.6 calibrate + ~$0.2 probes/smoke ≈ **$2.7** (within the ~$3 Step-1 envelope).
 
+---
+
+# Scale-corpus matrix run (2026-07-08, twenty-sixth pass) — grep headroom opens at scale; adoption rises 0.0→16.7%; both (a) and (b) visible, underpowered
+
+> Autonomous run (Opus orchestration). Built the scale member the campaign's Step-3a reserved, via a
+> STRUCTURAL generator change, not a knob re-tune. Result read through pass-24 §5's pre-registered tree.
+
+## Structural work (the durable artifacts)
+
+1. **Gold-chain ceiling lifted** `len(places)=26` → the (type,place,qual) triple-injectivity bound.
+   The query already disambiguates a head by the full synonym triple, and `(g%T,g%P,g%Q)` is injective
+   on `[0,lcm(T,P,Q))` (CRT). First lcm(12,26,20)=780; then **descriptor pools expanded** (append-only,
+   existing corpora bit-identical) types 12→21, places 26→44, quals 20→25 → triple space **23100**,
+   lcm=23100. Regression tests + regen-determinism green.
+2. **Corpus** `battlefield-en-scale-v1`: n_chains=380, distractor_ratio=1.4, doc_words=2500 → **2736 docs,
+   380 queries** (14.6× battlefield-en-v1's query power). Gates: closed-book memory PASS (acc 0.0),
+   descriptor-collision PASS (0 gold-involved), regeneration-determinism PASS.
+
+## The structural finding that gated the corpus design (interrogated, not worked around)
+
+**The semantic-descriptor design cannot decouple grep-expense from retrieval-difficulty at scale.** The
+same property that makes grep expensive (many hard-negative heads sharing the query's descriptor
+vocabulary) clusters those heads semantically and buries the gold. Measured: nDCG@10 ≈ 0.414·√(130/heads)
+across three points (390-doc→0.414, 2736-doc→0.163, 3120-doc→0.109). At 2736 docs the corpus is
+**out of the fidelity band** (nDCG 0.163; a direct `justsearch_search` probe put the gold head outside
+top-10). So a *multi-thousand-doc in-band* corpus is not constructible with this generator — the
+grep-break regime (low-thousands of docs) coincides with the retrieval-break regime. **Consequence for
+the campaign:** the accuracy comparison below carries a retrieval-difficulty caveat, but the ADOPTION
+question — does a scale-stressed agent try the tool — is valid regardless of retrieval difficulty, and
+that is the heart of (a)/(b).
+
+## Matrix — haiku, A/B/C × 30 queries × 1 seed, neutral prompt, eager surface (30/30 verified), CLI 2.1.204, comparable=True
+
+| Arm | Accuracy | Adoption_rate | first_mcp_call (median idx) | justsearch_answer cells | median tokens | vs A |
+|---|---|---|---|---|---|---|
+| A (grep only) | **56.7%** | n/a | n/a | n/a | 42,790 | — |
+| B (file+MCP offered) | **73.3%** | **16.7%** (5/30) | 21st call | 4/30 (13.3%) | 35,624 | +16.7%, McNemar **p=0.227** (n.s.); tokens −4,118 |
+| C (MCP forced) | **60.0%** | **96.7%** | 4th call | 23/30 (76.7%) | 31,283 | +3.3%, p=1.0; tokens −5,817 |
+
+Calibration: full 380-q run estimated $220 / ~12h (grep cells hit the 600s timeout — itself the
+budget-death signal), so the decisive block was cut to 30 q (~$17). Cost proxy caveat: the harness
+cannot distinguish a budget/turn-cap stop from a natural finish (only retry_rate/timeout proxies exist).
+
+## Findings (interrogated)
+
+1. **Grep's accuracy headroom OPENED at scale.** A dropped **0.9 (390 docs) → 0.567 (2736 docs)** — the
+   pilot's near-saturated baseline (the reason 390-doc adoption couldn't be a utility finding) is gone.
+2. **Adoption rose 0.0 (pilot) → 16.7% (B).** The agent now *tries* the tool at scale — but LATE (median
+   21st tool call, after grep-flailing) and in only 1/6 of cells. Pure discoverability-defect (a) is
+   **weakened** (it does try), but a **residual steering gap remains** (too little, too late given A=0.567).
+3. **`justsearch_answer` was called for the FIRST TIME in the campaign's history** (4 B + 23 C cells) —
+   it had never been called in any prior run. The 655 legibility layer (which promotes answer-first)
+   plausibly contributed. Confounded: corpus scale AND the 655 layer both changed since the pilot.
+4. **When used, the tool helps AND is cheaper.** B > A by +16.7% (directional, p=0.227 n.s. at n=30) with
+   −4,118 tokens; C reaches 60% on MCP-only despite out-of-band retrieval (the agent iterates: search →
+   rerank → read). **Token-efficiency lever confirmed** (both with-tool arms cheaper than grep).
+5. **Habit prior, quantified:** 18/30 C cells attempted a disallowed file tool (grep/Read), blocked by
+   the CLI (leak-suspect=0) — the agent reflexively reaches for grep even when forbidden. A 655-relevant
+   steering signal (naming/priming), independent of corpus.
+
+## Verdict on (a) vs (b) — both are visible; the honest reading is a mix, underpowered
+
+The pre-registered tree assumed a clean leaf; the real result straddles. **(b) rational-adoption is
+supported**: as grep broke (0.9→0.567), adoption rose (0.0→16.7%) — the agent responds to grep's rising
+cost, exactly as rationality predicts, and the tool helps + saves tokens when used. **(a) a residual
+discoverability/steering defect also persists**: adoption is only 16.7% and arrives on the ~21st call,
+far below what A=0.567 would warrant — the agent should adopt more and earlier. So: **scale opens the
+regime where the tool matters; the 655 layer moved answer-usage off zero; but a steering gap keeps
+adoption low and late.** The B>A accuracy margin is directional, not significant (n=30, p=0.227).
+
+**Step-2 go/no-go:** the result now *directionally motivates* a powered run (n≈100 for significance on
+the +16.7% margin) — the first time the campaign has had a positive signal worth powering — but that is
+a founder spend decision (~$60-70 at 100 q haiku, or the tier sweep), not autonomously taken here.
+**Next lever (highest-value):** 655 steering to raise adoption rate + earliness (the gap is now
+quantified: 16.7%, 21st-call). The model-tier sweep (does a stronger agent adopt more/earlier?) directly
+tests whether the residual gap is (a) capability-driven or (b) rational — recommended as the Step-2 shape.
+
+Artifacts: `scripts/jseval/624-run-scale-2026-07-08/` (calibration + logs + `out/utility-comparison.v1.json`).
+
+---
+
 ## Executor-substrate note (2026-07-08) — informational, does not reopen the 655-gated Step-2 decision
 
 675 (the executor this and every future run here executes on) is now implemented, review-fixed, and

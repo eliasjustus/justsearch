@@ -416,6 +416,22 @@ def test_compose_omits_leak_section_when_unsourced():
     assert "leak" not in r
 
 
+# --- tempdoc 701: optional union_recall section (leak's recall-survival sibling) --
+
+def test_compose_writes_union_recall_section_from_measured_rates():
+    s = _summary(dataset="scifact")
+    r = release.compose([s], default_mode="hybrid", composed_at=_AT,
+                        union_recall_by_dataset={"scifact": 0.97})
+    assert r["union_recall"] == {
+        "beir/scifact": {"leg_union_recall": 0.97, "src": "staged_recall_accounting projection"},
+    }
+
+
+def test_compose_omits_union_recall_section_when_unsourced():
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    assert "union_recall" not in r
+
+
 def test_corpus_source_upstream_revision_passthrough_null():
     r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
     src = r["measured"]["beir/scifact"]["corpus_source"]
@@ -460,3 +476,43 @@ def test_cmd_release_refuses_leak_relaxation_without_changeset(tmp_path):
     assert r2.exit_code == 1
     assert "release refused" in r2.output
     assert json.loads(out.read_text())["leak"]["beir/scifact"]["leak_rate"] == 0.02
+
+
+def test_cmd_release_sources_union_recall_from_run_projection(tmp_path):
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(dataset="scifact"))
+    proj_dir = run1 / "projections"
+    proj_dir.mkdir()
+    (proj_dir / "staged_recall_accounting.json").write_text(
+        json.dumps({"status": "ok", "aggregate": {"leg_union_recall": 0.981}}), encoding="utf-8")
+    r = CliRunner().invoke(
+        cmd_release,
+        ["--run", str(run1), "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r.exit_code == 0, r.output
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["release_id"] == "rel-test-2026-01-01"
+    assert doc["union_recall"]["beir/scifact"]["leg_union_recall"] == 0.981
+
+
+def test_cmd_release_refuses_union_recall_relaxation_without_changeset(tmp_path):
+    out = tmp_path / "release.v1.json"
+
+    def _run_with_union_recall(name, rate):
+        rd = _write_run(tmp_path / name, _summary(dataset="scifact"))
+        proj_dir = rd / "projections"
+        proj_dir.mkdir()
+        (proj_dir / "staged_recall_accounting.json").write_text(
+            json.dumps({"status": "ok", "aggregate": {"leg_union_recall": rate}}),
+            encoding="utf-8")
+        return rd
+
+    runner = CliRunner()
+    r1 = runner.invoke(cmd_release, ["--run", str(_run_with_union_recall("run1", 0.98)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r1.exit_code == 0, r1.output
+    # Second compose measures a LOWER union-recall (a relaxation of the projected floor).
+    r2 = runner.invoke(cmd_release, ["--run", str(_run_with_union_recall("run2", 0.80)),
+                                     "--out", str(out), "--release-id", "rel-test-2026-01-01"])
+    assert r2.exit_code == 1
+    assert "release refused" in r2.output
+    assert json.loads(out.read_text())["union_recall"]["beir/scifact"]["leg_union_recall"] == 0.98
