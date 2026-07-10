@@ -185,3 +185,38 @@ design dimension and query verbosity as a controlled variable.
 Remaining in this lane: E5-C variant 2 (`llm-reduced` — local LLM, generate-once, recipe-committed,
 content not committed), then E5-D (chunk-level probe: gold-chunk embedding ranks, chunk-length stats
 vs the 2000-char floor).
+
+### E5-D RESULTS — chunk-granularity probe (2026-07-10, same session)
+
+**Corpus stats (mechanical):** CLERC docs are extreme-length — median 28,487 chars, mean 35,508,
+p75 46,186, max 129,915; 97% exceed the 2,000-char chunking floor; 44% exceed 32k chars. The
+whole-doc mean-pooled vector averages over ~30k chars — maximal dilution conditions.
+
+**Probe (throwaway driver, 699-evidence-standard; validated against jseval first):** gold-doc-in-
+context rate for the PRODUCT's chunk-first RAG surface (`POST /api/knowledge/retrieve-context`),
+200 original verbose queries, same index both arms (jseval dev, no clean), A/B via
+`JUSTSEARCH_RAG_RETRIEVE_MODE`. Probe matching validated: a search-API replication reproduced
+E5-A's hybrid final_recall exactly (0.675 vs 0.67) before either arm was trusted.
+
+| Arm | gold-in-context @ ~2.8 distinct docs | mode observed |
+|---|---|---|
+| chunk-hybrid (BM25 chunks + dense chunk vectors) | **142/200 = 0.710** | CHUNK_HYBRID 199/200 |
+| chunk-bm25 (BM25 chunks only) | **136/200 = 0.680** | BM25 199/200 |
+
+**Findings:** (1) **Dense adds only +3.0 points even at chunk granularity** (with verbose queries) —
+granularity alone is not the recovery lever. (2) **Positive product finding:** the chunk-first RAG
+surface reaches 0.68 gold-in-context within ~2.9 documents on legal text via lexical chunks alone —
+7× the whole-doc dense R@10 (0.10) at a third of the candidate count; the RAG path is efficient on
+the ICP shape today, riding BM25.
+
+**Honest entanglement (do not over-conclude):** E5-D used VERBOSE queries, so its small dense delta
+is consistent with BOTH remaining mechanisms — query-side dilution (the query embedding is bad
+regardless of doc granularity) and encoder-domain mismatch (legal text collapses distances in the
+embedding space). The missing decisive cell is **short/natural queries × dense retrieval** — exactly
+E5-C variant 2 (`llm-reduced`, in progress). If natural short queries fail too, the attribution
+lands on encoder-domain fit (a model/representation question → routes toward the encoder choice /
+636 territory, NOT a 678 query lever); if they recover, 678's lever is real but must be per-leg
+(E5-C's lexical finding stands: BM25 needs the verbosity).
+
+Ruled out so far across E5-A→D: gate/fusion capping (E5-A/B), query length alone at the keyword
+operating point (E5-C), and doc granularity alone (E5-D).
