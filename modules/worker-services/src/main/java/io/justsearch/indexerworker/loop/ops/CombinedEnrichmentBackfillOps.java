@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.loop.ops;
 
+import ai.onnxruntime.OrtException;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
@@ -13,12 +14,14 @@ import static io.justsearch.indexerworker.metrics.BatchTimingKeys.WRITE;
 
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
+import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.metrics.EncoderOrtRunSpans;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.ort.NativeSessionHandle;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Scope;
 import java.util.ArrayList;
@@ -43,16 +46,29 @@ import org.slf4j.Logger;
  *
  * <p>Tempdoc 334 item 3.
  *
- * <p><b>Chunked-parent handoff (tempdoc 691 Stage A3 full-ownership).</b> When {@link
- * BackfillContext#lateChunkingEnabled()} is true, this pass does not enroll a chunked parent (one
- * with {@code PARENT_DOC_ID}-matching chunk docs) for the embed stage — {@code
- * LateChunkingEmbedBackfillOps} owns those end to end, including its own windowed fallback for
- * over-limit/arena-OOM parents. The skip is embed-stage-only; SPLADE/NER enrollment for the same
- * parent is unaffected. Flag off: zero behavior change — the chunk-existence probe is never
- * called.
+ * <p><b>Late-chunking single-pass embed strategy (tempdoc 691 forensics fold-in).</b> Lucene
+ * read-modify-write destroys non-stored fields absent from the current write — {@code VECTOR} is a
+ * non-stored {@code KnnFloatVectorField} (see the {@code WritePathOps} readModifyWrite re-queue
+ * comment). An earlier design ran the late-chunking single-pass embed as a SEPARATE RMW pass
+ * ({@code LateChunkingEmbedBackfillOps}) ahead of this one; this pass's later SPLADE/NER-only RMW
+ * for the same doc then silently destroyed that just-written vector — chunked parents ended
+ * COMPLETED but vectorless (legal-clerc live evidence: vector nDCG 0.016). The fix folds the
+ * single-pass strategy IN as another embed sub-phase here: when {@link
+ * BackfillContext#lateChunkingEnabled()} is true and a pending-embed parent has {@code
+ * PARENT_DOC_ID}-matching chunk docs, its vector comes from one whole-document forward pass
+ * ({@link EmbeddingProvider#embedWithSpans}, empty span array) instead of the base-window-mean
+ * batch embed — but the result always lands in the SAME per-doc update map this pass already
+ * builds for SPLADE/NER, so every doc still gets exactly one bundled write. A {@code null} result
+ * (content over the raised single-pass limit) or a GPU BFC-arena OOM on the single-pass call falls
+ * back INLINE into the ordinary windowed batch below, alongside every other pending-embed doc in
+ * the batch — still one RMW per doc. Flag off: byte-identical to before the fold — the
+ * chunk-existence probe and {@code embedWithSpans} are never called.
  */
 public final class CombinedEnrichmentBackfillOps {
   private CombinedEnrichmentBackfillOps() {}
+
+  /** VECTOR-only mode (tempdoc 691 §Phase M): no char spans are derived or passed to the encoder. */
+  private static final int[][] NO_SPANS = new int[0][];
 
   public record BackfillContext(
       DocumentFieldOps documentFieldOps,
@@ -216,6 +232,8 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 2: Collect docs needing each enrichment
       List<String> embedDocIds = new ArrayList<>();
       List<String> embedContents = new ArrayList<>();
+      List<String> lateChunkingDocIds = new ArrayList<>();
+      List<String> lateChunkingContents = new ArrayList<>();
       List<String> spladeDocIds = new ArrayList<>();
       List<String> spladeContents = new ArrayList<>();
 
@@ -271,23 +289,23 @@ public final class CombinedEnrichmentBackfillOps {
           continue;
         }
 
-        // Tempdoc 691 Stage A3 full-ownership: while the late-chunking pass is enabled, it owns
-        // chunked parents end to end (single-pass embed, falling back inline to windowed on
-        // over-limit/arena-OOM — LateChunkingEmbedBackfillOps). A chunked parent must NOT also be
-        // enrolled here, or the combined pass's own tight while-loop (BackfillScheduler#
-        // runIdleCycle) races the late pass and claims it windowed first — silently forfeiting the
-        // single-pass quality upgrade for that parent. Skipped parents stay PENDING for the next
-        // idle cycle's late-chunking drain; this check is embed-stage-only — SPLADE/NER enrollment
-        // below is untouched, since those stages are collected independently of embedDocIds/
-        // embedContents (no shared enrollment gate to decouple).
-        boolean skipEmbedForLateChunking =
+        // Tempdoc 691 forensics fold-in: a chunked parent (one with PARENT_DOC_ID-matching chunk
+        // docs) routes to the late-chunking single-pass embed strategy in Phase 3a-i below instead
+        // of the ordinary windowed batch — collected into a separate list here so that sub-phase
+        // can try embedWithSpans first and only fold the doc into embedDocIds/embedContents on a
+        // null/arena-OOM outcome. This check is embed-stage-only — SPLADE/NER enrollment below is
+        // untouched, since those stages are collected independently of embedDocIds/embedContents
+        // (no shared enrollment gate to decouple). Whichever strategy serves the vector, the
+        // result lands in this same doc's entry in updatesByDocId — one bundled write either way.
+        boolean isLateChunkingParent =
             context.lateChunkingEnabled()
                 && embedAvailable
                 && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)
                 && hasChunkDocs(context, docId);
-        if (embedAvailable
-            && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)
-            && !skipEmbedForLateChunking) {
+        if (isLateChunkingParent) {
+          lateChunkingDocIds.add(docId);
+          lateChunkingContents.add(content);
+        } else if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
           embedDocIds.add(docId);
           embedContents.add(content);
         }
@@ -312,6 +330,71 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 3a: Batch embedding
       long tEmbed = System.nanoTime();
       int embedFailed = 0;
+      int singlePassProcessed = 0;
+      int longDocWindowed = 0;
+      int arenaOomWindowed = 0;
+
+      // Phase 3a-i: Late-chunking single-pass embed (tempdoc 691 forensics fold-in). Tries one
+      // whole-document forward pass per chunked parent. A null result (content over the raised
+      // single-pass limit) or a GPU BFC-arena OOM folds the doc INLINE into the ordinary windowed
+      // batch below (embedDocIds/embedContents) rather than deferring to a different RMW pass —
+      // every doc still resolves within this pass's single bundled write. A non-arena-OOM failure
+      // escalates the parent directly through the same retry-count/FAILED-at-max helper the
+      // windowed batch failure path below uses.
+      if (!lateChunkingDocIds.isEmpty() && embedAvailable) {
+        EmbeddingProvider lateChunkingProvider = context.embeddingProviderSupplier().get();
+        for (int i = 0; i < lateChunkingDocIds.size(); i++) {
+          String lcDocId = lateChunkingDocIds.get(i);
+          String lcContent = lateChunkingContents.get(i);
+          try {
+            EmbeddingService.ChunkedEmbedding result =
+                lateChunkingProvider.embedWithSpans(lcContent, NO_SPANS);
+            if (result != null && result.primaryVector().length > 0) {
+              Map<String, Object> updates = updatesByDocId.get(lcDocId);
+              updates.put(SchemaFields.VECTOR, result.primaryVector());
+              updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+              updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, "0");
+              singlePassProcessed++;
+            } else {
+              // Content exceeds the raised single-pass limit — fold into the windowed batch.
+              embedDocIds.add(lcDocId);
+              embedContents.add(lcContent);
+              longDocWindowed++;
+            }
+          } catch (Exception e) {
+            if (isArenaOomFailure(e)) {
+              // A single-pass batch-1 forward pass over the whole document needs more contiguous
+              // GPU arena memory than a windowed pass — resource contention, not a bad-input
+              // failure. Fold into the windowed batch same as the over-limit null case.
+              context
+                  .log()
+                  .warn(
+                      "Combined backfill: late-chunking single-pass falling back to windowed for"
+                          + " {} (GPU arena OOM on single-pass batch-1): {}",
+                      lcDocId,
+                      e.getMessage());
+              embedDocIds.add(lcDocId);
+              embedContents.add(lcContent);
+              arenaOomWindowed++;
+            } else {
+              context
+                  .log()
+                  .warn(
+                      "Combined backfill: late-chunking single-pass embed failed for {}: {}",
+                      lcDocId,
+                      e.getMessage());
+              Map<String, String> lcDocFields = batchedFields.getOrDefault(lcDocId, Map.of());
+              int currentRetryCount =
+                  parseRetryCountOrZero(lcDocFields.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+              updatesByDocId
+                  .get(lcDocId)
+                  .putAll(EmbeddingBackfillOps.computeEmbeddingFailureUpdate(currentRetryCount));
+              embedFailed++;
+            }
+          }
+        }
+      }
+
       if (!embedDocIds.isEmpty() && embedAvailable) {
         EmbeddingProvider provider = context.embeddingProviderSupplier().get();
         List<float[]> vectors = provider.embedDocumentBatch(embedContents);
@@ -364,7 +447,11 @@ public final class CombinedEnrichmentBackfillOps {
               "Combined backfill: batch embedding returned {} (expected {} vectors)",
               vectors == null ? "null" : vectors.size() + " results",
               embedDocIds.size());
-          embedFailed = embedDocIds.size();
+          // += not =: embedDocIds can now include late-chunking windowed-fallback docs, and
+          // embedFailed may already carry Phase 3a-i single-pass escalation failures — a bare
+          // reassignment here would silently erase those from the summary log (tempdoc 691
+          // forensics fold-in; the write correctness is unaffected, only this counter).
+          embedFailed += embedDocIds.size();
         }
       }
       embedMs = (System.nanoTime() - tEmbed) / 1_000_000;
@@ -505,7 +592,8 @@ public final class CombinedEnrichmentBackfillOps {
           .log()
           .info(
               "Combined backfill: docs={} (embed={},splade={},chunks={}),"
-                  + " fetch={}ms, embed={}ms(ok={},fail={}),"
+                  + " fetch={}ms, embed={}ms(ok={},fail={},singlePass={},longDocWindowed={},"
+                  + "arenaOomWindowed={}),"
                   + " splade={}ms(ok={},fail={}), ner={}ms(ok={},fail={}),"
                   + " write={}ms(written={}), total={}ms",
               pendingIds.size(),
@@ -516,6 +604,9 @@ public final class CombinedEnrichmentBackfillOps {
               embedMs,
               embedProcessed,
               embedFailed,
+              singlePassProcessed,
+              longDocWindowed,
+              arenaOomWindowed,
               spladeMs,
               spladeProcessed,
               spladeFailed,
@@ -554,17 +645,35 @@ public final class CombinedEnrichmentBackfillOps {
   }
 
   /**
-   * Existence probe for "does this parent have chunk docs" (tempdoc 691 Stage A3 full-ownership) —
-   * same {@code queryDocIdsByField(PARENT_DOC_ID, parentId, 1)} shape {@code
-   * LateChunkingEmbedBackfillOps} uses for its own chunked-parent predicate, so the two passes
-   * agree on which parents are "chunked" by construction rather than via a hand-ported copy that
-   * can drift.
+   * Existence probe for "does this parent have chunk docs" (tempdoc 691 forensics fold-in) — a
+   * {@code queryDocIdsByField(PARENT_DOC_ID, parentId, 1)} limit=1 existence check; only
+   * existence matters here since the single-pass embed strategy is VECTOR-only (no chunk
+   * span/order metadata is read).
    */
   private static boolean hasChunkDocs(BackfillContext context, String parentId) {
     return !context
         .documentFieldOps()
         .queryDocIdsByField(SchemaFields.PARENT_DOC_ID, parentId, 1)
         .isEmpty();
+  }
+
+  /**
+   * Walks the exception's cause chain looking for an {@link OrtException} matching {@link
+   * NativeSessionHandle#isBfcArenaFailure} — the single choke point for the BFC-arena string
+   * match (owned by {@code ort-common}, shared with {@code SpladeEncoder}/{@code
+   * CrossEncoderReranker}). {@link EmbeddingService#embedWithSpans} wraps the raw {@code
+   * OrtException} in a {@code RuntimeException}, so a direct {@code instanceof} on the caught
+   * exception isn't enough — this walks {@link Throwable#getCause()} to find it either way.
+   * Ported from the deleted {@code LateChunkingEmbedBackfillOps} (tempdoc 691 forensics fold-in).
+   */
+  private static boolean isArenaOomFailure(Throwable e) {
+    for (Throwable cur = e; cur != null; cur = cur.getCause()) {
+      if (cur instanceof OrtException ortException
+          && NativeSessionHandle.isBfcArenaFailure(ortException)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
