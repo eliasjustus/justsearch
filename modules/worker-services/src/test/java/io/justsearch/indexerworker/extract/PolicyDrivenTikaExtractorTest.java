@@ -212,7 +212,8 @@ final class PolicyDrivenTikaExtractorTest {
     writeTextImage(image, "OVERSIZED OCR");
     TestMetricRegistry registry = new TestMetricRegistry(OcrMetricCatalog.DEFINITIONS);
     OcrMetricCatalog catalog = new OcrMetricCatalog(registry);
-    OcrRoutingConfig guarded = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 10, 40_000_000);
+    OcrRoutingConfig guarded =
+        new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 10, 40_000_000, null, null);
 
     ExtractionArtifact artifact =
         new PolicyDrivenTikaExtractor(TikaExtractionPolicy.defaults(), guarded, catalog)
@@ -229,7 +230,7 @@ final class PolicyDrivenTikaExtractorTest {
   @Test
   @Timeout(30)
   void realTesseractRuntimeProducesOcrArtifactForImageText() throws Exception {
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");
@@ -306,7 +307,7 @@ final class PolicyDrivenTikaExtractorTest {
     // Tempdoc 671: OCR is genuinely attempted (real Tesseract) against an image with no text at
     // all and no baseline text either. Before the fix this was mislabeled OcrSkipReason.TEXTUAL
     // ("existing text was already adequate") — the exact bug this test guards against.
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 10_000, 1, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");
@@ -348,7 +349,7 @@ final class PolicyDrivenTikaExtractorTest {
   @Test
   @Timeout(60)
   void realTesseractRuntimeAddsSelectiveOcrEvidenceForMixedPdf() throws Exception {
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");
@@ -391,7 +392,7 @@ final class PolicyDrivenTikaExtractorTest {
   @Test
   @Timeout(60)
   void realTesseractRuntimeClearsMissingReadableTextForImageOnlyPdfOcr() throws Exception {
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");
@@ -425,7 +426,7 @@ final class PolicyDrivenTikaExtractorTest {
     // Tempdoc 671: empirically confirms (not just statically argues) that trySelectivePdfOcr
     // never needs the NO_TEXT_FOUND code — a mixed PDF, by definition, always has real baseline
     // text on another page, so its own no-improvement tail must stay TEXTUAL.
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");
@@ -478,7 +479,7 @@ final class PolicyDrivenTikaExtractorTest {
     // image-only PDF with no baseline text must never be mislabeled "textual" (that label means
     // "there was already adequate text," which is false here) — assert that directly, and assert
     // no_text_found specifically only in the branch where a skip reason is actually recorded.
-    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000);
+    OcrRoutingConfig ocrConfig = new OcrRoutingConfig(true, List.of("eng"), 20_000, 5, 4096, 40_000_000, null, null);
     assumeTrue(
         TikaOcrRuntime.blockedReason(ocrConfig).isBlank(),
         "real Tesseract OCR runtime with eng tessdata is not available");

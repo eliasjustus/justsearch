@@ -109,8 +109,9 @@ final class PdfOcrEngine {
    * (the {@code standalone-capability-stays-stuck} failure shape).
    */
   static PdfOcrEngine create(OcrRoutingConfig ocrConfig, Logger log) {
+    OcrRoutingConfig cfg = ocrConfig == null ? OcrRoutingConfig.defaults() : ocrConfig;
     return new PdfOcrEngine(
-        ocrConfig, TikaOcrRuntime::resolve, DEFAULT_RENDER_DPI, defaultPoolSize(), log);
+        cfg, TikaOcrRuntime::resolve, cfg.effectiveRenderDpi(), cfg.effectiveOcrWorkers(), log);
   }
 
   /** Resolves the executable + spawn environment for one engine call from the current runtime. */

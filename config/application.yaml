@@ -117,10 +117,14 @@ index:
     trigger:
       min_image_pixels: 524288
     limits:
-      per_file_timeout_ms: 5000
-      max_pages: 10
+      # Aggregate per-document OCR budget (must sit below the outer extractor timebox).
+      per_file_timeout_ms: 30000
+      max_pages: 50
       max_image_dimension: 4096
       # max_image_pixels: 50000000
+      render_dpi: 300
+    # 0 = auto (min(cores/2, 8))
+    workers: 0
   export:
     otlp:
       traces:

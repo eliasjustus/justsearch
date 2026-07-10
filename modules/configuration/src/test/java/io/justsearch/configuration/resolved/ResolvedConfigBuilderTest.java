@@ -458,6 +458,8 @@ final class ResolvedConfigBuilderTest {
                 min_image_pixels: 10000
               limits:
                 max_pages: 50
+                render_dpi: 220
+              workers: 4
           """;
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.contributeYaml(parseYaml(yaml));
@@ -467,6 +469,8 @@ final class ResolvedConfigBuilderTest {
       assertEquals(java.util.List.of("eng", "deu"), config.ocr().languages());
       assertEquals(10000, config.ocr().triggerMinImagePixels());
       assertEquals(50, config.ocr().maxPages());
+      assertEquals(220, config.ocr().renderDpi());
+      assertEquals(4, config.ocr().workers());
     }
 
     @Test

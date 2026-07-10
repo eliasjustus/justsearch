@@ -32,7 +32,7 @@ final class PdfOcrEngineTest {
   @TempDir Path tempDir;
 
   private static final OcrRoutingConfig CONFIG =
-      new OcrRoutingConfig(true, List.of("eng"), 30_000, null, null, null);
+      new OcrRoutingConfig(true, List.of("eng"), 30_000, null, null, null, null, null);
 
   @Test
   @Timeout(30)
@@ -62,7 +62,8 @@ final class PdfOcrEngineTest {
   @Timeout(30)
   void inLoopPageCapMarksTruncated() throws Exception {
     Path pdf = blankPdf(3);
-    OcrRoutingConfig capped = new OcrRoutingConfig(true, List.of("eng"), 30_000, 2, null, null);
+    OcrRoutingConfig capped =
+        new OcrRoutingConfig(true, List.of("eng"), 30_000, 2, null, null, null, null);
     PdfOcrEngine engine = engine(capped, 4, cmd -> succeedStub(cmd, new long[] {0L, 0L, 0L}));
 
     PdfOcrEngine.OcrEngineResult result = engine.ocrPdf(pdf, Integer.MAX_VALUE);
@@ -77,7 +78,7 @@ final class PdfOcrEngineTest {
   void aggregateBudgetExpiryReturnsPartialOrderedTextTruncated() throws Exception {
     Path pdf = blankPdf(3);
     // Budget 1s; page 0 instant, later pages block well past the budget.
-    OcrRoutingConfig budgeted = new OcrRoutingConfig(true, List.of("eng"), 1_000, null, null, null);
+    OcrRoutingConfig budgeted = new OcrRoutingConfig(true, List.of("eng"), 1_000, null, null, null, null, null);
     long[] blockMs = {0L, 5_000L, 5_000L};
     PdfOcrEngine engine = engine(budgeted, 4, cmd -> succeedStub(cmd, blockMs));
 
@@ -93,7 +94,7 @@ final class PdfOcrEngineTest {
   @Timeout(30)
   void timeoutWithZeroCompletedPagesReportsTimeout() throws Exception {
     Path pdf = blankPdf(2);
-    OcrRoutingConfig budgeted = new OcrRoutingConfig(true, List.of("eng"), 1_000, null, null, null);
+    OcrRoutingConfig budgeted = new OcrRoutingConfig(true, List.of("eng"), 1_000, null, null, null, null, null);
     PdfOcrEngine engine = engine(budgeted, 4, cmd -> succeedStub(cmd, new long[] {9_000L, 9_000L}));
 
     PdfOcrEngine.OcrEngineResult result = engine.ocrPdf(pdf, Integer.MAX_VALUE);

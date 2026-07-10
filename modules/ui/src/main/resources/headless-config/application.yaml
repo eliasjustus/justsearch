@@ -37,5 +37,16 @@ index:
   watcher:
     strategy: auto
     debounce_ms: 50
+  ocr:
+    enabled: true
+    languages: []
+    trigger:
+      min_image_pixels: 524288
+    limits:
+      per_file_timeout_ms: 30000
+      max_pages: 50
+      max_image_dimension: 4096
+      render_dpi: 300
+    workers: 0
 
 

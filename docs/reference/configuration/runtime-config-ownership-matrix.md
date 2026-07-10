@@ -65,7 +65,9 @@ Precedence note:
 | index.ocr.limits.max_image_pixels | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.max_pages | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.per_file_timeout_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.ocr.limits.render_dpi | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.trigger.min_image_pixels | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| index.ocr.workers | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.queue.max_depth | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.recovery.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.schema_mismatch.policy | JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY | index.schema_mismatch.policy | INDEX_SCHEMA_MISMATCH_POLICY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

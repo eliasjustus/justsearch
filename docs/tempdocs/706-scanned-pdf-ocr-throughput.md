@@ -232,6 +232,53 @@ the 671 evidence-builder first-write-wins and single-terminal-classifier semanti
 well-tested, and fiddly; (2) formal quality parity and the live 686-style re-run remain
 post-implementation gates (structurally argued, not yet measured).
 
+## Execution log (implementation, 2026-07-10)
+
+Orchestrated per the approved plan: design/briefs/review/evidence by the orchestrating session,
+mechanical implementation by subagents (S1 opus, S2 sonnet), every subagent result independently
+re-verified (build + module tests re-run by the orchestrator; diff reviewed line-level).
+
+### S1 — engine + call-site restructure + teardown (commit 8e882d1)
+
+Shipped as designed: `PdfOcrEngine` (serial 300-DPI GRAY render → bounded pool `min(cores/2, 8)` →
+one spawn/page emitting `txt tsv` → page-ordered join; in-loop page cap; aggregate budget below the
+60s timebox returning honest partials; per-document temp dir; child registry with `destroyForcibly`
+on interrupt/timeout). All seven orphans deleted; `evaluateOcrAttempt`, reason codes, evidence
+shapes untouched; `OcrOutcomeClassifierTest` + `VduEligibilityPdfFixturesTest` green unmodified.
+Two review findings during orchestration:
+- **Design part C was already shipped on main** (commit `04a4700` — `configureTesseractSkipOcr` in
+  the structured parse context); the takeover investigation had missed it. The raster-blanking
+  workaround was therefore already belt-and-suspenders; deleted after the new de-OCR completeness
+  test proved it unreachable.
+- **Reviewer-found defect, fixed same pass**: the engine initially snapshotted
+  `TikaOcrRuntime.resolve()` at construction — a lifecycle regression vs the old per-attempt
+  resolution (`standalone-capability-stays-stuck` shape: a mid-session Install-AI tesseract restore
+  would pass the per-attempt eligibility gate while the engine held stale paths). Fixed to per-
+  engine-call resolution with a mutable-supplier regression test.
+- **One deliberate semantics change**: the full-scan PDF path now *merges* baseline + OCR text
+  (the old primary path *replaced* content with OCR-only text; the old fallback loop already
+  merged). On text-layer+scan hybrids this retains text the old path threw away, at the cost of
+  some duplicated content (measured on doc 208 below). Flagged for the independent review.
+
+### Measured before/after (same 3 corpus docs, same machine — RTX-4070 box, 20 logical cores,
+pool=8 — same custom harness config `600s budget / 100p cap` both sides; before = commit `aec9b99`
+in a detached worktree, after = `8e882d1`)
+
+| Doc (686 corpus) | Shape | Before | After | Delta |
+|---|---|---|---|---|
+| `govdocs1-000--000208.pdf` | 77p, 76 image pages, `ocr_full` | **113,855 ms**, 161,819 chars | **16,774 ms**, 318,791 chars | **6.8×** faster; content = baseline + OCR (merge semantics) |
+| `govdocs1-000--000164.pdf` | 14p full scan | 29,517 ms, **OCR FAILED** (63 chars kept, `ocrSkipReason: unknown`) | **3,661 ms**, 36,478 chars, `ocr` route | **8.1×** faster AND recovers a document the old path lost entirely |
+| `govdocs1-000--000187.pdf` | text PDF control | 1,900 ms, structured | 2,140 ms, +394 chars accepted selective OCR | +240 ms; old path's selective OCR silently failed on its image pages, new succeeds |
+
+**Quality parity (doc 208): 100.0% of the before-run's unique word vocabulary (4,504/4,505 words
+>3 chars) is present in the after output**, which adds 868 further unique words (retained text
+layer + recovered pages). The after output is a strict vocabulary superset on the headline doc.
+
+Notes for honest reading: 6.8× (not the >10× projection) because the measured doc spends ~2.5s in
+baseline parse + serial render alongside the parallelized OCR, and the projection assumed pure
+serial-OCR docs; doc 164 shows the second win class (old-path hard failures recovered). Speedup
+scales with worker count (~2 workers ≈ ~2× on a 4-core machine).
+
 ## Reach (design-pass judgment)
 
 **Conforms to an existing shape rather than inventing one.** This is the third instance of
