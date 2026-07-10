@@ -105,7 +105,18 @@ public final class BertNerInference implements Closeable {
     Path tokenizerPath = modelDir.resolve(manifest.tokenizer());
     HuggingFaceTokenizer tokenizer;
     try {
-      tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath);
+      // Tempdoc 710 Move 3: explicit truncation=false/padding=false (matches SpladeEncoder /
+      // OnnxEmbeddingEncoder's tokenizer construction). Without this, DJL's batchEncode(List)
+      // applies its own default padding-to-batch-max regardless of this model's tokenizer.json
+      // declaring "padding": null — discovered via BertNerInferenceBoundedTokenizeTest failing
+      // with a short text's tokens padded from 11 to 512 once inferBatch's Phase 1 started using
+      // batchEncode (previously only single-text encode() was ever called, which already behaved
+      // unpadded/untruncated, so the inconsistency was latent). Explicit false on both keeps
+      // batchEncode's per-text output equivalent to encode()'s, and Java-side truncation (below)
+      // remains the sole truncation point, as already documented for maxSequenceLength.
+      tokenizer =
+          HuggingFaceTokenizer.newInstance(
+              tokenizerPath, Map.of("truncation", "false", "padding", "false"));
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to load NER tokenizer from " + tokenizerPath, e);
     }
@@ -294,6 +305,19 @@ public final class BertNerInference implements Closeable {
   }
 
   /**
+   * Upper bound on total input CHARS per native {@code batchEncode} call in {@link #inferBatch}'s
+   * tokenize phase. Mirrors {@code SpladeEncoder.TOKENIZE_GROUP_CHAR_BUDGET} (tempdoc 686 crash
+   * fix; ported here by tempdoc 710 Move 3). NER inputs are typically pre-chunked to a few hundred
+   * tokens by the caller, but (a) this tokenizer's {@code tokenizer.json} has {@code truncation:
+   * null} — no tokenizer-level cap — so one mis-chunked/oversized text still produces an unbounded
+   * native encoding, and (b) the caller LIST itself is unbounded, so tokenizing it upfront in one
+   * unbounded scan before any inference sub-batching held the same class of landmine SPLADE hit.
+   * Grouping by input chars bounds peak per-call native materialization to one group regardless
+   * of caller list size, while preserving exact per-text tokenization results.
+   */
+  private static final long TOKENIZE_GROUP_CHAR_BUDGET = 512_000;
+
+  /**
    * Runs batched NER inference on multiple text chunks. Sorts by token count, groups into
    * sub-batches by sequence length bucket, pads to bucket boundary (not max-in-batch) to minimize
    * padding waste while keeping consistent tensor shapes for ORT caching.
@@ -310,7 +334,10 @@ public final class BertNerInference implements Closeable {
       return List.of(infer(texts.get(0)));
     }
 
-    // Tokenize all texts
+    // Tokenize in memory-bounded groups (tempdoc 686/710 crash-fix port — see
+    // TOKENIZE_GROUP_CHAR_BUDGET). Groups are processed in original order and written into the
+    // same per-index arrays a single upfront scan would have produced, so grouping changes only
+    // native-call granularity, not output order or values.
     int n = texts.size();
     long[][] allInputIds = new long[n][];
     long[][] allAttentionMask = new long[n][];
@@ -318,14 +345,28 @@ public final class BertNerInference implements Closeable {
     long[][] allWordIds = new long[n][];
     int[] tokenCounts = new int[n];
 
-    for (int i = 0; i < n; i++) {
-      Encoding enc = tokenizer.encode(texts.get(i));
-      int seqLen = Math.min(enc.getIds().length, maxSequenceLength);
-      allInputIds[i] = truncate(enc.getIds(), seqLen);
-      allAttentionMask[i] = truncate(enc.getAttentionMask(), seqLen);
-      allTokens[i] = truncateStr(enc.getTokens(), seqLen);
-      allWordIds[i] = truncate(enc.getWordIds(), seqLen);
-      tokenCounts[i] = seqLen;
+    int groupStart = 0;
+    while (groupStart < n) {
+      int groupEnd = groupStart;
+      long groupChars = 0;
+      while (groupEnd < n
+          && (groupEnd == groupStart
+              || groupChars + texts.get(groupEnd).length() <= TOKENIZE_GROUP_CHAR_BUDGET)) {
+        groupChars += texts.get(groupEnd).length();
+        groupEnd++;
+      }
+      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      for (int j = 0; j < groupEncodings.length; j++) {
+        int idx = groupStart + j;
+        Encoding enc = groupEncodings[j];
+        int seqLen = Math.min(enc.getIds().length, maxSequenceLength);
+        allInputIds[idx] = truncate(enc.getIds(), seqLen);
+        allAttentionMask[idx] = truncate(enc.getAttentionMask(), seqLen);
+        allTokens[idx] = truncateStr(enc.getTokens(), seqLen);
+        allWordIds[idx] = truncate(enc.getWordIds(), seqLen);
+        tokenCounts[idx] = seqLen;
+      }
+      groupStart = groupEnd;
     }
 
     // Sort by token count (ascending) to group similar-length sequences
