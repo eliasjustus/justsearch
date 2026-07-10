@@ -32,6 +32,8 @@ public enum ConfigKey {
     INDEX_OCR_MAX_PAGES("index.ocr.limits.max_pages"),
     INDEX_OCR_MAX_IMAGE_DIMENSION("index.ocr.limits.max_image_dimension"),
     INDEX_OCR_MAX_IMAGE_PIXELS("index.ocr.limits.max_image_pixels"),
+    INDEX_OCR_RENDER_DPI("index.ocr.limits.render_dpi"),
+    INDEX_OCR_WORKERS("index.ocr.workers"),
 
     // -- Index writer --
     INDEX_WRITER_RAM_BUFFER_MB("index.writer.ram_buffer_mb"),

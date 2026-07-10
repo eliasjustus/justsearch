@@ -38,7 +38,7 @@ final class ProcessExtractionSandboxTest {
     Path file = tempDir.resolve("sandbox.txt");
     Files.writeString(file, "sandbox child content");
     OcrRoutingConfig ocrConfig =
-        new OcrRoutingConfig(true, List.of("deu"), 1_234, 4, 2048, 8_000_000);
+        new OcrRoutingConfig(true, List.of("deu"), 1_234, 4, 2048, 8_000_000, null, null);
 
     ProcessExtractionSandbox sandbox =
         new ProcessExtractionSandbox(
