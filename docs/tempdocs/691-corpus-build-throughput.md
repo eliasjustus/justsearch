@@ -809,3 +809,57 @@ dense corpora (F-2 measured the duplicate) with neutral relevance/union-recall/l
 pool of its chunks can carry (pool-of-parts ≠ whole is retrieval-meaningful), the projection identity
 is false for that leg — retire the principle there and justify an independent whole-object derivation,
 rather than force-fit it.
+
+## Phase H — internet research pass (2026-07-10, /research): LATE CHUNKING dominates the §G dedup
+
+A focused pass (the aggregation of chunk embeddings into a document representation, and efficient
+chunk+doc embedding of long docs, is very actively researched 2024-2026). Verdict: **warranted, and it
+found a strictly-better successor** to §G's plain dedup.
+
+**Finding: "Late chunking" (Jina AI — Günther et al., [arXiv:2409.04701](https://arxiv.org/abs/2409.04701),
+Sep 2024 / rev Jul 2025; [Jina writeup](https://jina.ai/news/late-chunking-in-long-context-embedding-models/))
+is the directly-relevant SOTA and *dominates* the §G design.** It embeds the WHOLE document once into
+**token-level** embeddings with a long-context model, THEN partitions the token embeddings into
+chunk-spans and mean-pools each span — so every chunk vector carries full-document context (measurably
+better retrieval across boundary strategies, per the paper), and **all chunk vectors + the whole-doc
+vector come from ONE forward pass**. Same mean-pooling, no retraining.
+
+**Why it dominates §G.** §G removes the duplicate but is quality-neutral-at-best (it derives the
+weaker whole-doc vector from independently-embedded, context-*blind* chunks). Late chunking removes
+the *same* duplication (one document pass, not a parent pass + N chunk passes) **and** upgrades the
+chunk vectors from context-blind to context-aware — a throughput win *and* a quality win, on the same
+axis the register already flags (F-023 whole-doc dilution; F-029/F-030 dense-death — context-aware
+chunks are the field's answer to exactly that dilution). So §G is the *floor*; late chunking is the
+*target*.
+
+**Feasibility with OUR stack — verified in source, and it is favorable.** Late chunking's one hard
+precondition is a model that emits token-level embeddings pooled outside the model. **We already do
+this**: `OnnxEmbeddingEncoder` reads `last_hidden_state` `[batch, seqLen, dim]` (`:341`) and mean-pools
+in Java (`pool()`, `:350`) — we currently pool per 512-token window; late chunking pools per
+RAG-chunk-span instead. The model (`gte-multilingual-base`) supports 32k context (tokenizer
+`model_max_length`). So it is feasible **without re-exporting the model**. The gates are:
+1. **Operative embed `maxSeqLen`** (`EmbeddingShape.maxSequenceLength`, doc says "typically 512–2048";
+   `chunkSize = min(512, maxSeqLen)`). If already high, most docs embed whole in one pass and late
+   chunking is nearly free; if 512, full-document context needs raising the embedding context window
+   (VRAM/latency cost) or "long late chunking" (overlapping macro-windows). **Implementer must pin
+   this value first** — it decides whether late chunking is a small change or needs a context raise.
+2. **Token-span pooling** needs the char→token offset map to align RAG-chunk boundaries to token
+   positions (the tokenizer already produces offsets); plus macro-windowing for docs beyond the
+   context window.
+
+**Recommendation (updates §G).** Before implementing the plain §G dedup, run a **bounded feasibility
+spike on late chunking**: pin the operative embed `maxSeqLen`; confirm token-span pooling via the
+tokenizer offset map; estimate the VRAM/latency of the whole-doc pass at realistic doc lengths. If
+feasible at acceptable cost, **late chunking supersedes §G as the E-5 target** (same dedup + a measured
+retrieval gain, and it directly attacks the register's whole-doc-dilution finding). If the context
+raise is too costly, §G's mean-pool-projection is the quality-neutral throughput fallback. Both are
+validated by the same instruments (relevance/union-recall/leak gates + shared-index A/B) and both stay
+default-off → measure → default-on.
+
+**License/attribution.** Late chunking is a *published technique* (an inference-time algorithm), not
+code to copy — an implementation would be our own, citing the paper in a code comment + here. No
+Jina source is copied, so no license/notices-CI concern from adopting the method. (Adjacent-but-not-
+decision-changing, noted not pursued: "Beyond Chunk-Then-Embed" chunking taxonomy
+[arXiv:2602.16974](https://arxiv.org/abs/2602.16974); Landmark Pooling [arXiv:2601.21525]; Multi-Prefix
+long-context embedding [arXiv:2606.23642]. Mean-pool-of-chunks as a doc representation is confirmed a
+standard, sound aggregation — no red flag for the §G fallback.)
