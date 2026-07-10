@@ -548,3 +548,37 @@ is inline in the phase sections above. Durable evidence pointers:
   machine state that no longer exists (different NER model file state,
   regenerated corpus); treat 691's C2 as the current reference until the
   perf-gate recompose refreshes floors.
+
+## Chunk-pacing investigation seed (2026-07-10, from the 686/706 session — pickup material)
+
+A real-corpus ingest (mixed/realdocs-v1: 620 docs → 85,641 chunks, ~138 chunks/doc — 12× denser
+than battlefield) exposed the chunk-embedding backlog crawling at ~50 chunks per ~3.5-min combined
+cycle. Read-only investigation findings (file:line evidence verified 2026-07-10):
+
+1. **The cap is a bare literal**: `chunkSlotsPerBatch = 50` at
+   `CombinedEnrichmentBackfillOps.java:138` — no constant, no config, no derivation; parent docs
+   get `EMBEDDING_BACKFILL_BATCH_SIZE = 100` (`LoopPacingPolicy.java:12`). Set once at the
+   public-release squash, never revisited. Reproduces the observed cycle shape exactly
+   (docs=150 = 100 parent + 50 chunk).
+2. **Cadence is compute-bound, not sleep-bound**: `BackfillScheduler.runIdleCycle` runs a tight
+   no-sleep loop (`BackfillScheduler.java:135-149`); ~3.5 min is one `processCombinedBackfill`
+   call's own wall time, dominated by parent-doc embedding (137s observed).
+3. **Drain model**: naive extrapolation ≈ 100h; but chunk-only tail cycles (after parents finish;
+   chunks skip SPLADE/NER, `CombinedEnrichmentBackfillOps.java:223-238`) should be seconds each
+   → tail ≈ 2-5h. UNMEASURED — measure a chunk-only cycle before concluding code must change.
+4. **Risk coupling**: `OnnxEmbeddingEncoder.embedBatchWithChunking` (`:385-448`) tokenizes the
+   whole caller list upfront — the SAME pattern whose SPLADE sibling caused the 686 native heap
+   crash (fixed via `SpladeEncoder.TOKENIZE_GROUP_CHAR_BUDGET`). Raising the chunk cap without
+   bounding this path first risks reproducing that crash class in the embed path (686
+   §Unverified assumptions #2 flags the audit as open).
+5. **E-5 interaction is LARGER on dense corpora**: parent-internal pooling re-embeds content that
+   chunk docs re-embed again independently; at ~138 chunks/doc most of a cycle's embed time is
+   plausibly discarded pooling work while net chunk progress stays capped at 50. E-5 fix (b)
+   (align boundaries, reuse parent-pass chunk vectors) could complete ~138 chunks per parent as a
+   side effect — a much bigger lever than raising the cap. Both E-5 options remain
+   retrieval-semantics-affecting (search-quality register + nDCG ratchet + live A/B required).
+
+**Candidate fix shapes, risk-ordered**: (1) measure the chunk-only tail first — possibly no code
+change needed for the tail; (2) E-5 pool-from-chunks (removes the waste, no new heap surface,
+needs the quality gate); (3) raise/decouple `chunkSlotsPerBatch` ONLY after bounding
+`embedBatchWithChunking`'s upfront tokenization the way SPLADE's was bounded.
