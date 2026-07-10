@@ -367,6 +367,52 @@ config nothing changed; versus the de-facto capless reality, >50p scans lose OCR
 (~0.2 s/page) raising `max_pages` is now cheap — that is a 607-adjacent routing/product decision
 left explicitly open for the founder, not made here.
 
+### Session closeout / handoff (2026-07-10)
+
+**Branch state:** `worktree-takeover-706`, clean tree, 9 commits, UNPUSHED, no PR (founder
+gates publication). Work commits: `8e882d1` (S1 engine+teardown), `159653d` (S2 config),
+`82be9b2` (review-round fix: pre-render size guard + test precision); the rest are docs.
+
+**Publication coordination (important for whoever publishes):** this branch was forked from
+`worktree-takeover-705`'s tip `b7c9258` (tempdoc 706 existed only there), so it is a **strict
+superset** of that branch — it carries 3 inherited docs commits (`901fff5` 686 heap verdict,
+`2f1a14d` 705 sidegoal evidence, `b7c9258` this doc's spin-out). As of closeout the 705 branch
+had NOT moved past `b7c9258`. Either publish this branch as one PR (inherited docs ride along)
+or let the 705 session publish first and rebase-by-merge afterwards. The 705 session may still
+be live — coordinate via the founder.
+
+**Evidence durability legend** (what a future agent can and cannot re-derive):
+- Repo-durable: every number and command in this doc's execution log (commit-stamped),
+  the tests by name (`PdfOcrEngineTest` incl. `interruptDestroysAllRegisteredChildren` and the
+  two oversize-guard tests, `OcrRoutingConfigTest`, `StructuredContentDeOcrTest`), register
+  F-030, and the corpus recipe (`datasets/mixed/realdocs-v1`, regenerable via jseval — docs
+  named here: `govdocs1-000--000{164,187,208}.pdf`).
+- Session-ephemeral (numbers recorded here are the durable record; the artifact files live in a
+  session-local scratchpad that will not outlive the machine/session): harness outputs, the
+  preserved live worker log, the evidence bundle under `tmp/agent-evidence/dev-runner/49495856-…`
+  (main checkout, gitignored). Verbatim durable copy of the re-measured baseline line:
+  `HARNESS govdocs1-000--000208.pdf elapsedMs=115055 chars=161819 words=25082 parser=tika-policy-ocr commit=aec9b99`.
+- The before/after harness itself is reconstructable from this doc: a scratch JUnit test
+  constructing `PolicyDrivenTikaExtractor` with `new OcrRoutingConfig(true, ["eng"], 600_000,
+  100, 4096, 40_000_000, null, null)` and timing `extractArtifact` per doc.
+
+**Unverified assumptions (do not treat as facts):**
+1. "Packaged installs also ran capless pre-fix" — inferred from the config-resolution trace
+   (no repo root → no yaml → null limits), never probed on a real installed build.
+2. The live search-top-hit and zero-orphan checks were session-output-grade (see §review round).
+3. The >10× projection for pure-serial scan docs remains a projection; measured is 6.9× on the
+   77-page doc (which includes ~2.5s unparallelized parse+render).
+
+**Open work, in priority order:**
+1. PR/merge — awaiting founder go-ahead (plus the 705-branch coordination above).
+2. Founder decision: raise the now-binding 50-page cap? (§review round, F4.)
+3. Optional full-corpus `mixed/realdocs-v1` re-run (686-style) for the corpus-level number.
+4. Low-priority refinement: salvage already-OCR'd pages when a mid-render exception aborts a
+   document (currently whole-doc UNKNOWN, matching old behavior).
+5. Out-of-scope drift logged to the observations shard (this branch,
+   `docs/observations.d/`): `runtime-config-ownership-matrix.md` fails its verifier on 6
+   pre-existing missing pairs unrelated to 706.
+
 ## Reach (design-pass judgment)
 
 **Conforms to an existing shape rather than inventing one.** This is the third instance of
