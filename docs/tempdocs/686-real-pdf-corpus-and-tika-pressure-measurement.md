@@ -1,7 +1,7 @@
 ---
 title: "Real-PDF/office corpus acquisition + Tika-pressure measurement: the machine (and the eval harness) currently has NO real binary-document corpus — 3 fixture PDFs total; every 'pdf' dataset (ohr-bench-tika-pdf etc.) is pre-extracted TEXT, so live Tika/PDFBox/POI parse pressure is unexercised by all existing evals. This gap was hit concretely by 682 item 1 (the worker-heap measurement had to ship with a stated Tika-scope hole) and equally limits the OCR-routing (671) and VDU (677) streams. Work: acquire/build one license-clean, redistributable-or-locally-pinned corpus of real PDFs + office docs (mixed sizes incl. genuinely large files), register it as a jseval local dataset, then re-run 682's instrumented heap recipe against the new 1g default and record whether 1g absorbs parse pressure or the constant needs a second look."
 type: tempdocs
-status: "substantially complete (2026-07-10): corpus acquired + registered (mixed/realdocs-v1, 620 real files, pinned manifest), jseval raw-binary support shipped, instrumented run executed (partial — stopped by founder at 31min/120 docs; parse-phase GC evidence captured), heap verdict recorded at the constant site. Remaining: the raise-vs-bound-extraction follow-up decision (out of scope here by design), and optionally a full-corpus re-run with OCR-page caps if fuller coverage is wanted."
+status: "complete (2026-07-10, two runs + a fix): corpus acquired + registered (mixed/realdocs-v1, 620 real files, pinned manifest), jseval raw-binary support shipped, TWO instrumented runs executed (run 1 partial/founder-stopped → heap verdict at the constant site; run 2 full-corpus post-706-engine → extraction 5× faster, real extraction_method distribution recorded, and a heap-exhaustion-induced native SPLADE-tokenizer crash found, root-caused, fixed in SpladeEncoder, and validated by resuming enrichment past the death zone). Remaining out-of-scope: the general raise-vs-bound heap decision (first instance answered: bound), and the chunk-embedding pacing cap (691's domain, inbox-logged)."
 created: 2026-07-07
 updated: 2026-07-10
 author: agent session 2026-07-07 (gap established empirically during 682 item 1: PDF search across F:\\JustSearch found 3 fixture PDFs; jseval mixed/ datasets verified to be corpus.jsonl text)
@@ -148,6 +148,54 @@ while everything else costs ~nothing; this is the first direct measurement of WH
 extraction cost tax concentrates. Also logged to the inbox: the analyzers catalog was loaded
 ~40× per document during ingest (3,958 loads / 98 docs) — possible un-cached per-chunk path
 worth a separate look.
+
+### Full-corpus run 2 (2026-07-10, post-706 engine) — extraction 5× faster; the corpus claimed a second real defect (fixed + validated)
+
+**Extraction phase (706's corpus-level validation): 615/620 docs indexed in ~33 min** vs 120/620
+at 31 min on the old engine (~5× corpus-level; the residual 5 are honest legacy-office parse
+failures / extraction-budget rejections, logged WARN). First real **extraction_method
+distribution** (705 trigger-1 datum, harvested live via `/api/knowledge/folder-files`):
+**TIKA_STRUCTURED 331 (54%) / OCR_TIKA 284 (46%)**; vdu_status NOT_NEEDED 494 / **PENDING 121
+(19.7%)**; extraction_status SUCCESS_FULL 611 / SUCCESS_PARTIAL 4. On a real gov-heavy corpus
+the OCR path is ~half of extraction — not a niche fallback — and a fifth of documents demand VDU.
+
+**Enrichment phase crash-looped — the corpus's second scalp.** Three identical JVM native
+crashes (`EXCEPTION_UNCAUGHT_CXX_EXCEPTION` in tokenizers.dll, thread "indexing-loop",
+`TokenizersLibrary.getTokenCharSpans` ← `HuggingFaceTokenizer.batchEncode` ←
+`SpladeEncoder.encodeBatchTokenBudget`), intervals shrinking 43→17→10 min. Forensics — every
+hypothesis tested before fixing:
+
+- Poison document: **falsified.** A JVM harness replayed all 86,296 stored content/chunk_content
+  strings from the crashed index through the same tokenizer + batching: zero crashes
+  (`SpladeIndexContentCrashHarnessTest`, worker-services, manual/asset-gated).
+- Unpaired-surrogate input: **falsified** (`SpladeTokenizerSurrogateSafetyTest`, worker-core).
+- **Confirmed: heap-exhaustion-induced JNI death.** All three hs_err dumps show the 1g heap at
+  99.7-99.9% occupancy at crash. `encodeBatchTokenBudget` batch-tokenized the FULL caller list
+  upfront with truncation disabled: ~100 doc-level contents × up to ~107k tokens each (content
+  char-capped at 200k) materialized simultaneously — ids + token strings + char spans, up to
+  ~1 GB short-lived — while only the first maxSeqLen tokens are ever used. DJL's JNI surfaces
+  the failed allocation as an uncaught C++ exception instead of an OOME → native JVM death.
+  This is run 1's heap verdict ("1g survives with no margin") escalating to a kill.
+
+**Fix (worker-core `SpladeEncoder`):** chunked tokenization — native `batchEncode` calls bounded
+by `TOKENIZE_GROUP_CHAR_BUDGET` (512k input chars ≈ tens of MB peak, derivation at the constant),
+retaining only maxSeqLen-truncated arrays; full Encodings are short-lived per group. Regression:
+`SpladeEncoderBoundedTokenizeTest` (multi-group batch ≡ singleton results by dominant-token
+agreement — catches cross-wiring; exact float equality across padded batches is not expected and
+was verified to differ only in near-zero tail terms).
+
+**Validation experiment (quick, per founder directive — no full re-run):** enrichment resumed
+over the crashed run's own index with the fixed encoder: sailed through the previous death zone
+— 328/615 docs enriched (53%, vs crashes at ≤193) over ~15 min of observation, **zero crash
+dumps**, no resets, stable cycles. Fix considered validated; the remaining chunk-embedding
+backlog drain is bounded by a ~50-chunks-per-cycle pacing cap (logged to the inbox for 691's
+domain — throughput, not correctness).
+
+**Heap follow-up sharpened:** the raise-vs-bound decision now has its first concrete instance
+answered — this was a "bound the consumer" case (allocation churn by a single consumer), not a
+"raise the heap" case. The GC logs for run 2 + resume are preserved
+(`tmp/worker-gc-686-full.log` — truncated per crash-restart, `tmp/worker-gc-686-resume.log`;
+hs_err dumps archived in the session scratchpad, key numbers recorded here durably).
 
 ### Harness gap found + closed (step 2)
 
