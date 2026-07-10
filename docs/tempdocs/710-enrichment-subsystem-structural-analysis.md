@@ -367,10 +367,86 @@ whole-batch OOM discard). Design-layer findings, all incorporated into S-C/waves
 Surviving unmodified: Move 2's architectural core (with honest ~6-file migration sizing), Move
 5's restraint calibration, Move 6, Wave 0's cheapness, all Axis-1 facts.
 
+## S-C.R — internet research addendum (2026-07-10, /research pass; post-S-D)
+
+Two focused external passes on the design's moving-target aspects (capability-declaration prior
+art; ORT memory/error mechanics + OTel conventions). Findings below AMEND the moves; primary
+sources verified by the researching agents (HF file fetches, ORT source/blame, official docs).
+
+**R-1. Move 1 should ADOPT the sentence-transformers convention as its read layer, not invent a
+schema.** Verified against the actual `Alibaba-NLP/gte-multilingual-base` HF repo: it ships
+`modules.json`, `1_Pooling/config.json` (**older boolean-flag schema** —
+`pooling_mode_cls_token:true` — while our sidecar uses the newer `"pooling_mode":"cls"` string;
+a reader must accept BOTH generations), and `sentence_bert_config.json` (`max_seq_length: 8192`,
+agreeing with `config.json` `max_position_embeddings: 8192`). Per-fact verdicts:
+- **Pooling / context / dimension**: read the ST files + `config.json` directly; cross-validate
+  the two context sources. **Never trust `tokenizer_config.json` `model_max_length`** — for this
+  exact model it says **32768** vs the real 8192 trained context (and is almost certainly where
+  691 §H's unsubstantiated "32k" figure came from — source of that error now identified).
+- **Precision**: NO ecosystem field is authoritative for an exported ONNX file's precision
+  (`torch_dtype` describes the original checkpoint, not the export). Self-declared manifest
+  field required; sanity-check against ORT `getInputInfo()/getOutputInfo()` element types (the
+  Java API cannot introspect initializer dtypes, and mixed-precision graphs make I/O types a
+  check, not a source of truth). This retires the filename-substring mechanism.
+- **Prefixes**: `config_sentence_transformers.json` `prompts` is the designed home but is
+  UNPOPULATED in practice — verified 404 for both gte-multilingual-base AND multilingual-e5-large
+  (whose README prescribes prefixes in prose only). Stays our own manifest field; read the ST
+  file if present, never treat absence as "no prefix".
+- **Fail-closed posture is externally validated**: TEI (HuggingFace's embedding server — the
+  same problem, widely deployed) ERRORS on missing/ambiguous capability facts rather than
+  defaulting (TEI issue #366, gte-multilingual-base support). Move 1's rule (a) matches the
+  field's chosen posture.
+- **Long-term hardening (Wave 2+, optional)**: stamp capabilities INTO the ONNX file via
+  `metadata_props` (reverse-DNS keys, e.g. `io.justsearch.pooling_mode`) at model-conversion
+  time and read via the already-created session's `getMetadata().getCustomMetadata()` — zero
+  marginal load cost, makes capabilities inseparable from weights. Precedent: GGUF ships
+  `{arch}.pooling_type` / `{arch}.context_length` as first-class binary metadata. No upstream
+  exporter populates this — it's our own conversion-script step (`scripts/models/build-*.py`).
+
+**R-2. Move 3's string-match OOM detection is confirmed as THE mechanism, not a workaround.**
+ORT has **no typed OOM error code** — BFC-arena exhaustion surfaces as generic `ORT_FAIL` with
+the diagnostic only in message text (verified in `onnxruntime_error_code.h` + `bfc_arena.cc`).
+The exact message has been **unchanged since June 2020** (git blame, commit `9790e194`) — stable
+in practice, structurally unguaranteed → the canary test pinning the message format is exactly
+right. Also confirmed: **no pre-flight memory-estimate API exists** (batch sizing must stay
+catch-and-retry or calibrated heuristic — validates Move 3's shape and the restraint on a
+memory-model batcher).
+
+**R-3. Two arena assumptions in our code are stale or suspect (new watch-items).**
+(a) `kNextPowerOfTwo` — named by three lanes' comments as the known-but-unlanded fix — is
+actually the **CUDA EP default** that ORT docs pair with over-reservation risk on tight VRAM;
+`kSameAsRequested` (our runtime-wide setting) trades that for external fragmentation. Neither
+dominates for variable batch×seq: any strategy change is an **A/B with VRAM-headroom
+measurement**, not a known fix — the three code comments should be corrected when Move 3
+touches those files. (b) **Arena shrinkage, which we enable on every run**
+(`SessionOptionsApplier.java:109-115`), is reported in ORT issues as unreliable for CUDA and
+latency-costly (doesn't cleanly free after peak-then-small sequences) — never validated locally;
+a cheap A/B candidate for whoever next holds the dev stack on throughput work.
+
+**R-4. Move 2 metric names: adopt OTel `gen_ai.*` WITH named deviations.** The GenAI semantic
+conventions explicitly cover embeddings (`gen_ai.operation.name="embeddings"`,
+`gen_ai.usage.input_tokens`, `gen_ai.embeddings.dimension.count`,
+`gen_ai.client.operation.duration`) and explicitly sanction in-process inference for spans
+(span kind **INTERNAL** for same-process models — use that, not CLIENT). Deviations: override
+the spec's histogram buckets (tuned for LLM-scale seconds, useless for sub-ms/ms encoder calls);
+keep per-lane and batch-size as bespoke attributes (no spec concept). Caveat: the conventions
+are **Development-tier** (repo `semantic-conventions-genai`) — adopt names for interop, don't
+couple dashboards/gates to them as a contract.
+
+**R-5. License/attribution (public-repo check).** Interop with file formats/key names
+(ST config files, `gen_ai.*` names, ONNX metadata keys) carries no attribution burden — formats
+and names aren't copyrightable expression; a from-scratch Java reader is clean. Attribution
+applies only if code/doc text is copied verbatim: sentence-transformers/ONNX/TEI/OTel are
+Apache-2.0, llama.cpp/GGUF is MIT, and **ONNX Runtime is MIT (not Apache-2.0** — corrected
+assumption). Nothing in the current design copies external code.
+
 ## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
 - 2026-07-10: all four surveys returned; condensed evidence + S-C synthesis recorded above.
 - 2026-07-10: S-D adversarial review completed (verdict: fit-with-corrections); all five
-  corrections applied to S-C/waves. Status: READY FOR S-E FOUNDER REVIEW. Implementation
-  remains unauthorized.
+  corrections applied to S-C/waves.
+- 2026-07-10: S-C.R research addendum — Move 1 adopts ST-convention read layer + TEI fail-closed
+  precedent + optional ONNX-embedded metadata; Move 3's string match confirmed sole mechanism
+  (stable since 2020) + two stale arena assumptions flagged; Move 2 adopts `gen_ai.*` names with
+  deviations. Status: READY FOR S-E FOUNDER REVIEW. Implementation remains unauthorized.
