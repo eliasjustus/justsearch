@@ -314,6 +314,18 @@ public enum EnvRegistry {
     /** GPU memory arena limit for ONNX embedding sessions (MB, default 3072). */
     EMBED_GPU_MEM_MB("justsearch.embed.gpu_mem_mb", "JUSTSEARCH_EMBED_GPU_MEM_MB"),
 
+    /**
+     * Tempdoc 691 Phase 1: late-chunking embed pass — a chunked parent doc and all its chunk
+     * docs get their embedding vectors from a SINGLE forward pass ({@code
+     * OnnxEmbeddingEncoder#embedWithSpans}) instead of the parent + each chunk being embedded
+     * independently (E-5 dedup, arXiv:2409.04701). Default off; D-004 went default-off ->
+     * measured -> default-on, same template.
+     */
+    EMBED_LATE_CHUNKING_ENABLED(
+        "justsearch.embed.late_chunking_enabled",
+        "JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED",
+        "false"),
+
     /** Enable GPU acceleration for SPLADE inference (default false). */
     SPLADE_GPU_ENABLED("justsearch.splade.gpu_enabled", "JUSTSEARCH_SPLADE_GPU_ENABLED"),
 

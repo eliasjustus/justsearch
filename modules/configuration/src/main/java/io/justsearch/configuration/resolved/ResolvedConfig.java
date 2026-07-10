@@ -251,7 +251,10 @@ public record ResolvedConfig(
         boolean gpuEnabled,
         int gpuDeviceId,
         int gpuMemMb,
-        int contextLength) {}
+        int contextLength,
+        // Tempdoc 691 Phase 1: late-chunking embed pass (single forward pass for a chunked
+        // parent + its chunk docs) — default off.
+        boolean lateChunkingEnabled) {}
 
     public record Splade(
         Boolean enabled,

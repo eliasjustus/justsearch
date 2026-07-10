@@ -1021,7 +1021,9 @@ public final class ResolvedConfigBuilder {
         // (10 BFCArena failures observed in 391's 2026-04-19 re-measurement).
         // Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB.
         resolveInt("justsearch.embed.gpu_mem_mb", 3072),
-        resolveInt("justsearch.embed.context_length", 2048));
+        resolveInt("justsearch.embed.context_length", 2048),
+        // Tempdoc 691 Phase 1: late-chunking embed pass — default off (D-004 template).
+        resolveBoolean("justsearch.embed.late_chunking_enabled", false));
   }
 
   /**

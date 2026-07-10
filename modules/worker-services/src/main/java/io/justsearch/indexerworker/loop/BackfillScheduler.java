@@ -14,6 +14,7 @@ import io.justsearch.indexerworker.loop.ops.BgeM3BackfillOps;
 import io.justsearch.indexerworker.loop.ops.CombinedEnrichmentBackfillOps;
 import io.justsearch.indexerworker.loop.ops.DisambiguationBackfillOps;
 import io.justsearch.indexerworker.loop.ops.EmbeddingBackfillOps;
+import io.justsearch.indexerworker.loop.ops.LateChunkingEmbedBackfillOps;
 import io.justsearch.indexerworker.loop.ops.LoopPacingPolicy;
 import io.justsearch.indexerworker.loop.ops.NerBackfillOps;
 import io.justsearch.indexerworker.loop.ops.SpladeBackfillOps;
@@ -121,6 +122,15 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
+      // Tempdoc 691 Phase 1: additive, flag-gated late-chunking embed pass — a chunked parent
+      // doc and all its chunk docs get their VECTOR/CHUNK_VECTOR from a single forward pass
+      // instead of the parent being embedded-and-pooled internally AND each chunk re-embedded
+      // independently (E-5 dedup). Runs BEFORE the combined pass so any parent/chunk it marks
+      // EMBEDDING_STATUS/CHUNK_EMBEDDING_STATUS=COMPLETED still gets its SPLADE/NER processed
+      // normally below — this pass never touches those fields. Default off: when the flag is
+      // false, processLateChunkingEmbedBackfill returns immediately with zero I/O (strict
+      // no-op).
+      boolean lateChunkingDidWork = processLateChunkingEmbedIfApplicable();
       boolean useCombined = processCombinedBackfillIfApplicable();
       if (useCombined) {
         // 334 Phase 8/10: tight loop with persistent pending-ID caches across iterations.
@@ -152,6 +162,9 @@ public final class BackfillScheduler {
         }
       } else {
         backfillDidWork = runIndividualBackfills();
+      }
+      if (lateChunkingDidWork) {
+        backfillDidWork = true;
       }
     }
 
@@ -289,6 +302,27 @@ public final class BackfillScheduler {
   }
 
   // ==================== Backfill delegates ====================
+
+  private boolean processLateChunkingEmbedIfApplicable() {
+    boolean embedAvail =
+        embeddingLifecycle.embeddingProvider().isAvailable()
+            && embeddingLifecycle.allowEmbeddingWrites();
+    if (!embedAvail) {
+      return false;
+    }
+    return LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(
+        new LateChunkingEmbedBackfillOps.BackfillContext(
+            documentFieldOps,
+            indexingCoordinator,
+            commitOps,
+            signalBus,
+            embeddingLifecycle::embeddingProvider,
+            running::get,
+            embeddingLifecycle::allowEmbeddingWrites,
+            resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
+            EMBEDDING_BACKFILL_BATCH_SIZE,
+            log));
+  }
 
   private boolean processCombinedBackfillIfApplicable() {
     return processCombinedBackfillIfApplicable(null, null, null);

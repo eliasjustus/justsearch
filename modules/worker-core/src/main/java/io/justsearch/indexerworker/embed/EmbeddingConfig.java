@@ -40,12 +40,15 @@ public record EmbeddingConfig(
     boolean gpuEnabled,
     int gpuDeviceId,
     long gpuMemLimitBytes,
-    int contextLength) {
+    int contextLength,
+    // Tempdoc 691 Phase 1: late-chunking embed pass (single forward pass for a chunked parent +
+    // its chunk docs) — default off.
+    boolean lateChunkingEnabled) {
 
   private static final Logger log = LoggerFactory.getLogger(EmbeddingConfig.class);
 
   public static final EmbeddingConfig DISABLED =
-      new EmbeddingConfig(false, null, "auto", false, 0, 0, 2048);
+      new EmbeddingConfig(false, null, "auto", false, 0, 0, 2048, false);
 
   /** Convenience: reads from {@link ConfigStore#global()}. Prefer {@link #from} in new code. */
   public static EmbeddingConfig fromEnv() {
@@ -90,11 +93,12 @@ public record EmbeddingConfig(
     int gpuDeviceId = embed.gpuDeviceId();
     int gpuMemMb = embed.gpuMemMb();
     int contextLength = embed.contextLength();
+    boolean lateChunkingEnabled = embed.lateChunkingEnabled();
 
     EmbeddingConfig embeddingConfig =
         new EmbeddingConfig(
             enabled, modelPath, backend, gpuEnabled, gpuDeviceId, gpuMemMb * 1024L * 1024,
-            contextLength);
+            contextLength, lateChunkingEnabled);
 
     if (embeddingConfig.isReady()) {
       log.info(

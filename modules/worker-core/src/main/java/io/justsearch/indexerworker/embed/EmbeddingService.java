@@ -395,6 +395,58 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
   }
 
   /**
+   * Late chunking (tempdoc 691 Phase 1, arXiv:2409.04701): embeds {@code content} once and derives
+   * both the whole-document vector and one vector per character span from the same forward pass,
+   * instead of embedding the parent and each chunk independently. Delegates to {@link
+   * io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingEncoder#embedWithSpans} — mirrors how
+   * {@link #embedDocumentBatch} is a thin pass-through to the backend's native batch path.
+   *
+   * <p>{@code content} is prefixed with the document task instruction (same as {@link
+   * #embedDocument} / {@link #embedDocumentBatch}) so the resulting vectors live in the same
+   * embedding space as every other {@code VECTOR}/{@code CHUNK_VECTOR}; {@code charSpans} are
+   * shifted by the prefix length before being handed to the encoder so they still address the
+   * caller's original (unprefixed) {@code content} offsets.
+   *
+   * <p>Callers must gate on {@code EmbeddingConfig#lateChunkingEnabled()} themselves — this method
+   * is unconditional and only checks backend availability/support.
+   *
+   * @return the doc vector plus one chunk vector per span, or {@code null} if this backend does not
+   *     support late chunking (non-ONNX) or {@code content} exceeds the model's context window
+   * @throws RuntimeException if the underlying ONNX inference call fails — callers should treat
+   *     this like any other embedding failure (do not mark complete; let the doc retry/escalate)
+   */
+  public ChunkedEmbedding embedWithSpans(String content, int[][] charSpans) {
+    if (closed.get() || !available || backend == null) {
+      return null;
+    }
+    if (content == null || content.isBlank() || charSpans == null) {
+      return null;
+    }
+    if (!(backend
+        instanceof io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingBackend onnxBackend)) {
+      return null;
+    }
+
+    String prefixed = documentPrefix + content;
+    int shift = documentPrefix.length();
+    int[][] shiftedSpans = new int[charSpans.length][];
+    for (int i = 0; i < charSpans.length; i++) {
+      shiftedSpans[i] = new int[] {charSpans[i][0] + shift, charSpans[i][1] + shift};
+    }
+
+    try {
+      io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingEncoder.EmbedResult result =
+          onnxBackend.encoder().embedWithSpans(prefixed, shiftedSpans);
+      if (result == null) {
+        return null;
+      }
+      return new ChunkedEmbedding(result.vector(), result.chunkVectors(), result.chunkCount());
+    } catch (ai.onnxruntime.OrtException e) {
+      throw new RuntimeException("Late-chunking embed failed: " + e.getMessage(), e);
+    }
+  }
+
+  /**
    * Loads task prefixes from a {@code prefix_config.json} in the model directory. Expected format:
    * {@code {"document_prefix": "search_document: ", "query_prefix": "search_query: "}}. Returns
    * defaults if no config file exists.

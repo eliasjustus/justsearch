@@ -52,7 +52,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
         new EmbeddingConfig(
-            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048);
+            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
     assertTrue(service.isAvailable());
 
@@ -93,7 +93,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
         new EmbeddingConfig(
-            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048);
+            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
     IndexingLoop loop = newLoop();
     loop.getEmbeddingLifecycle().setEmbeddingTelemetryEvents(events);
@@ -124,7 +124,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
         new EmbeddingConfig(
-            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048);
+            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
     IndexingLoop loop = newLoop();
     loop.getEmbeddingLifecycle().setEmbeddingTelemetryEvents(events);
@@ -159,7 +159,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
         new EmbeddingConfig(
-            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048);
+            true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
     IndexingLoop loop = newLoop();
     loop.getEmbeddingLifecycle().setEmbeddingTelemetryEvents(events);
@@ -204,7 +204,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var events = new RecordingEvents();
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
-        new EmbeddingConfig(true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048);
+        new EmbeddingConfig(true, tempDir.resolve("fake-model"), "auto", false, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
 
     EmbeddingProviderLifecycle lifecycle = newLifecycle(false);
@@ -242,7 +242,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
     var backend = new TimingMockBackend();
     EmbeddingConfig config =
         new EmbeddingConfig(
-            true, tempDir.resolve("fake-model"), "auto", /* gpuEnabled= */ true, 0, 0L, 2048);
+            true, tempDir.resolve("fake-model"), "auto", /* gpuEnabled= */ true, 0, 0L, 2048, false);
     EmbeddingService service = EmbeddingService.createWithBackend(backend, config, events);
 
     EmbeddingProviderLifecycle lifecycle = newLifecycle(/* mainGpuActive= */ true);
