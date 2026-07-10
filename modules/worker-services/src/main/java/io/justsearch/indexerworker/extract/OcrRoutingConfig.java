@@ -19,7 +19,11 @@ public record OcrRoutingConfig(
   public static final String ENGINE = "tesseract";
   private static final List<String> DEFAULT_LANGUAGES = List.of("eng");
   private static final int DEFAULT_PER_FILE_TIMEOUT_MS = 30_000;
-  private static final int DEFAULT_MAX_PAGES = 50;
+  // 706 founder-delegated decision (2026-07-10): raised 50 -> 200. The aggregate per-document
+  // budget (DEFAULT_PER_FILE_TIMEOUT_MS) is the cost bound now that budget expiry returns
+  // partial page-ordered text; this cap is only a sanity ceiling for pathological documents.
+  // Corpus evidence (mixed/realdocs-v1): 14% of real PDFs exceed 50 pages; <2% exceed 200.
+  private static final int DEFAULT_MAX_PAGES = 200;
   private static final int DEFAULT_MAX_IMAGE_DIMENSION = 4096;
   private static final int DEFAULT_MAX_IMAGE_PIXELS = 40_000_000;
   private static final int DEFAULT_RENDER_DPI = 300;

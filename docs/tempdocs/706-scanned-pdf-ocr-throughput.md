@@ -367,6 +367,16 @@ config nothing changed; versus the de-facto capless reality, >50p scans lose OCR
 (~0.2 s/page) raising `max_pages` is now cheap — that is a 607-adjacent routing/product decision
 left explicitly open for the founder, not made here.
 
+> **DECIDED (2026-07-10, founder delegated "proceed autonomously with remaining work"): raised
+> to 200.** Rationale: the aggregate per-document budget (30s, partial page-ordered text on
+> expiry) is now the cost bound, so the cap's only remaining job is a sanity ceiling for
+> pathological documents. Corpus evidence (`mixed/realdocs-v1`): 44/311 real PDFs (14%) exceed
+> 50 pages (manuals/reports up to 1,000p) — a tail real user corpora share; only 5 (<2%) exceed
+> 200. Changed in the three authoritative sites (`OcrRoutingConfig.DEFAULT_MAX_PAGES`,
+> `config/application.yaml`, headless yaml) + tests; smoke profile's tight 10 intentionally
+> kept. A >200p doc still gets an honest `SIZE` skip; a 51-200p doc now gets up to ~30s of
+> budget-bounded OCR instead of nothing.
+
 ### Session closeout / handoff (2026-07-10)
 
 **Branch state:** `worktree-takeover-706`, clean tree, 9 commits, UNPUSHED, no PR (founder

@@ -119,7 +119,8 @@ index:
     limits:
       # Aggregate per-document OCR budget (must sit below the outer extractor timebox).
       per_file_timeout_ms: 30000
-      max_pages: 50
+      # 200 = sanity ceiling only; the per-document budget above is the cost bound (706).
+      max_pages: 200
       max_image_dimension: 4096
       # max_image_pixels: 50000000
       render_dpi: 300

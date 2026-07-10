@@ -28,7 +28,7 @@ final class OcrRoutingConfigTest {
 
     assertTrue(defaults.enabled());
     assertEquals(30_000, defaults.perFileTimeoutMs());
-    assertEquals(50, defaults.maxPages());
+    assertEquals(200, defaults.maxPages());
     assertEquals(4096, defaults.maxImageDimension());
     assertEquals(40_000_000, defaults.maxImagePixels());
     assertEquals(300, defaults.renderDpi());
@@ -46,7 +46,7 @@ final class OcrRoutingConfigTest {
 
     assertTrue(resolved.enabled(), "enabled defaults true when unspecified");
     assertEquals(30_000, resolved.perFileTimeoutMs());
-    assertEquals(50, resolved.maxPages());
+    assertEquals(200, resolved.maxPages());
     assertEquals(4096, resolved.maxImageDimension());
     assertEquals(40_000_000, resolved.maxImagePixels());
     assertEquals(300, resolved.renderDpi());
@@ -63,7 +63,7 @@ final class OcrRoutingConfigTest {
     OcrRoutingConfig resolved = OcrRoutingConfig.from(allZeroOrNegative);
 
     assertEquals(30_000, resolved.perFileTimeoutMs());
-    assertEquals(50, resolved.maxPages());
+    assertEquals(200, resolved.maxPages());
     assertEquals(4096, resolved.maxImageDimension());
     assertEquals(40_000_000, resolved.maxImagePixels());
     assertEquals(300, resolved.renderDpi());
