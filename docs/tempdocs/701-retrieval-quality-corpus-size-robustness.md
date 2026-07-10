@@ -1065,3 +1065,70 @@ unknowns, not blockers).
 (fetch/run/derive, no code). Neither needs design judgment — that tier is done.
 **Recommendation: do nothing now (close 701 as complete); if R1/R2 are later wanted, Sonnet at low effort is
 sufficient.** Opus is not warranted for either.
+
+---
+
+# Repetitive-real probe (2026-07-10) — the untested slice, now measured: size-robustness is CORPUS-DEPENDENT; the E4 "flat" verdict scopes to diverse corpora
+
+> The review of this tempdoc flagged one under-weighted residual: E4's realistic control (MIRACL,
+> diverse Wikipedia) did not cover realistic-REPETITIVE corpora — templated legal/boilerplate text,
+> the paying-ICP shape. This $0 probe measures exactly that slice, enabled by extending
+> `corpus-fetch-clerc` with MIRACL-style `n_docs` distractor sampling (same seed 666 + n_queries 200
+> reproduces byte-identical queries to the pinned `legal-clerc-200`, verified) — an E4-style
+> fixed-query volume sweep on real legal text: 198 → 4,000 docs.
+
+## Results (fixed 200 CLERC queries; modes vector/lexical/splade/full; no CE in eval mode)
+
+| | 198 docs | 4,000 docs | Δ |
+|---|---|---|---|
+| leg_union_recall | 0.875 | **0.705** | −0.170 |
+| LEG_MISS | 0.10 | **0.295** | +0.195 |
+| CASCADE_LEAK (leak_rate) | 0.035 | 0.02 | ≈flat |
+| final_recall | 0.865 | 0.685 | −0.180 |
+| full nDCG@10 | 0.681 | 0.507 | −0.174 |
+| per-leg R@10: lexical | 0.855 | 0.69 | −0.165 |
+| per-leg R@10: vector / splade | 0.10 / 0.15 | 0.03 / 0.005 | near-dead at BOTH sizes |
+
+Caveat, stated honestly: the 4k `full` mode is `comparable=False` (`ann_proof_failed:
+dense_vector_evidence_available_rate=0.455`), so its absolute number carries a dense-evidence caveat —
+but the headline size-drop is carried by the LEXICAL leg (no vectors involved), and the 198-doc point
+is fully comparable, so the finding survives the caveat. Runs:
+`tmp/eval-results/20260709T235522_mixed_legal-clerc-200` + `20260710T001438_mixed_legal-clerc-4k`
+(gitignored artifacts; regenerable — fetch recipes committed under `666-corpora/`).
+
+## Findings
+
+1. **Size-robustness is corpus-dependent — the E4 verdict is now SCOPED, not overturned.** Diverse
+   Wikipedia (MIRACL): flat 3k→10k. Repetitive-real legal text (CLERC): union recall −17 pts over 20×
+   volume at byte-identical queries. The engine's size-robustness claim must say "on diverse corpora";
+   the repetitive slice has a measured counterexample.
+2. **The mechanism on repetitive-real text is COMPLETENESS decay (LEG_MISS), not fusion burial.**
+   Unlike the synthetic corpus (CASCADE_LEAK-dominant, fusion buries retrieved gold), fusion holds here
+   (leak ≤0.035); the gold increasingly isn't retrieved by ANY leg. And unlike the synthetic LEG_MISS
+   (dense geometry on near-identical docs), this LEG_MISS is **BM25 dilution**: the corpus de facto
+   rides the lexical leg alone, and BM25 degrades as 20× same-domain boilerplate accumulates.
+3. **Dense + SPLADE are near-dead on CLERC-shaped legal retrieval at BOTH sizes** (R@10 ≤0.15 → ≤0.03)
+   — the "hybrid" engine is effectively BM25-only on the paying-ICP corpus shape. Working hypothesis
+   (not yet attributed): CLERC queries are long citing sentences — 678's verbose-query dilution at its
+   extreme — compounded by very long case documents. This is arguably the probe's biggest single
+   product finding and needs its own attribution pass (678 lineage; NOT owned here).
+4. **The union-recall floor gate just proved its sensitivity design**: legal-clerc-200 pins the floor
+   at 0.87; the same corpus family at 4k measures 0.705 — a completeness regression of exactly the
+   kind the gate exists to catch, live-demonstrated on real data.
+5. **Bycatch (fixed in this branch): a worker enrichment crash-loop, live-reproduced on this corpus.**
+   First contact with re-ingested real legal text at 4k wedged enrichment permanently:
+   `EmbeddingBackfillOps` (and 4 sibling batch paths) trusted a batch result's length; an empty result
+   (backfill racing provider init after a mid-enrichment worker restart) threw AIOOBE before anything
+   was marked failed → the scheduler refetched the same batch forever (199/199 doc embeddings starved).
+   Fixed: null-or-size-mismatch → the existing per-item fallback (bounded retries, visible failures);
+   five sites guarded, new `EmbeddingBackfillOpsTest` (empty/short/null), module suite green. The 686
+   prediction ("no real messy corpus has ever exercised the pipeline") came true on first contact.
+
+## Ownership routing
+
+- The repetitive-corpus completeness decay + the dense-dead-on-legal finding: register F-029; the
+  attribution pass (why are the semantic legs dead on CLERC — query length? doc length? chunking?) is
+  a NEW investigation, 678-adjacent, deliberately not opened here (one tempdoc per owner).
+- The crash-loop fix ships with this branch (PR #117). The observation about
+  `CombinedEnrichmentBackfillOps` SPLADE-phase partial-write inconsistency is in the session shard.
+- P1 (10⁵–10⁶ diverse) stays parked under 639; this probe does not change that.

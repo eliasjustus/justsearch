@@ -125,6 +125,18 @@ public final class SpladeBackfillOps {
       List<Map<String, Float>> sparseVecs;
       try {
         sparseVecs = encoder.encodeBatch(batchContents);
+        // A short/empty result is as unusable as null for the index-aligned loop in Phase 3 —
+        // trusting its length to match batchDocIds is what crash-loops the embedding-chunk
+        // sibling of this method (EmbeddingBackfillOps#processChunkEmbeddingBackfill). Route
+        // it into the same per-doc fallback below instead of indexing out of bounds.
+        if (sparseVecs == null || sparseVecs.size() != batchDocIds.size()) {
+          throw new IllegalStateException(
+              "SPLADE batch result size mismatch (expected "
+                  + batchDocIds.size()
+                  + ", got "
+                  + (sparseVecs == null ? "null" : sparseVecs.size())
+                  + ")");
+        }
       } catch (Exception e) {
         context.log().error("SPLADE batch encoding failed: {}", e.getMessage());
         // Fallback to per-doc encoding

@@ -277,7 +277,10 @@ public final class CombinedEnrichmentBackfillOps {
       if (!embedDocIds.isEmpty() && embedAvailable) {
         EmbeddingProvider provider = context.embeddingProviderSupplier().get();
         List<float[]> vectors = provider.embedDocumentBatch(embedContents);
-        if (vectors != null) {
+        // Trusting a batch result's length to match the request is what crash-loops the
+        // embedding-chunk sibling (EmbeddingBackfillOps#processChunkEmbeddingBackfill) — guard
+        // size mismatch the same way here, not just null.
+        if (vectors != null && vectors.size() == embedDocIds.size()) {
           for (int i = 0; i < embedDocIds.size(); i++) {
             float[] vector = vectors.get(i);
             String eid = embedDocIds.get(i);
@@ -304,8 +307,11 @@ public final class CombinedEnrichmentBackfillOps {
             }
           }
         } else {
-          // Batch failed — mark all as still pending (will retry next cycle)
-          context.log().warn("Combined backfill: batch embedding returned null");
+          // Batch failed or size-mismatched — mark all as still pending (will retry next cycle)
+          context.log().warn(
+              "Combined backfill: batch embedding returned {} (expected {} vectors)",
+              vectors == null ? "null" : vectors.size() + " results",
+              embedDocIds.size());
           embedFailed = embedDocIds.size();
         }
       }

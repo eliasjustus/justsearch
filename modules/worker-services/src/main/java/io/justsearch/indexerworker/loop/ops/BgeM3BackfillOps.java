@@ -117,6 +117,18 @@ public final class BgeM3BackfillOps {
       List<BgeM3Output> outputs;
       try {
         outputs = encoder.encodeBatch(batchContents);
+        // A short/empty result is as unusable as null for the index-aligned loop in Phase 3 —
+        // trusting its length to match batchDocIds is what crash-loops the embedding-chunk
+        // sibling of this method (EmbeddingBackfillOps#processChunkEmbeddingBackfill). Route
+        // it into the same per-doc fallback below instead of indexing out of bounds.
+        if (outputs == null || outputs.size() != batchDocIds.size()) {
+          throw new IllegalStateException(
+              "BGE-M3 batch result size mismatch (expected "
+                  + batchDocIds.size()
+                  + ", got "
+                  + (outputs == null ? "null" : outputs.size())
+                  + ")");
+        }
       } catch (Exception e) {
         context.log().error("BGE-M3 batch encoding failed: {}", e.getMessage());
         // Fallback to per-doc encoding
