@@ -423,13 +423,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Pre-existing (base HEAD, not 627): `./gradlew build` fails at `:ssotValidateExec` — field-catalog.schema.json requires 'analyzer' but 58/68 fields in SSOT/catalogs/fields.v1.json lack it (mid-flight ADR-0043 analyzer migration). Blocks full-build pre-merge gate for all worktrees off this HEAD. (2026-06-21)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 6` `first: 2026-06-21` `last: 2026-07-08`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 7` `first: 2026-06-21` `last: 2026-07-10`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
 - [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
 - [ ] remove-worktree.cjs record-merge misattribution RE-OBSERVED 2026-07-07 (681 teardown): linked session 20097c0b (neighbour's id in main checkout's current-session-id) to a local merge commit instead of the tearing-down session 06f94413 -> squash f604144; backfilled manually in session-merges.ndjson — `scripts/dev/remove-worktree.cjs` (2026-07-07)
 - [ ] reportHolders (scripts/dev/remove-worktree.cjs, added by 684/#82) still self-matches: its Win32_Process CommandLine -like '*<base>*' filter (excluding only its own powershell $PID) STILL matches the removal script's OWN node process and bash wrapper, because the target worktree path is in THEIR argv (observed live 2026-07-07: 'PID 536: node.exe ... remove-worktree.cjs .claude/worktrees/obs-cleanup'). Cheap fix for a future dev-tooling batch: also exclude the removal process tree (e.g. CommandLine -notlike '*remove-worktree*' and the parent node/bash PIDs). Fundamental cwd-holder limit (Win32_Process has no cwd) remains separate/out-of-scope. — scripts/dev/remove-worktree.cjs:94-113 (2026-07-07)
 - [ ] Process gap: no cleanup path for worktree-* branches on closed-but-unmerged PRs — delete_branch_on_merge only fires on actual merge; scripts/dev/remove-worktree.cjs:158-216 only deletes local branch/worktree, never touches origin (2026-07-07)
 - [ ] scripts/dev/remove-worktree.cjs intermittently fails to delete a worktree directory with EPERM/'used by another process' even with no obviously-holding process (retry usually succeeds, but not always — hit a case this session requiring git worktree prune + manual rmdir fallback) — scripts/dev/remove-worktree.cjs (2026-07-08)
+- [ ] remove-worktree.cjs cannot remove the CALLING session's own start-worktree — the session's MCP server processes (justsearch-dev server.mjs etc.) hold cwd inside it until session exit; remove-worktree correctly deletes other worktrees (624-step0-campaign removed fine post-684-fix) but self-removal needs a post-session step. Suggest: remove-worktree detect-and-say 'owned by live session <id>, rerun after it exits' instead of a bare EPERM-style failure — `scripts/dev/remove-worktree.cjs` (2026-07-10)
 
 ### obs:tikaocrruntime — Pre-existing (untracked, another agent's 607 OCR work): IndexerWorkerGuardrailsTest fails — TikaOcrR
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/extract/TikaOcrRuntime.java` `seen: 1` `first: 2026-06-21` `last: 2026-06-21`
@@ -1907,9 +1908,53 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
 - [ ] gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree while another checkout has main checked out — gh's local branch-deletion step tries to checkout the base branch locally. Workaround: omit --delete-branch, merge succeeds via API regardless, then clean up local/remote branches separately. (2026-07-08)
 
-### obs:report-build-attribution — Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the 
+### obs:report-build-attribution — Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the
 `kind: defect?` `anchor: report-build-attribution.mjs` `seen: 1` `first: 2026-07-09` `last: 2026-07-09`
 - [ ] Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the main checkout's node_modules, masking missing-dependency bugs in local/worktree testing that only surface on a true clean CI runner. Caught when PR #116's CI failed with ERR_MODULE_NOT_FOUND for cross-spawn despite passing locally in a worktree — scripts/ci/report-build-attribution.mjs (2026-07-09)
+
+### obs:verify-runtime-config-matrix — runtime-config-ownership-matrix.md is stale vs verify-runtime-config-matrix.mjs (exit 1): 6 missing 
+`kind: environment?` `anchor: verify-runtime-config-matrix.mjs` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] runtime-config-ownership-matrix.md is stale vs verify-runtime-config-matrix.mjs (exit 1): 6 missing env/sysprop pairs (JUSTSEARCH_MODE + 5x JUSTSEARCH_RERANK_JUDGE_*) — pre-existing drift unrelated to 706's two new index.ocr rows, found while verifying those (2026-07-10)
+
+### obs:unanchored-error-10 — eval-run logs commit machine context by default — the PR-117 scrub found 3,900+ 'C:\Users\<name>' oc
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] eval-run logs commit machine context by default — the PR-117 scrub found 3,900+ 'C:\Users\<name>' occurrences across 10 committed Inspect/agent-eval log JSONs (all escape depths incl. the Claude project-slug dash form); nothing structurally prevents recurrence when the next run's logs are committed. Candidate fix: a gitleaks.toml machine-path rule (pattern like Users[\/-]{1,8}(?!<user>)\w+) or a scrub step in the log-committing path — `scripts/jseval/624-run-*/logs/` precedent (2026-07-10)
+
+### obs:hybridsearchopstest — ~~HybridSearchOpsTest confidentDense() + defaults-test comments stale vs the 702 recalibration~~ — R
+`kind: follow-up?` `anchor: HybridSearchOpsTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [x] ~~HybridSearchOpsTest confidentDense() + defaults-test comments stale vs the 702 recalibration~~ — RESOLVED in-branch same session (comments referenced the exact constants the 702 change moved, so fixing them was in-scope, not deferred): `confidentDense()` gate comment + the two "default 0.40" comments updated at `HybridSearchOpsTest.java:200,215,302` (2026-07-10)
+
+### obs:relevance-gate — jseval relevance-gate exits 2 ('no eval-results run with summary.json') when pointed at scripts/jsev
+`kind: defect?` `anchor: scripts/jseval/jseval/relevance_gate.py` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] jseval relevance-gate exits 2 ('no eval-results run with summary.json') when pointed at scripts/jseval/tmp/eval-results runs that do contain summary.json — data-dir layout expectation mismatch vs jseval run's default output; found during 702 A/B, not investigated — `scripts/jseval/jseval/relevance_gate.py` (2026-07-10)
+
+### obs:extractionsandboxfactory — Reported (sidecar audit, unverified by me): in_process extraction sandbox reportedly uses one long-l
+`kind: environment?` `anchor: modules/worker-services/.../extract/ExtractionSandboxFactory.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] Reported (sidecar audit, unverified by me): in_process extraction sandbox reportedly uses one long-lived single-thread executor, so a single non-interruptible native hang (Tika/PDFBox/Tesseract) could wedge ALL future extraction until Worker restart; verify and consider executor replacement/watchdog — `modules/worker-services/.../extract/ExtractionSandboxFactory.java` / `TimeboxedContentExtractor.java` (2026-07-10)
+
+### obs:unanchored-general-75 — Worker log shows ~40 'Loaded analyzers catalog from repo path' loads PER DOCUMENT during 686 realdoc
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] Worker log shows ~40 'Loaded analyzers catalog from repo path' loads PER DOCUMENT during 686 realdocs-v1 ingest (3,958 loads for 98 docs) — analyzers catalog appears un-cached on some per-doc/per-chunk path; possible indexing-throughput defect (or eval-mode-only artifact); verify against production wiring — `worker log 2026-07-10, tmp/headless-eval-data/logs/worker.log` (2026-07-10)
+
+### obs:unanchored-general-76 — Combined enrichment backfill caps chunk-embedding at ~50 chunks/cycle (~3.5min cycles) — an 85k-chun
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] Combined enrichment backfill caps chunk-embedding at ~50 chunks/cycle (~3.5min cycles) — an 85k-chunk corpus (mixed/realdocs-v1) would take days to drain; doc-level enrichment dominates cycles while the chunk backlog crawls. Throughput pacing question for 691's domain — `CombinedEnrichmentBackfillOps/BackfillScheduler`, observed live 2026-07-10 (2026-07-10)
+
+### obs:knowledgesearchcontroller-error — /api/knowledge/search sharp edges found while harvesting index stats: facets return silently EMPTY o
+`kind: lesson?` `anchor: KnowledgeSearchController.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] /api/knowledge/search sharp edges found while harvesting index stats: facets return silently EMPTY on this path (no error), 'lucene' querySyntax field-term queries cap totalHits/results at 100 and match-all (*:*) returns 0 — an agent can read false per-value counts (all values = 100) without an error. jseval lacks an index-field-distribution utility; folder-files + projection is the workaround — `KnowledgeSearchController.java` / jseval feature gap (2026-07-10)
+
+### obs:spladeindexcontentcrashharnesstest — JUnit @Tag("evidence") makes a test invisible to gradle --tests discovery in worker-services ('No te
+`kind: defect?` `anchor: SpladeIndexContentCrashHarnessTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] JUnit @Tag("evidence") makes a test invisible to gradle --tests discovery in worker-services ('No tests found for given includes') — exclusion source never located (no excludeTags outside system-tests); silent tag-based exclusion should fail loudly or be documented — `SpladeIndexContentCrashHarnessTest discovery, 2026-07-10` (2026-07-10)
+
+### obs:spladebatchsweeptest — SPLADE model-dir resolution in worker-core tests walks only 5 parent dirs from user.dir — in a workt
+`kind: defect?` `anchor: SpladeBatchSweepTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] SPLADE model-dir resolution in worker-core tests walks only 5 parent dirs from user.dir — in a worktree (.claude/worktrees/<name>/modules/worker-core) the main checkout's models/ is 7 levels up, so asset-gated SPLADE tests SKIP SILENTLY in every worktree session (SpladeBatchSweepTest etc.); SpladeEncoderBoundedTokenizeTest uses depth 8 — align the others — `modules/worker-core/src/test/.../splade` (2026-07-10)
+
+### obs:unanchored-missing-7 — STALE observation correction: obs:vdu-pdf-fixtures-local-env claims eng.traineddata missing — on 202
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] STALE observation correction: obs:vdu-pdf-fixtures-local-env claims eng.traineddata missing — on 2026-07-10 the file EXISTED at F:/scoop/persist/tesseract/tessdata/ (was overwritten with tessdata_fast variant during 686 setup, disclosed in 686); tesseract verified working. Retire or re-scope the observation. (2026-07-10)
 
 ## Parked
 
