@@ -1478,7 +1478,9 @@ public final class ResolvedConfigBuilder {
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight", 0.75))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_score_boost_weight", 0.002)),
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.40))),
+        // Default is in EUCLIDEAN score space (0.294 = 1/3.4), not the cosine-score space the field
+        // was originally calibrated for (tempdoc 702); explicit user overrides keep their value.
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.294))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_low_signal_top_score_threshold", 0.0)),
         Math.max(0, resolveInt("index.hybrid.bm25_low_signal_total_hits_threshold", 0)),
         Math.max(0, resolveInt("index.hybrid.vector_only_cap_low_signal", 3)),

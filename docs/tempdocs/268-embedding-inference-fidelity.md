@@ -255,6 +255,7 @@ an explicit `VectorSimilarityFunction` (`FieldMapper.java:245`), which
 defaults to `COSINE` — correct for L2-normalized vectors. (Test code in
 `VectorFormatDetectorTest.java` explicitly uses `COSINE` for all vectors,
 confirming the intended behavior.)
+[2026-07-10, via tempdoc 702: bytecode-verified the 2-arg constructor defaults to EUCLIDEAN in lucene-core-10.4.0; see 702]
 
 No double-normalization or missed-normalization issues found. This is
 not the cause.

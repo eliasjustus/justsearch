@@ -1,7 +1,7 @@
 ---
 title: "Natural-language question robustness: the engine loses ~21 points of top-3 hop-1 recall to question boilerplate — verbose NL questions rank worse than their own distinctive descriptor phrase"
 type: tempdocs
-status: "open — STUB, goals and context only, no design or implementation. Evidence in hand (a measured 69% -> 90% top-3 gap between verbatim-question and descriptor-phrase formulations of the same information need, tempdoc 624 mechanism replay, 2026-07-03). Sequencing: design AFTER the 624 harness fix + real-with-tool re-run lands — that run decides whether lazy verbatim-question usage is the dominant real access pattern (raising this to critical path) or whether callers reformulate well (lowering it). D-005-clean by construction: the lever keys on the query's own shape, never on an assumed corpus."
+status: "open — RESEQUENCED 2026-07-10 (supersedes the 07-03 sequencing clause below): tempdoc 704 made the pillar-5 dense-legs attribution — this doc's mechanism at its extreme (F-029: dense/SPLADE R@10 ≤0.15 on CLERC-shaped legal text) — the measurement program's explicit FIRST pickup, and it GATES the pillar-1 corpus design that the powered 624 re-run needs. The original clause ('design AFTER the 624 re-run lands') is therefore inverted and void: the re-run now waits on this lane, not vice versa. The §Pillar-5 attribution experiment section (2026-07-10) is the designed, runnable first work item (~$0, dev-stack sessions); the broader query-robustness LEVER design (reduction/reformulation mechanism) remains open and follows the attribution verdict. [Original 07-03 clause, retained as history: design AFTER the 624 harness fix + real-with-tool re-run lands — that run decides whether lazy verbatim-question usage is the dominant real access pattern.] Evidence in hand: measured 69% -> 90% top-3 gap between verbatim-question and descriptor-phrase formulations (624 mechanism replay, 2026-07-03). D-005-clean by construction: the lever keys on the query's own shape, never on an assumed corpus."
 created: 2026-07-03
 updated: 2026-07-03
 author: agent retrospective (624 mechanism investigation), filed by agent — STUB
@@ -58,3 +58,92 @@ cheaply. Per D-005, any solution must be a fixed, regime-blind behavior keyed on
 Not benchmark tuning (the fix must be justified on general verbose-question handling, with the
 battlefield replay as *one* measurement among the register's corpora); not agent-side prompt
 engineering (that is 655's layer); not a per-corpus router (D-005).
+
+## §Pillar-5 attribution experiment (designed 2026-07-10, Fable orchestration — 704's first pickup, run in this lane)
+
+### The question and why it forks everything downstream
+
+Why are dense + SPLADE near-dead on CLERC-shaped legal retrieval (F-029: R@10 ≤0.15 at 198 docs,
+≤0.03 at 4k — "hybrid" de facto BM25-only on the paying-ICP corpus shape)? Two explanations with
+opposite consequences: **(a) product gap** — verbose citing-sentence queries dilute the query
+embedding (this doc's mechanism at its extreme, compounded by very long case documents); fix is
+query-side, then re-measure. **(b) corpus artifact** — CLERC queries are citation sentences, not
+user queries; fix is the pillar-1 corpus's *query* construction. 704's pillar-1 corpus design forks
+on this answer, and the powered 624 run waits on that corpus — hence first pickup.
+
+### Scope boundary settled in 702 §B.6 (do not re-litigate)
+
+Threshold recalibration (702) **cannot move raw dense-leg R@10** — unit vectors rank identically
+under EUCLIDEAN and COSINE. It can only move post-gate/post-fusion numbers (the miscalibrated
+low-signal gate effectively required cos ≥ 0.25 to count the vector leg as healthy, and verbose
+legal queries plausibly score below that — capping the dense leg's fused contribution). Therefore:
+**measure pre-gate leg recall and post-fusion recall separately, and run all post-fusion stages on
+the post-702 engine.** Sequencing within the lane: 702 fix lands first, then this experiment.
+
+### Stages (each ~$0; local dev stack; staged-recall instrument + `leg_union_recall` projections)
+
+- **E5-A — raw-leg baseline (decisive for calibration-vs-retrieval, run first).** On
+  `legal-clerc-200` (pinned, reproducible, union-recall floor 0.87): per-leg **pre-gate** R@10/R@100
+  for dense and SPLADE (raw KNN / raw impact-ordered top-K, before low-signal gating and fusion).
+  If raw dense R@10 is already ≤0.15, gating/calibration is NOT the cause → proceed to E5-C. If raw
+  recall is materially higher than the post-fusion 0.15, the loss is in gate/fusion → 702's
+  recalibration is the primary fix; re-measure post-fix and re-scope F-029.
+- **E5-B — post-702 hybrid re-measure (rides with 702's eval gate).** `leg_union_recall`, hybrid
+  R@10, arbitration firing rate, low-signal classification rate on legal-clerc-200, branch vs main.
+  Also probes 701's unexplained `ann_proof` dense-evidence 0.455 anomaly (704's coordination note
+  suspects a shared root).
+- **E5-C — query-shape sweep (the (a)/(b) discriminator).** Same 198 docs, same qrels, three query
+  variants: (1) original CLERC citing sentences; (2) LLM-reduced short user-style queries —
+  generated ONCE with the local model and committed (determinism-by-commitment, 704 pillar 1's
+  rule), (3) mechanically keyword-extracted phrases (no LLM, the cheap control). Pre-gate dense
+  R@10 per variant. **Dense recovers with short queries → (a)**: the lever is query reduction (this
+  doc's design pass proceeds; register-check 363/QU first per §Relevant register facts) and
+  pillar-1 corpora need realistic-length queries. **Dense stays dead → doc-side attribution
+  (E5-D).**
+- **E5-D — doc-side attribution (only if E5-C is flat).** CLERC case documents are very long;
+  check chunk-population stats on the indexed corpus (chunk count/length distribution vs the
+  2000-char floor), and whether gold *chunk* embeddings rank when queried directly (chunk-level
+  nearest-neighbor probe). Distinguishes embedding-content dilution (long chunks) from
+  chunking/coverage gaps. Routes to 636 (buried-signal/long-documents) — not owned here.
+- **E5-E — SPLADE pruning probe (optional rider, teardown lever #5).** SPLADE leg with `beta=1.0`
+  vs the hardcoded 0.5 (`SearchInputCapture.java:320/329/331`) on the same query variants — verbose
+  queries produce many terms; top-50% pruning may drop the discriminative ones. One knob, one run;
+  if it moves recall materially, file the finding to 266/273.
+
+### Interpretation tree → routing (pre-registered so the verdict routes itself)
+
+| E5-A raw | E5-C sweep | Verdict | Routes to |
+|---|---|---|---|
+| low (≈ post-fusion) | recovers | (a) product gap, query dilution | 678 lever design (this doc); pillar-1 queries must be realistic-length |
+| low | flat | doc-side (length/chunking) | E5-D → 636/686; pillar-1 needs doc-shape realism, not just query realism |
+| materially higher than post-fusion | n/a | gate/fusion loss | 702 recalibration is the fix; re-scope F-029 post-fix |
+| SPLADE-only anomaly in E5-E | — | pruning artifact | 266/273 (beta tune) |
+
+Deliverable: an attribution verdict + the pillar-1 fork decision recorded here AND in 704's pillar-5
+section; the founder ratifies the fork before the pillar-1 corpus tempdoc is filed (orchestration
+sync point 1).
+
+### E5-A + E5-B RESULTS (2026-07-10, same session — post-702 engine, worktree 702-dense-calibration)
+
+Run: `mixed/legal-clerc-200` re-fetched via the committed recipe (198 docs / 200 queries, seed 666),
+four modes (`lexical,vector,splade,hybrid`), clean lifecycle, branch `0f93193` (702 recalibration
+included). All modes `comparable=True`; staged-recall reconciliation 0 mismatches / 200. Run dir
+`scripts/jseval/tmp/eval-results/20260710T050037_mixed_legal-clerc-200`.
+
+| Measure | Value | Register reference (pre-702, tempdoc 666) |
+|---|---|---|
+| raw per-leg recall (pre-fusion) | **lexical 0.855 · vector 0.10 · splade 0.15** | F-029: dense ≤0.15 / SPLADE 0.15 at 198 docs |
+| leg_union_recall | 0.875 | union-recall floor pin 0.87 → PASS |
+| hybrid nDCG@10 | 0.517 | 0.521 — unchanged |
+| vector-mode nDCG@10 | 0.0597 | 0.060 — unchanged |
+| staged buckets (hybrid, top-10) | leg_miss 0.115 · leak 0.215 · judge_low 0.30 · final_recall 0.67 | (701's probe leak ≤0.035 was `full` mode, **CE-off**; this is `hybrid`, CE-on — modes differ, not a regression: hybrid nDCG matches its own register baseline) |
+
+**E5-A verdict (per the pre-registered tree, row 1): the dense leg's RAW pre-fusion recall is 0.10 —
+essentially equal to its post-fusion contribution. Gate/fusion capping is NOT the cause of dense-death
+on CLERC; the loss is in the leg's own retrieval.** E5-B side-verdict: the 702 recalibration does NOT
+recover legal hybrid (0.517 ≈ 0.521) — consistent with 702 §B.6's prediction and completing 702's
+exoneration as the F-029 mechanism (the miscalibration was latent on every corpus measured, four of
+four). **Next: E5-C (query-shape sweep) is now the live discriminator** between (a) verbose-query
+embedding dilution (this doc's lever) and doc-side representation (E5-D → 636/686). E5-C needs the
+query-variant datasets built (same corpus + qrels, reduced/keyword query files — LLM variant
+generate-once-committed per 704's determinism rule); not run this session.
