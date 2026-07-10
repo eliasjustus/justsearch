@@ -1083,6 +1083,104 @@ work below. The active work is the **E-5 late-chunking** effort (§G design → 
   read-only corpus reuse. Ship default-off → measure → default-on (D-004 template); authorization-gated
   (get founder go-ahead before flipping default-on or merging).
 
+## Phase N — Phase-4 A/B (2026-07-10/11, plan A3): five defects found live; final design = single-pass INSIDE the combined bundle; legal vector 0.0597→0.2967 (defaults) / 0.3401 (arena 6144)
+
+The OFF→ON A/B on legal-clerc-200 took FOUR attempts — each failure was a real defect the A/B
+caught that unit tests structurally could not. Recorded in causal order (all fixed on this branch;
+artifacts `tmp/691-ab2/`, worker.log copies preserved per arm):
+
+**N-1. Run-procedure defect: foreground background-shell runs are killed ~10 min in** — pipeline
+runs must be launched DETACHED (Start-Process + done-marker + Monitor polling). Two runs lost.
+
+**N-2. Scheduling starvation (our bug, fix committed `e1c2140`):** `runIdleCycle` gave the late
+pass ONE ≤100-parent batch, then the combined tight-loop drained the whole corpus windowed. Only
+49/198 parents single-passed. Fixed with a drain loop — then SUPERSEDED by N-5's design.
+
+**N-3. Arena-OOM retry burn (our bug, fixed in `e1c2140`):** 13-21 batch-1 single passes OOM'd the
+default 3072MB embed arena (fragmentation from varying 2-8k seq lengths; BiasSoftmax requests up to
+~1.5GB); each burned a retry increment. Reclassified as windowed-fallback, no retry cost.
+
+**N-4. jseval `--clean` does NOT clean:** stale index (docs accumulate across runs) +
+`watched_roots.json` survive, causing BLOCKED_LEGACY → forced-reindex churn + double-ingest waves
+that raced the late pass and discarded its writes (arm on1/on2 confounded). Worked around by
+manual `tmp/headless-eval-data` wipe; logged to observations (jseval-owner defect). Note:
+BLOCKED_LEGACY ALSO fires on genuinely-fresh first ingests (fingerprint stamps only at rebuild
+completion) — that instance is cosmetic.
+
+**N-5. THE ROOT CAUSE — RMW destroys non-stored vectors; the bundling IS the invariant (fix
+`e83653a`).** After N-2's fix, vectors STILL collapsed (vector nDCG 0.016; a handful of docs in
+every query's top-10). Eliminated in order: ONNX fp16 long-seq numerics (python probe vs HF:
+cosine 0.999999 at 1500/4000/7000/8192 tokens, no NaN — `tmp/691-onnx-probe/`), the encoder Java
+path (`OnnxEmbeddingEncoderLongDocForensicTest`, real model, 5141 tokens: `embedWithSpans` vs
+base-path `embed` cosine 1.000000 — kept as a regression test), content fetch (identical
+`getDocumentContentBatch` in both passes), query lengths (all ≤574 tokens). The killer:
+**`KnnFloatVectorField` is non-stored, and ANY subsequent read-modify-write silently destroys it**
+(`WritePathOps.java:471` documents this for chunks, which get re-queued — parents do NOT). The
+separate late pass wrote VECTOR in its own RMW; the combined pass's later SPLADE/NER RMW erased
+it, leaving parents COMPLETED-but-vectorless; the few vector-bearing docs crowded every query's
+top-10. The combined pass's one-RMW-per-doc bundling is an UNDECLARED INVARIANT the whole dense
+index rests on (logged to observations as a 710 structural candidate). **Final design: the
+single-pass embed is a sub-phase INSIDE `CombinedEnrichmentBackfillOps`** — vector lands in the
+same per-doc update map as SPLADE/NER, invariant holds by construction.
+`LateChunkingEmbedBackfillOps` (and its scheduler drain loop) DELETED — teardown rode along.
+
+**N-6. Results (legal-clerc-200, 198 docs / 200 queries, RTX 4070, git `e83653a`):**
+
+| Arm | vector nDCG@10 | hybrid nDCG@10 | hybrid P@1 | enrich docs/s | comparable |
+|---|---|---|---|---|---|
+| OFF (defaults) | 0.0597 | 0.5232 | 0.365 | 1.4 | True |
+| **ON (defaults, arena 3072)** | **0.2967 (5.0×)** | **0.5489** | **0.415** | 1.3 | True |
+| ON + `JUSTSEARCH_EMBED_GPU_MEM_MB=6144` | **0.3401 (5.7×)** | 0.5420 | 0.410 | 1.3 | True |
+| §J-B replication (base ctx 8192 + 6144, flag OFF) | 0.3403 | 0.5343 | 0.405 | — | True |
+
+- OFF reproduces the register baseline exactly (0.0597/0.523 vs register 0.060/0.521) — harness
+  validated, flag-off is a live no-op.
+- ON at SHIPPED DEFAULTS: **5.0× dense revival + the best hybrid** (0.5489, +0.026); ~20 near-8k
+  docs OOM-fall-back to windowed at the 3072 arena.
+- ON + arena 6144: matches the §J-B ceiling to 3 decimals (0.3401 vs 0.3403), zero OOM — the flag
+  path fully reproduces the F-030 fix. The arena-default question (3072→6144 costs VRAM budget,
+  F-010 coexistence) is a separate decision; both numbers recorded.
+- Throughput price of the quality win (§L-7's question): **~nothing on this corpus** (1.3 vs 1.4
+  docs/s — within noise; single-pass replaces the parent's window-batch pass).
+
+**N-7. Controls + gates (2026-07-11; all arms at shipped defaults unless noted):**
+
+| Corpus | Arm | vector nDCG@10 | hybrid nDCG@10 | enrich docs/s |
+|---|---|---|---|---|
+| scifact (5,184 docs, short) | OFF | 0.7247 | 0.7542 | 24.5 |
+| scifact | ON | 0.7163 (−0.008, within wobble) | 0.7518 (−0.002) | 24.6 |
+| enron-qa (5,485 docs, long emails) | OFF | 0.5182 | 0.7228 | 7.7 |
+| enron-qa | ON | **0.5550 (+7%)** | **0.7355 (+1.3%)** | **4.5 (−42%)** |
+
+- scifact: neutral within run-to-run wobble (few chunked docs; ~16 single-passes/cycle) — control passes.
+- enron: IMPROVES both legs (no BM25-dominant regression — the D-004 failure mode does not recur)
+  but pays the measured throughput price: enrichment 7.7→4.5 docs/s at defaults. This is §L-7's
+  quadratic-attention arithmetic measured live (single-pass long emails cost more GPU than their
+  windowed batches), amplified by 33 arena-OOM double-pays at the 3072 default (try single-pass,
+  OOM, re-embed windowed). Arena 6144 would reduce the double-pays; the arena default is a
+  separate VRAM-budget decision (inference register F-010).
+- **Gates (full-mode legal run, flag ON, defaults; git `e83653a`):** `relevance-gate` OK ·
+  `union-recall-gate` **0.890 ≥ floor 0.82 (pin 0.87) — completeness ABOVE the pinned baseline**
+  (the revived dense leg surfaces golds lexical misses) · `leak-gate` OK. Full-mode per-leg:
+  lexical 0.6888 / vector 0.2967 / splade 0.0591 / hybrid 0.5497. NOTE: two-mode runs
+  (vector,hybrid only) cannot be judged against the union pin (mode-set-truncated union — the
+  earlier "fail" readings were that artifact, not regressions).
+
+**N-8. The E-5 dedup ledger closes HONESTLY: the throughput lever died with Phase M; what
+shipped is a QUALITY lever.** Original E-5 arithmetic: parent windowed pass (N tokens) + chunk
+passes (N tokens) = 2N, dedup → N. Phase M measured that chunk vectors CANNOT come from the
+parent pass on a CLS model (−0.23 nDCG), so chunks keep their own pass; the parent's windowed
+pass became a single pass (same tokens, quadratically costlier at length) — total work is still
+~2N and MORE GPU-expensive for long docs (enron −42% enrichment). 691's Phase 2-4 outcome is
+therefore: **F-030 dense revival shipped and gate-verified (5.0-5.7× on legal, +7% on enron,
+neutral scifact), at a measured background-enrichment cost on long-doc corpora — and the
+throughput charge is served only by the Phases A-E NER/arena wins (2.69×), not by late
+chunking.** §G's mean-pool projection (the quality-neutral dedup) remains the only unplayed
+throughput card and stays retired unless dense-corpus build time re-emerges as a wall
+(realdocs-class tail ≈ ~10 min per F-3 — currently acceptable). §K-3's "Phase 3 teardown" is
+RETIRED as scoped: nothing is dead — the windowed path is the live fallback (flag-off,
+over-limit, arena-OOM); `LateChunkingEmbedBackfillOps` was already deleted in N-5's fold-in.
+
 ## Phase M — offline CLS chunk-vector experiment (2026-07-10, plan A1): per-span chunk half REGRESSES; Phase 2 ships VECTOR-only
 
 The L-8 "cheap offline evidence" ran (`scripts/jseval/experiments/late_chunk_cls_check_691.py`,
