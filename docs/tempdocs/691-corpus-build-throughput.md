@@ -694,6 +694,23 @@ lever, not in scope here.)
 back to per-doc" OOM events; **0** degraded-variant WARNs (fp16 present → optimal). The PR #90
 defaults work as committed on a fresh env-var-free run.
 
+**F-5b. Complexity note for the E-5 implementer (2026-07-10) — the two chunkers are architecturally
+DIFFERENT by design; "reuse one for the other" is a retrieval-semantics decision, not a mechanical
+dedup.** Verified in source:
+- *Encoder internal chunking* (`OnnxEmbeddingEncoder.createChunks:525`): sliding window on RAW TOKEN
+  IDS, `chunkSize=min(512,maxSeqLen)`, boundary-AGNOSTIC — its only job is to pool a long doc into
+  ONE parent vector.
+- *Pipeline RAG chunker* (`ChunkSplitter`): `DEFAULT_CHUNK_TOKENS=500`, `OVERLAP=50`, sentence/
+  paragraph boundary-AWARE on text, with 5 content-aware modes (MARKDOWN/CODE/CSV/JSON/STRUCTURED)
+  + CJK handling — its job is coherent retrievable chunks.
+They differ on window size (512 vs 500), overlap, boundary rule, and mode-specificity, so they emit
+DIFFERENT chunk sets. Therefore E-5 (a) pool-parent-from-chunk-vectors CHANGES the parent doc vector
+(pooled from boundary-aware chunks, not raw 512-windows) AND inverts backfill ordering (chunks must
+embed before the parent pools); E-5 (b) align-and-reuse forces one chunker's boundaries onto the
+other, changing either parent-retrieval or chunk-retrieval semantics. Both are eval-gated retrieval
+changes with a silent-green failure mode (compiles + unit-green while search quietly regresses), not
+bounded mechanical edits. Design-first, /search-quality-register + nDCG-ratchet + live-A/B gated.
+
 **F-5. Revised recommendation.** 691 stays OPEN, but the next lever is now *named by measurement*:
 the cap is a red herring for throughput; **E-5 duplicate-embedding elimination is the one lever that
 reduces actual GPU work, and its payoff scales with corpus chunk-density.** That work is
