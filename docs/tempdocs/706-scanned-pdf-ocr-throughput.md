@@ -143,6 +143,95 @@ Load `/search-quality` before coding (extraction feeds retrieval quality; update
 before closing this tempdoc), and expect the `seam-hint`/logic-seams gate when touching the
 classifier-adjacent code (671's seam).
 
+## De-risk pass (2026-07-10, pre-implementation; all eight planned uncertainties closed)
+
+Confidence-building only — no feature work. Experiments ran in the session scratchpad against the
+app-owned tesseract 5.5.0 runtime (`native-bin/tesseract`) and the real corpus scan
+(`govdocs1-000--000164.pdf`, 13 pages, from the 686 dataset).
+
+### Experimental results (all pass)
+
+- **Single-spawn dual output works** (was claimed, never demonstrated): one
+  `tesseract <img> <base> --psm 6 -l eng txt tsv` invocation produced both `.txt` and `.tsv` in
+  **1052 ms** vs **1978 ms** for the two separate spawns the code does today (~1.9× per page on
+  confidence-carrying paths), with byte-identical text output. Stderr shows only harmless
+  small-region warnings; no failure modes.
+- **The owned render is sound**: PDFBox 3.0.6 `renderImageWithDPI(i, 300, GRAY)` on the corpus
+  scan → 2550×3299 px at **30–142 ms/page** (matches the 705 bench), ImageIO-written PNG produced
+  real OCR text with **no** tesseract resolution-metadata warnings — the feared "ImageIO PNG lacks
+  DPI metadata" degradation did not materialize. Parity with the Tika path is structurally
+  near-guaranteed (Tika renders via the same PDFBox with the same 300/GRAY defaults into the same
+  tesseract with the same `--psm 6`); the formal word/char-parity check stays in the verification
+  plan as the closing gate.
+
+### Root cause of the config anomaly — CORRECTION to Evidence item 5 and design D4
+
+The evidence base inferred "the code fallback (`defaults()` 30s/50p) was live" from the 686 run
+OCR-ing a 29+-page doc. **That inference is wrong.** The full chain was traced and the mechanism
+is different and worse:
+
+1. The worker *always* populates its `ConfigStore` (`IndexerWorker.java:76,92`) — the `defaults()`
+   fallback in `resolvedOcrConfig()` is effectively dead in real runs.
+2. The yaml→`Ocr` mapping is correct and unit-proven (`ResolvedConfigBuilderTest.ocrConfig`,
+   asserts `maxPages`), and the Head→Worker snapshot carries **all** resolved keys
+   (`ResolvedConfig.toWorkerSnapshot`).
+3. But the headless/eval backend (which 686 used) sets `JUSTSEARCH_CONFIG` to
+   `modules/ui/src/main/resources/headless-config/application.yaml` — **which has no `ocr`
+   section at all**. All `index.ocr.*` keys resolve absent → `ResolvedConfig.Ocr` fields are
+   null → `OcrRoutingConfig.from()` **passes nulls through**: `enabled=true` (null ≠ FALSE),
+   `maxPages=null` → the page-cap gate never fires, `maxImageDimension/maxImagePixels=null` → no
+   guards, `perFileTimeoutMs=null` → 30s per tesseract invocation. The 686 run ran **unbounded**
+   OCR, not 50-page-capped OCR.
+4. Consequence: there are (at least) three different effective OCR configs by environment —
+   repo-root desktop dev runs get yaml's aggressive 5s/10p; headless/eval runs get *no limits*;
+   packaged installs (no repo root, `CONFIG_PATH` unset) most likely also get no limits.
+
+**D4 is accordingly revised** (supersedes its "fix the ConfigStore population path" wording —
+population is fine): (a) `OcrRoutingConfig.from()` must fill absent fields with safe defaults —
+"config absent" must mean *safe limits*, not *no limits*; (b) the headless-config yaml gets an
+explicit `ocr` block; (c) one unified value set across both yamls and `defaults()` (30s aggregate
+budget / 50 pages, per §Design); (d) log the effective OCR config at extractor construction —
+today it is logged nowhere, which is why the 686 anomaly needed a code-archaeology session to
+diagnose. Correction A's in-loop page cap is now known to be load-bearing (not just
+defense-in-depth), since real environments have been running capless.
+
+### Mechanism verifications (code/jar evidence)
+
+- **De-OCR lever confirmed**: `TesseractOCRConfig.setSkipOcr(boolean)` exists in the Tika 3.2.3
+  ocr-module jar (javap-verified) — disabling Tika-initiated OCR is a one-line addition to the
+  existing reflective config helper, no custom TikaConfig XML. Also re-confirmed:
+  `PDFParserConfig` has **no** OCR page-cap setter (the "Tika can't be capped" premise holds).
+- **Interrupt propagation is clean** (U7): `InProcessExtractionSandbox` is a plain pass-through;
+  the timebox's `cancel(true)` interrupt lands on the extraction thread, which in the new engine
+  blocks at the parallel join — an interruptible point. Per-document pool + child-process
+  registry + `destroyForcibly` on interrupt needs **no** `TimeboxedContentExtractor` change.
+  One implementation note: add `Thread.interrupted()` checks between rendered pages (PDFBox
+  rendering is CPU-bound and interrupt-blind).
+- **Quality-gate stability** (U6): `computeQualityScore` is length + alphanumeric-ratio banded
+  with hard zeros only on `(cid:`/U+FFFD (which tesseract output cannot contain); page markers
+  are alphanumeric-friendly. No perverse acceptance-gate flips expected from the output-shape
+  change.
+- **Blast radius** (U5): every production caller of the OCR execution surface lives inside
+  `worker-services`' extract package; `VisualExtractionEvidence` consumes only the `Summary`
+  type; `IndexStatusOps` touches `OcrRoutingConfig` only. Tests that must stay green:
+  `OcrOutcomeClassifierTest` (registered logic seam), `VduEligibilityPdfFixturesTest`; tests that
+  will need updating: `PolicyDrivenTikaExtractorTest`, `OcrConfidenceExtractorTest`. Bonus
+  orphan found: `OcrConfidenceExtractor.extractPlainText` is already flagged suspected-dead in
+  `UnreferencedCodeTest` (638 F6) — delete it in this work and update that registry entry.
+- **Verification prerequisites** (U8): tesseract 5.5.0 runs app-owned at
+  `<main-checkout>/native-bin/tesseract/` (plus a scoop shim on PATH); the scanned corpus lives in
+  the 686 dataset (`datasets/mixed/realdocs-v1/`, currently materialized in the takeover-705
+  worktree; regenerable via jseval if that worktree is removed).
+
+### Confidence: 8/10
+
+Every mechanism the design depends on is now demonstrated or code-verified; the config root cause
+is named with unit-test-level proof of the mapping; the blast radius is one package plus its
+tests. The two points withheld: (1) the `tryOcr`/`trySelectivePdfOcr` restructure must preserve
+the 671 evidence-builder first-write-wins and single-terminal-classifier semantics — precise,
+well-tested, and fiddly; (2) formal quality parity and the live 686-style re-run remain
+post-implementation gates (structurally argued, not yet measured).
+
 ## Reach (design-pass judgment)
 
 **Conforms to an existing shape rather than inventing one.** This is the third instance of
