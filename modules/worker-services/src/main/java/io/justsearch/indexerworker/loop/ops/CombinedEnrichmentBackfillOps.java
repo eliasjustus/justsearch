@@ -42,6 +42,14 @@ import org.slf4j.Logger;
  * write-once pattern (ES ingest pipelines, Solr URPs, Vespa document processors).
  *
  * <p>Tempdoc 334 item 3.
+ *
+ * <p><b>Chunked-parent handoff (tempdoc 691 Stage A3 full-ownership).</b> When {@link
+ * BackfillContext#lateChunkingEnabled()} is true, this pass does not enroll a chunked parent (one
+ * with {@code PARENT_DOC_ID}-matching chunk docs) for the embed stage — {@code
+ * LateChunkingEmbedBackfillOps} owns those end to end, including its own windowed fallback for
+ * over-limit/arena-OOM parents. The skip is embed-stage-only; SPLADE/NER enrollment for the same
+ * parent is unaffected. Flag off: zero behavior change — the chunk-existence probe is never
+ * called.
  */
 public final class CombinedEnrichmentBackfillOps {
   private CombinedEnrichmentBackfillOps() {}
@@ -59,6 +67,7 @@ public final class CombinedEnrichmentBackfillOps {
       int batchSize,
       Logger log,
       boolean chunkVectorsEnabled,
+      boolean lateChunkingEnabled,
       java.util.ArrayDeque<String> parentIdCache,
       java.util.ArrayDeque<String> chunkIdCache,
       int[] batchesSinceCommit) {}
@@ -262,7 +271,23 @@ public final class CombinedEnrichmentBackfillOps {
           continue;
         }
 
-        if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
+        // Tempdoc 691 Stage A3 full-ownership: while the late-chunking pass is enabled, it owns
+        // chunked parents end to end (single-pass embed, falling back inline to windowed on
+        // over-limit/arena-OOM — LateChunkingEmbedBackfillOps). A chunked parent must NOT also be
+        // enrolled here, or the combined pass's own tight while-loop (BackfillScheduler#
+        // runIdleCycle) races the late pass and claims it windowed first — silently forfeiting the
+        // single-pass quality upgrade for that parent. Skipped parents stay PENDING for the next
+        // idle cycle's late-chunking drain; this check is embed-stage-only — SPLADE/NER enrollment
+        // below is untouched, since those stages are collected independently of embedDocIds/
+        // embedContents (no shared enrollment gate to decouple).
+        boolean skipEmbedForLateChunking =
+            context.lateChunkingEnabled()
+                && embedAvailable
+                && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)
+                && hasChunkDocs(context, docId);
+        if (embedAvailable
+            && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)
+            && !skipEmbedForLateChunking) {
           embedDocIds.add(docId);
           embedContents.add(content);
         }
@@ -526,6 +551,20 @@ public final class CombinedEnrichmentBackfillOps {
     } finally {
       enrichmentSpan.end();
     }
+  }
+
+  /**
+   * Existence probe for "does this parent have chunk docs" (tempdoc 691 Stage A3 full-ownership) —
+   * same {@code queryDocIdsByField(PARENT_DOC_ID, parentId, 1)} shape {@code
+   * LateChunkingEmbedBackfillOps} uses for its own chunked-parent predicate, so the two passes
+   * agree on which parents are "chunked" by construction rather than via a hand-ported copy that
+   * can drift.
+   */
+  private static boolean hasChunkDocs(BackfillContext context, String parentId) {
+    return !context
+        .documentFieldOps()
+        .queryDocIdsByField(SchemaFields.PARENT_DOC_ID, parentId, 1)
+        .isEmpty();
   }
 
   /**

@@ -125,21 +125,27 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
-      // Tempdoc 691 Phase 1/Stage A3: additive, flag-gated late-chunking embed pass — a chunked
-      // parent doc gets its VECTOR from a single forward pass instead of the base-window-mean
-      // embed. Drained in its OWN loop BEFORE the combined pass: previously a single call here
-      // yielded exactly one <=batchSize batch before falling through to the combined pass's tight
-      // while-loop (below), which then drained ALL remaining pending embeddings via the old
-      // windowed path — starving the quality-bearing single-pass path down to ~1 batch per corpus
-      // regardless of corpus size. Loop-termination mirrors the yield discipline of the combined
-      // tight loop below (running/isUserActive/shouldYieldGpuBackfill) and additionally stops when
-      // a batch produces zero processed+failed (LateChunkingBackfillResult#hasProgress()) — a
-      // deferral-only batch (long-doc-over-limit or GPU arena-OOM) would otherwise re-query and
-      // re-defer the same PENDING parents forever, since they never leave PENDING. Any
-      // parent/chunk this pass marks EMBEDDING_STATUS/CHUNK_EMBEDDING_STATUS=COMPLETED still gets
-      // its SPLADE/NER processed normally below — this pass never touches those fields. Default
-      // off: when the flag is false, the detailed call returns the zero-result immediately with
-      // zero I/O (strict no-op), so the loop body never runs.
+      // Tempdoc 691 Phase 1/Stage A3 (full-ownership follow-up): additive, flag-gated
+      // late-chunking embed pass — a chunked parent doc gets its VECTOR from a single forward pass
+      // instead of the base-window-mean embed, falling back INLINE to the windowed embed for
+      // over-limit/arena-OOM parents rather than deferring them to the combined pass below. This
+      // pass now owns chunked parents end to end: the combined pass's own embed enrollment skips
+      // any parent with chunk docs while this flag is on (CombinedEnrichmentBackfillOps), so there
+      // is no handoff race to starve. Drained in its OWN loop BEFORE the combined pass: previously
+      // a single call here yielded exactly one <=batchSize batch before falling through to the
+      // combined pass's tight while-loop (below), which then drained ALL remaining pending
+      // embeddings via the old windowed path — starving the quality-bearing single-pass path down
+      // to ~1 batch per corpus regardless of corpus size. Loop-termination mirrors the yield
+      // discipline of the combined tight loop below (running/isUserActive/shouldYieldGpuBackfill)
+      // and additionally stops when a batch produces zero progress
+      // (LateChunkingBackfillResult#hasProgress()) — a batch where every pending parent in the
+      // window was non-chunked (or blank-content) would otherwise re-query the same empty result
+      // forever, since neither long-doc-over-limit nor GPU arena-OOM leave a parent PENDING
+      // anymore (both resolve inline via the windowed fallback). Any parent/chunk this pass marks
+      // EMBEDDING_STATUS/CHUNK_EMBEDDING_STATUS=COMPLETED still gets its SPLADE/NER processed
+      // normally below — this pass never touches those fields. Default off: when the flag is
+      // false, the detailed call returns the zero-result immediately with zero I/O (strict no-op),
+      // so the loop body never runs and the combined pass's embed enrollment is unaffected.
       boolean lateChunkingDidWork = false;
       LateChunkingEmbedBackfillOps.LateChunkingBackfillResult lateChunkingResult =
           processLateChunkingEmbedIfApplicable();
@@ -379,6 +385,7 @@ public final class BackfillScheduler {
             EMBEDDING_BACKFILL_BATCH_SIZE,
             log,
             resolvedConfigSupplier.get().rag().chunkVectorsEnabled(),
+            resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));

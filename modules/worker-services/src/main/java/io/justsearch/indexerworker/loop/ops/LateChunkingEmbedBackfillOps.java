@@ -47,13 +47,21 @@ import org.slf4j.Logger;
  *
  * <p>Parents that are not chunked (no {@code PARENT_DOC_ID}-matching chunk docs) are left alone —
  * the existing per-doc/combined embed path handles those; chunked-ness is still the "long doc"
- * predicate this pass targets. Parents whose content exceeds the raised single-pass limit ({@link
- * io.justsearch.indexerworker.embed.EmbeddingConfig#lateChunkingContextLength()}) get {@code null}
- * back from {@link EmbeddingProvider#embedWithSpans}; this pass leaves them PENDING for the
- * existing fallback rather than guessing at a degraded embedding. A GPU BFC-arena OOM on the
+ * predicate this pass targets. This pass takes FULL ownership of chunked parents (tempdoc 691
+ * Stage A3 full-ownership follow-up): a deferral no longer leaves the parent PENDING for a
+ * different pass to pick up windowed — instead it falls back INLINE to the same windowed provider
+ * call the individual backfill uses ({@link EmbeddingProvider#embedDocument}), writing {@code
+ * VECTOR}/{@code EMBEDDING_STATUS}/{@code EMBEDDING_RETRY_COUNT} exactly like the single-pass
+ * success path. Two cases fall back: content exceeding the raised single-pass limit ({@link
+ * io.justsearch.indexerworker.embed.EmbeddingConfig#lateChunkingContextLength()}), which gets
+ * {@code null} back from {@link EmbeddingProvider#embedWithSpans}; and a GPU BFC-arena OOM on the
  * single-pass forward call (tempdoc 691 Stage A3 — the whole-doc pass needs more contiguous
- * memory than a windowed pass) gets the same PENDING-deferral treatment, not a failure-count
- * burn — see {@link #isArenaOomFailure}.
+ * memory than a windowed pass), detected via {@link #isArenaOomFailure}. A failure of the
+ * windowed fallback itself escalates through the same retry-count/FAILED-at-max path as any other
+ * embed failure. Coverage for these parents no longer depends on scheduling races between this
+ * pass and the combined pass — every batch with an eligible chunked parent makes progress, so the
+ * drain loop in {@code BackfillScheduler#runIdleCycle} terminates naturally once the pending query
+ * returns nothing eligible, not on a deferral-only batch.
  */
 public final class LateChunkingEmbedBackfillOps {
   private LateChunkingEmbedBackfillOps() {}
@@ -71,20 +79,25 @@ public final class LateChunkingEmbedBackfillOps {
       Logger log) {}
 
   /**
-   * Per-batch outcome (tempdoc 691 Stage A3 drain-loop fix). {@link #hasProgress()} is the
-   * scheduler's loop-continuation signal: {@code true} means the batch embedded or
-   * failure-escalated at least one parent, so another PENDING parent may exist beyond this
-   * batch's {@code batchSize} window — worth another pass. {@code false} means the batch produced
-   * only deferrals ({@code longDocDeferred}/{@code arenaOomDeferred}) — those parents stay PENDING
-   * and the next query would return the same set, so looping again would just re-defer them
-   * forever. The scheduler stops the drain loop on {@code false} rather than tracking which IDs it
-   * already saw.
+   * Per-batch outcome (tempdoc 691 Stage A3 drain-loop fix; full-ownership follow-up). {@link
+   * #hasProgress()} is the scheduler's loop-continuation signal: {@code true} means the batch
+   * resolved at least one parent — embedded single-pass, fell back to the windowed embed, or
+   * failure-escalated — so another PENDING parent may exist beyond this batch's {@code batchSize}
+   * window — worth another pass. {@code false} means the batch found no chunked parent to act on
+   * (e.g. every pending doc in the window was non-chunked, or had blank content) — the scheduler
+   * stops the drain loop rather than tracking which IDs it already saw. Unlike the original
+   * design, {@code longDocWindowed}/{@code arenaOomWindowed} no longer mean "left PENDING for a
+   * different pass" — they mean "resolved inline via the windowed fallback", so they count toward
+   * progress just like {@code processedParents}/{@code failedParents}.
    */
   public record LateChunkingBackfillResult(
-      int processedParents, int failedParents, int longDocDeferred, int arenaOomDeferred) {
+      int processedParents, int failedParents, int longDocWindowed, int arenaOomWindowed) {
 
     public boolean hasProgress() {
-      return processedParents > 0 || failedParents > 0;
+      return processedParents > 0
+          || failedParents > 0
+          || longDocWindowed > 0
+          || arenaOomWindowed > 0;
     }
   }
 
@@ -108,10 +121,10 @@ public final class LateChunkingEmbedBackfillOps {
   /**
    * Runs one batch of the late-chunking embed pass and reports its detailed outcome.
    *
-   * @return the per-batch outcome, distinguishing real progress (processed/failed) from
-   *     deferral-only batches — see {@link LateChunkingBackfillResult#hasProgress()}. The
-   *     scheduler's drain loop (tempdoc 691 Stage A3) uses this to decide whether to run another
-   *     batch.
+   * @return the per-batch outcome — see {@link LateChunkingBackfillResult#hasProgress()} for what
+   *     counts as progress now that long-doc/arena-OOM cases resolve inline via the windowed
+   *     fallback instead of deferring to a different pass. The scheduler's drain loop (tempdoc 691
+   *     Stage A3) uses this to decide whether to run another batch.
    */
   public static LateChunkingBackfillResult processLateChunkingEmbedBackfillDetailed(
       BackfillContext context) {
@@ -139,8 +152,8 @@ public final class LateChunkingEmbedBackfillOps {
 
     int processedParents = 0;
     int failedParents = 0;
-    int longDocDeferred = 0;
-    int arenaOomDeferred = 0;
+    int longDocWindowed = 0;
+    int arenaOomWindowed = 0;
     long embedNs = 0;
     long t0 = System.nanoTime();
 
@@ -177,8 +190,14 @@ public final class LateChunkingEmbedBackfillOps {
           }
           if (result == null) {
             // Content exceeds the raised single-pass limit (or backend doesn't support late
-            // chunking). Leave PENDING for the existing per-doc/combined fallback.
-            longDocDeferred++;
+            // chunking). Tempdoc 691 Stage A3 full-ownership: fall back INLINE to the windowed
+            // provider call rather than leaving the parent PENDING for a different pass — this
+            // pass owns chunked parents end to end.
+            if (embedWindowedFallbackAndUpdate(context, provider, parentId, parentContent)) {
+              longDocWindowed++;
+            } else {
+              failedParents++;
+            }
             continue;
           }
 
@@ -195,17 +214,21 @@ public final class LateChunkingEmbedBackfillOps {
           if (isArenaOomFailure(e)) {
             // Tempdoc 691 Stage A3: a single-pass batch-1 forward pass over the whole document
             // needs more contiguous GPU arena memory than a windowed pass — this is a resource
-            // contention signal, not a bad-input failure. Treat like the over-limit null case:
-            // leave PENDING, no retry-count burn, no failure escalation. The existing windowed
-            // combined/individual fallback handles these parents fine.
-            arenaOomDeferred++;
+            // contention signal, not a bad-input failure. Fall back INLINE to the windowed
+            // provider call (same as the over-limit null case) instead of deferring to a
+            // different pass.
             context
                 .log()
                 .warn(
-                    "Late-chunking embed deferred for parent {} (GPU arena OOM on single-pass"
-                        + " batch-1): {}",
+                    "Late-chunking embed falling back to windowed for parent {} (GPU arena OOM"
+                        + " on single-pass batch-1): {}",
                     parentId,
                     e.getMessage());
+            if (embedWindowedFallbackAndUpdate(context, provider, parentId, parentContent)) {
+              arenaOomWindowed++;
+            } else {
+              failedParents++;
+            }
             continue;
           }
           // Tempdoc 700 escalation parity: a late-chunking inference failure gets the same
@@ -216,23 +239,7 @@ public final class LateChunkingEmbedBackfillOps {
           context
               .log()
               .warn("Late-chunking embed failed for parent {}: {}", parentId, e.getMessage());
-          Map<String, Map<String, String>> parentRetry =
-              context
-                  .documentFieldOps()
-                  .getDocumentFieldsBatch(
-                      List.of(parentId), Set.of(SchemaFields.EMBEDDING_RETRY_COUNT));
-          int parentRetryCount =
-              parseIntOrDefault(
-                  parentRetry.getOrDefault(parentId, Map.of()).get(SchemaFields.EMBEDDING_RETRY_COUNT),
-                  0);
-
-          context
-              .indexingCoordinator()
-              .updateDocumentsBatch(
-                  List.of(
-                      Map.entry(
-                          parentId,
-                          EmbeddingBackfillOps.computeEmbeddingFailureUpdate(parentRetryCount))));
+          escalateParentFailure(context, parentId);
           failedParents++;
         }
       }
@@ -240,30 +247,97 @@ public final class LateChunkingEmbedBackfillOps {
       context.log().error("Error during late-chunking embed backfill", e);
     }
 
-    if (processedParents > 0 || failedParents > 0) {
+    if (processedParents > 0 || failedParents > 0 || longDocWindowed > 0 || arenaOomWindowed > 0) {
       context
           .commitOps()
           .commitAndTrack(CommitReason.BACKFILL_EMBEDDING);
     }
 
-    if (processedParents > 0 || failedParents > 0 || longDocDeferred > 0 || arenaOomDeferred > 0) {
+    if (processedParents > 0 || failedParents > 0 || longDocWindowed > 0 || arenaOomWindowed > 0) {
       long embedMs = embedNs / 1_000_000;
       long totalMs = (System.nanoTime() - t0) / 1_000_000;
       context
           .log()
           .info(
               "Late-chunking embed backfill: parents processed={}, failed={},"
-                  + " long-doc-deferred={}, arena-oom-deferred={}, embed={}ms, total={}ms",
+                  + " long-doc-windowed={}, arena-oom-windowed={}, embed={}ms, total={}ms",
               processedParents,
               failedParents,
-              longDocDeferred,
-              arenaOomDeferred,
+              longDocWindowed,
+              arenaOomWindowed,
               embedMs,
               totalMs);
     }
 
     return new LateChunkingBackfillResult(
-        processedParents, failedParents, longDocDeferred, arenaOomDeferred);
+        processedParents, failedParents, longDocWindowed, arenaOomWindowed);
+  }
+
+  /**
+   * Inline windowed fallback (tempdoc 691 Stage A3 full-ownership): embeds via the same provider
+   * call the individual backfill uses for a single doc ({@link EmbeddingProvider#embedDocument},
+   * see {@code EmbeddingBackfillOps#embedAndUpdateSingle}) and, on success, writes {@code
+   * VECTOR}/{@code EMBEDDING_STATUS=COMPLETED}/{@code EMBEDDING_RETRY_COUNT=0} exactly like the
+   * single-pass success path above. On failure (empty vector or a thrown exception), escalates
+   * through the same retry-count/FAILED-at-max path as any other embed failure — the caller only
+   * needs to bump its own counters based on the return value.
+   *
+   * @return {@code true} if the fallback embed succeeded and was written.
+   */
+  private static boolean embedWindowedFallbackAndUpdate(
+      BackfillContext context, EmbeddingProvider provider, String parentId, String parentContent) {
+    try {
+      float[] vector = provider.embedDocument(parentContent);
+      if (vector != null && vector.length > 0) {
+        Map<String, Object> parentUpdates = new HashMap<>();
+        parentUpdates.put(SchemaFields.VECTOR, vector);
+        parentUpdates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+        parentUpdates.put(SchemaFields.EMBEDDING_RETRY_COUNT, "0");
+        context
+            .indexingCoordinator()
+            .updateDocumentsBatch(List.of(Map.entry(parentId, parentUpdates)));
+        return true;
+      }
+      context
+          .log()
+          .warn("Late-chunking windowed fallback returned empty vector for parent {}", parentId);
+      escalateParentFailure(context, parentId);
+      return false;
+    } catch (Exception e) {
+      context
+          .log()
+          .warn(
+              "Late-chunking windowed fallback failed for parent {}: {}",
+              parentId,
+              e.getMessage());
+      escalateParentFailure(context, parentId);
+      return false;
+    }
+  }
+
+  /**
+   * Shared failure-escalation write: fetches the parent's current retry count and delegates the
+   * increment/FAILED-at-max decision to {@link
+   * EmbeddingBackfillOps#computeEmbeddingFailureUpdate} (tempdoc 700 parity) — the same pure
+   * helper the per-doc/combined embed paths use.
+   */
+  private static void escalateParentFailure(BackfillContext context, String parentId) {
+    Map<String, Map<String, String>> parentRetry =
+        context
+            .documentFieldOps()
+            .getDocumentFieldsBatch(List.of(parentId), Set.of(SchemaFields.EMBEDDING_RETRY_COUNT));
+    int parentRetryCount =
+        parseIntOrDefault(
+            parentRetry.getOrDefault(parentId, Map.of()).get(SchemaFields.EMBEDDING_RETRY_COUNT),
+            0);
+
+    context
+        .indexingCoordinator()
+        .updateDocumentsBatch(
+            List.of(
+                Map.entry(
+                    parentId,
+                    EmbeddingBackfillOps.computeEmbeddingFailureUpdate(parentRetryCount))));
   }
 
   /**

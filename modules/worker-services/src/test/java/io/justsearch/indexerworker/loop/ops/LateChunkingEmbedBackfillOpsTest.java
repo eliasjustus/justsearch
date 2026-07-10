@@ -235,10 +235,10 @@ class LateChunkingEmbedBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "flag ON, long-doc deferred: embedWithSpans returns null -> nothing written, parent status"
-          + " stays PENDING, counted as deferred, and the summary log fires even though"
-          + " processed=failed=0")
-  void longDoc_embedWithSpansReturnsNull_deferredAndLoggedDespiteZeroWork() {
+      "flag ON, long-doc windowed fallback: embedWithSpans returns null -> falls back INLINE to"
+          + " embedDocument, parent VECTOR written and COMPLETED, counted as long-doc-windowed"
+          + " (tempdoc 691 Stage A3 full-ownership)")
+  void longDoc_embedWithSpansReturnsNull_fallsBackToWindowedInline() {
     seedDoc(
         "parent-long",
         "content that exceeds the raised single-pass limit",
@@ -246,26 +246,75 @@ class LateChunkingEmbedBackfillOpsTest {
     seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class))).thenReturn(null);
+    float[] windowedVector = {5f, 6f};
+    when(embeddingProvider.embedDocument("content that exceeds the raised single-pass limit"))
+        .thenReturn(windowedVector);
 
-    boolean didWork =
-        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
 
-    assertFalse(didWork, "no work should be recorded when embedWithSpans defers (long doc)");
-    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
-    verify(commitOps, never()).commitAndTrack(any());
+    assertTrue(result.hasProgress(), "an inline windowed fallback is still recorded as progress");
+    assertEquals(0, result.processedParents());
+    assertEquals(0, result.failedParents());
+    assertEquals(1, result.longDocWindowed());
+    assertEquals(0, result.arenaOomWindowed());
+
+    verify(embeddingProvider, times(1))
+        .embedDocument("content that exceeds the raised single-pass limit");
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-long")));
+    verify(commitOps, times(1)).commitAndTrack(any());
 
     Map<String, Object> parentState = fakeIndex.get("parent-long");
-    assertEquals(SchemaFields.EMBEDDING_STATUS_PENDING, parentState.get(SchemaFields.EMBEDDING_STATUS));
-    assertNull(parentState.get(SchemaFields.VECTOR));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertEquals("0", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertArrayEquals(windowedVector, (float[]) parentState.get(SchemaFields.VECTOR));
+    // Chunk docs stay untouched — the windowed fallback is still VECTOR-only on the parent.
     Map<String, Object> chunkState = fakeIndex.get("chunk-1");
     assertEquals(
         SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
     assertNull(chunkState.get(SchemaFields.CHUNK_VECTOR));
 
-    // The core of the tempdoc 691 Wave 0 visibility fix: the log fires with longDocDeferred=1 and
-    // processed=failed=0, so an all-deferred cycle is not invisible.
     verify(log, times(1))
         .info(anyString(), eq(0), eq(0), eq(1), eq(0), anyLong(), anyLong());
+  }
+
+  @Test
+  @DisplayName(
+      "flag ON, long-doc windowed fallback ALSO fails: escalates through the same"
+          + " retry-count/FAILED-at-max path as any other embed failure")
+  void longDoc_embedWithSpansReturnsNull_windowedFallbackAlsoFails_escalates() {
+    seedDoc(
+        "parent-long",
+        "content that exceeds the raised single-pass limit",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+    seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class))).thenReturn(null);
+    when(embeddingProvider.embedDocument(anyString())).thenReturn(null);
+
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
+
+    assertTrue(result.hasProgress());
+    assertEquals(0, result.processedParents());
+    assertEquals(1, result.failedParents());
+    assertEquals(0, result.longDocWindowed());
+    assertEquals(0, result.arenaOomWindowed());
+
+    Map<String, Object> parentState = fakeIndex.get("parent-long");
+    assertEquals("1", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_PENDING,
+        parentState.get(SchemaFields.EMBEDDING_STATUS),
+        "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
+    assertNull(parentState.get(SchemaFields.VECTOR));
   }
 
   @Test
@@ -320,10 +369,10 @@ class LateChunkingEmbedBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "flag ON, GPU arena-OOM (wrapped RuntimeException): parent is DEFERRED like the long-doc"
-          + " case — no retry-count bump, stays PENDING, no failure escalation — because"
+      "flag ON, GPU arena-OOM (wrapped RuntimeException): falls back INLINE to the windowed"
+          + " embed (embedDocument) and completes the parent — because"
           + " EmbeddingService#embedWithSpans wraps the raw OrtException in a RuntimeException")
-  void arenaOom_wrappedRuntimeException_deferredNotFailed() {
+  void arenaOom_wrappedRuntimeException_fallsBackToWindowedInline() {
     seedDoc(
         "parent-oom",
         "poison parent content",
@@ -338,32 +387,75 @@ class LateChunkingEmbedBackfillOpsTest {
                 + " requested bytes of 1073741824");
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
         .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+    float[] windowedVector = {7f, 8f};
+    when(embeddingProvider.embedDocument("poison parent content")).thenReturn(windowedVector);
 
     LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
             lateChunkingContext(true));
 
-    assertFalse(
+    assertTrue(
         result.hasProgress(),
-        "an arena-OOM-only batch must NOT report progress — the scheduler's drain loop relies on"
-            + " this to stop instead of re-querying and re-deferring the same parent forever");
+        "an arena-OOM batch that resolves inline via the windowed fallback IS progress — the"
+            + " scheduler's drain loop should keep going");
     assertEquals(0, result.processedParents());
     assertEquals(0, result.failedParents());
-    assertEquals(1, result.arenaOomDeferred());
-    assertEquals(0, result.longDocDeferred());
+    assertEquals(1, result.arenaOomWindowed());
+    assertEquals(0, result.longDocWindowed());
+
+    verify(embeddingProvider, times(1)).embedDocument("poison parent content");
 
     Map<String, Object> parentState = fakeIndex.get("parent-oom");
     assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED,
+        parentState.get(SchemaFields.EMBEDDING_STATUS),
+        "windowed fallback success completes the parent, same as any other embed success");
+    assertEquals("0", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertArrayEquals(windowedVector, (float[]) parentState.get(SchemaFields.VECTOR));
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-oom")));
+    verify(commitOps, times(1)).commitAndTrack(any());
+  }
+
+  @Test
+  @DisplayName(
+      "flag ON, GPU arena-OOM whose windowed fallback ALSO fails: escalates via retry-count"
+          + " (not left PENDING forever)")
+  void arenaOom_windowedFallbackAlsoThrows_escalates() {
+    seedDoc(
+        "parent-oom",
+        "poison parent content",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+    seedChunkDoc("chunk-1", "parent-oom", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    OrtException arenaOom =
+        new OrtException(
+            "BFCArena::AllocateRawInternal: Available memory of 1 is smaller than requested bytes"
+                + " of 2");
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+    when(embeddingProvider.embedDocument(anyString()))
+        .thenThrow(new RuntimeException("windowed fallback also boom"));
+
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
+
+    assertTrue(result.hasProgress());
+    assertEquals(0, result.processedParents());
+    assertEquals(1, result.failedParents());
+    assertEquals(0, result.arenaOomWindowed());
+
+    Map<String, Object> parentState = fakeIndex.get("parent-oom");
+    assertEquals("1", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertEquals(
         SchemaFields.EMBEDDING_STATUS_PENDING,
         parentState.get(SchemaFields.EMBEDDING_STATUS),
-        "must stay PENDING — arena OOM is resource contention, not a bad-input failure");
-    assertEquals(
-        "0",
-        parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT),
-        "must NOT burn a retry increment — the windowed fallback handles this parent fine");
+        "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
     assertNull(parentState.get(SchemaFields.VECTOR));
-    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
-    verify(commitOps, never()).commitAndTrack(any());
   }
 
   // NOTE: no separate "raw unwrapped OrtException" test — EmbeddingProvider#embedWithSpans does
@@ -376,9 +468,10 @@ class LateChunkingEmbedBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "drain-loop contract: a deferral-only batch (long-doc + arena-OOM, zero processed/failed)"
-          + " reports hasProgress()=false so the scheduler's while-loop stops")
-  void deferralOnlyBatch_hasProgressFalse() {
+      "drain-loop contract: a batch mixing long-doc-windowed and arena-oom-windowed parents"
+          + " (zero processed/failed, both resolved inline) reports hasProgress()=true so the"
+          + " scheduler's while-loop keeps going")
+  void windowedFallbackOnlyBatch_hasProgressTrue() {
     seedDoc(
         "parent-longdoc",
         "content that exceeds the raised single-pass limit",
@@ -399,23 +492,34 @@ class LateChunkingEmbedBackfillOpsTest {
         .thenReturn(null);
     when(embeddingProvider.embedWithSpans(eq("oom-only content"), any(int[][].class)))
         .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+    when(embeddingProvider.embedDocument("content that exceeds the raised single-pass limit"))
+        .thenReturn(new float[] {1f, 1f});
+    when(embeddingProvider.embedDocument("oom-only content")).thenReturn(new float[] {2f, 2f});
 
     LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
             lateChunkingContext(true));
 
-    assertFalse(result.hasProgress(), "deferral-only batch must not signal loop-continuation");
+    assertTrue(
+        result.hasProgress(), "a windowed-fallback-only batch must signal loop-continuation");
     assertEquals(0, result.processedParents());
     assertEquals(0, result.failedParents());
-    assertEquals(1, result.longDocDeferred());
-    assertEquals(1, result.arenaOomDeferred());
+    assertEquals(1, result.longDocWindowed());
+    assertEquals(1, result.arenaOomWindowed());
+
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED,
+        fakeIndex.get("parent-longdoc").get(SchemaFields.EMBEDDING_STATUS));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED,
+        fakeIndex.get("parent-oomonly").get(SchemaFields.EMBEDDING_STATUS));
   }
 
   @Test
   @DisplayName(
-      "drain-loop contract: a mixed batch (one processed, one arena-OOM-deferred) reports"
-          + " hasProgress()=true so the scheduler's while-loop runs another batch")
-  void mixedBatch_processedAndDeferred_hasProgressTrue() {
+      "drain-loop contract: a mixed batch (one single-pass processed, one arena-OOM resolved via"
+          + " windowed fallback) reports hasProgress()=true, both parents COMPLETED")
+  void mixedBatch_processedAndWindowed_hasProgressTrue() {
     seedDoc(
         "parent-ok",
         "processable content",
@@ -430,6 +534,7 @@ class LateChunkingEmbedBackfillOpsTest {
     seedChunkDoc("chunk-2", "parent-oom", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     float[] docVector = {3f, 4f};
+    float[] windowedVector = {9f, 9f};
     OrtException arenaOom =
         new OrtException(
             "BFCArena::AllocateRawInternal: Available memory of 1 is smaller than requested bytes"
@@ -438,25 +543,25 @@ class LateChunkingEmbedBackfillOpsTest {
         .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
     when(embeddingProvider.embedWithSpans(eq("oom content"), any(int[][].class)))
         .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+    when(embeddingProvider.embedDocument("oom content")).thenReturn(windowedVector);
 
     LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
             lateChunkingContext(true));
 
-    assertTrue(
-        result.hasProgress(),
-        "one real processed parent must signal progress even though the other was deferred");
+    assertTrue(result.hasProgress());
     assertEquals(1, result.processedParents());
     assertEquals(0, result.failedParents());
-    assertEquals(1, result.arenaOomDeferred());
+    assertEquals(1, result.arenaOomWindowed());
 
     Map<String, Object> okState = fakeIndex.get("parent-ok");
     assertArrayEquals(docVector, (float[]) okState.get(SchemaFields.VECTOR));
     assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, okState.get(SchemaFields.EMBEDDING_STATUS));
 
     Map<String, Object> oomState = fakeIndex.get("parent-oom");
-    assertEquals(SchemaFields.EMBEDDING_STATUS_PENDING, oomState.get(SchemaFields.EMBEDDING_STATUS));
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, oomState.get(SchemaFields.EMBEDDING_STATUS));
     assertEquals("0", oomState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertArrayEquals(windowedVector, (float[]) oomState.get(SchemaFields.VECTOR));
   }
 
   @Test

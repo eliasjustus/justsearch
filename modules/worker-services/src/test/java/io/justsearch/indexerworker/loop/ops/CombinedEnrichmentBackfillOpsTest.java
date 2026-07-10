@@ -154,6 +154,11 @@ class CombinedEnrichmentBackfillOpsTest {
 
   private CombinedEnrichmentBackfillOps.BackfillContext context(
       boolean embedEnabled, boolean spladeEnabled, boolean nerEnabled) {
+    return context(embedEnabled, spladeEnabled, nerEnabled, false);
+  }
+
+  private CombinedEnrichmentBackfillOps.BackfillContext context(
+      boolean embedEnabled, boolean spladeEnabled, boolean nerEnabled, boolean lateChunkingEnabled) {
     return new CombinedEnrichmentBackfillOps.BackfillContext(
         documentFieldOps,
         indexingCoordinator,
@@ -167,6 +172,7 @@ class CombinedEnrichmentBackfillOpsTest {
         100,
         LoggerFactory.getLogger(CombinedEnrichmentBackfillOpsTest.class),
         false,
+        lateChunkingEnabled,
         new ArrayDeque<>(),
         new ArrayDeque<>(),
         new int[] {0});
@@ -536,8 +542,9 @@ class CombinedEnrichmentBackfillOpsTest {
   @Test
   @DisplayName(
       "late-chunking flag ON: embedWithSpans returns null (doc exceeds the raised single-pass"
-          + " limit) — leaves both parent and chunks PENDING for the existing fallback path")
-  void lateChunking_longDoc_embedWithSpansReturnsNull_leavesEverythingPending() {
+          + " limit) — falls back INLINE to the windowed embed and completes the parent (tempdoc"
+          + " 691 Stage A3 full-ownership)")
+  void lateChunking_longDoc_embedWithSpansReturnsNull_fallsBackToWindowedInline() {
     seedDoc(
         "parent-long",
         "content that exceeds the raised single-pass limit",
@@ -545,18 +552,26 @@ class CombinedEnrichmentBackfillOpsTest {
     seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class))).thenReturn(null);
+    float[] windowedVector = {5f, 6f};
+    when(embeddingProvider.embedDocument("content that exceeds the raised single-pass limit"))
+        .thenReturn(windowedVector);
 
     boolean didWork =
         LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(lateChunkingContext(true));
 
-    assertFalse(didWork, "no work should be recorded when embedWithSpans defers (long doc)");
+    assertTrue(didWork, "an inline windowed fallback is still recorded as progress");
     verify(embeddingProvider, times(1)).embedWithSpans(anyString(), any(int[][].class));
-    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
-    verify(commitOps, never()).commitAndTrack(any());
+    verify(embeddingProvider, times(1))
+        .embedDocument("content that exceeds the raised single-pass limit");
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-long")));
+    verify(commitOps, times(1)).commitAndTrack(any());
 
     Map<String, Object> parentState = fakeIndex.get("parent-long");
-    assertEquals(SchemaFields.EMBEDDING_STATUS_PENDING, parentState.get(SchemaFields.EMBEDDING_STATUS));
-    assertNull(parentState.get(SchemaFields.VECTOR));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertArrayEquals(windowedVector, (float[]) parentState.get(SchemaFields.VECTOR));
     Map<String, Object> chunkState = fakeIndex.get("chunk-1");
     assertEquals(
         SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
@@ -594,5 +609,75 @@ class CombinedEnrichmentBackfillOpsTest {
     assertNull(chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
     assertEquals(
         SchemaFields.EMBEDDING_STATUS_PENDING, chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Tempdoc 691 Stage A3 full-ownership: the combined pass's embed stage must skip a chunked
+  // parent while late-chunking is enabled — LateChunkingEmbedBackfillOps owns that parent end to
+  // end (including its own windowed fallback), so the combined pass claiming it windowed first
+  // would race the late pass and forfeit the single-pass quality upgrade for that parent.
+  // ---------------------------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: combined pass's embed stage skips a chunked parent (stays PENDING,"
+          + " no embedDocumentBatch call for its content), while a chunkless parent still embeds"
+          + " normally")
+  void lateChunkingOn_embedStageSkipsChunkedParent_chunklessParentStillEmbeds() {
+    seedDoc(
+        "parent-chunked",
+        "chunked parent content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-chunked", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    seedDoc(
+        "parent-chunkless",
+        "chunkless parent content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true));
+
+    assertTrue(didWork, "the chunkless parent still makes progress");
+
+    Map<String, Object> chunkedParentState = fakeIndex.get("parent-chunked");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_PENDING,
+        chunkedParentState.get(SchemaFields.EMBEDDING_STATUS),
+        "chunked parent must stay PENDING — the late-chunking pass owns it, not the combined pass");
+    assertNull(chunkedParentState.get(SchemaFields.VECTOR));
+
+    Map<String, Object> chunklessParentState = fakeIndex.get("parent-chunkless");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED, chunklessParentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertNotNull(chunklessParentState.get(SchemaFields.VECTOR));
+
+    // The chunked parent's content must never reach embedDocumentBatch.
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(
+            argThat(
+                texts ->
+                    texts.size() == 1 && texts.contains("chunkless parent content")));
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag OFF: combined pass embeds a chunked parent exactly as today — the skip"
+          + " logic never fires (strict no behavior change)")
+  void lateChunkingOff_chunkedParentStillEmbedsInCombinedPass() {
+    seedDoc(
+        "parent-chunked",
+        "chunked parent content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-chunked", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, false));
+
+    assertTrue(didWork);
+    Map<String, Object> parentState = fakeIndex.get("parent-chunked");
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertNotNull(parentState.get(SchemaFields.VECTOR));
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(argThat(texts -> texts.contains("chunked parent content")));
   }
 }
