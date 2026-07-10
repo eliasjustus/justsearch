@@ -18,7 +18,7 @@ related:
 > NOTE: Noncanonical working tempdoc. Verify every cited number against the named tempdocs before
 > building on it. This doc is a DESIGN; nothing here authorizes spend.
 
-# 705 — The pillar-1 in-band utility corpus
+# 707 — The pillar-1 in-band utility corpus
 
 ## Why this corpus must exist (one paragraph)
 
