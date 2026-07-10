@@ -122,3 +122,28 @@ the post-702 engine.** Sequencing within the lane: 702 fix lands first, then thi
 Deliverable: an attribution verdict + the pillar-1 fork decision recorded here AND in 704's pillar-5
 section; the founder ratifies the fork before the pillar-1 corpus tempdoc is filed (orchestration
 sync point 1).
+
+### E5-A + E5-B RESULTS (2026-07-10, same session — post-702 engine, worktree 702-dense-calibration)
+
+Run: `mixed/legal-clerc-200` re-fetched via the committed recipe (198 docs / 200 queries, seed 666),
+four modes (`lexical,vector,splade,hybrid`), clean lifecycle, branch `0f93193` (702 recalibration
+included). All modes `comparable=True`; staged-recall reconciliation 0 mismatches / 200. Run dir
+`scripts/jseval/tmp/eval-results/20260710T050037_mixed_legal-clerc-200`.
+
+| Measure | Value | Register reference (pre-702, tempdoc 666) |
+|---|---|---|
+| raw per-leg recall (pre-fusion) | **lexical 0.855 · vector 0.10 · splade 0.15** | F-029: dense ≤0.15 / SPLADE 0.15 at 198 docs |
+| leg_union_recall | 0.875 | union-recall floor pin 0.87 → PASS |
+| hybrid nDCG@10 | 0.517 | 0.521 — unchanged |
+| vector-mode nDCG@10 | 0.0597 | 0.060 — unchanged |
+| staged buckets (hybrid, top-10) | leg_miss 0.115 · leak 0.215 · judge_low 0.30 · final_recall 0.67 | (701's probe leak ≤0.035 was `full` mode, **CE-off**; this is `hybrid`, CE-on — modes differ, not a regression: hybrid nDCG matches its own register baseline) |
+
+**E5-A verdict (per the pre-registered tree, row 1): the dense leg's RAW pre-fusion recall is 0.10 —
+essentially equal to its post-fusion contribution. Gate/fusion capping is NOT the cause of dense-death
+on CLERC; the loss is in the leg's own retrieval.** E5-B side-verdict: the 702 recalibration does NOT
+recover legal hybrid (0.517 ≈ 0.521) — consistent with 702 §B.6's prediction and completing 702's
+exoneration as the F-029 mechanism (the miscalibration was latent on every corpus measured, four of
+four). **Next: E5-C (query-shape sweep) is now the live discriminator** between (a) verbose-query
+embedding dilution (this doc's lever) and doc-side representation (E5-D → 636/686). E5-C needs the
+query-variant datasets built (same corpus + qrels, reduced/keyword query files — LLM variant
+generate-once-committed per 704's determinism rule); not run this session.
