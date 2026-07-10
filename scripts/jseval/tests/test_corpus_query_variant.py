@@ -1,10 +1,12 @@
-"""Tests for corpus_query_variant.py — deterministic keyword query-variant datasets
-(tempdoc 678 §Pillar-5 E5-C).
+"""Tests for corpus_query_variant.py — deterministic keyword + llm-reduced query-variant
+datasets (tempdoc 678 §Pillar-5 E5-C).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+from unittest.mock import MagicMock, patch
 
 from jseval import corpus_query_variant as cqv
 
@@ -205,7 +207,7 @@ def test_unknown_variant_raises():
     import pytest
 
     with pytest.raises(ValueError, match="Unknown variant"):
-        cqv.build_query_variant(None, None, variant="llm-reduced", top_k=8)
+        cqv.build_query_variant(None, None, variant="bogus-variant", top_k=8)
 
 
 # ---------------------------------------------------------------------------
@@ -217,3 +219,172 @@ def test_corpus_query_variant_is_registered_in_corpus_group():
     import jseval.cli  # noqa: F401 — populates the registry
 
     assert command_groups()["corpus-query-variant"] == "corpus"
+
+
+# ---------------------------------------------------------------------------
+# llm-reduced variant (tempdoc 678 §Pillar-5 E5-C) — mocked at the same client
+# seam tests/test_judge_ceiling.py exercises: the running backend's OpenAI-compatible
+# httpx.post call, and the served_model_name discovery helper.
+# ---------------------------------------------------------------------------
+
+def _mock_llm_response(content):
+    resp = MagicMock()
+    resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+    return resp
+
+
+class TestLlmReducedVariant:
+    @patch("jseval.corpus_query_variant.served_model_name", return_value="test-served-model")
+    @patch("jseval.corpus_query_variant.httpx.post")
+    def test_happy_path_writes_transformed_queries_and_metadata(self, mock_post, mock_model, tmp_path):
+        source_dir = _write_source_dataset(tmp_path)
+        dest_dir = tmp_path / "out"
+        mock_post.return_value = _mock_llm_response("eviction notice tenant rights case")
+
+        meta = cqv.build_query_variant(
+            source_dir, dest_dir, variant="llm-reduced", top_k=8,
+            api_url="http://127.0.0.1:33221",
+        )
+
+        lines = [json.loads(l) for l in
+                 (dest_dir / "queries.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert all(d["text"] == "eviction notice tenant rights case" for d in lines)
+
+        assert meta["variant"] == "llm-reduced"
+        assert meta["fallback_count"] == 0
+        llm_meta = meta["llm_reduced"]
+        assert llm_meta["api_url"] == "http://127.0.0.1:33221"
+        assert llm_meta["endpoint"] == "/v1/chat/completions"
+        assert llm_meta["prompt_sha256"] == hashlib.sha256(
+            cqv.LLM_REDUCE_PROMPT.encode("utf-8")).hexdigest()
+        assert llm_meta["model"] == "test-served-model"
+        assert llm_meta["sampling_params"]["temperature"] == 0.0
+        assert llm_meta["sampling_params"]["seed"] == cqv._LLM_REDUCE_SEED
+        assert llm_meta["fallback_count"] == 0
+
+        # Request body actually sent used the fixed prompt template + deterministic sampling
+        # (first call == q1, processed via the queries.jsonl loop before queries.json's pass).
+        sent = mock_post.call_args_list[0].kwargs["json"]
+        assert sent["messages"][0]["content"] == cqv.LLM_REDUCE_PROMPT.format(
+            query="zephyr widget gadget")
+        assert sent["temperature"] == 0.0
+        assert sent["seed"] == cqv._LLM_REDUCE_SEED
+        assert sent["model"] == "test-served-model"
+
+    @patch("jseval.corpus_query_variant.served_model_name", return_value=None)
+    @patch("jseval.corpus_query_variant.httpx.post")
+    def test_per_query_failure_falls_back_to_original_and_is_counted(self, mock_post, mock_model, tmp_path):
+        source_dir = _write_source_dataset(tmp_path)
+        dest_dir = tmp_path / "out"
+
+        def side_effect(url, json, timeout):
+            if json["messages"][0]["content"].endswith("zephyr widget gadget"):
+                raise RuntimeError("connection refused")
+            return _mock_llm_response("some short query")
+
+        mock_post.side_effect = side_effect
+
+        meta = cqv.build_query_variant(
+            source_dir, dest_dir, variant="llm-reduced", top_k=8,
+            api_url="http://127.0.0.1:33221",
+        )
+
+        assert meta["fallback_count"] == 1  # only q1 (the one whose call raised) falls back
+        by_id = {d["_id"]: d["text"] for d in
+                  (json.loads(l) for l in
+                   (dest_dir / "queries.jsonl").read_text(encoding="utf-8").splitlines())}
+        assert by_id["q1"] == "zephyr widget gadget"  # unchanged original on the failing call
+        assert by_id["q2"] == "some short query"
+
+    @patch("jseval.corpus_query_variant.served_model_name", return_value="m")
+    @patch("jseval.corpus_query_variant.httpx.post")
+    def test_empty_response_falls_back_to_original(self, mock_post, mock_model, tmp_path):
+        source_dir = _write_source_dataset(tmp_path)
+        dest_dir = tmp_path / "out"
+        mock_post.return_value = _mock_llm_response("   \n  \n")
+
+        meta = cqv.build_query_variant(
+            source_dir, dest_dir, variant="llm-reduced", top_k=8,
+            api_url="http://127.0.0.1:33221",
+        )
+        assert meta["fallback_count"] == 3  # all 3 queries fall back (blank/whitespace response)
+
+    @patch("jseval.corpus_query_variant.served_model_name", return_value="m")
+    @patch("jseval.corpus_query_variant.httpx.post")
+    def test_multiline_preamble_response_takes_last_non_empty_line(self, mock_post, mock_model, tmp_path):
+        source_dir = _write_source_dataset(tmp_path)
+        dest_dir = tmp_path / "out"
+        mock_post.return_value = _mock_llm_response(
+            "Sure, here's a concise search query:\n\n  eviction notice tenant rights  \n"
+        )
+
+        meta = cqv.build_query_variant(
+            source_dir, dest_dir, variant="llm-reduced", top_k=8,
+            api_url="http://127.0.0.1:33221",
+        )
+        assert meta["fallback_count"] == 0
+        lines = [json.loads(l) for l in
+                 (dest_dir / "queries.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert all(d["text"] == "eviction notice tenant rights" for d in lines)
+
+    @patch("jseval.corpus_query_variant.served_model_name", return_value="m")
+    @patch("jseval.corpus_query_variant.httpx.post")
+    def test_long_response_capped_at_200_chars(self, mock_post, mock_model, tmp_path):
+        source_dir = _write_source_dataset(tmp_path)
+        dest_dir = tmp_path / "out"
+        mock_post.return_value = _mock_llm_response("x" * 250)
+
+        cqv.build_query_variant(
+            source_dir, dest_dir, variant="llm-reduced", top_k=8,
+            api_url="http://127.0.0.1:33221",
+        )
+        lines = [json.loads(l) for l in
+                 (dest_dir / "queries.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert all(len(d["text"]) == 200 for d in lines)
+
+    def test_missing_llm_ctx_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="LlmReduceContext"):
+            cqv.llm_reduced_variant("some text", {}, 8, None)
+
+    def test_build_query_variant_requires_api_url_for_llm_reduced(self, tmp_path):
+        import pytest
+
+        source_dir = _write_source_dataset(tmp_path)
+        with pytest.raises(ValueError, match="requires api_url"):
+            cqv.build_query_variant(source_dir, tmp_path / "out", variant="llm-reduced", top_k=8)
+
+
+# ---------------------------------------------------------------------------
+# CLI --api-url validation: keyword rejects it, llm-reduced requires it
+# ---------------------------------------------------------------------------
+
+class TestApiUrlCliValidation:
+    def test_keyword_rejects_api_url(self, tmp_path):
+        from click.testing import CliRunner
+
+        from jseval.cli import main
+
+        _write_source_dataset(tmp_path)
+        result = CliRunner().invoke(main, [
+            "corpus-query-variant", "--source", "mixed/toy-corpus", "--variant", "keyword",
+            "--api-url", "http://127.0.0.1:33221", "--datasets-dir", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+        assert "api-url" in result.output.lower()
+        assert "keyword" in result.output.lower()
+
+    def test_llm_reduced_requires_api_url(self, tmp_path):
+        from click.testing import CliRunner
+
+        from jseval.cli import main
+
+        _write_source_dataset(tmp_path)
+        result = CliRunner().invoke(main, [
+            "corpus-query-variant", "--source", "mixed/toy-corpus", "--variant", "llm-reduced",
+            "--datasets-dir", str(tmp_path),
+        ])
+        assert result.exit_code != 0
+        assert "api-url" in result.output.lower()
+        assert "llm-reduced" in result.output.lower()

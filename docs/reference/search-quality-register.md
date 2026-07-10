@@ -592,6 +592,39 @@ above)*
   `extraction_method`/reason-code semantics are unchanged (671 classifiers green unmodified).
 - **Evidence:** tempdoc 706 §Execution log (before/after harness, word-overlap parity).
 
+### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
+
+- **Answer:** a four-stage elimination campaign on `mixed/legal-clerc-200` (198 docs / 200 queries,
+  fixed qrels throughout, all runs `comparable=True`, staged-recall reconciliation 0 mismatches)
+  attributed F-029's dead semantic legs. Raw pre-fusion R@10 by query shape: dense **0.100**
+  (verbose citing sentences) / **0.145** (deterministic keyword top-8) / **0.145** (LLM-reduced
+  natural short phrases, Qwen3.5-9B temp=0, 0 fallbacks); SPLADE ≤0.165 at every shape. Chunk
+  granularity adds only **+3.0 pts** (product RAG surface A/B via `JUSTSEARCH_RAG_RETRIEVE_MODE`:
+  chunk-hybrid 0.710 vs chunk-bm25 0.680 gold-in-context, probe validated against jseval's own
+  hybrid number first). Gate/fusion was exonerated first: tempdoc 702's EUCLIDEAN/COSINE threshold
+  recalibration (bytecode-confirmed real, shipped PR #121) changed NOTHING measurable on four
+  corpora — the miscalibration was latent (dense top-1 clears even the wrong gate where dense
+  works), and post-fix legal hybrid is unchanged (0.517 ≈ 0.521). **What remains is the
+  representation: gte-multilingual (and the multilingual SPLADE encoder, same profile) does not
+  separate legal case documents by citation-relevant content, at any query shape or granularity.**
+- **Secondary findings:** (1) BM25 is **monotonic in query verbosity** on CLERC — R@10 0.630
+  (keyword) → 0.780 (natural short) → 0.855 (verbose): the citing sentence's context is
+  load-bearing for the lexical leg, so query reduction is NOT a free lever; any query-side
+  mechanism must be per-leg (constrains 678's lever design and 707's query construction).
+  (2) Positive product finding: the chunk-first RAG surface reaches **0.68 gold-in-context within
+  ~2.9 documents** on legal text via lexical chunks alone — the ICP shape is served today, riding
+  BM25. (3) CLERC docs are extreme-length (median 28.5k chars, 97% chunked) — maximal whole-doc
+  mean-pool dilution conditions, yet granularity still wasn't the lever.
+- **Conditions/caveats:** one corpus family (CLERC citation-retrieval); one encoder family tested.
+  The verdict routes to a model/representation investigation (704 names it a new unowned piece;
+  636/580-adjacent) — NOT to corpus design (707 proceeds on its Branch B: measure the engine
+  as-is, no design flatters dense), NOT to 678's query lever (which remains live for corpora where
+  dense works), NOT to 639/ANN (ruled out, 701 E2). Evidence: tempdoc 678 §Pillar-5 (E5-A..E5-C-v2
+  results tables + run-dir pointers), tempdoc 702 §B.7, tempdoc 707.
+- **Reusable instrument:** `jseval corpus-query-variant` (deterministic `keyword` + recorded-params
+  `llm-reduced` transforms) — query-shape sweeps on any local dataset are now a one-command
+  operation (PRs #123/#125).
+
 ### F-029: size-robustness is CORPUS-DEPENDENT — repetitive-real legal text degrades where diverse Wikipedia is flat; dense+SPLADE near-dead on CLERC at every size (tempdoc 701 probe, 2026-07-10)
 
 - **Finding:** an E4-style fixed-query volume sweep on REAL legal text (CLERC, byte-identical 200
@@ -1206,9 +1239,16 @@ above)*
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
-### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them?
+### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030
 
-- **Question:** On `mixed/legal-clerc-200`, `vector` scores 0.060 and `splade` 0.059 while `lexical`
+- **Answered (2026-07-10, tempdoc 678 §Pillar-5, campaign E5-A..E5-C-v2):** the collapse is an
+  **encoder-domain mismatch** — see F-030. Eliminated in order: gate/fusion capping (E5-A/B, with
+  tempdoc 702's threshold recalibration eval-gated and shipped as correctness-only, PR #121), query
+  length (E5-C keyword control), doc granularity (E5-D: dense adds only +3.0 pts at chunk level),
+  query naturalness (E5-C-v2 LLM-reduced). No engine change recovers the legs short of the encoder/
+  representation itself — a model-level question, flagged in 704 as a new unowned piece. ANN was
+  already ruled out separately (701 E2).
+- **Original question (retained):** On `mixed/legal-clerc-200`, `vector` scores 0.060 and `splade` 0.059 while `lexical`
   scores 0.686 (register baselines, 666) — two of three legs are effectively dead on a real,
   citable legal-retrieval benchmark, and the production `hybrid` (0.516-0.521) underperforms plain
   BM25 there. Is this an embedding-truncation/long-document representation failure, a

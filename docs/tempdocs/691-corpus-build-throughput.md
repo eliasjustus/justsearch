@@ -549,98 +549,100 @@ is inline in the phase sections above. Durable evidence pointers:
   regenerated corpus); treat 691's C2 as the current reference until the
   perf-gate recompose refreshes floors.
 
-## Takeover investigation (2026-07-10) — VERDICT: CLOSE, do not continue
+## Chunk-pacing investigation seed (2026-07-10, from the 686/706 session — pickup material)
 
-A fresh-session takeover re-read the whole tempdoc and verified its shipped
-state against `main` + the newer tempdoc corpus (692–706). No code changes; no
-new experiments run (the decisive evidence already existed — see below).
+A real-corpus ingest (mixed/realdocs-v1: 620 docs → 85,641 chunks, ~138 chunks/doc — 12× denser
+than battlefield) exposed the chunk-embedding backlog crawling at ~50 chunks per ~3.5-min combined
+cycle. Read-only investigation findings (file:line evidence verified 2026-07-10):
 
-**Shipped state confirmed in `main` (not just claimed):**
-- PR #90 merged (`3bd9078`); follow-up docs PRs #92/#94/#104 merged.
-- Item 1 — NER arena `2048` live at `ResolvedConfigBuilder.java:1098` with the
-  691 rationale comment.
-- Item 2 — degraded-variant surfacing live at `DevModeVariantProbe.java:86`
-  (`VariantSelection.degraded(...)`, "CPU model on CUDA" reason).
-- Item 3 — batched-path profiler in `BertNerInference.java` (worker-core).
-- Item 4 (model distribution) is owned by **657**, which bakes NER **INT8+FP16**
-  into the full-desktop bundle (`657 …:151-152`). `model_fp16.onnx` is on disk
-  in the main checkout but git-untracked — the fresh-checkout INT8-on-CUDA
-  reproduction persists **until 657 lands**, which is 657's charge, not 691's.
+1. **The cap is a bare literal**: `chunkSlotsPerBatch = 50` at
+   `CombinedEnrichmentBackfillOps.java:138` — no constant, no config, no derivation; parent docs
+   get `EMBEDDING_BACKFILL_BATCH_SIZE = 100` (`LoopPacingPolicy.java:12`). Set once at the
+   public-release squash, never revisited. Reproduces the observed cycle shape exactly
+   (docs=150 = 100 parent + 50 chunk).
+2. **Cadence is compute-bound, not sleep-bound**: `BackfillScheduler.runIdleCycle` runs a tight
+   no-sleep loop (`BackfillScheduler.java:135-149`); ~3.5 min is one `processCombinedBackfill`
+   call's own wall time, dominated by parent-doc embedding (137s observed).
+3. **Drain model**: naive extrapolation ≈ 100h; but chunk-only tail cycles (after parents finish;
+   chunks skip SPLADE/NER, `CombinedEnrichmentBackfillOps.java:223-238`) should be seconds each
+   → tail ≈ 2-5h. UNMEASURED — measure a chunk-only cycle before concluding code must change.
+4. **Risk coupling**: `OnnxEmbeddingEncoder.embedBatchWithChunking` (`:385-448`) tokenizes the
+   whole caller list upfront — the SAME pattern whose SPLADE sibling caused the 686 native heap
+   crash (fixed via `SpladeEncoder.TOKENIZE_GROUP_CHAR_BUDGET`). Raising the chunk cap without
+   bounding this path first risks reproducing that crash class in the embed path (686
+   §Unverified assumptions #2 flags the audit as open).
+5. **E-5 interaction is LARGER on dense corpora**: parent-internal pooling re-embeds content that
+   chunk docs re-embed again independently; at ~138 chunks/doc most of a cycle's embed time is
+   plausibly discarded pooling work while net chunk progress stays capped at 50. E-5 fix (b)
+   (align boundaries, reuse parent-pass chunk vectors) could complete ~138 chunks per parent as a
+   side effect — a much bigger lever than raising the cap. Both E-5 options remain
+   retrieval-semantics-affecting (search-quality register + nDCG ratchet + live A/B required).
 
-**Why CLOSE and not continue — the motivating consumer no longer bottlenecks on
-corpus build.** 691's purpose was to stop eval builds from monopolizing the dev
-stack for hours. Two independent facts, both now durable, retire that purpose:
-- 691's own **E-4**: post-NER-fix a 1,000-doc build is ~6–7 min; further build
-  optimization is third-order vs the agent-cell matrix (~3 h).
-- **699** (2026-07-08) *measured* it: a single agent-eval cell is **~90%
-  Anthropic API time**, backend share only 2.7–8% — so ~0.48 concurrent backend
-  requests at agent-concurrency 6. Shaving the build cannot move the eval
-  schedule; the API wall dominates by an order of magnitude.
+**Candidate fix shapes, risk-ordered**: (1) measure the chunk-only tail first — possibly no code
+change needed for the tail; (2) E-5 pool-from-chunks (removes the waste, no new heap surface,
+needs the quality gate); (3) raise/decouple `chunkSlotsPerBatch` ONLY after bounding
+`embedBatchWithChunking`'s upfront tokenization the way SPLADE's was bounded.
 
-This is the cheapest validating evidence, and it **already exists** (699's
-timing breakdown). No 691 experiment can change that arithmetic, so none is
-warranted.
+## Takeover investigation (2026-07-10) — VERDICT: CONTINUE, but measure the chunk-only tail before any code
 
-**Disposition of each remaining item:**
-- **Item 6 / E-5 (embed duplicate-chunk dedup, ~20% of build) — DECLINE now.**
-  It is retrieval-semantics-affecting (changes parent/chunk vectors), so it
-  needs the /search-quality register + a relevance ratchet + a live A/B — real
-  cost and real risk — to buy ~1.3 min on a build that is no longer on the eval
-  critical path (699). Classic "correctness argument vs cost-benefit" inversion
-  in reverse: the cost-benefit here is clearly negative. Keep the E-5 analysis
-  as recorded design history; do not implement without a *new* motivating
-  consumer that is build-bound. The duplicate-embedding observation is already
-  in the observations shard for independent pickup.
-- **Assumption #6 (primary indexing -35%) — DECLINE.** Primary is <15% of build
-  (~30 s/enron); suspects are non-code (regenerated corpus, machine state);
-  both candidate commits cleared in B-6. Not worth the decisive 640-era-code
-  rerun.
-- **Item 5 (build-ner.py incremental/fp16-only mode) — DROP as a 691 item.**
-  Its repair-path motivation (recover from an interrupted download) is
-  subsumed once 657 ships both variants in the pack; the friction itself is a
-  jseval/model-tooling wish, already listed in the §Follow-up ledger batch.
-- **Item 4 (model distribution) — already routed to 657.** No 691 action.
-- **Assumption #2 (post-merge live-verify of shipped defaults) — LOW-STAKES,
-  ride-along.** Never run as an env-var-free post-merge battlefield build, but
-  indirectly corroborated: ~dozens of subsequent battlefield/enron eval builds
-  (678, 701, 702) ran on the same machine (fp16 present on disk) across ~30 PRs
-  with no NER-regression report. A clean one-run confirmation (memLimit=2048 in
-  the init line, zero OOM fallbacks, ~124 s, batched-path profiler records ≈docs
-  calls, no NER degraded-WARN) is worth folding into the *next* eval cycle's
-  build, not worth reopening 691 as active work.
+A fresh-session takeover re-read the whole tempdoc and verified its shipped state against `main`.
+**Correction to an earlier draft of this verdict:** the first pass concluded "close / dormant owner,"
+formed on a worktree branched *before* PR #129 (`1a4729e`) landed — so it missed the §Chunk-pacing
+investigation seed directly above. That seed reverses the conclusion. Recording the miss honestly
+(base-ref staleness, `verify-worktree-base`): the corpus 691 optimized against (battlefield, ~11
+chunks/doc) under-represents real chunk load by ~12×.
 
-**What 691 displaces/duplicates:** the real-PDF/scan **extraction** throughput
-leg 691 explicitly disowned is now shipped by **686/706** (6.9× on scanned
-PDFs); the model-pack/fp16 distribution is **657**; the embed lever would cross
-into **701/702/704** search-quality territory. 691 owns none of these going
-forward.
+**Shipped state confirmed in `main` (unchanged, still solid):** PR #90 merged (`3bd9078`) + docs
+PRs #92/#94/#104/#129. NER arena `2048` (`ResolvedConfigBuilder.java:1098`), degraded-variant
+surfacing (`DevModeVariantProbe.java:86`), batched-path profiler (`BertNerInference.java`). The
+2.69× NER headline win is real and live. Item 4 (model distribution) is owned by **657** (bundle
+ships NER INT8+FP16). None of that is in question.
 
-**Two same-day (2026-07-10) direction docs still name 691 — as owner-of-record,
-not as pending work.** Checked explicitly (they post-date every 691 file edit,
-so they are the only place new 691 charge could hide):
-- **704 §Pillar 4 (measurement economics):** "Enrichment throughput (691) is the
-  same pillar's other face: iteration speed bounds how much correct data is
-  affordable." But 704's Boundary lists 691 under **"routed not absorbed"**, and
-  Pillar 4 is **4th of 6** in its sequence (`5 → 1 → 3+2 → 4 → 6`), with Pillar 5
-  the sole first pickup — 691 is not on 704's critical path.
-- **705 §routing:** 691 is "the COST-tax side any quality change trades against"
-  and "has a baseline"; 705 also "routes already-owned pieces … rather than
-  absorbing them," and 705's own verdict is WAIT-FOR-EVIDENCE (686/677 first).
+**What changed the verdict — the bottleneck is corpus-class-dependent, and 691 only measured the
+easy class.** Two facts must be held together, not one against the other:
+- For the **agentic-eval** consumer (624/673), corpus build is NOT the wall: **699** measured a
+  single cell at ~90% Anthropic API time, backend 2.7–8%. On synthetic/sparse corpora the shipped
+  fixes already made build ~6–7 min/1,000 docs. That half of the original charge is *satisfied*.
+- For the **real-document** consumer (686/705/706), the §Chunk-pacing seed shows a *different*
+  regime: `realdocs-v1` at ~138 chunks/doc drives chunk backfill to a **2–5 h (unmeasured), naive
+  ~100 h** tail, throttled by a bare `chunkSlotsPerBatch = 50` literal. This is the first evidence
+  on a realistic-density corpus, and it post-dates every A–E measurement. 691's "build is fast now,
+  third-order" claim does **not** generalize to it (704's own meta-principle: *a claim without its
+  corpus-class scope is a lie by generalization*).
 
-Neither adds a concrete new *item* — both lean on 691 as the **shipped
-baseline / owner-of-record** for enrichment-cost attribution, for work that is
-itself deferred. So closing 691 orphans nothing.
+**Cheapest evidence that decides whether code must change — and it does NOT yet exist.** Measure one
+**chunk-only tail cycle** on a dense corpus (seed item 3, explicitly UNMEASURED). If chunk-only
+cycles drain in seconds (chunks skip SPLADE/NER), the tail may be tolerable with *no* code change and
+the cap stays. If they don't, the risk-ordered fix ladder in the seed applies. This is a read-only
+`jseval --pipeline` measurement on a dense corpus — bounded, no code, dev-stack-exclusive. It is the
+correct first pickup and it gates everything else here.
 
-**Recommendation to founder — DORMANT OWNER (not hard-close).** 691's chartered
-work (the throughput optimization pass) is **done**: headline 2.69× shipped +
-verified in `main`, residual levers third-order and declined with reasons above.
-But keep 691 as the **named owner-of-record for enrichment-throughput /
-cost-tax attribution** that 704-Pillar-4 and 705 point at — do not delete or
-fully retire it. **Reopen triggers (concretely build-bound only):** (a) 705's
-extraction-quality work adds enrichment cost that needs re-attribution; (b) 704
-sequences Pillar 4 in and iteration speed becomes binding; (c) a new consumer
-appears whose wall-clock is genuinely dominated by corpus build (699 says
-today's eval consumer is ~90% Anthropic API time, so this is not currently
-true). Absent a trigger: no further design or implementation on 691. Keep the
-§Follow-up ledger open items where they already live (657 for distribution;
-jseval owner for the tooling batch; observations shard for the dedup note).
+**Disposition of each item under the corrected frame:**
+- **Chunk-pacing tail (seed) — the live lever; START with the measurement above.** Do not raise
+  `chunkSlotsPerBatch` first: seed item 4 shows raising it without bounding
+  `embedBatchWithChunking`'s upfront tokenization risks the 686 native-heap crash class.
+- **Item 6 / E-5 (embed duplicate-chunk dedup) — RE-ELEVATED by the seed, not declined.** The
+  earlier draft dismissed it as ~1.3 min on a sparse corpus; the seed shows that on dense corpora
+  the discarded parent-pooling work dominates a cycle while net chunk progress stays capped at 50,
+  so E-5 fix (b) could be *the* dense-corpus lever. Still retrieval-semantics-affecting
+  (search-quality register + nDCG ratchet + live A/B) — but its expected value is now large, not
+  marginal. Re-measure after the chunk-only-tail number lands.
+- **Assumption #6 (primary indexing −35%) — still DECLINE.** Primary is <15% of build; suspects
+  non-code; low value regardless of corpus class.
+- **Item 5 (build-ner.py incremental mode) — still low priority;** repair-path subsumed by 657.
+- **Assumption #2 (post-merge live-verify of shipped defaults) — fold into the dense-corpus run
+  above** (it needs a live build anyway): confirm memLimit=2048, zero OOM, no NER degraded-WARN,
+  batched-path profiler records ≈docs calls.
+- **Item 4 (model distribution) — 657 owns it.** No 691 action.
+
+**Relationship to newer docs:** 704 §Pillar 4 and 705 name 691 as owner of "enrichment throughput /
+the cost tax" (routed, not absorbed). 706 shipped the *extraction/parse* leg (6.9× scanned PDF); the
+chunk-pacing tail is the *enrichment* leg, squarely 691's. So the seed is not a duplicate of 706 —
+it is the piece 691 still owns.
+
+**Recommendation to founder — 691 STAYS OPEN with one concrete, cheap next step:** an agent-run,
+read-only chunk-only-tail measurement on a dense corpus (`realdocs-v1` or equivalent), which decides
+whether the tail needs any code change and re-attributes E-5 vs the cap. Everything past that
+measurement (cap change, E-5 dedup) is authorization-gated and, for E-5, search-quality-gated. Do
+NOT close 691. (This is a measurement recommendation, not implementation — no code or design written
+this session, per the takeover contract.)
