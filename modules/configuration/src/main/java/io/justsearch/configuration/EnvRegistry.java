@@ -314,6 +314,32 @@ public enum EnvRegistry {
     /** GPU memory arena limit for ONNX embedding sessions (MB, default 3072). */
     EMBED_GPU_MEM_MB("justsearch.embed.gpu_mem_mb", "JUSTSEARCH_EMBED_GPU_MEM_MB"),
 
+    /**
+     * Tempdoc 691 Phase 2/4: long-doc single-pass VECTOR embed — a chunked parent doc's whole-doc
+     * vector comes from ONE batch-1 forward pass at {@code late_chunking_context_length} tokens
+     * ({@code OnnxEmbeddingEncoder#embedWithSpans}, technique per arXiv:2409.04701) instead of the
+     * base window-mean; chunk docs keep their own per-chunk path (per-span reuse dropped by
+     * measurement, 691 §Phase M). DEFAULT ON since 691 §Phase N (D-004 template: default-off →
+     * measured → default-on): legal-clerc vector nDCG@10 0.0597→0.2967 at defaults, all three
+     * quality gates green; measured cost: background enrichment slower on long-doc corpora
+     * (enron 7.7→4.5 docs/s at the default 3072MB arena — see 691 §N-7).
+     */
+    EMBED_LATE_CHUNKING_ENABLED(
+        "justsearch.embed.late_chunking_enabled",
+        "JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED",
+        "true"),
+
+    /**
+     * Single-pass whole-doc VECTOR limit for the late-chunking path — tempdoc 691 Phase 2. Raises
+     * the eligibility ceiling for the batch-1 {@code embedWithSpans} long-doc pass independently of
+     * the base {@code justsearch.embed.context_length} (whose batch path would OOM at this length).
+     * Default 8192, clamped to the model's trained context ceiling.
+     */
+    EMBED_LATE_CHUNKING_CONTEXT_LENGTH(
+        "justsearch.embed.late_chunking_context_length",
+        "JUSTSEARCH_EMBED_LATE_CHUNKING_CONTEXT_LENGTH",
+        "8192"),
+
     /** Enable GPU acceleration for SPLADE inference (default false). */
     SPLADE_GPU_ENABLED("justsearch.splade.gpu_enabled", "JUSTSEARCH_SPLADE_GPU_ENABLED"),
 

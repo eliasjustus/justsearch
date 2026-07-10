@@ -325,6 +325,7 @@ public final class BackfillScheduler {
             EMBEDDING_BACKFILL_BATCH_SIZE,
             log,
             resolvedConfigSupplier.get().rag().chunkVectorsEnabled(),
+            resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));
