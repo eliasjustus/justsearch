@@ -313,6 +313,17 @@ public final class SpladeEncoder implements Closeable {
     return MAX_SPLADE_BATCH_SIZE_CPU;
   }
 
+  /**
+   * Upper bound on total input CHARS per native batchEncode call in {@link
+   * #encodeBatchTokenBudget}. With truncation disabled, materialized Encoding memory scales with
+   * input length (~2 chars/token for OCR-grade text, ~100 bytes/token materialized incl. char
+   * spans and token strings), so 512k chars ≈ ~256k tokens ≈ a few tens of MB peak — bounded
+   * regardless of caller batch size. A single text longer than the budget forms its own group
+   * (~200k chars max via the extraction char cap → ~10-25 MB, safe). Derivation: tempdoc 686
+   * full-corpus crash forensics, 2026-07-10.
+   */
+  private static final long TOKENIZE_GROUP_CHAR_BUDGET = 512_000;
+
   public List<Map<String, Float>> encodeBatch(List<String> texts) throws OrtException {
     if (texts.size() <= 1) {
       return encodeBatchInternal(texts);
@@ -333,24 +344,51 @@ public final class SpladeEncoder implements Closeable {
     int maxBatch = getMaxBatchSize();
     int tokenBudget = maxBatch * maxSeqLen;
 
-    // Phase 1: Batch tokenize (native parallel via DJL)
+    // Phase 1: Tokenize in memory-bounded groups (tempdoc 686 crash fix). The tokenizer runs
+    // with truncation DISABLED (truncation-evidence contract), so one full-document text can
+    // materialize an Encoding of ~100k+ tokens (ids + tokens + char spans ≈ tens of MB). The
+    // previous single batchEncode(texts) call materialized ALL encodings simultaneously —
+    // ~100 doc-level contents ≈ up to ~1 GB of short-lived Java allocations, which exhausted
+    // the 1g worker heap and killed the JVM natively (JNI allocation failure inside DJL's
+    // getTokenCharSpans surfaced as EXCEPTION_UNCAUGHT_CXX_EXCEPTION in tokenizers.dll; three
+    // identical hs_err dumps, heap 99.8% full). Grouping by input chars bounds peak
+    // materialization to one group; only the truncated (≤ maxSeqLen) arrays are retained.
+    int n = texts.size();
+    long[][] idsByText = new long[n][];
+    long[][] maskByText = new long[n][];
+    long[][] typesByText = new long[n][];
+    int[] tokenCounts = new int[n];
     long tTok = System.nanoTime();
-    Encoding[] encodings = tokenizer.batchEncode(texts);
-    profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
-
-    // Record truncation evidence for all texts
-    for (Encoding enc : encodings) {
-      truncationEvidence.record(enc.getIds().length);
+    int groupStart = 0;
+    while (groupStart < n) {
+      int groupEnd = groupStart;
+      long groupChars = 0;
+      while (groupEnd < n
+          && (groupEnd == groupStart
+              || groupChars + texts.get(groupEnd).length() <= TOKENIZE_GROUP_CHAR_BUDGET)) {
+        groupChars += texts.get(groupEnd).length();
+        groupEnd++;
+      }
+      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      for (int i = 0; i < groupEncodings.length; i++) {
+        int idx = groupStart + i;
+        Encoding enc = groupEncodings[i];
+        truncationEvidence.record(enc.getIds().length);
+        int seqLen = Math.min(enc.getIds().length, maxSeqLen);
+        tokenCounts[idx] = seqLen;
+        idsByText[idx] = truncate(enc.getIds(), seqLen);
+        maskByText[idx] = truncate(enc.getAttentionMask(), seqLen);
+        typesByText[idx] = truncate(enc.getTypeIds(), seqLen);
+      }
+      groupStart = groupEnd;
     }
+    profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
     truncationEvidence.flushIfNeeded(truncationEvidencePath, config.modelPath());
 
     // Phase 2: Build index array sorted by effective token count (ascending)
-    int n = texts.size();
     Integer[] sortedIndices = new Integer[n];
-    int[] tokenCounts = new int[n];
     for (int i = 0; i < n; i++) {
       sortedIndices[i] = i;
-      tokenCounts[i] = Math.min(encodings[i].getIds().length, maxSeqLen);
     }
     Arrays.sort(sortedIndices, Comparator.comparingInt(i -> tokenCounts[i]));
 
@@ -371,7 +409,7 @@ public final class SpladeEncoder implements Closeable {
         pos++;
       }
 
-      // Build pre-tokenized arrays for this sub-batch
+      // Build pre-tokenized arrays for this sub-batch (already truncated in phase 1)
       int batchSize = pos - batchStart;
       long[][] batchIds = new long[batchSize][];
       long[][] batchMask = new long[batchSize][];
@@ -380,9 +418,9 @@ public final class SpladeEncoder implements Closeable {
       for (int j = 0; j < batchSize; j++) {
         int origIdx = sortedIndices[batchStart + j];
         int seqLen = tokenCounts[origIdx];
-        batchIds[j] = truncate(encodings[origIdx].getIds(), seqLen);
-        batchMask[j] = truncate(encodings[origIdx].getAttentionMask(), seqLen);
-        batchTypes[j] = truncate(encodings[origIdx].getTypeIds(), seqLen);
+        batchIds[j] = idsByText[origIdx];
+        batchMask[j] = maskByText[origIdx];
+        batchTypes[j] = typesByText[origIdx];
         maxLen = Math.max(maxLen, seqLen);
       }
 

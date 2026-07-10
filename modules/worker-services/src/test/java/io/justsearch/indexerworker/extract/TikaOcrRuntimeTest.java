@@ -70,7 +70,7 @@ final class TikaOcrRuntimeTest {
 
     assertEquals(
         TikaOcrRuntime.REASON_ENGINE_MISSING,
-        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000)));
+        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000, 300, 0)));
   }
 
   @Test
@@ -82,7 +82,7 @@ final class TikaOcrRuntimeTest {
 
     assertEquals(
         TikaOcrRuntime.REASON_LANGUAGE_MISSING,
-        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000)));
+        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000, 300, 0)));
   }
 
   @Test
@@ -94,7 +94,7 @@ final class TikaOcrRuntimeTest {
 
     assertEquals(
         TikaOcrRuntime.REASON_LANGUAGE_MISSING,
-        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000)));
+        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000, 300, 0)));
   }
 
   @Test
@@ -134,10 +134,10 @@ final class TikaOcrRuntimeTest {
     Files.createDirectories(runtime.resolve("tessdata"));
     System.setProperty("justsearch.home", tempDir.resolve("home").toString());
 
-    assertEquals("", TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000)));
+    assertEquals("", TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("eng"), 5_000, 1, 4096, 40_000_000, 300, 0)));
     assertEquals(
         TikaOcrRuntime.REASON_LANGUAGE_MISSING,
-        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("deu"), 5_000, 1, 4096, 40_000_000)));
+        TikaOcrRuntime.blockedReason(new OcrRoutingConfig(true, List.of("deu"), 5_000, 1, 4096, 40_000_000, 300, 0)));
   }
 
   private static Path writeFakeTesseract(Path directory) throws IOException {
