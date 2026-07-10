@@ -1,7 +1,7 @@
 ---
 title: "Real-PDF/office corpus acquisition + Tika-pressure measurement: the machine (and the eval harness) currently has NO real binary-document corpus — 3 fixture PDFs total; every 'pdf' dataset (ohr-bench-tika-pdf etc.) is pre-extracted TEXT, so live Tika/PDFBox/POI parse pressure is unexercised by all existing evals. This gap was hit concretely by 682 item 1 (the worker-heap measurement had to ship with a stated Tika-scope hole) and equally limits the OCR-routing (671) and VDU (677) streams. Work: acquire/build one license-clean, redistributable-or-locally-pinned corpus of real PDFs + office docs (mixed sizes incl. genuinely large files), register it as a jseval local dataset, then re-run 682's instrumented heap recipe against the new 1g default and record whether 1g absorbs parse pressure or the constant needs a second look."
 type: tempdocs
-status: "open — IN PROGRESS (2026-07-10, taken over via 705's takeover session at founder direction). Sourcing decided: public/license-clean hybrid (govdocs1 + NapierOne), no personal files. Acquisition script + pinned manifest + jseval raw-binary-dataset support in flight; instrumented heap run next."
+status: "substantially complete (2026-07-10): corpus acquired + registered (mixed/realdocs-v1, 620 real files, pinned manifest), jseval raw-binary support shipped, instrumented run executed (partial — stopped by founder at 31min/120 docs; parse-phase GC evidence captured), heap verdict recorded at the constant site. Remaining: the raise-vs-bound-extraction follow-up decision (out of scope here by design), and optionally a full-corpus re-run with OCR-page caps if fuller coverage is wanted."
 created: 2026-07-07
 updated: 2026-07-10
 author: agent session 2026-07-07 (gap established empirically during 682 item 1: PDF search across F:\\JustSearch found 3 fixture PDFs; jseval mixed/ datasets verified to be corpus.jsonl text)
@@ -100,6 +100,54 @@ total. Script: `scripts/search/fetch-realdocs-corpus.py`; committed pins:
 `scripts/jseval/666-corpora/realdocs-v1/{manifest.json,recipe.json}` (per-file sha256s + archive
 hashes + selection policy). Dataset lands at `datasets/mixed/realdocs-v1/corpus-dir/` (gitignored,
 per the universal fetch-fresh-never-commit rule).
+
+### Instrumented run + heap verdict (step 3) — partial run, verdict recorded
+
+**Command** (682's recipe verbatim, new corpus): from the worktree, cwd `scripts/jseval`:
+`JUSTSEARCH_JVM_OPTS="-Xlog:gc:file=<worktree>/tmp/worker-gc-686.log" python -m jseval run
+--dataset mixed/realdocs-v1 --max-queries 0 --pipeline --start-backend --clean --json`.
+Worker at the shipped `1g` default (verified in-log: `(1024M)` capacity on every GC line).
+
+**Scope statement (honest limits):** run stopped by the founder at **31 min / 120 of 620 docs
+indexed** (pace ~4-5 docs/min, dominated by serial per-page OCR of scanned gov PDFs — see cost
+finding below). GC evidence below covers those 31 minutes, incl. several multi-page scans and
+large office files; enrichment barely started, so this measures the **parse phase**, which was
+exactly the unmeasured half 682 named. OCR env note: this machine's `eng.traineddata` was
+overwritten with the tessdata_fast variant during setup (the "missing tessdata" observation was
+stale — file existed); OCR ran live either way.
+
+**GC watermark analysis** (`tmp/worker-gc-686-partial-snapshot.log`, preserved; 477 GC-line
+events over 1,860s):
+
+- **No Full GC, no OOM.** Live set after mixed collections ~500M (~50% of heap; e.g.
+  `Prepare Mixed (G1 Humongous Allocation) 908M->508M(1024M)`).
+- **72 distinct GC events with evacuation failures** and **179 humongous-allocation-triggered
+  GCs** in 31 minutes; transient after-GC occupancy peaks to 926-945M (~92%) during
+  concurrent-mark windows; max before-GC (young) 612M. For calibration: 682 judged FIVE
+  evacuation failures in 543s at 512m "one step from OOM" and raised the default 2×.
+- **Interpretation (interrogated, not just correlated):** the pressure is NOT live-set growth —
+  it is **humongous allocation churn from large-document parse buffers** (Tika/PDFBox/POI whole-
+  document strings/DOM + PDFBox page renders for OCR). G1 repeatedly fails to evacuate around
+  the churn even though half the heap is reclaimable. Raising the heap buys headroom but does
+  not remove the churn; bounding extraction buffers or G1 region-size tuning
+  (`-XX:G1HeapRegionSize`) is the structural lever.
+
+**Verdict recorded at the constant site** (`KnowledgeServerConfig.DEFAULT_WORKER_HEAP` javadoc,
+dated addendum): 1g **survives** real parse pressure (no Full GC/OOM) but with **no safety
+margin** during large-document parse. Per this doc's own out-of-scope rule ("fixing whatever
+the measurement finds" is a new decision), the raise-vs-bound-extraction choice is left as the
+recorded follow-up: options are (a) raise default to 2g (simple, costs residency on constrained
+devices), (b) bound extraction buffer sizes (structural, touches the extraction path), (c) G1
+region-size tuning (cheap experiment, may absorb humongous churn without more heap).
+
+**Cost-tax finding (705-relevant, free byproduct):** per-document completion cadence was
+bimodal — median gap ~0s (bursts of fast docs) vs 7 stalls of 35-350s, each a scanned PDF in
+serial per-page render→tesseract OCR (observed live: page 29 of one doc, two tesseract
+processes on one page image). Scanned documents cost minutes each on the baseline OCR path
+while everything else costs ~nothing; this is the first direct measurement of WHERE the
+extraction cost tax concentrates. Also logged to the inbox: the analyzers catalog was loaded
+~40× per document during ingest (3,958 loads / 98 docs) — possible un-cached per-chunk path
+worth a separate look.
 
 ### Harness gap found + closed (step 2)
 

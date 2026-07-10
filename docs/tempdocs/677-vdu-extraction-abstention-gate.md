@@ -64,3 +64,11 @@ Not extraction routing (607), not reason-code plumbing (671), not VDU lifecycle/
 the separate research question of constructing scans that are pipeline-readable but agent-unreadable
 (that stays with 624/the register). Not a general OCR-quality program — the scope is the honesty of
 the output path when reading fails.
+
+## Corpus availability note (2026-07-10, from 686)
+
+A real binary-document corpus now exists: `mixed/realdocs-v1` (620 real PDF/office files incl.
+scanned gov PDFs with genuine low-legibility pages; pinned manifest at
+`scripts/jseval/666-corpora/realdocs-v1/`, rebuild via `scripts/search/fetch-realdocs-corpus.py`).
+Complements `golden/synth-scan-v1` (adversarial synthetic) with REAL scan-quality diversity for
+whatever abstention gate this doc designs.

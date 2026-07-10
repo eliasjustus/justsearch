@@ -232,6 +232,14 @@ the 252 bake-off ad hoc). **But not now.** Launching the investigation today wou
    extraction_method/vdu_status distribution, the parse-vs-enrichment cost split, and a real
    extraction-quality substrate — the cheapest evidence that validates or invalidates this doc's
    premise, and it does not exist today).
+   > TRIGGER 1 SUBSTANTIALLY MET (2026-07-10, same session, founder-directed): 686 executed —
+   > corpus `mixed/realdocs-v1` exists (620 real files, pinned manifest), jseval ingests raw
+   > binaries, and a partial instrumented run (31min/120 docs, founder-stopped) already yielded
+   > the first real cost-tax attribution: **the extraction cost tax concentrates almost
+   > entirely in scanned PDFs** (serial per-page render→tesseract OCR, minutes per document,
+   > bimodal cadence — everything else ~free), plus a heap verdict (1g survives real parse
+   > pressure with no margin; humongous parse-buffer churn, 72 evacuation-failure events/31min).
+   > See 686 §Execution log. A full-corpus run + extraction_method distribution remains open.
 2. **677 is resolved or characterized** enough that VDU output quality is measurable without the
    confabulation confound.
 

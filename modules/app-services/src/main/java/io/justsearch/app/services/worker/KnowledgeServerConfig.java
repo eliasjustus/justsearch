@@ -50,6 +50,18 @@ public record KnowledgeServerConfig(
      * pressure (no PDF corpus exercised), so the observed pressure is a lower bound. 1g puts
      * the observed live-set peak at ~34% occupancy. Override via JUSTSEARCH_WORKER_HEAP for
      * constrained devices; the spawner pins -Xms=-Xmx, so this is fully resident from boot.
+     *
+     * <p>Tempdoc 686 follow-up (2026-07-10), closing 682's "no PDF corpus exercised" caveat:
+     * first run WITH real parse pressure (mixed/realdocs-v1 — 620 real PDF/office files incl.
+     * multi-page scans; run stopped early at 31min/120 docs, so per-doc coverage is partial but
+     * the pressure pattern was already stable). At 1g: no Full GC and no OOM, live set after
+     * mixed collections only ~500M (~50%) — but 72 GC events with evacuation failures and 179
+     * humongous-allocation-triggered GCs in 31 minutes. The pressure is transient humongous
+     * allocation churn from large-document parse buffers (Tika/PDFBox/POI), not live-set
+     * growth, so raising the heap further mostly buys headroom for a churn problem; bounding
+     * extraction buffer sizes (or G1 region-size tuning) is the structural lever. Verdict:
+     * 1g survives real parse pressure but with no safety margin during large-document parse;
+     * the raise-vs-bound decision is recorded in tempdoc 686.
      */
     private static final String DEFAULT_WORKER_HEAP = "1g";
     private static final long DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS = 5000;
