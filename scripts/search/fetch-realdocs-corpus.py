@@ -35,7 +35,9 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import random
+import re
 import sys
 import urllib.request
 import zipfile
@@ -46,7 +48,44 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DATASET_NAME = "mixed/realdocs-v1"
 DATASET_DIR = REPO_ROOT / "datasets" / DATASET_NAME
 CORPUS_DIR = DATASET_DIR / "corpus-dir"
-CACHE_DIR = REPO_ROOT / "datasets" / ".download-cache"
+
+
+def _resolve_download_cache_dir() -> Path:
+    """Resolve the pinned-archive download cache dir (tempdoc 709).
+
+    `download()` below already treats this directory as a persistent on-disk cache (skips
+    re-downloading a zip that's already present) -- but by default that cache lives under
+    *this checkout's* `datasets/`, so it doesn't survive worktree teardown and re-downloads
+    once per worktree, same as the jseval corpus fetchers this mirrors. Honors the same
+    `JUSTSEARCH_DATASET_CACHE` convention `jseval.dataset_cache` uses (empty/"0" disables
+    sharing; any other value is used verbatim), defaulting to a directory under the MAIN
+    checkout when this is a linked worktree (same gitdir-file walk `_paths.main_repo_root()`
+    does — duplicated here in ~10 lines rather than importing the jseval package, since this
+    is a standalone script with no other jseval dependency). Falls back to this checkout's
+    own `datasets/.download-cache` (today's behavior) when disabled or unresolvable -- fail
+    OPEN, never fail closed on cache trouble.
+    """
+    override = os.environ.get("JUSTSEARCH_DATASET_CACHE")
+    if override is not None:
+        if override.strip() in ("", "0"):
+            return REPO_ROOT / "datasets" / ".download-cache"
+        return Path(override) / "realdocs-raw"
+    git_path = REPO_ROOT / ".git"
+    try:
+        if git_path.is_file():
+            content = git_path.read_text(encoding="utf-8").strip()
+            match = re.match(r"^gitdir:\s*(.+)$", content)
+            if match:
+                git_dir = (REPO_ROOT / match.group(1)).resolve()
+                main_root = git_dir.parents[2]
+                if main_root.is_dir():
+                    return main_root / "scripts" / "jseval" / "tmp" / "dataset-fetch-cache" / "realdocs-raw"
+    except (OSError, IndexError):
+        pass
+    return REPO_ROOT / "datasets" / ".download-cache"
+
+
+CACHE_DIR = _resolve_download_cache_dir()
 MANIFEST_DIR = REPO_ROOT / "scripts" / "jseval" / "666-corpora" / "realdocs-v1"
 MANIFEST_PATH = MANIFEST_DIR / "manifest.json"
 RECIPE_PATH = MANIFEST_DIR / "recipe.json"
