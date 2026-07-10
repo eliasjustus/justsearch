@@ -919,3 +919,29 @@ first step (the whole-doc `VECTOR`), so:
 pooling = throughput + a CLS-risky chunk-quality bet. Phase-1a (≤2048, VECTOR bit-identical + per-span
 chunks) is a sound, harmless default-off foundation for both. Phase 2 now carries the primary quality
 win. The A/B (Phase 4) on legal-clerc-200 is the decision point for whether per-span chunks ship.
+
+**I-5. Phase 1 COMPLETE + committed (default-off, green).** Commits `db5a83a` (1a primitive+test),
+`42d8862` (1b flag + `LateChunkingEmbedBackfillOps` additive pass + env-var doc). `build -x test`
+green; worker-services 802 / worker-core 254 / configuration 183 tests pass; backfill test 12/12;
+flag-off strict no-op (`verifyNoInteractions`). Critical-analysis pass done on both subagent diffs
+(runHidden extraction is output-preserving; the backfill pass is status-driven dedup with
+tempdoc-700 failure parity, SPLADE/NER untouched; service prefixes + span-shifts correctly).
+
+**I-6. Phase 2 decomposition insight (from 708 + CLS).** The 708-measured F-030 win
+(R@10 0.100→0.745 on legal) is fundamentally a **context-length** effect: gte given the whole long
+doc in ONE pass (≤8192 tokens — legal-clerc median ~7k tokens fits) yields a far better whole-doc CLS
+`VECTOR` than the production mean-of-512-window-CLSs. This is **separable from and larger than** late
+chunking's per-span chunk dedup, and it is **CLS-on-distribution** (single CLS of the whole doc), so
+it is the lower-risk, higher-value half. Two consequences:
+- **Phase 1 (≤2048) cannot be A/B-tested on legal-clerc** — those docs are all >2048 tokens, so
+  `embedWithSpans` returns null and the late path no-ops there. Phase 1 is only exercisable on
+  short-doc corpora (scifact, enron). To validate on the corpus where the effect is largest (708's
+  legal-clerc), **Phase 2 is required.**
+- **Phase 2 shape:** raise the late-chunking single-pass eligibility toward the model's real context
+  (8192, gte supports 32k) so docs ≤8192 tokens go single-pass — capturing the 708 VECTOR win AND the
+  per-span chunk dedup for those docs. Docs >8192 tokens (minority) macro-window or fall back. Open
+  sub-question for the A/B: whether to ALSO raise the base `justsearch.embed.context_length` (affects
+  all embedding, VRAM/latency) or keep the larger context scoped to the late-chunking path. The
+  context-raise VECTOR win could even be measured independently of per-span chunks (a cleaner first
+  A/B arm). VRAM: an 8192-token single pass on gte-base (~300M) is feasible on 12GB one-doc-at-a-time;
+  measure latency/VRAM in the Phase-0-style spike.
