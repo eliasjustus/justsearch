@@ -1,7 +1,7 @@
 ---
 title: "Encoder-domain fit on legal/professional text: can any locally-runnable multilingual embedding (and/or learned-sparse) model separate legal-shaped documents by content — the F-030 follow-up (dense R@10 ≤0.145 and SPLADE ≤0.165 at EVERY query shape and granularity on CLERC)"
 type: tempdocs
-status: "open — takeover→theorize→design→plan COMPLETE 2026-07-10 (takeover verdict: GO; design + 6-phase plan settled below; bake-off NOT yet executed — awaits implementation go-ahead). Originally a STUB filed 2026-07-10 at founder request (NO implementation, NO model-swap shipping, NO spend beyond local compute without a separate go-ahead). Owner question spawned by F-030 (search-quality register) / tempdoc 678 §Final attribution verdict; named a new unowned piece in 704's pillar-5 resolution note."
+status: "PAUSED for 691 coordination (founder directive 2026-07-10) — Gate 0 PASSED, 20-run partial screen recorded below (incumbent clears the FIX band once window-mean construction is removed: W2 0.745, chunk-MaxP 0.855 = lexical parity); NO Phase 5/6, NO register updates until post-691-merge rebase. Earlier same day: takeover→theorize→design→plan COMPLETE (verdict GO). Originally a STUB filed 2026-07-10 at founder request (NO implementation, NO model-swap shipping, NO spend beyond local compute without a separate go-ahead). Owner question spawned by F-030 (search-quality register) / tempdoc 678 §Final attribution verdict; named a new unowned piece in 704's pillar-5 resolution note."
 created: 2026-07-10
 author: agent (Fable orchestration), filed at founder direction after the pillar-5 attribution campaign closed
 category: search-quality / dense-retrieval / model-selection / inference-runtime
@@ -549,6 +549,83 @@ ordering claims, and register cross-checks. No UI surface; no dev-stack validati
   Early observation (not a verdict): anchor R@100 0.775 verbose — the gold IS in the incumbent's top-100
   for ~78% of queries; the death is concentrated at the top of the list, which the funnel-and-judge
   frame (the R@100/R@20 metrics) was designed to see.
+
+### Phase 4 — PAUSED-INCOMPLETE (founder directive, 2026-07-10: 691 coordination)
+
+**Status: the screen was paused mid-run by founder directive** (see §691 coordination below). The
+in-flight job was additionally killed when the GPU became contended by an unrelated local workload
+(an image-gen process at 11/12 GB, 100% util) — per charter, this lane yielded; nothing was relaunched.
+All completed runs below are corpus-signature-bound (`90d4300d…baf1`, byte-identical to F-030's corpus);
+run JSONs live in `tmp/eval-results/708-bakeoff/` (one per row, with per-query gold ranks).
+
+**Measured (20 runs; verbose and kw cells are R@10 / R@20 / R@100 / nDCG@10; docs/s = doc-side encode
+throughput, RTX 4070 fp16):**
+
+| Model | Cond | verbose | kw | docs/s |
+|---|---|---|---|---|
+| **anchor** (gte-ml-base, 305M) | **W1 prod-mirror** | **0.105** / 0.235 / 0.775 / 0.061 | **0.150** / 0.230 / 0.625 / 0.069 | 9.6 |
+| anchor | W2 @2048 | 0.655 / 0.735 / 0.935 / 0.468 | 0.290 / 0.385 / 0.755 / 0.180 | 30.7 |
+| anchor | W2 @8192 | **0.745** / 0.815 / 0.955 / 0.526 | 0.330 / 0.400 / 0.780 / 0.212 | 9.0 |
+| anchor | C (500/50 MaxP) | **0.855** / 0.895 / 0.975 / 0.643 | 0.335 / 0.430 / 0.805 / 0.223 | 9.7 |
+| arctic-l-v2 (568M) | W1 (text-window) | 0.790 / 0.865 / 0.960 / 0.590 | 0.330 / 0.440 / 0.780 / 0.218 | 4.9 |
+| arctic-l-v2 | W2 @8192 | 0.775 / 0.850 / 0.960 / 0.555 | 0.350 / 0.435 / 0.765 / 0.236 | 4.9 |
+| arctic-l-v2 | C | **0.865** / 0.910 / 0.965 / 0.671 | 0.395 / 0.485 / 0.830 / 0.267 | 5.6 |
+| granite-278m | W2 @512 | 0.445 / 0.555 / 0.865 / 0.298 | 0.245 / 0.320 / 0.675 / 0.157 | 31.6 |
+| granite-278m | C | 0.715 / 0.780 / 0.955 / 0.512 | 0.325 / 0.425 / 0.770 / 0.214 | 12.9 |
+| qwen3-0.6b (595M) | W1 (text-window) | 0.530 / 0.640 / 0.890 / 0.377 | 0.135 / 0.200 / 0.665 / 0.077 | 1.35 |
+
+**Unmeasured (remain for resume):** qwen3-0.6b W2/C + the `qwen3-0.6b-cite` instruction variant;
+arctic-m-v2 all conditions (first attempt failed on a recipe bug — mGTE architecture needs
+`trust_remote_code=True`; fixed in commit aa342c4, not yet rerun); bge-m3 all; me5-large all (weights
+downloaded via `local_dir` after HF-cache symlink failures); **anchor-fav W1** (the attribution
+control — incumbent under candidate-favorable text windows; separates the raw-id-window/[CLS] artifact
+from mean-pool dilution inside W1's 0.105); granite-278m W1 (failed: window max_len 528 > granite's 514
+position embeddings — cap `max_len` at the model limit at resume, one-line fix). The prepared runner is
+`tmp/708-bakeoff/run_screen2.sh`.
+
+**Provisional reading — labeled PROVISIONAL-PENDING-691, explicitly NOT a Phase 6 verdict:**
+1. Under the pre-registered protocol, the FIX band (R@10 ≥ ~0.6 verbose) is cleared — **by the incumbent
+   itself** once the whole-doc window-mean construction is removed: W2@2048 0.655, W2@8192 0.745,
+   chunk-MaxP 0.855. Candidates confirm rather than decisively beat it (arctic-l C 0.865 ≈ anchor C
+   0.855, at ~2× footprint).
+2. **The mechanism finding (the pause-worthy result): F-030's "encoder-domain mismatch" is substantially
+   a whole-doc vector CONSTRUCTION artifact, not (only) a representation limit.** Same model, same
+   corpus, same queries, exact-NN: production 512/128 window-mean = 0.105; single-pass truncation@2048 =
+   0.655; chunk-MaxP = 0.855 — **equal to BM25's verbose R@10 (0.855, F-030)**. The incumbent separates
+   legal case documents fine at chunk granularity; averaging ~15+ window vectors into one whole-doc
+   vector destroys the signal.
+3. Query-shape secondary finding: kw is weak for every model and condition (max 0.395) — dense needs the
+   verbose citing sentence. Mirrors F-030's BM25-verbosity-monotonicity on the dense side.
+4. Open tension to reconcile at resume: engine E5-D measured chunk granularity adding only +3.0 pts on
+   the RAG surface, while offline chunk-dense reaches 0.855 R@10 — E5-D measured a fused end-metric, not
+   the isolated chunk-dense leg, and engine-side `chunk_vector` construction/coverage may differ. If the
+   engine's chunk-dense leg does NOT reproduce ~0.85-class recall, that is an engine-side gap
+   (639-adjacent), not a model question.
+5. Model-swap question: provisionally NOT the lever — construction is. This re-scopes the remaining
+   candidate screen (see §691 coordination).
+
+### 691 coordination — this lane is PAUSED (founder directive, 2026-07-10)
+
+- A parallel worktree (**tempdoc 691 takeover session**) is implementing **late chunking**
+  (arXiv:2409.04701) for enrichment-embedding dedup — its E-5 design derives the whole-doc vector as a
+  projection of chunk vectors from a **single native long-context pass**, i.e. exactly the construction
+  this doc's **W2 condition** measures. This screen's anchor W2/C results (0.105 → 0.745/0.855) are
+  direct quality evidence for that design.
+- **691 is the presumptive vehicle for this doc's Branch FIX.** The fix these numbers point at is a
+  vector-construction change on the incumbent model — no model swap, no footprint change, no D-003
+  exposure — which lands naturally in 691's late-chunking implementation.
+- To avoid colliding implementations and register merge conflicts (691's branch also edits the
+  search-quality register), **this lane stops before Phase 5/6**: no decision-protocol verdict, no
+  register updates, no scoped-claim drafting, no follow-on stub — those re-open after 691 merges, when
+  this branch is rebased/merged onto post-691 main.
+- **On resume, the remaining work re-scopes:** if 691's late-chunked incumbent holds W2/C-level quality
+  engine-side, the candidate screen's question ("which model?") collapses to a confirmation pass and
+  Branch FIX becomes "adopt 691's construction + re-baseline"; the unmeasured candidates matter only if
+  691's engine-side numbers do NOT reproduce the offline construction gain. The anchor-fav attribution
+  control and the E5-D tension (reading 4 above) are the first two items to close at resume.
+- **Scratch kept intact for resume** (`tmp/708-bakeoff/`: venv + all 7 model snapshots, ~12 GB; datasets
+  regenerated and signature-verified) — no teardown, no re-download needed. Result JSONs are the durable
+  record regardless.
 
 ### Open founder decisions this plan surfaces
 
