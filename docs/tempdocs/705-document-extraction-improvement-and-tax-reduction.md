@@ -219,6 +219,12 @@ engine is not the bottleneck; knowing the truth about the engine is."
 
 ### Sidegoal (founder-added 2026-07-10): make scanned-PDF baseline OCR fast — evidence + design
 
+> **SPUN OUT → tempdoc 706** (`706-scanned-pdf-ocr-throughput.md`), at founder direction, per
+> 686's own out-of-scope rule ("fixing whatever the measurement finds" is a new tempdoc) and this
+> doc's boundary (705 owns the question, not mechanism builds). 706 owns the design +
+> implementation + the timebox/orphan liveness fix; the evidence record below stays here as
+> takeover history. Add to the routing table: OCR execution performance → **706**.
+
 The 686 run showed the extraction cost tax concentrates in scanned PDFs (minutes/doc, serial).
 Founder directed a speedup investigation. Three evidence legs (code map with `file:line`, external
 research, local micro-benchmark on corpus scans) produced a converging picture:
