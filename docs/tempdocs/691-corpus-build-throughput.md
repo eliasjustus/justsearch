@@ -945,3 +945,39 @@ it is the lower-risk, higher-value half. Two consequences:
   context-raise VECTOR win could even be measured independently of per-span chunks (a cleaner first
   A/B arm). VRAM: an 8192-token single pass on gte-base (~300M) is feasible on 12GB one-doc-at-a-time;
   measure latency/VRAM in the Phase-0-style spike.
+
+## Phase J — context-length A/B (2026-07-10, /plan Phase 4 first arm): F-030 VECTOR win reproduced live; late chunking is the OOM-safe vehicle
+
+Two clean-lifecycle pipeline builds on `mixed/legal-clerc-200` (198 docs / 200 queries, register
+signature `90d4300d…`, reused from the 708 worktree — no re-download), late chunking OFF, isolating
+the base embed-context effect. Scratchpad `691-ab/`.
+
+| Arm | embed context | vector nDCG@10 | hybrid nDCG@10 | comparable |
+|---|---|---|---|---|
+| A (baseline) | 2048 (prod) | **0.0597** | 0.5216 | True |
+| B | **8192** (`JUSTSEARCH_EMBED_CONTEXT_LENGTH`) | **0.3403** | 0.5344 | True |
+
+- **J-1. Harness validated:** Arm A reproduces the register baselines exactly (vector 0.060, hybrid
+  0.521) — like 708's Gate-0, our pipeline faithfully reproduces production.
+- **J-2. F-030 dense revival is REAL and reproduced live:** raising the embed context so long legal
+  docs embed in a SINGLE pass (instead of 512-token windows mean-pooled) lifts the whole-doc `VECTOR`
+  (dense) leg **0.0597 → 0.3403 (5.7×)**. This is the 708 finding (R@10 0.100→0.745; here the stricter
+  nDCG@10) reproduced in our own engine, CLS-on-distribution, late-chunking-independent. **This alone
+  is a shippable F-030 lever** (a config/default change), separable from the per-span chunk dedup.
+- **J-3. hybrid barely moves** (0.5216→0.5344, +0.013): on legal the fused default rides BM25, so the
+  dense revival surfaces in the `vector` leg / union-recall, not (yet) in fused nDCG. The win is a
+  representation-completeness gain (F-028 territory) more than a headline-hybrid gain — matches the
+  register's F-029/F-030 framing.
+- **J-4. KEY implementation finding — a naive base-context bump is OOM-UNSAFE; late chunking is the
+  fix.** Arm B logged 17 `Batch embedding failed … BFCArena requested 7.1 GB` events: the base batch
+  path put 8 × 8192-token docs in one ORT run (MAX_ORT_BATCH_SIZE=8), blowing even a 6144 MB arena.
+  The backfill's per-doc fallback (batch=1, ~0.9 GB) recovered them, so the index still single-passed
+  (0.34 is ~clean), but at a throughput cost. **`embedWithSpans` processes ONE parent at a time
+  (batch=1) by construction — so late chunking captures the single-pass VECTOR win WITHOUT the batch
+  OOM.** This is a second, independent reason late chunking (Phase 2) is the right vehicle, beyond the
+  chunk dedup: it is the OOM-safe path to the F-030 fix.
+- **J-5. Consequence for Phase 2:** implement the long-doc single-pass via the late-chunking path
+  (batch-1 `embedWithSpans` at a raised eligibility limit), NOT a global base-context bump (which
+  OOMs the batch path). The A/B to run next: late-chunking OFF vs ON at the raised limit on
+  legal-clerc, measuring vector + union-recall (the direct dense-leg / completeness signal) — plus
+  the per-span chunk quality question (I-2, CLS) that this VECTOR-only arm did not test.
