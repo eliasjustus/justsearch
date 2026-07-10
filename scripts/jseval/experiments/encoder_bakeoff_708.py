@@ -94,9 +94,21 @@ RECIPES: dict[str, dict] = {
     },
     "arctic-m-v2": {
         "hf_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
-        "trust_remote_code": False,
+        "trust_remote_code": True,  # mGTE architecture (same family as incumbent)
         "pooling": "cls",
         "query_prefix": "query: ",
+        "doc_prefix": "",
+        "native_ctx": 8192,
+    },
+    # W1 attribution control: the incumbent under the candidate-favorable
+    # text-window treatment (proper [CLS]/[SEP] per window) instead of the
+    # production raw id slices.  Separates "model can't represent legal text"
+    # from "production windows CLS-pool a non-[CLS] token on windows 2+".
+    "anchor-fav": {
+        "hf_id": "Alibaba-NLP/gte-multilingual-base",
+        "trust_remote_code": True,
+        "pooling": "cls",
+        "query_prefix": "",
         "doc_prefix": "",
         "native_ctx": 8192,
     },
@@ -110,6 +122,9 @@ RECIPES: dict[str, dict] = {
     },
     "me5-large": {
         "hf_id": "intfloat/multilingual-e5-large",
+        # local_dir download (HF cache symlink creation fails on this host for
+        # this repo — Windows privilege); load_path overrides hf_id at load time
+        "load_path": "tmp/708-bakeoff/local-models/multilingual-e5-large",
         "trust_remote_code": False,
         "pooling": "mean",
         "query_prefix": "query: ",
@@ -194,13 +209,14 @@ class Encoder:
         self.recipe = recipe
         self.device = device
         self.batch_size = batch_size
+        load_id = recipe.get("load_path", recipe["hf_id"])
         self.tokenizer = AutoTokenizer.from_pretrained(
-            recipe["hf_id"], trust_remote_code=recipe.get("trust_remote_code", False)
+            load_id, trust_remote_code=recipe.get("trust_remote_code", False)
         )
         if recipe.get("padding_side"):
             self.tokenizer.padding_side = recipe["padding_side"]
         self.model = AutoModel.from_pretrained(
-            recipe["hf_id"],
+            load_id,
             trust_remote_code=recipe.get("trust_remote_code", False),
             torch_dtype=torch.float32 if device == "cpu" else torch.float16,
         ).to(device)
