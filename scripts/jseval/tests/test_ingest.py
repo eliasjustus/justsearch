@@ -14,6 +14,7 @@ from jseval.ingest import (
     _ensure_materialized,
     _get_indexed_doc_count,
     _iter_corpus_jsonl,
+    _raw_corpus_dir,
     _source_signature,
     _wait_for_backpressure,
     _watcher_settle_timeout,
@@ -335,3 +336,168 @@ def test_ensure_materialized_plain_axis_unaffected(tmp_path, monkeypatch):
     assert n == 3  # 2 docs + sentinel
     assert len(list(cache.glob("*.txt"))) == 3
     assert not list(cache.glob("*.png"))
+
+
+# ---------------------------------------------------------------------------
+# _raw_corpus_dir / prepare_corpus raw-files branch (tempdoc 686)
+#
+# A local (golden/mixed) dataset whose metadata.json carries {"raw_files": true} has
+# no corpus.jsonl and is never materialized — ingest points the watched root directly
+# at the dataset's own corpus-dir/, counting files of ANY extension.
+# ---------------------------------------------------------------------------
+
+def _seed_raw_dataset(base: Path, name: str, raw_files: bool | None = True) -> Path:
+    """Seed a local dataset dir with a metadata.json and an (empty) corpus-dir/.
+
+    `raw_files=None` omits the key entirely (as opposed to writing it `false`).
+    Returns the corpus-dir path.
+    """
+    import json
+    root = base / name
+    root.mkdir(parents=True, exist_ok=True)
+    meta: dict = {} if raw_files is None else {"raw_files": raw_files}
+    (root / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    corpus_dir = root / "corpus-dir"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    return corpus_dir
+
+
+class TestRawCorpusDir:
+    """Unit coverage for `_raw_corpus_dir` in isolation from `prepare_corpus`."""
+
+    def test_raw_files_true_returns_corpus_dir(self, tmp_path, monkeypatch):
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        corpus_dir = _seed_raw_dataset(base, "mixed/raw-test-x", raw_files=True)
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        assert _raw_corpus_dir("mixed/raw-test-x") == corpus_dir
+
+    def test_raw_files_false_returns_none(self, tmp_path, monkeypatch):
+        """metadata.json present but raw_files explicitly false → non-raw path."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        _seed_raw_dataset(base, "golden/not-raw-x", raw_files=False)
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        assert _raw_corpus_dir("golden/not-raw-x") is None
+
+    def test_raw_files_key_absent_returns_none(self, tmp_path, monkeypatch):
+        """metadata.json present but without a raw_files key at all → non-raw path."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        _seed_raw_dataset(base, "golden/no-key-x", raw_files=None)
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        assert _raw_corpus_dir("golden/no-key-x") is None
+
+    def test_no_metadata_json_returns_none(self, tmp_path, monkeypatch):
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        (base / "golden" / "plain-x").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        assert _raw_corpus_dir("golden/plain-x") is None
+
+    def test_non_golden_mixed_dataset_returns_none(self, tmp_path, monkeypatch):
+        """BEIR / unknown dataset names are never raw — short-circuits on prefix before
+        touching disk at all (base dir is patched but never consulted)."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        assert _raw_corpus_dir("beir/scifact") is None
+        assert _raw_corpus_dir("scifact") is None
+
+
+class TestPrepareCorpusRawBranch:
+    """`prepare_corpus` behavior for raw_files=true datasets."""
+
+    def test_raw_dataset_ingests_without_materializing(self, tmp_path, monkeypatch):
+        """2 pdfs + 1 nested docx → corpus_doc_count=3, ingest_and_wait pointed at the
+        dataset's corpus-dir, materialization never invoked."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        corpus_dir = _seed_raw_dataset(base, "mixed/raw-test-x", raw_files=True)
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        (corpus_dir / "a.pdf").write_bytes(b"%PDF-fake-a")
+        (corpus_dir / "b.pdf").write_bytes(b"%PDF-fake-b")
+        nested = corpus_dir / "sub"
+        nested.mkdir()
+        (nested / "c.docx").write_bytes(b"fake-docx-c")
+
+        with patch("jseval.ingest.ingest_and_wait") as mock_ingest, \
+                patch("jseval.ingest._ensure_materialized") as mock_materialize:
+            mock_ingest.return_value = {"readiness_passed": True, "docs_indexed": 3}
+
+            result = prepare_corpus(
+                "mixed/raw-test-x", IngestConfig(base_url="http://localhost:33221"),
+            )
+
+        mock_materialize.assert_not_called()
+        mock_ingest.assert_called_once()
+        args, kwargs = mock_ingest.call_args
+        assert args[1] == corpus_dir
+        assert kwargs["corpus_doc_count"] == 3
+        assert result["readiness_passed"] is True
+
+    def test_raw_dataset_empty_corpus_dir_raises(self, tmp_path, monkeypatch):
+        """corpus-dir exists but has zero files → FileNotFoundError, never reaches ingest."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        _seed_raw_dataset(base, "mixed/raw-test-empty", raw_files=True)  # corpus-dir stays empty
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        with patch("jseval.ingest.ingest_and_wait") as mock_ingest:
+            with pytest.raises(FileNotFoundError, match="empty corpus-dir"):
+                prepare_corpus(
+                    "mixed/raw-test-empty", IngestConfig(base_url="http://localhost:33221"),
+                )
+        mock_ingest.assert_not_called()
+
+    def test_raw_dataset_missing_corpus_dir_raises(self, tmp_path, monkeypatch):
+        """corpus-dir does not exist at all (never created) → also FileNotFoundError, not a
+        crash on rglob() against a missing path."""
+        import json
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        root = base / "mixed" / "raw-test-missing"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "metadata.json").write_text(json.dumps({"raw_files": True}), encoding="utf-8")
+        # corpus-dir intentionally NOT created.
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        with pytest.raises(FileNotFoundError, match="empty corpus-dir"):
+            prepare_corpus(
+                "mixed/raw-test-missing", IngestConfig(base_url="http://localhost:33221"),
+            )
+
+    def test_raw_dataset_explicit_corpus_dir_bypasses_raw_branch(self, tmp_path, monkeypatch):
+        """An explicit corpus_dir= argument bypasses the raw branch entirely, even for a
+        raw_files=true dataset — falls through to the existing explicit-dir behavior, which
+        counts only .txt/.png files (not the raw .pdf/.docx in the dataset's own corpus-dir,
+        which is never consulted)."""
+        from jseval import corpora
+        base = tmp_path / "datasets"
+        corpus_dir = _seed_raw_dataset(base, "mixed/raw-test-x", raw_files=True)
+        (corpus_dir / "a.pdf").write_bytes(b"%PDF-fake-a")  # would count as 1 via raw branch
+        monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
+
+        explicit_dir = tmp_path / "explicit"
+        explicit_dir.mkdir()
+        (explicit_dir / "doc1.txt").write_text("content")
+        (explicit_dir / "doc2.txt").write_text("content")
+
+        with patch("jseval.ingest.ingest_and_wait") as mock_ingest:
+            mock_ingest.return_value = {"readiness_passed": True, "docs_indexed": 0}
+
+            prepare_corpus(
+                "mixed/raw-test-x", IngestConfig(base_url="http://localhost:33221"),
+                corpus_dir=explicit_dir,
+            )
+
+        mock_ingest.assert_called_once()
+        args, kwargs = mock_ingest.call_args
+        assert args[1] == explicit_dir  # NOT the dataset's raw corpus-dir
+        assert kwargs["corpus_doc_count"] == 2  # .txt count, not the raw branch's file count

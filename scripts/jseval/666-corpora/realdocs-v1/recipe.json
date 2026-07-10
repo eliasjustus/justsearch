@@ -1,0 +1,8 @@
+{
+  "method": "fetch-realdocs-corpus",
+  "script": "scripts/search/fetch-realdocs-corpus.py",
+  "source": "govdocs1(000,001) + NapierOne tiny(PDF,DOCX,XLSX,PPTX)",
+  "seed": 686,
+  "n_docs": 620,
+  "tempdoc": "686"
+}
