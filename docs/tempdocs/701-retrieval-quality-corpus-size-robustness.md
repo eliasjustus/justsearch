@@ -1132,3 +1132,51 @@ is fully comparable, so the finding survives the caveat. Runs:
 - The crash-loop fix ships with this branch (PR #117). The observation about
   `CombinedEnrichmentBackfillOps` SPLADE-phase partial-write inconsistency is in the session shard.
 - P1 (10⁵–10⁶ diverse) stays parked under 639; this probe does not change that.
+
+## Probe evidence pointers & unverified assumptions (session-close, 2026-07-10)
+
+**Verified claims, each with its evidence pointer:**
+- **Fix commit:** the crash-loop guard + probe results are commit `c2d25aa` (branch
+  `worktree-624-scale-corpus`, PR #117); the CLERC `n_docs` fetcher is `aae9ea2`.
+- **Guard behavior:** `modules/worker-services/src/test/java/io/justsearch/indexerworker/loop/ops/EmbeddingBackfillOpsTest.java`
+  — empty-list / short-list (n−1) / null batch results; run
+  `./gradlew.bat :modules:worker-services:test --tests "*EmbeddingBackfillOpsTest*"` (was green at
+  commit time; full worker-services suite also green same session).
+- **Fix live-verified:** pre-fix, the wedged run sat at `embed_pct=0.0` for ~26 min with the AIOOBE
+  repeating ~1/s in `tmp/headless-eval-data/logs/worker.log`; post-fix (dist rebuilt via
+  `:modules:indexer-worker:installDist`), the same eval reached `embed_pct=48.2` at 63 s and both
+  evals completed end-to-end (exit 0). Progress artifacts are gitignored
+  (`scripts/jseval/tmp/701-probe/clerc-{200,4k}-{summary.json,progress.ndjson}`) — regenerate below.
+- **Byte-identical queries across sizes:** verified two ways — (1) live: Python set-comparison of
+  `queries.json` texts between `datasets/mixed/legal-clerc-200` and `legal-clerc-4k` (equal, 200
+  each); (2) durable: `tests/test_corpus_fetch.py::test_fetch_clerc_sample_qrel_set_is_invariant_to_n_docs`
+  pins the seed-invariance property structurally.
+- **Reproduce the probe from scratch** (fetches re-stream CLERC, ~25-60 min each):
+  `python -m jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200` ·
+  `python -m jseval corpus-fetch-clerc --name legal-clerc-4k --seed 666 --n-queries 200 --n-docs 4000` ·
+  then per corpus `python -m jseval run --dataset mixed/<name> --modes vector,lexical,splade,full
+  --pipeline --start-backend --clean`; buckets are in the run dir's
+  `projections/staged_recall_accounting.json`.
+
+**Unverified assumptions / deferred checks (do NOT treat as verified):**
+- **The crash-loop TRIGGER narrative is inferred, not proven.** "Empty batch result caused by the
+  backfill racing provider init after a worker restart" fits the log timeline (first AIOOBE at
+  01:27:40.53, embed encoder loaded 01:27:41.12) but was never reproduced in isolation; the loop
+  also persisted long after init. The FIX is trigger-agnostic (any null/size-mismatch routes to the
+  per-item fallback), so the guard's correctness does not depend on the narrative — but the true
+  upstream cause of the empty batch (and why the FIRST worker crashed mid-enrichment at all) is
+  unowned. Deferred check: reproduce an empty `embedDocumentBatch` return in isolation.
+- **The `ann_proof` anomaly is unexplained.** The 4k run's `full` mode reported
+  `dense_vector_evidence_available_rate=0.455` DESPITE `--pipeline` waiting for ~100% enrichment
+  coverage before querying. Why qrel-relevant dense evidence was unavailable for half the queries on
+  a pipeline-complete index is an open question — and possibly *related to the dense-dead finding*
+  (long legal docs → truncation/chunk-mapping?). Whoever runs the dense-legs attribution should
+  answer this first; it may be the same root cause.
+- **Enrichment speed at 4k** (~19 min, far under the extrapolated estimate) is assumed to be
+  "distractor docs chunk much lighter than the qrelled cases" — per-corpus chunk counts were not
+  recorded; unverified.
+- **The dense-legs mechanism** (verbose citing-sentence queries) remains a working hypothesis —
+  stated as such in F-029; NOT established. Note for the pickup agent: an in-flight tempdoc
+  `702-dense-fusion-score-calibration-euclidean-cosine` (main checkout, uncommitted at close) appears
+  to investigate a fusion-score-calibration mismatch — a candidate root cause this probe did not
+  consider. Coordinate before starting attribution work.

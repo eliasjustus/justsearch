@@ -57,6 +57,13 @@ the bottleneck; *knowing the truth about the engine* is.
 
 ### Pillar 5 first — the dense-legs attribution (gates everything; ~$0; 678's lane)
 
+> COORDINATION (2026-07-10, session close): an in-flight tempdoc
+> `702-dense-fusion-score-calibration-euclidean-cosine` existed in the main checkout (uncommitted)
+> when this doc was written — its title suggests a fusion-score-calibration (euclidean-vs-cosine)
+> mismatch hypothesis for the dead dense leg, a candidate cause the (a)/(b) split below does not
+> cover. Whoever picks up pillar 5 must read that doc first; 701's unexplained `ann_proof`
+> anomaly (dense evidence 0.455 on a pipeline-complete index) may share the same root.
+
 Why are dense+SPLADE near-dead on CLERC-shaped legal retrieval (R@10 ≤0.15 at 198 docs, fully
 comparable)? Two live explanations with OPPOSITE consequences: (a) **product gap** — verbose
 citing-sentence queries dilute embeddings (678's mechanism at its extreme, compounded by very long
