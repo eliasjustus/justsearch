@@ -38,8 +38,21 @@ import org.junit.jupiter.api.condition.EnabledIf;
 class SpladeIndexContentCrashHarnessTest {
 
   private static final Path REPO_ROOT = resolveRepoRoot();
-  private static final Path TOKENIZER_PATH =
-      Path.of("F:/justsearch-public/models/splade/naver-splade-v3/tokenizer.json");
+  // Models live in the MAIN checkout; from a worktree that's up to ~7 levels above this
+  // module, so walk like the bounded-tokenize test does instead of hardcoding a machine path.
+  private static final Path TOKENIZER_PATH = resolveTokenizerPath();
+
+  private static Path resolveTokenizerPath() {
+    Path p = Path.of("").toAbsolutePath();
+    for (int i = 0; i < 8 && p != null; i++) {
+      Path tok = p.resolve("models/splade/naver-splade-v3/tokenizer.json");
+      if (Files.exists(tok)) {
+        return tok;
+      }
+      p = p.getParent();
+    }
+    return Path.of("models/splade/naver-splade-v3/tokenizer.json");
+  }
   private static final Path INDEX_DIR =
       REPO_ROOT.resolve("tmp/headless-eval-data/index/default/indices/g-20260710-072554");
   private static final Path PROGRESS =
