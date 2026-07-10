@@ -77,6 +77,15 @@ corpus with progressively reduced/reformulated queries through the staged-recall
 dense recall recovers with short queries, it's (a)-flavored with a known lever; if not, doc-side
 (length/chunking) attribution follows.
 
+> RESOLVED (2026-07-10, same-day follow-up): the pillar-5 attribution CLOSED — verdict
+> **encoder-domain mismatch** (Branch B). Full campaign + matrix: tempdoc 678 §Pillar-5
+> (E5-A..E5-C-v2); eliminated in order: gate/fusion (702 exonerated, eval-gated) -> query length ->
+> doc granularity (+3pts only) -> query naturalness. The (a)/(b) split below is superseded: neither
+> pure (a) nor (b) — the dense/SPLADE encoders do not separate legal-shaped content at any query
+> shape. Pillar 1's design consequence is owned by tempdoc 707 (Branch B: no corpus design flatters
+> dense; EN-legal member measures the engine as-is). The encoder question is a NEW unowned piece —
+> a model/representation investigation (636/580-adjacent), not corpus or query work.
+
 ### Pillar 1 — hybrid corpus construction (the measuring stick; extends 635)
 
 Correct data needs a corpus satisfying SEVEN requirements at once: (a) contamination-free,

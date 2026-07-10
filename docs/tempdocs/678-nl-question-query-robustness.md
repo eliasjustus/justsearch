@@ -220,3 +220,36 @@ lands on encoder-domain fit (a model/representation question → routes toward t
 
 Ruled out so far across E5-A→D: gate/fusion capping (E5-A/B), query length alone at the keyword
 operating point (E5-C), and doc granularity alone (E5-D).
+
+### E5-C-v2 RESULTS + FINAL ATTRIBUTION VERDICT (2026-07-10, same session — campaign CLOSED)
+
+Variant `mixed/legal-clerc-200-llm`: 200/200 queries rewritten by the local LLM
+(Qwen3.5-9B, temp=0, seed=42, prompt sha-recorded, 0 fallbacks) into coherent short legal
+search phrases (spot-checked: real case-name/topic queries, not keyword bags). Run
+`20260710T134438_mixed_legal-clerc-200-llm`, four modes, all `comparable=True`.
+
+**The completed attribution matrix (raw pre-fusion R@10, same 198 docs + qrels throughout):**
+
+| Leg | verbose originals | keyword top-8 | LLM natural phrase |
+|---|---|---|---|
+| lexical | 0.855 | 0.630 | 0.780 |
+| **dense** | **0.100** | **0.145** | **0.145** |
+| splade | 0.150 | 0.165 | 0.145 |
+
+**FINAL VERDICT — Branch B: encoder-domain mismatch.** The dense leg is dead on CLERC-shaped
+legal retrieval at every query shape (verbose / keyword / natural-short), every granularity
+(whole-doc / chunk: E5-D +3.0 pts), and independent of gating (E5-A/B, 702). The mechanism is the
+embedding representation itself: gte-multilingual does not separate legal case documents by
+citation-relevant content. Eliminated in order: gate/fusion (E5-A/B) → query length (E5-C) →
+doc granularity (E5-D) → query naturalness (E5-C-v2). SPLADE shows the same profile (≤0.165
+everywhere) — the learned-sparse encoder shares the domain gap.
+
+**Routing:** the encoder-domain question is NOT a 678 query lever and NOT a corpus question —
+it routes to a model/representation investigation (636/580 territory; candidate shapes: domain
+eval of alternative encoders, passage-level matching designs). 678's original verbose-question
+gap (69→90% on battlefield corpora) remains real for corpora where dense WORKS — the lever design
+here stays open for those, with E5-C's per-leg constraint (BM25 needs verbosity) binding. Tempdoc
+707 (pillar-1 corpus) proceeds on its Branch B: the EN-legal member measures utility on the
+engine as it is (lexical-carried, per E5-D the RAG chunk surface reaches 0.68 in ~3 docs);
+no corpus design flatters dense. Secondary confirmation: lexical is monotonic in verbosity on
+CLERC (0.630 keyword → 0.780 natural → 0.855 verbose).

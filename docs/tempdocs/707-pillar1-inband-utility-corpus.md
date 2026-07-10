@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "open — DESIGN (2026-07-10). Substrate decision RATIFIED by founder 2026-07-10 (real licensed legal+email distractor mass, EN + DE members, fabricated injected fact-chains as gold — option 1 of 704 pillar 1's three families). Attribution inputs from the 678 §Pillar-5 campaign are folded in (E5-A→D); ONE input still pending: the E5-C-v2 (llm-reduced natural-query) verdict, which forks §Query construction only — both branches are designed below, pick on the verdict. No implementation yet; no spend authorized here (the ~$3 smoke and the ~$60-90 powered run remain founder gates, 624 §Step-2 definition)."
+status: "open — DESIGN (2026-07-10). Substrate decision RATIFIED by founder 2026-07-10 (real licensed legal+email distractor mass, EN + DE members, fabricated injected fact-chains as gold — option 1 of 704 pillar 1's three families). Attribution inputs from the 678 §Pillar-5 campaign are folded in (E5-A→D); The E5-C-v2 verdict LANDED same day: BRANCH B (encoder-domain mismatch — dense dead at every query shape; see 678 §Final attribution verdict). §Query construction proceeds on Branch B; the encoder question routes to its own investigation, not here. No implementation yet; no spend authorized here (the ~$3 smoke and the ~$60-90 powered run remain founder gates, 624 §Step-2 definition)."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -62,7 +62,7 @@ happens on THIS corpus or not at all.
   at 10⁴ is bounded by 691's throughput work; the 700 escalation fix (merged #122) protects the
   ingest from poison-pill stalls.
 
-## Query construction — forked on the pending E5-C-v2 verdict (both branches pre-designed)
+## Query construction — RESOLVED to Branch B (E5-C-v2 verdict, 2026-07-10)
 
 E5-C proved query verbosity is a *load-bearing variable*, not a nuisance: BM25 LOSES 22.5 recall
 points under keyword reduction on legal text, while dense stayed dead at both operating points.
