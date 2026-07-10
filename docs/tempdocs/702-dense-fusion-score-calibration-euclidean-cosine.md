@@ -1,7 +1,7 @@
 ---
 title: "Dense fusion score-calibration: the EUCLIDEAN vector field vs COSINE-calibrated arbitration thresholds — fix + re-eval the +125% arbitration"
 type: tempdoc
-status: "planned — diagnosis code+bytecode-verified; a no-reindex fix exists; MUST be eval-gated (it moves the shipped tempdoc-636 arbitration). 2026-07-10 (second pass, §B): pre-implementation verification pass re-confirmed every anchor at source AND found the fix plan incomplete — the low-signal 0.40 default has a SECOND, production-authoritative site (ResolvedConfigBuilder.java:1481) the original plan missed; corrected constants derived (0.5→1/3, 0.40→0.294 at both sites); bounded implementation plan §B.4 ready for a Sonnet implementer; eval gate concretized §B.5; pillar-5 scope boundary recorded §B.6 (recalibration cannot move raw leg recall — pre-gate vs post-fusion must be measured separately)"
+status: "IMPLEMENTED + EVAL-GATED PASS 2026-07-10 (worktree 702-dense-calibration, NOT merged — awaiting founder ship call). Option A implemented per §B.4 (both default sites recalibrated 0.5→1/3 and 0.40→0.294, fixtures aligned, CalibrationConstantsTest pins the derivation; commits e300ed4+4557cd8; build + module tests green). §B.5 eval EXECUTED (§B.7): two-arm A/B vs merge-base f4889d1, 6 clean-lifecycle runs — arbitration firing MATERIALLY UNCHANGED (needle 14/14, scifact 23/22, enron 49/49), nDCG deltas non-significant (needle bit-identical; scifact −0.0056 p=0.254 with R@10 bit-equal; enron −0.0016 p=0.529), all comparable=True → the pre-registered falsifier resolves to CORRECTNESS-ONLY CLEANUP, SHIP. Interrogated why: the miscalibration is LATENT on in-band corpora (dense top-1 clears even the wrong gate); its real bite is expected on weak-dense/CLERC-shaped corpora — measured next by 678 §Pillar-5 E5-B on this branch. Earlier same day (second pass, §B): verification pass found the fix plan incomplete — the low-signal default has a SECOND production-authoritative site (ResolvedConfigBuilder.java:1481); corrected constants derived §B.3. [was: planned — diagnosis code+bytecode-verified]"
 created: 2026-07-10
 updated: 2026-07-10
 related: [636, 268, 640]
@@ -163,3 +163,37 @@ alpha). Therefore F-029's raw dense-death on CLERC is NOT explained by this bug 
 the pillar-5 experiment (designed in tempdoc 678 this session) must measure **pre-gate
 leg recall and post-fusion recall separately**, and its post-fusion measurements should
 run on the post-702 engine to avoid measuring a known-miscalibrated gate.
+
+### B.7 Eval gate RESULTS (2026-07-10, §B.5 executed) — falsifier resolves to "correctness-only cleanup, ship"
+
+Two-arm A/B, six runs, same machine/session: branch (`4557cd8`) vs merge-base baseline
+(`f4889d1`, detached worktree `702-baseline-main`), each arm a full clean lifecycle
+(`jseval run --modes hybrid --pipeline --start-backend --clean`); arbitration firing counted
+from the worker log (`leg-arbitration: alpha` line, `HybridSearchOps.java:467`); needle
+identity-verified (corpus signature `1ade3579…` = register). Run dirs:
+`<worktree>/scripts/jseval/tmp/eval-results/20260710T03*` both trees.
+
+| Corpus | base nDCG@10 | branch nDCG@10 | Δ (paired p) | base firing | branch firing |
+|---|---|---|---|---|---|
+| golden/needle-burial-v1 (20q) | 0.8386 | 0.8386 | **bit-identical** | 14/20 | 14/20 |
+| beir/scifact (300q) | 0.7565 | 0.7510 | −0.0056 (p=0.254, n.s.; **R@10 Δ 0.0000, p=1.0**) | 23/300 | 22/300 |
+| mixed/enron-qa (300q) | 0.7205 | 0.7189 | −0.0016 (p=0.529, n.s.) | 49/300 | 49/300 |
+
+**Verdict per the pre-registered falsifier: arbitration firing-rate is materially UNCHANGED
+(±1 query across 620), nDCG deltas are non-significant with retrieval sets identical
+(scifact R@10 bit-equal) → correctness-only cleanup — SHIP (removes a latent trap), no
+non-inferiority question arises.** All six runs `comparable=True`.
+
+**Why unchanged (interrogated, not assumed):** on in-band corpora the dense top-1 score
+virtually always cleared even the wrong, stricter effective gate (cos ≥ 0.5), so the
+miscalibration was *latent* there — needle is bit-identical across arms because no gate
+decision flipped. Where the wrong thresholds plausibly bind is weak-dense corpora
+(CLERC-shaped legal text: the low-signal gate's effective cos ≥ 0.25 misclassifying and
+capping the dense leg) — exactly the pillar-5/E5-B measurement (678 §Pillar-5), which must
+run on THIS branch's engine. The fix's expected payoff is there, not on these three corpora;
+these three establish it costs nothing where the engine already works.
+
+Residue: `jseval relevance-gate --data-dir tmp/eval-results` exited 2 ("no eval-results run
+with summary.json") against runs that demonstrably have summary.json — a data-dir layout
+expectation mismatch, not investigated (out of scope; the mandated A/B protocol is satisfied
+by the paired runs). Logged to the observations shard.
