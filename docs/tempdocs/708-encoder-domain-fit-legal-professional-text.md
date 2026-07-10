@@ -518,6 +518,38 @@ Gate 0 anchor reproduction (the harness's own correctness proof against a regist
 measurement), corpus-signature verification on every dataset, smoke self-checks, paired sign tests for
 ordering claims, and register cross-checks. No UI surface; no dev-stack validation needed by design.
 
+## Execution log (2026-07-10, founder go-ahead received — same session)
+
+### Phases 0–3: environment, data, harness, Gate 0 — COMPLETE
+
+- **Phase 0:** scratch venv `tmp/708-bakeoff/venv` (Python 3.12.13; torch 2.13.0+cu126,
+  `cuda.is_available()=True`; transformers 4.57.6; sentence-transformers 5.6.0; ir-measures; numpy).
+  `HF_HOME=tmp/708-bakeoff/hf-cache`. GPU free apart from desktop load (~2.5 GB/12 GB) — no contention.
+  All 7 model snapshots downloaded to scratch (two needed an `HF_HUB_DISABLE_SYMLINKS=1` retry — Windows
+  symlink privilege; nothing entered `models/` or git).
+- **Phase 1:** `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200` → 198 docs /
+  200 queries; `corpus_signature()` = `90d4300d…baf1` — **MATCH** with the register (byte-identical corpus
+  to the one F-030 measured). `corpus-query-variant --variant keyword` → `legal-clerc-200-kw` (top_k=8,
+  0 fallbacks — same construction as F-030's kw shape).
+- **Phase 2:** harness committed (`scripts/jseval/experiments/encoder_bakeoff_708.py`, commit 4655adf).
+  Smoke (12 docs, anchor, GPU): runs end-to-end, non-degenerate ranking.
+- **Phase 3 — GATE 0 PASSED.** Anchor (gte-multilingual-base, exact production W1 recipe: raw id windows
+  512/128 + tail-merge, CLS per window, per-window L2, unweighted mean, L2):
+
+| Anchor condition | R@10 | R@20 | R@100 | nDCG@10 | F-030 engine value | Δ |
+|---|---|---|---|---|---|---|
+| W1 verbose | **0.105** | 0.235 | 0.775 | 0.0611 | R@10 0.100 (dense leg) | +0.005 |
+| W1 kw | **0.150** | 0.230 | 0.625 | 0.0692 | R@10 0.145 | +0.005 |
+
+  Both within ±0.05 (actual Δ = 0.005). The offline nDCG@10 0.0611 also matches the register's
+  engine-measured `vector`-mode 0.060 (666 baseline) to within noise — triple-consistency. The harness
+  measures what the engine measures; candidate deltas are interpretable. (Run JSONs:
+  `tmp/eval-results/708-bakeoff/anchor_W1_{verbose,kw}.json`, corpus-signature-bound.)
+
+  Early observation (not a verdict): anchor R@100 0.775 verbose — the gold IS in the incumbent's top-100
+  for ~78% of queries; the death is concentrated at the top of the list, which the funnel-and-judge
+  frame (the R@100/R@20 metrics) was designed to see.
+
 ### Open founder decisions this plan surfaces
 
 1. **Gray-zone adjudication** (if the best candidate lands 0.3–0.6 R@10).
