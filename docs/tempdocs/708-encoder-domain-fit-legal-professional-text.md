@@ -1,7 +1,7 @@
 ---
 title: "Encoder-domain fit on legal/professional text: can any locally-runnable multilingual embedding (and/or learned-sparse) model separate legal-shaped documents by content — the F-030 follow-up (dense R@10 ≤0.145 and SPLADE ≤0.165 at EVERY query shape and granularity on CLERC)"
 type: tempdocs
-status: "open — STUB filed 2026-07-10 at founder request; investigation authorized to proceed through takeover → theorize → design → plan (NO implementation, NO model-swap shipping, NO spend beyond local compute without a separate go-ahead). Owner question spawned by F-030 (search-quality register) / tempdoc 678 §Final attribution verdict; named a new unowned piece in 704's pillar-5 resolution note."
+status: "open — takeover→theorize→design→plan COMPLETE 2026-07-10 (takeover verdict: GO; design + 6-phase plan settled below; bake-off NOT yet executed — awaits implementation go-ahead). Originally a STUB filed 2026-07-10 at founder request (NO implementation, NO model-swap shipping, NO spend beyond local compute without a separate go-ahead). Owner question spawned by F-030 (search-quality register) / tempdoc 678 §Final attribution verdict; named a new unowned piece in 704's pillar-5 resolution note."
 created: 2026-07-10
 author: agent (Fable orchestration), filed at founder direction after the pillar-5 attribution campaign closed
 category: search-quality / dense-retrieval / model-selection / inference-runtime
