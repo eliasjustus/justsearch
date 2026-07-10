@@ -1,7 +1,8 @@
 ---
 title: "VDU extraction abstention gate: the vision model hallucinates plausible text on scans it cannot read, and that text is indexed as real document content with no confidence check anywhere on the output path"
 type: tempdocs
-status: "open — STUB, no design or implementation. A live-observed production correctness defect, not a speculative improvement: the evidence run is documented and reproducible (tempdoc 624, twenty-second pass, 2026-07-03). Register check at filing: 607 owns extraction ROUTING (which path a document takes), 671 owned OCR-skip reason-code truth, 672 owned VDU bootstrap wiring — no existing tempdoc owns extraction OUTPUT quality/abstention; this one does."
+status: "open — DESIGN SETTLED (2026-07-10, takeover session §Investigation + design pass): three-stage cheap-first cascade (input-legibility gate → same-call logprob/finish_reason/OCR-cross-check → seed-varied agreement probe) + new REJECTED_SUSPECT_TEXT outcome retaining baseline. Implementation not started; first implementation step is the live mmproj-logprobs probe. Original filing context: a live-observed production correctness defect (624 twenty-second pass, 2026-07-03); 607 owns routing, 671 reason-code truth, 672 wiring — this doc owns extraction OUTPUT quality/abstention."
+updated: 2026-07-10
 created: 2026-07-03
 updated: 2026-07-03
 author: agent retrospective (624 scan-battlefield session), filed by agent — STUB
@@ -72,3 +73,85 @@ scanned gov PDFs with genuine low-legibility pages; pinned manifest at
 `scripts/jseval/666-corpora/realdocs-v1/`, rebuild via `scripts/search/fetch-realdocs-corpus.py`).
 Complements `golden/synth-scan-v1` (adversarial synthetic) with REAL scan-quality diversity for
 whatever abstention gate this doc designs.
+
+## Investigation + design pass (2026-07-10, takeover session; design only — no implementation)
+
+Two evidence legs: a full code map of the VDU output path (file:line) and a survey of 2024-26
+VLM-OCR abstention practice (per this doc's own "survey, don't invent" note). Load-bearing findings:
+
+### What the code map established
+
+- **The only output check anywhere is blank/non-blank** (`VduBatchProcessor.java:239`, duplicated
+  worker-side `GrpcIngestService.java:669-676`). Confabulated fluent text passes trivially.
+- **No confidence signal crosses any hand-off**: logprobs are never requested from llama-server
+  (`OnlineModeOps.java:774-798` builds the request without `logprobs`; response parsing reads only
+  `message.content`, `:828`); `finish_reason` is not inspected on the non-streaming VDU path; no
+  image-legibility measure is computed pre-send (`ImagePreparer` is resize-only).
+- **The reusable evidence vocabulary exists and is never consulted post-VDU**:
+  `visual_extraction_evidence` (ocrMeanConfidence, low-confidence word counts, textQualityScore,
+  pagesMissingReadableText…) is persisted per-doc at routing time and read only by
+  `VisualRoutingDecision` — write-once, never re-read when VDU's output is accepted.
+- **`SUCCESS_TEXT` overwrites unconditionally** (content, preview, language, re-chunk, re-embed) —
+  there is NO outcome for "VDU attempted, output rejected, baseline retained"; `COMPLETED_EMPTY`
+  is reachable only when the model itself returns blank. The baseline a rejected output would fall
+  back to is the honest low/empty pre-VDU text — exactly this doc's "degrade to absence".
+- **Sampling is temperature-0 deterministic** (`SamplingParams.VDU`) — a naive re-sample repeats
+  the same hallucination; a consistency probe must vary seed/temperature explicitly.
+- **Pass 2 is not a check**: it summarizes Pass 1's own output, trusting it unconditionally.
+- **FE gap**: `PreviewController.computeTextProvenance` has no `COMPLETED_EMPTY` case — docs where
+  VDU ran-and-found-nothing silently display the pre-VDU provenance.
+
+### What the practice survey established
+
+- Instructed sentinel abstention ("output UNREADABLE") is a documented weak lever (AbstentionBench:
+  models confidently answer rather than abstain) — acceptable only as a free extra layer.
+- llama-server exposes per-token probabilities (`n_probs`; OAI-compat `logprobs` since PR #10783) —
+  near-zero marginal cost on the same call — but **behavior with mmproj/vision requests is
+  undocumented**; must be probed live before the design leans on it.
+- Cheap input gates are standard practice: Laplacian-variance blur scoring (ms-scale; a dedicated
+  2026 pre-VLM blur-gate paper reports F1≈0.98) and tesseract-confidence-as-proxy with
+  area-weighted aggregation.
+- Two-sample agreement (CE-OCR pattern: pairwise edit-distance entropy over re-extractions,
+  threshold ≈0.5, ~7% escalation rate reported) is the only surveyed signal that directly measures
+  confabulation rather than proxying for it; cost 2× inference, so reserve for the ambiguous band.
+- No open-source VLM-OCR pipeline ships a runtime confidence gate today (olmOCR defends input-side
+  via text-layer anchoring — inapplicable to pure scans); per-span confidence is a cloud-commercial
+  feature (Azure `logprobsConfidence`). This gate is ours to design; nothing to copy wholesale.
+
+### Proposed design: three-stage cheap-first cascade + an honest reject outcome
+
+**Stage 0 — input legibility gate (pre-send, ~ms):** compute Laplacian variance + contrast in
+`ImagePreparer` (already touches every pixel; near-free) and consult the persisted
+`visual_extraction_evidence`. CAUTION: OCR-failed-is-why-we're-here — the gate must key on
+"no textual signal present for anything" (blur/contrast floor), not "OCR confidence low", or it
+would defeat VDU's purpose. Below floor → do not call the model; record honest can't-read.
+
+**Stage 1 — same-call signals (free, on every VDU call):** request `logprobs` on the vision
+completion (first implementation step: live-probe that llama-server returns them for mmproj
+requests — undocumented); compute mean logprob + fraction-of-low-confidence-tokens; parse
+`finish_reason` (truncation ≠ clean completion). Also cross-check against the baseline when OCR
+produced words (word-overlap between VDU text and baseline OCR text — near-free, already on
+disk; wild disagreement where OCR read *something* is suspicious). Thresholds calibrated, not
+borrowed: `golden/synth-scan-v1` (360 docs, ~100% known-confabulated) vs the readable fixtures +
+`mixed/realdocs-v1` real scans (known-legible).
+
+**Stage 2 — agreement probe (2× cost, ambiguous band only):** re-run Pass 1 once with varied
+seed/temperature; normalized edit-distance agreement (CE-OCR); low agreement → reject. Expected
+to run on a small fraction of documents (survey anchor: ~7%).
+
+**Reject path (the vocabulary home):** new `VduUpdateOutcome.REJECTED_SUSPECT_TEXT` → worker
+branch that RETAINS baseline content (no overwrite, no re-chunk/re-embed), sets a new
+`VDU_STATUS` value (e.g. `REJECTED`), keeps the honest evidence trail (which stage rejected, the
+scores), and does not re-queue (poison-pill discipline as with PROCESSING). Prompt-level sentinel
+("UNREADABLE") added as a free extra signal feeding Stage 1, never load-bearing. Also fix the FE
+`COMPLETED_EMPTY` provenance fall-through as part of the same change (and give `REJECTED` a case
+from day one).
+
+**Verification plan:** synth-scan-v1 expect ≥~95% rejected (today: 0%); legible set expect
+low single-digit % false-abstain (product decision on the exact bar); reason-code/classifier
+tests in the 671 style (outcome injectivity); live-stack pass per `static-green ≠ live-working`.
+
+**Open questions for owner review:** (a) mmproj logprob support — probe first; the cascade
+degrades gracefully to Stages 0+2 if absent; (b) whether `REJECTED` warrants FE surfacing beyond
+provenance; (c) threshold governance — config (OcrRoutingConfig-style) vs constants with
+derivation comments.
