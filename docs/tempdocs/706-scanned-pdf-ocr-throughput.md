@@ -154,6 +154,106 @@ defers to existing infrastructure rather than duplicating it.
   50p at 300 DPI is affordable (~15-20s) — recommend reconciling toward the code defaults
   (30s/50p), fixing the `ConfigStore` fallback path, and making yaml the single authority.
 
+## Theorization (2026-07-10, pre-design breadth pass)
+
+Recorded before final design so the settled mechanism is chosen against, not instead of, the
+alternatives. Nothing here reopens the GO verdict; it widens the option space and names the
+assumptions the design rests on.
+
+### Alternative framings of the same problem
+
+1. **Latency vs throughput vs freshness.** The design optimizes per-document wall-time. But the
+   user-visible harm has a second component: extraction is a single-serial lane, so one 300s scan
+   blocks *every* document behind it — the stall taxes corpus freshness, not just the one file.
+   Two consequences: (a) the liveness fixes (budget + forceful kill) are valuable *independently*
+   of any speedup, because they bound the worst case the whole pipeline inherits; (b) per-page
+   parallelism attacks the worst-document latency, which is the right first target — but
+   document-level parallelism (N extractions concurrently) is the complementary lever left with
+   the deferred executor redesign. They compose; this doc deliberately takes only the first.
+2. **"Faster OCR" vs "OCR off the hot path".** A different shape entirely: index the document
+   immediately with whatever cheap extraction yields, and queue OCR as a background enrichment
+   that upgrades the document later — the pattern the VDU path already ships (idle auto-trigger +
+   batch mode, tempdoc 672). Ingest latency for scans becomes ~0 regardless of OCR speed;
+   the cost is searchable-but-empty documents until OCR lands, plus an update/re-index path.
+   Not this doc's scope (it changes indexing-job lifecycle surfaces), but it is the natural
+   *next* frame if scanned corpora grow, and the owned loop built here would serve that lane
+   unchanged. Worth remembering that this framing exists before anyone proposes heroics inside
+   the synchronous path.
+3. **Pay-per-index vs pay-once.** No extraction cache exists anywhere in the tree (verified by
+   grep). Blue/green schema migrations and `--clean`/`--reset` rebuilds re-pay full OCR for every
+   scanned document on every rebuild — a standing multiplier on whatever per-document cost
+   remains. A content-hash-keyed extraction cache (key must include engine + DPI + config
+   version) would make rebuild OCR ~free. Out of this doc's scope and possibly its own decision
+   (interacts with 691's throughput domain and store recoverability), but it may ultimately be
+   worth more than the speedup on corpora that get rebuilt often. Recorded so it isn't
+   rediscovered from scratch.
+
+### Alternative mechanisms considered (and why the owned loop still wins now)
+
+- **Configure Tika harder** (AUTO strategy, lower `ocrDPI`): no page cap, no budget, no
+  parallelism exists behind those knobs (verified §above); rejected for the same reasons as
+  before. AUTO's per-page selectivity is already covered by JustSearch's own
+  mixed-PDF selective path.
+- **In-process OCR via JNI (tess4j-style)**: spawn cost is measured at ~0.1s/page (~10%) — the
+  gain is small, and a native tesseract crash would take down the Worker JVM. Process-per-page is
+  not overhead to eliminate; it is the crash-isolation architecture working as designed. Rejected.
+- **A different OCR engine (ONNX-based PP-OCR-class det+rec models, or the PaddleOCR-VL /
+  DeepDoc candidates from 705 F5/F7)**: potentially faster *and* better than tesseract, GPU-
+  capable, and JustSearch already owns ORT session infrastructure (`modules/ort-common`) and a
+  model-distribution pipeline. Not now — it is a model-selection + quality-eval + distribution
+  project (374/705 territory, gated on the 686/677 evidence preconditions). The key structural
+  point: **the owned loop is what makes this future swap possible at all** — once the loop is
+  JustSearch's, the engine behind it becomes a pluggable seam; inside Tika it is unreachable.
+  Design should keep the per-page OCR call behind a minimal internal seam for that reason (a
+  method boundary is enough; no speculative abstraction — AHA applies).
+- **Page-level result streaming** (emit pages into the index as they finish): interacts with
+  document atomicity and the indexing job model; complexity >> value while whole-doc OCR is
+  15-20s. Rejected without prejudice.
+
+### Hidden assumptions worth naming (each is cheap to check during implementation)
+
+1. **Absolute tesseract quality is adequate** — the verification plan checks *parity* with the
+   old path, not adequacy; nobody has evaluated tesseract-at-300-GRAY accuracy on this corpus.
+   Adequacy is 705/686's question; this doc must only not regress it. (`--psm 6` for uniform
+   text blocks is likewise inherited from both existing paths, unevaluated — a possible future
+   quality lever, not touched here.)
+2. **Cores are idle during OCR** — measured true (686: near-zero CPU during stalls), and the
+   pool must stay bounded so it remains roughly true alongside enrichment.
+3. **Low-end hardware still wins** — a 4-core machine gets ~2 workers ≈ ~2×, not 10×; the >10×
+   headline is a 16-20-thread-machine number. Honest reporting should state speedup as a
+   function of workers.
+4. **Windows environment effects are second-order** — per-page temp PNG + txt/tsv churn invites
+   antivirus real-time scanning overhead per file; a per-document temp directory (one create,
+   one recursive delete) is cheaper and cleans up orphaned artifacts on kill. Native memory of
+   ~8 concurrent tesseract children (each can reach a few hundred MB on dense pages) sits
+   *outside* the JVM heap — worker-count choice should respect machine RAM, not just cores.
+5. **Out-of-order completion is handled** — parallel page results must be joined in page order,
+   and the `maxExtractedChars` cap means late-cancelling in-flight pages once the cap is hit
+   (waves or a completion-ordered collector; minor waste acceptable).
+
+### The recurring system shape (principle, not yet design)
+
+This is the third time JustSearch converts a rented lifecycle into an owned one: llama-server
+(`InferenceLifecycleManager`/`LlamaServerOps` — hung-process taskkill, zombie recovery, adoption)
+and ORT sessions (`ort-common` — session ownership, VRAM budgeting) preceded it. The shape:
+**an expensive external engine is invoked only for one bounded unit of work per call (one page,
+one inference), while JustSearch owns the loop, the budget, the parallelism, and the child
+lifecycle — including forceful termination.** Tika-internal OCR violates the shape (unbounded
+work per call, rented loop); this doc restores it for OCR. If a future gate or doc wants the
+invariant named: *no black-box call may own an unbounded amount of per-document work.* The
+liveness fix should consciously mirror the existing `LlamaServerOps` kill discipline rather than
+inventing a new one.
+
+### Sequencing option (de-risking, if wanted)
+
+The design can ship as one change, but it decomposes into three independently-verifiable slices
+with strictly increasing risk: **(1)** liveness only — `destroyForcibly` on interrupt + process-
+tree kill + aggregate budget (no behavior change on healthy docs, kills the worst UX harm);
+**(2)** waste removal — single spawn emitting `txt tsv`, drop the whole-file confidence re-OCR
+(pure cost removal, output identical); **(3)** engine swap — bypass Tika OCR, owned parallel
+loop at 300 GRAY (the >10×, and the only slice carrying quality-parity risk). If anything forces
+a partial ship, that is the order; slice 3 is where corrections A and B (§above) live.
+
 ### Verdict
 
 **GO — do it, and now.** This is the opposite case from 705's WAIT-FOR-EVIDENCE: the evidence
