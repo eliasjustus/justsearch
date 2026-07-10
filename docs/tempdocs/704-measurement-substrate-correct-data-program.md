@@ -63,6 +63,8 @@ the bottleneck; *knowing the truth about the engine* is.
 > mismatch hypothesis for the dead dense leg, a candidate cause the (a)/(b) split below does not
 > cover. Whoever picks up pillar 5 must read that doc first; 701's unexplained `ann_proof`
 > anomaly (dense evidence 0.455 on a pipeline-complete index) may share the same root.
+> Update (2026-07-10, post-close): that doc LANDED on main as PR #118 — it is committed, not
+> in-flight; read it before any pillar-5 work.
 
 Why are dense+SPLADE near-dead on CLERC-shaped legal retrieval (R@10 ≤0.15 at 198 docs, fully
 comparable)? Two live explanations with OPPOSITE consequences: (a) **product gap** — verbose
