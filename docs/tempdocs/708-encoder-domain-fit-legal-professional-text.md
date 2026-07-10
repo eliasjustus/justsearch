@@ -408,3 +408,121 @@ reproducible record of why. The only deletion candidate this doc could ever crea
 - **Second principle (from theorize, now with a home): capability-boundary claims.** A measured dead
   leg on a corpus family closes as a scoped public claim + register finding. Applies to any future
   domain-shaped collapse; no framework until a second instance exists.
+
+---
+
+## Implementation plan (2026-07-10, same session) — all remaining work
+
+Execution note: everything below is local-compute-only, no dev-stack requirement, no engine change.
+GPU use yields to any contending session (run CPU or wait). The `-llm` query shape is out of the
+decision matrix (design §Conditions); nothing here starts the dev stack.
+
+### Declared model downloads (hard-constraint disclosure — >1 GB items listed BEFORE any download)
+
+All fetched transiently into `tmp/708-bakeoff/hf-cache/` (gitignored scratch; deleted at close), never
+into the LFS `models/` tree, never committed. Approximate published-weight sizes:
+
+| Download | ~Size | >1 GB? |
+|---|---|---|
+| PyTorch wheel (cu12x or cpu) for the scratch venv | 2–2.7 GB | **yes** |
+| `Qwen/Qwen3-Embedding-0.6B` | ~1.2 GB | **yes** |
+| `Snowflake/snowflake-arctic-embed-l-v2.0` | ~1.1–2.3 GB | **yes** |
+| `BAAI/bge-m3` | ~2.3 GB | **yes** |
+| `intfloat/multilingual-e5-large` | ~1.1–2.2 GB | **yes** |
+| `Snowflake/snowflake-arctic-embed-m-v2.0` | ~0.6–1.2 GB | borderline |
+| `ibm-granite/granite-embedding-278m-multilingual` | ~0.6 GB | no |
+| `Alibaba-NLP/gte-multilingual-base` (anchor, torch weights) | ~0.6–1.2 GB | borderline |
+| CLERC corpus stream (transient HTTP, `corpus-fetch-clerc`) | collection-stream, GB-scale worst case | transient data, not a model |
+
+Total scratch budget ≈ 12–15 GB disk. Anchor ONNX cross-check uses the already-shipped
+`models/onnx/gte-multilingual-base/model.onnx` (resolves from the main checkout) — no download.
+
+### Phase 0 — environment (bounded, throwaway)
+
+1. Create `tmp/708-bakeoff/venv` (Python ≥3.11); install `torch`, `sentence-transformers`,
+   `ir-measures`, `numpy` (+ `onnxruntime`, `tokenizers` for the anchor cross-check). `HF_HOME` →
+   `tmp/708-bakeoff/hf-cache`.
+2. jseval invoked with `PYTHONPATH=<worktree>/scripts/jseval` (the known Windows worktree pitfall —
+   CLAUDE.md Common Pitfalls) for `corpus-fetch-clerc` / `corpus-query-variant` / `corpus_identity`.
+3. GPU check: if another session holds the GPU (dev stack up / VRAM busy), run CPU or defer — never
+   contend.
+
+### Phase 1 — data (reuse committed recipes; verify identity)
+
+1. `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200` → verify
+   `corpus_signature() == 90d4300d…baf1` (register). **Abort on mismatch** (measuring a different corpus).
+2. `jseval corpus-query-variant --dataset mixed/legal-clerc-200 --variant keyword` → the `-kw` queries.
+3. Defer the 4k fetch (`--n-docs 4000`, recipe `666-corpora/legal-clerc-4k`) until a survivor exists.
+
+### Phase 2 — harness (`scripts/jseval/experiments/encoder_bakeoff_708.py`, committed)
+
+1. Recipe registry per model: HF id + revision pin, pooling, prefixes/instruction strings, max ctx,
+   normalization — anchor entry hard-codes the production recipe (CLS, no prefixes, 2048 ctx,
+   512/128 window-mean per design §pinned).
+2. Conditions W1 (production-mirror window-mean), W2 (native-long-context single pass), C (500/50
+   chunk MaxP); query shapes verbose + kw; exact-NN cosine (numpy); metrics R@10/R@20/R@100 + nDCG@10
+   via `ir_measures`; per-query gold ranks for paired sign tests.
+3. Result JSON per (model × condition): recipe, corpus signature, metrics, ranks, device, wall-clock,
+   encode throughput (docs/s — feeds the 640-style footprint/latency table).
+4. Smoke: 5-doc/5-query self-check (signature validation, shape checks, rank determinism) before any
+   full run. No jseval-package edits, no new jseval deps.
+
+### Phase 3 — Gate 0 (anchor reproduction; blocks everything downstream)
+
+1. Run incumbent anchor: W1 × {verbose, kw}. **Accept:** R@10 within ±0.05 of F-030's 0.100 (verbose)
+   and 0.145 (kw).
+2. Optional drift bound: same texts through shipped `model.onnx` (onnxruntime CPU, FP32) on a 30-doc
+   subsample; cosine(torch, onnx) ≥ 0.99 expected.
+3. **On failure:** stop; diagnose direction (offline ≫ engine → engine-side recall loss, route as its
+   own 639-adjacent finding; offline ≪ engine → harness recipe bug). No candidate numbers are reported
+   from a failed-gate harness.
+
+### Phase 4 — candidate screen (the bake-off proper)
+
+1. Six candidates × {W1, W2, C} × {verbose, kw}; + uniform-instruction variants for Qwen3/arctic;
+   + bge-m3 sparse rider where cheap. Serial on one GPU (parallelism is pointless on a single device;
+   no subagent orchestration for compute — a `sonnet` implementation subagent MAY draft harness
+   boilerplate, but runs and evidence judgment stay in the implementing session).
+2. Record per-model footprint (fp16 est.) + throughput next to every quality number (640/657 duty).
+3. Apply decision bands (design §Decision protocol): SCOPE ≤~0.3 / FIX ≥~0.6 (or R@100≥0.85 ∧ R@10≥0.4) /
+   gray 0.3–0.6 → founder.
+
+### Phase 5 — survivors only
+
+1. 4k scale stress (fetch `legal-clerc-4k`; re-embed 3.8k distractors; same queries).
+2. Offline multilingual non-inferiority: `beir/scifact` (ir_datasets) + `mixed/miracl-de-2k` /
+   `mixed/miracl-fr-2k` (committed recipes; signatures `d6f4026b…` / `a145edfa…`). Non-inferiority =
+   candidate within noise of anchor on all three (paired sign test) — a legal win that costs MIRACL exits.
+
+### Phase 6 — verdict + closure (both branches legitimate)
+
+1. Write results tables + run pointers into this tempdoc; declare SCOPE / FIX / gray-zone-referral.
+2. **Update both registers before close** (process contract): search-quality register — new finding
+   (encoder bake-off result; answers this doc's question; W2-vs-W1 tells representation-limited vs
+   pooling-limited) + close/annotate the F-030 follow-up pointer; inference-runtime register — only if a
+   runtime-relevant fact surfaced (e.g. candidate throughput/ONNX-fidelity findings).
+3. **Branch SCOPE:** draft the scoped public claim (semantic legs contribute on diverse/multilingual —
+   MIRACL 0.85+ hybrid; legal-shaped retrieval is lexical-carried and served — F-030 RAG 0.68
+   gold-in-context in ~2.9 docs) for 659/RESEARCH.md wording approval (founder). Public-claims lane rules
+   apply: every number must trace to a run pointer.
+4. **Branch FIX:** write the follow-on plan STUB (do not execute): engine-authoritative jseval sweep with
+   the winner swapped in (build via `scripts/models/build-embedding.py` path + ONNX export parity check),
+   full register-baseline re-run, reindex/migration cost, 657 tier-economics delta, D-003 conformance
+   note. **Explicit founder go-ahead required** before any of it.
+5. Teardown: delete `tmp/708-bakeoff/` scratch (models + venv); `git status` guard that no model files
+   entered the tree; harness + results-summary stay committed.
+
+### Validation summary
+
+Gate 0 anchor reproduction (the harness's own correctness proof against a register-recorded engine
+measurement), corpus-signature verification on every dataset, smoke self-checks, paired sign tests for
+ordering claims, and register cross-checks. No UI surface; no dev-stack validation needed by design.
+
+### Open founder decisions this plan surfaces
+
+1. **Gray-zone adjudication** (if the best candidate lands 0.3–0.6 R@10).
+2. **Branch-FIX go-ahead** (engine sweep + reindex + 657 tier impact + register re-baselining).
+3. **Branch-SCOPE claim wording** for 659/RESEARCH.md (public claim, needs sign-off).
+4. Whether the `-llm` query shape should ever be re-added (needs dev-stack LLM; F-030 says it adds no
+   discrimination for dense — recommend leaving it out).
+5. GPU scheduling window if the machine is contended during the screen (~hours of encode time).
