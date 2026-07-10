@@ -320,22 +320,30 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
 @click.option("--source", required=True,
               help="Existing local dataset name, e.g. mixed/legal-clerc-200 or golden/needle-burial-v1.")
 @click.option("--variant", required=True,
-              type=click.Choice(("keyword",), case_sensitive=False),
-              help="Query transform to apply. Only 'keyword' (deterministic, LLM-free) exists today; "
-                   "the registry in corpus_query_variant.py is the extension point for e.g. 'llm-reduced'.")
+              type=click.Choice(("keyword", "llm-reduced"), case_sensitive=False),
+              help="Query transform to apply: 'keyword' (deterministic, LLM-free keyword extraction) "
+                   "or 'llm-reduced' (running-backend local-LLM natural-phrase rewrite; requires "
+                   "--api-url). The registry in corpus_query_variant.py is the extension point for "
+                   "further variants.")
 @click.option("--top-k", default=8, show_default=True, type=int,
-              help="Number of query terms kept by the keyword transform.")
+              help="Number of query terms kept by the keyword transform (ignored by llm-reduced).")
 @click.option("--suffix", default=None,
-              help="Output dataset name suffix (default: the variant's shorthand, e.g. 'kw' for 'keyword') "
-                   "-> datasets/<source>-<suffix>/.")
+              help="Output dataset name suffix (default: the variant's shorthand, e.g. 'kw' for "
+                   "'keyword', 'llm' for 'llm-reduced') -> datasets/<source>-<suffix>/.")
+@click.option("--api-url", default=None,
+              help="Running backend base URL (OpenAI-compatible /v1/chat/completions), e.g. "
+                   "http://127.0.0.1:33221. REQUIRED for --variant llm-reduced; REJECTED for "
+                   "--variant keyword (which is LLM-free by design).")
 @click.option("--datasets-dir", default=None, type=click.Path())
 @click.pass_context
-def cmd_corpus_query_variant(ctx, source, variant, top_k, suffix, datasets_dir):
+def cmd_corpus_query_variant(ctx, source, variant, top_k, suffix, api_url, datasets_dir):
     """Derive a query-variant dataset from --source (tempdoc 678 §Pillar-5 E5-C).
 
     Same corpus.jsonl + qrels/ as --source (copied verbatim), transformed queries.jsonl (and
-    queries.json, if present) -> datasets/<source>-<suffix>/. The E5-C query-shape sweep's
-    licensing-clean control: a pure function of the source dataset, no randomness/seed/LLM."""
+    queries.json, if present) -> datasets/<source>-<suffix>/. 'keyword' is the E5-C query-shape
+    sweep's licensing-clean control: a pure function of the source dataset, no randomness/seed/
+    LLM. 'llm-reduced' is the realistic-query-shape sibling: needs a running backend (--api-url)
+    to rewrite each verbose query into a short natural-language search phrase."""
     from .. import corpus_query_variant as cqv
     from .._paths import REPO_ROOT
 
@@ -345,11 +353,21 @@ def cmd_corpus_query_variant(ctx, source, variant, top_k, suffix, datasets_dir):
         raise click.UsageError(f"Source dataset directory not found: {source_dir}")
 
     variant = variant.lower()
+    if variant == "keyword" and api_url:
+        raise click.UsageError(
+            "--api-url is not used by the keyword variant (deterministic, LLM-free transform); "
+            "omit it."
+        )
+    if variant == "llm-reduced" and not api_url:
+        raise click.UsageError(
+            "--variant llm-reduced requires --api-url (the running backend's OpenAI-compatible "
+            "endpoint, e.g. http://127.0.0.1:33221)."
+        )
     resolved_suffix = suffix or cqv.VARIANT_SUFFIXES.get(variant, variant)
     dest_name = f"{source}-{resolved_suffix}"
     dest_dir = base / dest_name
 
-    meta = cqv.build_query_variant(source_dir, dest_dir, variant=variant, top_k=top_k)
+    meta = cqv.build_query_variant(source_dir, dest_dir, variant=variant, top_k=top_k, api_url=api_url)
     if ctx.obj.get("json"):
         click.echo(json.dumps(meta, indent=2))
     else:
