@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import ai.onnxruntime.OrtException;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
@@ -205,7 +206,7 @@ class LateChunkingEmbedBackfillOpsTest {
         .updateDocumentsBatch(argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-1")));
     verify(commitOps, times(1)).commitAndTrack(any());
     verify(log, times(1))
-        .info(anyString(), eq(1), eq(0), eq(0), anyLong(), anyLong());
+        .info(anyString(), eq(1), eq(0), eq(0), eq(0), anyLong(), anyLong());
   }
 
   @Test
@@ -264,7 +265,7 @@ class LateChunkingEmbedBackfillOpsTest {
     // The core of the tempdoc 691 Wave 0 visibility fix: the log fires with longDocDeferred=1 and
     // processed=failed=0, so an all-deferred cycle is not invisible.
     verify(log, times(1))
-        .info(anyString(), eq(0), eq(0), eq(1), anyLong(), anyLong());
+        .info(anyString(), eq(0), eq(0), eq(1), eq(0), anyLong(), anyLong());
   }
 
   @Test
@@ -315,6 +316,147 @@ class LateChunkingEmbedBackfillOpsTest {
     verify(indexingCoordinator, times(1))
         .updateDocumentsBatch(argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-bad")));
     verify(commitOps, times(1)).commitAndTrack(any());
+  }
+
+  @Test
+  @DisplayName(
+      "flag ON, GPU arena-OOM (wrapped RuntimeException): parent is DEFERRED like the long-doc"
+          + " case — no retry-count bump, stays PENDING, no failure escalation — because"
+          + " EmbeddingService#embedWithSpans wraps the raw OrtException in a RuntimeException")
+  void arenaOom_wrappedRuntimeException_deferredNotFailed() {
+    seedDoc(
+        "parent-oom",
+        "poison parent content",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+    seedChunkDoc("chunk-1", "parent-oom", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    OrtException arenaOom =
+        new OrtException(
+            "BFCArena::AllocateRawInternal: Available memory of 536870912 is smaller than"
+                + " requested bytes of 1073741824");
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
+
+    assertFalse(
+        result.hasProgress(),
+        "an arena-OOM-only batch must NOT report progress — the scheduler's drain loop relies on"
+            + " this to stop instead of re-querying and re-deferring the same parent forever");
+    assertEquals(0, result.processedParents());
+    assertEquals(0, result.failedParents());
+    assertEquals(1, result.arenaOomDeferred());
+    assertEquals(0, result.longDocDeferred());
+
+    Map<String, Object> parentState = fakeIndex.get("parent-oom");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_PENDING,
+        parentState.get(SchemaFields.EMBEDDING_STATUS),
+        "must stay PENDING — arena OOM is resource contention, not a bad-input failure");
+    assertEquals(
+        "0",
+        parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT),
+        "must NOT burn a retry increment — the windowed fallback handles this parent fine");
+    assertNull(parentState.get(SchemaFields.VECTOR));
+    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
+    verify(commitOps, never()).commitAndTrack(any());
+  }
+
+  // NOTE: no separate "raw unwrapped OrtException" test — EmbeddingProvider#embedWithSpans does
+  // not declare `throws OrtException` (it's a checked exception), so no compliant implementation
+  // can let it escape undeclared; EmbeddingService#embedWithSpans always wraps it in a
+  // RuntimeException (verified: Mockito itself rejects stubbing a raw checked-exception throw on
+  // this interface method — "Checked exception is invalid for this method!"). The wrapped-path
+  // test above is therefore the only reachable shape; isArenaOomFailure's cause-chain walk stays
+  // defensive for future callers/implementations, but only the wrapped path is exercised here.
+
+  @Test
+  @DisplayName(
+      "drain-loop contract: a deferral-only batch (long-doc + arena-OOM, zero processed/failed)"
+          + " reports hasProgress()=false so the scheduler's while-loop stops")
+  void deferralOnlyBatch_hasProgressFalse() {
+    seedDoc(
+        "parent-longdoc",
+        "content that exceeds the raised single-pass limit",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-longdoc", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    seedDoc(
+        "parent-oomonly",
+        "oom-only content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-2", "parent-oomonly", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    OrtException arenaOom =
+        new OrtException(
+            "BFCArena::AllocateRawInternal: Available memory of 1 is smaller than requested bytes"
+                + " of 2");
+    when(embeddingProvider.embedWithSpans(
+            eq("content that exceeds the raised single-pass limit"), any(int[][].class)))
+        .thenReturn(null);
+    when(embeddingProvider.embedWithSpans(eq("oom-only content"), any(int[][].class)))
+        .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
+
+    assertFalse(result.hasProgress(), "deferral-only batch must not signal loop-continuation");
+    assertEquals(0, result.processedParents());
+    assertEquals(0, result.failedParents());
+    assertEquals(1, result.longDocDeferred());
+    assertEquals(1, result.arenaOomDeferred());
+  }
+
+  @Test
+  @DisplayName(
+      "drain-loop contract: a mixed batch (one processed, one arena-OOM-deferred) reports"
+          + " hasProgress()=true so the scheduler's while-loop runs another batch")
+  void mixedBatch_processedAndDeferred_hasProgressTrue() {
+    seedDoc(
+        "parent-ok",
+        "processable content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-ok", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    seedDoc(
+        "parent-oom",
+        "oom content",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+    seedChunkDoc("chunk-2", "parent-oom", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    float[] docVector = {3f, 4f};
+    OrtException arenaOom =
+        new OrtException(
+            "BFCArena::AllocateRawInternal: Available memory of 1 is smaller than requested bytes"
+                + " of 2");
+    when(embeddingProvider.embedWithSpans(eq("processable content"), any(int[][].class)))
+        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
+    when(embeddingProvider.embedWithSpans(eq("oom content"), any(int[][].class)))
+        .thenThrow(new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+
+    LateChunkingEmbedBackfillOps.LateChunkingBackfillResult result =
+        LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
+            lateChunkingContext(true));
+
+    assertTrue(
+        result.hasProgress(),
+        "one real processed parent must signal progress even though the other was deferred");
+    assertEquals(1, result.processedParents());
+    assertEquals(0, result.failedParents());
+    assertEquals(1, result.arenaOomDeferred());
+
+    Map<String, Object> okState = fakeIndex.get("parent-ok");
+    assertArrayEquals(docVector, (float[]) okState.get(SchemaFields.VECTOR));
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, okState.get(SchemaFields.EMBEDDING_STATUS));
+
+    Map<String, Object> oomState = fakeIndex.get("parent-oom");
+    assertEquals(SchemaFields.EMBEDDING_STATUS_PENDING, oomState.get(SchemaFields.EMBEDDING_STATUS));
+    assertEquals("0", oomState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
   }
 
   @Test

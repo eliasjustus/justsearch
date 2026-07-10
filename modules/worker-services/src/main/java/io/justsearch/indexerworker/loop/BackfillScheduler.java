@@ -58,6 +58,9 @@ public final class BackfillScheduler {
       LoopPacingPolicy.spladeInterleaveBatchSize();
   private static final int BGE_M3_BACKFILL_BATCH_SIZE = 50;
   private static final int BGE_M3_INTERLEAVE_BATCH_SIZE = 10;
+  private static final LateChunkingEmbedBackfillOps.LateChunkingBackfillResult
+      NO_OP_LATE_CHUNKING_RESULT = new LateChunkingEmbedBackfillOps.LateChunkingBackfillResult(
+          0, 0, 0, 0);
 
   private final DocumentFieldOps documentFieldOps;
   private final IndexingCoordinator indexingCoordinator;
@@ -122,15 +125,31 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
-      // Tempdoc 691 Phase 1: additive, flag-gated late-chunking embed pass — a chunked parent
-      // doc and all its chunk docs get their VECTOR/CHUNK_VECTOR from a single forward pass
-      // instead of the parent being embedded-and-pooled internally AND each chunk re-embedded
-      // independently (E-5 dedup). Runs BEFORE the combined pass so any parent/chunk it marks
-      // EMBEDDING_STATUS/CHUNK_EMBEDDING_STATUS=COMPLETED still gets its SPLADE/NER processed
-      // normally below — this pass never touches those fields. Default off: when the flag is
-      // false, processLateChunkingEmbedBackfill returns immediately with zero I/O (strict
-      // no-op).
-      boolean lateChunkingDidWork = processLateChunkingEmbedIfApplicable();
+      // Tempdoc 691 Phase 1/Stage A3: additive, flag-gated late-chunking embed pass — a chunked
+      // parent doc gets its VECTOR from a single forward pass instead of the base-window-mean
+      // embed. Drained in its OWN loop BEFORE the combined pass: previously a single call here
+      // yielded exactly one <=batchSize batch before falling through to the combined pass's tight
+      // while-loop (below), which then drained ALL remaining pending embeddings via the old
+      // windowed path — starving the quality-bearing single-pass path down to ~1 batch per corpus
+      // regardless of corpus size. Loop-termination mirrors the yield discipline of the combined
+      // tight loop below (running/isUserActive/shouldYieldGpuBackfill) and additionally stops when
+      // a batch produces zero processed+failed (LateChunkingBackfillResult#hasProgress()) — a
+      // deferral-only batch (long-doc-over-limit or GPU arena-OOM) would otherwise re-query and
+      // re-defer the same PENDING parents forever, since they never leave PENDING. Any
+      // parent/chunk this pass marks EMBEDDING_STATUS/CHUNK_EMBEDDING_STATUS=COMPLETED still gets
+      // its SPLADE/NER processed normally below — this pass never touches those fields. Default
+      // off: when the flag is false, the detailed call returns the zero-result immediately with
+      // zero I/O (strict no-op), so the loop body never runs.
+      boolean lateChunkingDidWork = false;
+      LateChunkingEmbedBackfillOps.LateChunkingBackfillResult lateChunkingResult =
+          processLateChunkingEmbedIfApplicable();
+      while (lateChunkingResult.hasProgress()) {
+        lateChunkingDidWork = true;
+        if (!running.get() || Thread.currentThread().isInterrupted()) break;
+        if (signalBus.isUserActive()) break;
+        if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
+        lateChunkingResult = processLateChunkingEmbedIfApplicable();
+      }
       boolean useCombined = processCombinedBackfillIfApplicable();
       if (useCombined) {
         // 334 Phase 8/10: tight loop with persistent pending-ID caches across iterations.
@@ -303,14 +322,15 @@ public final class BackfillScheduler {
 
   // ==================== Backfill delegates ====================
 
-  private boolean processLateChunkingEmbedIfApplicable() {
+  private LateChunkingEmbedBackfillOps.LateChunkingBackfillResult
+      processLateChunkingEmbedIfApplicable() {
     boolean embedAvail =
         embeddingLifecycle.embeddingProvider().isAvailable()
             && embeddingLifecycle.allowEmbeddingWrites();
     if (!embedAvail) {
-      return false;
+      return NO_OP_LATE_CHUNKING_RESULT;
     }
-    return LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfill(
+    return LateChunkingEmbedBackfillOps.processLateChunkingEmbedBackfillDetailed(
         new LateChunkingEmbedBackfillOps.BackfillContext(
             documentFieldOps,
             indexingCoordinator,
