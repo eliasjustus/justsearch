@@ -1,0 +1,312 @@
+---
+title: "Enrichment/embedding subsystem — structural analysis and long-term design. Founder-directed scope increase out of 691 §Phase L: 691's campaign kept unearthing the same structural defect classes (representation forks, memory-blind batching, undeclared model capabilities, bare-literal pacing, implicit scheduling dependencies, metrics that can lie); this tempdoc runs the evidence-scoped structural analysis and produces a design + migration order. Analysis is READ-ONLY; no restructuring is authorized by this tempdoc — the deliverable is a defect-class → code-site → design-move map for founder review."
+type: tempdocs
+status: "open — chartered 2026-07-10 (Fable session, second 691 takeover). Phase S-A/S-B surveys launched (four parallel read-only subagent audits: history mining, representation/dataflow, resource/config/capability census, observability/test seams). Nothing designed yet; nothing implemented; implementation NOT authorized."
+created: 2026-07-10
+author: agent session 2026-07-10 (Fable; founder-directed scope increase from 691)
+category: architecture / indexing / long-term-structure
+related:
+  - 691-corpus-build-throughput          # the spawning campaign; §Phase L records the defect-class observations
+  - 686-real-pdf-corpus-and-tika-pressure-measurement   # extraction leg (OUT of scope here; shares the unbounded-tokenization incident)
+  - 702-dense-fusion-score-calibration-euclidean-cosine # unmerged sibling touching the same config surface
+  - 708-encoder-domain-fit-legal-professional-text      # paused encoder lane; "encoder swap without incident" is this doc's north star
+  - 647-engine-performance-attribution-and-budget-allocation # the method: attribution before allocation before (re)design
+  - 553 # representation-drift class precedent (projection-vs-fork; execution-surfaces register pattern)
+---
+
+# 710 — Enrichment/embedding subsystem structural analysis
+
+## Charter (founder-directed, 2026-07-10)
+
+Increase scope from 691's point fixes to a code-and-structure-level analysis of the
+enrichment/embedding vertical, with the goal of designing it to be better for long-term
+development. Founder and agent agree the 691 campaign's findings are symptoms of structural
+debt: every phase paid a discovery tax re-deriving invariants the structure doesn't express,
+and the defects cluster into repeatable classes.
+
+**This tempdoc authorizes ANALYSIS + DESIGN only.** Implementation (restructuring PRs) requires
+a separate founder go-ahead after the design review. All analysis is read-only.
+
+## Scope
+
+**In:** the enrichment/embedding vertical —
+encoder layer (`OnnxEmbeddingEncoder`, `SpladeEncoder`, `BertNerInference`, `ort-common`
+session/arena/manifest infra), embedding service layer (`EmbeddingService`, provider
+interfaces, prefix/pooling handling), backfill orchestration (`BackfillScheduler`,
+`CombinedEnrichmentBackfillOps`, `LateChunkingEmbedBackfillOps`, `LoopPacingPolicy`),
+chunking (`ChunkSplitter`, `ChunkDocumentWriter`, encoder-internal windowing), the enrichment
+config surface (`ResolvedConfigBuilder.buildEmbedding/buildNer/...`, `EnvRegistry`), and
+enrichment observability (`EncoderProfileAccumulator`, batch timing, per-cycle logs).
+
+**Out:** extraction/Tika/OCR (686/705/706 own it), the Lucene write path and primary indexing
+loop, query-time search pipeline (except where persisted representations couple to it), the
+LLM inference lane, model distribution/packaging (657 owns it).
+
+## Defect-class hypotheses (seeded from documented history; S-A validates/extends)
+
+1. **Representation forks** — same content, two independent derivations that can drift
+   (parent VECTOR vs CHUNK_VECTORs, E-5; whole-doc SPLADE truncation vs chunk_splade, 691 §G).
+2. **Memory-blind batching** — fixed batch constants + guessed arena sizes with no
+   `batch × seq` memory model; ≥3 incidents (NER arena OOM 691 A-2; SPLADE batch 16→4 cut;
+   embed 8×8192 OOM 691 §J-4).
+3. **Undeclared model capabilities** — pooling mode, context length, prefixes, variant
+   precision consumed as scattered assumptions (fp16-missing incident F-013; CLS discovery
+   mid-implementation 691 I-2; empty-prefix discovery 691 L-6).
+4. **Bare-literal pacing** — throughput constants with no config surface, derivation, or
+   rationale (`chunkSlotsPerBatch=50`, batch 100, commit thresholds).
+5. **Implicit scheduling dependencies** — enrichment pass ordering encoded positionally, not
+   as declared dependencies; late chunking just inverted one silently (691 §G scheduling note).
+6. **Metrics that can lie** — recording sites off the hot path miss whole regimes
+   (NER batched-path blind spot, 691 B-5/C).
+
+## Method
+
+- **S-A. Evidence inventory** (subagent): mine tempdocs 640/647/648/686/691/700/701/702/706/708
+  + observations + both registers for every documented enrichment-subsystem defect/incident/
+  friction; classify into the classes above (new classes allowed); cite tempdoc § + code site.
+- **S-B. Code surveys** (three parallel subagents, file:line evidence): representation &
+  dataflow map; resource/config/capability census; observability & test-seam audit.
+- **S-C. Synthesis + design** (main session): defect-class → code-site → design-move map;
+  target shape; enforcement tier per class (structural/compile-time > gate > hook > prose,
+  per tier-register philosophy); migration order respecting 691 Phase 2 → 702 merge → 708.
+  Per-class "leave it, document it" is a valid outcome — long-term velocity, not purity.
+- **S-D. Adversarial review** (independent subagent ≠ designer): attack the design for
+  over-DRY (AHA), migration cost across live worktrees, and silent-green retrieval risk.
+- **S-E. Founder review** — nothing is implemented before it.
+
+## Design tenets (fixed up front)
+
+- **North-star acceptance test: an encoder swap lands without an incident.** (708 may force
+  one; the fp16/CLS/prefix/context incidents are all "the pipeline didn't know what the model
+  was".) A design move earns its place by making a documented incident class impossible or
+  loudly visible — not by symmetry or aesthetics.
+- **Attribution before refactor** (647's method applied to structure): every design move cites
+  the incidents it retires.
+- **AHA / projection-not-fork** (CLAUDE.md; 553): unify only what shares a reason to change;
+  one canonical derivation, projections not forks.
+- **Behavior-preserving by gate, not by promise:** migration PRs are A/B-able against the
+  existing relevance/union-recall/leak/perf gates; silent-green retrieval regression is the
+  named failure mode.
+
+## S-A/S-B survey results (2026-07-10) — condensed evidence record
+
+Four parallel read-only subagent audits completed same-day. Their full reports are
+session-ephemeral; every load-bearing finding is preserved inline here with `file:line`.
+
+### S-A: documented-history inventory (33 instances, classified)
+
+Class frequencies across tempdocs 640/647/648/686/691/700/701/702/706/708 + observations +
+both registers: **undeclared-model-capabilities 12** (dominant), **metrics-that-can-lie 6**,
+memory-blind-batching 3 (+1 corollary), bare-literal-pacing 3, representation-forks 2 (fewest
+instances but the largest measured cost — up to ~50% of embed work on dense corpora, 691 F-2).
+Three NEW classes emerged: **missing-failure-escalation** (3 instances — the combined pass
+shipped without the poison-pill escalation its individual-op siblings all had; fixed by 700),
+**uncached-hot-path-resource-reload** (1 — `SsotAnalyzerRegistry` re-parsed per request, ~40
+loads/doc, independently re-discovered by two sessions 3 days apart, still unfixed), and
+**test-harness-fragility-for-encoder-regressions** (1 — `@Tag("evidence")` invisibility +
+model-dir walk-depth inconsistency make exactly the crash-regression tests skip silently in
+worktrees). The seeded class **implicit-scheduling-dependencies is under-evidenced** — zero
+observed incidents; its only instance is the forward-looking late-chunking inversion (691 §G).
+Highest-recurrence-risk judgment: (1) representation forks (a second instance, SPLADE, is
+already named); (2) the un-audited embed/NER twins of 686's upfront-tokenization crash;
+(3) stale numeric rationale comments (NER "2.0ms/call" was 15-17× off live); (4)
+escalation-omission in any future batch path; (5) "log, don't fix" observations not converting
+to work (the SsotAnalyzerRegistry re-discovery proves it).
+
+### S-B1: representation & dataflow map
+
+- **`VECTOR` has six write paths** (sync path effectively dead — `JobBatchWriter.java:116`
+  passes a bare `false` literal with a comment, making `IndexingDocumentOps.buildDocument`'s
+  synchronous-embed branch production-unreachable; migration batch path `IndexingLoop.java:740-771`;
+  individual backfill; combined backfill; BGE-M3 unified; late-chunking).
+- **THREE independent chunkers** over the same content, differently parameterized, only one
+  persisting offsets: encoder-internal token window 512/128 (`OnnxEmbeddingEncoder.java:101-102`,
+  discarded), RAG `ChunkSplitter` ~500/50 estimated tokens via char heuristic (~3.85 chars/token;
+  offsets persisted as `CHUNK_START_CHAR/END_CHAR`, invariant `substring(start,end)==content`,
+  `ChunkSplitter.java:794-800`), NER `ChunkSplitter` 400/50 (`NerService.java:31-33`, discarded).
+  Late chunking reuses only the persisted RAG boundaries — it removes the duplicate *embedding*
+  but does not unify the chunking schemes.
+- **BGE-M3 backfill is defect-suspect (live bug candidate)**: `BgeM3BackfillOps` queries
+  `SPLADE_STATUS=PENDING` across parents AND chunks but unconditionally writes
+  `VECTOR`+`EMBEDDING_STATUS` (`BgeM3BackfillOps.java:171-181,214-223`) — on a chunk doc that is
+  the wrong field pair; `CHUNK_EMBEDDING_STATUS` never touched, so the plain provider separately
+  re-embeds the same chunk with a DIFFERENT model → parent/chunk vectors from different embedding
+  spaces, and the NER-readiness gate (`BackfillScheduler.java:230-236`) can stay permanently
+  blocked. (Logged to observations; needs triage — severity depends on whether any deployment
+  enables BGE-M3.)
+- Other convention-maintained invariants: `ENTITY_*_TEXT` derivation hand-duplicated in two files
+  (`NerBackfillOps.java:98-111` = `CombinedEnrichmentBackfillOps.java:408-427`); dead
+  `CHUNK_CONTENT` fallback in the combined pass's parent-only branch
+  (`CombinedEnrichmentBackfillOps.java:271-273`); `PARENT_TOKEN_COUNT` records the TRUE token
+  count while the SPLADE vector encodes only the first `maxSeqLen` tokens, divergence unrecorded
+  (`SpladeEncoder.java:268-274` vs `:253-256`); chunk "token" targets are char-heuristic estimates
+  that downstream real tokenizers silently re-truncate.
+- Status machine: per-stage `*_STATUS`/`*_RETRY_COUNT` with shared pure failure helpers (700's
+  fix); disambiguation completion is in-memory only (`BackfillScheduler.java:78-79,265-286`);
+  ordering deps are positional (chunk-embed waits on parent drain ONLY in the individual path,
+  `BackfillScheduler.java:207-210`; NER waits on both; SPLADE on "nearly done"; late chunking
+  ordered first to pre-empt the combined pass claiming the same PENDING parents).
+
+### S-B2: resource / config / capability census
+
+- **Batch/arena constants**: embed `MAX_ORT_BATCH_SIZE=8` (`OnnxEmbeddingEncoder.java:218`,
+  OOM-history rationale), SPLADE 4/4 CPU/GPU (`SpladeEncoder.java:293,304`), NER 16
+  (`BertNerInference.java:284`), BGE-M3 4/2 (`BgeM3Encoder.java:51-52`, **bare** — no derivation,
+  unlike all siblings). Arenas: embed 3072 / SPLADE 4096 / NER 2048 / rerank 2048 / bgem3 3072
+  (`ResolvedConfigBuilder.java:1006-1138`). Arena extend-strategy `kSameAsRequested` runtime-wide;
+  the per-session override field exists but is "always empty today"
+  (`SessionOptionsApplier.java:81-83`) — three lanes' comments name `kNextPowerOfTwo` as the
+  known-but-unlanded fix.
+- **The 686 crash pattern is still live in two lanes**: SPLADE got
+  `TOKENIZE_GROUP_CHAR_BUDGET=512_000` (`SpladeEncoder.java:325`) after the native-heap JVM crash;
+  **embed's `embedBatchWithChunking` Phase 1 (`OnnxEmbeddingEncoder.java:394-418`) and NER's
+  `inferBatch` (`BertNerInference.java:313-329`) still tokenize the full caller list upfront,
+  unbounded** — the same shape, unexploded.
+- **OOM handling is asymmetric**: OOM detection is a string match on ORT's message
+  (`NativeSessionHandle.isBfcArenaFailure`, `NativeSessionHandle.java:483-489` — an ORT text change
+  silently defeats every fallback). SPLADE retries the failed sub-batch on CPU in-line
+  (`SpladeEncoder.java:596-637`); **embed discards the whole 100-doc backfill batch to per-doc
+  fallback on one OOM anywhere** (`OnnxEmbeddingBackend.java:140-142` →
+  `EmbeddingService.java:387-394` returns null for the batch → `EmbeddingBackfillOps.java:108-124`).
+- **Pacing has zero override surface**: every `LoopPacingPolicy` constant (poll 16, embed backfill
+  100, NER 100, SPLADE 200/10/5000ms, commit 10s/1000) has no `EnvRegistry` entry (grep-confirmed);
+  `chunkSlotsPerBatch=50` is an unnamed inline literal (`CombinedEnrichmentBackfillOps.java:138`);
+  BGE-M3's backfill sizes bypass `LoopPacingPolicy` entirely (`BackfillScheduler.java:59-60`).
+  Dead cross-reference found: `ResolvedConfigBuilder.java:1022` cites a constant that no longer
+  exists (logged to observations).
+- **Model-capability map — the core input.** Machine-checked at boot (graph-probed, cannot drift):
+  `needsTokenTypeIds` + SPLADE output format (`OrtSessionAssembler.probeModelNames`). EVERYTHING
+  ELSE is implicit with a **silent fallback**: pooling mode substring-parsed from
+  `pooling_config.json` with silent default **MEAN** on absence/corruption
+  (`OnnxEmbeddingEncoder.detectPoolingStrategy:736-755` — for the CLS-pooled gte model a missing
+  file silently mean-pools everything, debug-log only); context length config (2048) never
+  validated against the model's real trained capacity (no artifact even declares it); embedding
+  dimension detected reactively from the first inference's output shape
+  (`OnnxEmbeddingEncoder.java:74,345-347`) with no compatibility check against the existing index;
+  variant precision = filename-substring `"fp16"` (`DevModeVariantProbe.java:70,77`); `build.json`
+  provenance never read at runtime; `model_manifest.json` absent for ner/reranker (silent legacy
+  convention fallback — the F-013 incident is this exact failure mode); NER label mapping silently
+  falls back to a hardcoded default; tokenizer↔weights correspondence never verified.
+
+### S-B3: observability & test seams
+
+- **The B-5 blind-spot class is REINTRODUCED on this very branch**: `runHidden()` never records
+  into `EncoderProfileAccumulator` — `embedSingle` and the entire late-chunking path
+  (`embedWithSpans`) are invisible to the embed profiler (only the batched path records,
+  `OnnxEmbeddingEncoder.java:339`).
+- **The reranker lane is structurally absent from observability** — no `registerEncoder`, no
+  status surface, DEBUG-only log (`CrossEncoderReranker.java:267,279`).
+- **`batchTiming`/`enrichmentCompleted` record ONLY on the combined path**
+  (`CombinedEnrichmentBackfillOps.java:515-523` is the sole caller) — in individual or
+  late-chunking mode the counters freeze with no signal; `LateChunkingEmbedBackfillOps` structurally
+  cannot record (no `OperationalMetrics` reference). Backfill MODE (combined/individual/late) is
+  observable nowhere. Late-chunking's log line has no timing fields and is silent on
+  all-deferred cycles (`LateChunkingEmbedBackfillOps.java:237-248`).
+- Coverage percentages are computed live from Lucene counts (`IndexStatusOps.java:596-634`) — not
+  affected by the metrics freeze — but doc-level vs chunk-level remain two unlinked percentages,
+  and `vectorsReady` collapses a hardcoded 95% threshold into a boolean (`IndexStatusOps.java:628`).
+- **Test seams**: `poolSpan`/`pool` (pure functions!) have zero pure-Java unit coverage — reachable
+  only via a model-gated integration test that silently skips in every worktree; NO
+  `LateChunkingEmbedBackfillOpsTest` exists (the mock seam exists and is proven in
+  `CombinedEnrichmentBackfillOpsTest`); no test anywhere asserts an encoder path invokes
+  `recordOrtCall` (the B-5 class has no regression gate); `BackfillScheduler` mode selection is
+  untested. ORT native stderr still NUL-corrupts worker.log (no mitigation found).
+
+## S-C synthesis: defect-class → design-move map (2026-07-10, main session)
+
+One cross-cutting policy retires the dominant class, plus five scoped moves. Each move cites the
+incidents it retires and its enforcement tier (structural > gate > hook > prose).
+
+**Move 1 — Model Capability Contract (retires the 12-instance dominant class; the north star).**
+Promote `ModelManifest` from optional sidecar to a REQUIRED, validated, typed per-model contract:
+pooling mode, trained context length, embedding dimension, per-variant precision, prefixes,
+label config, tokenizer identity. Three rules: (a) **no silent capability defaults** — a missing
+or unparseable declared fact is a startup failure in contract mode and a WARN+degraded in dev
+mode, never a silent guess (today's worst: absent `pooling_config.json` silently mean-pools a
+CLS model); (b) **probe what the artifact can prove** — extend the existing graph-probe pattern
+(`needsTokenTypeIds`, SPLADE output format — the in-repo existence proof) to dimension (one boot
+probe vs today's reactive detection) and precision (ONNX tensor element types vs filename
+substring); (c) **config validates against capability** — `embed.context_length` must be ≤ the
+manifest's trained context; exceeding it is an explicit, logged decision. Enforcement:
+structural (typed contract consumed at `InferenceCompositionRoot`) + startup validation + a CI
+check that every `models/**` dir carries a manifest. Retires: F-013/INT8-on-CUDA (row 4), the
+CLS mid-flight discovery (13), context-vs-capacity blindness (14), prefix surprise (15),
+dimension drift, manifest-absent lanes, stale GGUF prerequisite (28). Acceptance test: an
+encoder swap = write one manifest; everything downstream adapts or refuses loudly.
+
+**Move 2 — instrumentation at the choke point (retires metrics-that-can-lie).** Recording moves
+to where the ORT run happens — one wrapper at the session/Lease layer records every inference
+for every lane; call sites cannot forget (the B-5 gap and this branch's `runHidden` gap both
+become impossible). Register ALL lanes incl. reranker. `batchTiming` records at the scheduler
+(which knows the mode), not inside one ops class; backfill mode becomes a status field; counter
+units documented in the wire schema. One regression test asserts call-count parity per path.
+Enforcement: structural (choke point) + an ArchUnit-style rule that no encoder invokes
+`session.run` outside the wrapper.
+
+**Move 3 — bounded tokenization + OOM-fallback parity (defuses the 686 landmine).** Apply
+SPLADE's `TOKENIZE_GROUP_CHAR_BUDGET` pattern to embed (`embedBatchWithChunking` Phase 1) and
+NER (`inferBatch`) — same bound, same regression-test shape (`SpladeEncoderBoundedTokenizeTest`
+precedent). Give embed SPLADE's sub-batch-level OOM fallback (CPU retry of the failed sub-batch)
+instead of discarding the whole 100-doc batch. Keep the typed-OOM string match in its single
+choke point but add a canary test pinning the ORT message format. Enforcement: structural +
+regression tests. This is the highest-urgency safety item: the docs themselves call it the same
+unexploded landmine (686 §Unverified #2, 691 seed item 4) and it blocks raising any chunk cap.
+
+**Move 4 — pacing gets a config surface (retires bare-literal-pacing).** `LoopPacingPolicy`
+constants + `chunkSlotsPerBatch` + the BGE-M3 strays become a typed pacing config record with
+env overrides and derivation comments; fixes the SPLADE gpu_mem_mb doc drift and the dead
+cross-reference. Purely mechanical, no retrieval semantics. Enforcement: structural/config; the
+existing `environment-variables.md` doc-sync discipline covers drift.
+
+**Move 5 — representation-derivation discipline, LIGHT (representation-forks).** The heavy
+machinery (a derivation register + gate à la execution-surfaces) is NOT yet earned — only two
+instances, one being actively fixed by 691's late-chunking/§G work. Do: fix the BGE-M3
+chunk-doc bug (a fork + status-machine bug, live-defect candidate); extract the duplicated
+`ENTITY_*_TEXT` derivation into one helper; record the "whole-object-as-projection-of-parts"
+principle + the SPLADE analogue in the search-quality register as a watch item with a named
+trigger (build the register/gate only when the SPLADE instance is actually built). Enforcement:
+prose+register now, structural later if the class grows.
+
+**Move 6 — test-seam repairs (enables all other moves).** Pure-Java unit tests for
+`poolSpan`/`pool` (they are pure functions today — no extraction needed, only tests);
+`LateChunkingEmbedBackfillOpsTest` via the existing mock seam; a scheduler mode-selection test;
+fix the model-dir walk-depth inconsistency so asset-gated tests stop silently skipping in
+worktrees. Enforcement: tests are the enforcement.
+
+**Explicit restraint decisions (AHA / under-evidenced):**
+- NO dependency-graph scheduler — implicit-scheduling-dependencies has zero observed incidents;
+  the smallest honest move is declaring the ordering constraints in one commented block in
+  `BackfillScheduler` when Wave 1 touches it. Revisit only if an ordering incident occurs.
+- NO general token-budget batcher unification across lanes yet — lanes differ legitimately
+  (SPLADE seq-buckets, NER chunking, embed windowing); Move 3 gives each lane the bound it
+  needs; unify only if a fourth lane appears or the three converge naturally.
+- NO SPLADE whole-doc projection build (691 §G's "candidate scope beyond embed") — per
+  `structural-defects-no-repeat` critique discipline, its own evidence must demand it.
+- NO wholesale rewrite of the six-path VECTOR write fan-in — the dead sync path (D.7) and dead
+  fallback branch (D.2) are deletions/simplifications inside other moves, not a redesign.
+
+## Migration waves (respects live lanes: 691 Phase 2 ships first; 702 merges; 708 restarts after)
+
+- **Wave 0 — feeds back into 691 Phase 2 on THIS branch (before its A/B):** record `runHidden`
+  into the embed profiler (else the Phase-4 A/B mis-attributes embed cost — the OFF arm records
+  ORT calls, the ON arm doesn't); add timing fields + all-deferred visibility to the
+  late-chunking log; `LateChunkingEmbedBackfillOpsTest`; pure-Java `poolSpan`/`pool` tests.
+  Cheap, in-scope for 691's own correctness.
+- **Wave 1 — independent, behavior-preserving, land any time:** Move 3 (bounded tokenization +
+  fallback parity — first, it gates everything that raises embed load), Move 2 (choke-point
+  instrumentation + reranker lane + mode observability), Move 4 (pacing config), BGE-M3 bug fix
+  + Move 6 seams.
+- **Wave 2 — before/with the 708 decision:** Move 1 (capability contract) — sequenced so an
+  encoder swap consumes the contract rather than re-learning every capability the hard way.
+- **Wave 3 — evidence-gated:** Move 5's register/gate machinery only if the SPLADE projection
+  instance is built; batcher unification only on a fourth lane.
+
+Every wave lands as independent PRs judged by the existing relevance/union-recall/leak/perf
+gates; none changes retrieval semantics (Move 3's sub-batch fallback preserves results by
+construction — same inputs, smaller batches).
+
+## Log
+
+- 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
+- 2026-07-10: all four surveys returned; condensed evidence + S-C synthesis recorded above.
+  S-D adversarial review next; then S-E founder review. Implementation remains unauthorized.
