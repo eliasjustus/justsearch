@@ -1,9 +1,9 @@
 ---
 title: "CombinedEnrichmentBackfillOps has no failure escalation/backoff — a deterministically-failing doc retries forever"
 type: tempdoc
-status: "planned — analysis complete (needs adaptation, not a clean method call); not yet implemented"
+status: "implemented (per-doc escalation, all three encoders) — compile + unit-test verified; live-stack verify deferred (needs dev stack, see Implementation notes below); systemic whole-batch backoff (Secondary section) explicitly NOT done, left as a follow-up per the tempdoc's own scoping"
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-10
 related: [312, 334]
 ---
 
@@ -188,6 +188,80 @@ implementation:
   Not yet attempted.
 - Whether the systemic whole-batch backoff (the "Secondary" item) is needed at
   all is an open decision, deferred to implementation.
+
+## Implementation notes (2026-07-10)
+
+Implemented per the plan above, in a worktree, unmerged as of this writing.
+
+**What was done:**
+
+- Extracted a pure `compute*FailureUpdate(currentRetryCount) -> Map<String,Object>` helper into
+  each individual op: `EmbeddingBackfillOps.computeEmbeddingFailureUpdate` (parent-doc) and
+  `computeChunkEmbeddingFailureUpdate` (chunk-doc, `public`, mirroring the sibling
+  `handle*Failure` methods' existing `public` visibility), `SpladeBackfillOps.computeSpladeFailureUpdate`
+  and `NerBackfillOps.computeNerFailureUpdate` (package-private, mirroring their `handle*Failure`
+  siblings). Each `handle*Failure` was refactored to call its new pure helper instead of
+  re-deriving the update inline — same log text, same `updateDocument` call shape per branch
+  (including the pre-existing SPLADE FAILED-branch asymmetry: `updateDocument(docId, updates)`
+  2-arg with no `preserveSplade`, vs. the retry branch's 3-arg `(docId, updates, true)` —
+  preserved verbatim, not "fixed", since normalizing it was out of scope).
+- `CombinedEnrichmentBackfillOps`: added `EMBEDDING_RETRY_COUNT` / `SPLADE_RETRY_COUNT` /
+  `NER_RETRY_COUNT` / `CHUNK_EMBEDDING_RETRY_COUNT` to the batched `fieldsToFetch` pre-fetch
+  (`:180-197` post-edit numbering). The embedding null-vector branch, the SPLADE batch-catch, and
+  the NER per-doc catch now look up the doc's already-fetched retry count, call the matching
+  individual op's pure helper, and merge the result into that doc's `updatesByDocId` entry — never
+  a direct `updateDocument` call. All existing open questions in this tempdoc are now resolved:
+  `CHUNK_EMBEDDING_RETRY_COUNT` exists in `SchemaFields.java:127`; `*_MAX_RETRIES` = 3 for all three
+  confirmed (`EMBEDDING_MAX_RETRIES`/`NER_MAX_RETRIES`/`SPLADE_MAX_RETRIES`, `SchemaFields.java:63,149,161`);
+  `OperationalMetrics.getInstance()` needed no test seam — it's a real singleton and the tests
+  never hit an assertion depending on its internal state, so it was accepted as an unavoidable
+  side-effecting no-op for test purposes (consistent with the tempdoc's own "accept-as-no-op"
+  fallback).
+- One implementation addition beyond the tempdoc's literal branch list: the SPLADE batch-catch
+  now skips docs that already got a successful write earlier in the *same* batch before the
+  exception fired (a short/partial `encodeBatch` result can populate some indices as `COMPLETED`
+  before an `IndexOutOfBoundsException` on a later index) — without this guard, the naive
+  "escalate everyone in `spladeDocIds`" would have clobbered an already-successful write with a
+  retry-count bump. Covered by a dedicated test
+  (`spladeBatchPartialWrite_doesNotClobberAlreadyCompletedDocOnEscalation`).
+- **Deliberately out of scope, matching the tempdoc's own citation**: the whole-batch-mismatch
+  embedding fallback (`vectors == null || vectors.size() != embedDocIds.size()`, log-only, no
+  per-doc write) was left untouched. The tempdoc's fix section cites only the null-vector branch
+  (`:300-303` in the original numbering) for embedding, not this systemic-failure branch; treating
+  a size-mismatched/null batch result as a systemic-failure signal (rather than a per-doc
+  escalation target) is consistent with the tempdoc's own "Secondary" section, which explicitly
+  defers systemic whole-batch backoff to a follow-up.
+- **"Secondary" section (systemic whole-batch backoff) was NOT implemented** — the tempdoc frames
+  it as "decide during implementation, may be a follow-up" and "per-doc escalation is the primary
+  correctness fix; systemic backoff is a cost-optimization." Per-doc escalation (the acceptance
+  criteria) is fully implemented; the systemic-backoff item remains a candidate follow-up tempdoc
+  if picked up later — not silently dropped, just not part of this fix's scope per the tempdoc's
+  own framing.
+
+**Verification performed:** `./gradlew.bat spotlessApply` (no changes needed),
+`./gradlew.bat build -x test -PskipWebBuild=true` (green), `./gradlew.bat :modules:worker-services:test`
+(full module suite green, including the pre-existing `EmbeddingBackfillOpsTest` / `NerBackfillOpsTest`
+unchanged and green, confirming the pure-helper extraction didn't alter individual-op behavior).
+8 new tests in `CombinedEnrichmentBackfillOpsTest` (previously zero tests for this class) cover:
+embedding-failure single-cycle increment, embedding escalation to `FAILED` at `EMBEDDING_MAX_RETRIES`
++ non-reselection, embedding success path unchanged, a mixed succeed/fail batch with single-write
+assertions, SPLADE failure increment + escalation to `FAILED`, the SPLADE partial-write guard, NER
+failure increment + escalation to `FAILED`, and all three encoders combined in one cycle with a
+single merged batched write.
+
+**Deferred to live-stack verify** (needs the dev stack, out of scope for this worktree per this
+task's brief): index a corpus containing one document whose content deterministically fails one
+encoder in the combined path (≥2 encoders loaded so the combined path is actually selected over
+the individual-op siblings — confirm via `/api/debug/state` / `/infra/capabilities`, not log
+grepping), let the backfill scheduler run `EMBEDDING_MAX_RETRIES` (or `SPLADE_`/`NER_MAX_RETRIES`)
+idle cycles, and confirm via `/api/status` that: (a) the doc's retry-count field increments each
+cycle, (b) it reaches `*_STATUS=FAILED` and is surfaced as a stuck/failed document rather than
+silently missing from 100%-enriched corpus reporting, (c) it stops consuming encoder cycles after
+reaching `FAILED`, and (d) unrelated documents in the same batch are unaffected. This exercises the
+real `BackfillScheduler` → `CombinedEnrichmentBackfillOps` wiring and real Lucene read/write timing
+that the mocked/fake-index unit tests cannot — in particular whether a real NRT-refresh cycle
+between combined-backfill calls changes the retry-count field's visibility to the next cycle's
+batched pre-fetch in a way the in-memory fake does not model.
 
 ## Related work from the same audit
 
