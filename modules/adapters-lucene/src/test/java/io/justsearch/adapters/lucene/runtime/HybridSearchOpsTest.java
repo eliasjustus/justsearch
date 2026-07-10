@@ -198,7 +198,7 @@ class HybridSearchOpsTest {
     HybridSearchOps ops = opsWithConfig(null);
 
     SearchResult bm25 = resultWithTopScore(10.0f, 100);
-    SearchResult vector = resultWithTopScore(0.2f, 50); // below default 0.40
+    SearchResult vector = resultWithTopScore(0.2f, 50); // below default 0.294 (tempdoc 702, EUCLIDEAN score space)
 
     HybridSearchOps.LowSignalGating gating =
         ops.computeLowSignalGating(bm25, vector, "test", "test");
@@ -212,7 +212,7 @@ class HybridSearchOpsTest {
     HybridSearchOps ops = opsWithConfig(null);
 
     SearchResult bm25 = resultWithTopScore(10.0f, 100);
-    SearchResult vector = resultWithTopScore(0.9f, 50); // above default 0.40
+    SearchResult vector = resultWithTopScore(0.9f, 50); // above default 0.294 (tempdoc 702, EUCLIDEAN score space)
 
     HybridSearchOps.LowSignalGating gating =
         ops.computeLowSignalGating(bm25, vector, "test", "test");
@@ -299,7 +299,7 @@ class HybridSearchOpsTest {
     return new SearchResult(hits, n, 0);
   }
 
-  // A dense leg that fires: top 0.7 (>= 0.55), gap 0.1 (>= 0.02).
+  // A dense leg that fires: top 0.7 (>= ARBITRATION_DENSE_CONFIDENT_MIN = 1/3), gap 0.1 (>= 0.02).
   private static SearchResult confidentDense() {
     return legDescending("dns", 0.7f, 0.1f, 5);
   }
