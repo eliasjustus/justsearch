@@ -440,6 +440,110 @@ applies only if code/doc text is copied verbatim: sentence-transformers/ONNX/TEI
 Apache-2.0, llama.cpp/GGUF is MIT, and **ONNX Runtime is MIT (not Apache-2.0** — corrected
 assumption). Nothing in the current design copies external code.
 
+## S-C.D — settled design (2026-07-10, /design pass; general level, not implementation)
+
+The synthesis named the moves; this settles the component design for the two that needed it
+(Moves 1 and 2), names every orphan, and records the extend-vs-replace decisions. Adjacent
+tempdocs consulted: 657 (install/pack substrate SHIPPED 2026-07-02 — packs already model per-EP
+variants incl. "NER INT8+FP16", and `InstallContract` records per-model selected variant),
+700/702/704-708 (absorbed via S-A/691 §L).
+
+### Move 1 settled: one capability contract, resolved once, at the existing choke point
+
+**Shape.** A typed `ModelCapabilities` value (pooling mode, trained context length, embedding
+dimension, per-variant precision, prefixes, label config, tokenizer identity) resolved ONCE per
+model directory at composition time, in `ort-common` — the module that already owns
+`ModelManifest` and the graph probes. Resolution extends the EXISTING single choke point
+(`InferenceCompositionRoot.resolveVariant` is already where contract-path and dev-probe-path
+converge); no parallel resolver.
+
+**One manifest, not two.** Capability fields JOIN the existing `model_manifest.json` (today a
+five-field file-routing record) — routing and capability are two sections of one per-model
+declaration. No second sidecar format.
+
+**Source priority per fact** (from S-C.R): manifest field → ecosystem files where authoritative
+(ST `1_Pooling/config.json`, BOTH schema generations; `sentence_bert_config.json` cross-checked
+against `config.json max_position_embeddings`; `prompts` if present; never
+`tokenizer_config.json model_max_length`) → graph probe (token_type_ids and SPLADE output format
+today; + dimension boot-probe; + I/O dtype sanity for precision) → **no default** (WARN+degraded
+now; fail-fast in contract mode once packs carry manifests — the 657-gated flip).
+
+**Consumption.** Encoders stop reading files entirely. The per-lane `Shape` records
+(`EmbeddingShape` already carries poolingStrategy/maxSeqLen/needsTokenTypeIds — it IS the
+capability projection, and it stays) are constructed FROM the contract by the composition root.
+This is the structural change: `ort-common` becomes the single owner of "what is this model";
+`worker-core` encoders become pure consumers.
+
+**657 coordination (not duplication).** 657's `ModelPackage`/`InstallContract` own *which
+variant is installed*; the capability manifest owns *what each variant is*. The manifest ships
+inside the pack payload; the fail-fast flip is scheduled on that shipping event. The optional
+hardening rung — stamping capabilities into the ONNX file via `metadata_props` in
+`scripts/models/build-*.py` (GGUF precedent) — layers on top without changing the read API
+(embedded values outrank sidecar when both present).
+
+### Move 2 settled: recording where the run happens
+
+A `run(...)`-shaped method on the `SessionHandle.Lease` (lane name bound at assembly time, where
+`OrtSessionAssembler` already knows it) records every ORT invocation; encoders migrate off raw
+`session.run` (~6 files, mechanical). An ArchUnit rule pins the invariant: no `session.run`
+outside `ort-common`. Metric names per R-4 (`gen_ai.*` with named deviations). `batchTiming`
+recording moves to `BackfillScheduler` (the only component that knows which pass ran); backfill
+mode becomes a status field.
+
+### Orphan list (deletion/tombstoning owned by THIS tempdoc's waves, not a later sweep)
+
+1. `OnnxEmbeddingEncoder.detectPoolingStrategy` + its substring JSON parse (`:736-755`) — moves
+   into the contract resolver; the encoder keeps only `EmbeddingShape.poolingStrategy`.
+2. `EmbeddingService.loadPrefixes` + the hand-rolled `extractJsonString` parser (`:454-481+`) —
+   replaced by contract prefix fields.
+3. The reactive `embeddingDimension` volatile-int detection (`OnnxEmbeddingEncoder.java:74,345-347`)
+   — replaced by boot probe + declaration (plus an index-compatibility check at startup).
+4. `DevModeVariantProbe`'s filename-substring precision inference (`:70,77`) — the probe keeps
+   file-existence duties; precision comes from declaration + I/O-dtype sanity check.
+5. The bespoke `pooling_config.json` / `prefix_config.json` sidecars — read as legacy during the
+   migration window, tombstoned once manifests carry the facts.
+6. `BertNerInference.loadLabelMapping`'s silent hardcoded fallback (`:140-169`) — label config
+   becomes a declared, loud-on-absence contract fact.
+7. (Move 2) the six per-call-site `profiler.recordOrtCall` invocations across four encoder
+   classes, and `CombinedEnrichmentBackfillOps`'s exclusive ownership of `batchTiming`
+   (`:515-523`) — both subsumed by the choke points.
+
+### Extend-not-replace inventory (existing design judged USABLE and kept)
+
+`ModelManifest` (extended, not replaced) · `InferenceCompositionRoot` resolution choke point
+(extended) · per-lane `Shape` records (kept as the projection layer) · the graph-probe pattern
+(extended — it is the design's own best precedent) · 657's `VariantSelector`/`InstallContract`
+(kept; complemented) · 700's shared pure failure helpers (kept; Move 6 makes them a checked
+convention) · SPLADE's bounded-tokenize + sub-batch CPU retry (kept; Move 3 copies it to the
+sibling lanes rather than inventing a new mechanism).
+
+### Reach judgment (principles recognized, NOT built general)
+
+**P1 — facts about an artifact travel with the artifact and are validated once, at the boundary
+where the artifact enters the system** (never re-inferred at consumption sites). This is NOT a
+new principle here — it is the existing SSOT / one-canonical-authority discipline (SSOT
+catalogs; jseval corpus register signatures; 657's runtime-manifest closure rule "new runtime
+facts must be manifest fields, CI-enforced") applied to model artifacts. Move 1 CONFORMS to
+that seam rather than creating a parallel one. Candidate scope beyond this tempdoc: the
+llama-server/GGUF lane — GGUF already embeds KV metadata (`{arch}.context_length`,
+`pooling_type`); whether `InferenceLifecycleManager` consumes it or config-guesses is UNAUDITED
+(named, not built; audit only when that lane next changes). Already-conforming: corpus
+signatures. Evidence P1 earns its keep: the next encoder swap (708's candidate outcome) lands
+with zero capability incidents, and the 12-instance class stops accruing. Retirement condition:
+if the declaration layer itself becomes the drift source (manifest rot that validation cannot
+catch), shrink declarations to the probe-impossible facts and prefer runtime probes — a
+declaration that can silently lie is worse than an honest probe.
+
+**P2 — measurement lives at the narrowest choke point the measured event passes through**;
+call sites cannot forget what they never had to remember. Conforms to the existing
+`CommitReason`/`CommitOps` shape (commits are already choke-pointed). Candidate scope: any
+future encoder lane (free coverage); explicitly NOT tokenize-phase timing (knowledge only call
+sites have — forcing it through the choke point would be the over-generalization). Evidence P2
+earns its keep: zero new unrecorded-path incidents (two occurred under the per-call-site
+regime: B-5, `runHidden`). Retirement condition: when a needed measurement requires context the
+choke point structurally lacks, record at the call site without guilt — P2 governs the events
+the choke point owns, not all measurement everywhere.
+
 ## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
@@ -449,4 +553,11 @@ assumption). Nothing in the current design copies external code.
 - 2026-07-10: S-C.R research addendum — Move 1 adopts ST-convention read layer + TEI fail-closed
   precedent + optional ONNX-embedded metadata; Move 3's string match confirmed sole mechanism
   (stable since 2020) + two stale arena assumptions flagged; Move 2 adopts `gen_ai.*` names with
-  deviations. Status: READY FOR S-E FOUNDER REVIEW. Implementation remains unauthorized.
+  deviations.
+- 2026-07-10: S-C.D settled design (/design pass) — Move 1 component architecture (one contract,
+  resolved once in ort-common at the existing composition choke point; one manifest not two;
+  Shape records kept as projections; 657 complemented not duplicated), Move 2 Lease-level
+  recording, full orphan list (7 items, owned by this tempdoc's waves), extend-not-replace
+  inventory, reach judgment (P1 conforms to the existing SSOT/manifest-closure seam — llama/GGUF
+  lane named as unaudited candidate scope; P2 with explicit non-scope). Status: READY FOR S-E
+  FOUNDER REVIEW. Implementation remains unauthorized.
