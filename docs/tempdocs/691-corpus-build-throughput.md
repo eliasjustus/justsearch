@@ -646,3 +646,58 @@ whether the tail needs any code change and re-attributes E-5 vs the cap. Everyth
 measurement (cap change, E-5 dedup) is authorization-gated and, for E-5, search-quality-gated. Do
 NOT close 691. (This is a measurement recommendation, not implementation — no code or design written
 this session, per the takeover contract.)
+
+## Phase F — chunk-pacing measurement (2026-07-10, takeover, user-authorized "proceed with the cheap step")
+
+Ran the cheap read-only measurement recommended above. `realdocs-v1` is a raw-binary 686 corpus and
+is NOT on this machine, so measured on **`golden/battlefield-en-v1`** (390 docs, ~4,380 chunks,
+RTX 4070) — the per-chunk embed cost is corpus-density-independent, so the chunk-tail *mechanism*
+generalizes; the realdocs *total-time* figure below is arithmetic, not measured. Instrument: the
+existing per-cycle INFO line `CombinedEnrichmentBackfillOps.java:479` (`docs=… chunks=… embed=…ms
+… total=…ms`), no code change. Clean env-var-free run (shipped defaults). 94 cycles parsed.
+
+**F-1. The chunk-only tail is GPU-COMPUTE-BOUND — the `chunkSlotsPerBatch=50` cap is NOT the
+throughput lever.** Backfill wall 115.0 s split cleanly:
+| Regime | cycles | wall | embed(GPU) | fetch+write+other | chunks drained | ms/embed-doc |
+|---|---|---|---|---|---|---|
+| Parent-enrichment | 6 | 78.0 s (68%) | 41.8 s (54%) | 36.9 s (SPLADE+NER+ov) | 300 (50/cyc) | **52.8** |
+| **Chunk-only tail** | 82 | 36.8 s (32%) | **30.2 s (82%)** | 6.6 s (18%) | 4,080 | **7.23** |
+| No-op drain | 6 | 0.2 s | — | — | 0 | — |
+
+A chunk-only cycle is ~50 chunks in ~0.40 s, of which **82% is ORT embedding at 7.23 ms/chunk** —
+i.e. the compute floor (Phase E bench: 6.75 ms/chunk isolated). Overhead is only ~18%, so raising
+the cap recovers at most ~6.6 s here and *nothing* on the GPU-bound 30.2 s. **The seed's worry that
+the tail is overhead/cap-throttled is REFUTED — the tail is the GPU embedding 4,080 chunks, and the
+cap can't make the GPU faster.**
+
+**F-2. The measured improvable lever is E-5 duplicate embedding, and it SCALES with chunks/doc.**
+Parent cycles cost **52.8 ms per "embed-doc" vs 7.23 for chunks** because each parent re-embeds its
+internal chunks (pooled → discarded), which are then re-embedded *again* as chunk docs (E-5).
+Battlefield parent cycles embedded 791 doc-units for ~390 parents. On battlefield (~11 chunks/doc)
+this duplication is a minority of the 115 s. On `realdocs-v1` (~138 chunks/doc) the parent-internal
+embedding ≈ the chunk-doc embedding ≈ **~half of all embedding work** → the dominant eliminable
+cost. So: **improvable = YES, via E-5 dedup (retrieval-semantics-affecting → search-quality register
++ nDCG ratchet + live A/B), NOT via the cap.**
+
+**F-3. The seed's ~2-5 h / naive ~100 h realdocs drain is very likely overstated.** Chunk-only
+cycles are compute-bound at ~0.40 s/50, so a realdocs chunk tail ≈ 85,641 × 7.2 ms ≈ **~10 min**,
+not hours. The ~100 h figure assumed parent-heavy 3.5-min cycles persist for all ~1,700 cycles;
+in fact parents drain in ~7 cycles, then the tail is fast. The real realdocs enrichment cost is
+~10 min irreducible chunk-embed compute **plus a ~equal ~10 min of E-5 duplicate parent-internal
+embed that dedup would remove** — the lever, again, is dedup, not the cap. (Caveat: realdocs total
+time is extrapolated; a realdocs-v1 build would confirm. Also note GPU mutual-exclusion means the
+cap only re-orders GPU work, it doesn't add throughput — overlapping stages is a separate, deeper
+lever, not in scope here.)
+
+**F-4. Assumption #2 (shipped defaults, live) — CLOSED.** Same clean run, worker.log session-init:
+`ner: GPU session initialized — model=model_fp16.onnx, device=0, memLimit=2048MB`; **0** "falling
+back to per-doc" OOM events; **0** degraded-variant WARNs (fp16 present → optimal). The PR #90
+defaults work as committed on a fresh env-var-free run.
+
+**F-5. Revised recommendation.** 691 stays OPEN, but the next lever is now *named by measurement*:
+the cap is a red herring for throughput; **E-5 duplicate-embedding elimination is the one lever that
+reduces actual GPU work, and its payoff scales with corpus chunk-density.** That work is
+search-quality-gated (register + nDCG ratchet + live A/B) and authorization-gated — not started this
+session. Remaining genuine open measurement: a `realdocs-v1` build to confirm the F-3 extrapolation
+at true density. Artifacts: session scratchpad `691-chunk-tail/` (run.ndjson, timeline.tsv,
+worker.log-derived `bf.txt` per-cycle table).
