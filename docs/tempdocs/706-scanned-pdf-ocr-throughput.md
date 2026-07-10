@@ -1,7 +1,7 @@
 ---
 title: "Scanned-PDF OCR throughput: replace Tika's opaque internal per-page-serial OCR_ONLY path with JustSearch's own parallel, capped, budgeted render+OCR loop — >10x on scanned documents — and fix the advisory-timebox/orphaned-child liveness class the investigation confirmed on the same path"
 type: tempdocs
-status: "open — takeover investigation complete (2026-07-10, second session): verdict GO, do it now. All load-bearing evidence claims independently re-verified at file:line against main (no divergence); design confirmed in shape with two design-time corrections required (maxPages gate-vs-truncate semantics; tryOcr's blank-content branch must not be the reroute mechanism under NO_OCR) — see §Takeover investigation. Implementation not started, awaiting go-ahead. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
+status: "open — design SETTLED (2026-07-10, design pass after takeover GO verdict): one owned OCR engine, Tika de-OCR'd everywhere (PDFs and images), corrections A/B resolved (maxPages gate preserved + in-loop defense; tryOcr calls the engine directly, no blank-branch reroute), config unified root-cause, orphans named in §Design. Preceded by: takeover investigation (same day, second session) re-verified all evidence claims at file:line against main. Implementation not started, awaiting go-ahead. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
 created: 2026-07-10
 author: agent (Fable, takeover-705 session) — founder-directed sidegoal after the 686 instrumented run showed the extraction cost tax concentrates in scanned PDFs
 category: extraction / ocr / indexing-performance / worker
@@ -47,24 +47,130 @@ Three converging legs — code map (`file:line`), external research, local micro
    fallback `OcrRoutingConfig.defaults()` is `30s/50p`; the run OCR'd a 29+-page doc → code
    fallback was live. Needs an explicit decision.
 
-## Design
+## Design (settled 2026-07-10, design pass; supersedes the same-day sketch preserved in 705 §Sidegoal)
 
-1. **Bypass Tika-internal OCR for PDFs** (`OCR_STRATEGY = NO_OCR` on the OCR pass too); make the
-   owned render+OCR loop the single authoritative OCR engine. Routing (`evaluateOcrAttempt`) and
-   reason-code semantics (671 classifiers) unchanged — this swaps the execution engine of the OCR
-   tier, not which tier a document takes.
-2. **Owned loop**: 300 DPI GRAY render (PDFBox `renderImageWithDPI(page, dpi, ImageType.GRAY)`,
-   subsampling allowed); page OCR fanned out to a bounded pool (~min(cores/2, 8) workers,
-   `OMP_THREAD_LIMIT=1` per child, defensive); **one spawn per page emitting `txt tsv` together**
-   (text + confidence in one invocation — removes both double-pays); `maxPages` enforced INSIDE
-   the loop (truncate + record truncation honestly); an **aggregate per-document OCR budget**
-   (elapsed-time circuit breaker) so pages × per-page-timeout can't compound.
-3. **Liveness fixes**: `destroyForcibly()` on interrupt in `OcrConfidenceExtractor`; timebox
-   cancellation kills the child process tree; consider surfacing a "previous task still draining"
-   signal instead of silently queueing (the narrow fix here; the executor architecture itself is
-   a bigger question left out of scope).
-4. **Config decision**: reconcile yaml (5s/10p) vs code (30s/50p) defaults into one authoritative
-   set; wire the owned loop's DPI as a named constant/config, replacing the hardcoded 160s.
+The design's one sentence: **Tika does structure; JustSearch does OCR — everywhere.** Tika never
+spawns tesseract again; every tesseract invocation in the system goes through one owned engine
+that owns rendering, parallelism, budgets, and child lifecycle.
+
+### D1 — One owned OCR engine (new component, worker extract package)
+
+A single component owns PDF page OCR end-to-end:
+
+- **Render serially** (PDFBox is not thread-safe on a shared document; render is ~10% of page
+  cost), 300 DPI GRAY, DPI a named config (replacing both Tika's implicit 300 and the owned
+  loops' hardcoded 160), pages written to a **per-document temp directory** (one create, one
+  recursive delete — also sweeps orphaned artifacts on kill), image freed promptly, bounded
+  in-flight queue for heap backpressure (686's heap verdict: no margin).
+- **OCR in a bounded parallel pool**: default ~min(cores/2, 8) workers, config-visible,
+  `OMP_THREAD_LIMIT=1` per child (defensive). **One spawn per page emitting `txt tsv` together**
+  — text and confidence from the same invocation; no second pass exists anywhere anymore.
+- **Bounded honestly**: per-page timeout (existing per-invocation semantics) + an **aggregate
+  per-document elapsed budget** sitting *below* the 60s outer timebox, so the budget fires first
+  and returns partial page-ordered text with an honest truncation record — converting today's
+  "timeout → whole document discarded + queue pileup" into "budget → partial text kept".
+  The `maxPages` eligibility gate in `evaluateOcrAttempt` is **unchanged** (routing stays 607's);
+  the engine additionally enforces the cap in-loop as defense-in-depth for documents whose page
+  count was unknown (0) at gate time (correction A resolved).
+- **Child lifecycle owned**: every spawned process is registered; interrupt/cancel/close
+  forcefully terminates the registered set (the `LlamaServerOps` kill discipline, applied to
+  tesseract). The outer timebox needs no process knowledge — its `cancel(true)` interrupt lands
+  in the engine's waits, and the engine kills its own children (fixes the
+  `OcrConfidenceExtractor` interrupt-path orphan leak as a by-product of the restructure).
+- **Output**: page results joined in page order with the existing `--- OCR page N ---` markers,
+  aggregate confidence summary from the per-page TSVs, truncation + evidence facts in the shapes
+  the evidence builder already consumes.
+
+### D2 — All OCR call-sites route through the engine; Tika's OCR is retired
+
+- **Full-scan PDFs**: `tryOcr` invokes the engine *directly* for PDFs — not via a Tika pass
+  whose blank output happens to fall through (correction B resolved: the blank-content branch is
+  no longer a reroute mechanism; under the old structure a `NO_OCR`-configured Tika pass would
+  have silently ended OCR for partially-texty PDFs).
+- **Mixed PDFs**: `trySelectivePdfOcr` uses the same engine on the missing-readable-text page
+  subset (`ocr_selective` semantics unchanged), replacing its per-page Tika-on-PNG spawn +
+  direct-text fallback + separate confidence spawn (up to 3 spawns/page → 1).
+- **Raster images**: the direct single-spawn path becomes primary (it already exists as
+  `tryDirectImageOcr`'s substrate); Tika's parser config is de-OCR'd at `TikaConfig` level so
+  the structured first pass can never invoke tesseract — which, once verified, retires the
+  raster-image blank-baseline workaround in `extractArtifact` (that hack exists *because* Tika's
+  default config could OCR images uninvited).
+- **Confidence** always comes from the same spawn's TSV; the whole-file confidence re-OCR after
+  a successful OCR pass is deleted.
+
+### D3 — What is explicitly preserved (the seams this design must not move)
+
+- `evaluateOcrAttempt` gate order and skip semantics — routing authority stays 607's.
+- The single-terminal-classifier structure and `OcrOutcomeClassifier` (671's registered
+  `ocr-outcome-classifier` logic seam; its PIT-strength guarantee must hold through the
+  restructure), the `OcrSkipReason` vocabulary, `ocr_full`/`ocr_selective` extraction methods,
+  and `ENGINE = "tesseract"`.
+- `PARSER_ID = "tika-policy-ocr"` stays — it is wire-visible provenance naming the *route*
+  (the tika-policy extractor's OCR branch), not the execution engine; renaming would be consumer-
+  visible churn for zero information. Revisit only with a consumer sweep if the route itself is
+  ever renamed.
+- `TimeboxedContentExtractor`'s architecture (60s outer box, single-thread isolation) and the
+  process-sandbox seam (tempdoc 410) — untouched; the executor redesign remains deferred.
+
+### D4 — Config unification (root cause, not plumbing patches)
+
+Two defects, both fixed: (a) the worker falls back to `OcrRoutingConfig.defaults()` whenever its
+`ConfigStore` is unpopulated — fix the population path so shipped yaml is authoritative in every
+process that extracts; (b) yaml (5s/10p) and code defaults (30s/50p) disagree — unify on **one
+value set** (recommendation: 30s aggregate budget / 50 pages, which the parallel engine makes
+affordable; honoring yaml's current 10p cap would have *skipped* most of 686's stall documents
+entirely — worse extraction masquerading as speed) and make code defaults equal shipped yaml so
+the fallback can never diverge again. Render DPI and worker count join the same config surface.
+
+### Orphans (deleted by this tempdoc's work — not a later sweep)
+
+1. `StructuredContentExtractor.extractWithOcr` + `parseContextWithOcr` + `configurePdfOcrOnly` +
+   `configureTesseractOcr` — the entire Tika-OCR execution surface loses its last caller.
+2. `tryRenderedPdfOcr`'s serial 160-DPI loop — subsumed by the engine (the blank-fallback role
+   disappears because the engine is primary, not fallback).
+3. The per-page Tika-on-PNG spawn inside `trySelectivePdfOcr`.
+4. The whole-file confidence re-OCR after OCR success (`PolicyDrivenTikaExtractor.java:292`).
+5. The two-spawn text+TSV call pattern — `OcrConfidenceExtractor`'s two entry points collapse
+   into the engine's single spawn primitive (the TSV parsing survives as its consumer).
+6. The hardcoded 160-DPI constants.
+7. Conditionally: the raster-image blank-baseline workaround in `extractArtifact` — delete once
+   the Tika-level de-OCR is verified to make it unreachable; keep with an updated comment if any
+   reachable path remains.
+
+### Implementation prerequisites
+
+Load `/search-quality` before coding (extraction feeds retrieval quality; update the register
+before closing this tempdoc), and expect the `seam-hint`/logic-seams gate when touching the
+classifier-adjacent code (671's seam).
+
+## Reach (design-pass judgment)
+
+**Conforms to an existing shape rather than inventing one.** This is the third instance of
+JustSearch converting a rented external-engine lifecycle into an owned one — llama-server
+(`InferenceLifecycleManager`/`LlamaServerOps`: hung-process kill, zombie recovery, adoption) and
+ORT sessions (`ort-common`: session ownership, VRAM budgeting) are the precedents. The design
+deliberately mirrors their kill discipline instead of creating a parallel convention.
+
+**The principle, named**: *no black-box call may own an unbounded amount of per-document work* —
+external engines are invoked for one bounded unit (one page, one inference, one session op);
+JustSearch owns the loop, the budget, the parallelism, and forceful termination.
+- **Where else it applies / residual violator**: the Tika *parse itself* (a pathological
+  non-OCR document inside `extractStructured`) is still an unbounded black-box call, mitigated
+  only by the advisory timebox. That violation is real but owned: it is exactly what the
+  process-sandbox seam (410) exists to fix, and this doc defers to it rather than building a
+  second mechanism.
+- **A second, smaller seam this design creates**: the per-page OCR call inside the engine is the
+  natural future swap point for a different OCR engine (the ONNX/specialist-model candidates
+  priced in 705 F5/F7). Kept as a method boundary only — no interface, no plugin machinery —
+  per AHA; the point is that owning the loop is what makes the engine *swappable at all*.
+- **Evidence the principle earns its keep**: per-document extraction ceilings actually bounded
+  in the next 686-style run (no 350s tails, no inherited queue wait); zero orphaned tesseract
+  processes across kill/interrupt tests; a future engine swap that touches only engine internals.
+- **Retirement condition**: if extraction moves wholly behind the 410 process sandbox (ownership
+  transfers to the sandbox boundary), or OCR moves to an in-process ORT pipeline (no child
+  processes to own), the in-process spawn-ownership discipline retires with the code that needed
+  it. If the 686 re-run shows the tails were NOT eliminated, the principle mis-locates the
+  problem and must be re-examined rather than defended.
 
 ## Expected effect
 
@@ -77,8 +183,14 @@ better (same engine; 300 GRAY ≥ each replaced path's settings).
   the 25-65p mixed-PDF stall candidates), plus a full `mixed/realdocs-v1` ingest re-run when wanted.
 - Quality: word/char parity (±few %) on the scan sample vs the pre-change path; extraction_method /
   reason-code assertions unchanged (`VduEligibilityPdfFixturesTest` + 671's classifier tests green).
-- Liveness: a regression test for the orphan fix (interrupt → child killed), per
+- Liveness: a regression test for the orphan fix (interrupt → registered children killed) and for
+  the budget (expiry → partial page-ordered text + truncation recorded, not an empty result), per
   `audit-driven-fixes-need-test`.
+- De-OCR completeness: an assertion that no Tika parse path can spawn tesseract (e.g., structured
+  pass over a scan-image fixture produces zero OCR spawns) — guards the raster-blanking-hack
+  deletion and the "Tika does structure, JustSearch does OCR" invariant.
+- Quality parity must cover raster images too (their OCR route changes from Tika-internal to the
+  direct single-spawn path).
 - Timing evidence recorded here with the same discipline as 686 §Execution log.
 
 ## Boundary
