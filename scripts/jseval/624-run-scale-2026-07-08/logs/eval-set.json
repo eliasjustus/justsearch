@@ -7,7 +7,7 @@
       "task_args": {
         "condition": "A",
         "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
-        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
         "mcp_config": null,
         "model": "haiku",
         "max_queries": 30,
@@ -30,8 +30,8 @@
       "task_args": {
         "condition": "B",
         "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
-        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
-        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
+        "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
         "model": "haiku",
         "max_queries": 30,
         "max_budget": 0.5,
@@ -53,8 +53,8 @@
       "task_args": {
         "condition": "C",
         "queries_path": "624-run-scale-2026-07-08\\_calibrated_queries.json",
-        "corpus_dir": "C:\\Users\\Elias\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
-        "mcp_config": "C:\\Users\\Elias\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
+        "corpus_dir": "C:\\Users\\<user>\\AppData\\Local\\Temp\\jseval-corpus-stage-xhybz_7p\\corpus-dir",
+        "mcp_config": "C:\\Users\\<user>\\AppData\\Local\\Temp\\claude\\F--justsearch-public\\54d5b430-9d94-4f82-9f02-39a0d7d9d82e\\scratchpad\\js-mcp-scale.json",
         "model": "haiku",
         "max_queries": 30,
         "max_budget": 0.5,
