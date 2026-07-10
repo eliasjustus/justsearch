@@ -13,13 +13,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
-import org.apache.pdfbox.Loader;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.rendering.ImageType;
-import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.tika.Tika;
 import org.apache.tika.config.TikaConfig;
 import org.slf4j.Logger;
@@ -41,6 +38,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
   private final OcrMetricCatalog ocrMetricCatalog;
   private final Tika tika;
   private final StructuredContentExtractor structuredExtractor;
+  private final PdfOcrEngine ocrEngine;
 
   public PolicyDrivenTikaExtractor() {
     this(TikaExtractionPolicy.defaults(), OcrRoutingConfig.disabled());
@@ -63,6 +61,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
     this.tika = new Tika(config);
     this.tika.setMaxStringLength(this.policy.maxExtractedChars());
     this.structuredExtractor = new StructuredContentExtractor(this.policy.maxExtractedChars());
+    this.ocrEngine = PdfOcrEngine.create(this.ocrConfig, log);
   }
 
   public TikaExtractionPolicy policy() {
@@ -107,23 +106,6 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
     if (isPdfFile(file, detectedMime)) {
       summary = PdfVisualAnalyzer.enrich(file, summary);
     }
-    int pageCount = summary.pageCount();
-    if (isRasterImageFile(file, detectedMime) && result.content() != null && !result.content().isBlank()) {
-      // Tika's image parser can invoke Tesseract from the default config even when the first pass
-      // is intended to be structured/non-OCR. Raster images have no text layer, so treat their
-      // baseline as empty and let the explicit bounded OCR route own text, metrics, and provenance.
-      result =
-          new ExtractionResult(
-              "",
-              result.title(),
-              result.mimeType() == null || result.mimeType().isBlank() ? detectedMime : result.mimeType(),
-              result.author(),
-              result.frontmatterMetadata());
-      summary =
-          new StructuredDocumentSummary(
-              Math.max(pageCount, 1), 0, 0, Math.max(pageCount, 1), 0, 0, 0, 0, 1);
-      pageCount = summary.pageCount();
-    }
     boolean truncated = structured.truncated();
     if (truncated && result.content().length() > policy.maxExtractedChars()) {
       // Defensive trim — the SAX handler caps to maxExtractedChars, but a chunk that overflows
@@ -146,7 +128,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
       ExtractionArtifact ocrArtifact =
           summary.mixedPdf()
               ? trySelectivePdfOcr(file, result, summary, ocrEvidence)
-              : tryOcr(file, result, ocrEvidence);
+              : tryOcr(file, result, summary, ocrEvidence);
       if (ocrArtifact != null) {
         return ocrArtifact;
       }
@@ -256,126 +238,131 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
   }
 
   private ExtractionArtifact tryOcr(
-      Path file, ExtractionResult baseline, OcrEvidenceBuilder ocrEvidence) {
-    long startedAtNanos = System.nanoTime();
-    try {
-      StructuredContentExtractor.StructuredExtractionResult ocr =
-          structuredExtractor.extractWithOcr(file, ocrConfig);
-      ExtractionResult ocrResult = ocr.result();
-      StructuredDocumentSummary ocrSummary = ocr.summary();
-      if ((ocrResult.content() == null || ocrResult.content().isBlank())
-          && isRasterImageFile(file, ocrResult.mimeType())) {
-        ExtractionArtifact direct = tryDirectImageOcr(file, ocrResult, startedAtNanos, ocrEvidence);
-        if (direct != null) {
-          return direct;
-        }
-      }
-      if ((ocrResult.content() == null || ocrResult.content().isBlank())
-          && isPdfFile(file, ocrResult.mimeType())) {
-        ExtractionArtifact renderedPdfOcr = tryRenderedPdfOcr(file, baseline, ocrSummary, ocrEvidence);
-        if (renderedPdfOcr != null) {
-          return renderedPdfOcr;
-        }
-      }
-      long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
-      ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-      double ocrQuality =
-          TextQualityAnalyzer.computeQualityScore(ocrResult.content(), ocrSummary.pageCount());
-      double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content());
-      if (ocrResult.content() != null
-          && !ocrResult.content().isBlank()
-          && ocrQuality >= baselineQuality) {
-        ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-        if (isPdfFile(file, ocrResult.mimeType())) {
-          ocrSummary = ocrCoveredPdfSummary(file, ocrSummary, ocrResult.content());
-        }
-        OcrConfidenceExtractor.Summary confidence =
-            OcrConfidenceExtractor.extract(file, ocrConfig, log);
-        return ExtractionArtifact.full(ocrResult, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
-            .withVisualExtractionEvidence(
-                VisualExtractionEvidence.from(
-                    ocrResult.content(),
-                    ocrSummary,
-                    "ocr_full",
-                    ocrConfig,
-                    true,
-                    confidence,
-                    false,
-                    ocrEvidence.facts(ocr.truncated())));
-      }
-      OcrSkipReason noImprovementReason = OcrOutcomeClassifier.classifyNoImprovement(baselineQuality);
-      ocrEvidence.skip(noImprovementReason);
-      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(noImprovementReason));
-      log.debug(
-          "OCR did not improve extraction for {} (ocrQuality={}, baselineQuality={})",
-          file.getFileName(),
-          ocrQuality,
-          baselineQuality);
-    } catch (IOException | ExtractionException e) {
-      log.debug("OCR extraction failed for {}: {}", file.getFileName(), e.getMessage());
-      ExtractionArtifact direct =
-          isPdfFile(file, baseline.mimeType())
-              ? tryRenderedPdfOcr(file, baseline, StructuredDocumentSummary.empty(), ocrEvidence)
-              : isRasterImageFile(file, baseline.mimeType())
-                  ? tryDirectImageOcr(file, baseline, startedAtNanos, ocrEvidence)
-                  : null;
-      if (direct != null) {
-        return direct;
-      }
-      ocrEvidence.skip(OcrSkipReason.UNKNOWN);
-      ocrMetricCatalog.failedTotal.increment(
-          OcrTags.OcrFailureTags.of(OcrRoutingConfig.ENGINE, e.getClass().getSimpleName()));
+      Path file,
+      ExtractionResult baseline,
+      StructuredDocumentSummary baselineSummary,
+      OcrEvidenceBuilder ocrEvidence) {
+    if (isRasterImageFile(file, baseline.mimeType())) {
+      return tryImageOcr(file, baseline, ocrEvidence);
+    }
+    if (isPdfFile(file, baseline.mimeType())) {
+      return tryPdfOcr(file, baseline, baselineSummary, ocrEvidence);
     }
     return null;
   }
 
-  private ExtractionArtifact tryDirectImageOcr(
+  private ExtractionArtifact tryPdfOcr(
       Path file,
       ExtractionResult baseline,
-      long startedAtNanos,
+      StructuredDocumentSummary baselineSummary,
       OcrEvidenceBuilder ocrEvidence) {
-    OcrConfidenceExtractor.TextResult direct =
-        OcrConfidenceExtractor.extractPlainTextBounded(file, ocrConfig, log, policy.maxExtractedChars());
-    if (direct.failureReason() != null) {
-      ocrEvidence.skip(direct.failureReason());
-    }
-    String directText = direct.text();
-    if (directText.isBlank()) {
-      return null;
-    }
-    double directQuality = TextQualityAnalyzer.computeQualityScore(directText, 1);
-    double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content());
-    if (directQuality < baselineQuality) {
-      return null;
-    }
-    long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+    long startedAtNanos = System.nanoTime();
+    String baselineText = baseline.content() == null ? "" : baseline.content().stripTrailing();
+    int maxOcrChars = Math.max(0, policy.maxExtractedChars() - baselineText.length());
+    PdfOcrEngine.OcrEngineResult ocr = ocrEngine.ocrPdf(file, maxOcrChars);
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
     ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-    ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-    ocrEvidence.fallback(OCR_FALLBACK_DIRECT_TESSERACT);
-    ocrEvidence.truncated(direct.truncated());
-    ExtractionResult result =
-        new ExtractionResult(
-            directText,
-            baseline.title(),
-            baseline.mimeType(),
-            baseline.author(),
-            baseline.frontmatterMetadata());
-    StructuredDocumentSummary summary =
-        new StructuredDocumentSummary(
-            1, directText.length(), 1, 0, 0, Math.max(1, directText.split("\\R+").length), 0, 0, 0);
-    OcrConfidenceExtractor.Summary confidence =
-        OcrConfidenceExtractor.extract(file, ocrConfig, log);
-    return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, direct.truncated())
-        .withVisualExtractionEvidence(
-            VisualExtractionEvidence.from(
+
+    int pages = Math.max(1, baselineSummary == null ? 1 : baselineSummary.pageCount());
+    double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content(), pages);
+    String engineText = ocr.text();
+    if (engineText != null && !engineText.isBlank()) {
+      String merged = baselineText + engineText;
+      double mergedQuality = TextQualityAnalyzer.computeQualityScore(merged, pages);
+      if (mergedQuality >= baselineQuality) {
+        ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
+        ocrEvidence.truncated(ocr.truncated());
+        ExtractionResult result =
+            new ExtractionResult(
+                merged, baseline.title(), baseline.mimeType(), baseline.author(), baseline.frontmatterMetadata());
+        StructuredDocumentSummary summary =
+            new StructuredDocumentSummary(
+                pages,
+                merged.length(),
+                pages,
+                0,
+                baselineSummary == null ? 0 : baselineSummary.headingCount(),
+                baselineSummary == null ? 0 : baselineSummary.paragraphCount(),
+                baselineSummary == null ? 0 : baselineSummary.tableCount(),
+                baselineSummary == null ? 0 : baselineSummary.listCount(),
+                baselineSummary == null ? 0 : baselineSummary.imagePageCount());
+        summary = ocrCoveredPdfSummary(file, summary, merged);
+        return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
+            .withVisualExtractionEvidence(
+                VisualExtractionEvidence.from(
+                    merged,
+                    summary,
+                    "ocr_full",
+                    ocrConfig,
+                    true,
+                    ocr.confidence(),
+                    false,
+                    ocrEvidence.facts(ocr.truncated())));
+      }
+    }
+    // Single terminal classifier for the PDF OCR path (tempdoc 671 discipline; skip() is
+    // first-write-wins). A hard engine failure is a failure; every other no-improvement outcome
+    // (timeout with zero pages, blank-with-no-text) is a skip classified exactly once here.
+    return classifyNonImprovement(file, ocr.failureReason(), baselineQuality, ocrEvidence);
+  }
+
+  private ExtractionArtifact tryImageOcr(
+      Path file, ExtractionResult baseline, OcrEvidenceBuilder ocrEvidence) {
+    long startedAtNanos = System.nanoTime();
+    PdfOcrEngine.OcrEngineResult ocr = ocrEngine.ocrImage(file, policy.maxExtractedChars());
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+    ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
+
+    double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content());
+    String directText = ocr.text();
+    if (directText != null && !directText.isBlank()) {
+      double directQuality = TextQualityAnalyzer.computeQualityScore(directText, 1);
+      if (directQuality >= baselineQuality) {
+        ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
+        ocrEvidence.fallback(OCR_FALLBACK_DIRECT_TESSERACT);
+        ocrEvidence.truncated(ocr.truncated());
+        ExtractionResult result =
+            new ExtractionResult(
                 directText,
-                summary,
-                "ocr_full",
-                ocrConfig,
-                true,
-                confidence,
-                false,
-                ocrEvidence.facts(direct.truncated())));
+                baseline.title(),
+                baseline.mimeType(),
+                baseline.author(),
+                baseline.frontmatterMetadata());
+        StructuredDocumentSummary summary =
+            new StructuredDocumentSummary(
+                1, directText.length(), 1, 0, 0, Math.max(1, directText.split("\\R+").length), 0, 0, 0);
+        return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
+            .withVisualExtractionEvidence(
+                VisualExtractionEvidence.from(
+                    directText,
+                    summary,
+                    "ocr_full",
+                    ocrConfig,
+                    true,
+                    ocr.confidence(),
+                    false,
+                    ocrEvidence.facts(ocr.truncated())));
+      }
+    }
+    // Single terminal classifier for the raster-image OCR path.
+    return classifyNonImprovement(file, ocr.failureReason(), baselineQuality, ocrEvidence);
+  }
+
+  private ExtractionArtifact classifyNonImprovement(
+      Path file, OcrSkipReason engineFailure, double baselineQuality, OcrEvidenceBuilder ocrEvidence) {
+    if (engineFailure == OcrSkipReason.UNKNOWN) {
+      ocrEvidence.skip(OcrSkipReason.UNKNOWN);
+      ocrMetricCatalog.failedTotal.increment(
+          OcrTags.OcrFailureTags.of(OcrRoutingConfig.ENGINE, "OcrEngineFailure"));
+      log.debug("OCR engine failed for {}", file.getFileName());
+      return null;
+    }
+    OcrSkipReason reason =
+        engineFailure != null ? engineFailure : OcrOutcomeClassifier.classifyNoImprovement(baselineQuality);
+    ocrEvidence.skip(reason);
+    ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(reason));
+    log.debug("OCR did not improve extraction for {} (reason={})", file.getFileName(), reason);
+    return null;
   }
 
   private ExtractionArtifact trySelectivePdfOcr(
@@ -385,224 +372,58 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
       OcrEvidenceBuilder ocrEvidence) {
     PdfVisualAnalyzer.PdfPageEvidence pageEvidence = PdfVisualAnalyzer.analyze(file);
     if (pageEvidence == null || !pageEvidence.mixed()) {
-      return tryOcr(file, baseline, ocrEvidence);
+      return tryOcr(file, baseline, baselineSummary, ocrEvidence);
     }
     long startedAtNanos = System.nanoTime();
     String baselineText = baseline.content() == null ? "" : baseline.content().stripTrailing();
-    StringBuilder appended = new StringBuilder();
-    List<OcrConfidenceExtractor.Summary> confidenceSummaries = new ArrayList<>();
-    boolean truncated = false;
-    try (PDDocument document = Loader.loadPDF(file.toFile())) {
-      PDFRenderer renderer = new PDFRenderer(document);
-      for (int pageIndex : pageEvidence.missingReadableTextPages()) {
-        Path pageImage = Files.createTempFile("justsearch-ocr-page-", ".png");
-        try {
-          ImageIO.write(renderer.renderImageWithDPI(pageIndex, 160, ImageType.RGB), "png", pageImage.toFile());
-          if (!imageWithinConfiguredGuards(pageImage, "image/png")) {
-            ocrEvidence.skip(OcrSkipReason.SIZE);
-            ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.SIZE));
-            continue;
-          }
-          String pageText = "";
-          try {
-            StructuredContentExtractor.StructuredExtractionResult ocr =
-                structuredExtractor.extractWithOcr(pageImage, ocrConfig);
-            pageText = ocr.result().content();
-          } catch (IOException | ExtractionException e) {
-            log.debug("Tika page OCR failed for {} page {}: {}", file.getFileName(), pageIndex + 1, e.getMessage());
-          }
-          if (pageText == null || pageText.isBlank()) {
-            int remaining = Math.max(0, policy.maxExtractedChars() - baselineText.length() - appended.length());
-            OcrConfidenceExtractor.TextResult direct =
-                OcrConfidenceExtractor.extractPlainTextBounded(pageImage, ocrConfig, log, remaining);
-            if (direct.failureReason() != null) {
-              ocrEvidence.skip(direct.failureReason());
-            }
-            pageText = direct.text();
-            truncated = truncated || direct.truncated();
-            if (!pageText.isBlank()) {
-              ocrEvidence.fallback(OCR_FALLBACK_RENDERED_PDF);
-            }
-          }
-          if (pageText != null && !pageText.isBlank()) {
-            confidenceSummaries.add(OcrConfidenceExtractor.extract(pageImage, ocrConfig, log));
-            truncated = appendOcrPageText(appended, pageText, pageIndex + 1, baselineText.length()) || truncated;
-            if (baselineText.length() + appended.length() >= policy.maxExtractedChars()) {
-              truncated = true;
-              ocrEvidence.truncated(true);
-              break;
-            }
-          }
-        } finally {
-          try {
-            Files.deleteIfExists(pageImage);
-          } catch (IOException ignored) {
-            // Best-effort cleanup of a bounded temp image.
-          }
-        }
-      }
-      long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
-      ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-      double baselineQuality = TextQualityAnalyzer.computeQualityScore(baseline.content(), baselineSummary.pageCount());
-      if (!appended.isEmpty()) {
-        String merged = baselineText + appended;
+    int maxOcrChars = Math.max(0, policy.maxExtractedChars() - baselineText.length());
+    List<Integer> missingPages = new ArrayList<>(pageEvidence.missingReadableTextPages());
+    java.util.Collections.sort(missingPages);
+    PdfOcrEngine.OcrEngineResult ocr = ocrEngine.ocrPdfPages(file, missingPages, maxOcrChars);
+    long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+    ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
+
+    double baselineQuality =
+        TextQualityAnalyzer.computeQualityScore(baseline.content(), baselineSummary.pageCount());
+    String engineText = ocr.text();
+    if (engineText != null && !engineText.isBlank()) {
+      ocrEvidence.fallback(OCR_FALLBACK_RENDERED_PDF);
+      ocrEvidence.truncated(ocr.truncated());
+      String merged = baselineText + engineText;
+      double mergedQuality =
+          TextQualityAnalyzer.computeQualityScore(merged, baselineSummary.pageCount());
+      if (mergedQuality >= baselineQuality) {
+        ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
         ExtractionResult mergedResult =
             new ExtractionResult(
                 merged, baseline.title(), baseline.mimeType(), baseline.author(), baseline.frontmatterMetadata());
-        double mergedQuality = TextQualityAnalyzer.computeQualityScore(merged, baselineSummary.pageCount());
-        if (mergedQuality >= baselineQuality) {
-          ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-          StructuredDocumentSummary mergedSummary =
-              new StructuredDocumentSummary(
-                  baselineSummary.pageCount(),
-                  merged.length(),
-                  baselineSummary.pageCount(),
-                  0,
-                  baselineSummary.headingCount(),
-                  baselineSummary.paragraphCount(),
-                  baselineSummary.tableCount(),
-                  baselineSummary.listCount(),
-                  baselineSummary.imagePageCount());
-          return ExtractionArtifact.full(mergedResult, policy, OcrRoutingConfig.PARSER_ID, truncated)
-              .withVisualExtractionEvidence(
-                  VisualExtractionEvidence.from(
-                      merged,
-                      mergedSummary,
-                      "ocr_selective",
-                      ocrConfig,
-                      true,
-                      OcrConfidenceExtractor.aggregate(confidenceSummaries),
-                      true,
-                      ocrEvidence.facts(truncated)));
-        }
+        StructuredDocumentSummary mergedSummary =
+            new StructuredDocumentSummary(
+                baselineSummary.pageCount(),
+                merged.length(),
+                baselineSummary.pageCount(),
+                0,
+                baselineSummary.headingCount(),
+                baselineSummary.paragraphCount(),
+                baselineSummary.tableCount(),
+                baselineSummary.listCount(),
+                baselineSummary.imagePageCount());
+        return ExtractionArtifact.full(mergedResult, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
+            .withVisualExtractionEvidence(
+                VisualExtractionEvidence.from(
+                    merged,
+                    mergedSummary,
+                    "ocr_selective",
+                    ocrConfig,
+                    true,
+                    ocr.confidence(),
+                    true,
+                    ocrEvidence.facts(ocr.truncated())));
       }
-      OcrSkipReason noImprovementReason = OcrOutcomeClassifier.classifyNoImprovement(baselineQuality);
-      ocrEvidence.skip(noImprovementReason);
-      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(noImprovementReason));
-    } catch (IOException e) {
-      ocrEvidence.skip(OcrSkipReason.UNKNOWN);
-      ocrMetricCatalog.failedTotal.increment(
-          OcrTags.OcrFailureTags.of(OcrRoutingConfig.ENGINE, e.getClass().getSimpleName()));
-      log.debug("Selective PDF OCR failed for {}: {}", file.getFileName(), e.getMessage());
     }
-    return null;
-  }
-
-  private ExtractionArtifact tryRenderedPdfOcr(
-      Path file,
-      ExtractionResult baseline,
-      StructuredDocumentSummary baselineSummary,
-      OcrEvidenceBuilder ocrEvidence) {
-    long startedAtNanos = System.nanoTime();
-    String baselineText = baseline.content() == null ? "" : baseline.content().stripTrailing();
-    StringBuilder text = new StringBuilder();
-    List<OcrConfidenceExtractor.Summary> confidenceSummaries = new ArrayList<>();
-    int pages = 0;
-    boolean truncated = false;
-    try (PDDocument document = Loader.loadPDF(file.toFile())) {
-      PDFRenderer renderer = new PDFRenderer(document);
-      pages = document.getNumberOfPages();
-      for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
-        Path pageImage = Files.createTempFile("justsearch-ocr-page-", ".png");
-        try {
-          ImageIO.write(renderer.renderImageWithDPI(pageIndex, 160, ImageType.RGB), "png", pageImage.toFile());
-          if (!imageWithinConfiguredGuards(pageImage, "image/png")) {
-            ocrEvidence.skip(OcrSkipReason.SIZE);
-            ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.SIZE));
-            continue;
-          }
-          int remaining = Math.max(0, policy.maxExtractedChars() - baselineText.length() - text.length());
-          OcrConfidenceExtractor.TextResult direct =
-              OcrConfidenceExtractor.extractPlainTextBounded(pageImage, ocrConfig, log, remaining);
-          if (direct.failureReason() != null) {
-            ocrEvidence.skip(direct.failureReason());
-          }
-          String pageText = direct.text();
-          truncated = truncated || direct.truncated();
-          if (pageText != null && !pageText.isBlank()) {
-            ocrEvidence.fallback(OCR_FALLBACK_RENDERED_PDF);
-            confidenceSummaries.add(OcrConfidenceExtractor.extract(pageImage, ocrConfig, log));
-            truncated = appendOcrPageText(text, pageText, pageIndex + 1, baselineText.length()) || truncated;
-            if (baselineText.length() + text.length() >= policy.maxExtractedChars()) {
-              truncated = true;
-              ocrEvidence.truncated(true);
-              break;
-            }
-          }
-        } finally {
-          try {
-            Files.deleteIfExists(pageImage);
-          } catch (IOException ignored) {
-            // Best-effort cleanup of a bounded temp image.
-          }
-        }
-      }
-      long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
-      ocrMetricCatalog.timeMs.record(elapsedMs, OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-      if (!text.isEmpty()) {
-        String merged = baselineText + text;
-        double mergedQuality = TextQualityAnalyzer.computeQualityScore(merged, Math.max(1, pages));
-        double baselineQuality =
-            TextQualityAnalyzer.computeQualityScore(
-                baseline.content(), baselineSummary == null ? pages : baselineSummary.pageCount());
-        if (mergedQuality >= baselineQuality) {
-          ocrMetricCatalog.succeededTotal.increment(OcrTags.OcrEngineTags.of(OcrRoutingConfig.ENGINE));
-          ExtractionResult result =
-              new ExtractionResult(
-                  merged, baseline.title(), baseline.mimeType(), baseline.author(), baseline.frontmatterMetadata());
-          StructuredDocumentSummary summary =
-              new StructuredDocumentSummary(
-                  Math.max(1, pages),
-                  merged.length(),
-                  Math.max(1, pages),
-                  0,
-                  baselineSummary == null ? 0 : baselineSummary.headingCount(),
-                  baselineSummary == null ? 0 : baselineSummary.paragraphCount(),
-                  baselineSummary == null ? 0 : baselineSummary.tableCount(),
-                  baselineSummary == null ? 0 : baselineSummary.listCount(),
-                  baselineSummary == null ? 0 : baselineSummary.imagePageCount());
-          summary = ocrCoveredPdfSummary(file, summary, merged);
-          return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, truncated)
-              .withVisualExtractionEvidence(
-                  VisualExtractionEvidence.from(
-                      merged,
-                      summary,
-                      "ocr_full",
-                      ocrConfig,
-                      true,
-                      OcrConfidenceExtractor.aggregate(confidenceSummaries),
-                      false,
-                      ocrEvidence.facts(truncated)));
-        }
-      }
-      // No internal skip()/increment() here (tempdoc 671): this method is only ever reached
-      // nested inside tryOcr's own blank-content branch, whose tail is the single, already-
-      // executing, correctly-informed terminal classifier for this path — an internal call here
-      // would double-increment ocr.skipped_total and, since OcrEvidenceBuilder.skip() is
-      // first-write-wins, could disagree with the caller's classification (the two local
-      // baselineQuality computations use different computeQualityScore overloads).
-    } catch (IOException e) {
-      ocrEvidence.skip(OcrSkipReason.UNKNOWN);
-      ocrMetricCatalog.failedTotal.increment(
-          OcrTags.OcrFailureTags.of(OcrRoutingConfig.ENGINE, e.getClass().getSimpleName()));
-      log.debug("Rendered PDF OCR fallback failed for {}: {}", file.getFileName(), e.getMessage());
-    }
-    return null;
-  }
-
-  private boolean appendOcrPageText(
-      StringBuilder target, String pageText, int pageNumber, int baselineLength) {
-    String block = "\n\n--- OCR page " + pageNumber + " ---\n" + pageText.strip() + "\n";
-    int remaining = policy.maxExtractedChars() - baselineLength - target.length();
-    if (remaining <= 0) {
-      return true;
-    }
-    if (block.length() > remaining) {
-      target.append(block, 0, remaining);
-      return true;
-    }
-    target.append(block);
-    return false;
+    // Single terminal classifier for the selective PDF OCR path (a mixed PDF always has real
+    // baseline text, so classifyNoImprovement here stays TEXTUAL — tempdoc 671).
+    return classifyNonImprovement(file, ocr.failureReason(), baselineQuality, ocrEvidence);
   }
 
   private static StructuredDocumentSummary ocrCoveredPdfSummary(

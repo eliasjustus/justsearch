@@ -241,12 +241,11 @@ final class PolicyDrivenTikaExtractorTest {
         admissionProbe.shouldAttemptOcrForTesting(
             image, "image/png", "", StructuredDocumentSummary.empty()),
         "empty raster image should be OCR-admitted");
-    String directText =
-        OcrConfidenceExtractor.extractPlainTextBounded(image, ocrConfig, null, Integer.MAX_VALUE).text();
+    String directText = PdfOcrEngine.create(ocrConfig, null).ocrImage(image, Integer.MAX_VALUE).text();
     TikaOcrRuntime.RuntimePaths runtimePaths = TikaOcrRuntime.resolve();
     assertTrue(
         directText.toLowerCase(java.util.Locale.ROOT).contains("alpha"),
-        "direct packaged Tesseract should read fixture text, got: "
+        "owned engine Tesseract should read fixture text, got: "
             + directText
             + " runtime="
             + runtimePaths);

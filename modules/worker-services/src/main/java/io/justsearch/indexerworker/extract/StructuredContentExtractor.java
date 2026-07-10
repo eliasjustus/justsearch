@@ -100,27 +100,6 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
     }
   }
 
-  public StructuredExtractionResult extractWithOcr(Path file, OcrRoutingConfig ocrConfig)
-      throws IOException, ContentExtractor.ExtractionException {
-    Objects.requireNonNull(file, "file");
-    validateFileForExtraction(file);
-
-    if (Files.size(file) == 0) {
-      return new StructuredExtractionResult(
-          new ContentExtractor.ExtractionResult("", null, "text/plain"),
-          false,
-          StructuredDocumentSummary.empty());
-    }
-
-    try {
-      return extractStructured(
-          file, parseContextWithOcr(ocrConfig == null ? OcrRoutingConfig.defaults() : ocrConfig));
-    } catch (Exception e) {
-      throw new ContentExtractor.ExtractionException(
-          "OCR extraction failed for: " + file.getFileName(), e);
-    }
-  }
-
   private void validateFileForExtraction(Path file)
       throws IOException, ContentExtractor.ExtractionException {
     if (!Files.exists(file)) {
@@ -220,13 +199,6 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
     return parseContext;
   }
 
-  private static ParseContext parseContextWithOcr(OcrRoutingConfig config) {
-    ParseContext parseContext = new ParseContext();
-    configurePdfOcrOnly(parseContext);
-    configureTesseractOcr(parseContext, config);
-    return parseContext;
-  }
-
   /**
    * Configures PDF marked content extraction via reflection. PDFParserConfig is in
    * tika-parsers-standard (runtimeOnly dependency), so we avoid a compile-time import.
@@ -254,23 +226,6 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private static void configurePdfOcrOnly(ParseContext parseContext) {
-    try {
-      Class<?> configClass = Class.forName("org.apache.tika.parser.pdf.PDFParserConfig");
-      Object config = configClass.getDeclaredConstructor().newInstance();
-      configurePdfOcrStrategy(configClass, config, "OCR_ONLY");
-      invokeIfPresent(configClass, config, "setExtractInlineImages", boolean.class, true);
-      parseContext
-          .getClass()
-          .getMethod("set", Class.class, Object.class)
-          .invoke(parseContext, configClass, config);
-      log.debug("PDF OCR-only extraction enabled");
-    } catch (Exception e) {
-      log.debug("Could not enable PDF OCR strategy: {}", e.getMessage());
-    }
-  }
-
-  @SuppressWarnings({"unchecked", "rawtypes"})
   private static void configurePdfOcrStrategy(
       Class<?> configClass, Object config, String strategyName) {
     try {
@@ -281,57 +236,6 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
       configClass.getMethod("setOcrStrategy", strategyClass).invoke(config, strategy);
     } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
       // Tika version differences are handled by configuring only supported setters.
-    }
-  }
-
-  private static void configureTesseractOcr(ParseContext parseContext, OcrRoutingConfig config) {
-    try {
-      Class<?> configClass = Class.forName("org.apache.tika.parser.ocr.TesseractOCRConfig");
-      Object tesseract = configClass.getDeclaredConstructor().newInstance();
-      invokeIfPresent(configClass, tesseract, "setLanguage", String.class, config.tikaLanguage());
-      invokeIfPresent(configClass, tesseract, "setPageSegMode", String.class, "6");
-      invokeIfPresent(configClass, tesseract, "setOutputType", String.class, "txt");
-      invokeIfPresent(configClass, tesseract, "setInlineContent", boolean.class, true);
-      invokeIfPresent(configClass, tesseract, "setTimeoutSeconds", int.class, config.tikaTimeoutSeconds());
-      invokeIfPresent(configClass, tesseract, "setTimeout", int.class, config.tikaTimeoutSeconds());
-      parseContext
-          .getClass()
-          .getMethod("set", Class.class, Object.class)
-          .invoke(parseContext, configClass, tesseract);
-
-      TikaOcrRuntime.RuntimePaths runtime = TikaOcrRuntime.resolve();
-      if (runtime.available()) {
-        Class<?> parserClass = Class.forName("org.apache.tika.parser.ocr.TesseractOCRParser");
-        Object parser = parserClass.getDeclaredConstructor().newInstance();
-        if (runtime.executableDirectory() != null) {
-          invokeIfPresent(
-              parserClass,
-              parser,
-              "setTesseractPath",
-              String.class,
-              runtime.executableDirectory().toString());
-        }
-        if (runtime.tessdataDirectory() != null) {
-          invokeIfPresent(
-              parserClass,
-              parser,
-              "setTessdataPath",
-              String.class,
-              runtime.tessdataDirectory().toString());
-        }
-        invokeIfPresent(parserClass, parser, "setLanguage", String.class, config.tikaLanguage());
-        invokeIfPresent(parserClass, parser, "setPageSegMode", String.class, "6");
-        invokeIfPresent(parserClass, parser, "setOutputType", String.class, "txt");
-        invokeIfPresent(parserClass, parser, "setInlineContent", boolean.class, true);
-        invokeIfPresent(parserClass, parser, "setTimeout", int.class, config.tikaTimeoutSeconds());
-        parseContext
-            .getClass()
-            .getMethod("set", Class.class, Object.class)
-            .invoke(parseContext, parserClass, parser);
-      }
-      log.debug("Tesseract OCR configured");
-    } catch (Exception e) {
-      log.debug("Could not configure Tesseract OCR: {}", e.getMessage());
     }
   }
 
