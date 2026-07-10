@@ -1083,6 +1083,44 @@ work below. The active work is the **E-5 late-chunking** effort (§G design → 
   read-only corpus reuse. Ship default-off → measure → default-on (D-004 template); authorization-gated
   (get founder go-ahead before flipping default-on or merging).
 
+## Phase M — offline CLS chunk-vector experiment (2026-07-10, plan A1): per-span chunk half REGRESSES; Phase 2 ships VECTOR-only
+
+The L-8 "cheap offline evidence" ran (`scripts/jseval/experiments/late_chunk_cls_check_691.py`,
+results `tmp/691-cls-check/`; RTX 4070 fp16, 708-venv reuse, offline HF cache, 38.5s). Design:
+identical 500/50-token chunk spans over the first ≤8192 tokens of each legal-clerc-200 doc
+(85/198 docs truncated), CLS queries, exact-NN cosine, MaxP doc scoring — isolating ONLY the
+chunk-vector derivation: **C** = per-chunk CLS embeds (production recipe) vs **LC** = span-mean
+from one long-context pass (arXiv:2409.04701).
+
+| Metric | C (per-chunk CLS) | LC (late chunking) | Δ |
+|---|---|---|---|
+| nDCG@10 | 0.6397 | 0.4068 | **−0.2329** |
+| R@10 | 0.850 | 0.585 | **−0.265** |
+| R@100 | 0.960 | 0.915 | −0.045 |
+
+Per-query: C wins 108 / LC 25 / ties 67. LC's vectors are correlated-but-worse (R@100 nearly
+holds; @10 collapses) — exactly the off-distribution failure shape the literature predicted for
+mean-pooling a CLS model (§L-5). Far outside the −0.01 decision threshold.
+
+**Verdict (per the founder-approved decision rule): the per-span chunk half is DROPPED. Phase 2
+ships the single-pass whole-doc VECTOR only** — chunks keep today's per-chunk CLS path. K-4 risk
+#1 is settled (was the crux; now measured). Mechanically: the late pass keeps using
+`embedWithSpans` with an empty span array (same primitive, bit-identical VECTOR property intact,
+batch-1 OOM-safe); it writes `VECTOR`+`EMBEDDING_STATUS` only and leaves all chunk statuses to
+the existing path. Flag name kept (`JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED` — it gates the
+late-chunking *mechanism*; the chunk half is disabled by this measurement, documented here and
+in the env-var doc).
+
+**Secondary observation (recorded for 708's lane, NOT acted on here):** condition C itself —
+pure chunk-CLS dense, exact-NN MaxP — scores **nDCG@10 0.640 / R@10 0.850** on legal-clerc,
+versus the production whole-doc `vector` leg's 0.060 and hybrid's 0.521. This sits in tension
+with F-030(678)'s "encoder-domain mismatch, not granularity" framing: at chunk granularity with
+exact NN and MaxP, this encoder separates legal content rather well offline. Differences from
+production (exact-NN vs HNSW, MaxP vs fusion, 8192-token coverage cap, isolated leg vs fused
+pipeline) mean this is NOT directly comparable — but it suggests the production chunk-dense leg
+and/or its fusion path deserves attribution before concluding the encoder itself is the ceiling.
+Left as evidence for 708 to reconcile post-merge.
+
 ## Phase L — second-takeover verification + verdict (2026-07-10, fresh session; three-subagent verify/survey/research pass, no code changes)
 
 A fresh takeover re-verified §Phase K against the branch, `main`, the newer tempdocs, and the
