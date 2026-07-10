@@ -91,6 +91,8 @@ public final class LateChunkingEmbedBackfillOps {
     int processedParents = 0;
     int failedParents = 0;
     int longDocDeferred = 0;
+    long embedNs = 0;
+    long t0 = System.nanoTime();
 
     try {
       for (String parentId : pendingParentIds) {
@@ -149,7 +151,13 @@ public final class LateChunkingEmbedBackfillOps {
         }
 
         try {
-          EmbeddingService.ChunkedEmbedding result = provider.embedWithSpans(parentContent, spans);
+          long tEmbed = System.nanoTime();
+          EmbeddingService.ChunkedEmbedding result;
+          try {
+            result = provider.embedWithSpans(parentContent, spans);
+          } finally {
+            embedNs += System.nanoTime() - tEmbed;
+          }
           if (result == null) {
             // Content exceeds the model's context window (or backend doesn't support late
             // chunking) — Phase 2 scope. Leave PENDING for the existing per-doc/combined
@@ -238,13 +246,21 @@ public final class LateChunkingEmbedBackfillOps {
       context
           .commitOps()
           .commitAndTrack(CommitReason.BACKFILL_EMBEDDING);
+    }
+
+    if (processedParents > 0 || failedParents > 0 || longDocDeferred > 0) {
+      long embedMs = embedNs / 1_000_000;
+      long totalMs = (System.nanoTime() - t0) / 1_000_000;
       context
           .log()
           .info(
-              "Late-chunking embed backfill: parents processed={}, failed={}, long-doc-deferred={}",
+              "Late-chunking embed backfill: parents processed={}, failed={},"
+                  + " long-doc-deferred={}, embed={}ms, total={}ms",
               processedParents,
               failedParents,
-              longDocDeferred);
+              longDocDeferred,
+              embedMs,
+              totalMs);
     }
 
     return didWork;

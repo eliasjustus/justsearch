@@ -512,7 +512,12 @@ public final class OnnxEmbeddingEncoder implements Closeable {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
           OrtSession session = lease.session();
+          long tOrt = System.nanoTime();
           try (OrtSession.Result result = session.run(inputs, lease.runOptions())) {
+            // Tempdoc 691 Wave 0 (B-5): runHidden is the shared forward pass for embedSingle
+            // and embedWithSpans, but only the batched embed() path fed the profiler before
+            // this — record here too so EncoderProfileAccumulator isn't blind to those calls.
+            profiler.recordOrtCall(System.nanoTime() - tOrt);
             // last_hidden_state: [1, seqLen, dim]
             float[][][] hidden = (float[][][]) result.get(0).getValue();
             int dim = hidden[0][0].length;
@@ -590,7 +595,8 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    *
    * @return the L2-normalized pooled vector, or {@code null} if no token intersects the span
    */
-  private float[] poolSpan(
+  // package-private for tests (tempdoc 691 Wave 0)
+  float[] poolSpan(
       float[][] hidden, long[] mask, CharSpan[] tokSpans, int startChar, int endChar, int dim) {
     float[] pooled = new float[dim];
     float count = 0.0f;
@@ -758,7 +764,8 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * Applies the configured pooling strategy to extract a single vector from token-level hidden
    * states.
    */
-  private float[] pool(float[][] tokenHiddenStates, long[] attentionMask, int dim) {
+  // package-private for tests (tempdoc 691 Wave 0)
+  float[] pool(float[][] tokenHiddenStates, long[] attentionMask, int dim) {
     if (poolingStrategy == PoolingStrategy.CLS) {
       // CLS pooling: take the first token's hidden state
       return tokenHiddenStates[0].clone();
