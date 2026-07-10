@@ -23,6 +23,8 @@ import java.util.function.Supplier;
 import javax.imageio.ImageIO;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.slf4j.Logger;
@@ -207,6 +209,7 @@ final class PdfOcrEngine {
     boolean truncated = false;
     boolean interrupted = false;
     boolean sawTimeout = false;
+    int oversizePagesSkipped = 0;
     OcrSkipReason spawnFailure = null;
     List<PageTask> tasks = new ArrayList<>();
     StringBuilder merged = new StringBuilder();
@@ -234,6 +237,11 @@ final class PdfOcrEngine {
             truncated = true;
             sawTimeout = true;
             break;
+          }
+          if (!withinRenderGuards(document.getPage(pageIndex), pageIndex, pdf)) {
+            oversizePagesSkipped++;
+            truncated = true;
+            continue;
           }
           inFlight.acquire();
           boolean submitted = false;
@@ -318,10 +326,16 @@ final class PdfOcrEngine {
       Thread.currentThread().interrupt();
     }
 
-    OcrSkipReason failure =
-        pagesProcessed > 0
-            ? null
-            : (sawTimeout || interrupted ? OcrSkipReason.TIMEOUT : spawnFailure);
+    OcrSkipReason failure = null;
+    if (pagesProcessed == 0) {
+      if (sawTimeout || interrupted) {
+        failure = OcrSkipReason.TIMEOUT;
+      } else if (spawnFailure != null) {
+        failure = spawnFailure;
+      } else if (oversizePagesSkipped > 0) {
+        failure = OcrSkipReason.SIZE;
+      }
+    }
     return new OcrEngineResult(
         merged.toString(),
         OcrConfidenceExtractor.aggregate(confidences),
@@ -404,6 +418,47 @@ final class PdfOcrEngine {
     }
     target.append(block);
     return false;
+  }
+
+  /**
+   * Pre-render size guard: predicts the rendered pixel dimensions from the page's media box (and
+   * rotation) so an oversized page buffer is never allocated at all — the successor to the old
+   * post-render {@code imageWithinConfiguredGuards} check on the page PNG.
+   */
+  private boolean withinRenderGuards(PDPage page, int pageIndex, Path pdf) {
+    Integer maxDimension = ocrConfig.maxImageDimension();
+    Integer maxPixels = ocrConfig.maxImagePixels();
+    boolean dimensionGuarded = maxDimension != null && maxDimension > 0;
+    boolean pixelGuarded = maxPixels != null && maxPixels > 0;
+    if ((!dimensionGuarded && !pixelGuarded) || page == null) {
+      return true;
+    }
+    PDRectangle box = page.getMediaBox();
+    if (box == null) {
+      return true;
+    }
+    float scale = renderDpi / 72f;
+    long width = (long) Math.ceil(box.getWidth() * scale);
+    long height = (long) Math.ceil(box.getHeight() * scale);
+    int rotation = ((page.getRotation() % 360) + 360) % 360;
+    if (rotation == 90 || rotation == 270) {
+      long swap = width;
+      width = height;
+      height = swap;
+    }
+    boolean within =
+        (!dimensionGuarded || Math.max(width, height) <= maxDimension)
+            && (!pixelGuarded || width * height <= maxPixels);
+    if (!within) {
+      log.debug(
+          "Skipping OCR render for {} page {}: predicted {}x{} px at {} DPI exceeds configured guards",
+          pdf.getFileName(),
+          pageIndex + 1,
+          width,
+          height,
+          renderDpi);
+    }
+    return within;
   }
 
   private static List<Integer> resolveTargets(List<Integer> pageSubset, int pageCount) {

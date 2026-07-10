@@ -16,9 +16,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -149,8 +151,63 @@ final class PdfOcrEngineTest {
     assertFalse(worker.isAlive(), "engine must unwind promptly on interrupt");
     assertEquals(3, spawned.size());
     for (StubProcess stub : spawned) {
-      assertTrue(stub.wasDestroyed(), "every registered child must be force-killed on interrupt");
+      assertTrue(
+          stub.wasForceDestroyed(),
+          "every registered child must be destroyForcibly'd (not gracefully destroy'd) on interrupt");
     }
+  }
+
+  @Test
+  @Timeout(30)
+  void oversizePageIsSkippedBeforeRenderWithoutSpawn() throws Exception {
+    // F1 regression: the guard fires PRE-render (predicted dims from the media box at the
+    // engine's DPI), so the oversized page buffer is never allocated and no child is spawned.
+    // Test engine renders at 72 DPI (scale 1.0): Letter = 612x792 px passes maxImageDimension
+    // 1000; the 5000x5000pt page predicts 5000x5000 px and trips it.
+    Path pdf = pdfWithPages(PDRectangle.LETTER, new PDRectangle(5000, 5000));
+    OcrRoutingConfig guarded = new OcrRoutingConfig(true, List.of("eng"), 30_000, null, 1000, null, null, null);
+    AtomicInteger spawns = new AtomicInteger();
+    PdfOcrEngine engine =
+        engine(
+            guarded,
+            4,
+            cmd -> {
+              spawns.incrementAndGet();
+              return succeedStub(cmd, new long[] {0L, 0L});
+            });
+
+    PdfOcrEngine.OcrEngineResult result = engine.ocrPdf(pdf, Integer.MAX_VALUE);
+
+    assertEquals(1, spawns.get(), "the oversized page must never reach a tesseract spawn");
+    assertEquals(1, result.pagesProcessed());
+    assertTrue(result.text().contains("PAGEWORD0"), result.text());
+    assertFalse(result.text().contains("--- OCR page 2 ---"), result.text());
+    assertTrue(result.truncated(), "skipping an oversized page leaves content honestly incomplete");
+    assertNull(result.failureReason());
+  }
+
+  @Test
+  @Timeout(30)
+  void allPagesOversizeReportsSizeWithZeroSpawns() throws Exception {
+    Path pdf = pdfWithPages(new PDRectangle(5000, 5000), new PDRectangle(6000, 4000));
+    OcrRoutingConfig guarded = new OcrRoutingConfig(true, List.of("eng"), 30_000, null, 1000, null, null, null);
+    AtomicInteger spawns = new AtomicInteger();
+    PdfOcrEngine engine =
+        engine(
+            guarded,
+            4,
+            cmd -> {
+              spawns.incrementAndGet();
+              return succeedStub(cmd, new long[] {0L, 0L});
+            });
+
+    PdfOcrEngine.OcrEngineResult result = engine.ocrPdf(pdf, Integer.MAX_VALUE);
+
+    assertEquals(0, spawns.get(), "no page may render or spawn when all pages are oversize");
+    assertEquals(0, result.pagesProcessed());
+    assertTrue(result.text().isBlank());
+    assertTrue(result.truncated());
+    assertEquals(OcrSkipReason.SIZE, result.failureReason());
   }
 
   @Test
@@ -238,19 +295,31 @@ final class PdfOcrEngineTest {
     return pdf;
   }
 
+  private Path pdfWithPages(PDRectangle... mediaBoxes) throws IOException {
+    Path pdf = tempDir.resolve("sized-" + System.nanoTime() + ".pdf");
+    try (PDDocument document = new PDDocument()) {
+      for (PDRectangle box : mediaBoxes) {
+        document.addPage(new PDPage(box));
+      }
+      document.save(pdf.toFile());
+    }
+    return pdf;
+  }
+
   /** Minimal {@link Process} stub whose {@code waitFor} sleeps (interruptible) and records kills. */
   private static final class StubProcess extends Process {
     private final int exitCode;
     private final long blockMs;
-    private volatile boolean destroyed;
+    private volatile boolean destroyedForcibly;
+    private volatile boolean destroyedGracefully;
 
     StubProcess(int exitCode, long blockMs) {
       this.exitCode = exitCode;
       this.blockMs = blockMs;
     }
 
-    boolean wasDestroyed() {
-      return destroyed;
+    boolean wasForceDestroyed() {
+      return destroyedForcibly;
     }
 
     @Override
@@ -276,18 +345,18 @@ final class PdfOcrEngineTest {
 
     @Override
     public Process destroyForcibly() {
-      destroyed = true;
+      destroyedForcibly = true;
       return this;
     }
 
     @Override
     public void destroy() {
-      destroyed = true;
+      destroyedGracefully = true;
     }
 
     @Override
     public boolean isAlive() {
-      return !destroyed;
+      return !destroyedForcibly && !destroyedGracefully;
     }
 
     @Override

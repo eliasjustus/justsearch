@@ -1,7 +1,7 @@
 ---
 title: "Scanned-PDF OCR throughput: replace Tika's opaque internal per-page-serial OCR_ONLY path with JustSearch's own parallel, capped, budgeted render+OCR loop — >10x on scanned documents — and fix the advisory-timebox/orphaned-child liveness class the investigation confirmed on the same path"
 type: tempdocs
-status: "IMPLEMENTED + verified (2026-07-10, same day as design): S1 engine+teardown (8e882d1) and S2 config unification (159653d) shipped; full unit suite green; independent refute-first review verdict SHIP (frozen invariants byte-verified, no confirmed defects, two low-severity behavioral notes recorded in §Execution log); measured 6.8× on the 77p stall doc with 100% before-vocabulary retention, plus recovery of a doc the old path lost. Register F-030 records the extraction-content comparability boundary. Remaining: PR/merge (awaiting founder go-ahead) and the optional full-corpus 686 re-run. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
+status: "IMPLEMENTED + verified + review-hardened (2026-07-10, same day as design): S1 engine+teardown (8e882d1), S2 config unification (159653d), plus a post-implementation review round that found and fixed one real defect the first review missed (dropped per-rendered-page size guard — restored pre-render) and hardened the evidence record via an independent refute-first claims audit (before-timing re-measured durably: 115,055 ms → 16,774 ms ≈ 6.9×). Full unit suite + module suites green; two independent reviews (code SHIP verdict; claims audit). Register F-030 records the extraction-content comparability boundary. Open decision item: the now-actually-binding 50-page cap (§review round). Remaining: PR/merge (awaiting founder go-ahead) and the optional full-corpus 686 re-run. Spun out of 705's founder-directed sidegoal per 686's own out-of-scope rule ('fixing whatever the measurement finds' is a new tempdoc). Owns OCR execution performance + the extraction timebox/orphan liveness fix; does NOT own routing (607), reason codes (671, shipped), or the extraction-tax verdict (705)."
 created: 2026-07-10
 author: agent (Fable, takeover-705 session) — founder-directed sidegoal after the 686 instrumented run showed the extraction cost tax concentrates in scanned PDFs
 category: extraction / ocr / indexing-performance / worker
@@ -320,6 +320,52 @@ null-fill/auto semantics; `ResolvedConfigBuilderTest.ocrConfig` covers the new k
   remains the when-wanted final tier; the per-doc harness above already exercised the real
   extractor + real tesseract + real corpus end-to-end, and the live-stack tier above covered the
   wire/config/log integration.
+
+### Post-implementation review round (2026-07-10, /review-changes; findings fixed same day)
+
+A second critical pass (orchestrator review + an independent refute-first audit of the
+verification-claims list, auditor ≠ implementers ≠ first reviewer) after the SHIP verdict:
+
+**Defect found and FIXED — per-rendered-page size guard had been dropped.** The old loops
+guard-checked every rendered page PNG against `maxImageDimension`/`maxImagePixels` (pre-change
+`PolicyDrivenTikaExtractor.java:401,509`); the engine had no equivalent, and the file-level guard
+in `evaluateOcrAttempt` never applies to PDFs — a pathological large-media-box page would render
+unguarded at 300 DPI (100+ MB buffers on a no-margin heap). Both the first code review and the
+implementing agent missed it; the claims audit confirmed it (including refuting the "something
+else bounds it" escape — the budget bounds tesseract *time*, nothing bounded the render).
+Fixed better-than-old: a **pre-render** guard predicts pixel dims from the page's media box
+(rotation-aware) × DPI and skips oversized pages before any allocation; all-pages-oversize →
+`OcrSkipReason.SIZE` through the same terminal classifier (old evidence semantics). Two new
+stub tests (spawn-counting) prove skip-without-spawn and the SIZE classification. Also fixed:
+the interrupt liveness test now asserts `destroyForcibly` specifically (its stub previously
+conflated graceful and forceful kill).
+
+**Evidence-record corrections from the refute-first audit** (claims C1, C5–C8, C12, C14 held
+cleanly under independent re-derivation; corrections below):
+- The before-timing number's source run had been deleted; **re-measured durably: 115,055 ms at
+  `aec9b99`** (vs 113,855 ms first run, ~1% apart — the headline is 6.8–6.9×). Artifacts:
+  `scratchpad/ocr-derisk/before2/timing-record.txt` (+ extraction text/evidence json,
+  commit-stamped).
+- Vocabulary-parity claim restated tokenization-precisely: lowercase whole text → split on
+  whitespace → tokens >3 chars gives **4,505 unique before-tokens with exactly 1 absent from
+  the after output** (a filename-shaped OCR-noise token, not real document content — quoted
+  verbatim only in the session scratchpad, since its high entropy trips the public repo's
+  secret scanner). The auditor's variant
+  tokenization gave a different count (4,447) but the same exactly-one-missing invariant — that
+  invariant, not the count, is the load-bearing claim.
+- Live-tier evidence graded honestly: durable — the preserved worker log
+  (`scratchpad/ocr-derisk/worker-run-49495856.log`, contains the `Effective OCR config` line)
+  and the evidence bundle (`tmp/agent-evidence/dev-runner/49495856-…/tempdoc-706-ocr-live-verify-…`,
+  api-status/health); session-output-grade only — the search-top-hit response JSON and the
+  zero-orphan process checks (recorded in the session transcript, not re-derivable from disk).
+
+**Recorded decision item (not changed silently): the 50-page cap now actually binds.** The
+eval/headless (and likely packaged) environments previously ran *accidentally capless*, so >50p
+scans got OCR they were never configured to get (doc 208, 77p, is exactly this class). With the
+unified config the cap is real everywhere: >50p scans skip OCR entirely (`SIZE`). Versus intended
+config nothing changed; versus the de-facto capless reality, >50p scans lose OCR. At engine speed
+(~0.2 s/page) raising `max_pages` is now cheap — that is a 607-adjacent routing/product decision
+left explicitly open for the founder, not made here.
 
 ## Reach (design-pass judgment)
 
