@@ -1023,8 +1023,9 @@ public final class ResolvedConfigBuilder {
         // Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB.
         resolveInt("justsearch.embed.gpu_mem_mb", 3072),
         contextLength,
-        // Tempdoc 691 Phase 1: late-chunking embed pass — default off (D-004 template).
-        resolveBoolean("justsearch.embed.late_chunking_enabled", false),
+        // Tempdoc 691 Phase 4: long-doc single-pass VECTOR — DEFAULT ON since §Phase N
+        // (default-off → measured → default-on; gates green, see 691 §N-6/N-7).
+        resolveBoolean("justsearch.embed.late_chunking_enabled", true),
         resolveLateChunkingContextLength(contextLength));
   }
 

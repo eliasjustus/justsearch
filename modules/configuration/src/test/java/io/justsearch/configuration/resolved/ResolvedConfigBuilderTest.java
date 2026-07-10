@@ -276,8 +276,8 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName(
-        "late-chunking defaults from EnvRegistry: disabled, context length defaults to 8192"
-            + " (tempdoc 691 Phase 2)")
+        "late-chunking defaults from EnvRegistry: ENABLED (default-on since 691 Phase N), context"
+            + " length defaults to 8192")
     void lateChunkingDefaultsFromEnvRegistry() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.contributeEnvRegistry();
@@ -286,7 +286,7 @@ final class ResolvedConfigBuilderTest {
       assertEquals(
           Boolean.parseBoolean(EnvRegistry.EMBED_LATE_CHUNKING_ENABLED.defaultValue()),
           config.ai().embedding().lateChunkingEnabled());
-      assertFalse(config.ai().embedding().lateChunkingEnabled());
+      assertTrue(config.ai().embedding().lateChunkingEnabled());
       assertEquals(
           Integer.parseInt(EnvRegistry.EMBED_LATE_CHUNKING_CONTEXT_LENGTH.defaultValue()),
           config.ai().embedding().lateChunkingContextLength());
