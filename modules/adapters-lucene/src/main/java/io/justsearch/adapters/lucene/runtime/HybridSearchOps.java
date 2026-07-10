@@ -40,7 +40,11 @@ public final class HybridSearchOps {
   private static final int DEFAULT_TEXT_CANDIDATE_MULTIPLIER = 10;
   private static final int DEFAULT_VECTOR_CANDIDATE_MULTIPLIER = 10;
   private static final double DEFAULT_VECTOR_RRF_WEIGHT = 0.75;
-  private static final double DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD = 0.40;
+  // Dense field is EUCLIDEAN (FieldMapper's 2-arg KnnFloatVectorField constructor), vectors are
+  // L2-normalized, so score_euc = 1/(3-2*cos). Intended semantics: cosine-score (1+cos)/2 == 0.40
+  // <=> cos == -0.2 <=> score_euc = 1/(3-2*(-0.2)) = 1/3.4 ~= 0.294 (tempdoc 702).
+  // Package-private (not private) so CalibrationConstantsTest can pin the derivation.
+  static final double DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD = 0.294;
   private static final int DEFAULT_VECTOR_SKIP_MIN_CHARS = 4;
   private static final int DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL = 10;
   private static final double DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL = 0.3;
@@ -51,14 +55,19 @@ public final class HybridSearchOps {
   /** Top-K hits per leg used to measure cross-leg rank overlap. */
   private static final int ARBITRATION_TOP_K = 10;
   /**
-   * Min dense top score for the dense leg to be a usable signal (a sanity floor — dense is COSINE +
-   * L2-normalized so score = (1+cos)/2; 0.5 = cosine 0, i.e. "not anti-correlated"). This is a weak
-   * floor by design: the real selectivity is the <b>BM25-incoherence</b> condition, not a strong
-   * dense-confidence bar. (Tempdoc 636 review: a dense top1−top2 gap requirement was tried and
-   * measurement-rejected — it over-blocked the all-similar-docs needle regime without adding
-   * discrimination; BM25-incoherence is the correct discriminator.)
+   * Min dense top score for the dense leg to be a usable signal (a sanity floor). The dense field
+   * is indexed with Lucene's default <b>EUCLIDEAN</b> similarity ({@code FieldMapper}'s 2-arg
+   * {@code KnnFloatVectorField} constructor), not COSINE, but vectors are L2-normalized so
+   * {@code score_euc = 1/(3-2*cos)} and ranking is identical to COSINE. Intended semantics: cos ≥
+   * 0 ("not anti-correlated"), which is {@code 1/(3-2*0) = 1.0/3.0} in EUCLIDEAN score space
+   * (tempdoc 702). This is a weak floor by design: the real selectivity is the
+   * <b>BM25-incoherence</b> condition, not a strong dense-confidence bar. (Tempdoc 636 review: a
+   * dense top1−top2 gap requirement was tried and measurement-rejected — it over-blocked the
+   * all-similar-docs needle regime without adding discrimination; BM25-incoherence is the correct
+   * discriminator.)
    */
-  private static final double ARBITRATION_DENSE_CONFIDENT_MIN = 0.5;
+  // Package-private (not private) so CalibrationConstantsTest can pin the derivation.
+  static final double ARBITRATION_DENSE_CONFIDENT_MIN = 1.0 / 3.0;
   /** Cross-leg top-K doc-id Jaccard at/above which the legs "agree" (no intervention). */
   private static final double ARBITRATION_OVERLAP_MAX = 0.1;
 
@@ -220,8 +229,9 @@ public final class HybridSearchOps {
    * it is matching generic filler — which suppresses a confident dense answer on grep-defeating
    * paraphrase queries (tempdoc 636 F-023: vector 0.82 vs hybrid 0.32). This raises alpha toward dense
    * when, and only when, two conditions hold: (a) the dense leg is <em>bounded-confident</em> (top
-   * cosine ≥ {@link #ARBITRATION_DENSE_CONFIDENT_MIN}; cosine is bounded so this is a comparable
-   * signal, unlike raw BM25 scores), and (b) the legs <em>diverge</em> (top-K doc-id Jaccard &lt;
+   * EUCLIDEAN score ≥ {@link #ARBITRATION_DENSE_CONFIDENT_MIN}; the raw Lucene score is bounded so
+   * this is a comparable signal, unlike raw BM25 scores — see tempdoc 702 for the EUCLIDEAN-vs-cosine
+   * score-space conversion), and (b) the legs <em>diverge</em> (top-K doc-id Jaccard &lt;
    * {@link #ARBITRATION_OVERLAP_MAX}). The signal is rank-led, not score-led, per the BM25/cosine
    * score-incomparability constraint.
    *
