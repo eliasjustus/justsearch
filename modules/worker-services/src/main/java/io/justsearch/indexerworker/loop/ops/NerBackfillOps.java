@@ -149,26 +149,15 @@ public final class NerBackfillOps {
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator, String docId, String reason, Logger log) {
     try {
       String retryCountStr = documentFieldOps.getDocumentField(docId, SchemaFields.NER_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeNerFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.NER_MAX_RETRIES) {
-        updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_FAILED);
-        updates.put(SchemaFields.NER_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.NER_STATUS)) {
         log.warn("NER permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
         indexingCoordinator.updateDocument(docId, updates, true);
         return 1;
       } else {
-        updates.put(SchemaFields.NER_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "NER retry {}/{} for {}: {}",
             retryCount,
@@ -181,6 +170,37 @@ public final class NerBackfillOps {
 
     } catch (Exception e) {
       log.error("Failed to update NER retry count for {}", docId, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a NER failure — no I/O. Shared by {@link
+   * #handleNerFailure} (immediate single-doc write) and the combined enrichment path (merges the
+   * result into its own single batched write), so the two stay in escalation-parity by
+   * construction (tempdoc 700).
+   *
+   * @param currentRetryCount the doc's retry count *before* this failure
+   * @return field updates: always {@code NER_RETRY_COUNT}; additionally {@code
+   *     NER_STATUS=FAILED} once the incremented count reaches {@code NER_MAX_RETRIES}
+   */
+  static Map<String, Object> computeNerFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.NER_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.NER_MAX_RETRIES) {
+      updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
       return 0;
     }
   }
