@@ -476,9 +476,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Verify the loopback API + `/mcp` endpoint validate the Host header against a localhost allowlist (the DNS-rebinding defense per MCP sec best-practices + Ollama CVE-2024-28224) — grep found Origin/CORS validation in `ApiSecurityFilters.java:304` but no explicit Host-allowlist check; load-bearing for tempdoc 633's 'provable privacy' claim before go-public. (2026-06-23)
 
 ### obs:corpus-generate-general — 635 suite: generated corpus sources (4x ~450 long docs) committed under scripts/jseval/635-corpora/
-`kind: defect?` `anchor: corpus_generate.py` `seen: 2` `first: 2026-06-23` `last: 2026-07-03`
+`kind: defect?` `anchor: corpus_generate.py` `seen: 4` `first: 2026-06-23` `last: 2026-07-08`
 - [ ] 635 suite: generated corpus sources (4x ~450 long docs) committed under scripts/jseval/635-corpora/ — regenerable from corpus_generate.py + meta.json seed/params; a leaner pattern would commit only generator+manifest and regenerate at corpus-build time (2026-06-23)
 - [ ] battlefield-de-v1 (and the generator's lang=de path generally): the 'German' corpus's FILLER paragraphs are untranslated English — only the linking sentences are German (measured: both corpora share the same English filler; A-arm analysis 03, corpus analysis 05). Load-bearing for any future cross-lingual battlefield claim: a corpus labeled German that is ~90% English text cannot back a cross-lingual retrieval claim; the generator needs true target-language filler before the cross-lingual member (624 §M.2 successor) is built. — `scripts/jseval/jseval/corpus_generate.py` (2026-07-03)
+- [ ] Pre-existing intra-pair token overlap in _SEM_PLACE: ("eastern ridge", "ridge to the east") shares token "ridge", violating the pool's own zero-shared-token synonym invariant — `scripts/jseval/jseval/corpus_generate.py:81` (2026-07-08)
+- [ ] Pre-existing intra-pair token overlap across 6 original _SEM_PLACE/_SEM_PLACE_DE entries (violates the pool's own zero-shared-surface-token synonym invariant): EN (eastern ridge/ridge to the east; river bend/curve of the river; Carpathian highlands/Carpathian uplands; hill city/city on the slopes; southern hills/hills to the south) and DE (suedliche Huegel/Huegel im Sueden) — all in the original 26-entry pool, none in the tempdoc-624 append — `scripts/jseval/jseval/corpus_generate.py:81-86,143` (2026-07-08)
 
 ### obs:agenthistoryindexer — Restored agent runs are viewable but not searchable: AgentHistoryIndexer is purely live-listener-fed
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/agenthistory/AgentHistoryIndexer.java` `seen: 2` `first: 2026-06-23` `last: 2026-07-07`
@@ -518,8 +520,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Possible drift: ACC-003 in docs/reference/issues/decisions.md frames JustSearch as 'single-agent, multi-agent deferred (tempdoc 211)', but app-agent ships handoff infrastructure (AgentHandoff, handoff_to_{planner,executor,organizer}, agent profiles, AgentTurnPolicy primary-vs-subagent gating). Verify whether multi-agent handoff is a shipped UX or dormant infra, then reconcile ACC-003 — `modules/app-agent/src/main/java/io/justsearch/agent/AgentHandoff.java` vs `docs/reference/issues/decisions.md:68` (2026-06-25)
 
 ### obs:05-ai-architecture — Stale chat-model name in canonical docs: `docs/explanation/05-ai-architecture.md` (e.g. lines 15,167
-`kind: defect?` `anchor: docs/explanation/05-ai-architecture.md` `seen: 1` `first: 2026-06-25` `last: 2026-06-25`
+`kind: defect?` `anchor: docs/explanation/05-ai-architecture.md` `seen: 2` `first: 2026-06-25` `last: 2026-07-08`
 - [ ] Stale chat-model name in canonical docs: `docs/explanation/05-ai-architecture.md` (e.g. lines 15,167,226,457) + `06-configuration-ssot.md:82` name the retired `Qwen3VL-8B-Thinking` as the current/default generative LLM. Actual default is `Qwen3.5-9B` (only model on disk; `model-inventory.md:177` + `legal/ai-runtime-and-model-redistribution.md:79` already correct; no `Qwen3VL` anywhere in `modules/*/src/main`). 579-class canonical-vs-code drift, 2nd instance of the stale-technical-claim class (tempdoc 650) — reconcile 05/06 with a careful pass, not a blind find-replace (the reasoning/Thinking discussion may be model-specific). (2026-06-25)
+- [ ] 05-ai-architecture.md 'Frontend rendering' section still describes the retired React `useAppAI.ts` hook and the old `meta` citation event; needs a frontend-stack (Lit/shell-v0) refresh beyond the engine-citation event rename — `docs/explanation/05-ai-architecture.md:390` (2026-07-08)
 
 ### obs:hybridsearchintegrationtest — 636 follow-up: HybridSearchIntegrationTest now disables leg_arbitration + recall_complete to isolate
 `kind: follow-up?` `anchor: modules/adapters-lucene/.../HybridSearchIntegrationTest.java` `seen: 1` `first: 2026-06-25` `last: 2026-06-25`
@@ -601,9 +604,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] IndexingJobsChangeStreamTest.rapidMutationsArriveInCausalOrderWithoutLoss (modules/indexer-worker) failed once in CI (PR 26 run 28495429831) then passed cleanly on an identical re-run with no code changes -- confirmed flaky (timing-sensitive concurrency test name), not a real regression; same content had already passed cleanly on PR 25's checks and the actual main push-CI run minutes earlier. Worth watching for recurrence. (2026-07-01)
 
 ### obs:hybridsearchops — Stale code comments say recall-complete pool is 'default off' but resolved default is true — `Hybrid
-`kind: defect?` `anchor: HybridSearchOps.java` `seen: 2` `first: 2026-06-30` `last: 2026-07-06`
+`kind: defect?` `anchor: HybridSearchOps.java` `seen: 3` `first: 2026-06-30` `last: 2026-07-08`
 - [ ] Stale code comments say recall-complete pool is 'default off' but resolved default is true — `HybridSearchOps.java:477`, `SearchExecutor.java:758`, `EnvRegistry.java:972`; also CE javadoc still names 'MiniLM-L6-v2' (model is gte-multilingual-reranker-base) at `RerankerConfig.java:59`, `KnowledgeSearchEngine.java:158-161`. Found during tempdoc 643 investigation. (2026-06-30)
 - [ ] Low-signal fusion fallback constants drift from documented config defaults: HybridSearchOps.java:45-46 hardcodes DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL=10 / DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL=0.3 while claiming to match ResolvedConfig defaults, but ResolvedConfigBuilder.java:1480-1481 defaults are 3 / 0.25 — the no-config fallback path silently uses different fusion parameters than the documented defaults. Found during read-only constants-provenance sweep 2026-07-06. (2026-07-06)
+- [ ] Engine robustness (for 636/643): fusion CAN bury a RETRIEVED gold below the returned top-10 when one leg is degraded (CASCADE_LEAK); the recall-complete splice is not wired into the shipped 3-way CC path and SPLADE is unprotected (`HybridSearchOps.java:477-490`, `SearchExecutor.java runThreeWay`). Latent, non-biting on healthy realistic corpora (MIRACL CASCADE_LEAK≈0.03) — measured in tempdoc 701 E3 (2026-07-08)
 
 ### obs:resolvedconfigbuilder — D-004 leg-arbitration also has stale 'default off' docstrings while it resolves true (`ResolvedConfi
 `kind: defect?` `anchor: ResolvedConfigBuilder.java` `seen: 1` `first: 2026-06-30` `last: 2026-06-30`
@@ -1803,8 +1807,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
 
 ### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal
-`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 2` `first: 2026-07-07` `last: 2026-07-09`
 - [ ] CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal (batching regressed in item 22 due to padding waste); live 691-B1 measurement (golden/battlefield-en-v1, JUSTSEARCH_NER_GPU_MEM_MB=2048) shows encoderProfiles.ner.ortP50Us=33947us (34ms) and baseline E2 showed 28803us (28.8ms) — both ~15-17x the claimed 2.0ms/call, and batchTiming.totalMs.ner (202.5s/240.1s across 5 macro-cycles) still dominates ~69-75% of enrichment wall despite raising the NER GPU arena — the per-doc call cost itself, not just the OOM/fallback path, deserves re-measurement against the 'item 22' baseline — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:335` (2026-07-07)
+- [ ] CombinedEnrichmentBackfillOps SPLADE phase (encodeBatch try/catch, ~line 320-331): a size-mismatch/exception mid-loop leaves partial writes already put into updatesByDocId for docs processed before the throw, while spladeFailed is separately set to the full spladeDocIds.size() — double-counts and is inconsistent, though not a crash-loop risk since the exception is caught locally — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:320` (2026-07-09)
 
 ### obs:agent-retrieval-eval — util-smoke C-arm cells attempt ReadMcpResourceDirTool (server=filesystem) against the staged corpus-
 `kind: defect?` `anchor: scripts/jseval/jseval/agent_retrieval_eval.py` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
@@ -1873,6 +1878,38 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-70 — gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree w
 `kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
 - [ ] gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree while another checkout has main checked out — gh's local branch-deletion step tries to checkout the base branch locally. Workaround: omit --delete-branch, merge succeeds via API regardless, then clean up local/remote branches separately. (2026-07-08)
+
+### obs:unanchored-general-71 — jseval: `--ce` alone does not enable the ONNX cross-encoder in `run`; the backend gate `JUSTSEARCH_R
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] jseval: `--ce` alone does not enable the ONNX cross-encoder in `run`; the backend gate `JUSTSEARCH_RERANK_ENABLED=true` is also required, and CE activation in the client-resolved `full` eval path could not be confirmed (no ce timing in summary) — worth a jseval doc/flag fix (found tempdoc 701 E5) (2026-07-08)
+
+### obs:unanchored-general-72 — jseval readiness off-by-one hangs large MIRACL fetches: `corpus-fetch-miracl --n-docs 40000` materia
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] jseval readiness off-by-one hangs large MIRACL fetches: `corpus-fetch-miracl --n-docs 40000` materialized 40000 docs but readiness floor expected 40001 (one passage rejected as empty), so the run blocks on `indexed_doc_count_below_floor(40000/40001)` until timeout — floor should tolerate rejected/empty docs (found tempdoc 701 E4) (2026-07-08)
+
+### obs:corpus-fetch — jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line wit
+`kind: defect?` `anchor: corpus_fetch.py` `seen: 1` `first: 2026-07-09` `last: 2026-07-09`
+- [ ] jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line with `timeout=None` and NO progress output (`corpus_fetch.py:204-216`), so a ~200-doc sample can silently run 15-40+ min with a 0-byte log — looks like a hang but isn't. Add progress logging / a size hint / a bounded timeout (found tempdoc 701 R2) (2026-07-09)
+
+### obs:runtime-config-ownership-matrix — runtime-config-ownership-matrix stale: verify-runtime-config-matrix fails on 6 env/sysprop pairs mis
+`kind: environment?` `anchor: docs/reference/configuration/runtime-config-ownership-matrix.md` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] runtime-config-ownership-matrix stale: verify-runtime-config-matrix fails on 6 env/sysprop pairs missing from the matrix (JUSTSEARCH_MODE, JUSTSEARCH_RERANK_JUDGE_ARBITRATION_*, JUSTSEARCH_RERANK_JUDGE_BLEND_*); pre-existing, unrelated to doc-drift edits; needs a matrix regen — `docs/reference/configuration/runtime-config-ownership-matrix.md` (2026-07-08)
+
+### obs:corpus-build — corpus-build (build_golden) does not clean the target golden corpus-dir before materializing — regen
+`kind: environment?` `anchor: corpus_build.py` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] corpus-build (build_golden) does not clean the target golden corpus-dir before materializing — regenerating a corpus with FEWER docs leaves stale files from the prior gen (observed: re-gen 3120->2736 left 5462 files in corpus-dir, silently polluting ingest). build_golden should wipe/recreate corpus-dir, or warn on pre-existing contents — `scripts/jseval/jseval/corpus_build.py build_golden` (2026-07-08)
+
+### obs:unanchored-general-73 — License-and-notices CI job failed 2x this session with different transient causes (Gradle-distributi
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] License-and-notices CI job failed 2x this session with different transient causes (Gradle-distribution download timeout, then Maven Central 403) before succeeding on 3rd attempt — checkLicense runs with --no-configuration-cache --no-parallel and no caching, worth investigating whether enabling caching would reduce exposure to network flakes — .github/workflows/ci.yml:92-120 (2026-07-08)
+
+### obs:unanchored-general-74 — gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree w
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
+- [ ] gh pr merge --delete-branch fails with 'main is already used by worktree' when run from a worktree while another checkout has main checked out — gh's local branch-deletion step tries to checkout the base branch locally. Workaround: omit --delete-branch, merge succeeds via API regardless, then clean up local/remote branches separately. (2026-07-08)
+
+### obs:report-build-attribution — Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the 
+`kind: defect?` `anchor: report-build-attribution.mjs` `seen: 1` `first: 2026-07-09` `last: 2026-07-09`
+- [ ] Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the main checkout's node_modules, masking missing-dependency bugs in local/worktree testing that only surface on a true clean CI runner. Caught when PR #116's CI failed with ERR_MODULE_NOT_FOUND for cross-spawn despite passing locally in a worktree — scripts/ci/report-build-attribution.mjs (2026-07-09)
 
 ## Parked
 
