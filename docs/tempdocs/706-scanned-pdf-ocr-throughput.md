@@ -665,3 +665,71 @@ and the process-sandbox seam (410) are all untouched or deferred-to. Main residu
 quality parity, and the verification plan already gates on it. Conditions on GO: resolve
 corrections A and B in the design before coding; keep the verification plan's liveness regression
 test (`audit-driven-fixes-need-test`).
+
+## Session retro (2026-07-10, takeover-705/706 session — self-contained handoff)
+
+### Handoff facts (durable, no transcript needed)
+
+- **PR**: https://github.com/eliasjustus/justsearch/pull/124 — branch `worktree-takeover-706`
+  (strict superset of `worktree-takeover-705`), full unit suite green, squash preview 0 warnings,
+  **awaiting founder merge**. Carries: 705 verdict docs, 686 corpus/harness/two-run evidence,
+  706 engine + cap decision, the SPLADE crash fix, 677 design.
+- **Validation commands** (from repo root; models resolve from the MAIN checkout):
+  - jseval harness: `cd scripts/jseval && python -m pytest tests/ -q --ignore=tests/test_correction_probe.py`
+    (the ignored file is a known pre-existing red everywhere, expected-state.v1.json).
+  - SPLADE fix regression: `./gradlew.bat :modules:worker-core:test --tests "*SpladeEncoderBoundedTokenizeTest*"`
+    (asset-gated: needs `models/splade/naver-splade-v3` reachable ≤8 parent dirs up).
+  - Corpus rebuild/verify: `python scripts/search/fetch-realdocs-corpus.py [--verify]`
+    (downloads ~1.25 GB from govdocs1 + NapierOne public buckets; pinned manifest at
+    `scripts/jseval/666-corpora/realdocs-v1/`).
+  - Full-corpus instrumented run (682 recipe): `cd scripts/jseval && python -m jseval run
+    --dataset mixed/realdocs-v1 --max-queries 0 --pipeline --start-backend --clean --json`
+    with `JUSTSEARCH_JVM_OPTS=-Xlog:gc:file=<path>`.
+- **Known unrelated/local-only state** (not part of the PR): `datasets/` and
+  `tmp/headless-eval-data/` are gitignored per repo convention (corpus + the crashed run's index
+  live there locally); crash dumps and harvested document texts were archived to a
+  session-local scratchpad that will NOT outlive the machine/session — all load-bearing numbers
+  from them are recorded in 686/706 themselves. This machine's tesseract `eng.traineddata` was
+  overwritten with the tessdata_fast variant during 686 setup (disclosed in 686's scope
+  statement; the pre-existing "missing tessdata" observation was stale).
+- **Private-context boundary**: 705 §F7 summarizes a private strategy-sidecar cross-check;
+  that sidecar is NOT canonical and NOT published — only the public-safe summary in 705 is.
+
+### What worked (preserve these patterns)
+
+1. **Falsify before fixing.** The SPLADE crash fix landed right on the first attempt because
+   two plausible causes (poison document, unpaired surrogates) were experimentally falsified
+   first — an 86,296-string index replay harness and a surrogate probe test — before the hs_err
+   heap numbers confirmed the real cause. Cost: ~30 min; saved: shipping a wrong fix.
+2. **Three-legged design evidence** (code map with file:line + external research + local
+   micro-benchmark) for the OCR engine: the benchmark overturned two of three prior hypotheses
+   (batching worthless, DPI risky) before any code was written.
+3. **Harvest evidence from a live system BEFORE teardown** — the extraction_method distribution
+   and all document contents were pulled from the crashing run's index while its backend
+   auto-restart kept it reachable; after teardown that evidence would have cost a full re-run.
+4. **Derivations at constant sites** (heap javadoc, `TOKENIZE_GROUP_CHAR_BUDGET`) so the next
+   agent gets the WHY at the point of change.
+
+### What cost time (fix these habits/gaps)
+
+1. **Subagents that background their watch and stop** (happened twice: a test-runner and a run
+   watchdog launched `run_in_background` children and ended their turn — their notifications go
+   nowhere once the agent stops). Standard brief line now required for any watcher/verifier
+   subagent: "do all watching with FOREGROUND commands in bounded chunks; never
+   run_in_background; deliver the verdict as your final message."
+2. **No pilot before the first full-corpus run.** Run 1's serial-OCR crawl (~4-5 docs/min)
+   surfaced only after launch; a 20-doc pilot would have exposed it in minutes. Default for
+   first-of-kind pipeline runs: pilot subset first ("validate with experiments, not full runs" —
+   founder directive mid-session, adopted as standing practice).
+3. **Search-API archaeology** for a simple per-field count: facets silently return empty on
+   this path, `querySyntax:"lucene"` field terms cap at 100 and can fabricate identical counts
+   for every value (interrogate suspiciously-uniform numbers!), match-all is unsupported.
+   `folder-files` + projection is the working route; a proper index-stats utility is
+   inbox-logged as a jseval feature gap.
+4. **API-mediated text is laundered.** JSON transport replaces lone surrogates — encoding-bug
+   forensics must read source-of-truth bytes (Lucene stored fields), not preview endpoints.
+   The index-replay harness pattern (`SpladeIndexContentCrashHarnessTest`) is the reusable tool.
+5. **Silent test-skip traps**: `@Tag("evidence")` made a test invisible to `--tests` discovery
+   (exclusion source still unlocated — inbox-logged), and worker-core's 5-level model-dir walk
+   silently skips all asset-gated SPLADE tests in every worktree (inbox-logged; new tests use
+   depth 8).
