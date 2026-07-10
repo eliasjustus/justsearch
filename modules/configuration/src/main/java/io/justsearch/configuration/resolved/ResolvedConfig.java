@@ -493,6 +493,8 @@ public record ResolvedConfig(
    * @param maxPages maximum pages to process
    * @param maxImageDimension maximum image dimension
    * @param maxImagePixels maximum total image pixels
+   * @param renderDpi PDF page render DPI for OCR
+   * @param workers OCR worker pool size (0 or absent = auto, derived from available cores)
    */
   public record Ocr(
       Boolean enabled,
@@ -501,7 +503,9 @@ public record ResolvedConfig(
       Integer perFileTimeoutMs,
       Integer maxPages,
       Integer maxImageDimension,
-      Integer maxImagePixels) {
+      Integer maxImagePixels,
+      Integer renderDpi,
+      Integer workers) {
 
     public Ocr {
       languages = languages != null ? List.copyOf(languages) : List.of();

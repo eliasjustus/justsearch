@@ -336,6 +336,8 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.ocr.limits.max_image_dimension", root,
         "index.ocr.limits.max_image_dimension");
     putYamlInt("index.ocr.limits.max_image_pixels", root, "index.ocr.limits.max_image_pixels");
+    putYamlInt("index.ocr.limits.render_dpi", root, "index.ocr.limits.render_dpi");
+    putYamlInt("index.ocr.workers", root, "index.ocr.workers");
     // OCR languages is a list — stored as comma-joined string
     JsonNode langs = root.path("index").path("ocr").path("languages");
     if (langs.isArray()) {
@@ -1289,7 +1291,9 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.ocr.limits.per_file_timeout_ms"),
         resolveNullableInt("index.ocr.limits.max_pages"),
         resolveNullableInt("index.ocr.limits.max_image_dimension"),
-        resolveNullableInt("index.ocr.limits.max_image_pixels"));
+        resolveNullableInt("index.ocr.limits.max_image_pixels"),
+        resolveNullableInt("index.ocr.limits.render_dpi"),
+        resolveNullableInt("index.ocr.workers"));
   }
 
   private ResolvedConfig.Index buildIndex() {

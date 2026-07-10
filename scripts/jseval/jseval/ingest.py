@@ -170,9 +170,48 @@ def prepare_corpus(
     """
     from ._paths import default_corpus_dir
 
+    raw_dir = _raw_corpus_dir(dataset_name)
+    if raw_dir is not None and corpus_dir is None:
+        # Raw binary-file dataset (tempdoc 686): the files ARE the corpus — real
+        # PDFs/office docs ingested as-is so the Worker's Tika/PDFBox/POI path is
+        # exercised. No corpus.jsonl, no materialization projection, no cache
+        # sidecar (there is no projection that could go stale).
+        doc_count = sum(1 for p in raw_dir.rglob("*") if p.is_file())
+        if doc_count == 0:
+            raise FileNotFoundError(
+                f"raw_files dataset {dataset_name} has an empty corpus-dir at {raw_dir}. "
+                f"Build it first (see the dataset's metadata.json 'manifest' pointer)."
+            )
+        log.info("Raw binary corpus: %s (%d files)", raw_dir, doc_count)
+        return ingest_and_wait(config, raw_dir, corpus_doc_count=doc_count)
+
     resolved_dir = corpus_dir or default_corpus_dir(dataset_name)
     corpus_doc_count = _ensure_materialized(dataset_name, resolved_dir, corpus_dir)
     return ingest_and_wait(config, resolved_dir, corpus_doc_count=corpus_doc_count)
+
+
+def _raw_corpus_dir(dataset_name: str) -> Path | None:
+    """`corpus-dir` of a raw binary-file dataset, else None.
+
+    A local (golden/mixed) dataset is "raw" when its `metadata.json` carries
+    ``{"raw_files": true}`` — introduced for `mixed/realdocs-v1` (tempdoc 686), the
+    first corpus of real binary documents. Such datasets have no corpus.jsonl and are
+    never materialized; ingest points the watched root at the real files directly.
+    """
+    if not (dataset_name.startswith("golden/") or dataset_name.startswith("mixed/")):
+        return None
+    from .corpora import _default_base_dir
+    root = _default_base_dir() / dataset_name
+    meta = root / "metadata.json"
+    if not meta.is_file():
+        return None
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not data.get("raw_files"):
+        return None
+    return root / "corpus-dir"
 
 
 # The materialization cache is a VERIFIED PROJECTION of the source (tempdoc 635

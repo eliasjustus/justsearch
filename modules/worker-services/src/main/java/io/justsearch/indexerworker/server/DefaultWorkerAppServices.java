@@ -30,6 +30,8 @@ import io.justsearch.reranker.WorkerModelDiscovery;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Default implementation of {@link WorkerAppServices} that constructs and wires all
@@ -40,6 +42,8 @@ import java.util.List;
  * indexing loop; all infrastructure resources are closed by {@code KnowledgeServer}.
  */
 public final class DefaultWorkerAppServices implements WorkerAppServices {
+
+  private static final Logger log = LoggerFactory.getLogger(DefaultWorkerAppServices.class);
 
   private final IndexingLoop indexingLoop;
   private final GrpcSearchService searchService;
@@ -451,6 +455,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
       OcrMetricCatalog ocrCatalog) {
     String mode = EnvRegistry.EXTRACTION_SANDBOX_MODE.getString("in_process").trim();
     OcrRoutingConfig ocrConfig = resolvedOcrConfig();
+    logEffectiveOcrConfig(ocrConfig);
     if (mode.isEmpty() || "in_process".equalsIgnoreCase(mode)) {
       return ExtractionSandboxFactory.inProcessStructured(catalog, ocrConfig, ocrCatalog);
     }
@@ -486,6 +491,25 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
       return OcrRoutingConfig.defaults();
     }
     return OcrRoutingConfig.from(store.get().ocr());
+  }
+
+  /**
+   * Diagnosability fix (tempdoc 706): the effective OCR config previously appeared nowhere in the
+   * worker's log, which made an unbounded-OCR incident undiagnosable without code archaeology.
+   * Logged once at startup, after config-absent gaps are filled in {@link OcrRoutingConfig#from}.
+   */
+  private static void logEffectiveOcrConfig(OcrRoutingConfig ocrConfig) {
+    log.info(
+        "Effective OCR config: enabled={} budgetMs={} maxPages={} renderDpi={} workers={} "
+            + "maxImageDimension={} maxImagePixels={} languages={}",
+        ocrConfig.enabled(),
+        ocrConfig.perFileTimeoutMs(),
+        ocrConfig.maxPages(),
+        ocrConfig.effectiveRenderDpi(),
+        ocrConfig.effectiveOcrWorkers(),
+        ocrConfig.maxImageDimension(),
+        ocrConfig.maxImagePixels(),
+        ocrConfig.languages());
   }
 
   /**
