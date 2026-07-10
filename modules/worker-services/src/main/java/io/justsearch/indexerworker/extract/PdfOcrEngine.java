@@ -537,19 +537,28 @@ final class PdfOcrEngine {
     if (dir == null) {
       return;
     }
-    try (var paths = Files.walk(dir)) {
-      paths
-          .sorted(java.util.Comparator.reverseOrder())
-          .forEach(
-              path -> {
-                try {
-                  Files.deleteIfExists(path);
-                } catch (IOException ignored) {
-                  // Best-effort recursive sweep of the per-document OCR temp directory.
-                }
-              });
-    } catch (IOException ignored) {
-      // Directory already gone or unreadable — nothing more to clean.
+    // Two bounded passes: a cancelled-but-still-running page task (or a killed tesseract child
+    // finishing its last write) can mutate the directory concurrently with the sweep. The lazy
+    // Files.walk stream then throws UncheckedIOException DURING iteration — a RuntimeException
+    // that used to escape this "best-effort" method entirely (observed as a CI-only
+    // NoSuchFileException failure of PdfOcrEngineTest.timeoutWithZeroCompletedPagesReportsTimeout,
+    // run 29097906129) — and a file written after the walk snapshot can survive the first pass.
+    for (int attempt = 0; attempt < 2 && Files.exists(dir); attempt++) {
+      try (var paths = Files.walk(dir)) {
+        paths
+            .sorted(java.util.Comparator.reverseOrder())
+            .forEach(
+                path -> {
+                  try {
+                    Files.deleteIfExists(path);
+                  } catch (IOException ignored) {
+                    // Best-effort recursive sweep of the per-document OCR temp directory.
+                  }
+                });
+      } catch (IOException | java.io.UncheckedIOException ignored) {
+        // Directory already gone, unreadable, or concurrently mutated mid-walk — retry once,
+        // then give up; the sweep is best-effort by contract.
+      }
     }
   }
 
