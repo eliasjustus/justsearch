@@ -307,9 +307,19 @@ null-fill/auto semantics; `ResolvedConfigBuilderTest.ocrConfig` covers the new k
 - Search-quality register updated: **F-030** records the extraction-content comparability boundary
   (scanned/mixed-PDF content not comparable across this commit for extraction-quality or
   agent-utility measurements) + docs regen (`llms.txt`, skills-sync).
+- **Live-stack tier (ran, green)**: dev stack launched from this branch's dist
+  (`distFrom` worktree). Verified live: (a) the new config keys flow yaml → Head → worker
+  snapshot → Worker at ordinal 450 with unified values; (b) the new
+  `Effective OCR config: enabled=true budgetMs=30000 maxPages=50 renderDpi=300 workers=8 …`
+  INFO line appears in `worker.log` at extractor construction (workers auto-derived correctly);
+  (c) ingesting `govdocs1-000--000164.pdf` — the scan the OLD path failed on — through the full
+  Head→gRPC→Worker path indexed its OCR content, and a content query ("Vioxx gastrointestinal
+  histopathology") returns it as the top hit matched on the OCR'd text; (d) zero orphaned
+  tesseract processes on the machine after the live OCR run.
 - Deferred, recorded not silently skipped: the full `mixed/realdocs-v1` ingest re-run (686-style)
   remains the when-wanted final tier; the per-doc harness above already exercised the real
-  extractor + real tesseract + real corpus end-to-end.
+  extractor + real tesseract + real corpus end-to-end, and the live-stack tier above covered the
+  wire/config/log integration.
 
 ## Reach (design-pass judgment)
 
