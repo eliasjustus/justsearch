@@ -658,7 +658,9 @@ public record ResolvedConfig(
    * @param vectorCandidateMultiplier vector candidate multiplier
    * @param vectorRrfWeight vector RRF weight
    * @param bm25ScoreBoostWeight additive BM25 score boost weight
-   * @param vectorLowSignalTopScoreThreshold low-signal vector top-score threshold
+   * @param vectorLowSignalTopScoreThreshold low-signal vector top-score threshold (EUCLIDEAN score
+   *     space — the dense field is EUCLIDEAN, not cosine; default 0.294 corresponds to intended
+   *     cosine-score 0.40, tempdoc 702)
    * @param bm25LowSignalTopScoreThreshold low-signal BM25 top-score threshold
    * @param bm25LowSignalTotalHitsThreshold low-signal BM25 total-hits threshold
    * @param vectorOnlyCapLowSignal max vector-only docs in low-signal fusion

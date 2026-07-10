@@ -56,6 +56,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-query-variant",
+    "group": "corpus"
+  },
+  {
     "name": "correction-probe",
     "group": "analysis"
   },

@@ -12,7 +12,6 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.store.FSDirectory;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,7 +39,7 @@ class VectorFormatDetectorTest {
       try (IndexWriter writer = new IndexWriter(dir, config)) {
         Document doc = new Document();
         doc.add(new StringField("id", "1", Field.Store.YES));
-        doc.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc);
 
         // Set commit metadata (as SsotCommitMetadataSource would do)
@@ -69,7 +68,7 @@ class VectorFormatDetectorTest {
       try (IndexWriter writer = new IndexWriter(dir, config)) {
         Document doc = new Document();
         doc.add(new StringField("id", "1", Field.Store.YES));
-        doc.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc);
 
         // Set commit metadata (as SsotCommitMetadataSource would do)
@@ -133,7 +132,7 @@ class VectorFormatDetectorTest {
       try (IndexWriter writer = new IndexWriter(dir, config)) {
         Document doc = new Document();
         doc.add(new StringField("id", "1", Field.Store.YES));
-        doc.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc);
         // NO commit metadata set
         writer.commit();
@@ -163,7 +162,7 @@ class VectorFormatDetectorTest {
       try (IndexWriter writer = new IndexWriter(dir, config)) {
         Document doc = new Document();
         doc.add(new StringField("id", "1", Field.Store.YES));
-        doc.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc);
 
         // Set commit metadata
@@ -194,13 +193,13 @@ class VectorFormatDetectorTest {
         // Create two separate segments
         Document doc1 = new Document();
         doc1.add(new StringField("id", "1", Field.Store.YES));
-        doc1.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc1.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc1);
         writer.commit();
 
         Document doc2 = new Document();
         doc2.add(new StringField("id", "2", Field.Store.YES));
-        doc2.add(new KnnFloatVectorField("vector", randomVector(), VectorSimilarityFunction.COSINE));
+        doc2.add(new KnnFloatVectorField("vector", randomVector()));
         writer.addDocument(doc2);
         writer.commit();
       }

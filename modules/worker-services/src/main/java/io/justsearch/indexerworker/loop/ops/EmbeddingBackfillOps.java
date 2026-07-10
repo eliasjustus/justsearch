@@ -252,26 +252,15 @@ public final class EmbeddingBackfillOps {
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator, String docId, String reason, Logger log) {
     try {
       String retryCountStr = documentFieldOps.getDocumentField(docId, SchemaFields.EMBEDDING_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0 if unparseable
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeEmbeddingFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
-        updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
-        updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.EMBEDDING_STATUS)) {
         log.warn("Embedding permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
         indexingCoordinator.updateDocument(docId, updates, true);
         return 1;
       } else {
-        updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "Embedding retry {}/{} for {}: {}",
             retryCount,
@@ -286,6 +275,27 @@ public final class EmbeddingBackfillOps {
       log.error("Failed to update retry count for {}", docId, e);
       return 0;
     }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a parent-doc embedding failure — no I/O.
+   * Used by both {@link #handleEmbeddingFailure} (immediate single-doc write) and the combined
+   * enrichment path ({@code CombinedEnrichmentBackfillOps}, which merges the result into its own
+   * single batched write), so the two paths stay in escalation-parity by construction rather than
+   * via a hand-ported copy that can drift (tempdoc 700).
+   *
+   * @param currentRetryCount the doc's retry count *before* this failure
+   * @return field updates: always {@code EMBEDDING_RETRY_COUNT}; additionally {@code
+   *     EMBEDDING_STATUS=FAILED} once the incremented count reaches {@code EMBEDDING_MAX_RETRIES}
+   */
+  public static Map<String, Object> computeEmbeddingFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
+      updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+    }
+    return updates;
   }
 
   /** @return true if any chunks were processed (for tight-loop control) */
@@ -456,21 +466,11 @@ public final class EmbeddingBackfillOps {
     try {
       String retryCountStr =
           documentFieldOps.getDocumentField(chunkId, SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0 if unparseable
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeChunkEmbeddingFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
-        updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
-        updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)) {
         log.warn(
             "Chunk embedding permanently FAILED for {} after {} retries: {}",
             chunkId,
@@ -479,7 +479,6 @@ public final class EmbeddingBackfillOps {
         indexingCoordinator.updateDocument(chunkId, updates, true);
         return 1;
       } else {
-        updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "Chunk embedding retry {}/{} for {}: {}",
             retryCount,
@@ -492,6 +491,38 @@ public final class EmbeddingBackfillOps {
 
     } catch (Exception e) {
       log.error("Failed to update chunk retry count for {}", chunkId, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a chunk-doc embedding failure — no I/O.
+   * Mirrors {@link #computeEmbeddingFailureUpdate} for the {@code CHUNK_*} field pair; shared by
+   * {@link #handleChunkEmbeddingFailure} and the combined enrichment path (tempdoc 700).
+   *
+   * @param currentRetryCount the chunk's retry count *before* this failure
+   * @return field updates: always {@code CHUNK_EMBEDDING_RETRY_COUNT}; additionally {@code
+   *     CHUNK_EMBEDDING_STATUS=FAILED} once the incremented count reaches {@code
+   *     EMBEDDING_MAX_RETRIES} (chunk embedding shares the parent-doc threshold — there is no
+   *     separate {@code CHUNK_EMBEDDING_MAX_RETRIES} constant)
+   */
+  public static Map<String, Object> computeChunkEmbeddingFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
+      updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
       return 0;
     }
   }
