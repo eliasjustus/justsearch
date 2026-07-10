@@ -863,3 +863,59 @@ decision-changing, noted not pursued: "Beyond Chunk-Then-Embed" chunking taxonom
 [arXiv:2602.16974](https://arxiv.org/abs/2602.16974); Landmark Pooling [arXiv:2601.21525]; Multi-Prefix
 long-context embedding [arXiv:2606.23642]. Mean-pool-of-chunks as a doc representation is confirmed a
 standard, sound aggregation — no red flag for the §G fallback.)
+
+## Phase I — implementation log (2026-07-10, /plan approved: full late chunking)
+
+Plan approved (worktree `691-takeover`): full late chunking, default-off → measure → default-on.
+Plan file: user scratchpad `lovely-conjuring-dove.md`.
+
+**I-1. Phase-1a primitive LANDED (encoder, docs ≤2048 tokens).** `OnnxEmbeddingEncoder`:
+extracted `runHidden()` (the ORT forward pass, returns unpooled `last_hidden_state[0]`) so
+`embedSingle` and the new `embedWithSpans(content, charSpans[])` share the identical run+pool path
+→ the whole-doc vector is **bit-identical to `embed()` by construction** for ≤2048-token docs.
+`embedWithSpans` returns `null` for >2048-token docs (Phase 2), checked BEFORE any char-span
+materialization (686 memory-safety). `poolSpan()` = masked-mean over tokens whose `getCharTokenSpans()`
+offset intersects `[startChar,endChar)`, excluding masked/null/zero-width special tokens; zero-token
+fallback = isolated embed of the substring. DJL `Encoding.getCharTokenSpans()` →
+`ai.djl.huggingface.tokenizers.jni.CharSpan[]` (getStart/getEnd), confirmed via `javap` on
+tokenizers-0.36.0. `build -x test` green; spotless clean. Unit test
+`OnnxEmbeddingEncoderLateChunkingTest` written (bit-identity, single-span==isolated, multi-span unit,
+long-doc-null) but **SKIPPED in the worktree** (no `.onnx` on the worktree model path; the model
+resolves from the MAIN checkout at dev-stack runtime). Live bit-identity verification deferred to the
+Phase-4 build (real encoder). Diff: `OnnxEmbeddingEncoder.java` +118/-6, one new test file.
+
+**I-2. DESIGN RISK found — gte-multilingual-base is CLS-pooled** (`models/onnx/gte-multilingual-base/
+pooling_config.json` → `{"pooling_mode":"cls"}`). Consequence: `pool()` returns the CLS token for the
+whole-doc `VECTOR` (so `embedWithSpans`'s doc vector stays bit-identical — CLS of the same pass), but
+`poolSpan` does per-span **mean**, which is OFF the model's CLS training distribution. Late chunking is
+canonically defined for mean-pool models; for a CLS model the per-span-mean **chunk** vectors are a
+genuine quality unknown — today's chunk vectors are on-distribution per-chunk CLS embeds; late
+chunking's are context-aware but off-distribution mean pools. This does NOT block (default-off; the
+A/B decides) but it is the crux the Phase-4 A/B must settle, weighting legal-clerc-200. If per-span
+chunks regress, the fallback is VECTOR-only single-pass (see I-3), which is on-distribution CLS.
+
+**I-3. 708 coordination — late chunking is now ALSO the presumptive F-030 fix (quality-motivated,
+not just throughput).** The 708 lane (`docs/tempdocs/708-encoder-domain-fit-legal-professional-text.md`,
+worktree `708-encoder-investigation`; harness `scripts/jseval/experiments/encoder_bakeoff_708.py`)
+measured, offline + Gate-0-validated (reproduces the production F-030 numbers within 0.005 first):
+gte-multilingual-base given legal-clerc-200 verbose queries in a **single native 8192-token pass**
+(instead of the production 512-token-window CLS-then-mean) goes **R@10 0.100 → 0.745** (nDCG@10 0.526,
+R@100 0.955) — a ~+0.65 R@10 F-030 recovery. That single long-context pass is exactly late chunking's
+first step (the whole-doc `VECTOR`), so:
+- **Reframe:** late chunking's dominant win is now the whole-doc `VECTOR` via single long-context pass
+  for LONG docs (>2048 today, windowed) — this is 708-MEASURED and CLS-on-distribution, i.e. MORE
+  certain than the per-span chunk half (I-2). This elevates Phase 2 (long-doc / context-length) from
+  "the throughput win" to "the F-030 quality fix" and is the higher-value half.
+- **Validation set:** ADD `mixed/legal-clerc-200` (register signature `90d4300d…`, regenerable
+  `corpus-fetch-clerc --seed 666 --n-queries 200`) as the primary A/B corpus — largest effect.
+- **Context-length lever:** the 708 win needs the embed pass to see the whole long doc; production
+  `justsearch.embed.context_length=2048` caps this, and >2048 docs window at 512. Phase 2 must either
+  raise the context (VRAM/latency A/B) and/or macro-window at a larger width; 708 measured 8192.
+- **Coordination:** 708 is PAUSED until this PR merges (founder directive) and will not touch registers
+  or engine code meanwhile. Register Q-016 is ours to update here; 708 reconciles after rebase.
+
+**I-4. Re-sequencing implication (not yet acted).** Given I-2 + I-3, the value order is now:
+(1) VECTOR single-pass for long docs = 708-measured F-030 fix (CLS-safe); (2) chunk dedup via per-span
+pooling = throughput + a CLS-risky chunk-quality bet. Phase-1a (≤2048, VECTOR bit-identical + per-span
+chunks) is a sound, harmless default-off foundation for both. Phase 2 now carries the primary quality
+win. The A/B (Phase 4) on legal-clerc-200 is the decision point for whether per-span chunks ship.

@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.embed.onnx;
 
 import ai.djl.huggingface.tokenizers.Encoding;
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import ai.djl.huggingface.tokenizers.jni.CharSpan;
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
@@ -470,16 +471,32 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     long[] truncMask = truncate(mask, seqLen);
     long[] truncTypeIds = truncate(typeIds, seqLen);
 
+    float[][] hidden = runHidden(truncIds, truncMask, truncTypeIds, seqLen);
+    int dim = hidden[0].length;
+    return l2Normalize(pool(hidden, truncMask, dim));
+  }
+
+  /**
+   * Runs a single-document [1, seqLen] ORT forward pass and returns the per-token hidden states
+   * ({@code last_hidden_state[0]}, shape {@code [seqLen, dim]}) without pooling.
+   *
+   * <p>Extracted from {@link #embedSingle} (tempdoc 691 §Phase G) so that late-chunking ({@link
+   * #embedWithSpans}) and the plain single-vector path share the exact same ORT-run + tensor-build
+   * logic — the whole-doc vector each derives is therefore bit-identical by construction. Callers
+   * are responsible for truncating {@code ids}/{@code mask}/{@code typeIds} to {@code seqLen}
+   * before calling.
+   */
+  private float[][] runHidden(long[] ids, long[] mask, long[] typeIds, int seqLen)
+      throws OrtException {
     long[] shape = {1, seqLen};
 
     OrtEnvironment env = sessions.environment();
-    try (OnnxTensor inputIdsTensor =
-            OnnxTensor.createTensor(env, LongBuffer.wrap(truncIds), shape);
+    try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(ids), shape);
         OnnxTensor attentionMaskTensor =
-            OnnxTensor.createTensor(env, LongBuffer.wrap(truncMask), shape);
+            OnnxTensor.createTensor(env, LongBuffer.wrap(mask), shape);
         OnnxTensor tokenTypeIdsTensor =
             needsTokenTypeIds
-                ? OnnxTensor.createTensor(env, LongBuffer.wrap(truncTypeIds), shape)
+                ? OnnxTensor.createTensor(env, LongBuffer.wrap(typeIds), shape)
                 : null) {
 
       Map<String, OnnxTensor> inputs = new HashMap<>();
@@ -490,7 +507,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       }
 
       // Tempdoc 400 LR2-a/LR2-b: span starts before acquire; see batched path above.
-      Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(ORT_TRACER, "embed", 1, truncMask.length);
+      Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(ORT_TRACER, "embed", 1, mask.length);
       try (Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
@@ -504,13 +521,108 @@ public final class OnnxEmbeddingEncoder implements Closeable {
               embeddingDimension = dim;
             }
 
-            return l2Normalize(pool(hidden[0], truncMask, dim));
+            return hidden[0];
           }
         }
       } finally {
         ortSpan.end();
       }
     }
+  }
+
+  /**
+   * Late chunking (tempdoc 691 §Phase G/H, arXiv:2409.04701): embeds {@code content} once and
+   * derives both the whole-document vector and one vector per character span from the same
+   * token-level forward pass, instead of running a separate ORT pass per chunk.
+   *
+   * <p>Returns {@code null} if {@code content} exceeds the model's context window ({@link
+   * #maxSeqLen} tokens) — Phase-1 scope excludes long documents; the caller falls back to the
+   * existing per-chunk {@link #embed} path for those. The length check runs before any per-token
+   * character-offset materialization: {@code getCharTokenSpans()} on an unbounded {@link Encoding}
+   * previously caused a native OOM crash for very large documents (tempdoc 686, {@code
+   * SpladeEncoder}), so this primitive only touches it once the token count is confirmed small.
+   *
+   * @param content the full document text
+   * @param charSpans {@code [startCharInclusive, endCharExclusive)} ranges into {@code content}
+   *     (e.g. from {@code CHUNK_START_CHAR}/{@code CHUNK_END_CHAR}); one output vector per span
+   * @return the doc vector plus one chunk vector per span, or {@code null} if {@code content}
+   *     exceeds {@link #maxSeqLen} tokens
+   * @throws OrtException if ONNX inference fails
+   */
+  public EmbedResult embedWithSpans(String content, int[][] charSpans) throws OrtException {
+    Encoding encoding = tokenizer.encode(content);
+    long[] ids = encoding.getIds();
+
+    if (ids.length > maxSeqLen) {
+      return null;
+    }
+
+    long[] mask = encoding.getAttentionMask();
+    long[] typeIds = encoding.getTypeIds();
+    CharSpan[] tokSpans = encoding.getCharTokenSpans();
+
+    float[][] hidden = runHidden(ids, mask, typeIds, ids.length);
+    int dim = hidden[0].length;
+    float[] docVector = l2Normalize(pool(hidden, mask, dim));
+
+    List<float[]> chunkVectors = new ArrayList<>(charSpans.length);
+    for (int[] span : charSpans) {
+      float[] chunkVector = poolSpan(hidden, mask, tokSpans, span[0], span[1], dim);
+      if (chunkVector == null) {
+        // Defensive fallback: no token intersected this span. Embed the substring in
+        // isolation so a chunk never surfaces a null/zero vector to the caller.
+        Encoding subEncoding = tokenizer.encode(content.substring(span[0], span[1]));
+        chunkVector =
+            embedSingle(subEncoding.getIds(), subEncoding.getAttentionMask(), subEncoding.getTypeIds());
+      }
+      chunkVectors.add(chunkVector);
+    }
+
+    return new EmbedResult(docVector, chunkVectors, charSpans.length);
+  }
+
+  /**
+   * Masked-mean pooling restricted to the tokens whose char span intersects {@code [startChar,
+   * endChar)} — {@link #pool}'s formula, scoped to one chunk's token subset. Tokens with a null or
+   * zero-width char span (CLS/SEP/PAD and other special tokens — the DJL/tokenizers-rust JNI
+   * binding reports these as a {@code (0, 0)} sentinel rather than a real offset) are excluded, as
+   * are masked-out (padding) tokens.
+   *
+   * @return the L2-normalized pooled vector, or {@code null} if no token intersects the span
+   */
+  private float[] poolSpan(
+      float[][] hidden, long[] mask, CharSpan[] tokSpans, int startChar, int endChar, int dim) {
+    float[] pooled = new float[dim];
+    float count = 0.0f;
+    int len = Math.min(hidden.length, tokSpans.length);
+    for (int t = 0; t < len; t++) {
+      if (mask[t] != 1) {
+        continue;
+      }
+      CharSpan tokSpan = tokSpans[t];
+      if (tokSpan == null) {
+        continue;
+      }
+      int tokStart = tokSpan.getStart();
+      int tokEnd = tokSpan.getEnd();
+      if (tokStart == tokEnd) {
+        continue; // zero-width sentinel: token has no source-text offset
+      }
+      if (tokEnd <= startChar || tokStart >= endChar) {
+        continue; // no intersection with [startChar, endChar)
+      }
+      count += 1.0f;
+      for (int d = 0; d < dim; d++) {
+        pooled[d] += hidden[t][d];
+      }
+    }
+    if (count == 0.0f) {
+      return null;
+    }
+    for (int d = 0; d < dim; d++) {
+      pooled[d] /= count;
+    }
+    return l2Normalize(pooled);
   }
 
   // ---------------------------------------------------------------------------
