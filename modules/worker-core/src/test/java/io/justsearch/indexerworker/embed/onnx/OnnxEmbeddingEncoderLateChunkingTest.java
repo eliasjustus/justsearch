@@ -48,7 +48,7 @@ final class OnnxEmbeddingEncoderLateChunkingTest {
     // lateChunkingMaxSeqLen=0 falls back to MAX_SEQ_LEN — these tests exercise embedWithSpans'
     // limit-check semantics at the base maxSeqLen boundary, not the raised Phase-2 ceiling.
     EmbeddingAssembly assembly =
-        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0);
+        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0, false);
     encoder = new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());
   }
 

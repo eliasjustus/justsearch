@@ -6,6 +6,9 @@ import io.justsearch.configuration.model.ModelPrecision;
 import io.justsearch.configuration.model.VariantSelection;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Probes the filesystem for a model variant when {@link
@@ -38,6 +41,8 @@ import java.nio.file.Path;
  */
 public final class DevModeVariantProbe {
 
+  private static final Logger log = LoggerFactory.getLogger(DevModeVariantProbe.class);
+
   private DevModeVariantProbe() {}
 
   /**
@@ -67,15 +72,15 @@ public final class DevModeVariantProbe {
     }
 
     if (gpuFileExists) {
-      boolean isFp16 = gpuModelFile.getFileName().toString().contains("fp16");
-      return VariantSelection.optimal(
-          gpuModelFile,
-          isFp16 ? ModelPrecision.FP16 : ModelPrecision.FP32,
-          ExecutionProvider.CUDA);
+      ModelPrecision precision =
+          declaredOrGuessedPrecision(
+              manifest.capabilities().gpuPrecision(), gpuModelFile.getFileName().toString());
+      return VariantSelection.optimal(gpuModelFile, precision, ExecutionProvider.CUDA);
     }
     if (cpuFileExists) {
-      boolean isFp16 = cpuModelFile.getFileName().toString().contains("fp16");
-      ModelPrecision precision = isFp16 ? ModelPrecision.FP16 : ModelPrecision.FP32;
+      ModelPrecision precision =
+          declaredOrGuessedPrecision(
+              manifest.capabilities().cpuPrecision(), cpuModelFile.getFileName().toString());
       if (gpuEnabled) {
         // No dedicated GPU model file — use CPU model with CUDA. NativeSessionHandle attempts
         // a GPU session from the CPU model file and retries to CPU on failure. This is a
@@ -96,5 +101,47 @@ public final class DevModeVariantProbe {
       return VariantSelection.optimal(cpuModelFile, precision, ExecutionProvider.CPU);
     }
     return null;
+  }
+
+  /**
+   * Tempdoc 710 Wave 2 Move 1 orphan #4: precision comes from the manifest's declared {@code
+   * capabilities.cpu_precision}/{@code gpu_precision} field when present; the filename-substring
+   * heuristic (pre-Wave-2 the SOLE mechanism) is now a legacy fallback with a WARN — this probe
+   * keeps only file-existence duties, not precision authority. No ecosystem file is authoritative
+   * for an exported ONNX file's precision (S-C.R: {@code torch_dtype} describes the checkpoint,
+   * not the export), so the fallback is filename convention, not a richer file read.
+   */
+  private static ModelPrecision declaredOrGuessedPrecision(String declared, String fileName) {
+    if (declared != null && !declared.isBlank()) {
+      ModelPrecision parsed = parsePrecision(declared);
+      if (parsed != null) {
+        return parsed;
+      }
+      log.warn("Unrecognized declared precision '{}' for {} — falling back to filename convention", declared, fileName);
+    }
+    String lower = fileName.toLowerCase(Locale.ROOT);
+    ModelPrecision guessed;
+    if (lower.contains("int8")) {
+      guessed = ModelPrecision.INT8;
+    } else if (lower.contains("fp16")) {
+      guessed = ModelPrecision.FP16;
+    } else {
+      guessed = ModelPrecision.FP32;
+    }
+    log.warn(
+        "Precision undeclared for {} — using legacy filename-substring heuristic: {}",
+        fileName,
+        guessed);
+    return guessed;
+  }
+
+  private static ModelPrecision parsePrecision(String value) {
+    return switch (value.trim().toLowerCase(Locale.ROOT)) {
+      case "fp32" -> ModelPrecision.FP32;
+      case "fp16" -> ModelPrecision.FP16;
+      case "int8" -> ModelPrecision.INT8;
+      case "gguf" -> ModelPrecision.GGUF;
+      default -> null;
+    };
   }
 }

@@ -75,4 +75,21 @@ final class LoopPacingPolicyTest {
     // not running ⇒ interrupt.
     assertTrue(LoopPacingPolicy.shouldInterruptBackfill(false, false, false, false, CPU));
   }
+
+  @Test
+  @DisplayName(
+      "isTimeCommitTriggered / isBufferCommitTriggered honor the passed-in threshold (tempdoc"
+          + " 710 Wave-1.5 Move 4: thresholds moved from static constants to config parameters)")
+  void commitTriggersHonorConfiguredThresholds() {
+    assertFalse(LoopPacingPolicy.isTimeCommitTriggered(9_999L, 1, 10_000L));
+    assertTrue(LoopPacingPolicy.isTimeCommitTriggered(10_000L, 1, 10_000L));
+    assertFalse(LoopPacingPolicy.isTimeCommitTriggered(10_000L, 0, 10_000L), "no docs pending");
+    // A smaller configured interval fires earlier — proves the value is honored, not hardcoded.
+    assertTrue(LoopPacingPolicy.isTimeCommitTriggered(500L, 1, 250L));
+
+    assertFalse(LoopPacingPolicy.isBufferCommitTriggered(999, 1000));
+    assertTrue(LoopPacingPolicy.isBufferCommitTriggered(1000, 1000));
+    // A smaller configured max fires earlier.
+    assertTrue(LoopPacingPolicy.isBufferCommitTriggered(10, 5));
+  }
 }

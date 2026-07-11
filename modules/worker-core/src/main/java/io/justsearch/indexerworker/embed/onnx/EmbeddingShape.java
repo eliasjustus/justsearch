@@ -17,9 +17,14 @@ package io.justsearch.indexerworker.embed.onnx;
  *     maxSequenceLength} since the batch-1 late-chunking path tolerates a higher context than the
  *     base batch path (which OOMs at this length). {@code <= 0} falls back to {@code
  *     maxSequenceLength}.
+ * @param declaredEmbeddingDimension the model-capability contract's declared output vector width
+ *     (tempdoc 710 Wave 2 Move 1); {@code 0} if undeclared. The encoder's reactive first-inference
+ *     detection remains the source of truth for {@link OnnxEmbeddingEncoder#embeddingDimension()}
+ *     — this field is a cross-check only, WARNing on mismatch rather than overriding.
  */
 public record EmbeddingShape(
     int maxSequenceLength,
     boolean needsTokenTypeIds,
     OnnxEmbeddingEncoder.PoolingStrategy poolingStrategy,
-    int lateChunkingMaxSequenceLength) {}
+    int lateChunkingMaxSequenceLength,
+    int declaredEmbeddingDimension) {}

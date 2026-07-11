@@ -76,6 +76,11 @@ public final class CombinedEnrichmentBackfillOps {
       Logger log,
       boolean chunkVectorsEnabled,
       boolean lateChunkingEnabled,
+      // Tempdoc 710 Wave-1.5 Move 4 item 2: was the bare `chunkSlotsPerBatch = 50` local literal
+      // below; measured NOT the dense-corpus chunk-only-tail throughput lever (691 §F-1 — that
+      // tail is GPU-embedding-compute-bound, not cap-throttled), so this is a config surface for
+      // experimentation, not a known-good throughput knob.
+      int chunkSlotsPerBatch,
       java.util.ArrayDeque<String> parentIdCache,
       java.util.ArrayDeque<String> chunkIdCache,
       int[] batchesSinceCommit) {}
@@ -190,7 +195,7 @@ public final class CombinedEnrichmentBackfillOps {
       }
 
       // Populate chunk cache on first call (or when drained)
-      int chunkSlotsPerBatch = 50;
+      int chunkSlotsPerBatch = context.chunkSlotsPerBatch();
       if (context.chunkIdCache().isEmpty() && embedAvailable && context.chunkVectorsEnabled()) {
         context
             .chunkIdCache()

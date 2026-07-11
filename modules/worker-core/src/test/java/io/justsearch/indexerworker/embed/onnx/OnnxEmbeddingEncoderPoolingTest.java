@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 class OnnxEmbeddingEncoderPoolingTest {
 
   private static OnnxEmbeddingEncoder newEncoder(PoolingStrategy strategy) {
-    EmbeddingShape shape = new EmbeddingShape(512, false, strategy, 0);
+    EmbeddingShape shape = new EmbeddingShape(512, false, strategy, 0, 0);
     return new OnnxEmbeddingEncoder(null, shape, null);
   }
 
