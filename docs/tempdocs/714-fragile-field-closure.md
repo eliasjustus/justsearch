@@ -1,9 +1,11 @@
 # 714 — Fragile-field closure: extend the rmwPolicy fail-fast to every field type + dead-field census
 
-- **status:** takeover complete, verdict GO — theorize/design/plan done, awaiting founder
-  approval to implement (chartered 2026-07-11 from the 711 close-out)
+- **status:** implemented — plan approved (orchestrator, two riders) and executed same day; full
+  unit suite green; unmerged on branch `worktree-714-fields` (chartered 2026-07-11 from the 711
+  close-out)
 - **created:** 2026-07-11
-- **updated:** 2026-07-11 (takeover + theorize + design + plan, worktree `714-fields`)
+- **updated:** 2026-07-11 (takeover + theorize + design + plan + implementation, worktree
+  `714-fields`)
 
 ## Charter question
 
@@ -363,3 +365,56 @@ generic), or any live query/search code path.
 
 **Awaiting founder go-ahead before implementation begins** (per project convention: takeover /
 design / plan is investigation, not authorization to write code).
+
+## Implementation log (2026-07-11 — plan approved by orchestrator with two riders)
+
+Approval riders: (1) the `preserve-reread` ⇒ `type == vector` cross-check must land with its own
+rejection test — done (see Step 2/4 below); (2) a note must record why the `content_all`
+*analyzer* entry outlives the deleted *field* — the analyzers schema has
+`additionalProperties: false` on `AnalyzerRef` (no comment property can be added to the catalog
+entry without a schema change), so per the rider's fallback the note lives here:
+
+> **Why `analyzers.v1.json` still contains an entry named `content_all` after the `content_all`
+> field was deleted:** that entry is the registry-wide default ICU analyzer. Every text field's
+> `analyzer: "icu"` key resolves to it via `SsotAnalyzerRegistry`'s alias map
+> (`aliases.putIfAbsent("icu", def.id())`, `SsotAnalyzerRegistry.java:82-87`), and the default-
+> analyzer fallback selects it as the sole `locale:"*"` ICU entry (`:85-91`). It shares nothing
+> but a name with the deleted field. Do NOT "clean it up" — removing it would make
+> `KeywordAnalyzer` (no tokenization) the registry default and silently degrade all text search.
+> Renaming it is deliberately out of scope (alias/fingerprint/gate surface).
+
+### Steps executed (all in worktree `714-fields`, three logical commits)
+
+- **Step 1 — catalog + schema (commit `50ddfa7`):** `content_all` entry removed from both
+  `fields.v1.json` copies (68 → 67 fields; deep-equal preserved). `field-catalog.schema.json`
+  `rmwPolicy` `$comment` updated to the type-generic contract and records the
+  extension-point-not-shipped-code decision for future dispositions. `regenSsotManifest` run
+  (repro manifest updated); `:modules:ssot-tools:test` green.
+- **Step 2 — gate generalization (commit `4eb66ec`):** `FieldMapper.validateRmwPolicies` fragile
+  predicate is now `!stored && !docValues` with no type filter; `preserve-reread` on a non-vector
+  type is rejected at startup (rider 1); javadoc rewritten. Engine (`applyRmwPolicies`) untouched
+  — it was already type-agnostic.
+- **Step 3 — dead writers/literal (commit `cb385c8`):** `SchemaFields.CONTENT_ALL` deleted;
+  benchmark writers (`EngineIndexBench.java`, `IndexingOverheadProfiler.java`) stop writing the
+  field; `IntentJsonTemplate.java` `"field"` literal retargeted `content_all` → `content`
+  (resolves `obs:intentjsontemplate`, 2026-06-15, as a byproduct); `DefaultAppFacadeTest` literal
+  updated to match.
+- **Step 4 — regression tests (in commit `4eb66ec`):** `RmwFieldPreservationTest` gained
+  `startupFailFastRejectsUndeclaredFragileNonVectorField` (the content_all shape — the regression
+  the widened gate would have caught) and `startupFailFastRejectsPreserveRereadOnNonVectorField`
+  (rider 1). Suite result: **10/10 green** (verified from the JUnit XML: `tests="10" failures="0"
+  errors="0"`, all 10 test names enumerated — not from a piped tail).
+- **Step 5 — verification:** `spotlessApply` clean; `build -x test -PskipWebBuild=true` green
+  (exit 0); `:modules:adapters-lucene:test :modules:configuration:test :modules:ssot-tools:test`
+  green; `:modules:app-services:test --tests "*DefaultAppFacadeTest*"`, `:modules:ai-backend:test`,
+  `:modules:indexing:test` green. **Full unit suite** (`./gradlew.bat test -PskipWebBuild=true`):
+  BUILD SUCCESSFUL in 3m 37s, **bare exit code 0** (no trailing pipe; exit asserted from the
+  command's own `$?`).
+
+### Post-implementation notes
+
+- Remaining `content_all` references repo-wide after the change (all intentional):
+  `analyzers.v1.json` both copies (the default ICU analyzer entry, see rider-2 note above) and
+  `SsotValidatorFingerprintTest` (pins that analyzer entry's fingerprint — untouched by design).
+- No test anywhere asserted the `IntentJsonTemplate` field literal or the catalog field count, so
+  no assertion needed weakening (none was touched beyond the two literals named above).
