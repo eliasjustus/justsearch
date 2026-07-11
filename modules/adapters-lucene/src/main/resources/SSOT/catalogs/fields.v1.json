@@ -71,16 +71,6 @@
       "analyzer": "icu"
     },
     {
-      "id": "content_all",
-      "type": "text",
-      "stored": false,
-      "docValues": false,
-      "roles": [
-        "highlight"
-      ],
-      "analyzer": "icu"
-    },
-    {
       "id": "mime",
       "type": "keyword",
       "stored": true,
