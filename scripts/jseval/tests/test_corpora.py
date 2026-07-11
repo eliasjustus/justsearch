@@ -59,6 +59,30 @@ def test_load_beir_unknown_dataset():
         load("nonexistent_dataset")
 
 
+@patch("jseval.corpora.ir_datasets")
+def test_load_beir_points_ir_datasets_home_at_shared_cache_when_enabled(mock_ir, tmp_path, monkeypatch):
+    """tempdoc 709: `_load_beir` shares ir_datasets' own on-disk download cache across
+    worktrees (config-only -- see `dataset_cache.apply_ir_datasets_home`'s docstring)."""
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path))
+    monkeypatch.delenv("IR_DATASETS_HOME", raising=False)
+    mock_ir.load.return_value = _make_mock_dataset()
+
+    load("scifact")
+
+    assert __import__("os").environ["IR_DATASETS_HOME"] == str(tmp_path / "ir_datasets")
+
+
+@patch("jseval.corpora.ir_datasets")
+def test_load_beir_leaves_ir_datasets_home_untouched_when_cache_disabled(mock_ir, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", "0")
+    monkeypatch.delenv("IR_DATASETS_HOME", raising=False)
+    mock_ir.load.return_value = _make_mock_dataset()
+
+    load("scifact")
+
+    assert "IR_DATASETS_HOME" not in __import__("os").environ
+
+
 # ---------------------------------------------------------------------------
 # Golden set loading (local files)
 # ---------------------------------------------------------------------------

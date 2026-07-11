@@ -228,3 +228,59 @@ def test_fetch_clerc_sample_distractors_deterministic_across_two_runs(tmp_path):
     docs1 = (tmp_path / "run1" / "docs.jsonl").read_text(encoding="utf-8")
     docs2 = (tmp_path / "run2" / "docs.jsonl").read_text(encoding="utf-8")
     assert docs1 == docs2
+
+
+# ---------------------------------------------------------------------------
+# Shared dataset-fetch cache integration (tempdoc 709)
+# ---------------------------------------------------------------------------
+
+def test_fetch_clerc_sample_raw_fetch_is_cached_across_different_seeds(tmp_path, monkeypatch):
+    """A second `fetch_clerc_sample` call (even a different seed/n_queries/n_docs) must reuse
+    the already-fetched raw CLERC artifacts from the shared cache rather than re-fetching them
+    over the network -- the whole point of caching at the raw layer instead of the sampled-
+    output layer (709 pinned constraint e)."""
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path / "cache"))
+    out_dir = tmp_path / "out"
+
+    p1, p2 = _patched_clerc(n_distractor_docs=20)
+    with p1, p2:
+        prov1 = corpus_fetch.fetch_clerc_sample(out_dir / "one", seed=7, n_queries=2, n_docs=5)
+
+    # Second call: patch urlopen to explode if invoked -- the raw fetch must come entirely
+    # from the shared cache this time, not the network.
+    def _urlopen_must_not_be_called(*args, **kwargs):
+        raise AssertionError("urlopen() must not be called on a cached raw-fetch hit")
+
+    with patch("jseval.corpus_fetch.Request", _FakeReq), \
+         patch("jseval.corpus_fetch.urlopen", side_effect=_urlopen_must_not_be_called):
+        prov2 = corpus_fetch.fetch_clerc_sample(out_dir / "two", seed=99, n_queries=3, n_docs=5)
+
+    assert prov1["n_docs"] == prov2["n_docs"] == 5
+    docs2 = [json.loads(l) for l in (out_dir / "two" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(docs2) == 5
+
+    # The raw cache entry itself is on disk with a verified signature.
+    cache_dir = tmp_path / "cache" / "clerc-raw"
+    assert cache_dir.is_dir()
+    entries = list(cache_dir.iterdir())
+    assert len(entries) == 1
+    assert (entries[0] / "collection.doc.tsv.gz").is_file()
+    assert (entries[0] / "signature.json").is_file()
+
+
+def test_fetch_miracl_sample_sets_ir_datasets_home_when_cache_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path))
+    monkeypatch.delenv("IR_DATASETS_HOME", raising=False)
+
+    queries = [_miracl_query("q1", "query one")]
+    qrels = [_miracl_qrel("q1", "d1", 1)]
+    docs = [_miracl_doc("d1", "T1", "text one")]
+    fake_ds = MagicMock()
+    fake_ds.queries_iter.return_value = iter(queries)
+    fake_ds.qrels_iter.return_value = iter(qrels)
+    fake_ds.docs_iter.return_value = iter(docs)
+
+    with patch("ir_datasets.load", return_value=fake_ds):
+        corpus_fetch.fetch_miracl_sample(tmp_path / "out", lang="de", seed=1, n_docs=1)
+
+    assert __import__("os").environ["IR_DATASETS_HOME"] == str(tmp_path / "ir_datasets")
