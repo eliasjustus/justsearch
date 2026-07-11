@@ -130,7 +130,8 @@
       "encoderProfiles" : { },
       "embeddingEnabled" : true,
       "spladeEnabled" : true,
-      "nerEnabled" : true
+      "nerEnabled" : true,
+      "backfillMode" : "idle"
     },
     "gpu" : {
       "rerankerOrtCuda" : {

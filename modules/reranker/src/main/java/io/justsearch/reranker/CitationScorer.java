@@ -210,7 +210,9 @@ public final class CitationScorer implements Closeable {
       }
 
       try (var lease = sessions.acquire()) {
-        try (OrtSession.Result result = lease.session().run(inputs, lease.runOptions())) {
+        // Tempdoc 710 Move 2: lease.run() is the ORT choke point — records elapsed time via
+        // the recorder bound by the composition root (InferenceCompositionRoot).
+        try (OrtSession.Result result = lease.run(inputs)) {
           return extractScores(result);
         }
       }

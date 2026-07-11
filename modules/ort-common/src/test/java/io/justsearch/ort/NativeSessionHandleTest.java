@@ -73,6 +73,25 @@ class NativeSessionHandleTest {
       var e = new OrtException("AllocateRawInternal: some other error");
       assertFalse(NativeSessionHandle.isBfcArenaFailure(e));
     }
+
+    /**
+     * Canary (tempdoc 710 Move 3): pins {@link NativeSessionHandle#isBfcArenaFailure} against the
+     * VERBATIM ORT message format observed in production forensics (tempdoc 691 §J-4 / tempdoc
+     * 686), not just a synthetic paraphrase like {@link #detectsArenaOom}. If a future ORT version
+     * changes this message's wording (e.g. drops "AllocateRawInternal" or rewords "is smaller
+     * than"), this test fails loudly instead of every GPU-OOM fallback path silently going dark.
+     */
+    @Test
+    void detectsVerbatimObservedOrtMessage() {
+      var e =
+          new OrtException(
+              "Error in execution: Non-zero status code returned while running Add node."
+                  + " Name:'/encoder/layer.0/attention/self/Add' Status Message:"
+                  + " D:\\a\\_work\\1\\s\\onnxruntime\\core\\framework\\bfc_arena.cc:358"
+                  + " onnxruntime::BFCArena::AllocateRawInternal Available memory of 41473280 is"
+                  + " smaller than requested bytes of 86175744");
+      assertTrue(NativeSessionHandle.isBfcArenaFailure(e));
+    }
   }
 
   @Nested

@@ -98,6 +98,12 @@ public final class NativeSessionHandle implements SessionHandle {
   private final RuntimePolicy runtime;
   private final ModelSessionPolicy policy;
   private Runnable onBeforeGpuRelease; // nullable, mutable for late-binding
+  // Tempdoc 710 Move 2: recording hook bound via setOrtRunRecorder, threaded into every
+  // Lease produced by acquire()/acquireCpu() from this point forward. Volatile — bound once
+  // at construction time (typically from the owning encoder's constructor, right after it
+  // creates its EncoderProfileAccumulator) but read on every acquire() call, potentially from
+  // a different thread.
+  private volatile OrtRunRecorder ortRunRecorder = OrtRunRecorder.NOOP;
   // Tempdoc 414: typed lifecycle-event seam. NOOP when no adapter is wired (test contexts,
   // non-instrumented benchmarks). Production wires OrtSessionTelemetryAdapter via the Builder.
   private final OrtSessionTelemetryEvents events;
@@ -286,14 +292,14 @@ public final class NativeSessionHandle implements SessionHandle {
           leaseSpan.setAttribute("lease.mode", "cpu");
           // Tempdoc 414: silent line-260 fallback now first-class.
           events.onTransition(new TransitionReason.GpuFallbackTaken(consumerName));
-          return new Lease(cpuFallback, null, () -> {}, /* isCpu= */ true);
+          return new Lease(cpuFallback, null, () -> {}, /* isCpu= */ true, ortRunRecorder);
         }
         leaseSpan.setAttribute("lease.mode", "gpu");
         return new Lease(
-            session, gpuRunOptions, gpuInferenceSemaphore::release, /* isCpu= */ false);
+            session, gpuRunOptions, gpuInferenceSemaphore::release, /* isCpu= */ false, ortRunRecorder);
       }
       leaseSpan.setAttribute("lease.mode", "cpu");
-      return new Lease(session, null, () -> {}, /* isCpu= */ true);
+      return new Lease(session, null, () -> {}, /* isCpu= */ true, ortRunRecorder);
     } finally {
       leaseSpan.end();
     }
@@ -370,6 +376,16 @@ public final class NativeSessionHandle implements SessionHandle {
   @Override
   public void setLifecycleCallback(GpuLifecycleCallback callback) {
     this.onBeforeGpuRelease = callback == null ? null : callback::onBeforeRelease;
+  }
+
+  /**
+   * Replaces the ORT-run recording hook (tempdoc 710 Move 2). Used for the same late-binding
+   * reason as {@link #setLifecycleCallback}: the composition root builds the session handle
+   * before the encoder that owns the {@code EncoderProfileAccumulator} exists.
+   */
+  @Override
+  public void setOrtRunRecorder(OrtRunRecorder recorder) {
+    this.ortRunRecorder = recorder == null ? OrtRunRecorder.NOOP : recorder;
   }
 
   // ---------------------------------------------------------------------------
@@ -458,7 +474,7 @@ public final class NativeSessionHandle implements SessionHandle {
   @Override
   public Lease acquireCpu() {
     OrtSession cpu = getCpuSession();
-    return new Lease(cpu, null, () -> {}, /* isCpu= */ true);
+    return new Lease(cpu, null, () -> {}, /* isCpu= */ true, ortRunRecorder);
   }
 
   /** Returns the OrtEnvironment (shared, thread-safe singleton). */

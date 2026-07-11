@@ -641,6 +641,8 @@ final class IndexStatusOps {
                 .putAllTotalMs(metrics.getBatchTimingMs())
                 .build())
         .putAllEncoderProfiles(buildEncoderProfilesProto())
+        // Tempdoc 710 Move 2 item 4: which backfill pass ran last idle cycle.
+        .setBackfillMode(metrics.getBackfillMode())
         .build();
   }
 
