@@ -568,6 +568,18 @@ the choke point owns, not all measurement everywhere.
   exclusion is documented at its build-logic exclusion site; `ENTITY_*_TEXT` derivation deduped
   into `NerBackfillOps.applyEntityFieldUpdates` (D.1).
 
+### Wave 1 validation (2026-07-11, battlefield-en-v1 pipeline, git 3e83279+)
+
+Full unit suite green. Live pipeline run (390 docs, defaults, 691 single-pass default-on):
+enrichment 3.2 docs/s (pre-Wave-1 reference C2: 3.15 — no Wave-1 throughput regression);
+`backfillMode` field live on the wire (`"individual"` at end-of-run snapshot); choke-point
+recording active in all lanes; relevance-gate: battlefield is un-pinned (skip) — the pinned
+corpora were gate-validated in 691 Stage A. Notable side-observation: with the 691 single-pass
+default-on, battlefield `vector` nDCG@10 = **1.0000** (26/26 golds at rank 1, 26 distinct
+rank-1 docs — anti-crowding verified) vs its 624-era certification 0.4143; hybrid 0.9517.
+The corpus's "hard" difficulty rating predates the F-031 fix — 624's difficulty calibration
+for agent-utility corpora may need re-baselining (noted for the 624/704 lane, not acted on).
+
 ### New live evidence for the inventory (from 691 Stage A's A/B, 2026-07-10/11)
 
 **The RMW-destroys-vectors incident (691 §N-5) is a LIVE instance of a previously-undeclared
