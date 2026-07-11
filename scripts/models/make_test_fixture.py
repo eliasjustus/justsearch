@@ -4,15 +4,15 @@ Build the tiny ONNX fixtures used by ModelCapabilityResolverEmbeddedMetadataTest
 (tempdoc 711 Item 3).
 
 Produces two ~1KB single-node graphs (Identity op, float[4] in/out — small
-enough to commit as an LFS-tracked *.onnx blob without the multi-hundred-MB
+committed as base64 text (dodges the repo-wide *.onnx LFS rule; CI has no LFS blobs)
 weight of a real model):
 
-  modules/ort-common/src/test/resources/capability-fixtures/stamped.onnx
+  modules/ort-common/src/test/resources/capability-fixtures/stamped.onnx.b64
     — metadata_props stamped via _common.stamp_capabilities() with a known,
       fully-declared capability set. Exercises the embedded-metadata read
       rung in ModelCapabilityResolver.
 
-  modules/ort-common/src/test/resources/capability-fixtures/unstamped.onnx
+  modules/ort-common/src/test/resources/capability-fixtures/unstamped.onnx.b64
     — identical graph, zero metadata_props. Exercises the "absence of
       embedded metadata falls through to the existing rungs unchanged" case.
 
@@ -57,14 +57,24 @@ def main():
     fixtures_dir = repo_root / "modules" / "ort-common" / "src" / "test" / "resources" / "capability-fixtures"
     fixtures_dir.mkdir(parents=True, exist_ok=True)
 
-    stamped_path = fixtures_dir / "stamped.onnx"
-    onnx.save(build_minimal_graph(), str(stamped_path))
-    stamped_keys = stamp_capabilities(stamped_path, FIXTURE_CAPABILITIES)
-    print(f"Wrote {stamped_path} ({stamped_path.stat().st_size} bytes), stamped keys: {stamped_keys}")
+    # Committed as base64 TEXT (.onnx.b64), NOT as .onnx binaries: the repo-wide *.onnx
+    # LFS rule would capture them, and CI checks out without LFS blobs, so tests would
+    # receive pointer files (PR #140 first CI run). The Java test materializes them.
+    import base64, tempfile
 
-    unstamped_path = fixtures_dir / "unstamped.onnx"
-    onnx.save(build_minimal_graph(), str(unstamped_path))
-    print(f"Wrote {unstamped_path} ({unstamped_path.stat().st_size} bytes), no metadata_props")
+    with tempfile.TemporaryDirectory() as td:
+        stamped_path = Path(td) / "stamped.onnx"
+        onnx.save(build_minimal_graph(), str(stamped_path))
+        stamped_keys = stamp_capabilities(stamped_path, FIXTURE_CAPABILITIES)
+        out = fixtures_dir / "stamped.onnx.b64"
+        out.write_text(base64.b64encode(stamped_path.read_bytes()).decode("ascii"), encoding="ascii")
+        print(f"Wrote {out} ({stamped_path.stat().st_size} raw bytes), stamped keys: {stamped_keys}")
+
+        unstamped_path = Path(td) / "unstamped.onnx"
+        onnx.save(build_minimal_graph(), str(unstamped_path))
+        out = fixtures_dir / "unstamped.onnx.b64"
+        out.write_text(base64.b64encode(unstamped_path.read_bytes()).decode("ascii"), encoding="ascii")
+        print(f"Wrote {out} ({unstamped_path.stat().st_size} raw bytes), no metadata_props")
 
 
 if __name__ == "__main__":
