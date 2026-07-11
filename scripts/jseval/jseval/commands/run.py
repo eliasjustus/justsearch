@@ -330,7 +330,7 @@ def _run_iteration(
     finally:
         if backend_proc is not None:
             from .. import backend as backend_mod
-            backend_mod.stop_backend(backend_proc.proc)
+            backend_mod.stop_backend(backend_proc.proc, data_dir=backend_proc.data_dir)
 
 
 def _reset_index(base_url: str) -> None:
