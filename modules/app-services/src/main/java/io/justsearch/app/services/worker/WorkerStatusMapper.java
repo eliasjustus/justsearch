@@ -160,6 +160,7 @@ final class WorkerStatusMapper {
                         .embeddingEnabled(enrichment.getEmbeddingEnabled())
                         .spladeEnabled(enrichment.getSpladeEnabled())
                         .nerEnabled(enrichment.getNerEnabled())
+                        .backfillMode(enrichment.getBackfillMode())
                         .enrichmentCompleted(enrichment.getEnrichmentCompletedMap())
                         .batchTiming(new BatchTimingView(
                                 enrichment.getBatchTiming().getBatchCountMap(),

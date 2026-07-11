@@ -1,8 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ort;
 
+import ai.onnxruntime.OnnxTensor;
+import ai.onnxruntime.OnnxValue;
 import ai.onnxruntime.OrtEnvironment;
+import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
+import java.util.Collections;
+import java.util.Map;
 
 /**
  * Runtime-facing wrapper over an encoder's ORT session state.
@@ -124,6 +129,21 @@ public interface SessionHandle extends AutoCloseable {
    */
   void setLifecycleCallback(GpuLifecycleCallback callback);
 
+  /**
+   * Binds the recording hook invoked by every {@link Lease#run} / {@link Lease#runPinned} call
+   * produced by subsequent {@link #acquire()} / {@link #acquireCpu()} leases (tempdoc 710 Move 2).
+   * A {@link Lease} captures the currently-bound recorder at acquisition time, so callers must
+   * bind before the first {@code acquire()} that should be recorded — in practice, encoder
+   * constructors bind immediately after constructing their {@code EncoderProfileAccumulator},
+   * before any inference method can run.
+   *
+   * <p>Calling twice replaces the previous recorder (at-most-one, mirrors
+   * {@link #setLifecycleCallback}). Pass {@code null} or omit to leave the default
+   * {@link OrtRunRecorder#NOOP} in place — legitimate for CPU-only diagnostic sessions
+   * (e.g. {@code ModelVerifier}) that never go through this interface at all.
+   */
+  void setOrtRunRecorder(OrtRunRecorder recorder);
+
   /** Closes all sessions and releases resources. Idempotent. */
   @Override
   void close();
@@ -141,14 +161,68 @@ public interface SessionHandle extends AutoCloseable {
    * {@code reportCpuSessionFailure} guards — read this flag rather than compare raw session
    * identities against {@code peekCpuSession()}.
    *
+   * <p><strong>Tempdoc 710 Move 2.</strong> {@link #run} / {@link #runPinned} are the choke
+   * point every production ORT inference call must go through — an ArchUnit rule
+   * ({@code OrtRunChokePointTest} in {@code app-launcher}) pins the invariant that no class
+   * outside {@code io.justsearch.ort} invokes {@link OrtSession#run} directly. Callers that
+   * still need the raw {@link #session()} (e.g. to pass it into a recursive per-doc/CPU-retry
+   * helper that itself receives a {@code Lease}) should route through those helpers' own
+   * {@code Lease}-typed parameters rather than unpacking {@code session()}/{@code runOptions()}.
+   *
    * @param session the session to run inference on (non-null)
    * @param runOptions GPU-path {@link ai.onnxruntime.OrtSession.RunOptions}, or null for CPU
    * @param release invoked by {@link #close()} to release internal state
    * @param isCpu true if the lease is backed by the CPU session; false for the GPU session
+   * @param recorder recording hook bound via {@link SessionHandle#setOrtRunRecorder} at the time
+   *     this lease was acquired; never null ({@link OrtRunRecorder#NOOP} by default)
    */
   record Lease(
-      OrtSession session, OrtSession.RunOptions runOptions, Runnable release, boolean isCpu)
+      OrtSession session,
+      OrtSession.RunOptions runOptions,
+      Runnable release,
+      boolean isCpu,
+      OrtRunRecorder recorder)
       implements AutoCloseable {
+
+    public Lease {
+      recorder = recorder != null ? recorder : OrtRunRecorder.NOOP;
+    }
+
+    /**
+     * Runs one ORT inference call with the lease's session + RunOptions (null-RunOptions-safe:
+     * ORT Java's {@code run(Map, RunOptions)} overload does not accept a null {@code RunOptions},
+     * so CPU leases — which never carry one — route through the single-arg overload instead) and
+     * records its elapsed time via the bound {@link OrtRunRecorder} on success. A thrown
+     * {@link OrtException} is not recorded (see {@link OrtRunRecorder} semantics) — callers
+     * retrying on a fallback lease record that attempt separately, once each.
+     *
+     * @param inputs named input tensors
+     * @return the ORT result; caller owns its lifecycle (try-with-resources)
+     */
+    public OrtSession.Result run(Map<String, OnnxTensor> inputs) throws OrtException {
+      long start = System.nanoTime();
+      OrtSession.Result result =
+          runOptions != null ? session.run(inputs, runOptions) : session.run(inputs);
+      recorder.recordOrtRunNs(System.nanoTime() - start);
+      return result;
+    }
+
+    /**
+     * Runs one ORT inference call into caller-managed pinned output tensors (SPLADE's
+     * pinned-output fast path) and records its elapsed time via the bound {@link OrtRunRecorder}
+     * on success. The returned {@link OrtSession.Result} is closed immediately — pinned outputs
+     * are read from the caller's own buffer, not from the result.
+     *
+     * @param inputs named input tensors
+     * @param pinnedOutputs caller-owned output tensors ORT writes into directly
+     */
+    public void runPinned(Map<String, OnnxTensor> inputs, Map<String, OnnxValue> pinnedOutputs)
+        throws OrtException {
+      long start = System.nanoTime();
+      session.run(inputs, Collections.emptySet(), pinnedOutputs, runOptions).close();
+      recorder.recordOrtRunNs(System.nanoTime() - start);
+    }
+
     @Override
     public void close() {
       release.run();

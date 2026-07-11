@@ -108,6 +108,9 @@ public class BgeM3Encoder implements AutoCloseable {
         sessions.status().configured());
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("bgem3", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run() invocation
+    // through this SessionHandle's leases records itself.
+    sessions.setOrtRunRecorder(profiler::recordOrtCall);
   }
 
   /**
@@ -317,13 +320,8 @@ public class BgeM3Encoder implements AutoCloseable {
       try (io.opentelemetry.context.Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
-          OrtSession session = lease.session();
-          OrtSession.RunOptions runOpts = lease.runOptions();
-          long tOrt = System.nanoTime();
-          try (OrtSession.Result result =
-              runOpts != null ? session.run(inputs, runOpts) : session.run(inputs)) {
-            long ortElapsed = System.nanoTime() - tOrt;
-            profiler.recordOrtCall(ortElapsed);
+          try (OrtSession.Result result = lease.run(inputs)) {
+            // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
 
             long tExtract = System.nanoTime();
             // Extract dense_vecs: (batch, 1024)

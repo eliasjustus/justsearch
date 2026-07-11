@@ -656,6 +656,9 @@
         "enrichment" : {
           "type" : "object",
           "properties" : {
+            "backfillMode" : {
+              "type" : [ "string", "null" ]
+            },
             "batchTiming" : {
               "type" : [ "object", "null" ],
               "properties" : {

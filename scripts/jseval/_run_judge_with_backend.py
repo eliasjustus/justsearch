@@ -49,7 +49,7 @@ def main():
     try:
         lfj.run(JUDGE_URL)
     finally:
-        be.stop_backend(info.proc)
+        be.stop_backend(info.proc, data_dir=info.data_dir)
 
 
 if __name__ == "__main__":

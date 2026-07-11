@@ -1,7 +1,7 @@
 ---
 title: "Corpus-build throughput: increase indexing/enrichment throughput and decrease total corpus-build time — the indexing-side sibling of 648 that its stub explicitly reserved ('a separate target… spin a sibling stub'). Purpose kept deliberately GENERAL for now: make building an enrichment-complete (dense-searchable) index over a multi-thousand-file corpus fast enough that repeated agentic-utility eval runs (624/673) stop monopolizing the shared dev stack for hours. Method inherited from 647: attribution before allocation before optimization — no lever is chosen until measurement says which cost dominates."
 type: tempdocs
-status: "open — Phases A-E complete (2026-07-07), durable fixes SHIPPED on PR #90 (branch worktree-691-corpus-throughput). Headline: NER's missing fp16 variant silently ran the INT8 CPU model on CUDA (~10× per-call); with the model restored + arena 512→2048, battlefield corpus build 333.4s → 124.0s (2.69×). Batch-size tuning measured as a dead end (Phase E); the remaining embed lever is DUPLICATE chunk embedding (E-5, ~20% of build) — retrieval-semantics-affecting, decision point recorded, NOT implemented. See §Evidence index and §Unverified assumptions before continuing."
+status: "open — Phases A-E complete (2026-07-07), durable fixes SHIPPED on PR #90 (branch worktree-691-corpus-throughput). Headline: NER's missing fp16 variant silently ran the INT8 CPU model on CUDA (~10× per-call); with the model restored + arena 512→2048, battlefield corpus build 333.4s → 124.0s (2.69×). Batch-size tuning measured as a dead end (Phase E); the remaining embed lever is DUPLICATE chunk embedding (E-5, ~20% of build) — retrieval-semantics-affecting, decision point recorded, NOT implemented. See §Evidence index and §Unverified assumptions before continuing. TAKEOVER 2026-07-10 (§Phase F/G): chunk-pacing cap measured a compute-bound red herring; E-5 dedup is the density-scaling lever; §Phase G settles the DESIGN (whole-doc VECTOR = projection/mean-pool of CHUNK_VECTORs; search-quality register Q-016; principle: whole-object-as-projection-of-parts). IMPLEMENTATION UNDERWAY 2026-07-10 (§Phase H/I/J/K — read §Phase K FIRST, it is the self-contained continuation state): /research (§H) found LATE CHUNKING (Jina arXiv:2409.04701) DOMINATES the mean-pool design and is the vehicle; /plan approved 'full late chunking' default-off→measure→default-on. PHASE 1 SHIPPED default-off on this branch (commits db5a83a + 42d8862): `OnnxEmbeddingEncoder.embedWithSpans` primitive + `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED` flag + additive `LateChunkingEmbedBackfillOps` pass; build + module tests green; flag-off strict no-op. TWO FINDINGS RESHAPED IT: (a) gte-multilingual-base is CLS-pooled → per-span-mean chunk vectors are OFF-distribution (the chunk half is the risky/untested part, I-2); (b) the DOMINANT win is the whole-doc VECTOR from a SINGLE long-context pass (F-030 fix, 708-measured), now REPRODUCED LIVE (§Phase J: legal-clerc vector nDCG@10 0.0597→0.3403, 5.7×) — and a naive base-context bump OOMs the batch path, so late chunking's batch-1 path is the OOM-SAFE vehicle. NEXT = Phase 2 (long-doc single-pass via late chunking at raised eligibility) then the off-vs-on A/B on legal-clerc. Still default-off; nothing merged. Older §Evidence index / §Unverified assumptions predate this and describe the PRE-late-chunking state. SECOND TAKEOVER 2026-07-10 (§Phase L — read after §K): §K verified at file:line, zero main drift, VERDICT = CONTINUE NOW but Phase 2 RE-SHAPED — the per-span chunk half is researched-AGAINST (Jina: CLS models 'aren't compatible' with late chunking; proxy evidence regresses) → get cheap OFFLINE evidence (708-harness experiment) before building it; ship path = VECTOR-only single-pass ≤8192 (needs a NEW limit config — none exists, L-1); §G projection revived as the >8192 long-doc dedup complement (L-7: at 8192 late chunking is a throughput WASH, quality lever only); prefix risk K-4#2 RETIRED (runtime prefix empty); 691's Q-016/env-var doc edits are stranded UNCOMMITTED in the main checkout (L-3). STAGE A COMPLETE 2026-07-11 (§Phase N): A/B green (legal vector 5.0x defaults / 5.7x arena-6144; enron +7%/+1.3% with -42% enrichment cost measured; scifact neutral; union 0.890 > pin, leak+relevance OK); DEFAULT FLIPPED ON (Phase 4); F-031 registered; full unit suite green. Branch is PR-ready — PR/merge awaiting founder instruction."
 created: 2026-07-07
 author: agent session 2026-07-07 (Fable orientation pass; three-subagent tempdoc/code survey + targeted source verification)
 category: performance / indexing / eval-infrastructure
@@ -582,3 +582,756 @@ cycle. Read-only investigation findings (file:line evidence verified 2026-07-10)
 change needed for the tail; (2) E-5 pool-from-chunks (removes the waste, no new heap surface,
 needs the quality gate); (3) raise/decouple `chunkSlotsPerBatch` ONLY after bounding
 `embedBatchWithChunking`'s upfront tokenization the way SPLADE's was bounded.
+
+## Takeover investigation (2026-07-10) — VERDICT: CONTINUE, but measure the chunk-only tail before any code
+
+A fresh-session takeover re-read the whole tempdoc and verified its shipped state against `main`.
+**Correction to an earlier draft of this verdict:** the first pass concluded "close / dormant owner,"
+formed on a worktree branched *before* PR #129 (`1a4729e`) landed — so it missed the §Chunk-pacing
+investigation seed directly above. That seed reverses the conclusion. Recording the miss honestly
+(base-ref staleness, `verify-worktree-base`): the corpus 691 optimized against (battlefield, ~11
+chunks/doc) under-represents real chunk load by ~12×.
+
+**Shipped state confirmed in `main` (unchanged, still solid):** PR #90 merged (`3bd9078`) + docs
+PRs #92/#94/#104/#129. NER arena `2048` (`ResolvedConfigBuilder.java:1098`), degraded-variant
+surfacing (`DevModeVariantProbe.java:86`), batched-path profiler (`BertNerInference.java`). The
+2.69× NER headline win is real and live. Item 4 (model distribution) is owned by **657** (bundle
+ships NER INT8+FP16). None of that is in question.
+
+**What changed the verdict — the bottleneck is corpus-class-dependent, and 691 only measured the
+easy class.** Two facts must be held together, not one against the other:
+- For the **agentic-eval** consumer (624/673), corpus build is NOT the wall: **699** measured a
+  single cell at ~90% Anthropic API time, backend 2.7–8%. On synthetic/sparse corpora the shipped
+  fixes already made build ~6–7 min/1,000 docs. That half of the original charge is *satisfied*.
+- For the **real-document** consumer (686/705/706), the §Chunk-pacing seed shows a *different*
+  regime: `realdocs-v1` at ~138 chunks/doc drives chunk backfill to a **2–5 h (unmeasured), naive
+  ~100 h** tail, throttled by a bare `chunkSlotsPerBatch = 50` literal. This is the first evidence
+  on a realistic-density corpus, and it post-dates every A–E measurement. 691's "build is fast now,
+  third-order" claim does **not** generalize to it (704's own meta-principle: *a claim without its
+  corpus-class scope is a lie by generalization*).
+
+**Cheapest evidence that decides whether code must change — and it does NOT yet exist.** Measure one
+**chunk-only tail cycle** on a dense corpus (seed item 3, explicitly UNMEASURED). If chunk-only
+cycles drain in seconds (chunks skip SPLADE/NER), the tail may be tolerable with *no* code change and
+the cap stays. If they don't, the risk-ordered fix ladder in the seed applies. This is a read-only
+`jseval --pipeline` measurement on a dense corpus — bounded, no code, dev-stack-exclusive. It is the
+correct first pickup and it gates everything else here.
+
+**Disposition of each item under the corrected frame:**
+- **Chunk-pacing tail (seed) — the live lever; START with the measurement above.** Do not raise
+  `chunkSlotsPerBatch` first: seed item 4 shows raising it without bounding
+  `embedBatchWithChunking`'s upfront tokenization risks the 686 native-heap crash class.
+- **Item 6 / E-5 (embed duplicate-chunk dedup) — RE-ELEVATED by the seed, not declined.** The
+  earlier draft dismissed it as ~1.3 min on a sparse corpus; the seed shows that on dense corpora
+  the discarded parent-pooling work dominates a cycle while net chunk progress stays capped at 50,
+  so E-5 fix (b) could be *the* dense-corpus lever. Still retrieval-semantics-affecting
+  (search-quality register + nDCG ratchet + live A/B) — but its expected value is now large, not
+  marginal. Re-measure after the chunk-only-tail number lands.
+- **Assumption #6 (primary indexing −35%) — still DECLINE.** Primary is <15% of build; suspects
+  non-code; low value regardless of corpus class.
+- **Item 5 (build-ner.py incremental mode) — still low priority;** repair-path subsumed by 657.
+- **Assumption #2 (post-merge live-verify of shipped defaults) — fold into the dense-corpus run
+  above** (it needs a live build anyway): confirm memLimit=2048, zero OOM, no NER degraded-WARN,
+  batched-path profiler records ≈docs calls.
+- **Item 4 (model distribution) — 657 owns it.** No 691 action.
+
+**Relationship to newer docs:** 704 §Pillar 4 and 705 name 691 as owner of "enrichment throughput /
+the cost tax" (routed, not absorbed). 706 shipped the *extraction/parse* leg (6.9× scanned PDF); the
+chunk-pacing tail is the *enrichment* leg, squarely 691's. So the seed is not a duplicate of 706 —
+it is the piece 691 still owns.
+
+**Recommendation to founder — 691 STAYS OPEN with one concrete, cheap next step:** an agent-run,
+read-only chunk-only-tail measurement on a dense corpus (`realdocs-v1` or equivalent), which decides
+whether the tail needs any code change and re-attributes E-5 vs the cap. Everything past that
+measurement (cap change, E-5 dedup) is authorization-gated and, for E-5, search-quality-gated. Do
+NOT close 691. (This is a measurement recommendation, not implementation — no code or design written
+this session, per the takeover contract.)
+
+## Phase F — chunk-pacing measurement (2026-07-10, takeover, user-authorized "proceed with the cheap step")
+
+Ran the cheap read-only measurement recommended above. `realdocs-v1` is a raw-binary 686 corpus and
+is NOT on this machine, so measured on **`golden/battlefield-en-v1`** (390 docs, ~4,380 chunks,
+RTX 4070) — the per-chunk embed cost is corpus-density-independent, so the chunk-tail *mechanism*
+generalizes; the realdocs *total-time* figure below is arithmetic, not measured. Instrument: the
+existing per-cycle INFO line `CombinedEnrichmentBackfillOps.java:479` (`docs=… chunks=… embed=…ms
+… total=…ms`), no code change. Clean env-var-free run (shipped defaults). 94 cycles parsed.
+
+**F-1. The chunk-only tail is GPU-COMPUTE-BOUND — the `chunkSlotsPerBatch=50` cap is NOT the
+throughput lever.** Backfill wall 115.0 s split cleanly:
+| Regime | cycles | wall | embed(GPU) | fetch+write+other | chunks drained | ms/embed-doc |
+|---|---|---|---|---|---|---|
+| Parent-enrichment | 6 | 78.0 s (68%) | 41.8 s (54%) | 36.9 s (SPLADE+NER+ov) | 300 (50/cyc) | **52.8** |
+| **Chunk-only tail** | 82 | 36.8 s (32%) | **30.2 s (82%)** | 6.6 s (18%) | 4,080 | **7.23** |
+| No-op drain | 6 | 0.2 s | — | — | 0 | — |
+
+A chunk-only cycle is ~50 chunks in ~0.40 s, of which **82% is ORT embedding at 7.23 ms/chunk** —
+i.e. the compute floor (Phase E bench: 6.75 ms/chunk isolated). Overhead is only ~18%, so raising
+the cap recovers at most ~6.6 s here and *nothing* on the GPU-bound 30.2 s. **The seed's worry that
+the tail is overhead/cap-throttled is REFUTED — the tail is the GPU embedding 4,080 chunks, and the
+cap can't make the GPU faster.**
+
+**F-2. The measured improvable lever is E-5 duplicate embedding, and it SCALES with chunks/doc.**
+Parent cycles cost **52.8 ms per "embed-doc" vs 7.23 for chunks** because each parent re-embeds its
+internal chunks (pooled → discarded), which are then re-embedded *again* as chunk docs (E-5).
+Battlefield parent cycles embedded 791 doc-units for ~390 parents. On battlefield (~11 chunks/doc)
+this duplication is a minority of the 115 s. On `realdocs-v1` (~138 chunks/doc) the parent-internal
+embedding ≈ the chunk-doc embedding ≈ **~half of all embedding work** → the dominant eliminable
+cost. So: **improvable = YES, via E-5 dedup (retrieval-semantics-affecting → search-quality register
++ nDCG ratchet + live A/B), NOT via the cap.**
+
+**F-3. The seed's ~2-5 h / naive ~100 h realdocs drain is very likely overstated.** Chunk-only
+cycles are compute-bound at ~0.40 s/50, so a realdocs chunk tail ≈ 85,641 × 7.2 ms ≈ **~10 min**,
+not hours. The ~100 h figure assumed parent-heavy 3.5-min cycles persist for all ~1,700 cycles;
+in fact parents drain in ~7 cycles, then the tail is fast. The real realdocs enrichment cost is
+~10 min irreducible chunk-embed compute **plus a ~equal ~10 min of E-5 duplicate parent-internal
+embed that dedup would remove** — the lever, again, is dedup, not the cap. (Caveat: realdocs total
+time is extrapolated; a realdocs-v1 build would confirm. Also note GPU mutual-exclusion means the
+cap only re-orders GPU work, it doesn't add throughput — overlapping stages is a separate, deeper
+lever, not in scope here.)
+
+**F-4. Assumption #2 (shipped defaults, live) — CLOSED.** Same clean run, worker.log session-init:
+`ner: GPU session initialized — model=model_fp16.onnx, device=0, memLimit=2048MB`; **0** "falling
+back to per-doc" OOM events; **0** degraded-variant WARNs (fp16 present → optimal). The PR #90
+defaults work as committed on a fresh env-var-free run.
+
+**F-5b. Complexity note for the E-5 implementer (2026-07-10) — the two chunkers are architecturally
+DIFFERENT by design; "reuse one for the other" is a retrieval-semantics decision, not a mechanical
+dedup.** Verified in source:
+- *Encoder internal chunking* (`OnnxEmbeddingEncoder.createChunks:525`): sliding window on RAW TOKEN
+  IDS, `chunkSize=min(512,maxSeqLen)`, boundary-AGNOSTIC — its only job is to pool a long doc into
+  ONE parent vector.
+- *Pipeline RAG chunker* (`ChunkSplitter`): `DEFAULT_CHUNK_TOKENS=500`, `OVERLAP=50`, sentence/
+  paragraph boundary-AWARE on text, with 5 content-aware modes (MARKDOWN/CODE/CSV/JSON/STRUCTURED)
+  + CJK handling — its job is coherent retrievable chunks.
+They differ on window size (512 vs 500), overlap, boundary rule, and mode-specificity, so they emit
+DIFFERENT chunk sets. Therefore E-5 (a) pool-parent-from-chunk-vectors CHANGES the parent doc vector
+(pooled from boundary-aware chunks, not raw 512-windows) AND inverts backfill ordering (chunks must
+embed before the parent pools); E-5 (b) align-and-reuse forces one chunker's boundaries onto the
+other, changing either parent-retrieval or chunk-retrieval semantics. Both are eval-gated retrieval
+changes with a silent-green failure mode (compiles + unit-green while search quietly regresses), not
+bounded mechanical edits. Design-first, /search-quality-register + nDCG-ratchet + live-A/B gated.
+
+**F-5. Revised recommendation.** 691 stays OPEN, but the next lever is now *named by measurement*:
+the cap is a red herring for throughput; **E-5 duplicate-embedding elimination is the one lever that
+reduces actual GPU work, and its payoff scales with corpus chunk-density.** That work is
+search-quality-gated (register + nDCG ratchet + live A/B) and authorization-gated — not started this
+session. Remaining genuine open measurement: a `realdocs-v1` build to confirm the F-3 extrapolation
+at true density. Artifacts: session scratchpad `691-chunk-tail/` (run.ndjson, timeline.tsv,
+worker.log-derived `bf.txt` per-cycle table).
+
+## Phase G — E-5 dedup DESIGN (2026-07-10, /design; /search-quality register loaded)
+
+Design only; no code. The measurement (F) named the lever; this settles the correct shape. Grounded
+in the search-quality register (23-search-pipeline-overview, F-023/F-029/F-030, D-005, stage 13c).
+
+**The duplication, source-exact.** The combined backfill embeds via
+`EmbeddingService.embedDocumentBatch` (`:340`), which keeps only the pooled `.vector()` (`:379`) and
+**discards** the per-window vectors the encoder computed internally. So a chunked parent
+(content > `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS = 2000`) is embedded **twice** over ~the same
+text: (1) parent content → encoder 512-token windows → mean-pool → `VECTOR` (windows discarded);
+(2) each `CHUNK_CONTENT` doc → its own embed → `CHUNK_VECTOR` (`CombinedEnrichmentBackfillOps:305`).
+F-2 measured the cost: parent-cycle embed is 52.8 ms/doc-unit vs 7.23 for chunks; on ~138-chunk/doc
+corpora the discarded parent-internal pass ≈ the chunk pass ≈ **~½ of all embed work**.
+
+**Design: the whole-doc vector is a PROJECTION (mean-pool) of the document's chunk vectors, not an
+independent re-derivation.** For a document that has chunk docs, compute each chunk once (its
+`CHUNK_VECTOR`, via the canonical RAG chunker `ChunkSplitter` — UNCHANGED) and derive `VECTOR` as the
+mean-pool of that document's `CHUNK_VECTOR`s. Drop the separate encoder-internal chunk-and-pool pass
+over the parent content. Documents with no chunk docs (≤2000 chars, plus the CJK/dense-token band
+that is long-in-tokens yet short-in-chars) keep today's direct/whole-doc path unchanged.
+
+**Direction is forced (chunk→parent, never parent→chunk).** Option (b) — reuse the encoder's 512-token
+windows as the chunk vectors — is rejected: it desynchronizes `CHUNK_VECTOR` from `CHUNK_CONTENT`
+(different text spans) and degrades the chunk-branch dense leg, which the register shows is the
+*load-bearing* dense leg on exactly the long docs this touches (stage 13c "long docs trust chunk
+branch"; F-029/F-030). The RAG chunks are what chunk-dense retrieval and RAG actually serve; they stay
+canonical. Only the whole-doc `VECTOR` — a derived view — changes.
+
+**Why the retrieval risk is structurally bounded (register-grounded, not asserted).** The change
+touches only `VECTOR`, only for chunked (long) docs, and three register facts align risk *against*
+harm: (a) whole-doc mean-pool dilution is a KNOWN liability that grows with length (F-023; F-029/F-030
+"maximal whole-doc mean-pool dilution") — the whole-doc vector is the WEAKER signal on long docs;
+(b) branch fusion already de-weights the whole-doc branch on long docs (13c parent-length modulation,
+`chunkMinMultiplier` 0.25); (c) the change is largest where the whole-doc dense leg matters least
+(long/dense docs) and smallest where it matters most (short docs). Benefit and risk are inversely
+aligned. Net *expectation*: retrieval-neutral with ~2× less embed on dense corpora — but per D-005
+this is a hypothesis to MEASURE, not a claim to ship on.
+
+**Validation (instruments already shipped; no new measurement tech).** Ship default-off → measure →
+default-on (D-004 template). Gate on the recall-survival triad + relevance on the pinned corpora,
+weighting long-doc corpora (legal-clerc-200, enron-qa): `jseval relevance-gate` (nDCG floor),
+`jseval union-recall-gate` (leg_union_recall floor — the direct test of whether the whole-doc dense
+leg still surfaces the gold; F-028, pinned legal-clerc-200 0.87 / scifact 0.96 / needle-burial 1.0),
+`jseval leak-gate` (cascade-leak ceiling), plus a shared-index OFF-vs-ON A/B (build once — the method
+D-004 used to avoid embedding-rebuild noise).
+
+**What this orphans (teardown belongs to THIS tempdoc).** Nothing wholesale — a NARROWING. The
+parent's use of the encoder-internal chunk-and-pool path (`OnnxEmbeddingEncoder.createChunks` +
+`meanPoolChunks` reached via `embedDocumentBatch`) shrinks to the no-chunk-docs fallback.
+`embedBatchWithChunking` and the `ChunkedEmbedding.chunkVectors` return stay live (consumers: the
+single-doc `embed` path, `OnnxEmbeddingBackend`, `LocalIntentTranslatorV2`). At implementation time,
+run a consumer scan and tombstone only what it proves unreachable — do not pre-emptively delete.
+
+**Scheduling consequence (stated, not designed to implementation level).** `VECTOR` now depends on the
+document's `CHUNK_VECTOR`s, inverting today's parent-first enrichment order for the vector field: a
+chunked parent's `VECTOR` can only be pooled once its chunks are embedded (e.g. pool the parent when
+its last chunk completes). The exact mechanism is an implementation choice; the invariant is the
+dependency edge.
+
+**Deliberately out of scope (named, deferred).** Whether the whole-doc `VECTOR` is worth keeping AT
+ALL for chunked docs (given F-023 dilution + 13c de-weighting) is a larger retrieval-representation
+question — removing the whole-doc dense branch for long docs is a /search-quality investigation, not a
+throughput dedup. Matching scope to 691's actual problem: keep the branch, remove the duplicate
+compute. Recorded for the register (Q-016).
+
+### Reach & principle
+
+**Principle (recognized, not built general): whole-object-as-projection-of-parts.** A composite
+representation of a whole object should be a projection (here mean-pool) of its canonical part
+representations, not a second independent derivation over the whole. This is the projection-not-fork
+discipline (CLAUDE.md `explore-before-implementing`; 553 one-canonical-record; D-005
+one-canonical-authority) applied to the dense-vector layer: chunk vectors are the canonical
+per-passage dense representation; the whole-doc vector is a derived view. Today it is a *fork*
+(independent encoder-window chunk-and-pool), which is why it both duplicates compute AND can silently
+drift from the chunk representation.
+
+**Candidate scope beyond embed (named, NOT built).** The SPLADE leg has the analogous shape: the
+whole-doc SPLADE representation is a 512-token *truncation* of the doc (register: SPLADE truncates at
+512 tokens, weight modulated by `parent_token_count` to compensate), while `chunk_splade` is
+per-chunk. A pooled/union projection of chunk SPLADEs would conform to this principle AND fix the
+whole-doc SPLADE truncation loss — but that is its own retrieval-quality change with its own A/B;
+`structural-defects-no-repeat` says build the next instance only when its own evidence demands it. NER
+does not apply (chunks skip NER — no duplication).
+
+**Evidence the principle earns its keep:** the embed dedup cuts enrichment embedding compute ~½ on
+dense corpora (F-2 measured the duplicate) with neutral relevance/union-recall/leak gates.
+**Retirement condition:** if a measured case shows the whole-doc vector needs a global signal that no
+pool of its chunks can carry (pool-of-parts ≠ whole is retrieval-meaningful), the projection identity
+is false for that leg — retire the principle there and justify an independent whole-object derivation,
+rather than force-fit it.
+
+## Phase H — internet research pass (2026-07-10, /research): LATE CHUNKING dominates the §G dedup
+
+A focused pass (the aggregation of chunk embeddings into a document representation, and efficient
+chunk+doc embedding of long docs, is very actively researched 2024-2026). Verdict: **warranted, and it
+found a strictly-better successor** to §G's plain dedup.
+
+**Finding: "Late chunking" (Jina AI — Günther et al., [arXiv:2409.04701](https://arxiv.org/abs/2409.04701),
+Sep 2024 / rev Jul 2025; [Jina writeup](https://jina.ai/news/late-chunking-in-long-context-embedding-models/))
+is the directly-relevant SOTA and *dominates* the §G design.** It embeds the WHOLE document once into
+**token-level** embeddings with a long-context model, THEN partitions the token embeddings into
+chunk-spans and mean-pools each span — so every chunk vector carries full-document context (measurably
+better retrieval across boundary strategies, per the paper), and **all chunk vectors + the whole-doc
+vector come from ONE forward pass**. Same mean-pooling, no retraining.
+
+**Why it dominates §G.** §G removes the duplicate but is quality-neutral-at-best (it derives the
+weaker whole-doc vector from independently-embedded, context-*blind* chunks). Late chunking removes
+the *same* duplication (one document pass, not a parent pass + N chunk passes) **and** upgrades the
+chunk vectors from context-blind to context-aware — a throughput win *and* a quality win, on the same
+axis the register already flags (F-023 whole-doc dilution; F-029/F-030 dense-death — context-aware
+chunks are the field's answer to exactly that dilution). So §G is the *floor*; late chunking is the
+*target*.
+
+**Feasibility with OUR stack — verified in source, and it is favorable.** Late chunking's one hard
+precondition is a model that emits token-level embeddings pooled outside the model. **We already do
+this**: `OnnxEmbeddingEncoder` reads `last_hidden_state` `[batch, seqLen, dim]` (`:341`) and mean-pools
+in Java (`pool()`, `:350`) — we currently pool per 512-token window; late chunking pools per
+RAG-chunk-span instead. The model (`gte-multilingual-base`) supports 32k context (tokenizer
+`model_max_length`). So it is feasible **without re-exporting the model**. The gates are:
+1. **Operative embed `maxSeqLen`** (`EmbeddingShape.maxSequenceLength`, doc says "typically 512–2048";
+   `chunkSize = min(512, maxSeqLen)`). If already high, most docs embed whole in one pass and late
+   chunking is nearly free; if 512, full-document context needs raising the embedding context window
+   (VRAM/latency cost) or "long late chunking" (overlapping macro-windows). **Implementer must pin
+   this value first** — it decides whether late chunking is a small change or needs a context raise.
+2. **Token-span pooling** needs the char→token offset map to align RAG-chunk boundaries to token
+   positions (the tokenizer already produces offsets); plus macro-windowing for docs beyond the
+   context window.
+
+**Recommendation (updates §G).** Before implementing the plain §G dedup, run a **bounded feasibility
+spike on late chunking**: pin the operative embed `maxSeqLen`; confirm token-span pooling via the
+tokenizer offset map; estimate the VRAM/latency of the whole-doc pass at realistic doc lengths. If
+feasible at acceptable cost, **late chunking supersedes §G as the E-5 target** (same dedup + a measured
+retrieval gain, and it directly attacks the register's whole-doc-dilution finding). If the context
+raise is too costly, §G's mean-pool-projection is the quality-neutral throughput fallback. Both are
+validated by the same instruments (relevance/union-recall/leak gates + shared-index A/B) and both stay
+default-off → measure → default-on.
+
+**License/attribution.** Late chunking is a *published technique* (an inference-time algorithm), not
+code to copy — an implementation would be our own, citing the paper in a code comment + here. No
+Jina source is copied, so no license/notices-CI concern from adopting the method. (Adjacent-but-not-
+decision-changing, noted not pursued: "Beyond Chunk-Then-Embed" chunking taxonomy
+[arXiv:2602.16974](https://arxiv.org/abs/2602.16974); Landmark Pooling [arXiv:2601.21525]; Multi-Prefix
+long-context embedding [arXiv:2606.23642]. Mean-pool-of-chunks as a doc representation is confirmed a
+standard, sound aggregation — no red flag for the §G fallback.)
+
+## Phase I — implementation log (2026-07-10, /plan approved: full late chunking)
+
+Plan approved (worktree `691-takeover`): full late chunking, default-off → measure → default-on.
+Plan file: user scratchpad `lovely-conjuring-dove.md`.
+
+**I-1. Phase-1a primitive LANDED (encoder, docs ≤2048 tokens).** `OnnxEmbeddingEncoder`:
+extracted `runHidden()` (the ORT forward pass, returns unpooled `last_hidden_state[0]`) so
+`embedSingle` and the new `embedWithSpans(content, charSpans[])` share the identical run+pool path
+→ the whole-doc vector is **bit-identical to `embed()` by construction** for ≤2048-token docs.
+`embedWithSpans` returns `null` for >2048-token docs (Phase 2), checked BEFORE any char-span
+materialization (686 memory-safety). `poolSpan()` = masked-mean over tokens whose `getCharTokenSpans()`
+offset intersects `[startChar,endChar)`, excluding masked/null/zero-width special tokens; zero-token
+fallback = isolated embed of the substring. DJL `Encoding.getCharTokenSpans()` →
+`ai.djl.huggingface.tokenizers.jni.CharSpan[]` (getStart/getEnd), confirmed via `javap` on
+tokenizers-0.36.0. `build -x test` green; spotless clean. Unit test
+`OnnxEmbeddingEncoderLateChunkingTest` written (bit-identity, single-span==isolated, multi-span unit,
+long-doc-null) but **SKIPPED in the worktree** (no `.onnx` on the worktree model path; the model
+resolves from the MAIN checkout at dev-stack runtime). Live bit-identity verification deferred to the
+Phase-4 build (real encoder). Diff: `OnnxEmbeddingEncoder.java` +118/-6, one new test file.
+
+**I-2. DESIGN RISK found — gte-multilingual-base is CLS-pooled** (`models/onnx/gte-multilingual-base/
+pooling_config.json` → `{"pooling_mode":"cls"}`). Consequence: `pool()` returns the CLS token for the
+whole-doc `VECTOR` (so `embedWithSpans`'s doc vector stays bit-identical — CLS of the same pass), but
+`poolSpan` does per-span **mean**, which is OFF the model's CLS training distribution. Late chunking is
+canonically defined for mean-pool models; for a CLS model the per-span-mean **chunk** vectors are a
+genuine quality unknown — today's chunk vectors are on-distribution per-chunk CLS embeds; late
+chunking's are context-aware but off-distribution mean pools. This does NOT block (default-off; the
+A/B decides) but it is the crux the Phase-4 A/B must settle, weighting legal-clerc-200. If per-span
+chunks regress, the fallback is VECTOR-only single-pass (see I-3), which is on-distribution CLS.
+
+**I-3. 708 coordination — late chunking is now ALSO the presumptive F-030 fix (quality-motivated,
+not just throughput).** The 708 lane (`docs/tempdocs/708-encoder-domain-fit-legal-professional-text.md`,
+worktree `708-encoder-investigation`; harness `scripts/jseval/experiments/encoder_bakeoff_708.py`)
+measured, offline + Gate-0-validated (reproduces the production F-030 numbers within 0.005 first):
+gte-multilingual-base given legal-clerc-200 verbose queries in a **single native 8192-token pass**
+(instead of the production 512-token-window CLS-then-mean) goes **R@10 0.100 → 0.745** (nDCG@10 0.526,
+R@100 0.955) — a ~+0.65 R@10 F-030 recovery. That single long-context pass is exactly late chunking's
+first step (the whole-doc `VECTOR`), so:
+- **Reframe:** late chunking's dominant win is now the whole-doc `VECTOR` via single long-context pass
+  for LONG docs (>2048 today, windowed) — this is 708-MEASURED and CLS-on-distribution, i.e. MORE
+  certain than the per-span chunk half (I-2). This elevates Phase 2 (long-doc / context-length) from
+  "the throughput win" to "the F-030 quality fix" and is the higher-value half.
+- **Validation set:** ADD `mixed/legal-clerc-200` (register signature `90d4300d…`, regenerable
+  `corpus-fetch-clerc --seed 666 --n-queries 200`) as the primary A/B corpus — largest effect.
+- **Context-length lever:** the 708 win needs the embed pass to see the whole long doc; production
+  `justsearch.embed.context_length=2048` caps this, and >2048 docs window at 512. Phase 2 must either
+  raise the context (VRAM/latency A/B) and/or macro-window at a larger width; 708 measured 8192.
+- **Coordination:** 708 is PAUSED until this PR merges (founder directive) and will not touch registers
+  or engine code meanwhile. Register Q-016 is ours to update here; 708 reconciles after rebase.
+
+**I-4. Re-sequencing implication (not yet acted).** Given I-2 + I-3, the value order is now:
+(1) VECTOR single-pass for long docs = 708-measured F-030 fix (CLS-safe); (2) chunk dedup via per-span
+pooling = throughput + a CLS-risky chunk-quality bet. Phase-1a (≤2048, VECTOR bit-identical + per-span
+chunks) is a sound, harmless default-off foundation for both. Phase 2 now carries the primary quality
+win. The A/B (Phase 4) on legal-clerc-200 is the decision point for whether per-span chunks ship.
+
+**I-5. Phase 1 COMPLETE + committed (default-off, green).** Commits `db5a83a` (1a primitive+test),
+`42d8862` (1b flag + `LateChunkingEmbedBackfillOps` additive pass + env-var doc). `build -x test`
+green; worker-services 802 / worker-core 254 / configuration 183 tests pass; backfill test 12/12;
+flag-off strict no-op (`verifyNoInteractions`). Critical-analysis pass done on both subagent diffs
+(runHidden extraction is output-preserving; the backfill pass is status-driven dedup with
+tempdoc-700 failure parity, SPLADE/NER untouched; service prefixes + span-shifts correctly).
+
+**I-6. Phase 2 decomposition insight (from 708 + CLS).** The 708-measured F-030 win
+(R@10 0.100→0.745 on legal) is fundamentally a **context-length** effect: gte given the whole long
+doc in ONE pass (≤8192 tokens — legal-clerc median ~7k tokens fits) yields a far better whole-doc CLS
+`VECTOR` than the production mean-of-512-window-CLSs. This is **separable from and larger than** late
+chunking's per-span chunk dedup, and it is **CLS-on-distribution** (single CLS of the whole doc), so
+it is the lower-risk, higher-value half. Two consequences:
+- **Phase 1 (≤2048) cannot be A/B-tested on legal-clerc** — those docs are all >2048 tokens, so
+  `embedWithSpans` returns null and the late path no-ops there. Phase 1 is only exercisable on
+  short-doc corpora (scifact, enron). To validate on the corpus where the effect is largest (708's
+  legal-clerc), **Phase 2 is required.**
+- **Phase 2 shape:** raise the late-chunking single-pass eligibility toward the model's real context
+  (8192, gte supports 32k) so docs ≤8192 tokens go single-pass — capturing the 708 VECTOR win AND the
+  per-span chunk dedup for those docs. Docs >8192 tokens (minority) macro-window or fall back. Open
+  sub-question for the A/B: whether to ALSO raise the base `justsearch.embed.context_length` (affects
+  all embedding, VRAM/latency) or keep the larger context scoped to the late-chunking path. The
+  context-raise VECTOR win could even be measured independently of per-span chunks (a cleaner first
+  A/B arm). VRAM: an 8192-token single pass on gte-base (~300M) is feasible on 12GB one-doc-at-a-time;
+  measure latency/VRAM in the Phase-0-style spike.
+
+## Phase J — context-length A/B (2026-07-10, /plan Phase 4 first arm): F-030 VECTOR win reproduced live; late chunking is the OOM-safe vehicle
+
+Two clean-lifecycle pipeline builds on `mixed/legal-clerc-200` (198 docs / 200 queries, register
+signature `90d4300d…`, reused from the 708 worktree — no re-download), late chunking OFF, isolating
+the base embed-context effect. Scratchpad `691-ab/`.
+
+| Arm | embed context | vector nDCG@10 | hybrid nDCG@10 | comparable |
+|---|---|---|---|---|
+| A (baseline) | 2048 (prod) | **0.0597** | 0.5216 | True |
+| B | **8192** (`JUSTSEARCH_EMBED_CONTEXT_LENGTH`) | **0.3403** | 0.5344 | True |
+
+- **J-1. Harness validated:** Arm A reproduces the register baselines exactly (vector 0.060, hybrid
+  0.521) — like 708's Gate-0, our pipeline faithfully reproduces production.
+- **J-2. F-030 dense revival is REAL and reproduced live:** raising the embed context so long legal
+  docs embed in a SINGLE pass (instead of 512-token windows mean-pooled) lifts the whole-doc `VECTOR`
+  (dense) leg **0.0597 → 0.3403 (5.7×)**. This is the 708 finding (R@10 0.100→0.745; here the stricter
+  nDCG@10) reproduced in our own engine, CLS-on-distribution, late-chunking-independent. **This alone
+  is a shippable F-030 lever** (a config/default change), separable from the per-span chunk dedup.
+- **J-3. hybrid barely moves** (0.5216→0.5344, +0.013): on legal the fused default rides BM25, so the
+  dense revival surfaces in the `vector` leg / union-recall, not (yet) in fused nDCG. The win is a
+  representation-completeness gain (F-028 territory) more than a headline-hybrid gain — matches the
+  register's F-029/F-030 framing.
+- **J-4. KEY implementation finding — a naive base-context bump is OOM-UNSAFE; late chunking is the
+  fix.** Arm B logged 17 `Batch embedding failed … BFCArena requested 7.1 GB` events: the base batch
+  path put 8 × 8192-token docs in one ORT run (MAX_ORT_BATCH_SIZE=8), blowing even a 6144 MB arena.
+  The backfill's per-doc fallback (batch=1, ~0.9 GB) recovered them, so the index still single-passed
+  (0.34 is ~clean), but at a throughput cost. **`embedWithSpans` processes ONE parent at a time
+  (batch=1) by construction — so late chunking captures the single-pass VECTOR win WITHOUT the batch
+  OOM.** This is a second, independent reason late chunking (Phase 2) is the right vehicle, beyond the
+  chunk dedup: it is the OOM-safe path to the F-030 fix.
+- **J-5. Consequence for Phase 2:** implement the long-doc single-pass via the late-chunking path
+  (batch-1 `embedWithSpans` at a raised eligibility limit), NOT a global base-context bump (which
+  OOMs the batch path). The A/B to run next: late-chunking OFF vs ON at the raised limit on
+  legal-clerc, measuring vector + union-recall (the direct dense-leg / completeness signal) — plus
+  the per-span chunk quality question (I-2, CLS) that this VECTOR-only arm did not test.
+
+## Phase K — continuation state (2026-07-10): read this first if you are picking this up
+
+Self-contained snapshot so the tempdoc stands alone. Branch `worktree-691-takeover`, default-off,
+nothing merged. Phases A–E (NER fp16 + arena, SHIPPED PR #90 on `main`) are DONE and unrelated to the
+work below. The active work is the **E-5 late-chunking** effort (§G design → §H research → §I/J impl).
+
+### K-1. What is IMPLEMENTED and committed on this branch (all default-OFF)
+- **`OnnxEmbeddingEncoder.embedWithSpans(String content, int[][] charSpans)`** (`modules/worker-core/
+  .../embed/onnx/OnnxEmbeddingEncoder.java`, commit `db5a83a`). Embeds a doc ONCE and returns
+  `EmbedResult(vector, chunkVectors, chunkCount)`: `vector` = whole-doc pool (bit-identical to
+  `embed()` by construction via the shared `runHidden` extraction); `chunkVectors[i]` = masked-mean of
+  the tokens whose `getCharTokenSpans()` offset intersects `charSpans[i]` (`poolSpan`, excludes
+  masked/null/zero-width special tokens; isolated-embed fallback for a zero-token span). Returns
+  **null if the doc > `maxSeqLen` tokens** (context window; caller falls back). Unit test
+  `OnnxEmbeddingEncoderLateChunkingTest` exists but SKIPS in this worktree (no `.onnx` on the worktree
+  model path — models resolve from the MAIN checkout `F:\justsearch-public\models` at dev-stack
+  runtime only; run it where the integration harness has a model).
+- **Flag `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED`** (default `false`), commit `42d8862`, wired
+  EnvRegistry → `ResolvedConfigBuilder.buildEmbedding` → `ResolvedConfig.Ai.Embedding.lateChunkingEnabled`
+  → `EmbeddingConfig` → the backfill. `EmbeddingProvider.embedWithSpans` delegates to the encoder and
+  **prepends `documentPrefix` ("search_document: ") and shifts spans** so the doc vector stays in the
+  production embedding space (bit-identical VECTOR).
+- **`LateChunkingEmbedBackfillOps`** (new, `modules/worker-services/.../loop/ops/`, commit `42d8862`):
+  an ADDITIVE pass wired into `BackfillScheduler.runIdleCycle` BEFORE the combined pass. When the flag
+  is on, for a chunked parent whose embedding is PENDING it fetches the parent content + its chunk
+  docs' `[CHUNK_START_CHAR, CHUNK_END_CHAR)` spans (ordered by `CHUNK_INDEX`), calls `embedWithSpans`,
+  writes `VECTOR` + each `CHUNK_VECTOR`, and marks ONLY the embedding statuses COMPLETED — **SPLADE/NER
+  untouched** (processed normally afterward). Long docs (null) / malformed spans / count-mismatch are
+  left PENDING for the existing per-doc fallback. Tempdoc-700 failure escalation preserved. Flag-off is
+  a `verifyNoInteractions` strict no-op. Build + module tests green (worker-services 802 / worker-core
+  254 / configuration 183; backfill test 12/12). Env var documented in `environment-variables.md`.
+
+### K-2. What is MEASURED / validated
+- **§Phase J (the decisive A/B, legal-clerc-200, late chunking OFF):** raising `embed.context_length`
+  2048→8192 (long docs single-pass instead of 512-window-mean) lifts the **whole-doc dense leg
+  `vector` nDCG@10 0.0597 → 0.3403 (5.7×)**; hybrid barely moves (0.5216→0.5344, rides BM25). This is
+  the 708-measured F-030 dense revival, reproduced live, CLS-on-distribution, late-chunking-independent.
+- **The single-pass VECTOR win is the DOMINANT, LOWER-RISK half** and is a shippable config lever on
+  its own. The per-span CHUNK dedup (the throughput half) is the CLS-RISKY, UNTESTED half.
+
+### K-3. REMAINING WORK (the plan; nothing below is started)
+- **Phase 2 — long-doc single-pass via late chunking (the F-030 fix + dedup).** Make the late-chunking
+  path single-pass docs up to a larger context (target ~8192; gte supports 32k). CRITICAL: do it via
+  the **batch-1 `embedWithSpans` path, NOT a global `embed.context_length` bump** — the base BATCH path
+  puts 8×8192-token docs in one ORT run and OOMs (§J-4: BFCArena requested 7.1 GB; per-doc fallback
+  rescued it but slowly). `embedWithSpans` is batch-1 by construction → OOM-safe. Mechanics options:
+  (a) give the late-chunking path its own higher seq limit (so `embedWithSpans` doesn't return null
+  until e.g. 8192) while leaving the base path at 2048; (b) docs beyond the raised limit macro-window
+  or stay on the existing fallback. Watch VRAM: a batch-1 8192-token pass ≈ 0.9 GB — fits; keep the
+  embed arena adequate (`JUSTSEARCH_EMBED_GPU_MEM_MB`, default 2048; §J used 6144).
+- **Phase 4 — the deciding A/B (needs the dev stack/GPU).** Late-chunking OFF vs ON at the raised limit
+  on `mixed/legal-clerc-200` (+ a short-doc control like `beir/scifact` and `mixed/enron-qa`). Measure
+  `vector` + **`union-recall-gate`** (the direct dense-leg/completeness signal — the win is here, not in
+  hybrid nDCG) + `relevance-gate` + `leak-gate`. This is where the OPEN RISK gets settled: does the
+  per-span-MEAN chunk vector help or hurt on a CLS model (I-2)? If chunks hurt, ship the VECTOR-single-
+  pass win alone (it is separable) and drop/rethink the per-span chunk half.
+- **Phase 3 — teardown (at the default-ON flip, same PR arc).** Once the A/B passes and the flag flips
+  default-on, remove the now-dead duplicate path for chunked docs (the separate per-chunk embed +
+  parent-window pooling) after a consumer scan — `embedBatchWithChunking`/`ChunkedEmbedding.chunkVectors`
+  stay live for the single-doc `embed` API, `OnnxEmbeddingBackend`, `LocalIntentTranslatorV2`, and
+  non-chunked docs (NARROW, don't delete those). Mark §G (mean-pool design) superseded by §H/§Phase K.
+- **Phase 5 — docs/registers.** Move register Q-016 → Findings with the A/B result (`docs/reference/
+  search-quality-register.md`, then `node scripts/docs/skills-sync.mjs`); update canonical
+  `docs/explanation/23-search-pipeline-overview.md` stage 6 (Dense Embedding). No new SchemaField
+  (reuse VECTOR/CHUNK_VECTOR) → no `fields.v1.json` dual-copy.
+
+### K-4. OPEN RISKS & WATCH-ITEMS (do not lose these)
+1. **CLS chunk-vector quality (the crux, UNTESTED).** gte is CLS-pooled; `poolSpan` is masked-MEAN, so
+   per-span chunk vectors are off-distribution. §Phase J tested only the VECTOR (CLS-safe); the CHUNK
+   half is unmeasured. The Phase-4 A/B on legal-clerc is the decision point.
+2. **Chunk vectors exclude the `documentPrefix`.** In late chunking the "search_document: " prefix sits
+   once at doc start (outside every chunk span), so late-chunk chunk vectors lack it, whereas today's
+   separate chunk embeds include it. May affect query-doc space alignment for a CLS model — an A/B axis.
+3. **hybrid vs vector.** On legal the fused default rides BM25, so the dense win surfaces in `vector` /
+   union-recall, not headline hybrid nDCG. Judge the A/B on the dense leg + completeness, not hybrid.
+4. **VECTOR bit-identity is by-construction, not yet live-verified** (unit test skipped for lack of a
+   worktree model). A live check would confirm it; the shared `runHidden` code path makes it robust.
+5. **Backfill per-parent query cost:** `LateChunkingEmbedBackfillOps` does ~3 index queries per parent
+   (less batch-efficient than the combined path). Correctness-fine (DocValues are cheap); optimize only
+   if measured to matter — the win is GPU passes, not index reads.
+
+### K-5. REPRODUCTION / OPERATIONS (how to run the A/B)
+- **Corpus:** `mixed/legal-clerc-200` (register signature `90d4300d…`) is gitignored. It was reused
+  from the sibling `708-encoder-investigation` worktree's `datasets/mixed/legal-clerc-200/` (copied into
+  this worktree — no re-download; HF hub-cached anyway). Regenerable: `python -m jseval corpus-fetch-clerc
+  --name legal-clerc-200 --seed 666 --n-queries 200` (recipe `scripts/jseval/666-corpora/legal-clerc-200/`).
+- **A/B command** (from `scripts/jseval`, `PYTHONUTF8=1`): `python -m jseval run --dataset
+  mixed/legal-clerc-200 --modes vector,hybrid --pipeline --start-backend --clean --output-dir <out> --json`.
+  Arm with the context raise: prefix `JUSTSEARCH_EMBED_CONTEXT_LENGTH=8192 JUSTSEARCH_EMBED_GPU_MEM_MB=6144`.
+  For late chunking: `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=true` (+ whatever Phase-2 raised-limit knob
+  lands). Dev stack is shared/one-at-a-time; `--start-backend` auto-stops. Models resolve from the MAIN
+  checkout automatically. `--clean` wipes worker.log between runs (extract per-run evidence before the
+  next `--clean`).
+- **Gates:** `jseval relevance-gate` / `union-recall-gate` / `leak-gate` / `perf-gate` (baselines
+  `scripts/jseval/*-baselines.v1.json`); flag pattern template = tempdoc-643 `RERANK_JUDGE_BLEND_ENABLED`.
+- **GPU coordination:** the 708 lane (encoder-domain / F-030 investigation) is PAUSED pending THIS PR's
+  merge (founder directive); its bake-off (`encoder_bakeoff_708.py`, the source of the R@10 0.100→0.745
+  evidence) has FINISHED. 708 reconciles register Q-016 after rebase; do not touch 708's worktree beyond
+  read-only corpus reuse. Ship default-off → measure → default-on (D-004 template); authorization-gated
+  (get founder go-ahead before flipping default-on or merging).
+
+## Phase N — Phase-4 A/B (2026-07-10/11, plan A3): five defects found live; final design = single-pass INSIDE the combined bundle; legal vector 0.0597→0.2967 (defaults) / 0.3401 (arena 6144)
+
+The OFF→ON A/B on legal-clerc-200 took FOUR attempts — each failure was a real defect the A/B
+caught that unit tests structurally could not. Recorded in causal order (all fixed on this branch;
+artifacts `tmp/691-ab2/`, worker.log copies preserved per arm):
+
+**N-1. Run-procedure defect: foreground background-shell runs are killed ~10 min in** — pipeline
+runs must be launched DETACHED (Start-Process + done-marker + Monitor polling). Two runs lost.
+
+**N-2. Scheduling starvation (our bug, fix committed `e1c2140`):** `runIdleCycle` gave the late
+pass ONE ≤100-parent batch, then the combined tight-loop drained the whole corpus windowed. Only
+49/198 parents single-passed. Fixed with a drain loop — then SUPERSEDED by N-5's design.
+
+**N-3. Arena-OOM retry burn (our bug, fixed in `e1c2140`):** 13-21 batch-1 single passes OOM'd the
+default 3072MB embed arena (fragmentation from varying 2-8k seq lengths; BiasSoftmax requests up to
+~1.5GB); each burned a retry increment. Reclassified as windowed-fallback, no retry cost.
+
+**N-4. jseval `--clean` does NOT clean:** stale index (docs accumulate across runs) +
+`watched_roots.json` survive, causing BLOCKED_LEGACY → forced-reindex churn + double-ingest waves
+that raced the late pass and discarded its writes (arm on1/on2 confounded). Worked around by
+manual `tmp/headless-eval-data` wipe; logged to observations (jseval-owner defect). Note:
+BLOCKED_LEGACY ALSO fires on genuinely-fresh first ingests (fingerprint stamps only at rebuild
+completion) — that instance is cosmetic.
+
+**N-5. THE ROOT CAUSE — RMW destroys non-stored vectors; the bundling IS the invariant (fix
+`e83653a`).** After N-2's fix, vectors STILL collapsed (vector nDCG 0.016; a handful of docs in
+every query's top-10). Eliminated in order: ONNX fp16 long-seq numerics (python probe vs HF:
+cosine 0.999999 at 1500/4000/7000/8192 tokens, no NaN — `tmp/691-onnx-probe/`), the encoder Java
+path (`OnnxEmbeddingEncoderLongDocForensicTest`, real model, 5141 tokens: `embedWithSpans` vs
+base-path `embed` cosine 1.000000 — kept as a regression test), content fetch (identical
+`getDocumentContentBatch` in both passes), query lengths (all ≤574 tokens). The killer:
+**`KnnFloatVectorField` is non-stored, and ANY subsequent read-modify-write silently destroys it**
+(`WritePathOps.java:471` documents this for chunks, which get re-queued — parents do NOT). The
+separate late pass wrote VECTOR in its own RMW; the combined pass's later SPLADE/NER RMW erased
+it, leaving parents COMPLETED-but-vectorless; the few vector-bearing docs crowded every query's
+top-10. The combined pass's one-RMW-per-doc bundling is an UNDECLARED INVARIANT the whole dense
+index rests on (logged to observations as a 710 structural candidate). **Final design: the
+single-pass embed is a sub-phase INSIDE `CombinedEnrichmentBackfillOps`** — vector lands in the
+same per-doc update map as SPLADE/NER, invariant holds by construction.
+`LateChunkingEmbedBackfillOps` (and its scheduler drain loop) DELETED — teardown rode along.
+
+**N-6. Results (legal-clerc-200, 198 docs / 200 queries, RTX 4070, git `e83653a`):**
+
+| Arm | vector nDCG@10 | hybrid nDCG@10 | hybrid P@1 | enrich docs/s | comparable |
+|---|---|---|---|---|---|
+| OFF (defaults) | 0.0597 | 0.5232 | 0.365 | 1.4 | True |
+| **ON (defaults, arena 3072)** | **0.2967 (5.0×)** | **0.5489** | **0.415** | 1.3 | True |
+| ON + `JUSTSEARCH_EMBED_GPU_MEM_MB=6144` | **0.3401 (5.7×)** | 0.5420 | 0.410 | 1.3 | True |
+| §J-B replication (base ctx 8192 + 6144, flag OFF) | 0.3403 | 0.5343 | 0.405 | — | True |
+
+- OFF reproduces the register baseline exactly (0.0597/0.523 vs register 0.060/0.521) — harness
+  validated, flag-off is a live no-op.
+- ON at SHIPPED DEFAULTS: **5.0× dense revival + the best hybrid** (0.5489, +0.026); ~20 near-8k
+  docs OOM-fall-back to windowed at the 3072 arena.
+- ON + arena 6144: matches the §J-B ceiling to 3 decimals (0.3401 vs 0.3403), zero OOM — the flag
+  path fully reproduces the F-030 fix. The arena-default question (3072→6144 costs VRAM budget,
+  F-010 coexistence) is a separate decision; both numbers recorded.
+- Throughput price of the quality win (§L-7's question): **~nothing on this corpus** (1.3 vs 1.4
+  docs/s — within noise; single-pass replaces the parent's window-batch pass).
+
+**N-7. Controls + gates (2026-07-11; all arms at shipped defaults unless noted):**
+
+| Corpus | Arm | vector nDCG@10 | hybrid nDCG@10 | enrich docs/s |
+|---|---|---|---|---|
+| scifact (5,184 docs, short) | OFF | 0.7247 | 0.7542 | 24.5 |
+| scifact | ON | 0.7163 (−0.008, within wobble) | 0.7518 (−0.002) | 24.6 |
+| enron-qa (5,485 docs, long emails) | OFF | 0.5182 | 0.7228 | 7.7 |
+| enron-qa | ON | **0.5550 (+7%)** | **0.7355 (+1.3%)** | **4.5 (−42%)** |
+
+- scifact: neutral within run-to-run wobble (few chunked docs; ~16 single-passes/cycle) — control passes.
+- enron: IMPROVES both legs (no BM25-dominant regression — the D-004 failure mode does not recur)
+  but pays the measured throughput price: enrichment 7.7→4.5 docs/s at defaults. This is §L-7's
+  quadratic-attention arithmetic measured live (single-pass long emails cost more GPU than their
+  windowed batches), amplified by 33 arena-OOM double-pays at the 3072 default (try single-pass,
+  OOM, re-embed windowed). Arena 6144 would reduce the double-pays; the arena default is a
+  separate VRAM-budget decision (inference register F-010).
+- **Gates (full-mode legal run, flag ON, defaults; git `e83653a`):** `relevance-gate` OK ·
+  `union-recall-gate` **0.890 ≥ floor 0.82 (pin 0.87) — completeness ABOVE the pinned baseline**
+  (the revived dense leg surfaces golds lexical misses) · `leak-gate` OK. Full-mode per-leg:
+  lexical 0.6888 / vector 0.2967 / splade 0.0591 / hybrid 0.5497. NOTE: two-mode runs
+  (vector,hybrid only) cannot be judged against the union pin (mode-set-truncated union — the
+  earlier "fail" readings were that artifact, not regressions).
+
+**N-8. The E-5 dedup ledger closes HONESTLY: the throughput lever died with Phase M; what
+shipped is a QUALITY lever.** Original E-5 arithmetic: parent windowed pass (N tokens) + chunk
+passes (N tokens) = 2N, dedup → N. Phase M measured that chunk vectors CANNOT come from the
+parent pass on a CLS model (−0.23 nDCG), so chunks keep their own pass; the parent's windowed
+pass became a single pass (same tokens, quadratically costlier at length) — total work is still
+~2N and MORE GPU-expensive for long docs (enron −42% enrichment). 691's Phase 2-4 outcome is
+therefore: **F-030 dense revival shipped and gate-verified (5.0-5.7× on legal, +7% on enron,
+neutral scifact), at a measured background-enrichment cost on long-doc corpora — and the
+throughput charge is served only by the Phases A-E NER/arena wins (2.69×), not by late
+chunking.** §G's mean-pool projection (the quality-neutral dedup) remains the only unplayed
+throughput card and stays retired unless dense-corpus build time re-emerges as a wall
+(realdocs-class tail ≈ ~10 min per F-3 — currently acceptable). §K-3's "Phase 3 teardown" is
+RETIRED as scoped: nothing is dead — the windowed path is the live fallback (flag-off,
+over-limit, arena-OOM); `LateChunkingEmbedBackfillOps` was already deleted in N-5's fold-in.
+
+## Phase M — offline CLS chunk-vector experiment (2026-07-10, plan A1): per-span chunk half REGRESSES; Phase 2 ships VECTOR-only
+
+The L-8 "cheap offline evidence" ran (`scripts/jseval/experiments/late_chunk_cls_check_691.py`,
+results `tmp/691-cls-check/`; RTX 4070 fp16, 708-venv reuse, offline HF cache, 38.5s). Design:
+identical 500/50-token chunk spans over the first ≤8192 tokens of each legal-clerc-200 doc
+(85/198 docs truncated), CLS queries, exact-NN cosine, MaxP doc scoring — isolating ONLY the
+chunk-vector derivation: **C** = per-chunk CLS embeds (production recipe) vs **LC** = span-mean
+from one long-context pass (arXiv:2409.04701).
+
+| Metric | C (per-chunk CLS) | LC (late chunking) | Δ |
+|---|---|---|---|
+| nDCG@10 | 0.6397 | 0.4068 | **−0.2329** |
+| R@10 | 0.850 | 0.585 | **−0.265** |
+| R@100 | 0.960 | 0.915 | −0.045 |
+
+Per-query: C wins 108 / LC 25 / ties 67. LC's vectors are correlated-but-worse (R@100 nearly
+holds; @10 collapses) — exactly the off-distribution failure shape the literature predicted for
+mean-pooling a CLS model (§L-5). Far outside the −0.01 decision threshold.
+
+**Verdict (per the founder-approved decision rule): the per-span chunk half is DROPPED. Phase 2
+ships the single-pass whole-doc VECTOR only** — chunks keep today's per-chunk CLS path. K-4 risk
+#1 is settled (was the crux; now measured). Mechanically: the late pass keeps using
+`embedWithSpans` with an empty span array (same primitive, bit-identical VECTOR property intact,
+batch-1 OOM-safe); it writes `VECTOR`+`EMBEDDING_STATUS` only and leaves all chunk statuses to
+the existing path. Flag name kept (`JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED` — it gates the
+late-chunking *mechanism*; the chunk half is disabled by this measurement, documented here and
+in the env-var doc).
+
+**Secondary observation (recorded for 708's lane, NOT acted on here):** condition C itself —
+pure chunk-CLS dense, exact-NN MaxP — scores **nDCG@10 0.640 / R@10 0.850** on legal-clerc,
+versus the production whole-doc `vector` leg's 0.060 and hybrid's 0.521. This sits in tension
+with F-030(678)'s "encoder-domain mismatch, not granularity" framing: at chunk granularity with
+exact NN and MaxP, this encoder separates legal content rather well offline. Differences from
+production (exact-NN vs HNSW, MaxP vs fusion, 8192-token coverage cap, isolated leg vs fused
+pipeline) mean this is NOT directly comparable — but it suggests the production chunk-dense leg
+and/or its fusion path deserves attribution before concluding the encoder itself is the ceiling.
+Left as evidence for 708 to reconcile post-merge.
+
+## Phase L — second-takeover verification + verdict (2026-07-10, fresh session; three-subagent verify/survey/research pass, no code changes)
+
+A fresh takeover re-verified §Phase K against the branch, `main`, the newer tempdocs, and the
+literature. §K is accurate; two of its risks are now *settled in opposite directions* (one retired,
+one upgraded), one docs discrepancy was found, and the throughput accounting needs a correction that
+reshapes Phase 2's framing.
+
+**L-1. Branch state: every §K-1 claim CONFIRMED at file:line** (independent subagent, read-only).
+`embedWithSpans` + shared `runHidden` (`OnnxEmbeddingEncoder.java:552-582`, `:489-531`), null-return
+before span materialization (`:556-558`), CLS-conditional `pool()` (`:761-783`), masked-mean
+`poolSpan` + isolated fallback (`:593-626`, `:570-577`), flag chain EnvRegistry (`:324-327`, default
+`"false"`) → `ResolvedConfigBuilder:1012-1026` → `ResolvedConfig.java:248-257` →
+`EmbeddingConfig.java:96` → `BackfillScheduler.java:322`; late pass ordered before combined
+(`BackfillScheduler.java:133-134`); embedding-only status writes
+(`LateChunkingEmbedBackfillOps.java:172-187`); genuinely batch-1 (tensor shape `{1, seqLen}`,
+`OnnxEmbeddingEncoder.java:491`; never touches `MAX_ORT_BATCH_SIZE=8`, `:218`). Branch footprint is
+exactly the described 16 files (+1380/−19), clean tree. One naming nuance: the flag-off no-op test is
+`CombinedEnrichmentBackfillOpsTest.lateChunking_flagOff_isStrictNoOp` (`:509-535`), not a standalone
+test file. **Load-bearing for Phase 2:** there is NO separate late-chunking seq limit today —
+`embedWithSpans` and `embed()` read the same `final maxSeqLen` field, sourced once at construction
+from `justsearch.embed.context_length` (default 2048, `ResolvedConfigBuilder:1024`;
+`JUSTSEARCH_EMBED_CONTEXT_LENGTH`, `EnvRegistry:811-813`). Phase 2's "own higher limit" therefore
+needs a new config field (e.g. `lateChunkingContextLength`) threaded through the same chain, or a
+per-call limit — `maxSeqLen` is per-instance and `final`.
+
+**L-2. Main drift: ZERO; nothing supersedes this branch.** `main` HEAD (`301d9b8`) is byte-identical
+in tree to the merge-base `1a4729e` (the 42 intervening commits are reconciliation merges of content
+already squashed into `1a4729e`); `origin/main` is at `1a4729e`. Newer tempdocs 704/705/706/707 all
+*route* enrichment-throughput ownership here; 708 exists only in its worktree, status "PAUSED for 691
+coordination (founder directive 2026-07-10)". One forward-looking collision: unmerged sibling
+worktree **702** (`702-dense-calibration`) also touches `ResolvedConfigBuilder.java` / `EnvRegistry.java`
+— whichever of 691/702 merges second reconciles those two files.
+
+**L-3. Docs discrepancy — 691's own register/env-doc edits are STRANDED UNCOMMITTED in the shared
+MAIN checkout, not on this branch.** §K-1 says the env var is "documented in
+`environment-variables.md`", but the branch footprint (L-1) contains no `docs/reference/` file. The
+Q-016 register entry (`search-quality-register.md`) and the `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED`
+env-var doc edit exist only as uncommitted working-tree modifications in `F:\justsearch-public`
+(they match this work verbatim — "691 §Phase I — IN IMPLEMENTATION, worktree 691-takeover"). Before
+the PR, re-author (or port) both edits ON THIS BRANCH; do not commit them from main. Committed main
+has no Q-016 at all.
+
+**L-4. Register reconciliation duty for Q-016 (write it precisely).** The committed register's F-030
+entry from tempdoc 678 concludes the legal dense death is an encoder-domain mismatch — "not gating,
+not query length, not granularity". Context length was NOT one of 678's tested axes, so §J's 5.7×
+context-length revival does not contradict it — but the Q-016/F-030 text must cite that scope
+explicitly, or the register will hold two entries that read as contradicting. (Separately: the
+committed register already has TWO entries numbered F-030 — 678's and 706's — a pre-existing
+numbering collision; logged to the observations shard, not 691's to fix.)
+
+**L-5. Literature check UPGRADES risk K-4#1 (CLS chunk vectors) from "untested" to
+"researched-against".** Focused research pass (sources verified): the late-chunking paper
+(arXiv:2409.04701 incl. the 2025 revision) is explicitly scoped to mean-pooled models — all evaluated
+models are mean-pooled; Jina's own follow-up states outright *"Models using CLS or max pooling aren't
+compatible with late chunking"* (jina.ai "What Late Chunking Really Is… Part II"); Weaviate's
+implementation writeup repeats the mean-pooling requirement; the 2026 taxonomy replication
+(arXiv:2602.16974) restricted itself to mean-pooled backbones; no published result applies late
+chunking to a CLS model in either direction. Closest proxy (arXiv:2601.21525 "LMK > CLS", Landmark
+Pooling): naive inference-time mean-pooling of token states on a CLS-oriented backbone UNDERPERFORMED
+native CLS, worst on long docs (MLDR nDCG@10 15.7 vs 24.9) — and that paper exists precisely because
+the field considers naive-mean-on-CLS a real failure mode (its landmark-token fix is not a drop-in
+inference trick). gte-multilingual-base confirmed CLS-pooled, native 8192 context (RoPE base rescaled
+10k→160k in stage-2 training at 8192 — trained at that length, not extrapolated; the "32k" figure in
+§H is unsubstantiated for this checkpoint — treat 8192 as the ceiling). Consequence: expect the
+per-span chunk half to REGRESS; plan accordingly (L-8). The VECTOR half (CLS of a single long pass)
+is unaffected by all of this and is the measured, on-distribution win.
+
+**L-6. Risk K-4#2 (chunk vectors exclude the documentPrefix) is RETIRED — the prefix is empty at
+runtime for this model.** `EmbeddingService.loadPrefixes` (`:454-479`) reads `prefix_config.json`
+from the model dir; the runtime model dir (main checkout, `models/onnx/gte-multilingual-base/`) has
+`{"document_prefix": "", "query_prefix": ""}` — so `documentPrefix = ""`, the span shift is 0, and
+today's chunk embeds don't carry a prefix either. The `"search_document: "` value in §K-1 is only the
+no-config-file default. (§K-4#2 stays as a caveat for any future prefix-using checkpoint.)
+
+**L-7. Throughput-accounting correction: at 8192, late chunking is NOT a throughput win — Phase 2 is
+a QUALITY lever, and the original dense-corpus throughput charge is served by §G's projection for
+docs ABOVE the limit.** Attention is O(seq²): for gte-base geometry (12 layers, h=768, FFN 4h) the
+attention term ≈ the linear term at seq ≈ 4.6k tokens, so a single 8192-token pass costs ≈2.5-2.8×
+per token vs 512-token windows, while the current duplicate path (windowed parent pass + separate
+chunk embeds) costs ≈2.2-2.4 units/token. So at 8192 eligibility: full late chunking ≈ wash on
+throughput; VECTOR-only single-pass (keeping today's chunk embeds) ≈ net throughput COST — a price
+worth paying for the 5.7× dense revival, but it must be MEASURED, not assumed away (this is a
+throughput tempdoc: record enrichment wall time in every A/B arm; the §J arms did not report walls).
+Second consequence: `realdocs-v1`-class dense docs (~138 chunks/doc ≈ 60k+ tokens) exceed ANY
+single-pass limit — late chunking never reaches the corpus class that motivated E-5 unless
+macro-windowed. For docs > limit, the dedup lever remains **§G pool-VECTOR-from-chunk-vectors**
+(deletes the giant windowed parent pass ≈ halves embed work at high density; distributionally
+comparable — today's long-doc VECTOR is already a mean over window-CLS vectors, §G's is a mean over
+chunk-CLS vectors). §G is therefore NOT superseded — it is the long-doc complement to late chunking's
+≤8192 half. (All arithmetic estimates modulo fused-kernel constants — attribution-before-optimization
+says measure them in the A/B, which the existing instruments already do.)
+
+**L-8. VERDICT (takeover contract): CONTINUE, NOW — with Phase 2 re-shaped to split the safe half
+from the researched-against half.**
+- **Do it at all?** Yes. The motivating evidence is measured and reproduced live in our own engine
+  (§J: vector nDCG@10 0.0597→0.3403), the branch is sound and default-off (L-1), nothing on main
+  supersedes it (L-2), and 708 is paused *waiting on this PR* — walking away strands a founder-directed
+  coordination chain.
+- **Now?** Yes — it blocks 708, and the A/B instruments + corpus already exist.
+- **Re-shape:** (1) **Ship path (safe, measured): VECTOR-only single-pass** for docs ≤8192 via the
+  batch-1 `embedWithSpans` path with a NEW late-chunking-specific limit config (L-1) — the F-030 fix,
+  CLS-on-distribution, OOM-safe (§J-4). (2) **The per-span chunk half: get the cheap evidence BEFORE
+  building it.** The cheapest decisive evidence does not exist yet and needs NO engine code and NO dev
+  stack: an offline experiment in the 708 bake-off harness pattern (`encoder_bakeoff_708.py`) scoring
+  span-mean chunk vectors vs today's per-chunk CLS embeds on legal-clerc chunk-level retrieval.
+  Literature (L-5) predicts regression; if it regresses offline, drop the per-span half without paying
+  for engine plumbing + a dev-stack A/B. (3) **Long-doc throughput (the tempdoc's original charge):**
+  revive §G projection for docs > limit as its own follow-on (quality-gated like everything here).
+  (4) Every A/B arm records enrichment wall time (L-7).
+- **Displaces/duplicates:** nothing live — 708 defers by directive and owns post-merge register
+  reconciliation; §G is absorbed as the long-doc complement (its "superseded by §H" note in K-3 Phase 3
+  is hereby corrected); 686/706 own extraction; 657 owns model distribution.
+- **Still-not-do list stands:** chunk-cap raise (refuted, F-1), primary −35% (declined, B-6),
+  realdocs-v1 total-time confirmation (open, F-3).
+- Authorization posture unchanged: default-off; founder go-ahead required before Phase-2 implementation,
+  default-on flip, or merge.

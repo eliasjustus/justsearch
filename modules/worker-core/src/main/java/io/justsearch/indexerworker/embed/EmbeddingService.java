@@ -10,7 +10,6 @@ import io.justsearch.ort.GpuArbiter;
 import io.justsearch.ort.OrtCudaStatus;
 import java.io.Closeable;
 import java.util.function.Supplier;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,8 +44,10 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
   private static final int DEFAULT_DIMENSION = 768;
 
   /**
-   * Default task instruction prefixes for nomic-embed-text models. Used when no
-   * {@code prefix_config.json} file is found in the model directory.
+   * Default task instruction prefixes for nomic-embed-text models. Used when the capability
+   * contract's {@code documentPrefix}/{@code queryPrefix} is {@code null} (undeclared by every
+   * source — manifest, sentence-transformers ecosystem file, legacy sidecar; tempdoc 710 Wave 2
+   * Move 1). This service no longer reads any file to determine prefixes.
    */
   private static final String DEFAULT_DOCUMENT_PREFIX = "search_document: ";
 
@@ -100,12 +101,34 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
    * constructor is here for direct construction (test paths) that need to wire telemetry.
    */
   public EmbeddingService(Path modelPath, EmbeddingConfig config, EmbeddingTelemetryEvents events) {
+    this(modelPath, config, events, null, null);
+  }
+
+  /**
+   * Full constructor. Tempdoc 710 Wave 2 Move 1: prefixes are supplied by the caller — resolved
+   * ONCE by {@code ModelCapabilityResolver} at composition time (manifest {@code capabilities} →
+   * sentence-transformers {@code config_sentence_transformers.json prompts} → legacy {@code
+   * prefix_config.json}) — this service performs zero filesystem I/O for prefixes anymore. A
+   * {@code null} prefix means "the capability contract left this undeclared" and falls back to
+   * the historical nomic-embed-style default, matching pre-Wave-2 behavior for model directories
+   * that never shipped a {@code prefix_config.json}.
+   *
+   * @param documentPrefix resolved document-side task-instruction prefix, or {@code null} if
+   *     undeclared (falls back to {@link #DEFAULT_DOCUMENT_PREFIX})
+   * @param queryPrefix resolved query-side task-instruction prefix, or {@code null} if undeclared
+   *     (falls back to {@link #DEFAULT_QUERY_PREFIX})
+   */
+  public EmbeddingService(
+      Path modelPath,
+      EmbeddingConfig config,
+      EmbeddingTelemetryEvents events,
+      String documentPrefix,
+      String queryPrefix) {
     this.modelPath = Objects.requireNonNull(modelPath, "modelPath");
     this.embeddingConfig = Objects.requireNonNull(config, "config");
     this.events = events != null ? events : NoopEmbeddingTelemetryEvents.INSTANCE;
-    String[] prefixes = loadPrefixes(modelPath);
-    this.documentPrefix = prefixes[0];
-    this.queryPrefix = prefixes[1];
+    this.documentPrefix = documentPrefix != null ? documentPrefix : DEFAULT_DOCUMENT_PREFIX;
+    this.queryPrefix = queryPrefix != null ? queryPrefix : DEFAULT_QUERY_PREFIX;
   }
 
   /** Package-private constructor for tests that don't need full config. */
@@ -138,7 +161,26 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
    */
   public static EmbeddingService createWithBackend(
       AiBackend backend, EmbeddingConfig config, EmbeddingTelemetryEvents events) {
-    EmbeddingService svc = new EmbeddingService(config.modelPath(), config, events);
+    return createWithBackend(backend, config, events, null, null);
+  }
+
+  /**
+   * Creates an EmbeddingService with a pre-created backend, telemetry events, and explicit
+   * capability-resolved prefixes (tempdoc 710 Wave 2 Move 1). Production callers (KnowledgeServer)
+   * thread {@code embedAssembly.capabilities().documentPrefix()/queryPrefix()} through here.
+   *
+   * @param documentPrefix resolved document-side prefix, or {@code null} if undeclared
+   * @param queryPrefix resolved query-side prefix, or {@code null} if undeclared
+   * @return initialized EmbeddingService
+   */
+  public static EmbeddingService createWithBackend(
+      AiBackend backend,
+      EmbeddingConfig config,
+      EmbeddingTelemetryEvents events,
+      String documentPrefix,
+      String queryPrefix) {
+    EmbeddingService svc =
+        new EmbeddingService(config.modelPath(), config, events, documentPrefix, queryPrefix);
     svc.resolvedBackendId = "onnx";
     svc.backend = backend;
     svc.gpuEnabled = config.gpuEnabled();
@@ -395,49 +437,55 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
   }
 
   /**
-   * Loads task prefixes from a {@code prefix_config.json} in the model directory. Expected format:
-   * {@code {"document_prefix": "search_document: ", "query_prefix": "search_query: "}}. Returns
-   * defaults if no config file exists.
+   * Late chunking (tempdoc 691 Phase 1, arXiv:2409.04701): embeds {@code content} once and derives
+   * both the whole-document vector and one vector per character span from the same forward pass,
+   * instead of embedding the parent and each chunk independently. Delegates to {@link
+   * io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingEncoder#embedWithSpans} — mirrors how
+   * {@link #embedDocumentBatch} is a thin pass-through to the backend's native batch path.
+   *
+   * <p>{@code content} is prefixed with the document task instruction (same as {@link
+   * #embedDocument} / {@link #embedDocumentBatch}) so the resulting vectors live in the same
+   * embedding space as every other {@code VECTOR}/{@code CHUNK_VECTOR}; {@code charSpans} are
+   * shifted by the prefix length before being handed to the encoder so they still address the
+   * caller's original (unprefixed) {@code content} offsets.
+   *
+   * <p>Callers must gate on {@code EmbeddingConfig#lateChunkingEnabled()} themselves — this method
+   * is unconditional and only checks backend availability/support.
+   *
+   * @return the doc vector plus one chunk vector per span, or {@code null} if this backend does not
+   *     support late chunking (non-ONNX) or {@code content} exceeds the model's context window
+   * @throws RuntimeException if the underlying ONNX inference call fails — callers should treat
+   *     this like any other embedding failure (do not mark complete; let the doc retry/escalate)
    */
-  private static String[] loadPrefixes(Path modelPath) {
-    if (modelPath == null) {
-      return new String[] {DEFAULT_DOCUMENT_PREFIX, DEFAULT_QUERY_PREFIX};
+  public ChunkedEmbedding embedWithSpans(String content, int[][] charSpans) {
+    if (closed.get() || !available || backend == null) {
+      return null;
     }
-    // modelPath may be a file (GGUF) or directory (ONNX); get the directory
-    Path dir = Files.isDirectory(modelPath) ? modelPath : modelPath.getParent();
-    if (dir == null) {
-      return new String[] {DEFAULT_DOCUMENT_PREFIX, DEFAULT_QUERY_PREFIX};
+    if (content == null || content.isBlank() || charSpans == null) {
+      return null;
     }
-    Path configFile = dir.resolve("prefix_config.json");
-    if (Files.exists(configFile)) {
-      try {
-        String content = Files.readString(configFile);
-        String docPrefix = extractJsonString(content, "document_prefix");
-        String queryPrefix = extractJsonString(content, "query_prefix");
-        log.info(
-            "Embedding prefixes from prefix_config.json: doc='{}', query='{}'",
-            docPrefix,
-            queryPrefix);
-        return new String[] {docPrefix, queryPrefix};
-      } catch (java.io.IOException e) {
-        log.debug("Failed to read prefix_config.json, using defaults: {}", e.getMessage());
-      }
+    if (!(backend
+        instanceof io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingBackend onnxBackend)) {
+      return null;
     }
-    return new String[] {DEFAULT_DOCUMENT_PREFIX, DEFAULT_QUERY_PREFIX};
-  }
 
-  /** Simple JSON string value extraction (avoids adding a JSON library dependency). */
-  private static String extractJsonString(String json, String key) {
-    String pattern = "\"" + key + "\"";
-    int keyIdx = json.indexOf(pattern);
-    if (keyIdx < 0) return "";
-    int colonIdx = json.indexOf(':', keyIdx + pattern.length());
-    if (colonIdx < 0) return "";
-    int startQuote = json.indexOf('"', colonIdx + 1);
-    if (startQuote < 0) return "";
-    int endQuote = json.indexOf('"', startQuote + 1);
-    if (endQuote < 0) return "";
-    return json.substring(startQuote + 1, endQuote);
+    String prefixed = documentPrefix + content;
+    int shift = documentPrefix.length();
+    int[][] shiftedSpans = new int[charSpans.length][];
+    for (int i = 0; i < charSpans.length; i++) {
+      shiftedSpans[i] = new int[] {charSpans[i][0] + shift, charSpans[i][1] + shift};
+    }
+
+    try {
+      io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingEncoder.EmbedResult result =
+          onnxBackend.encoder().embedWithSpans(prefixed, shiftedSpans);
+      if (result == null) {
+        return null;
+      }
+      return new ChunkedEmbedding(result.vector(), result.chunkVectors(), result.chunkCount());
+    } catch (ai.onnxruntime.OrtException e) {
+      throw new RuntimeException("Late-chunking embed failed: " + e.getMessage(), e);
+    }
   }
 
   private static float[] toFloatArray(List<Double> vector) {

@@ -1,0 +1,12 @@
+{
+  "cpu": "model.onnx",
+  "gpu": "model_fp16.onnx",
+  "tokenizer": "tokenizer.json",
+  "capabilities": {
+    "context_length": 8192,
+    "embedding_dimension": 768,
+    "cpu_precision": "fp32",
+    "gpu_precision": "fp16",
+    "_comment": "Alibaba-NLP/gte-multilingual-reranker-base (docs/reference/model-inventory.md). context_length=this dir's config.json max_position_embeddings, embedding_dimension=this dir's config.json hidden_size (internal transformer width; the model's actual output is a scalar relevance score via a classification head, not a pooled vector). precision: cpu=model.onnx is FP32, gpu=model_fp16.onnx is FP16 (model-inventory.md). pooling_mode/prefixes deliberately undeclared — cross-encoder reranker, neither concept applies. Tempdoc 710 Wave 2 Move 1 manifest authoring pass."
+  }
+}

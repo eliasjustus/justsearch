@@ -107,7 +107,7 @@ def cmd_dev(ctx, clean, llm, port):
     finally:
         if not attached:
             click.echo("Stopping backend...")
-            backend_mod.stop_backend(backend_info.proc)
+            backend_mod.stop_backend(backend_info.proc, data_dir=backend_info.data_dir)
             click.echo("Stopped.")
         else:
             click.echo("Detached (backend still running).")

@@ -187,6 +187,7 @@
       "roles": [
         "vector"
       ],
+      "rmwPolicy": "preserve-reread",
       "vector": {
         "dimension": 768
       }
@@ -199,6 +200,7 @@
       "roles": [
         "chunk_vector"
       ],
+      "rmwPolicy": "preserve-reread",
       "vector": {
         "dimension": 768
       }
@@ -438,6 +440,7 @@
       "stored": false,
       "docValues": false,
       "roles": [],
+      "rmwPolicy": "reset-status:splade_status",
       "multiValued": false
     },
     {

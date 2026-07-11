@@ -23,6 +23,17 @@ import org.slf4j.Logger;
  *
  * <p>Follows the same pattern as {@link SpladeBackfillOps}. Documents with {@code
  * splade_status=PENDING} are processed; both sparse and dense fields are written together.
+ *
+ * <p>Tempdoc 710 D.3: the {@code splade_status=PENDING} query has no parent/chunk filter, so a
+ * batch mixes parent docs and chunk docs (chunk docs get {@code SPLADE_STATUS=PENDING} at
+ * creation too — see {@code ChunkDocumentWriter}). The dense-write side must therefore route by
+ * doc type — chunk docs use {@link SchemaFields#CHUNK_VECTOR} / {@link
+ * SchemaFields#CHUNK_EMBEDDING_STATUS}, parents use {@link SchemaFields#VECTOR} / {@link
+ * SchemaFields#EMBEDDING_STATUS} — mirroring the doc-type routing in {@code
+ * CombinedEnrichmentBackfillOps}. Doc type is detected the same way the content-fetch fallback
+ * already does: a non-blank {@link SchemaFields#CHUNK_CONTENT} means a chunk doc (only {@code
+ * ChunkDocumentWriter} ever populates that field). The sparse ({@code SPLADE}/{@code
+ * SPLADE_STATUS}) write pair is unaffected — chunk docs legitimately carry the SPLADE field.
  */
 public final class BgeM3BackfillOps {
   private BgeM3BackfillOps() {}
@@ -39,12 +50,16 @@ public final class BgeM3BackfillOps {
       Logger log) {}
 
   /**
-   * Processes a batch of BGE-M3 backfill documents. Returns {@code true} on success (or partial
-   * success), {@code false} when the entire batch failed systemically.
+   * Processes a batch of BGE-M3 backfill documents.
+   *
+   * @return outcome whose {@code success()} preserves the original "not a systemic failure"
+   *     signal ({@code true} on success or partial success, {@code false} when the entire batch
+   *     failed systemically); the record also carries docsProcessed/elapsedMs for {@link
+   *     BackfillScheduler}'s per-stage metrics recording (tempdoc 710 Move 2 item 4).
    */
-  public static boolean processBgeM3Backfill(BackfillContext context) {
+  public static StageOutcome processBgeM3Backfill(BackfillContext context) {
+    long t0 = System.nanoTime();
     try {
-      long t0 = System.nanoTime();
       List<String> pendingIds =
           context
               .documentFieldOps()
@@ -55,13 +70,13 @@ public final class BgeM3BackfillOps {
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
-        return true;
+        return StageOutcome.none();
       }
 
       BgeM3Encoder encoder = context.encoderSupplier().get();
       if (encoder == null) {
         context.log().debug("BGE-M3 backfill: encoder unavailable, stopping batch");
-        return true;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing BGE-M3 backfill for {} documents", pendingIds.size());
@@ -69,26 +84,34 @@ public final class BgeM3BackfillOps {
       int failed = 0;
 
       if (shouldInterrupt(context)) {
-        return true;
+        return StageOutcome.elapsedSince(t0);
       }
 
       // Phase 1: Collect content for all pending docs
       long t1 = System.nanoTime();
       List<String> batchDocIds = new ArrayList<>(pendingIds.size());
       List<String> batchContents = new ArrayList<>(pendingIds.size());
+      // Tempdoc 710 D.3: aligned with batchDocIds/batchContents — tracks whether each pending doc
+      // is a chunk doc (CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS) or a parent doc (VECTOR/
+      // EMBEDDING_STATUS), since the SPLADE_STATUS=PENDING query above mixes both doc types.
+      List<Boolean> batchIsChunk = new ArrayList<>(pendingIds.size());
       for (String docId : pendingIds) {
         try {
-          String content =
+          String chunkContent =
               context.documentFieldOps().getDocumentField(docId, SchemaFields.CHUNK_CONTENT);
-          if (content == null || content.isBlank()) {
-            content = context.documentFieldOps().getDocumentContent(docId);
-          }
+          // Only ChunkDocumentWriter ever populates CHUNK_CONTENT, so a non-blank value here is
+          // a reliable doc-type signal (tempdoc 710 D.3) — same detection the CombinedEnrichment
+          // path uses.
+          boolean isChunk = chunkContent != null && !chunkContent.isBlank();
+          String content = isChunk ? chunkContent : context.documentFieldOps().getDocumentContent(docId);
 
           if (content == null || content.isBlank()) {
             context.log().debug("BGE-M3 backfill: no content for {}, marking COMPLETED", docId);
             Map<String, Object> updates = new HashMap<>();
             updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-            updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+            updates.put(
+                isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_COMPLETED);
             context.indexingCoordinator().updateDocument(docId, updates);
             processed++;
             continue;
@@ -96,6 +119,7 @@ public final class BgeM3BackfillOps {
 
           batchDocIds.add(docId);
           batchContents.add(content);
+          batchIsChunk.add(isChunk);
         } catch (Exception e) {
           context.log().error("BGE-M3 content fetch failed for {}: {}", docId, e.getMessage());
           failed++;
@@ -105,11 +129,11 @@ public final class BgeM3BackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed);
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       if (shouldInterrupt(context)) {
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Phase 2: Batch encode with BGE-M3 (produces both dense + sparse)
@@ -134,17 +158,34 @@ public final class BgeM3BackfillOps {
         // Fallback to per-doc encoding
         int perDocFailed = 0;
         for (int i = 0; i < batchDocIds.size(); i++) {
+          String docId = batchDocIds.get(i);
+          boolean isChunk = batchIsChunk.get(i);
           try {
             BgeM3Output output = encoder.encode(batchContents.get(i));
-            writeOutput(context, batchDocIds.get(i), output);
+            writeOutput(context, docId, isChunk, output);
             processed++;
           } catch (Exception e2) {
             context
                 .log()
-                .warn(
-                    "BGE-M3 per-doc encoding failed for {}: {}",
-                    batchDocIds.get(i),
-                    e2.getMessage());
+                .warn("BGE-M3 per-doc encoding failed for {}: {}", docId, e2.getMessage());
+            // Tempdoc 710 D.3: escalate via the chunk-vs-parent appropriate helper so a
+            // deterministically-failing doc reaches EMBEDDING_MAX_RETRIES instead of retrying
+            // this pending batch forever with no persisted state.
+            if (isChunk) {
+              EmbeddingBackfillOps.handleChunkEmbeddingFailure(
+                  context.documentFieldOps(),
+                  context.indexingCoordinator(),
+                  docId,
+                  e2.getMessage(),
+                  context.log());
+            } else {
+              EmbeddingBackfillOps.handleEmbeddingFailure(
+                  context.documentFieldOps(),
+                  context.indexingCoordinator(),
+                  docId,
+                  e2.getMessage(),
+                  context.log());
+            }
             perDocFailed++;
             failed++;
           }
@@ -158,9 +199,9 @@ public final class BgeM3BackfillOps {
                   "BGE-M3 encoding unavailable: entire batch of {} docs failed — {}",
                   perDocFailed,
                   e.getMessage());
-          return false;
+          return new StageOutcome(false, processed, (System.nanoTime() - t0) / 1_000_000);
         }
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
       long encodeMs = (System.nanoTime() - t2) / 1_000_000;
 
@@ -170,13 +211,23 @@ public final class BgeM3BackfillOps {
           new ArrayList<>(batchDocIds.size());
       for (int i = 0; i < batchDocIds.size(); i++) {
         BgeM3Output output = outputs.get(i);
+        boolean isChunk = batchIsChunk.get(i);
         Map<String, Object> updates = new HashMap<>();
         updates.put(SchemaFields.SPLADE, output.sparseWeights());
         updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
         updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
         if (output.denseVector() != null && output.denseVector().length > 0) {
-          updates.put(SchemaFields.VECTOR, output.denseVector());
-          updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          // Tempdoc 710 D.3: chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use
+          // VECTOR/EMBEDDING_STATUS.
+          updates.put(isChunk ? SchemaFields.CHUNK_VECTOR : SchemaFields.VECTOR, output.denseVector());
+          updates.put(
+              isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
+              SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          updates.put(
+              isChunk
+                  ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                  : SchemaFields.EMBEDDING_RETRY_COUNT,
+              "0");
         }
         batchUpdates.add(Map.entry(batchDocIds.get(i), updates));
       }
@@ -203,22 +254,30 @@ public final class BgeM3BackfillOps {
               writeMs,
               commitMs,
               docs > 0 ? totalMs / docs : 0);
-      return true;
+      return new StageOutcome(true, processed, totalMs);
 
     } catch (Exception e) {
       context.log().error("Error during BGE-M3 backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - t0) / 1_000_000);
     }
   }
 
-  private static void writeOutput(BackfillContext context, String docId, BgeM3Output output) {
+  private static void writeOutput(
+      BackfillContext context, String docId, boolean isChunk, BgeM3Output output) {
     Map<String, Object> updates = new HashMap<>();
     updates.put(SchemaFields.SPLADE, output.sparseWeights());
     updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
     updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
     if (output.denseVector() != null && output.denseVector().length > 0) {
-      updates.put(SchemaFields.VECTOR, output.denseVector());
-      updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+      // Tempdoc 710 D.3: chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use
+      // VECTOR/EMBEDDING_STATUS.
+      updates.put(isChunk ? SchemaFields.CHUNK_VECTOR : SchemaFields.VECTOR, output.denseVector());
+      updates.put(
+          isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
+          SchemaFields.EMBEDDING_STATUS_COMPLETED);
+      updates.put(
+          isChunk ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT : SchemaFields.EMBEDDING_RETRY_COUNT,
+          "0");
     }
     context.indexingCoordinator().updateDocument(docId, updates);
   }

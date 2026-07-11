@@ -28,7 +28,15 @@ import shutil
 import sys
 from pathlib import Path
 
-from _common import get_tool_versions, posix_relpath, resolve_hf_commit, sha256_file, verify_model
+from _common import (
+    get_tool_versions,
+    load_manifest_capabilities,
+    posix_relpath,
+    resolve_hf_commit,
+    sha256_file,
+    stamp_capabilities,
+    verify_model,
+)
 
 
 def download_hf_file(repo_id: str, filename: str, output_dir: Path) -> Path:
@@ -122,6 +130,21 @@ def main():
     verify_model(gpu_path)
     verify_model(cpu_path)
 
+    # Stamp declared capabilities into ONNX metadata_props (tempdoc 711 Item 3) — a
+    # build-time projection of model_manifest.json's `capabilities` section, if the
+    # manifest has one yet. Legacy dirs without a manifest capabilities section are
+    # skipped, not crashed.
+    manifest_capabilities = load_manifest_capabilities(output_dir)
+    if manifest_capabilities:
+        gpu_stamped_keys = stamp_capabilities(gpu_path, manifest_capabilities)
+        cpu_stamped_keys = stamp_capabilities(cpu_path, manifest_capabilities)
+        print(f"  Stamped {len(gpu_stamped_keys)} metadata_props key(s) into {gpu_path.name}")
+        print(f"  Stamped {len(cpu_stamped_keys)} metadata_props key(s) into {cpu_path.name}")
+    else:
+        print(f"  No model_manifest.json capabilities section in {output_dir} — skipping metadata_props stamping")
+        gpu_stamped_keys = []
+        cpu_stamped_keys = []
+
     # Compute hashes and write build.json
     gpu_sha = sha256_file(gpu_path)
     cpu_sha = sha256_file(cpu_path)
@@ -142,6 +165,7 @@ def main():
                     "Merged split external-data files into single self-contained model.onnx via onnx.save()",
                 ],
                 "output_sha256": gpu_sha,
+                "stamped_metadata_keys": gpu_stamped_keys,
             },
             "model_int8.onnx": {
                 "description": "CPU — INT8 dynamic quantization",
@@ -150,6 +174,7 @@ def main():
                     "Applied ORT dynamic INT8 quantization (onnxruntime.quantization.quantize_dynamic, weight_type=QInt8)",
                 ],
                 "output_sha256": cpu_sha,
+                "stamped_metadata_keys": cpu_stamped_keys,
             },
         },
         "build_command": f"python scripts/models/build-embedding.py --hf-onnx-repo {args.hf_onnx_repo} --output-dir {posix_relpath(args.output_dir)}",

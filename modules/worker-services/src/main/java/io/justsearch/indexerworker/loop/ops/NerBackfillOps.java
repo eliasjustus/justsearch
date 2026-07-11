@@ -35,7 +35,14 @@ public final class NerBackfillOps {
       int batchSize,
       Logger log) {}
 
-  public static void processNerBackfill(BackfillContext context) {
+  /**
+   * Processes one batch of NER backfill.
+   *
+   * @return the batch outcome (tempdoc 710 Move 2 item 4) — {@link BackfillScheduler} records
+   *     per-stage timing/counts from this instead of relying on a metrics call inside the op.
+   */
+  public static StageOutcome processNerBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     try {
       List<String> pendingIds =
           context
@@ -44,7 +51,7 @@ public final class NerBackfillOps {
                   SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING, context.batchSize());
 
       if (pendingIds.isEmpty()) {
-        return;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing NER backfill for {} documents", pendingIds.size());
@@ -93,23 +100,7 @@ public final class NerBackfillOps {
           updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
           updates.put(SchemaFields.NER_RETRY_COUNT, "0");
 
-          if (!result.isEmpty()) {
-            if (!result.persons().isEmpty()) {
-              updates.put(SchemaFields.ENTITY_PERSONS_RAW, new ArrayList<>(result.persons()));
-              updates.put(SchemaFields.ENTITY_PERSONS_TEXT, String.join(" ", result.persons()));
-            }
-            if (!result.organizations().isEmpty()) {
-              updates.put(
-                  SchemaFields.ENTITY_ORGANIZATIONS_RAW, new ArrayList<>(result.organizations()));
-              updates.put(
-                  SchemaFields.ENTITY_ORGANIZATIONS_TEXT, String.join(" ", result.organizations()));
-            }
-            if (!result.locations().isEmpty()) {
-              updates.put(SchemaFields.ENTITY_LOCATIONS_RAW, new ArrayList<>(result.locations()));
-              updates.put(
-                  SchemaFields.ENTITY_LOCATIONS_TEXT, String.join(" ", result.locations()));
-            }
-          }
+          applyEntityFieldUpdates(updates, result);
 
           batchUpdates.add(Map.entry(docId, updates));
           processed++;
@@ -124,7 +115,7 @@ public final class NerBackfillOps {
 
       // Batch-write all collected updates (single NRT refresh for the entire batch)
       if (!batchUpdates.isEmpty()) {
-        context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+        context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
       }
 
       if (processed > 0 || failed > 0) {
@@ -139,9 +130,11 @@ public final class NerBackfillOps {
                 failed,
                 markedFailed);
       }
+      return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during NER backfill", e);
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 
@@ -155,7 +148,7 @@ public final class NerBackfillOps {
 
       if (updates.containsKey(SchemaFields.NER_STATUS)) {
         log.warn("NER permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
         log.debug(
@@ -164,7 +157,7 @@ public final class NerBackfillOps {
             SchemaFields.NER_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 
@@ -192,6 +185,37 @@ public final class NerBackfillOps {
       updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_FAILED);
     }
     return updates;
+  }
+
+  /**
+   * Pure derivation of the {@code ENTITY_*_RAW}/{@code ENTITY_*_TEXT} field updates from a {@link
+   * NerResult} — no I/O. Shared by {@link #processNerBackfill} (per-doc immediate write) and the
+   * combined enrichment path (merges into its own single batched write), so the {@code
+   * String.join(" ", ...)} derivation can't drift between the two lanes (tempdoc 710 §B1 D.1).
+   * Mirrors {@link #computeNerFailureUpdate}'s shared-pure-helper shape — mutates {@code updates}
+   * in place instead of returning a new map, matching the mutate-in-place convention both call
+   * sites already use for their batch-update map.
+   *
+   * @param updates the batch-update map to populate in place; a no-op if {@code result} is empty
+   * @param result the NER extraction result
+   */
+  static void applyEntityFieldUpdates(Map<String, Object> updates, NerResult result) {
+    if (result.isEmpty()) {
+      return;
+    }
+    if (!result.persons().isEmpty()) {
+      updates.put(SchemaFields.ENTITY_PERSONS_RAW, new ArrayList<>(result.persons()));
+      updates.put(SchemaFields.ENTITY_PERSONS_TEXT, String.join(" ", result.persons()));
+    }
+    if (!result.organizations().isEmpty()) {
+      updates.put(SchemaFields.ENTITY_ORGANIZATIONS_RAW, new ArrayList<>(result.organizations()));
+      updates.put(
+          SchemaFields.ENTITY_ORGANIZATIONS_TEXT, String.join(" ", result.organizations()));
+    }
+    if (!result.locations().isEmpty()) {
+      updates.put(SchemaFields.ENTITY_LOCATIONS_RAW, new ArrayList<>(result.locations()));
+      updates.put(SchemaFields.ENTITY_LOCATIONS_TEXT, String.join(" ", result.locations()));
+    }
   }
 
   private static int parseRetryCountOrZero(String retryCountStr) {

@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.ner;
 
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import io.justsearch.ort.ModelCapabilities;
 import io.justsearch.ort.SessionHandle;
 
 /**
@@ -18,9 +19,11 @@ import io.justsearch.ort.SessionHandle;
  * @param shape model-intrinsic facts (input-name detection + max sequence length)
  * @param tokenizer loaded DJL HuggingFace tokenizer
  * @param labelMapping BIO→entity-type mapping loaded from the model's label-config JSON
+ * @param capabilities the full resolved model-capability contract (tempdoc 710 Wave 2 Move 1)
  */
 public record NerAssembly(
     SessionHandle sessions,
     NerShape shape,
     HuggingFaceTokenizer tokenizer,
-    BioTagDecoder.LabelMapping labelMapping) {}
+    BioTagDecoder.LabelMapping labelMapping,
+    ModelCapabilities capabilities) {}
