@@ -149,6 +149,28 @@ Settled empirical facts. Each was an open question that got answered.
 
 ---
 
+### F-014: 708 offline encoder screen — candidate footprint/throughput record + two runtime facts (tempdoc 708, 2026-07-11)
+
+- **Context:** the 708 bake-off (search-quality F-034: NO MODEL SWAP) measured candidate encoders
+  offline in torch fp16 on the RTX 4070 — a screen, NOT ORT production baselines (the Canonical
+  Baselines table above stays ORT-only). Doc-side encode throughput at chunk granularity
+  (500-token chunks, includes tokenize+forward+pool), fp16 size estimates:
+  incumbent gte-multilingual-base 628 MB / 9.7 docs/s; arctic-embed-m-v2.0 ~610 MB / 10.0;
+  granite-278m ~556 MB / 12.9; arctic-embed-l-v2.0 ~1.1 GB / 5.6; bge-m3 ~1.1 GB / 6.2;
+  multilingual-e5-large ~1.1 GB / 6.0; Qwen3-Embedding-0.6B ~1.2 GB / 1.35 (W1; ~6× slower than
+  same-size peers — decoder-style embedder; its W2 8k-context run exceeded 60 min for 198 docs and
+  was abandoned).
+- **Runtime fact 1 (production-relevant):** `OnnxEmbeddingEncoder.createChunks` raw id-slice
+  windows CLS-pool a non-[CLS] token on windows 2+ — offline A/B isolates this as the dominant
+  share of the old whole-doc dense death (0.105 vs 0.745 R@10 with proper per-window special
+  tokens, same model/windowing). F-031's single-pass path moots it up to 8192 tokens; any residual
+  >8192-token window-mean path still carries it (observations inbox).
+- **Runtime fact 2 (tooling):** Snowflake arctic-embed-m-v2.0's HF remote code (mGTE family)
+  hard-requires `xformers` on CUDA (`AssertionError: please install xformers`); the incumbent's
+  Alibaba remote code does not. `xformers` 0.0.35 installs clean against torch 2.13.0+cu126
+  (`--no-deps`; triton warnings non-fatal).
+- **Evidence:** tempdoc 708 §Execution log (final table + run JSON pointers).
+
 ## Decisions
 
 Design choices in the current inference runtime, with rationale.
