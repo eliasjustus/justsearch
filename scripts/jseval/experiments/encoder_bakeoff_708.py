@@ -236,6 +236,9 @@ class Encoder:
 
     def encode_texts(self, texts: list[str], max_len: int, prefix: str = "") -> np.ndarray:
         """Standard path: text (+prefix) -> tokenize w/ special tokens -> pool -> l2."""
+        model_max = getattr(self.tokenizer, "model_max_length", None)
+        if model_max and model_max < 10**9:
+            max_len = min(max_len, model_max)
         out = []
         with self.torch.no_grad():
             for i in range(0, len(texts), self.batch_size):
