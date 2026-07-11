@@ -265,12 +265,37 @@ public interface OnlineAiService {
   }
 
   /**
+   * Confidence/diagnostic signals accompanying a vision completion, alongside the extracted text.
+   * Tempdoc 677 S1: plumbing only — nothing consumes these fields for gating yet.
+   *
+   * <p>Populated from llama-server's OpenAI-compatible response ({@code finish_reason} and,
+   * when the request opted into per-token logprobs, {@code choices[0].logprobs.content[]}
+   * reduced to two scalars). {@code meanLogprob} and {@code lowConfidenceFraction} are {@code
+   * null} when the server did not return logprobs (not requested, or unsupported); {@code
+   * tokenCount} is {@code 0} in that case.
+   *
+   * @param content the extracted/generated text
+   * @param finishReason the OpenAI-compatible finish reason (e.g. "stop", "length"), or null if
+   *     absent from the response
+   * @param tokenCount number of per-token logprob entries observed (0 if none)
+   * @param meanLogprob mean of per-token logprob values, or null if unavailable
+   * @param lowConfidenceFraction fraction of tokens with logprob &lt; -1.0, or null if unavailable
+   */
+  record VisionCompletionResult(
+      String content,
+      String finishReason,
+      int tokenCount,
+      Double meanLogprob,
+      Double lowConfidenceFraction) {}
+
+  /**
    * Vision completion — extract text from an image via a multimodal model. Tempdoc 518
    * Appendix G W4.2: promoted to the role-typed interface so {@code VduProcessor} can hold
    * {@code OnlineAiService} instead of the concrete {@code InferenceLifecycleManager}.
    *
-   * <p>Default implementation returns a failed future. Implementations backed by a
-   * vision-capable llama-server should override.
+   * <p>Delegates to {@link #visionCompletionDetailed(String, byte[], int)} and returns just the
+   * extracted text. Callers that need finish_reason/confidence signals should call the detailed
+   * variant directly.
    *
    * @param prompt instruction prompt (e.g., "extract text from this image")
    * @param imageBytes raw image bytes (PNG/JPG)
@@ -279,8 +304,27 @@ public interface OnlineAiService {
    */
   default CompletableFuture<String> visionCompletion(
       String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens)
+        .thenApply(VisionCompletionResult::content);
+  }
+
+  /**
+   * Vision completion with finish_reason and logprob-derived confidence signals attached.
+   * Tempdoc 677 S1: plumbing only, no abstention/gating behavior yet.
+   *
+   * <p>Default implementation returns a failed future. Implementations backed by a
+   * vision-capable llama-server should override.
+   *
+   * @param prompt instruction prompt (e.g., "extract text from this image")
+   * @param imageBytes raw image bytes (PNG/JPG)
+   * @param maxTokens max tokens to generate
+   * @return future containing the generated text plus finish_reason/logprob-derived signals
+   */
+  default CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens) {
     return CompletableFuture.failedFuture(
-        new UnsupportedOperationException("OnlineAiService.visionCompletion unsupported"));
+        new UnsupportedOperationException(
+            "OnlineAiService.visionCompletionDetailed unsupported"));
   }
 
   /**

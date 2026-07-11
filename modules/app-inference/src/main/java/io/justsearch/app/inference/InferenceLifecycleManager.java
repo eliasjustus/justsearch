@@ -20,6 +20,7 @@ import io.justsearch.app.api.StartupCode;
 import io.justsearch.app.api.TransitionCode;
 import io.justsearch.app.api.ModeChangeListener;
 import io.justsearch.app.api.OnlineAiService.AiUsage;
+import io.justsearch.app.api.OnlineAiService.VisionCompletionResult;
 import io.justsearch.app.api.SamplingParams;
 import net.jcip.annotations.ThreadSafe;
 import java.io.Closeable;
@@ -950,6 +951,11 @@ public class InferenceLifecycleManager
   public CompletableFuture<String> visionCompletion(
       String prompt, byte[] imageBytes, int maxTokens) {
     return onlineOps.visionCompletion(prompt, imageBytes, maxTokens);
+  }
+
+  public CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens) {
+    return onlineOps.visionCompletionDetailed(prompt, imageBytes, maxTokens);
   }
 
   public CompletableFuture<String> summarize(String content, int maxTokens) {

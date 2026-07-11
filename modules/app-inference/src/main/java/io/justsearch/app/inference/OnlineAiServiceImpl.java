@@ -155,9 +155,9 @@ public final class OnlineAiServiceImpl
   }
 
   @Override
-  public CompletableFuture<String> visionCompletion(
+  public CompletableFuture<OnlineAiService.VisionCompletionResult> visionCompletionDetailed(
       String prompt, byte[] imageBytes, int maxTokens) {
-    return manager.visionCompletion(prompt, imageBytes, maxTokens);
+    return manager.visionCompletionDetailed(prompt, imageBytes, maxTokens);
   }
 
   @Override
