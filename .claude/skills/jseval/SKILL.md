@@ -238,6 +238,20 @@ modes (like `hybrid`) send a mode string for backend resolution.
   pipeline timing comparison
 - **Backend lifecycle**: `--start-backend` starts runHeadlessEval,
   `--clean` wipes data dir, auto-stops via taskkill on completion.
+  `--clean` is **fail-closed** (tempdoc 711 item 4): it preserves the
+  top-level `cohort_baselines/` and `non_determinism_envelopes/`
+  directories, deletes everything else, and — because the Worker JVM
+  (spawned by the Head as a grandchild of the Gradle process) has been
+  observed to survive the process-tree `taskkill` and keep the Lucene
+  index open — runs a double-keyed orphan-Worker sweep (matched by the
+  index lock file's recorded PID/start-time **and** by the process
+  command line's `-Djustsearch.data.dir=` value, so it can never target
+  another session's process on a shared machine) before retrying any
+  failed deletion. If a survivor remains after the sweep and retry, the
+  run raises a hard error naming the survivor and the last-known holder
+  PID/cmdline instead of silently proceeding on a dirty data dir. This
+  also runs on `stop_backend()` after every `--start-backend` run, not
+  only under `--clean`.
   `--llm` enables Brain/llama-server with autostart and extended
   health timeout (waits for model load + inference readiness).
   Auto-detects llama-server from the dev layout; override with
@@ -267,7 +281,7 @@ modes (like `hybrid`) send a mode string for backend resolution.
 | `--splade` | Wait for SPLADE coverage ≥ 99.9% |
 | `--start-backend` | Start runHeadlessEval, stop when done |
 | `--llm` | Enable LLM/llama-server in backend (requires `--start-backend`) |
-| `--clean` | Clean data dir before start (requires `--start-backend`) |
+| `--clean` | Clean data dir before start (requires `--start-backend`); fail-closed — preserves `cohort_baselines/`/`non_determinism_envelopes/`, sweeps orphan Worker processes on a delete failure, raises rather than proceeding if a survivor remains (711 item 4) |
 | `--reset` | Reset index via API before ingestion (eval mode, no restart) |
 | `--timeline PATH` | Record status snapshots to TSV during wait |
 | `--config PATH` | Load YAML run configuration file |
