@@ -8,6 +8,7 @@ import tools.jackson.databind.ObjectMapper;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.OnlineAiService.AiUsage;
+import io.justsearch.app.api.OnlineAiService.VisionCompletionResult;
 import io.justsearch.app.api.SamplingParams;
 import io.justsearch.app.api.Mode;
 import io.justsearch.app.inference.telemetry.InferenceTelemetryEvents;
@@ -201,8 +202,18 @@ final class OnlineModeOps {
         });
   }
 
-  CompletableFuture<String> visionCompletion(
+  CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
       String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens, SamplingParams.VDU, null);
+  }
+
+  /**
+   * Tempdoc 677 Stage 2: sampling/seed-override overload — the agreement probe calls this with
+   * {@link SamplingParams#VDU_PROBE} and a fixed seed instead of the deterministic {@link
+   * SamplingParams#VDU} the 3-arg overload above always uses.
+   */
+  CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
     requireOnline("Vision");
 
     String base64Image = Base64.getEncoder().encodeToString(imageBytes);
@@ -223,7 +234,8 @@ final class OnlineModeOps {
             }
             emitRequestStarted(RequestKind.VISION, enqueueNanos);
             try {
-              String result = sendVisionRequest(prompt, base64Image, maxTokens);
+              VisionCompletionResult result =
+                  sendVisionRequestDetailed(prompt, base64Image, maxTokens, sampling, seed);
               outcome = RequestOutcome.OK;
               return result;
             } finally {
@@ -241,6 +253,12 @@ final class OnlineModeOps {
           }
         },
         vduExecutor);
+  }
+
+  CompletableFuture<String> visionCompletion(
+      String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens)
+        .thenApply(VisionCompletionResult::content);
   }
 
   CompletableFuture<String> summarize(String content, int maxTokens) {
@@ -770,11 +788,43 @@ final class OnlineModeOps {
 
   private String sendChatRequest(
       List<Map<String, Object>> messages, int maxTokens, SamplingParams sampling) {
+    return sendChatRequestDetailed(messages, maxTokens, sampling, false, null).content();
+  }
+
+  /**
+   * Sends a non-streaming chat completion request, optionally requesting per-token logprobs and/or
+   * an explicit seed.
+   *
+   * <p>Tempdoc 677 S1 (plumbing only, no gating): {@code requestLogprobs} is opt-in. Today only
+   * {@link #sendVisionRequestDetailed} passes {@code true} — {@link #sendChatRequest} (used by
+   * interactive chat, summarize, Q&amp;A, and the VDU pass-2 enrichment call, all of which are
+   * out of this slice's scope) always passes {@code false}, so this change is behavior-neutral
+   * for every non-vision caller. {@code finish_reason} is extracted unconditionally (cheap);
+   * the logprob-derived scalars ({@code meanLogprob}, {@code lowConfidenceFraction}) are null
+   * when the server did not return {@code logprobs} on the response.
+   *
+   * <p>Tempdoc 677 Stage 2: {@code seed}, when non-null, is sent as llama-server's {@code seed}
+   * request field. Only the Stage-2 agreement probe (via {@link #sendVisionRequestDetailed})
+   * passes a non-null seed today — {@link #sendChatRequest} always passes {@code null}, so this
+   * is likewise behavior-neutral for every existing caller.
+   */
+  private VisionCompletionResult sendChatRequestDetailed(
+      List<Map<String, Object>> messages,
+      int maxTokens,
+      SamplingParams sampling,
+      boolean requestLogprobs,
+      Long seed) {
     try {
       Map<String, Object> body = new java.util.HashMap<>();
       body.put("model", resolveModelIdForRequests());
       body.put("messages", messages);
       body.put("max_tokens", maxTokens);
+      if (requestLogprobs) {
+        body.put("logprobs", true);
+      }
+      if (seed != null) {
+        body.put("seed", seed);
+      }
       if (sampling != null) {
         body.put("temperature", sampling.temperature());
         body.put("top_p", sampling.topP());
@@ -825,7 +875,12 @@ final class OnlineModeOps {
       }
 
       JsonNode root = objectMapper.readTree(response.body());
-      String result = root.path("choices").path(0).path("message").path("content").asText();
+      JsonNode choice = root.path("choices").path(0);
+      String result = choice.path("message").path("content").asText();
+      String finishReason =
+          choice.path("finish_reason").isMissingNode()
+              ? null
+              : choice.path("finish_reason").asText(null);
 
       // Strip leaked <think> tags (llama.cpp #13189 defense)
       String stripped = THINK_TAGS.matcher(result).replaceAll("").strip();
@@ -838,14 +893,38 @@ final class OnlineModeOps {
       }
 
       LOG.debug("LLM Result: length={}", result.length());
-      return result;
+
+      // Tempdoc 677 S1: reduce per-token logprobs to three scalars on the way through — the
+      // full per-token array is never retained beyond this block.
+      int tokenCount = 0;
+      Double meanLogprob = null;
+      Double lowConfidenceFraction = null;
+      JsonNode logprobContent = choice.path("logprobs").path("content");
+      if (logprobContent.isArray() && !logprobContent.isEmpty()) {
+        double sum = 0.0;
+        int lowConfidenceCount = 0;
+        for (JsonNode tokenNode : logprobContent) {
+          double logprob = tokenNode.path("logprob").asDouble();
+          sum += logprob;
+          if (logprob < -1.0) {
+            lowConfidenceCount++;
+          }
+        }
+        tokenCount = logprobContent.size();
+        meanLogprob = sum / tokenCount;
+        lowConfidenceFraction = (double) lowConfidenceCount / tokenCount;
+      }
+
+      return new VisionCompletionResult(
+          result, finishReason, tokenCount, meanLogprob, lowConfidenceFraction);
 
     } catch (Exception e) {
       throw new RuntimeException("Chat request failed", e);
     }
   }
 
-  private String sendVisionRequest(String prompt, String base64Image, int maxTokens) {
+  private VisionCompletionResult sendVisionRequestDetailed(
+      String prompt, String base64Image, int maxTokens, SamplingParams sampling, Long seed) {
     try {
       List<Map<String, Object>> content = new ArrayList<>();
       content.add(Map.of("type", "text", "text", prompt));
@@ -858,10 +937,11 @@ final class OnlineModeOps {
 
       List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", content));
 
-      return sendChatRequest(messages, maxTokens, SamplingParams.VDU);
+      return sendChatRequestDetailed(
+          messages, maxTokens, sampling != null ? sampling : SamplingParams.VDU, true, seed);
 
     } catch (RuntimeException e) {
-      throw e; // avoid double-wrapping RuntimeExceptions from sendChatRequest
+      throw e; // avoid double-wrapping RuntimeExceptions from sendChatRequestDetailed
     } catch (Exception e) {
       throw new RuntimeException("Vision request failed", e);
     }

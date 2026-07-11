@@ -336,6 +336,42 @@ describe('DocumentPane — zero-content diagnostic (tempdoc 671 parity)', () => 
   });
 });
 
+describe('DocumentPane — VDU abstention-gate provenance (tempdoc 677)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it('labels vdu_empty as VDU-ran-but-found-nothing, not the silent base-method fall-through', async () => {
+    stubFetchOnce({
+      content: 'OCR baseline text',
+      textProvenance: 'vdu_empty',
+    });
+    const el = make();
+    el.docPath = 'scans/blank-page.md';
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector('.preview-source')?.textContent).toContain('VDU: no text found');
+  });
+
+  it('labels vdu_rejected with the abstention-gate label and an explanatory tooltip', async () => {
+    stubFetchOnce({
+      content: 'OCR baseline text',
+      textProvenance: 'vdu_rejected',
+    });
+    const el = make();
+    el.docPath = 'scans/suspect-page.md';
+    await flush(el);
+
+    const sourceEl = el.shadowRoot?.querySelector('.preview-source');
+    expect(sourceEl?.textContent).toContain('VDU: unreliable, not used');
+    const labelSpan = sourceEl?.querySelector('span[title]');
+    expect(labelSpan?.getAttribute('title')).toBe(
+      'The automatic reader could not produce trustworthy text for this document, so search uses the original extraction.',
+    );
+  });
+});
+
 describe('DocumentPane — a11y + events', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

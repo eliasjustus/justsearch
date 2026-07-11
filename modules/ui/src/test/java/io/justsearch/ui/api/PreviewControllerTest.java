@@ -419,8 +419,8 @@ class PreviewControllerTest {
   }
 
   @Test
-  @DisplayName("VDU COMPLETED_EMPTY preserves active non-VDU provenance")
-  void vduCompletedEmptyPreservesBaselineProvenance() throws Exception {
+  @DisplayName("VDU COMPLETED_EMPTY status returns textProvenance='vdu_empty' (tempdoc 677: no longer falls through to base method)")
+  void vduCompletedEmptyReturnsVduEmptyProvenance() throws Exception {
     String docId = "D:\\docs\\empty-vdu.pdf";
     Map<String, Object> metadata = Map.of(
         "mime", "application/pdf",
@@ -446,9 +446,46 @@ class PreviewControllerTest {
 
     assertEquals(200, resp.statusCode());
     JsonNode json = MAPPER.readTree(resp.body());
-    assertEquals("ocr", json.path("textProvenance").asText());
+    assertEquals("vdu_empty", json.path("textProvenance").asText());
     assertEquals("COMPLETED_EMPTY", json.path("vduStatus").asText());
     assertTrue(json.path("vduProcessed").asBoolean());
+  }
+
+  @Test
+  @DisplayName("VDU REJECTED status returns textProvenance='vdu_rejected' (tempdoc 677 abstention gate)")
+  void vduRejectedReturnsVduRejectedProvenance() throws Exception {
+    String docId = "D:\\docs\\rejected-vdu.pdf";
+    Map<String, Object> metadata = Map.of(
+        "mime", "application/pdf",
+        "extraction_method", "OCR_TIKA",
+        "vdu_status", "REJECTED",
+        "vdu_processed", "true",
+        "vdu_enrichment", "{\"gate\":{\"stage\":\"logprob\",\"meanLogprob\":-0.6}}"
+    );
+    DocumentService docService = stubDocumentsWithContentAndMetadata(docId, "OCR baseline text", metadata);
+    PreviewController controller = new PreviewController(docService, Duration.ofSeconds(2));
+
+    app = Javalin.create(cfg -> { cfg.showJavalinBanner = false; cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper()); })
+        .get("/api/preview", controller::handlePreview)
+        .start(0);
+    port = app.port();
+
+    String url = "http://localhost:" + port + "/api/preview?docId=" + enc(docId);
+    HttpResponse<String> resp = client.send(
+        HttpRequest.newBuilder(URI.create(url))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, resp.statusCode());
+    JsonNode json = MAPPER.readTree(resp.body());
+    assertEquals("vdu_rejected", json.path("textProvenance").asText());
+    assertEquals("REJECTED", json.path("vduStatus").asText());
+    assertTrue(json.path("vduProcessed").asBoolean());
+    assertEquals(
+        "{\"gate\":{\"stage\":\"logprob\",\"meanLogprob\":-0.6}}",
+        json.path("vduEnrichment").asText());
   }
 
   @Test

@@ -42,6 +42,14 @@
     "ingestion-success-classifier": {
       "minStrength": 100,
       "maxNoCoverage": 0
+    },
+    "legibility-floor-check": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
+    },
+    "vdu-abstention-gate": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
     }
   }
 }
