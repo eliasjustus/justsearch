@@ -544,6 +544,46 @@ regime: B-5, `runHidden`). Retirement condition: when a needed measurement requi
 choke point structurally lacks, record at the call site without guilt — P2 governs the events
 the choke point owns, not all measurement everywhere.
 
+## Wave 1 — IMPLEMENTED (2026-07-11, branch worktree-710-wave1; founder-authorized via approved plan + per-stage /publish)
+
+- **Move 3 (B1):** bounded upfront tokenization for embed + NER (`TOKENIZE_GROUP_CHAR_BUDGET`
+  ported from SPLADE; live order/value-equivalence verified against the real model) — the 686
+  landmine class is defused in all three lanes. Embed sub-batch OOM fallback ladder (GPU batch-1 →
+  CPU last resort, testable seam) replaces whole-batch nulling. BFC-message canary test. BONUS
+  bug found by the new live test: NER's tokenizer applied DJL default padding under `batchEncode`
+  (construction lacked `padding:false`) — fixed.
+- **Move 2 (B2):** ORT profiler recording moved to the `SessionHandle.Lease.run()` choke point
+  (`OrtRunRecorder` hook bound at composition); all six lanes migrated, per-call-site
+  `recordOrtCall` deleted; reranker + citation lanes REGISTERED (were absent from observability);
+  ArchUnit rule `OrtRunChokePointTest` pins no-raw-`session.run` outside `io.justsearch.ort`
+  (negative-checked). `batchTiming` ownership moved to `BackfillScheduler` (records whichever
+  path ran — the combined-only freeze is gone); new `backfillMode` status field wired
+  proto→IndexStatusOps→WorkerStatusMapper→EnrichmentProgressView (schemas + TS regenerated,
+  wire gate green); counter units documented.
+- **B3 (D.3 fix):** `BgeM3BackfillOps` routes chunk docs to `CHUNK_VECTOR`/`CHUNK_EMBEDDING_STATUS`
+  (was writing the parent field pair — permanently blocking NER readiness under BGE-M3 + chunk
+  vectors); per-doc-type failure escalation added (was silent infinite retry).
+- **Move 6 remainder (B4):** one shared `ModelDirTestResolver` (testFixtures, depth-8, loud
+  path-naming skips) replaced NINE divergent model-dir walkers; the `evidence`/`experiment` test
+  exclusion is documented at its build-logic exclusion site; `ENTITY_*_TEXT` derivation deduped
+  into `NerBackfillOps.applyEntityFieldUpdates` (D.1).
+
+### New live evidence for the inventory (from 691 Stage A's A/B, 2026-07-10/11)
+
+**The RMW-destroys-vectors incident (691 §N-5) is a LIVE instance of a previously-undeclared
+invariant**: `KnnFloatVectorField` is non-stored; ANY later read-modify-write silently destroys it
+(chunks get re-queued, `WritePathOps.java:471`; parents do NOT) — a separate VECTOR-writing pass
+was erased by the next stage's RMW with status still COMPLETED, collapsing dense retrieval, found
+only by the live A/B. Classification: this is a SEVENTH defect-class instance pattern —
+"convention-maintained write-ordering invariant" (nearest S-A class: implicit-scheduling-
+dependencies, which S-A had marked under-evidenced — it now has its observed incident).
+Candidate design moves for Wave 2+ (NOT built): (a) declare + enforce (ArchUnit/registry: only
+the bundling pass may write VECTOR), or (b) make RMW vector-preserving (re-read + re-attach,
+kills the class structurally — costlier, adapters-lucene hot path). Recorded in observations
+(conditions store) + F-031's structural caveat; decision belongs to the Wave-2 arc with founder
+review.
+
+## Log
 ## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
