@@ -499,3 +499,32 @@ then flipped):
   `OrtSessionAssembler.probeCustomMetadata`; manifest wins with disagreement WARN. Two tiny
   committed fixtures (429/145 bytes) + 3 new tests; ort-common suite green incl. the live gte
   resolution test. No committed model was restamped (forward-only per design).
+
+## Item 1 live verification (2026-07-11) — engine recovers 100% of chunk vectors
+
+Same-day A/B on byte-identical `mixed/legal-clerc-200` (corpus sha256 630f5376…, 198 docs /
+200 queries), same machine, back-to-back detached runs at shipped defaults
+(`jseval run --modes vector,hybrid --embedding --pipeline --start-backend --clean`):
+
+| arm | vector nDCG@10 | hybrid nDCG@10 | total wall | parent `vector` docs | `chunk_vector` docs |
+|---|---|---|---|---|---|
+| CONTROL = base `f12ded5` (shipped HEAD) | **0.3401** (reproduces the F-031 pin to 4 decimals) | 0.5446 | 141.2 s | 198 | **0** |
+| ENGINE = `worktree-711-rmw` | **0.6180** | 0.5592 | 130.8 s | 199 | **4293** |
+
+Vector-bearing-doc counts measured by a throwaway Lucene read-only probe over both runs'
+on-disk indexes (deleted after capture). Combined-pass counters (engine run):
+`singlePass=135`, `longDocWindowed=101`, `arenaOomWindowed=0`.
+
+**Finding (third live instance of the RMW bug-class):** at the shipped HEAD, every chunk
+vector was silently destroyed by a later RMW after its write — the `chunk_merge` leg of
+vector mode operated on ZERO chunk vectors. The preservation engine recovers all 4,293
+(+0.278 vector nDCG, +0.015 hybrid over the pinned baselines), with no throughput cost
+(engine arm was 10 s faster; noise-level). This also resolves the F-031 "ceiling"
+coincidence: the §J-B offline replication scored parent vectors only, so its 0.3403 agreed
+with a live index whose chunk vectors were all dead — the true defaults ceiling with chunks
+alive is 0.618 on this corpus.
+
+Gate note: this run used modes `vector,hybrid` only, so the full-mode union-recall/leak pins
+are not judgeable from it (mode-set-truncated union); direction is provably non-degrading
+(strictly more vectors present, nothing else changed). Standard full-mode gate runs belong to
+the publish step.
