@@ -97,6 +97,21 @@ def make_span():
     return _factory
 
 
+@pytest.fixture(autouse=True)
+def _disable_shared_dataset_cache_by_default(monkeypatch):
+    """Default every test to `dataset_cache`'s pre-709 (cache-disabled) behavior.
+
+    `dataset_cache.cache_root()` defaults to a directory under the MAIN checkout when
+    `JUSTSEARCH_DATASET_CACHE` is unset -- exactly what a real worktree run wants, but never
+    what a test run wants: an un-opted-in test would otherwise write real cache-entry
+    directories into the actual main checkout on disk merely by running the unit suite from
+    a worktree. `tests/test_dataset_cache.py`'s own tests opt back in explicitly by setting
+    `JUSTSEARCH_DATASET_CACHE` to a `tmp_path` (monkeypatch's last write for a given test wins
+    over this autouse fixture, since both share the same function-scoped `monkeypatch`).
+    """
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", "0")
+
+
 @pytest.fixture
 def clean_projection_registry():
     """Reset the projection registry around each test that opts in.
