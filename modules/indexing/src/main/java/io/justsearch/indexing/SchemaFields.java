@@ -63,7 +63,10 @@ public final class SchemaFields {
   public static final int EMBEDDING_MAX_RETRIES = 3;
 
   // VDU (Vision Document Understanding) fields
-  /** VDU processing status: "PENDING", "PROCESSING", "COMPLETED", "FAILED", or "NOT_NEEDED" */
+  /**
+   * VDU processing status: "PENDING", "PROCESSING", "COMPLETED", "COMPLETED_EMPTY", "REJECTED",
+   * "FAILED", or "NOT_NEEDED"
+   */
   public static final String VDU_STATUS = "vdu_status";
 
   /** VDU status values */
@@ -71,6 +74,15 @@ public final class SchemaFields {
   public static final String VDU_STATUS_PROCESSING = "PROCESSING";
   public static final String VDU_STATUS_COMPLETED = "COMPLETED";
   public static final String VDU_STATUS_COMPLETED_EMPTY = "COMPLETED_EMPTY";
+
+  /**
+   * Tempdoc 677: VDU ran and returned non-empty text, but the abstention gate judged the output
+   * untrustworthy (suspected confabulation on an unreadable input). Baseline content was RETAINED
+   * — honest absence instead of confident fabrication. Terminal like COMPLETED_EMPTY (no
+   * re-queue; poison-pill discipline).
+   */
+  public static final String VDU_STATUS_REJECTED = "REJECTED";
+
   public static final String VDU_STATUS_FAILED = "FAILED";
   public static final String VDU_STATUS_NOT_NEEDED = "NOT_NEEDED";
 

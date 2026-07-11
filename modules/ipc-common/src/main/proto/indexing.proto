@@ -951,6 +951,10 @@ enum VduUpdateOutcome {
   VDU_UPDATE_OUTCOME_SUCCESS_TEXT = 1;   // VDU succeeded and extracted non-empty text
   VDU_UPDATE_OUTCOME_SUCCESS_EMPTY = 2;  // VDU succeeded but no text was extractable (e.g., blank image)
   VDU_UPDATE_OUTCOME_FAILED = 3;         // VDU processing failed (error or timeout)
+  // Tempdoc 677: the abstention gate judged the model's non-empty output untrustworthy
+  // (suspected confabulation). Worker must RETAIN the baseline content — no overwrite,
+  // no re-chunk, no re-embed — and record the honest rejected state.
+  VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT = 4;
 }
 
 message UpdateVduResultRequest {
