@@ -49,4 +49,21 @@ final class LegibilityMeasuresTest {
     LegibilityMeasures measures = new LegibilityMeasures(50.0, 0.05);
     assertFalse(measures.belowFloor(50.0, 0.05));
   }
+
+  @Test
+  @DisplayName("Laplacian exactly at floor is not below, even with contrast strictly below")
+  void laplacianAtFloorAloneIsNotBelow() {
+    // Per-operand boundary: the other operand is strictly below its floor, so this assertion
+    // fails iff the Laplacian comparison is mutated from < to <= (kills the boundary mutant
+    // the both-at-floor case masks in the conjunction).
+    LegibilityMeasures measures = new LegibilityMeasures(50.0, 0.01);
+    assertFalse(measures.belowFloor(50.0, 0.05));
+  }
+
+  @Test
+  @DisplayName("contrast exactly at floor is not below, even with Laplacian strictly below")
+  void contrastAtFloorAloneIsNotBelow() {
+    LegibilityMeasures measures = new LegibilityMeasures(1.0, 0.05);
+    assertFalse(measures.belowFloor(50.0, 0.05));
+  }
 }
