@@ -283,6 +283,42 @@ class TestCalibrateOrchestration:
                 dataset="scifact",
                 modes=["full"],
                 runs=1,
-                data_dir=tmp_path,
+                backend_data_dir=tmp_path / "backend",
+                envelope_dir=tmp_path / "jseval-root",
                 max_queries=5,
             )
+
+    def test_envelope_filed_under_envelope_dir_not_backend_dir(self, tmp_path, monkeypatch):
+        """Tempdoc 716 physical separation: the envelope lands under the
+        jseval-owned root even when the backend data dir is a different,
+        explicitly-overridden path — so `--clean` wiping the backend dir can
+        never destroy calibration state again."""
+        from jseval import calibrate as cal
+
+        backend = tmp_path / "backend-data"
+        envroot = tmp_path / "jseval-root"
+        run_dirs = [tmp_path / "run1", tmp_path / "run2"]
+        seen_backend_dirs = []
+
+        def fake_run_single(*, dataset, modes, max_queries, data_dir, run_num, total):
+            seen_backend_dirs.append(data_dir)
+            return run_dirs[run_num - 1]
+
+        monkeypatch.setattr(cal, "_run_single", fake_run_single)
+        monkeypatch.setattr(cal, "_read_cohort_hash", lambda rd: "cohort-716")
+        monkeypatch.setattr(
+            cal, "_collect_metrics",
+            lambda rd: {"full": {"nDCG@10": 0.80 if rd == run_dirs[0] else 0.81}},
+        )
+
+        envelope = cal.calibrate(
+            dataset="d", modes=["full"], runs=2,
+            backend_data_dir=backend, envelope_dir=envroot, max_queries=5,
+        )
+
+        assert envelope["cohort_hash"] == "cohort-716"
+        assert (envroot / "cohort_baselines" / "cohort-716" / "envelope.json").is_file()
+        # Nothing durable may land inside the backend (wipeable) dir.
+        assert not (backend / "cohort_baselines").exists()
+        # The sub-runs executed against the backend dir, not the envelope root.
+        assert seen_backend_dirs == [backend, backend]

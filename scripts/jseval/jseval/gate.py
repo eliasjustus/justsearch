@@ -44,20 +44,31 @@ REQUIRED_PROJECTIONS = (
 
 
 def _find_envelope(data_dir: Path) -> tuple[Path, dict] | None:
-    """Return (envelope_path, envelope_doc) for the calibrated cohort."""
-    baselines = data_dir / "cohort_baselines"
-    if not baselines.is_dir():
-        return None
-    for cohort_dir in sorted(baselines.iterdir()):
-        if not cohort_dir.is_dir():
+    """Return (envelope_path, envelope_doc) for the calibrated cohort.
+
+    Scans ``<data_dir>/cohort_baselines/`` first, then the pre-716 legacy
+    roots (the backend data dir — tempdoc 716 migration shim, WARNs on a
+    legacy hit).
+    """
+    from . import cohort_baselines as _cb
+
+    for i, root in enumerate(_cb.candidate_roots(data_dir)):
+        baselines = root / "cohort_baselines"
+        if not baselines.is_dir():
             continue
-        env_path = cohort_dir / "envelope.json"
-        if not env_path.is_file():
-            continue
-        try:
-            return env_path, json.loads(env_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+        for cohort_dir in sorted(baselines.iterdir()):
+            if not cohort_dir.is_dir():
+                continue
+            env_path = cohort_dir / "envelope.json"
+            if not env_path.is_file():
+                continue
+            try:
+                doc = json.loads(env_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if i > 0:
+                _cb.warn_legacy_hit(env_path)
+            return env_path, doc
     return None
 
 
