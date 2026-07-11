@@ -677,6 +677,112 @@ public enum EnvRegistry {
     /** GPU memory arena limit for BGE-M3 sessions (MB, default 3072). */
     BGE_M3_GPU_MEM_MB("justsearch.bgem3.gpu_mem_mb", "JUSTSEARCH_BGE_M3_GPU_MEM_MB"),
 
+    // ==================== Backfill Pacing Configuration (tempdoc 710 Wave-1.5 Move 4) ====================
+    // Advanced/tuning knobs — converts the LoopPacingPolicy / BackfillScheduler /
+    // CombinedEnrichmentBackfillOps pacing constants to a config surface. Defaults are
+    // byte-identical to the pre-Move-4 hardcoded literals; see ResolvedConfig.Ai.BackfillPacing
+    // for per-field derivation notes.
+
+    /**
+     * Primary-indexing job-queue poll batch size (default 16 — tempdoc 278 Phase 1 item 1b:
+     * raised from 1 to amortize per-batch queue overhead).
+     */
+    BACKFILL_POLL_BATCH_SIZE(
+        "justsearch.backfill.poll_batch_size", "JUSTSEARCH_BACKFILL_POLL_BATCH_SIZE", "16"),
+
+    /** Doc-count per embedding backfill batch, parent and chunk (default 100). */
+    BACKFILL_EMBEDDING_BATCH_SIZE(
+        "justsearch.backfill.embedding_batch_size",
+        "JUSTSEARCH_BACKFILL_EMBEDDING_BATCH_SIZE",
+        "100"),
+
+    /** Doc-count per NER backfill batch (default 100). */
+    BACKFILL_NER_BATCH_SIZE(
+        "justsearch.backfill.ner_batch_size", "JUSTSEARCH_BACKFILL_NER_BATCH_SIZE", "100"),
+
+    /** Doc-count per disambiguation backfill batch (default 500). */
+    BACKFILL_DISAMBIGUATION_BATCH_SIZE(
+        "justsearch.backfill.disambiguation_batch_size",
+        "JUSTSEARCH_BACKFILL_DISAMBIGUATION_BATCH_SIZE",
+        "500"),
+
+    /** Doc-count per idle-branch SPLADE backfill batch (default 200). */
+    BACKFILL_SPLADE_BATCH_SIZE(
+        "justsearch.backfill.splade_batch_size", "JUSTSEARCH_BACKFILL_SPLADE_BATCH_SIZE", "200"),
+
+    /**
+     * Doc-count per SPLADE batch interleaved into primary indexing (default 10 — tempdoc 278
+     * Phase 4c; smaller than the idle-branch batch so interleaving stays cheap).
+     */
+    BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE(
+        "justsearch.backfill.splade_interleave_batch_size",
+        "JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE",
+        "10"),
+
+    /**
+     * Minimum time (ms) between interleaved SPLADE/BGE-M3 batches during primary indexing
+     * (default 5000 — tempdoc 278 Phase 4a; time-gated to limit primary-indexing overhead to
+     * ~13%).
+     */
+    BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS(
+        "justsearch.backfill.splade_interleave_interval_ms",
+        "JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS",
+        "5000"),
+
+    /** Time-based commit trigger interval in ms (default 10000). */
+    BACKFILL_COMMIT_INTERVAL_MS(
+        "justsearch.backfill.commit_interval_ms",
+        "JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS",
+        "10000"),
+
+    /** Buffer-based commit trigger: doc count since last commit (default 1000). */
+    BACKFILL_MAX_DOCS_BEFORE_COMMIT(
+        "justsearch.backfill.max_docs_before_commit",
+        "JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT",
+        "1000"),
+
+    /**
+     * Chunk-doc cache slots populated per combined-backfill batch (default 50). Tempdoc 691 §F-1
+     * measured this cap is NOT the dense-corpus chunk-only-tail throughput lever (that tail is
+     * GPU-embedding-compute-bound, not cap-throttled) — this knob exists for experimentation, not
+     * because raising it is known to help.
+     */
+    BACKFILL_CHUNK_SLOTS_PER_BATCH(
+        "justsearch.backfill.chunk_slots_per_batch",
+        "JUSTSEARCH_BACKFILL_CHUNK_SLOTS_PER_BATCH",
+        "50"),
+
+    /**
+     * Doc-count per idle-branch BGE-M3 backfill batch (default 50). Previously a stray literal in
+     * {@code BackfillScheduler} that bypassed {@code LoopPacingPolicy} entirely; unified here.
+     */
+    BACKFILL_BGE_M3_BATCH_SIZE(
+        "justsearch.backfill.bge_m3_batch_size",
+        "JUSTSEARCH_BACKFILL_BGE_M3_BATCH_SIZE",
+        "50"),
+
+    /** Doc-count per BGE-M3 batch interleaved into primary indexing (default 10). */
+    BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE(
+        "justsearch.backfill.bge_m3_interleave_batch_size",
+        "JUSTSEARCH_BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE",
+        "10"),
+
+    // ==================== Model Capability Contract (tempdoc 710 Wave 2 Move 1) ====================
+
+    /**
+     * When {@code true}, a model-capability fact ({@code io.justsearch.ort.ModelCapabilities} —
+     * pooling mode, trained context length, embedding dimension, precision, prefixes) left
+     * undeclared by every source (manifest {@code capabilities}, sentence-transformers ecosystem
+     * files, legacy sidecar) is a startup failure for that encoder lane instead of a WARN +
+     * documented fallback (TEI fail-closed precedent, tempdoc 710 S-C.R). Default {@code false} —
+     * held off until tempdoc 657 ships capability manifests inside install packs; flipping true
+     * today would fail every lane whose model directory predates Wave 2's authored manifests.
+     */
+    CAPABILITY_CONTRACT_STRICT(
+        "justsearch.models.capability_contract_strict",
+        "JUSTSEARCH_MODELS_CAPABILITY_CONTRACT_STRICT",
+        "false"),
+
     // ==================== Reranker Configuration ====================
 
     /** Enable document reranking (auto if model found). */

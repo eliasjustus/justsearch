@@ -23,14 +23,27 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>Optional fields are normalized to defaults in the compact constructor — callers never see null
  * for {@code tokenizer}, {@code poolingConfig}, or {@code labelConfig}.
  *
+ * <p>Tempdoc 710 Wave 2 Move 1: {@code capabilities} joins the file-routing fields as a second
+ * section of the same per-model declaration (one manifest, not two) — {@link
+ * ModelCapabilityResolver} reads it as the highest-priority source for model-intrinsic facts
+ * (pooling mode, trained context length, embedding dimension, per-variant precision, prefixes)
+ * before falling back to sentence-transformers ecosystem files, then legacy sidecars.
+ *
  * @param cpu ONNX model file for CPU execution provider (required)
  * @param gpu ONNX model file for GPU/CUDA execution provider (null = fall back to cpu)
  * @param tokenizer tokenizer file name (default: {@code tokenizer.json})
  * @param poolingConfig pooling config file for embedding (default: {@code pooling_config.json})
  * @param labelConfig label mapping config file for NER (default: {@code config.json})
+ * @param capabilities declared model-intrinsic facts (default: {@link Capabilities#EMPTY} — every
+ *     fact falls through to the ecosystem-file / legacy-sidecar / WARN chain)
  */
 public record ModelManifest(
-    String cpu, String gpu, String tokenizer, String poolingConfig, String labelConfig) {
+    String cpu,
+    String gpu,
+    String tokenizer,
+    String poolingConfig,
+    String labelConfig,
+    Capabilities capabilities) {
 
   static final String MANIFEST_FILE = "model_manifest.json";
 
@@ -42,12 +55,53 @@ public record ModelManifest(
           .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
           .build();
 
+  /**
+   * Declared model-intrinsic facts (tempdoc 710 Wave 2 Move 1). Every field is optional — {@code
+   * null} means "not declared here", not "declared as absent" (distinguishing null-vs-empty
+   * matters for {@code documentPrefix}/{@code queryPrefix}: an unpopulated ST {@code prompts}
+   * field is never proof of "no prefix", S-C.R). {@link ModelCapabilityResolver} treats a manifest
+   * declaration as the highest-priority source, ahead of ecosystem files and legacy sidecars.
+   *
+   * @param poolingMode {@code "cls"} or {@code "mean"} (case-insensitive); null = undeclared
+   * @param contextLength trained context length in tokens; null = undeclared
+   * @param embeddingDimension declared output vector width; null = undeclared
+   * @param cpuPrecision precision of the {@code cpu} file variant ({@code "fp32"|"fp16"|"int8"});
+   *     null = undeclared (falls back to the legacy filename-substring heuristic, WARN)
+   * @param gpuPrecision precision of the {@code gpu} file variant; same fallback as {@code
+   *     cpuPrecision}
+   * @param documentPrefix task-instruction prefix for document-side embedding; null = undeclared,
+   *     {@code ""} = declared empty
+   * @param queryPrefix task-instruction prefix for query-side embedding; same null-vs-empty rule
+   * @param _comment free-text provenance note (e.g. "verified against HF Alibaba-NLP/
+   *     gte-multilingual-base config.json, tempdoc 710 S-C.R") — not consumed programmatically
+   */
+  public record Capabilities(
+      String poolingMode,
+      Integer contextLength,
+      Integer embeddingDimension,
+      String cpuPrecision,
+      String gpuPrecision,
+      String documentPrefix,
+      String queryPrefix,
+      String _comment) {
+
+    /** No facts declared — every field falls through to ecosystem-file / legacy-sidecar / WARN. */
+    public static final Capabilities EMPTY =
+        new Capabilities(null, null, null, null, null, null, null, null);
+  }
+
+  /** 5-arg convenience constructor for callers that don't declare capabilities (pre-Wave-2 call sites). */
+  public ModelManifest(String cpu, String gpu, String tokenizer, String poolingConfig, String labelConfig) {
+    this(cpu, gpu, tokenizer, poolingConfig, labelConfig, null);
+  }
+
   /** Compact constructor — normalizes null optional fields to defaults. */
   public ModelManifest {
     // gpu is intentionally nullable (resolveModelPath falls back to cpu)
     if (tokenizer == null || tokenizer.isBlank()) tokenizer = "tokenizer.json";
     if (poolingConfig == null || poolingConfig.isBlank()) poolingConfig = "pooling_config.json";
     if (labelConfig == null || labelConfig.isBlank()) labelConfig = "config.json";
+    if (capabilities == null) capabilities = Capabilities.EMPTY;
   }
 
   /**

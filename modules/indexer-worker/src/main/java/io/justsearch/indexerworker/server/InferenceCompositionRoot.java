@@ -205,15 +205,20 @@ public final class InferenceCompositionRoot {
               sessions,
               embedCfg.modelPath(),
               embedCfg.contextLength(),
-              embedCfg.lateChunkingContextLength());
+              embedCfg.lateChunkingContextLength(),
+              cfg.ai().capabilityContractStrict());
       handles.add(assembly.sessions());
       policies.put(
           EncoderRole.EMBEDDING,
           ModelSessionPolicyResolver.resolve(EncoderRole.EMBEDDING, cfg, hardware, variant));
       return Optional.of(assembly);
-    } catch (OrtException e) {
+    } catch (Exception e) {
+      // Tempdoc 710 Wave 2 Move 1: widened from OrtException — ModelCapabilityResolver throws
+      // IllegalStateException under justsearch.models.capability_contract_strict, and that must
+      // degrade this lane to Optional.empty() the same way a session-creation failure does, not
+      // abort the whole composition.
       log.error(
-          "Embedding ORT session creation failed — variant resolved but assembler threw."
+          "Embedding composition failed — variant resolved but assembly/session creation threw."
               + " Embedding will be unavailable.",
           e);
       return Optional.empty();
@@ -246,7 +251,7 @@ public final class InferenceCompositionRoot {
       Path modelDir = variant.modelFile().getParent();
       NerAssembly assembly =
           io.justsearch.indexerworker.ner.BertNerInference.buildAssembly(
-              sessions, modelDir, nerCfg.maxSequenceLength());
+              sessions, modelDir, nerCfg.maxSequenceLength(), cfg.ai().capabilityContractStrict());
       handles.add(assembly.sessions());
       policies.put(
           EncoderRole.NER,

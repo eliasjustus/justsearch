@@ -320,6 +320,83 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName(
+        "backfill pacing defaults from EnvRegistry are byte-identical to the pre-Move-4"
+            + " hardcoded literals (tempdoc 710 Wave-1.5 Move 4)")
+    void backfillPacingDefaultsFromEnvRegistry() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+      ResolvedConfig.Ai.BackfillPacing pacing = config.ai().backfillPacing();
+
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_POLL_BATCH_SIZE.defaultValue()),
+          pacing.pollBatchSize());
+      assertEquals(16, pacing.pollBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_EMBEDDING_BATCH_SIZE.defaultValue()),
+          pacing.embeddingBackfillBatchSize());
+      assertEquals(100, pacing.embeddingBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_NER_BATCH_SIZE.defaultValue()),
+          pacing.nerBackfillBatchSize());
+      assertEquals(100, pacing.nerBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_DISAMBIGUATION_BATCH_SIZE.defaultValue()),
+          pacing.disambiguationBackfillBatchSize());
+      assertEquals(500, pacing.disambiguationBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_SPLADE_BATCH_SIZE.defaultValue()),
+          pacing.spladeBackfillBatchSize());
+      assertEquals(200, pacing.spladeBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE.defaultValue()),
+          pacing.spladeInterleaveBatchSize());
+      assertEquals(10, pacing.spladeInterleaveBatchSize());
+      assertEquals(
+          Long.parseLong(EnvRegistry.BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS.defaultValue()),
+          pacing.spladeInterleaveIntervalMs());
+      assertEquals(5_000L, pacing.spladeInterleaveIntervalMs());
+      assertEquals(
+          Long.parseLong(EnvRegistry.BACKFILL_COMMIT_INTERVAL_MS.defaultValue()),
+          pacing.commitIntervalMs());
+      assertEquals(10_000L, pacing.commitIntervalMs());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_MAX_DOCS_BEFORE_COMMIT.defaultValue()),
+          pacing.maxDocsBeforeCommit());
+      assertEquals(1000, pacing.maxDocsBeforeCommit());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_CHUNK_SLOTS_PER_BATCH.defaultValue()),
+          pacing.chunkSlotsPerBatch());
+      assertEquals(50, pacing.chunkSlotsPerBatch());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_BGE_M3_BATCH_SIZE.defaultValue()),
+          pacing.bgeM3BackfillBatchSize());
+      assertEquals(50, pacing.bgeM3BackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE.defaultValue()),
+          pacing.bgeM3InterleaveBatchSize());
+      assertEquals(10, pacing.bgeM3InterleaveBatchSize());
+
+      // The DEFAULTS sentinel (used as the null-supplier fallback in IndexingLoop/
+      // BackfillScheduler) must match the config-resolved defaults exactly.
+      assertEquals(ResolvedConfig.Ai.BackfillPacing.DEFAULTS, pacing);
+    }
+
+    @Test
+    @DisplayName("backfill pacing honors explicit overrides")
+    void backfillPacingExplicitOverride() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.backfill.chunk_slots_per_batch", "128");
+      builder.putDefault("justsearch.backfill.commit_interval_ms", "20000");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(128, config.ai().backfillPacing().chunkSlotsPerBatch());
+      assertEquals(20_000L, config.ai().backfillPacing().commitIntervalMs());
+    }
+
+    @Test
     @DisplayName("indexBasePath is derived from dataDir when not explicitly set")
     void indexBasePathDerived() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();

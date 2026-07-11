@@ -51,15 +51,12 @@ public final class BackfillScheduler {
 
   private static final Logger log = LoggerFactory.getLogger(BackfillScheduler.class);
 
-  static final int EMBEDDING_BACKFILL_BATCH_SIZE = LoopPacingPolicy.embeddingBackfillBatchSize();
-  private static final int NER_BACKFILL_BATCH_SIZE = LoopPacingPolicy.nerBackfillBatchSize();
-  private static final int DISAMBIGUATION_BACKFILL_BATCH_SIZE =
-      LoopPacingPolicy.disambiguationBackfillBatchSize();
-  private static final int SPLADE_BACKFILL_BATCH_SIZE = LoopPacingPolicy.spladeBackfillBatchSize();
-  private static final int SPLADE_INTERLEAVE_BATCH_SIZE =
-      LoopPacingPolicy.spladeInterleaveBatchSize();
-  private static final int BGE_M3_BACKFILL_BATCH_SIZE = 50;
-  private static final int BGE_M3_INTERLEAVE_BATCH_SIZE = 10;
+  // Tempdoc 710 Wave-1.5 Move 4: the per-stage backfill batch sizes (formerly static fields
+  // computed once from LoopPacingPolicy, plus the BGE-M3 pair which bypassed LoopPacingPolicy
+  // entirely as bare literals here) all moved onto ResolvedConfig.Ai.BackfillPacing
+  // (justsearch.backfill.* config surface). See the pacing() helper below — call sites read the
+  // live snapshot the same way resolvedConfigSupplier.get().rag().chunkVectorsEnabled() already
+  // does elsewhere in this class.
 
   private final DocumentFieldOps documentFieldOps;
   private final IndexingCoordinator indexingCoordinator;
@@ -105,6 +102,17 @@ public final class BackfillScheduler {
     this.bgeM3EncoderSupplier = bgeM3EncoderSupplier;
     this.nerServiceSupplier = nerServiceSupplier;
     this.disambiguationServiceSupplier = disambiguationServiceSupplier;
+  }
+
+  /**
+   * Resolves the current enrichment-backfill pacing snapshot (tempdoc 710 Wave-1.5 Move 4). Falls
+   * back to {@link ResolvedConfig.Ai.BackfillPacing#DEFAULTS} — byte-identical to the pre-Move-4
+   * hardcoded literals — when no config is available, e.g. a test double supplying {@code () ->
+   * null} for {@code resolvedConfigSupplier}.
+   */
+  private ResolvedConfig.Ai.BackfillPacing pacing() {
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
   }
 
   /**
@@ -217,7 +225,7 @@ public final class BackfillScheduler {
   public void runInterleavedSplade(long now) {
     if (spladeEncoderSupplier.get() == null && bgeM3EncoderSupplier.get() == null) return;
     if (now < nextSpladeRetryTime) return;
-    long spladeIntervalMs = LoopPacingPolicy.spladeInterleaveIntervalMs();
+    long spladeIntervalMs = pacing().spladeInterleaveIntervalMs();
     if (now - lastSpladeInterleaveTime < spladeIntervalMs) return;
     StageOutcome outcome = processSpladeBackfillInterleaved();
     recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
@@ -291,7 +299,7 @@ public final class BackfillScheduler {
               ? indexCountOps.countByField(
                   SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)
               : 0;
-      if (pendingEmbedForSplade < EMBEDDING_BACKFILL_BATCH_SIZE) {
+      if (pendingEmbedForSplade < pacing().embeddingBackfillBatchSize()) {
         int spladePendingBefore =
             indexCountOps.countByField(
                 SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
@@ -369,6 +377,7 @@ public final class BackfillScheduler {
       return CombinedEnrichmentBackfillOps.CombinedOutcome.none();
     }
 
+    ResolvedConfig.Ai.BackfillPacing pacing = pacing();
     return CombinedEnrichmentBackfillOps.processCombinedBackfill(
         new CombinedEnrichmentBackfillOps.BackfillContext(
             documentFieldOps,
@@ -380,10 +389,11 @@ public final class BackfillScheduler {
             nerServiceSupplier,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing.embeddingBackfillBatchSize(),
             log,
             resolvedConfigSupplier.get().rag().chunkVectorsEnabled(),
             resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
+            pacing.chunkSlotsPerBatch(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));
@@ -404,7 +414,7 @@ public final class BackfillScheduler {
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing().embeddingBackfillBatchSize(),
             log));
   }
 
@@ -418,7 +428,7 @@ public final class BackfillScheduler {
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing().embeddingBackfillBatchSize(),
             log));
   }
 
@@ -431,7 +441,7 @@ public final class BackfillScheduler {
             signalBus,
             nerServiceSupplier,
             running::get,
-            NER_BACKFILL_BATCH_SIZE,
+            pacing().nerBackfillBatchSize(),
             log));
   }
 
@@ -446,7 +456,7 @@ public final class BackfillScheduler {
               signalBus,
               () -> bge,
               running::get,
-              BGE_M3_BACKFILL_BATCH_SIZE,
+              pacing().bgeM3BackfillBatchSize(),
               true,
               log));
     }
@@ -458,7 +468,7 @@ public final class BackfillScheduler {
             signalBus,
             spladeEncoderSupplier,
             running::get,
-            SPLADE_BACKFILL_BATCH_SIZE,
+            pacing().spladeBackfillBatchSize(),
             true,
             log));
   }
@@ -474,7 +484,7 @@ public final class BackfillScheduler {
               signalBus,
               () -> bge,
               running::get,
-              BGE_M3_INTERLEAVE_BATCH_SIZE,
+              pacing().bgeM3InterleaveBatchSize(),
               false,
               log));
     }
@@ -486,7 +496,7 @@ public final class BackfillScheduler {
             signalBus,
             spladeEncoderSupplier,
             running::get,
-            SPLADE_INTERLEAVE_BATCH_SIZE,
+            pacing().spladeInterleaveBatchSize(),
             false,
             log));
   }
@@ -498,7 +508,7 @@ public final class BackfillScheduler {
             signalBus,
             disambiguationServiceSupplier,
             running::get,
-            DISAMBIGUATION_BACKFILL_BATCH_SIZE,
+            pacing().disambiguationBackfillBatchSize(),
             log));
   }
 }

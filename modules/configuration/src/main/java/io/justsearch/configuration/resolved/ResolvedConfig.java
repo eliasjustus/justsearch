@@ -234,7 +234,12 @@ public record ResolvedConfig(
       BgeM3 bgeM3,
       Profiling profiling,
       String sparseModel,
-      boolean devHotReload) {
+      boolean devHotReload,
+      BackfillPacing backfillPacing,
+      // Tempdoc 710 Wave 2 Move 1: undeclared model-capability facts fail startup for that
+      // encoder lane instead of WARN + fallback (default false until 657 ships manifests in
+      // packs — see EnvRegistry.CAPABILITY_CONTRACT_STRICT).
+      boolean capabilityContractStrict) {
 
     /** BGE-M3 multi-vector retrieval configuration. */
     public record BgeM3(
@@ -329,6 +334,68 @@ public record ResolvedConfig(
      * @param verboseLogging enables ORT VERBOSE-level session logging
      */
     public record Profiling(Path ortProfilingDir, boolean verboseLogging) {}
+
+    /**
+     * Enrichment-backfill pacing knobs (tempdoc 710 Wave-1.5 Move 4). Previously bare literals in
+     * {@code LoopPacingPolicy} / {@code BackfillScheduler} / {@code
+     * CombinedEnrichmentBackfillOps} with zero config surface; converted 1:1 to {@code
+     * justsearch.backfill.*} keys with identical defaults so behavior is unchanged unless an
+     * operator explicitly overrides one for experimentation.
+     *
+     * @param pollBatchSize primary-indexing job-queue poll batch size. Raised from 1 to 16 in
+     *     tempdoc 278 Phase 1 item 1b to amortize per-batch queue overhead (paired with item 1a's
+     *     per-document {@code isUserActive()} check, which keeps larger batches responsive).
+     * @param embeddingBackfillBatchSize doc-count per embedding backfill batch (parent docs and,
+     *     when {@code chunkVectorsEnabled}, the chunk cache populated by the same batch size).
+     * @param nerBackfillBatchSize doc-count per NER backfill batch.
+     * @param disambiguationBackfillBatchSize doc-count per disambiguation backfill batch.
+     * @param spladeBackfillBatchSize doc-count per idle-branch SPLADE backfill batch.
+     * @param spladeInterleaveBatchSize doc-count per SPLADE batch interleaved into the primary
+     *     indexing branch (tempdoc 278 Phase 4c — smaller than the idle-branch batch so
+     *     interleaving stays cheap).
+     * @param spladeInterleaveIntervalMs minimum time between interleaved SPLADE/BGE-M3 batches
+     *     during primary indexing (tempdoc 278 Phase 4a — time-gated to limit primary-indexing
+     *     overhead to ~13%).
+     * @param commitIntervalMs time-based commit trigger: commit if this much time has elapsed
+     *     since the last commit and at least one document is pending.
+     * @param maxDocsBeforeCommit buffer-based commit trigger: commit once this many documents have
+     *     been indexed since the last commit, regardless of elapsed time.
+     * @param chunkSlotsPerBatch chunk-doc cache slots populated per combined-backfill batch
+     *     (formerly the bare {@code chunkSlotsPerBatch = 50} literal in {@code
+     *     CombinedEnrichmentBackfillOps}). Tempdoc 691 §F-1 measured this cap is NOT the
+     *     dense-corpus chunk-only-tail throughput lever — that tail is GPU-embedding-compute-bound
+     *     (82% ORT time at the compute floor), not cap-throttled — so this exists as a config
+     *     surface for experimentation, not because raising it is known to help.
+     * @param bgeM3BackfillBatchSize doc-count per idle-branch BGE-M3 backfill batch (BGE-M3's own
+     *     pacing constant — previously bypassed {@code LoopPacingPolicy} entirely as a stray
+     *     literal in {@code BackfillScheduler}; unified onto this record).
+     * @param bgeM3InterleaveBatchSize doc-count per BGE-M3 batch interleaved into the primary
+     *     indexing branch (BGE-M3's counterpart to {@code spladeInterleaveBatchSize}).
+     */
+    public record BackfillPacing(
+        int pollBatchSize,
+        int embeddingBackfillBatchSize,
+        int nerBackfillBatchSize,
+        int disambiguationBackfillBatchSize,
+        int spladeBackfillBatchSize,
+        int spladeInterleaveBatchSize,
+        long spladeInterleaveIntervalMs,
+        long commitIntervalMs,
+        int maxDocsBeforeCommit,
+        int chunkSlotsPerBatch,
+        int bgeM3BackfillBatchSize,
+        int bgeM3InterleaveBatchSize) {
+
+      /**
+       * The historical hardcoded values, used as a defensive fallback when no {@link
+       * ResolvedConfig} is available (e.g. a test double supplying a null config supplier).
+       * Identical to every field's {@code justsearch.backfill.*} default in {@link
+       * ResolvedConfigBuilder} — kept in sync by construction since both originate from the same
+       * pre-Move-4 literals.
+       */
+      public static final BackfillPacing DEFAULTS =
+          new BackfillPacing(16, 100, 100, 500, 200, 10, 5_000L, 10_000L, 1000, 50, 50, 10);
+    }
   }
 
   /** LLM runtime tuning — sampling, VRAM management, deadlines, templates, remote config. */

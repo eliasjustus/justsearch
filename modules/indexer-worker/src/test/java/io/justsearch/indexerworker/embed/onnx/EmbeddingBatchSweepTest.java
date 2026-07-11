@@ -69,7 +69,7 @@ final class EmbeddingBatchSweepTest {
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
             "embed-test", modelDir);
     io.justsearch.indexerworker.embed.onnx.EmbeddingAssembly assembly =
-        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0);
+        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0, false);
     encoder =
         new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());
   }

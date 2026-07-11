@@ -174,6 +174,7 @@ class CombinedEnrichmentBackfillOpsTest {
         LoggerFactory.getLogger(CombinedEnrichmentBackfillOpsTest.class),
         false,
         lateChunkingEnabled,
+        50,
         new ArrayDeque<>(),
         new ArrayDeque<>(),
         new int[] {0});

@@ -969,8 +969,15 @@ public final class KnowledgeServer implements Closeable {
                 encoder, embeddingConfig.gpuEnabled() ? 1 : 0, embeddingConfig.contextLength());
         // Tempdoc 413: pass embeddingTelemetry so the service emits invoke_failure / cache /
         // chunked events into the worker LocalTelemetry's metrics-worker.ndjson.
+        // Tempdoc 710 Wave 2 Move 1: prefixes come from the capability contract resolved once at
+        // composition time — EmbeddingService no longer reads prefix_config.json itself.
         EmbeddingService es =
-            EmbeddingService.createWithBackend(backend, embeddingConfig, embeddingTelemetry);
+            EmbeddingService.createWithBackend(
+                backend,
+                embeddingConfig,
+                embeddingTelemetry,
+                embedAssembly.capabilities().documentPrefix(),
+                embedAssembly.capabilities().queryPrefix());
         if (es.isAvailable()) {
           embeddingService = es;
           validateEmbeddingDimension();

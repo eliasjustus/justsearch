@@ -189,6 +189,11 @@ class BackfillSchedulerModeRecordingTest {
     ResolvedConfig.Ai.Embedding embedding = mock(ResolvedConfig.Ai.Embedding.class);
     lenient().when(embedding.lateChunkingEnabled()).thenReturn(false);
     lenient().when(ai.embedding()).thenReturn(embedding);
+    // Tempdoc 710 Wave-1.5 Move 4: pacing() now reads ai().backfillPacing() on every stage
+    // dispatch — an unstubbed backfillPacing() would return null (Mockito default) and NPE.
+    // DEFAULTS mirrors the pre-Move-4 hardcoded batch sizes, keeping this test's exercised
+    // batch sizes unchanged.
+    lenient().when(ai.backfillPacing()).thenReturn(ResolvedConfig.Ai.BackfillPacing.DEFAULTS);
     lenient().when(config.ai()).thenReturn(ai);
     return config;
   }

@@ -19,7 +19,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.LongBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -77,6 +76,12 @@ public final class OnnxEmbeddingEncoder implements Closeable {
 
   // --- Embedding dimension (detected from model output) ---
   private volatile int embeddingDimension;
+  // Tempdoc 710 Wave 2 Move 1: declared dimension from the capability contract, 0 if undeclared.
+  // Cross-check only — the reactive first-inference detection above stays authoritative for
+  // embeddingDimension(); a mismatch is WARNed once, not silently overridden either direction.
+  private final int declaredEmbeddingDimension;
+  private final java.util.concurrent.atomic.AtomicBoolean warnedDimensionMismatch =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
 
   // --- Per-call profiling (356->357: shared accumulator, pull model) ---
   private final io.justsearch.indexerworker.metrics.EncoderProfileAccumulator profiler =
@@ -110,6 +115,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     this.needsTokenTypeIds = shape.needsTokenTypeIds();
     this.tokenizer = tokenizer;
     this.poolingStrategy = shape.poolingStrategy();
+    this.declaredEmbeddingDimension = shape.declaredEmbeddingDimension();
 
     log.info(
         "OnnxEmbeddingEncoder initialized: maxSeqLen={}, lateChunkingMaxSeqLen={}, tokenTypeIds={},"
@@ -140,18 +146,27 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    *
    * @param lateChunkingMaxSeqLen single-pass whole-doc token limit for {@link #embedWithSpans}
    *     (tempdoc 691 Phase 2); {@code <= 0} falls back to {@code maxSeqLen}
+   * @param capabilityContractStrict when {@code true}, an undeclared/ambiguous model-capability
+   *     fact throws instead of degrading with a WARN — {@code
+   *     justsearch.models.capability_contract_strict} (tempdoc 710 Wave 2 Move 1)
    * @throws OrtException if session input-name probe fails
    * @throws UncheckedIOException if tokenizer load fails
+   * @throws IllegalStateException if {@code capabilityContractStrict} and a capability fact is
+   *     undeclared/ambiguous
    */
   public static EmbeddingAssembly buildAssembly(
-      SessionHandle sessions, Path modelDir, int maxSeqLen, int lateChunkingMaxSeqLen)
+      SessionHandle sessions,
+      Path modelDir,
+      int maxSeqLen,
+      int lateChunkingMaxSeqLen,
+      boolean capabilityContractStrict)
       throws OrtException {
     // Tempdoc 397 §14.24 FD-ProbeDeletion: probe input names via the assembler helper.
     // Tempdoc 374 sandbox round 4 issue H: previously hardcoded model.onnx, which
     // broke when Install AI only downloaded model_fp16.onnx on a CUDA-functional
     // host. resolveExistingModelFile picks whichever declared variant is on disk.
-    Path probeModel =
-        io.justsearch.ort.ModelManifest.loadOrDefault(modelDir).resolveExistingModelFile(modelDir);
+    io.justsearch.ort.ModelManifest manifest = io.justsearch.ort.ModelManifest.loadOrDefault(modelDir);
+    Path probeModel = manifest.resolveExistingModelFile(modelDir);
     io.justsearch.ort.OrtSessionAssembler.ProbedNames probed =
         io.justsearch.ort.OrtSessionAssembler.probeModelNames(
             sessions.environment(), probeModel);
@@ -166,11 +181,34 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       throw new UncheckedIOException(
           "Failed to load embedding tokenizer from " + tokenizerPath, e);
     }
-    PoolingStrategy poolingStrategy = detectPoolingStrategy(modelDir, "pooling_config.json");
+    // Tempdoc 710 Wave 2 Move 1: capabilities resolved ONCE here (the composition choke point),
+    // not parsed by this encoder — detectPoolingStrategy's own file read is retired.
+    io.justsearch.ort.ModelCapabilities capabilities =
+        io.justsearch.ort.ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, capabilityContractStrict);
+    PoolingStrategy poolingStrategy = toPoolingStrategy(capabilities.poolingMode());
     return new EmbeddingAssembly(
         sessions,
-        new EmbeddingShape(maxSeqLen, needsTokenTypeIds, poolingStrategy, lateChunkingMaxSeqLen),
-        tokenizer);
+        new EmbeddingShape(
+            maxSeqLen,
+            needsTokenTypeIds,
+            poolingStrategy,
+            lateChunkingMaxSeqLen,
+            capabilities.embeddingDimension()),
+        tokenizer,
+        capabilities);
+  }
+
+  /**
+   * Maps the ort-common capability fact to this encoder's pooling enum. {@code UNKNOWN} (no
+   * source declared a pooling mode) falls back to the historical default ({@code MEAN_POOL}) —
+   * {@link io.justsearch.ort.ModelCapabilityResolver} already logged a WARN naming the gap at the
+   * choke point, so this mapping doesn't re-warn.
+   */
+  private static PoolingStrategy toPoolingStrategy(io.justsearch.ort.ModelCapabilities.PoolingMode mode) {
+    return mode == io.justsearch.ort.ModelCapabilities.PoolingMode.CLS
+        ? PoolingStrategy.CLS
+        : PoolingStrategy.MEAN_POOL;
   }
 
   /**
@@ -411,9 +449,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
           }
 
           int dim = hidden[0][0].length;
-          if (embeddingDimension == 0) {
-            embeddingDimension = dim;
-          }
+          recordDetectedDimension(dim);
 
           List<float[]> vectors = new ArrayList<>(batchSize);
           for (int b = 0; b < batchSize; b++) {
@@ -629,6 +665,28 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     return embeddingDimension;
   }
 
+  /**
+   * Records the dimension observed from an ORT output tensor on (at most) the first call, and
+   * cross-checks it against {@link #declaredEmbeddingDimension} (tempdoc 710 Wave 2 Move 1). A
+   * mismatch is WARNed once — the reactive detection stays authoritative; the declared value is a
+   * sanity check, not an override (mirrors {@link
+   * io.justsearch.ort.ModelCapabilityResolver}'s precision sanity check).
+   */
+  private void recordDetectedDimension(int dim) {
+    if (embeddingDimension == 0) {
+      embeddingDimension = dim;
+    }
+    if (declaredEmbeddingDimension > 0
+        && dim != declaredEmbeddingDimension
+        && warnedDimensionMismatch.compareAndSet(false, true)) {
+      log.warn(
+          "Embedding dimension mismatch: declared capability={} but first inference observed={}"
+              + " — reactive detection kept authoritative",
+          declaredEmbeddingDimension,
+          dim);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Single-chunk embedding
   // ---------------------------------------------------------------------------
@@ -694,10 +752,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
             // last_hidden_state: [1, seqLen, dim]
             float[][][] hidden = (float[][][]) result.get(0).getValue();
             int dim = hidden[0][0].length;
-
-            if (embeddingDimension == 0) {
-              embeddingDimension = dim;
-            }
+            recordDetectedDimension(dim);
 
             return hidden[0];
           }
@@ -906,35 +961,6 @@ public final class OnnxEmbeddingEncoder implements Closeable {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
-
-  /**
-   * Detects pooling strategy from a pooling config file in the model directory. Expected format:
-   * {@code {"pooling_mode": "cls"}} or {@code {"pooling_mode": "mean"}}. Defaults to {@link
-   * PoolingStrategy#MEAN_POOL} if no config file exists or the value is unrecognized.
-   *
-   * @param modelDir directory containing model files
-   * @param poolingConfigFile name of the pooling config file (from manifest)
-   */
-  private static PoolingStrategy detectPoolingStrategy(Path modelDir, String poolingConfigFile) {
-    Path configFile = modelDir.resolve(poolingConfigFile);
-    if (Files.exists(configFile)) {
-      try {
-        String content = Files.readString(configFile);
-        // Simple JSON parsing — look for "pooling_mode" value
-        if (content.contains("\"cls\"")) {
-          log.info("Embedding pooling strategy: CLS (from {})", poolingConfigFile);
-          return PoolingStrategy.CLS;
-        } else if (content.contains("\"mean\"")) {
-          log.info("Embedding pooling strategy: MEAN_POOL (from {})", poolingConfigFile);
-          return PoolingStrategy.MEAN_POOL;
-        }
-      } catch (IOException e) {
-        log.debug("Failed to read {}, using default: {}", poolingConfigFile, e.getMessage());
-      }
-    }
-    log.debug("Embedding pooling strategy: MEAN_POOL (default)");
-    return PoolingStrategy.MEAN_POOL;
-  }
 
   /**
    * Applies the configured pooling strategy to extract a single vector from token-level hidden
