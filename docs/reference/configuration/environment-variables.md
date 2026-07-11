@@ -169,7 +169,7 @@ Scope:
 | **SPLADE GPU** | | | |
 | `JUSTSEARCH_SPLADE_GPU_ENABLED` | `justsearch.splade.gpu_enabled` | Bool | Enable GPU acceleration for SPLADE inference. Falls back to `JUSTSEARCH_GPU_ENABLED` when unset. |
 | `JUSTSEARCH_SPLADE_GPU_DEVICE_ID` | `justsearch.splade.gpu_device_id` | Int | CUDA device ID for SPLADE inference (default 0). |
-| `JUSTSEARCH_SPLADE_GPU_MEM_MB` | `justsearch.splade.gpu_mem_mb` | Int | GPU memory arena limit for SPLADE sessions in MB (default 2048). |
+| `JUSTSEARCH_SPLADE_GPU_MEM_MB` | `justsearch.splade.gpu_mem_mb` | Int | GPU memory arena limit for SPLADE sessions in MB (default 4096). |
 | **NER GPU** | | | |
 | `JUSTSEARCH_NER_GPU_ENABLED` | `justsearch.ner.gpu_enabled` | Bool | Enable GPU acceleration for NER inference. Falls back to `JUSTSEARCH_GPU_ENABLED` when unset. |
 | `JUSTSEARCH_NER_GPU_DEVICE_ID` | `justsearch.ner.gpu_device_id` | Int | CUDA device ID for NER inference (default 0). |
@@ -178,6 +178,19 @@ Scope:
 | `JUSTSEARCH_BGE_M3_GPU_ENABLED` | `justsearch.bgem3.gpu_enabled` | Bool | Enable GPU acceleration for BGE-M3 inference. Falls back to `JUSTSEARCH_GPU_ENABLED` when unset. |
 | `JUSTSEARCH_BGE_M3_GPU_DEVICE_ID` | `justsearch.bgem3.gpu_device_id` | Int | CUDA device ID for BGE-M3 inference (default 0). |
 | `JUSTSEARCH_BGE_M3_GPU_MEM_MB` | `justsearch.bgem3.gpu_mem_mb` | Int | GPU memory arena limit for BGE-M3 sessions in MB (default 3072). |
+| **Backfill Pacing (tempdoc 710 Wave-1.5 Move 4)** | | | |
+| `JUSTSEARCH_BACKFILL_POLL_BATCH_SIZE` | `justsearch.backfill.poll_batch_size` | Int | Advanced/tuning knob. Primary-indexing job-queue poll batch size (default 16 — tempdoc 278 Phase 1 item 1b: raised from 1 to amortize per-batch queue overhead). |
+| `JUSTSEARCH_BACKFILL_EMBEDDING_BATCH_SIZE` | `justsearch.backfill.embedding_batch_size` | Int | Advanced/tuning knob. Doc-count per embedding backfill batch, parent and chunk (default 100). |
+| `JUSTSEARCH_BACKFILL_NER_BATCH_SIZE` | `justsearch.backfill.ner_batch_size` | Int | Advanced/tuning knob. Doc-count per NER backfill batch (default 100). |
+| `JUSTSEARCH_BACKFILL_DISAMBIGUATION_BATCH_SIZE` | `justsearch.backfill.disambiguation_batch_size` | Int | Advanced/tuning knob. Doc-count per disambiguation backfill batch (default 500). |
+| `JUSTSEARCH_BACKFILL_SPLADE_BATCH_SIZE` | `justsearch.backfill.splade_batch_size` | Int | Advanced/tuning knob. Doc-count per idle-branch SPLADE backfill batch (default 200). |
+| `JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE` | `justsearch.backfill.splade_interleave_batch_size` | Int | Advanced/tuning knob. Doc-count per SPLADE batch interleaved into primary indexing (default 10 — tempdoc 278 Phase 4c; smaller than the idle-branch batch so interleaving stays cheap). |
+| `JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS` | `justsearch.backfill.splade_interleave_interval_ms` | Int | Advanced/tuning knob. Minimum time (ms) between interleaved SPLADE/BGE-M3 batches during primary indexing (default 5000 — tempdoc 278 Phase 4a; time-gated to limit primary-indexing overhead to ~13%). |
+| `JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS` | `justsearch.backfill.commit_interval_ms` | Int | Advanced/tuning knob. Time-based commit trigger interval in ms (default 10000). |
+| `JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT` | `justsearch.backfill.max_docs_before_commit` | Int | Advanced/tuning knob. Buffer-based commit trigger: doc count since last commit (default 1000). |
+| `JUSTSEARCH_BACKFILL_CHUNK_SLOTS_PER_BATCH` | `justsearch.backfill.chunk_slots_per_batch` | Int | Advanced/tuning knob. Chunk-doc cache slots populated per combined-backfill batch (default 50). Tempdoc 691 §F-1 measured this cap is NOT the dense-corpus chunk-only-tail throughput lever (that tail is GPU-embedding-compute-bound, not cap-throttled) — exists for experimentation, not because raising it is known to help. |
+| `JUSTSEARCH_BACKFILL_BGE_M3_BATCH_SIZE` | `justsearch.backfill.bge_m3_batch_size` | Int | Advanced/tuning knob. Doc-count per idle-branch BGE-M3 backfill batch (default 50). Previously a stray literal bypassing `LoopPacingPolicy` entirely; unified onto this config surface. |
+| `JUSTSEARCH_BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE` | `justsearch.backfill.bge_m3_interleave_batch_size` | Int | Advanced/tuning knob. Doc-count per BGE-M3 batch interleaved into primary indexing (default 10). |
 | **ONNX Runtime** | | | |
 | `JUSTSEARCH_ONNXRUNTIME_NATIVE_PATH` | `justsearch.onnxruntime.native_path` | Path | ORT native runtime directory for CUDA EP (SPLADE, embedding, reranker). First-class resolved config path; propagated to Worker via config snapshot. Supersedes legacy `onnxruntime.native.path`. |
 | `JUSTSEARCH_ORT_PROFILING_DIR` | `justsearch.ort.profiling_dir` | Path | Diagnostic only. When set, each ORT GPU session writes a per-session profile file to this directory (5–15% inference overhead). Typed via `RuntimePolicy.Profiling.ortProfilingDir` since tempdoc 397 §14.24 FB; appears in `/api/debug/session-policies` under `runtime.profiling.ortProfilingDir`. |

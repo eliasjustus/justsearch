@@ -985,7 +985,31 @@ public final class ResolvedConfigBuilder {
         buildBgeM3(),
         buildProfiling(),
         resolveString("justsearch.sparse_model", "splade"),
-        resolveBoolean("justsearch.dev.hotreload", false));
+        resolveBoolean("justsearch.dev.hotreload", false),
+        buildBackfillPacing());
+  }
+
+  /**
+   * Builds {@link ResolvedConfig.Ai.BackfillPacing} from the {@code justsearch.backfill.*} config
+   * surface (tempdoc 710 Wave-1.5 Move 4). Defaults are byte-identical to the pre-Move-4 literals
+   * in {@code LoopPacingPolicy} / {@code BackfillScheduler} / {@code
+   * CombinedEnrichmentBackfillOps} — see {@link ResolvedConfig.Ai.BackfillPacing} for per-field
+   * derivation notes.
+   */
+  private ResolvedConfig.Ai.BackfillPacing buildBackfillPacing() {
+    return new ResolvedConfig.Ai.BackfillPacing(
+        resolveInt("justsearch.backfill.poll_batch_size", 16),
+        resolveInt("justsearch.backfill.embedding_batch_size", 100),
+        resolveInt("justsearch.backfill.ner_batch_size", 100),
+        resolveInt("justsearch.backfill.disambiguation_batch_size", 500),
+        resolveInt("justsearch.backfill.splade_batch_size", 200),
+        resolveInt("justsearch.backfill.splade_interleave_batch_size", 10),
+        resolveLong("justsearch.backfill.splade_interleave_interval_ms", 5_000L),
+        resolveLong("justsearch.backfill.commit_interval_ms", 10_000L),
+        resolveInt("justsearch.backfill.max_docs_before_commit", 1000),
+        resolveInt("justsearch.backfill.chunk_slots_per_batch", 50),
+        resolveInt("justsearch.backfill.bge_m3_batch_size", 50),
+        resolveInt("justsearch.backfill.bge_m3_interleave_batch_size", 10));
   }
 
   /**
@@ -1020,7 +1044,11 @@ public final class ResolvedConfigBuilder {
         // gte-multilingual-base (628 MB FP16, post-358) activations —
         // 2048 MB fragments under the larger MLP intermediate tensors
         // (10 BFCArena failures observed in 391's 2026-04-19 re-measurement).
-        // Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB.
+        // This is the single source of truth for the embed GPU arena limit — EmbeddingConfig.from
+        // reads justsearch.embed.gpu_mem_mb via ai().embedding().gpuMemMb() directly, with no
+        // other compiled-in default to keep in sync (the dead "OnnxEmbeddingEncoder.
+        // DEFAULT_GPU_MEM_MB" pointer this comment used to carry no longer resolves to any
+        // constant in that class).
         resolveInt("justsearch.embed.gpu_mem_mb", 3072),
         contextLength,
         // Tempdoc 691 Phase 4: long-doc single-pass VECTOR — DEFAULT ON since §Phase N
