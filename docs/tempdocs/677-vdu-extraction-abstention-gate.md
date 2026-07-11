@@ -203,3 +203,38 @@ suspect text); truncation (finish_reason=length) alone does not reject.
 Stage-2 agreement probe (seed-varied re-extraction, ambiguous band only), threshold calibration
 on golden/synth-scan-v1 vs legible realdocs scans (thresholds are PROVISIONAL until then), and
 the live-stack pass (static-green ≠ live-working).
+
+## Calibration (2026-07-11, direct llama-server harness — durable record)
+
+Harness: 47 vision completions against the shipped cuda12 llama-server (Qwen3.5-9B + mmproj,
+temp 0, thinking off, same request shape + reduction arithmetic as the shipped S1 code).
+Sets: 16 legible pages (rendered text + probe images) and 30 sampled `golden/synth-scan-v1`
+degraded scans with ground-truth word-overlap scoring.
+
+**Confabulation reconfirmed at 100%**: all 30 scans produced output with <0.30 ground-truth
+overlap. Two distinct modes:
+- **Short-confab (22/30)**: 150-360 chars, meanLogprob ≤ -0.41, lowConfFraction ≥ 0.07.
+- **Long/confident-confab (8/30)**: 2,276-3,547 chars of fluent fabrication at meanLogprob
+  -0.049..-0.25, lowConfFraction 0.013-0.048 — statistically near-legible; the original 624
+  bibliography-style failure. **Stage 1 cannot catch this mode with production-safe margins.**
+- Legible: meanLogprob ∈ [-0.058, -0.006], lowConfFraction = 0.000 on all 16.
+
+**The PROVISIONAL floors (mean<-1.0, frac>0.35) caught 0/30** — they were derived from the
+probe's REFUSAL-shaped noise response; fluent confabulation is far more confident. Falsified
+before shipping, exactly what calibration was for.
+
+**Stage-2 agreement probe validated** (re-sample at temp 0.8, fixed seed; Jaccard word-set
+agreement vs the temp-0 pass): legible = 1.000 on all 6 tested; long-confab 0.047-0.239;
+short-confab 0.231-0.379. Enormous margin around a 0.5 floor.
+
+**Calibrated cascade (encoded in VduAbstentionGate, S5 slice):**
+- Stage-1 REJECT: meanLogprob < -0.35 OR lowConfFraction > 0.06 OR anomalous finish_reason.
+- AMBIGUOUS → Stage 2: lowConfFraction > 0.005 OR meanLogprob < -0.09 (null signals pass).
+- Stage-2 REJECT: agreement < 0.5 (one extra inference, ambiguous band only — on the sample
+  the band routes exactly the 8 long-confabs and zero legible docs).
+- Sample confusion: 30/30 confabulations rejected, 0/16 legible false-abstains.
+
+Caveats recorded honestly: legible set is synthetic clean renders (real-world legible scans
+will show nonzero lowConfFraction — the ambiguity band costs them one extra inference, not a
+rejection; the live-stack pass should spot-check this); sample n=30/360; thresholds cite this
+section as their derivation.
