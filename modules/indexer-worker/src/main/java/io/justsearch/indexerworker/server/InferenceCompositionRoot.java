@@ -381,6 +381,16 @@ public final class InferenceCompositionRoot {
               variant,
               arbiter,
               events);
+      // Tempdoc 710 Move 2: the reranker lane was structurally absent from observability (no
+      // registerEncoder, S-B3). CrossEncoderReranker lives in the `reranker` module, which does
+      // not depend on worker-core (where EncoderProfileAccumulator/OperationalMetrics live), so
+      // registration + choke-point binding happens here at the composition root instead of in
+      // the encoder's own constructor (the pattern the other four encoders use).
+      io.justsearch.indexerworker.metrics.EncoderProfileAccumulator rerankerProfiler =
+          new io.justsearch.indexerworker.metrics.EncoderProfileAccumulator("ort");
+      io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
+          .registerEncoder(EncoderRole.RERANKER.consumerName(), rerankerProfiler);
+      sessions.setOrtRunRecorder(rerankerProfiler::recordOrtCall);
       RerankerAssembly assembly =
           CrossEncoderReranker.buildAssembly(
               sessions,
@@ -435,6 +445,14 @@ public final class InferenceCompositionRoot {
               variant,
               () -> false,
               events);
+      // Tempdoc 710 Move 2: the citation lane was likewise structurally absent from
+      // observability. Same reasoning as composeRerankerRole above — CitationScorer lives in
+      // the `reranker` module, so registration + choke-point binding happens here.
+      io.justsearch.indexerworker.metrics.EncoderProfileAccumulator citationProfiler =
+          new io.justsearch.indexerworker.metrics.EncoderProfileAccumulator("ort");
+      io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
+          .registerEncoder(EncoderRole.CITATION.consumerName(), citationProfiler);
+      sessions.setOrtRunRecorder(citationProfiler::recordOrtCall);
       RerankerAssembly assembly =
           CitationScorer.buildAssembly(
               sessions,

@@ -3,7 +3,6 @@ package io.justsearch.indexerworker.splade;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,21 +39,13 @@ final class SpladeBatchSweepTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    // Look for SPLADE model directory
-    Path repoRoot = Path.of(System.getProperty("user.dir"));
-    Path candidate = repoRoot;
-    for (int i = 0; i < 5; i++) {
-      Path spladeDir = candidate.resolve("models/splade/naver-splade-v3");
-      if (Files.exists(spladeDir.resolve("model.onnx"))
-          && Files.exists(spladeDir.resolve("tokenizer.json"))) {
-        modelDir = spladeDir;
-        break;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) break;
-    }
-
-    assumeTrue(modelDir != null, "SPLADE model not found — skipping EXP-5");
+    // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest — this test used to walk only
+    // 5 parent dirs, silently skipping in every worktree session).
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery discovery =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/splade/naver-splade-v3", null, "model.onnx", "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription() + " — skipping EXP-5");
+    modelDir = discovery.modelDir();
 
     SpladeConfig config =
         new SpladeConfig(true, modelDir, 512, false, 0, 0, "onnx", "log1p");

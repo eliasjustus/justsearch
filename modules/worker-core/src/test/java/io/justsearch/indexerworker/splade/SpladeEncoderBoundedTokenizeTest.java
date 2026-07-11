@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,20 +37,12 @@ final class SpladeEncoderBoundedTokenizeTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    // Walk up to 8 levels: from a worktree module dir
-    // (.claude/worktrees/<name>/modules/worker-core) the shared models live in the MAIN
-    // checkout 7 levels up — the 5-level walk used by older splade tests silently skips there.
-    Path candidate = Path.of(System.getProperty("user.dir"));
-    for (int i = 0; i < 8 && candidate != null; i++) {
-      Path spladeDir = candidate.resolve("models/splade/naver-splade-v3");
-      if (Files.exists(spladeDir.resolve("model.onnx"))
-          && Files.exists(spladeDir.resolve("tokenizer.json"))) {
-        modelDir = spladeDir;
-        break;
-      }
-      candidate = candidate.getParent();
-    }
-    assumeTrue(modelDir != null, "SPLADE model not found — skipping");
+    // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest).
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery discovery =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/splade/naver-splade-v3", null, "model.onnx", "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription());
+    modelDir = discovery.modelDir();
 
     SpladeConfig config = new SpladeConfig(true, modelDir, 512, false, 0, 0, "onnx", "log1p");
     io.justsearch.ort.SessionHandle sessions =

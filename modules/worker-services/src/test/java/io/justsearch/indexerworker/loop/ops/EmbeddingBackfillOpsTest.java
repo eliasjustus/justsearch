@@ -77,10 +77,10 @@ class EmbeddingBackfillOpsTest {
       when(embeddingProvider.embedDocument("content one")).thenReturn(new float[] {1f, 2f});
       when(embeddingProvider.embedDocument("content two")).thenReturn(new float[] {3f, 4f});
 
-      boolean result =
+      StageOutcome result =
           assertDoesNotThrow(() -> EmbeddingBackfillOps.processChunkEmbeddingBackfill(context()));
 
-      assertTrue(result, "should report work was done via the per-chunk fallback");
+      assertTrue(result.success(), "should report work was done via the per-chunk fallback");
       verify(embeddingProvider).embedDocument("content one");
       verify(embeddingProvider).embedDocument("content two");
       verify(indexingCoordinator)
@@ -113,10 +113,10 @@ class EmbeddingBackfillOpsTest {
       when(embeddingProvider.embedDocument("content one")).thenReturn(new float[] {1f, 2f});
       when(embeddingProvider.embedDocument("content two")).thenReturn(new float[] {3f, 4f});
 
-      boolean result =
+      StageOutcome result =
           assertDoesNotThrow(() -> EmbeddingBackfillOps.processChunkEmbeddingBackfill(context()));
 
-      assertTrue(result);
+      assertTrue(result.success());
       verify(embeddingProvider).embedDocument("content one");
       verify(embeddingProvider).embedDocument("content two");
     }
@@ -130,10 +130,10 @@ class EmbeddingBackfillOpsTest {
       when(embeddingProvider.embedDocument("content one")).thenReturn(new float[] {1f, 2f});
       when(embeddingProvider.embedDocument("content two")).thenReturn(new float[] {3f, 4f});
 
-      boolean result =
+      StageOutcome result =
           assertDoesNotThrow(() -> EmbeddingBackfillOps.processChunkEmbeddingBackfill(context()));
 
-      assertTrue(result);
+      assertTrue(result.success());
       verify(embeddingProvider).embedDocument("content one");
       verify(embeddingProvider).embedDocument("content two");
     }
@@ -150,10 +150,10 @@ class EmbeddingBackfillOpsTest {
       when(documentFieldOps.getDocumentField("chunk2", SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT))
           .thenReturn(null);
 
-      boolean result =
+      StageOutcome result =
           assertDoesNotThrow(() -> EmbeddingBackfillOps.processChunkEmbeddingBackfill(context()));
 
-      assertTrue(result);
+      assertTrue(result.success());
       verify(indexingCoordinator)
           .updateDocument(
               eq("chunk2"),

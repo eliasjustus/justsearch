@@ -264,7 +264,10 @@ public final class CrossEncoderReranker implements Closeable {
         // Run inference (select GPU or CPU session based on availability and arbitration)
         try (var lease = sessions.acquire()) {
           wasCpu = lease.isCpu();
-          try (OrtSession.Result result = lease.session().run(inputs, lease.runOptions())) {
+          // Tempdoc 710 Move 2: lease.run() is the ORT choke point — records elapsed time via
+          // the recorder bound by the composition root (reranker/citation have no worker-core
+          // dependency, so registration + binding happens in InferenceCompositionRoot).
+          try (OrtSession.Result result = lease.run(inputs)) {
             // Extract scores — only for actual documents, not padding rows
             List<Float> scores = extractScores(result, actualBatchSize);
 

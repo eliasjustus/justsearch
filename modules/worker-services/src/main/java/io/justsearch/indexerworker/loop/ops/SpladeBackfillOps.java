@@ -41,13 +41,17 @@ public final class SpladeBackfillOps {
       Logger log) {}
 
   /**
-   * Processes a batch of SPLADE backfill documents. Returns {@code true} on success (or partial
-   * success), {@code false} when the entire batch failed systemically (e.g., GPU OOM). The caller
-   * should back off on consecutive {@code false} returns.
+   * Processes a batch of SPLADE backfill documents.
+   *
+   * @return outcome whose {@code success()} preserves the original "not a systemic failure"
+   *     signal ({@code true} on success or partial success, {@code false} when the entire batch
+   *     failed systemically e.g. GPU OOM — the caller backs off on consecutive {@code false}); the
+   *     record also carries docsProcessed/elapsedMs for {@link BackfillScheduler}'s per-stage
+   *     metrics recording (tempdoc 710 Move 2 item 4).
    */
-  public static boolean processSpladeBackfill(BackfillContext context) {
+  public static StageOutcome processSpladeBackfill(BackfillContext context) {
+    long t0 = System.nanoTime();
     try {
-      long t0 = System.nanoTime();
       List<String> pendingIds =
           context
               .documentFieldOps()
@@ -58,13 +62,13 @@ public final class SpladeBackfillOps {
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
-        return true;
+        return StageOutcome.none();
       }
 
       SpladeEncoder encoder = context.spladeEncoderSupplier().get();
       if (encoder == null) {
         context.log().debug("SPLADE backfill: encoder unavailable, stopping batch");
-        return true;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing SPLADE backfill for {} documents", pendingIds.size());
@@ -74,7 +78,7 @@ public final class SpladeBackfillOps {
 
       // Check for interruption before batch work
       if (shouldInterrupt(context)) {
-        return true;
+        return StageOutcome.elapsedSince(t0);
       }
 
       // Phase 1: Collect content for all pending docs
@@ -112,12 +116,12 @@ public final class SpladeBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed, markedFailed);
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Re-check interruption after content collection
       if (shouldInterrupt(context)) {
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Phase 2: Batch encode with SPLADE
@@ -169,9 +173,9 @@ public final class SpladeBackfillOps {
                   "SPLADE encoding unavailable: entire batch of {} docs failed — {}",
                   failed,
                   e.getMessage());
-          return false;
+          return new StageOutcome(false, processed, (System.nanoTime() - t0) / 1_000_000);
         }
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       long encodeMs = (System.nanoTime() - t2) / 1_000_000;
@@ -210,11 +214,11 @@ public final class SpladeBackfillOps {
               writeMs,
               commitMs,
               docs > 0 ? totalMs / docs : 0);
-      return true;
+      return new StageOutcome(true, processed, totalMs);
 
     } catch (Exception e) {
       context.log().error("Error during SPLADE backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - t0) / 1_000_000);
     }
   }
 

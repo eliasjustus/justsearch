@@ -23,10 +23,13 @@ import org.junit.jupiter.api.Test;
  * Integration tests that load real ONNX models with production session options.
  *
  * <p>Tagged {@code experiment} so they are excluded from default test runs (models may not be
- * present on disk, especially in CI without LFS checkout). Run explicitly with:
+ * present on disk, especially in CI without LFS checkout) — see {@code conventions.jvm-base}
+ * ({@code build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt}). Run explicitly
+ * with (tempdoc 710 Move 6: corrected from the stale {@code -PincludeTags=experiment}, which is
+ * not a recognized project property):
  *
  * <pre>{@code
- * ./gradlew.bat :modules:worker-core:test -PincludeTags=experiment
+ * ./gradlew.bat :modules:worker-core:test -PincludeExperiment=true --tests "OrtModelSessionLoadingTest"
  * }</pre>
  *
  * <p>Each test uses {@code assumeTrue(modelFile.exists())} to skip gracefully when model files are
@@ -36,24 +39,27 @@ import org.junit.jupiter.api.Test;
 @Tag("experiment")
 final class OrtModelSessionLoadingTest {
 
-  /** Resolves the repo root by walking up from user.dir looking for the models/ directory. */
+  /**
+   * Resolves the repo root by walking up from user.dir looking for the models/ directory.
+   * Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest) — the loud, path-naming
+   * {@code assumeTrue} lives here so every call site below gets it for free.
+   */
   private static Path findRepoRoot() {
-    Path candidate = Path.of(System.getProperty("user.dir"));
-    for (int i = 0; i < 5; i++) {
-      if (Files.isDirectory(candidate.resolve("models"))) {
-        return candidate;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) break;
-    }
-    return null;
+    Path repoRoot =
+        io.justsearch.ort.testing.ModelDirTestResolver.findRepoRootByMarker("models");
+    assumeTrue(
+        repoRoot != null,
+        "'models' directory not found walking "
+            + io.justsearch.ort.testing.ModelDirTestResolver.MAX_WALK_DEPTH
+            + " parent director(ies) up from "
+            + System.getProperty("user.dir"));
+    return repoRoot;
   }
 
   @Test
   @DisplayName("SPLADE model loads on CPU and produces [1, seqLen, 30522] output")
   void spladeModelLoadsCpu() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/splade/naver-splade-v3");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path modelPath = modelDir.resolve(manifest.cpu());
@@ -89,7 +95,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("Embedding model loads on CPU and produces [1, seqLen, dim] output")
   void embeddingModelLoadsCpu() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/onnx/embeddinggemma-300m");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path modelPath = modelDir.resolve(manifest.cpu());
@@ -113,7 +118,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("NER model loads on CPU and produces [1, seqLen, 9] output")
   void nerModelLoadsCpu() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/onnx/ner");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path modelPath = modelDir.resolve(manifest.cpu());
@@ -136,7 +140,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("SPLADE FP16 model loads on CPU (format validation)")
   void spladefp16ModelLoadsCpu() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/splade/naver-splade-v3");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     if (manifest.gpu() == null) return; // No FP16 variant
@@ -154,7 +157,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("NER FP16 model loads on CPU or fails with known ORT error")
   void nerFp16ModelLoadsOrFailsGracefully() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/onnx/ner");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     if (manifest.gpu() == null) return;
@@ -180,7 +182,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("SPLADE multilingual PRESPARSE model loads, infers, and closes without crash")
   void spladeMultilingualPresparseCloseSession() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelPath =
         repoRoot.resolve("tmp/splade-multilingual-staging/presparse/model.onnx");
     assumeTrue(Files.exists(modelPath), "PRESPARSE model not found: " + modelPath);
@@ -237,7 +238,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("NER multilingual model loads, infers, and closes without crash")
   void nerMultilingualCloseSession() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path modelDir = repoRoot.resolve("models/onnx/ner");
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path modelPath = modelDir.resolve(manifest.cpu());
@@ -259,7 +259,6 @@ final class OrtModelSessionLoadingTest {
   @DisplayName("SPLADE multilingual PRESPARSE FP16 loads on GPU, infers, and closes without crash")
   void spladeMultilingualPresparseGpuCloseSession() throws Exception {
     Path repoRoot = findRepoRoot();
-    assumeTrue(repoRoot != null, "Repo root not found");
     Path fp16Path =
         repoRoot.resolve("tmp/splade-multilingual-staging/presparse/model_fp16.onnx");
     assumeTrue(Files.exists(fp16Path), "PRESPARSE FP16 model not found: " + fp16Path);

@@ -21,7 +21,7 @@ import io.justsearch.ort.OrtSessionAssembler;
 import io.justsearch.ort.RuntimePolicy;
 import io.justsearch.ort.SessionHandle;
 import io.justsearch.ort.testing.InferenceCompositionRootTestHelper;
-import java.nio.file.Files;
+import io.justsearch.ort.testing.ModelDirTestResolver;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -75,13 +75,11 @@ final class OnnxEmbeddingEncoderLongDocForensicTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    modelDir = discoverModelDir();
-    assumeTrue(modelDir != null, "gte-multilingual-base ONNX model not found, skipping forensic test");
+    ModelDirTestResolver.Discovery discovery = discoverModelDir();
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription());
+    modelDir = discovery.modelDir();
 
     Path modelFile = modelDir.resolve("model.onnx");
-    assumeTrue(Files.exists(modelFile), "model.onnx (FP32) not found in " + modelDir);
-    assumeTrue(
-        Files.exists(modelDir.resolve("tokenizer.json")), "tokenizer.json not found in " + modelDir);
 
     sharedSessions = buildFp32CpuSession("embed-longdoc-forensic", modelFile);
 
@@ -111,29 +109,14 @@ final class OnnxEmbeddingEncoderLongDocForensicTest {
     }
   }
 
-  /** Mirrors {@link OnnxEmbeddingEncoderLateChunkingTest}'s discovery, plus the real model dir. */
-  private static Path discoverModelDir() {
-    Path repoRoot = Path.of(System.getProperty("user.dir"));
-    Path candidate = repoRoot;
-    for (int i = 0; i < 6; i++) {
-      Path modelsDir = candidate.resolve("models/onnx/gte-multilingual-base");
-      if (Files.exists(modelsDir.resolve("model.onnx"))
-          && Files.exists(modelsDir.resolve("tokenizer.json"))) {
-        return modelsDir;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) {
-        break;
-      }
-    }
-    String envPath = System.getenv("JUSTSEARCH_EMBED_ONNX_MODEL_PATH");
-    if (envPath != null && !envPath.isBlank()) {
-      Path envDir = Path.of(envPath);
-      if (Files.exists(envDir.resolve("model.onnx")) && Files.exists(envDir.resolve("tokenizer.json"))) {
-        return envDir;
-      }
-    }
-    return null;
+  // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest) — mirrors {@link
+  // OnnxEmbeddingEncoderLateChunkingTest}'s discovery, plus the real model dir.
+  private static ModelDirTestResolver.Discovery discoverModelDir() {
+    return ModelDirTestResolver.discover(
+        "models/onnx/gte-multilingual-base",
+        "JUSTSEARCH_EMBED_ONNX_MODEL_PATH",
+        "model.onnx",
+        "tokenizer.json");
   }
 
   /**

@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -33,36 +32,15 @@ final class OnnxEmbeddingEncoderLateChunkingTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    Path repoRoot = Path.of(System.getProperty("user.dir"));
-    Path candidate = repoRoot;
-    for (int i = 0; i < 5; i++) {
-      Path modelsDir = candidate.resolve("models/onnx/embedding");
-      if (Files.exists(modelsDir.resolve("model.onnx"))
-          && Files.exists(modelsDir.resolve("tokenizer.json"))) {
-        modelDir = modelsDir;
-        break;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) {
-        break;
-      }
-    }
-
-    if (modelDir == null) {
-      String envPath = System.getenv("JUSTSEARCH_EMBED_ONNX_MODEL_PATH");
-      if (envPath != null && !envPath.isBlank()) {
-        Path envDir = Path.of(envPath);
-        if (Files.exists(envDir.resolve("model.onnx"))
-            && Files.exists(envDir.resolve("tokenizer.json"))) {
-          modelDir = envDir;
-        }
-      }
-    }
-
-    assumeTrue(modelDir != null, "ONNX embedding model not found, skipping late-chunking test");
-    assumeTrue(Files.exists(modelDir.resolve("model.onnx")), "model.onnx not found in " + modelDir);
-    assumeTrue(
-        Files.exists(modelDir.resolve("tokenizer.json")), "tokenizer.json not found in " + modelDir);
+    // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest).
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery discovery =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/onnx/embedding",
+            "JUSTSEARCH_EMBED_ONNX_MODEL_PATH",
+            "model.onnx",
+            "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription());
+    modelDir = discovery.modelDir();
 
     io.justsearch.ort.SessionHandle sessions =
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
