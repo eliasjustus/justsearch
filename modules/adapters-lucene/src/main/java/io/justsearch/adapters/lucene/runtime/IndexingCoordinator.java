@@ -76,7 +76,7 @@ public final class IndexingCoordinator {
 
   /**
    * Synchronous op dispatch serialized against concurrent callers via {@link #dispatchLock}.
-   * Used by the convenience mirrors ({@link #updateDocument(String, Map, boolean)} etc.) so
+   * Used by the convenience mirrors ({@link #updateDocument(String, Map)} etc.) so
    * synchronous RMW semantics match the pre-402 call shape. Also the correct choice for
    * lifecycle paths (reset) where no dispatcher loop is running.
    */
@@ -100,11 +100,9 @@ public final class IndexingCoordinator {
     try {
       switch (op) {
         case IndexWriteOperation.UpdateDoc u ->
-            u.completion()
-                .complete(writeOps.get().updateDocument(u.docId(), u.updates(), u.preserveSplade()));
+            u.completion().complete(writeOps.get().updateDocument(u.docId(), u.updates()));
         case IndexWriteOperation.BatchUpdate b ->
-            b.completion()
-                .complete(writeOps.get().updateDocumentsBatch(b.batchUpdates(), b.preserveSplade()));
+            b.completion().complete(writeOps.get().updateDocumentsBatch(b.batchUpdates()));
         case IndexWriteOperation.DeleteAll d -> {
           writeOps.get().deleteAll();
           d.completion().complete(null);
@@ -121,29 +119,20 @@ public final class IndexingCoordinator {
   // ==========================================================================
 
   public boolean updateDocument(String docId, Map<String, Object> updates) {
-    return updateDocument(docId, updates, false);
-  }
-
-  public boolean updateDocument(String docId, Map<String, Object> updates, boolean preserveSplade) {
     if (docId == null || docId.isBlank() || updates == null || updates.isEmpty()) {
       return false;
     }
-    var op = IndexWriteOperation.UpdateDoc.of(docId, updates, preserveSplade);
+    var op = IndexWriteOperation.UpdateDoc.of(docId, updates);
     executeNow(op);
     return joinOrUnwrap(op.completion());
   }
 
   public BatchUpdateResult updateDocumentsBatch(
       List<Map.Entry<String, Map<String, Object>>> batchUpdates) {
-    return updateDocumentsBatch(batchUpdates, false);
-  }
-
-  public BatchUpdateResult updateDocumentsBatch(
-      List<Map.Entry<String, Map<String, Object>>> batchUpdates, boolean preserveSplade) {
     if (batchUpdates == null || batchUpdates.isEmpty()) {
       return new BatchUpdateResult(0, 0);
     }
-    var op = IndexWriteOperation.BatchUpdate.of(batchUpdates, preserveSplade);
+    var op = IndexWriteOperation.BatchUpdate.of(batchUpdates);
     executeNow(op);
     return joinOrUnwrap(op.completion());
   }

@@ -24,10 +24,15 @@ import tools.jackson.databind.json.JsonMapper;
  * the single production entry point for model-intrinsic facts — no encoder parses sidecar JSON
  * itself anymore.
  *
- * <p>Per-fact source priority (S-C.R): manifest {@code capabilities} field → ecosystem files where
- * authoritative → boot-time graph probe (dimension only; precision is sanity-checked, never
- * sourced, against I/O dtype — S-C.R: "no ecosystem field is authoritative for an exported ONNX
- * file's precision") → legacy sidecar (deprecated fallback generation) → no default. Every gap
+ * <p>Per-fact source priority (S-C.R, extended by tempdoc 711 Item 3): manifest {@code
+ * capabilities} field → embedded ONNX {@code metadata_props} (reverse-DNS {@code io.justsearch.*}
+ * keys stamped at model-build time — {@code scripts/models/_common.py stamp_capabilities}, a
+ * projection of the same manifest) → ecosystem files where authoritative → boot-time graph probe
+ * (dimension only; precision is sanity-checked, never sourced, against I/O dtype — S-C.R: "no
+ * ecosystem field is authoritative for an exported ONNX file's precision") → legacy sidecar
+ * (deprecated fallback generation) → no default. When both the manifest and the embedded metadata
+ * declare a fact and they disagree, the manifest wins and a WARN names both values — a manifest
+ * hand-edited after the model was last stamped is the expected drift case this catches. Every gap
  * that falls through to a fallback (or bottoms out with nothing) is recorded in {@link
  * ModelCapabilities#warnings()} and logged at WARN — mirroring {@code
  * InferenceCompositionRoot.resolveVariant}'s degraded-selection WARN (tempdoc 691 B-5). Under
@@ -51,6 +56,18 @@ public final class ModelCapabilityResolver {
   private static final Logger log = LoggerFactory.getLogger(ModelCapabilityResolver.class);
 
   private static final ObjectMapper JSON = JsonMapper.builder().build();
+
+  // Reverse-DNS metadata_props keys stamped by scripts/models/_common.py stamp_capabilities at
+  // model-build time (tempdoc 711 Item 3) — a projection of the manifest's `capabilities` section
+  // baked directly into the ONNX file, so the fact travels with the model even if the manifest is
+  // hand-edited later without a rebuild.
+  private static final String META_POOLING_MODE = "io.justsearch.pooling_mode";
+  private static final String META_CONTEXT_LENGTH = "io.justsearch.context_length";
+  private static final String META_EMBEDDING_DIMENSION = "io.justsearch.embedding_dimension";
+  private static final String META_CPU_PRECISION = "io.justsearch.cpu_precision";
+  private static final String META_GPU_PRECISION = "io.justsearch.gpu_precision";
+  private static final String META_DOCUMENT_PREFIX = "io.justsearch.document_prefix";
+  private static final String META_QUERY_PREFIX = "io.justsearch.query_prefix";
 
   private ModelCapabilityResolver() {}
 
@@ -81,17 +98,30 @@ public final class ModelCapabilityResolver {
       boolean strict) {
     List<String> warnings = new ArrayList<>();
 
+    // Embedded ONNX metadata_props (tempdoc 711 Item 3): one short-lived probe session per
+    // resolve() call, not per fact — every resolveX below that consults embedded metadata reads
+    // off this same map. Lazily skipped when LABELS is the only requested fact (LABELS is out of
+    // scope for the embedded rung), so an NER-only resolve doesn't pay for an unused probe.
+    boolean needsEmbeddedMetadata =
+        requirements.requires(CapabilityRequirements.Fact.POOLING)
+            || requirements.requires(CapabilityRequirements.Fact.CONTEXT_LENGTH)
+            || requirements.requires(CapabilityRequirements.Fact.DIMENSION)
+            || requirements.requires(CapabilityRequirements.Fact.PRECISION)
+            || requirements.requires(CapabilityRequirements.Fact.PREFIXES);
+    Map<String, String> embedded =
+        needsEmbeddedMetadata ? readEmbeddedMetadata(modelDir, manifest, warnings) : Map.of();
+
     ModelCapabilities.PoolingMode poolingMode =
         requirements.requires(CapabilityRequirements.Fact.POOLING)
-            ? resolvePoolingMode(modelDir, manifest, warnings)
+            ? resolvePoolingMode(modelDir, manifest, embedded, warnings)
             : ModelCapabilities.PoolingMode.UNKNOWN;
     int contextLength =
         requirements.requires(CapabilityRequirements.Fact.CONTEXT_LENGTH)
-            ? resolveContextLength(modelDir, manifest, warnings)
+            ? resolveContextLength(modelDir, manifest, embedded, warnings)
             : 0;
     int dimension = 0;
     if (requirements.requires(CapabilityRequirements.Fact.DIMENSION)) {
-      dimension = resolveDimension(modelDir, manifest, warnings);
+      dimension = resolveDimension(modelDir, manifest, embedded, warnings);
       if (dimension <= 0) {
         dimension = probeStaticEmbeddingDimension(modelDir, manifest, warnings);
       }
@@ -101,14 +131,22 @@ public final class ModelCapabilityResolver {
     if (requirements.requires(CapabilityRequirements.Fact.PRECISION)) {
       cpuPrecision =
           resolvePrecision(
-              manifest.capabilities().cpuPrecision(), manifest.cpu(), "cpu", warnings);
+              manifest.capabilities().cpuPrecision(),
+              embedded.get(META_CPU_PRECISION),
+              manifest.cpu(),
+              "cpu",
+              warnings);
       gpuPrecision =
           resolvePrecision(
-              manifest.capabilities().gpuPrecision(), manifest.gpu(), "gpu", warnings);
+              manifest.capabilities().gpuPrecision(),
+              embedded.get(META_GPU_PRECISION),
+              manifest.gpu(),
+              "gpu",
+              warnings);
     }
     String[] prefixes =
         requirements.requires(CapabilityRequirements.Fact.PREFIXES)
-            ? resolvePrefixes(modelDir, manifest, warnings)
+            ? resolvePrefixes(modelDir, manifest, embedded, warnings)
             : new String[] {null, null};
     Map<String, String> labelMapping =
         requirements.requires(CapabilityRequirements.Fact.LABELS)
@@ -146,14 +184,29 @@ public final class ModelCapabilityResolver {
   // ---------------------------------------------------------------------------
 
   private static ModelCapabilities.PoolingMode resolvePoolingMode(
-      Path modelDir, ModelManifest manifest, List<String> warnings) {
+      Path modelDir, ModelManifest manifest, Map<String, String> embedded, List<String> warnings) {
     String declared = manifest.capabilities().poolingMode();
+    String embeddedValue = embedded.get(META_POOLING_MODE);
     if (declared != null && !declared.isBlank()) {
       ModelCapabilities.PoolingMode parsed = parsePoolingMode(declared);
       if (parsed != ModelCapabilities.PoolingMode.UNKNOWN) {
+        warnIfDisagree(warnings, "pooling_mode", declared, embeddedValue);
         return parsed;
       }
       warnings.add("manifest capabilities.pooling_mode='" + declared + "' unrecognized (expected cls|mean)");
+    }
+
+    // Embedded ONNX metadata_props (tempdoc 711 Item 3) — one rung below the manifest, ahead of
+    // the ecosystem-file readers: a build-time-stamped projection of the manifest, so a model
+    // shipped without its manifest (or with a manifest that predates a rebuild) still carries the
+    // fact.
+    if (embeddedValue != null && !embeddedValue.isBlank()) {
+      ModelCapabilities.PoolingMode parsed = parsePoolingMode(embeddedValue);
+      if (parsed != ModelCapabilities.PoolingMode.UNKNOWN) {
+        return parsed;
+      }
+      warnings.add(
+          "embedded ONNX metadata_props pooling_mode='" + embeddedValue + "' unrecognized (expected cls|mean)");
     }
 
     // Sentence-transformers ecosystem: 1_Pooling/config.json, both schema generations.
@@ -215,10 +268,16 @@ public final class ModelCapabilityResolver {
   // Trained context length
   // ---------------------------------------------------------------------------
 
-  private static int resolveContextLength(Path modelDir, ModelManifest manifest, List<String> warnings) {
+  private static int resolveContextLength(
+      Path modelDir, ModelManifest manifest, Map<String, String> embedded, List<String> warnings) {
     Integer declared = manifest.capabilities().contextLength();
+    Integer embeddedValue = parseEmbeddedInt(embedded.get(META_CONTEXT_LENGTH), "context_length", warnings);
     if (declared != null && declared > 0) {
+      warnIfDisagree(warnings, "context_length", declared, embeddedValue);
       return declared;
+    }
+    if (embeddedValue != null && embeddedValue > 0) {
+      return embeddedValue;
     }
 
     Integer stSeqLen = readIntField(modelDir.resolve("sentence_bert_config.json"), "max_seq_length", warnings);
@@ -257,10 +316,17 @@ public final class ModelCapabilityResolver {
   // Embedding dimension
   // ---------------------------------------------------------------------------
 
-  private static int resolveDimension(Path modelDir, ModelManifest manifest, List<String> warnings) {
+  private static int resolveDimension(
+      Path modelDir, ModelManifest manifest, Map<String, String> embedded, List<String> warnings) {
     Integer declared = manifest.capabilities().embeddingDimension();
+    Integer embeddedValue =
+        parseEmbeddedInt(embedded.get(META_EMBEDDING_DIMENSION), "embedding_dimension", warnings);
     if (declared != null && declared > 0) {
+      warnIfDisagree(warnings, "embedding_dimension", declared, embeddedValue);
       return declared;
+    }
+    if (embeddedValue != null && embeddedValue > 0) {
+      return embeddedValue;
     }
     Integer hiddenSize = readIntField(modelDir.resolve("config.json"), "hidden_size", warnings);
     if (hiddenSize != null && hiddenSize > 0) {
@@ -309,18 +375,121 @@ public final class ModelCapabilityResolver {
   }
 
   // ---------------------------------------------------------------------------
+  // Embedded ONNX metadata_props (tempdoc 711 Item 3)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reads the resolved model file's embedded {@code metadata_props} once per {@link #resolve}
+   * call via a single short-lived probe session ({@link OrtSessionAssembler#probeCustomMetadata}
+   * — mirrors {@link #probeStaticEmbeddingDimension}'s existing-file guard so a manifest-declared
+   * file name that doesn't exist on disk degrades to "no embedded metadata" rather than throwing.
+   * Every {@code resolveX} method that consults embedded metadata reads off the same returned map
+   * — this is the only place a probe session is opened for that purpose.
+   */
+  private static Map<String, String> readEmbeddedMetadata(
+      Path modelDir, ModelManifest manifest, List<String> warnings) {
+    try {
+      Path modelFile = manifest.resolveExistingModelFile(modelDir);
+      if (!Files.isRegularFile(modelFile)) {
+        return Map.of();
+      }
+      OrtEnvironment env = OrtEnvironment.getEnvironment();
+      return OrtSessionAssembler.probeCustomMetadata(env, modelFile);
+    } catch (OrtException e) {
+      warnings.add("boot-probe for embedded ONNX metadata_props failed: " + e.getMessage());
+      return Map.of();
+    }
+  }
+
+  /** Parses an embedded metadata_props string value as a positive integer; null-safe. */
+  private static Integer parseEmbeddedInt(String raw, String factName, List<String> warnings) {
+    if (raw == null || raw.isBlank()) {
+      return null;
+    }
+    try {
+      return Integer.parseInt(raw.trim());
+    } catch (NumberFormatException e) {
+      warnings.add(
+          "embedded ONNX metadata_props " + factName + "='" + raw + "' is not a valid integer");
+      return null;
+    }
+  }
+
+  /**
+   * Records a WARN when both the manifest and the embedded ONNX metadata declare a fact and the
+   * values disagree — the manifest value always wins (it's the primary-authored source; the
+   * embedded value is a build-time projection of it, so disagreement means the model file wasn't
+   * rebuilt after the manifest was last edited). String values ({@code pooling_mode}, {@code
+   * *_precision}) compare case-insensitively, trimmed — matching {@link #parsePoolingMode}/{@link
+   * #parsePrecision}'s own normalization. Non-string values (context length, dimension) compare
+   * via {@link Object#equals}.
+   */
+  private static void warnIfDisagree(
+      List<String> warnings, String factName, Object manifestValue, Object embeddedValue) {
+    if (manifestValue == null || embeddedValue == null) {
+      return;
+    }
+    boolean agree =
+        (manifestValue instanceof String s1 && embeddedValue instanceof String s2)
+            ? s1.trim().equalsIgnoreCase(s2.trim())
+            : manifestValue.equals(embeddedValue);
+    if (!agree) {
+      warnings.add(
+          factName
+              + " disagreement: manifest='"
+              + manifestValue
+              + "' vs embedded ONNX metadata_props='"
+              + embeddedValue
+              + "' — manifest wins");
+    }
+  }
+
+  /**
+   * Same contract as {@link #warnIfDisagree} but for task-instruction prefixes: an exact,
+   * case-sensitive, untrimmed comparison — prefix text is literal (e.g. a trailing space in
+   * {@code "search_document: "} is meaningful), unlike the enum-like pooling-mode/precision
+   * facts.
+   */
+  private static void warnIfPrefixDisagrees(
+      List<String> warnings, String factName, String manifestValue, String embeddedValue) {
+    if (manifestValue == null || embeddedValue == null || manifestValue.equals(embeddedValue)) {
+      return;
+    }
+    warnings.add(
+        factName
+            + " disagreement: manifest='"
+            + manifestValue
+            + "' vs embedded ONNX metadata_props='"
+            + embeddedValue
+            + "' — manifest wins");
+  }
+
+  // ---------------------------------------------------------------------------
   // Precision (per-variant; sanity-checked, never sourced, from I/O dtype)
   // ---------------------------------------------------------------------------
 
   private static ModelPrecision resolvePrecision(
-      String declared, String variantFile, String label, List<String> warnings) {
+      String declared, String embeddedValue, String variantFile, String label, List<String> warnings) {
     if (declared != null && !declared.isBlank()) {
       ModelPrecision parsed = parsePrecision(declared);
       if (parsed != null) {
+        warnIfDisagree(warnings, label + "_precision", declared, embeddedValue);
         return parsed;
       }
       warnings.add("manifest capabilities." + label + "_precision='" + declared + "' unrecognized");
     }
+
+    // Embedded ONNX metadata_props (tempdoc 711 Item 3) — one rung below the manifest, ahead of
+    // the legacy filename-substring heuristic.
+    if (embeddedValue != null && !embeddedValue.isBlank()) {
+      ModelPrecision parsed = parsePrecision(embeddedValue);
+      if (parsed != null) {
+        return parsed;
+      }
+      warnings.add(
+          "embedded ONNX metadata_props " + label + "_precision='" + embeddedValue + "' unrecognized");
+    }
+
     if (variantFile == null || variantFile.isBlank()) {
       return null;
     }
@@ -358,10 +527,30 @@ public final class ModelCapabilityResolver {
   // Task-instruction prefixes
   // ---------------------------------------------------------------------------
 
-  private static String[] resolvePrefixes(Path modelDir, ModelManifest manifest, List<String> warnings) {
+  private static String[] resolvePrefixes(
+      Path modelDir, ModelManifest manifest, Map<String, String> embedded, List<String> warnings) {
     ModelManifest.Capabilities caps = manifest.capabilities();
     String doc = caps.documentPrefix();
     String query = caps.queryPrefix();
+
+    // Embedded ONNX metadata_props (tempdoc 711 Item 3) — one rung below the manifest. Each
+    // prefix is resolved independently (matching the null-vs-empty-string semantics the rest of
+    // this method already preserves): a manifest-declared value (including a declared-empty "")
+    // always wins over the embedded value, with a WARN on disagreement; a manifest-undeclared
+    // (null) prefix picks up the embedded value if present before falling through to the
+    // ecosystem-file readers below.
+    String embeddedDoc = embedded.get(META_DOCUMENT_PREFIX);
+    String embeddedQuery = embedded.get(META_QUERY_PREFIX);
+    if (doc != null) {
+      warnIfPrefixDisagrees(warnings, "document_prefix", doc, embeddedDoc);
+    } else if (embeddedDoc != null) {
+      doc = embeddedDoc;
+    }
+    if (query != null) {
+      warnIfPrefixDisagrees(warnings, "query_prefix", query, embeddedQuery);
+    } else if (embeddedQuery != null) {
+      query = embeddedQuery;
+    }
 
     // Sentence-transformers ecosystem: config_sentence_transformers.json `prompts`, IF present
     // (S-C.R: verified unpopulated in practice for gte-multilingual-base AND

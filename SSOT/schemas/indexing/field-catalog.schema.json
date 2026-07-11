@@ -29,6 +29,11 @@
         "roles": { "type": "array", "items": { "$ref": "#/$defs/role" } },
         "multiValued": { "type": "boolean" },
         "unique": { "type": "boolean" },
+        "rmwPolicy": {
+          "type": "string",
+          "$comment": "Read-modify-write disposition for a non-stored, non-docValues data-bearing field (tempdoc 711). 'preserve-reread' re-reads the field from the index and carries it forward; 'reset-status:<statusFieldId>' resets the named docValues-backed status field so a backfill re-derives the dropped data.",
+          "pattern": "^(preserve-reread|reset-status:[a-z0-9_]+)$"
+        },
         "analyzer": { "type": "string" },
         "facet": { "type": "boolean" },
         "indexOptions": { "type": "string", "enum": [

@@ -51,7 +51,7 @@ class NerBackfillOpsTest {
 
       NerBackfillOps.processNerBackfill(context);
 
-      verify(indexingCoordinator, never()).updateDocumentsBatch(anyList(), anyBoolean());
+      verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
       verify(commitOps, never()).commit();
     }
 
@@ -63,7 +63,7 @@ class NerBackfillOpsTest {
           .thenReturn(List.of("doc1"));
       when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("");
-      when(indexingCoordinator.updateDocumentsBatch(anyList(), anyBoolean()))
+      when(indexingCoordinator.updateDocumentsBatch(anyList()))
           .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
 
       NerBackfillOps.BackfillContext context =
@@ -80,8 +80,7 @@ class NerBackfillOpsTest {
                       entries.size() == 1
                           && entries.get(0).getKey().equals("doc1")
                           && SchemaFields.NER_STATUS_COMPLETED.equals(
-                              entries.get(0).getValue().get(SchemaFields.NER_STATUS))),
-              eq(true));
+                              entries.get(0).getValue().get(SchemaFields.NER_STATUS))));
       verify(nerService, never()).extractEntities(anyString());
     }
 
@@ -132,7 +131,7 @@ class NerBackfillOpsTest {
     @DisplayName("increments retry count on first failure")
     void incrementsRetryCount() {
       when(documentFieldOps.getDocumentField("doc1", SchemaFields.NER_RETRY_COUNT)).thenReturn(null);
-      when(indexingCoordinator.updateDocument(anyString(), anyMap(), anyBoolean())).thenReturn(true);
+      when(indexingCoordinator.updateDocument(anyString(), anyMap())).thenReturn(true);
 
       int result =
           NerBackfillOps.handleNerFailure(
@@ -144,8 +143,7 @@ class NerBackfillOpsTest {
           .updateDocument(
               eq("doc1"),
               argThat(
-                  (Map<String, Object> map) -> "1".equals(map.get(SchemaFields.NER_RETRY_COUNT))),
-              eq(true));
+                  (Map<String, Object> map) -> "1".equals(map.get(SchemaFields.NER_RETRY_COUNT))));
     }
 
     @Test
@@ -153,7 +151,7 @@ class NerBackfillOpsTest {
     void marksFailedAfterMaxRetries() {
       when(documentFieldOps.getDocumentField("doc1", SchemaFields.NER_RETRY_COUNT))
           .thenReturn(String.valueOf(SchemaFields.NER_MAX_RETRIES - 1));
-      when(indexingCoordinator.updateDocument(anyString(), anyMap(), anyBoolean())).thenReturn(true);
+      when(indexingCoordinator.updateDocument(anyString(), anyMap())).thenReturn(true);
 
       int result =
           NerBackfillOps.handleNerFailure(
@@ -166,8 +164,7 @@ class NerBackfillOpsTest {
               eq("doc1"),
               argThat(
                   (Map<String, Object> map) ->
-                      SchemaFields.NER_STATUS_FAILED.equals(map.get(SchemaFields.NER_STATUS))),
-              eq(true));
+                      SchemaFields.NER_STATUS_FAILED.equals(map.get(SchemaFields.NER_STATUS))));
     }
   }
 

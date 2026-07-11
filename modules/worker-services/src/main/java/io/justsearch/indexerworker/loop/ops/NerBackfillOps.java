@@ -115,7 +115,7 @@ public final class NerBackfillOps {
 
       // Batch-write all collected updates (single NRT refresh for the entire batch)
       if (!batchUpdates.isEmpty()) {
-        context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+        context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
       }
 
       if (processed > 0 || failed > 0) {
@@ -148,7 +148,7 @@ public final class NerBackfillOps {
 
       if (updates.containsKey(SchemaFields.NER_STATUS)) {
         log.warn("NER permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
         log.debug(
@@ -157,7 +157,7 @@ public final class NerBackfillOps {
             SchemaFields.NER_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 

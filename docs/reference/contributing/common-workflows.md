@@ -60,7 +60,7 @@ explicitly with `cd modules/ui-web && npm install`, then commit the updated
 Load `/ssot-catalog` for the dual-copy checklist and field role reference.
 1. Edit JSON in `SSOT/catalogs/`
 2. **If adding fields**: also update the classpath copy at `modules/adapters-lucene/src/main/resources/SSOT/catalogs/fields.v1.json` — production loads this when the repo root is unavailable
-3. **If adding fields with extraction logic**: update `IndexingDocumentOps.java` to populate the new field during ingestion. Existing indices will NOT have the new field — test corpora must be re-indexed (`jseval run --reset` or `--start-backend --clean`)
+3. **If adding fields with extraction logic**: update `IndexingDocumentOps.java` to populate the new field during ingestion. Existing indices will NOT have the new field — test corpora must be re-indexed (`jseval run --reset` or `--start-backend --clean`). `--clean` is fail-closed (tempdoc 711 item 4): it verifies the wipe actually completed (sweeping an orphaned Worker JVM if a delete is blocked) and raises rather than silently re-running against a stale index if a survivor remains — see `docs/reference/jseval-pipeline-reference.md`
 4. Regenerate fingerprints if needed
 5. Verify pinned-hash tests: `./gradlew.bat :modules:ssot-tools:test`
 6. Check commit metadata compatibility: `./gradlew.bat :modules:adapters-lucene:test`
