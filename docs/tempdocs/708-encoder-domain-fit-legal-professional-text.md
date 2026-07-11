@@ -1,7 +1,7 @@
 ---
 title: "Encoder-domain fit on legal/professional text: can any locally-runnable multilingual embedding (and/or learned-sparse) model separate legal-shaped documents by content — the F-030 follow-up (dense R@10 ≤0.145 and SPLADE ≤0.165 at EVERY query shape and granularity on CLERC)"
 type: tempdocs
-status: "CLOSED 2026-07-11 — VERDICT: NO MODEL SWAP. Bake-off complete (42 signature-bound runs, Gate 0 PASSED at delta 0.005): the incumbent gte-multilingual-base was never domain-limited — F-030(678)'s encoder-domain-mismatch verdict is superseded in mechanism by construction defects (F-031 window-mean/missing-CLS dilution + F-032 RMW chunk-vector destruction, both shipped fixed via 691/711); no eligible candidate significantly beats the incumbent at chunk granularity (sign tests p=0.085/0.488/1.0); shipped legal vector nDCG 0.6180 captures ~96% of the offline ceiling 0.643. Registers updated (F-033 + F-030 refinement + 678 E5-D correction + inference-runtime). Full pipeline history below (takeover GO -> theorize -> design -> plan -> execute -> 691-pause -> resume-close)."
+status: "CLOSED 2026-07-11 — VERDICT: NO MODEL SWAP. Bake-off complete (42 signature-bound runs, Gate 0 PASSED at delta 0.005): the incumbent gte-multilingual-base was never domain-limited — F-030(678)'s encoder-domain-mismatch verdict is superseded in mechanism by construction defects (F-031 window-mean/missing-CLS dilution + F-032 RMW chunk-vector destruction, both shipped fixed via 691/711); no eligible candidate significantly beats the incumbent at chunk granularity (sign tests p=0.085/0.488/1.0); shipped legal vector nDCG 0.6180 captures ~96% of the offline ceiling 0.643. Registers updated (F-034 + F-030 refinement + 678 E5-D correction + inference-runtime). Full pipeline history below (takeover GO -> theorize -> design -> plan -> execute -> 691-pause -> resume-close)."
 created: 2026-07-10
 author: agent (Fable orchestration), filed at founder direction after the pillar-5 attribution campaign closed
 category: search-quality / dense-retrieval / model-selection / inference-runtime
@@ -690,9 +690,9 @@ record.
    multilingual encoders — the incumbent handles it at the right construction/granularity. Surviving
    scoped truths: **kw-shape queries are weak for dense across every model and condition** (max
    0.400 — dense needs sentence-shaped queries; mirrors F-030's BM25-verbosity monotonicity), and
-   **SPLADE remains unrecovered on legal** (0.0591 shipped) — a separate representation question
+   **SPLADE remains unrecovered on legal** (0.0591 shipped; RESOLVED same-day by tempdoc 712/F-033 — a 512-token truncation artifact, the sparse sibling of this lane’s dense findings) — a separate representation question
    deliberately not reopened (the eligible multilingual learned-sparse field is one model deep).
-5. **Register updates made:** F-033 (verdict + table pointer, search-quality); dated refinement note
+5. **Register updates made:** F-034 (verdict + table pointer, search-quality); dated refinement note
    on F-030(678); dated correction annotation on tempdoc 678 §E5-D (the "+3.0 pts at chunk
    granularity" was an F-032 artifact — that probe's chunk-hybrid arm had zero chunk vectors);
    inference-runtime register F-014 (screen footprint/throughput + the xformers/CLS-artifact runtime

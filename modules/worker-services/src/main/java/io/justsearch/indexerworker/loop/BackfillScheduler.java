@@ -392,6 +392,7 @@ public final class BackfillScheduler {
             pacing.embeddingBackfillBatchSize(),
             log,
             resolvedConfigSupplier.get().rag().chunkVectorsEnabled(),
+            resolvedConfigSupplier.get().rag().chunkSpladeEnabled(),
             resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
             pacing.chunkSlotsPerBatch(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),

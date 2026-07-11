@@ -247,6 +247,10 @@ provenance note above). No cc/encoder ablation pass has been run yet.
 revives the dense leg 5.0× at shipped defaults (0.060→0.2967; 0.3401 with a 6144MB embed arena —
 the residual gap is ~20 near-8k-token docs OOM-falling-back to windowed at the 3072 default). See
 F-031. Union-recall 0.890 (> the 0.87 pin) on the same run; leak + relevance gates green.
+**Note (712, 2026-07-11):** the `splade` rows (0.059/0.0591) are substantially a 512-token
+truncation artifact — offline, per-chunk SPLADE covering the whole doc revives the sparse leg to
+0.327 (max-pool merge) / 0.545 (chunk-MaxP), the sparse sibling of F-031/F-032. See F-033 + Q-017.
+No engine-integrated chunk-splade row exists yet.
 
 ### mixed/miracl-de-2k
 
@@ -667,7 +671,7 @@ above)*
 - **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
   vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
 
-### F-033: offline encoder bake-off on legal-clerc-200 — NO MODEL SWAP; the incumbent was never domain-limited, and no eligible multilingual candidate significantly beats it (tempdoc 708, 2026-07-11; closes the encoder-choice question F-030(678) spawned)
+### F-034: offline encoder bake-off on legal-clerc-200 — NO MODEL SWAP; the incumbent was never domain-limited, and no eligible multilingual candidate significantly beats it (tempdoc 708, 2026-07-11; closes the encoder-choice question F-030(678) spawned)
 
 - **Answer:** a Gate-0-anchored offline exact-NN bake-off (42 runs, byte-identical register corpus
   `90d4300d…baf1`, harness `scripts/jseval/experiments/encoder_bakeoff_708.py`, run JSONs with
@@ -706,6 +710,33 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
+
+- **Answer:** production SPLADE hard-truncates every document to `maxSeqLen=512` tokens
+  (`SpladeEncoder.encode`/batch paths: `seqLen = min(len, maxSeqLen)`; the `SpladeTruncationEvidence`
+  sidecar only *records* the loss, never windows). On legal-clerc-200, 194/198 docs exceed 512
+  tokens (median 6,615 → the encoder sees ~7.7% of the median case doc). An offline A/B on the
+  **byte-identical** corpus (corpus.jsonl sha256 `630f5376…`, same as F-032) using the
+  production-shipped ONNX model (`models/splade/naver-splade-v3` = opensearch-neural-sparse-encoding-
+  multilingual-v1) measured: **A truncated whole-doc nDCG@10 0.0539** (reproduces the shipped
+  splade-mode 0.0591 — fidelity anchor), **B per-term max-pool chunk-merge 0.3274 (6.1×)**,
+  **B chunk-level MaxP 0.5445 (10.1×)**. Recall drives it: R@10 0.14→0.775, R@100 0.69→0.945.
+  Anti-dilution signature: `sum`-merge (0.089) ≪ `max`-merge — the relevant terms are in *some*
+  chunk, not diluted across all. Per-query B beats A 104–15 (max) / 154–6 (MaxP).
+- **Refines F-030(678):** 678's granularity arm was a product-RAG A/B on dense+BM25 chunks and
+  never measured chunk-level SPLADE, so its "encoder-domain mismatch at any granularity" verdict did
+  not cover this. The multilingual SPLADE encoder *does* separate legal content at chunk
+  granularity; the deadness was representation (truncation). Consistent with the dense sibling
+  (chunk-CLS MaxP 0.64, 691 §M). The residual gap (sparse chunk-MaxP 0.545 vs lexical 0.686) stays
+  with the encoder-domain question (708's lane).
+- **Caveat (offline ceiling):** B numbers are offline exact-retrieval ceilings (no ANN / Lucene
+  saturation / fusion), same treatment as the dense 0.64 datapoint; the load-bearing result is the
+  **A/B delta**. The engine-integrated number is unmeasured (see Q-017).
+- **Reproduction:** `PYTHONUTF8=1 python scripts/jseval/experiments/splade_chunk_truncation_check_712.py
+  --dataset-dir datasets/mixed/legal-clerc-200 --model-dir <models>/splade/naver-splade-v3
+  --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
+  Evidence: tempdoc 712 §Takeover experiment.
+
 ### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
@@ -725,7 +756,7 @@ above)*
 ### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
 
 - **REFINEMENT (2026-07-11, tempdoc 708 closure — original text below kept intact; annotate-don't-rewrite):**
-  the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-033: the
+  the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-034: the
   encoder (gte-multilingual-base) was never domain-limited on legal text. The dense death this finding
   attributed to the representation decomposes into (a) **window-mean whole-doc construction dilution**
   (F-031: one long-context pass lifts legal vector 5-6×, shipped default-on) and (b) **chunk vectors
@@ -737,7 +768,7 @@ above)*
   A dated correction annotation sits on tempdoc 678 §E5-D itself. What SURVIVES of this finding: the raw
   measurements (accurate for that HEAD), the gate/fusion exoneration (702), the BM25-verbosity
   monotonicity, the SPLADE profile (still unrecovered — splade 0.0591 at b88e76e), and the RAG-surface
-  product finding. The encoder-choice question it spawned (708) closed **NO MODEL SWAP** — see F-033.
+  product finding. The encoder-choice question it spawned (708) closed **NO MODEL SWAP** — see F-034.
 - **Answer:** a four-stage elimination campaign on `mixed/legal-clerc-200` (198 docs / 200 queries,
   fixed qrels throughout, all runs `comparable=True`, staged-recall reconciliation 0 mismatches)
   attributed F-029's dead semantic legs. Raw pre-fusion R@10 by query shape: dense **0.100**
@@ -1408,6 +1439,32 @@ above)*
   whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
   compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
   for representation/granularity if that's the finding).
+- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
+  mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
+  SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
+  domain. The dense half stands as F-031/F-032 scoped it.
+
+### Q-017: Does the offline chunk-SPLADE revival (F-033) hold once integrated into the live engine (ANN + Lucene FeatureField saturation + fusion), and at what enrichment cost? → OPEN (tempdoc 712)
+
+- **Question:** F-033 measured, offline, that per-chunk SPLADE lifts legal-clerc-200 sparse nDCG@10
+  from 0.054 (production-mirror truncated) to 0.327 (max-pool doc-merge) / 0.545 (chunk-MaxP). Those
+  are exact-retrieval ceilings. Does the engine-integrated chunk-sparse sub-leg realize a comparable
+  gain in `splade` and `hybrid` mode against live gates, and what is the enrichment-throughput cost
+  of the ~19× SPLADE forward-pass multiplier once amortized over already-enriched chunk docs?
+  As-built shape (712 steps 1–3, 2026-07-11): the search side already existed
+  (`searchChunksSplade` over the existing `splade` FeatureField on chunk docs, fused via
+  `chunk_merge`); the fix is producer enrollment — the combined pass now encodes chunk docs'
+  `chunk_content` instead of silently marking them COMPLETED — behind
+  `rag.chunk_splade.enabled` / `JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED`, **default OFF**.
+- **Why it matters:** it is the truth-tier confirmation of F-033 (`static-green ≠ live-working`) and
+  the go/no-go for the default-on flip of the chunk-sparse flag. It also feeds (with tempdoc 713's
+  parent-representation verdict) whether the parent whole-doc `splade` encode on chunked docs still
+  earns its place.
+- **Cheapest evidence:** tempdoc 712 §Step 4 (ON HOLD, GPU-sequenced after 713's pending
+  measurement) — `jseval run --start-backend --clean` on legal-clerc-200 with the flag on vs off,
+  recording enrichment wall-clock + docs/s as first-class outputs, plus a short-doc control corpus.
+- **Design/plan:** tempdoc 712 (§Mechanism correction + §Implementation log; steps 1–3 landed
+  flag-gated default-off on branch `worktree-712-sparse`).
 
 ### Q-014: Does any procedurally-generated `golden/` corpus clear the descriptor-collision gate, and is any of them suitable for an agent-utility (not just retrieval-quality) measurement?
 

@@ -29,6 +29,13 @@ Two sources:
   from CLERC is ever committed here — this module only ever writes to the gitignored `datasets/` tree,
   fetching fresh each time, the same "fetch, never commit" policy this project already applies to every
   BEIR corpus (SciFact, NFCorpus, etc. are never committed either).
+
+CLERC's raw fetch (qrels/queries text + the several-GB document collection) goes through
+`dataset_cache.cached_dir` (tempdoc 709): a shared, cross-worktree, gitignored, integrity-verified
+on-disk cache of the raw upstream bytes under the MAIN checkout, so the GB-scale collection stream
+isn't re-downloaded once per worktree per day. This is purely a network-trip dedupe of the same
+"fetch fresh, never commit/redistribute" bytes this module already only ever writes to a gitignored
+tree — it changes nothing about the licensing posture above.
 """
 
 from __future__ import annotations
@@ -38,8 +45,11 @@ import gzip
 import io
 import json
 import random
+import shutil
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+from . import dataset_cache
 
 _USER_AGENT = "justsearch-jseval/corpus_fetch (tempdoc-666)"
 
@@ -102,6 +112,11 @@ def fetch_miracl_sample(out_dir: Path | str, *, lang: str, seed: int, n_docs: in
     :returns: the `generation_provenance` dict recorded into the written `meta.json`.
     """
     import ir_datasets  # deferred: only this function's caller pays the import/network cost
+
+    # tempdoc 709: point ir_datasets' own download cache at the shared, cross-worktree
+    # dataset-fetch cache root (config-only -- ir_datasets already does its own on-disk
+    # caching + verification once IR_DATASETS_HOME is set).
+    dataset_cache.apply_ir_datasets_home()
 
     with _utf8_default_text_io():
         ds = ir_datasets.load(f"miracl/{lang}/{split}")
@@ -166,18 +181,49 @@ def _fetch_text(url: str) -> str:
         return resp.read().decode("utf-8")
 
 
+_CLERC_QRELS_FILE = "qrels-doc.test.direct.tsv"
+_CLERC_QUERIES_FILE = "test.single-removed.direct.tsv"
+_CLERC_COLLECTION_FILE = "collection.doc.tsv.gz"
+_CLERC_RAW_FILES = [_CLERC_QRELS_FILE, _CLERC_QUERIES_FILE, _CLERC_COLLECTION_FILE]
+
+
+def _populate_clerc_raw(dest: Path, *, base: str) -> None:
+    """Fetch CLERC's three raw upstream artifacts into `dest` (tempdoc 709's `dataset_cache`
+    `populate` callback) -- the qrels/queries text files, plus the (several-GB, gzip-compressed)
+    document collection, downloaded whole to disk. Independent of seed/n_queries/n_docs: the raw
+    bytes are the same regardless of how a caller later samples them, so this is cache-keyed on
+    `base` alone -- caching at this layer serves every future seed/sample-size combination, not
+    just the one that happened to trigger the first fetch.
+    """
+    (dest / _CLERC_QRELS_FILE).write_text(
+        _fetch_text(f"{base}/qrels/qrels-doc.test.direct.tsv"), encoding="utf-8")
+    (dest / _CLERC_QUERIES_FILE).write_text(
+        _fetch_text(f"{base}/queries/test.single-removed.direct.tsv"), encoding="utf-8")
+    req = Request(f"{base}/collection/collection.doc.tsv.gz", headers={"User-Agent": _USER_AGENT})
+    with urlopen(req, timeout=None) as raw, (dest / _CLERC_COLLECTION_FILE).open("wb") as out:  # noqa: S310
+        shutil.copyfileobj(raw, out)
+
+
 def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs: int | None = None) -> dict:
     """Fetch CLERC's test-split qrels + queries + document collection via plain HTTP (CLERC is not
     `ir_datasets`-registered), sample `n_queries` deterministically, and pull their qrelled documents
-    from the (large — several GB) document collection via a single streaming decompress pass, never
-    materializing the full collection to disk or holding it fully in memory.
+    from the (large — several GB) document collection.
+
+    The raw fetch of all three artifacts goes through `dataset_cache.cached_dir` (tempdoc 709): a
+    shared, cross-worktree, integrity-verified on-disk cache keyed on `base` alone (independent of
+    `seed`/`n_queries`/`n_docs` — the raw bytes don't depend on how they're later sampled), so a
+    same-day rerun in a different worktree (or a different seed/sample-size in the same worktree)
+    reuses the already-downloaded collection instead of re-streaming several GB over the network
+    again. When the shared cache is disabled (`JUSTSEARCH_DATASET_CACHE=0`) or unavailable, this
+    falls back to a direct, uncached, ephemeral fetch — identical to this function's pre-709 behavior.
 
     `n_docs=None` (default) keeps the original qrelled-only behavior byte-compatible (including the
-    early `break` once every wanted doc is found) so existing callers and the committed
+    early `break` once every wanted doc is found, now scanning the locally-cached collection file
+    rather than a live network stream) so existing callers and the committed
     `666-corpora/legal-clerc-200/recipe.json` reproduction path are unaffected. When `n_docs` is set,
     mirrors `fetch_miracl_sample`'s pattern: the qrelled docs are kept, and `n_docs - len(wanted)`
     additional distractor documents are deterministically reservoir-sampled from the rest of the same
-    streaming pass (so the early break must NOT fire — the full collection needs to be seen for the
+    pass (so the early break must NOT fire — the full collection needs to be seen for the
     reservoir sample to be uniform). Distractor sampling uses its own `random.Random(seed)` instance,
     separate from the `rng` used for query sampling above, so the sampled qrelled-doc set is identical
     across every `n_docs` value at a given `(seed, n_queries)` — verified in
@@ -188,9 +234,27 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs
     variants. See this module's docstring for the licensing note this design already accounts for.
     """
     base = "https://huggingface.co/datasets/jhu-clsp/CLERC/resolve/main"
-    qrels_lines = _fetch_text(f"{base}/qrels/qrels-doc.test.direct.tsv").splitlines()
-    queries_lines = _fetch_text(f"{base}/queries/test.single-removed.direct.tsv").splitlines()
+    with dataset_cache.cached_dir(
+        "clerc-raw",
+        {"base": base, "task_variant": "single-removed/direct"},
+        filenames=_CLERC_RAW_FILES,
+        populate=lambda dest: _populate_clerc_raw(dest, base=base),
+    ) as raw_dir:
+        qrels_lines = (raw_dir / _CLERC_QRELS_FILE).read_text(encoding="utf-8").splitlines()
+        queries_lines = (raw_dir / _CLERC_QUERIES_FILE).read_text(encoding="utf-8").splitlines()
+        collection_path = raw_dir / _CLERC_COLLECTION_FILE
+        return _sample_clerc_from_raw(
+            out_dir, qrels_lines=qrels_lines, queries_lines=queries_lines,
+            collection_path=collection_path, seed=seed, n_queries=n_queries, n_docs=n_docs)
 
+
+def _sample_clerc_from_raw(
+    out_dir: Path | str, *, qrels_lines: list[str], queries_lines: list[str], collection_path: Path,
+    seed: int, n_queries: int, n_docs: int | None,
+) -> dict:
+    """Deterministic sampling over already-fetched raw CLERC artifacts -- split out from
+    `fetch_clerc_sample` so the (cache-eligible) raw fetch and the (seed-dependent) sampling are two
+    separate concerns; this function has no network access of its own."""
     qrels_by_query: dict[str, list[str]] = {}
     for line in qrels_lines:
         if not line.strip():
@@ -221,9 +285,7 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs
     reservoir_texts: dict[str, str] = {}
 
     docs_by_id: dict[str, str] = {}
-    req = Request(f"{base}/collection/collection.doc.tsv.gz", headers={"User-Agent": _USER_AGENT})
-    with urlopen(req, timeout=None) as raw, gzip.GzipFile(fileobj=raw) as gz:  # noqa: S310
-        text_stream = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
+    with gzip.open(collection_path, "rt", encoding="utf-8", errors="replace") as text_stream:
         for line in text_stream:
             # The early break only applies to the qrelled-only (n_docs=None) path -- distractor
             # reservoir sampling needs the full stream to be uniform.

@@ -21,7 +21,7 @@ class DefaultAppFacadeTest {
         new SearchRequest.Filters(
             "text/plain", "en", new SearchRequest.TimeRange(1000L, 2000L));
     SearchRequest.Clause clause =
-        new SearchRequest.Clause("text", "content_all", "apollo", List.of("apollo"));
+        new SearchRequest.Clause("text", "content", "apollo", List.of("apollo"));
     SearchRequest request =
         new SearchRequest(10, 0, true, filters, List.of("-date"), List.of(clause), null);
 

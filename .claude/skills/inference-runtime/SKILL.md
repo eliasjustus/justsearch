@@ -151,7 +151,7 @@ Settled empirical facts. Each was an open question that got answered.
 
 ### F-014: 708 offline encoder screen — candidate footprint/throughput record + two runtime facts (tempdoc 708, 2026-07-11)
 
-- **Context:** the 708 bake-off (search-quality F-033: NO MODEL SWAP) measured candidate encoders
+- **Context:** the 708 bake-off (search-quality F-034: NO MODEL SWAP) measured candidate encoders
   offline in torch fp16 on the RTX 4070 — a screen, NOT ORT production baselines (the Canonical
   Baselines table above stays ORT-only). Doc-side encode throughput at chunk granularity
   (500-token chunks, includes tokenize+forward+pool), fp16 size estimates:

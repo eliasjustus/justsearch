@@ -75,6 +75,10 @@ public final class CombinedEnrichmentBackfillOps {
       int batchSize,
       Logger log,
       boolean chunkVectorsEnabled,
+      // Tempdoc 712: encode chunk docs' chunk_content into the splade FeatureField so the
+      // chunk-merge sparse sub-leg (searchChunksSplade) has data. Default false — flag-off keeps
+      // the historical behavior of marking chunk docs' splade_status COMPLETED without encoding.
+      boolean chunkSpladeEnabled,
       boolean lateChunkingEnabled,
       // Tempdoc 710 Wave-1.5 Move 4 item 2: was the bare `chunkSlotsPerBatch = 50` local literal
       // below; measured NOT the dense-corpus chunk-only-tail throughput lever (691 §F-1 — that
@@ -283,7 +287,8 @@ public final class CombinedEnrichmentBackfillOps {
         Map<String, String> docFields = batchedFields.getOrDefault(docId, Map.of());
 
         if (isChunkDoc) {
-          // Chunk doc: only needs embedding. Content from CHUNK_CONTENT field.
+          // Chunk doc: needs embedding; with chunk-SPLADE on (tempdoc 712) also sparse.
+          // Content from CHUNK_CONTENT field.
           String chunkContent = docFields.get(SchemaFields.CHUNK_CONTENT);
           if (chunkContent == null || chunkContent.isBlank()) {
             // Also try the main content batch (getDocumentContentBatch reads CONTENT)
@@ -297,6 +302,20 @@ public final class CombinedEnrichmentBackfillOps {
           embedDocIds.add(docId);
           embedContents.add(chunkContent);
           chunkIdsInBatch.add(docId);
+          if (context.chunkSpladeEnabled() && spladeAvailable) {
+            String chunkSpladeStatus =
+                docFields.getOrDefault(
+                    SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+            // Enroll on PENDING, and also on COMPLETED: this lane's own RMW cannot carry splade
+            // postings it does not re-derive — omitting splade here would destroy the data and
+            // reset-status it back to PENDING (WritePathOps rmwPolicy lane, tempdoc 711), costing
+            // a full destroy → re-queue → re-encode cycle. Re-encoding into the same bundled
+            // write is strictly cheaper. FAILED is respected (poison-pill).
+            if (!SchemaFields.SPLADE_STATUS_FAILED.equals(chunkSpladeStatus)) {
+              spladeDocIds.add(docId);
+              spladeContents.add(chunkContent);
+            }
+          }
           continue;
         }
 
@@ -315,11 +334,29 @@ public final class CombinedEnrichmentBackfillOps {
           if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
             updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
           }
-          if (spladeAvailable && SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus)) {
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-          }
           if (nerAvailable && SchemaFields.NER_STATUS_PENDING.equals(nerStatus)) {
             updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+          }
+          if (spladeAvailable) {
+            // A splade-PENDING doc with no CONTENT is a chunk doc picked up via the splade-status
+            // query (chunks carry CHUNK_CONTENT, never CONTENT). With chunk-SPLADE on (tempdoc
+            // 712) encode it; flag-off keeps the historical mark-COMPLETED-without-data. The
+            // COMPLETED-and-writing-anyway case also re-derives: an RMW that omits splade
+            // destroys the postings and reset-statuses them back to PENDING (tempdoc 711);
+            // carrying a fresh encode in the same bundled write skips that churn cycle.
+            String chunkContent = docFields.get(SchemaFields.CHUNK_CONTENT);
+            boolean chunkSparseEligible =
+                context.chunkSpladeEnabled()
+                    && chunkContent != null
+                    && !chunkContent.isBlank()
+                    && !SchemaFields.SPLADE_STATUS_FAILED.equals(spladeStatus);
+            boolean spladePending = SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus);
+            if (chunkSparseEligible && (spladePending || !updates.isEmpty())) {
+              spladeDocIds.add(docId);
+              spladeContents.add(chunkContent);
+            } else if (spladePending) {
+              updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            }
           }
           continue;
         }
