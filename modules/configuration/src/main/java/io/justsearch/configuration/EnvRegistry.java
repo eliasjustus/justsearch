@@ -311,7 +311,7 @@ public enum EnvRegistry {
     /** CUDA device ID for ONNX embedding sessions (default 0). */
     EMBED_GPU_DEVICE_ID("justsearch.embed.gpu.device_id", "JUSTSEARCH_EMBED_GPU_DEVICE_ID"),
 
-    /** GPU memory arena limit for ONNX embedding sessions (MB, default 3072). */
+    /** GPU memory arena limit for ONNX embedding sessions (MB, default 6144 — 691 §N/F-031). */
     EMBED_GPU_MEM_MB("justsearch.embed.gpu_mem_mb", "JUSTSEARCH_EMBED_GPU_MEM_MB"),
 
     /**
