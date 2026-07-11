@@ -1197,7 +1197,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       Map<String, Object> updates = new HashMap<>();
       updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_FAILED);
       updates.put(SchemaFields.VDU_ENRICHMENT, VDU_MAX_RETRIES_EXCEEDED_ENRICHMENT);
-      ingestLifecycle.indexingCoordinator().updateDocument(docId, updates, true);
+      ingestLifecycle.indexingCoordinator().updateDocument(docId, updates);
       // Commit deferred to periodic commit timer (DC7) / IndexingLoop cycle.
       return markVduErrorResponse(VDU_MAX_RETRIES_EXCEEDED_ERROR);
     }
@@ -1207,7 +1207,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_PROCESSING);
     updates.put(SchemaFields.VDU_RETRY_COUNT, String.valueOf(decision.retryCount()));
 
-    boolean updated = ingestLifecycle.indexingCoordinator().updateDocument(docId, updates, true);
+    boolean updated = ingestLifecycle.indexingCoordinator().updateDocument(docId, updates);
     if (updated) {
       // Commit deferred to periodic commit timer (DC7) / IndexingLoop cycle.
       log.debug(
@@ -1228,7 +1228,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private boolean resetVduStatusToPending(String docId) throws Exception {
     Map<String, Object> updates = new HashMap<>();
     updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_PENDING);
-    return ingestLifecycle.indexingCoordinator().updateDocument(docId, updates, true);
+    return ingestLifecycle.indexingCoordinator().updateDocument(docId, updates);
   }
 
   @FunctionalInterface

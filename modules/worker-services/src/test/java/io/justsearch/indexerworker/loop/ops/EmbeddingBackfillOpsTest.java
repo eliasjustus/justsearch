@@ -89,16 +89,14 @@ class EmbeddingBackfillOpsTest {
               argThat(
                   (Map<String, Object> m) ->
                       SchemaFields.EMBEDDING_STATUS_COMPLETED.equals(
-                          m.get(SchemaFields.CHUNK_EMBEDDING_STATUS))),
-              eq(true));
+                          m.get(SchemaFields.CHUNK_EMBEDDING_STATUS))));
       verify(indexingCoordinator)
           .updateDocument(
               eq("chunk2"),
               argThat(
                   (Map<String, Object> m) ->
                       SchemaFields.EMBEDDING_STATUS_COMPLETED.equals(
-                          m.get(SchemaFields.CHUNK_EMBEDDING_STATUS))),
-              eq(true));
+                          m.get(SchemaFields.CHUNK_EMBEDDING_STATUS))));
     }
 
     @Test
@@ -160,8 +158,7 @@ class EmbeddingBackfillOpsTest {
               argThat(
                   (Map<String, Object> m) ->
                       "1".equals(m.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT))
-                          && !m.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)),
-              eq(true));
+                          && !m.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)));
     }
   }
 

@@ -120,8 +120,7 @@ class IndexingCoordinatorDispatchTest {
                     .indexingCoordinator()
                     .updateDocument(
                         "doc-race",
-                        Map.of(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED),
-                        true);
+                        Map.of(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED));
               } catch (Exception e) {
                 failures.incrementAndGet();
               } finally {
@@ -136,7 +135,7 @@ class IndexingCoordinatorDispatchTest {
                 runtime
                     .indexingCoordinator()
                     .updateDocument(
-                        "doc-race", Map.of(SchemaFields.SPLADE_RETRY_COUNT, "7"), true);
+                        "doc-race", Map.of(SchemaFields.SPLADE_RETRY_COUNT, "7"));
               } catch (Exception e) {
                 failures.incrementAndGet();
               } finally {

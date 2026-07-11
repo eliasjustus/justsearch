@@ -32,13 +32,12 @@ public sealed interface IndexWriteOperation
   }
 
   /**
-   * Single-document read-modify-write. Mirrors {@link WritePathOps#updateDocument(String, Map,
-   * boolean)}; returns {@code true} iff the document was found and updated.
+   * Single-document read-modify-write. Mirrors {@link WritePathOps#updateDocument(String, Map)};
+   * returns {@code true} iff the document was found and updated.
    */
   record UpdateDoc(
       String docId,
       Map<String, Object> updates,
-      boolean preserveSplade,
       Priority priority,
       CompletableFuture<Boolean> completion)
       implements IndexWriteOperation {
@@ -51,12 +50,7 @@ public sealed interface IndexWriteOperation
     }
 
     public static UpdateDoc of(String docId, Map<String, Object> updates) {
-      return of(docId, updates, false);
-    }
-
-    public static UpdateDoc of(String docId, Map<String, Object> updates, boolean preserveSplade) {
-      return new UpdateDoc(
-          docId, updates, preserveSplade, Priority.BACKFILL, new CompletableFuture<>());
+      return new UpdateDoc(docId, updates, Priority.BACKFILL, new CompletableFuture<>());
     }
 
     @Override
@@ -66,12 +60,11 @@ public sealed interface IndexWriteOperation
   }
 
   /**
-   * Batched read-modify-write. Mirrors {@link WritePathOps#updateDocumentsBatch(List, boolean)};
-   * returns a {@link BatchUpdateResult} with found / updated counts.
+   * Batched read-modify-write. Mirrors {@link WritePathOps#updateDocumentsBatch(List)}; returns a
+   * {@link BatchUpdateResult} with found / updated counts.
    */
   record BatchUpdate(
       List<Map.Entry<String, Map<String, Object>>> batchUpdates,
-      boolean preserveSplade,
       Priority priority,
       CompletableFuture<BatchUpdateResult> completion)
       implements IndexWriteOperation {
@@ -83,13 +76,7 @@ public sealed interface IndexWriteOperation
     }
 
     public static BatchUpdate of(List<Map.Entry<String, Map<String, Object>>> batchUpdates) {
-      return of(batchUpdates, false);
-    }
-
-    public static BatchUpdate of(
-        List<Map.Entry<String, Map<String, Object>>> batchUpdates, boolean preserveSplade) {
-      return new BatchUpdate(
-          batchUpdates, preserveSplade, Priority.BACKFILL, new CompletableFuture<>());
+      return new BatchUpdate(batchUpdates, Priority.BACKFILL, new CompletableFuture<>());
     }
 
     @Override
