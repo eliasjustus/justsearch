@@ -71,10 +71,26 @@ public class ImagePreparer {
             return original;
         }
 
-        // Calculate scale to fit within MAX_DIMENSION
-        double scale = Math.min((double) MAX_DIMENSION / width, (double) MAX_DIMENSION / height);
-        int newWidth = (int) (width * scale);
-        int newHeight = (int) (height * scale);
+        return scaleToFit(original, MAX_DIMENSION);
+    }
+
+    /**
+     * Scales {@code original} to fit within a {@code maxDimension} x {@code maxDimension} box
+     * (preserving aspect ratio), compositing onto a white background and normalizing to {@code
+     * TYPE_INT_RGB}. Package-private so {@link ImageLegibility} can reuse the same downscale
+     * behavior (bilinear interpolation, white-fill for transparent sources) instead of
+     * duplicating it for its own bounded-size analysis pass.
+     *
+     * <p>Caller must ensure at least one of {@code original}'s dimensions exceeds {@code
+     * maxDimension} if upscaling is undesired — this method always scales to fit the box.
+     */
+    static BufferedImage scaleToFit(BufferedImage original, int maxDimension) {
+        int width = original.getWidth();
+        int height = original.getHeight();
+
+        double scale = Math.min((double) maxDimension / width, (double) maxDimension / height);
+        int newWidth = Math.max(1, (int) (width * scale));
+        int newHeight = Math.max(1, (int) (height * scale));
 
         BufferedImage resized = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = resized.createGraphics();
