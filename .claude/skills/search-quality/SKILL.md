@@ -232,6 +232,10 @@ catalog — see Corpus provenance note above)*
 | (HEAD default, RMW preservation) | (default) | (default) | splade | 0.0591 | 0.005 | — | splade+chunk_merge | A | b88e76e | 711 |
 | (HEAD default, RMW preservation) | (default) | (default) | vector | **0.6184** | 0.410 | — | dense+chunk_merge | A | b88e76e | 711 |
 | (HEAD default, RMW preservation) | (default) | (default) | hybrid | **0.5609** | 0.425 | — | cross_encoder+dense+hybrid+chunk_merge | A | b88e76e | 711 |
+| (HEAD default re-verify, FRESH build, chunk vectors probe-verified 4293/4293) | (default) | (default) | vector | 0.6185 | 0.410 | 0.825 | branch_fusion+chunk_merge+dense | A | bc4bcd8 | 713 §M-5 |
+| (HEAD default re-verify, FRESH build) | (default) | (default) | hybrid | 0.5588 | 0.425 | 0.700 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | A | bc4bcd8 | 713 §M-5 |
+| (single-pass OFF: `late_chunking_enabled=false`, chunks ON — the F-031-less cell) | (default) | (default) | vector | **0.4147** | 0.150 | 0.725 | branch_fusion+chunk_merge+dense | B | 7b7c485 | 713 |
+| (single-pass OFF, chunks ON) | (default) | (default) | hybrid | 0.5339 | 0.375 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | B | 7b7c485 | 713 |
 
 **Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
 2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
@@ -251,6 +255,14 @@ F-031. Union-recall 0.890 (> the 0.87 pin) on the same run; leak + relevance gat
 truncation artifact — offline, per-chunk SPLADE covering the whole doc revives the sparse leg to
 0.327 (max-pool merge) / 0.545 (chunk-MaxP), the sparse sibling of F-031/F-032. See F-033 + Q-017.
 No engine-integrated chunk-splade row exists yet.
+**Note (713, 2026-07-11):** the single-pass-OFF rows are the missing (chunks-alive × no-F-031)
+cell — see F-035: the parent single-pass is NOT redundant (−0.204 vector without it). Conf B: the
+arm reused the prior run's index via jseval `--clean`'s then-protected set (retired by 716) —
+incremental rebuild, cell content probe-verified (4293/4293 chunk vectors live, `singlePass=0` in
+all 94 batches). The fresh-build re-verify rows confirm the 711 defaults pin (0.6185 ≈ 0.6184)
+with a direct on-disk vector-count probe. A separate same-session fresh-build defaults run scored
+0.3403/chunks-dead (the F-032-control signature, with the fix present) — unreproduced on the
+immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5.
 
 ### mixed/miracl-de-2k
 
@@ -670,6 +682,37 @@ above)*
   legal-clerc block above.
 - **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
   vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
+
+### F-035: the parent single-pass VECTOR is NOT redundant post-F-032 — removing it costs legal vector −0.204 even with all chunk vectors alive; KEEP BOTH representations (tempdoc 713, 2026-07-11; answers the F-032-opened missing cell; F-031's lever survives the landscape change)
+
+- **Answer:** the never-measured (chunks-alive × parent-without-single-pass) cell on
+  `mixed/legal-clerc-200` (byte-identical corpus sha256 `630f5376…`, zero-code arm
+  `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`, chunk vectors on): **vector nDCG@10 0.4147 /
+  hybrid 0.5339**, vs same-session fresh-build defaults **0.6185 / 0.5588** (which re-verifies the
+  711 pin 0.6184/0.5609 with a direct on-disk probe — 4293/4293 chunk vectors live). Delta:
+  **vector −0.204 (−33%), hybrid −0.025**. Chunk-MaxP + `chunk_merge` does NOT substitute for a
+  good parent vector. **Mechanism:** the whole-doc branch participates in branch fusion regardless
+  of its quality — with the single-pass OFF, window-mean parents inject 0.060-quality noise that
+  dilutes the healthy chunk branch (the cell sits between window-mean-only 0.060 and the offline
+  chunk ceiling ~0.64). Verdict: **keep both** — the dense parent/chunk pair is a governed
+  dual-representation (parent = whole-doc gist consumed by branch fusion; chunks = best-passage
+  evidence), not a redundant fork. F-031's machinery stays; no config/default change.
+- **Cell validity:** arm probe `live_chunk_vector=4293/4293`, `singlePass=0` in all 94
+  combined-pass batches (flag took effect), `fail=0` (enrichment complete), 200 queries.
+  Conf B: the arm was an incremental rebuild over the prior run's index (jseval `--clean`
+  protected set, retired by 716) — content probe-verified, build-shape deviation noted.
+- **Honest framing:** this *confirms* (not reverses) 691's shipped F-031 lever under the F-032
+  landscape change — the charter's consolidation hypothesis is measurement-rejected.
+- **Anomaly quarantined (713 §M-3/M-5):** one same-session fresh-build defaults run scored
+  0.3403/chunks-dead (the exact F-032-control signature, with #139 verifiably in the running
+  code); the immediate probe-instrumented fresh re-run reproduced 0.6185/chunks-alive instead.
+  Unresolved one-off (C confidence, quarantined); the fresh-ingest path is NOT implicated —
+  re-open only if a chunks-dead signature (vector ≈0.34 + missing `chunk_merge` leg) recurs.
+- **Feeds 712/Q-017:** the structural argument (branch fusion always consumes the parent leg)
+  applies to the SPLADE parent too, but 712 should measure, not inherit.
+- **Evidence:** tempdoc 713 (§Takeover T-1..T-5, §Measurement M-1..M-5, probe outputs, counter
+  tables); runs `tmp/eval-results/20260711T135127/T135536/T161445_mixed_legal-clerc-200`
+  (713-dense worktree); reproduction commands in 713 §Measurement.
 
 ### F-034: offline encoder bake-off on legal-clerc-200 — NO MODEL SWAP; the incumbent was never domain-limited, and no eligible multilingual candidate significantly beats it (tempdoc 708, 2026-07-11; closes the encoder-choice question F-030(678) spawned)
 
@@ -1460,6 +1503,10 @@ above)*
   the go/no-go for the default-on flip of the chunk-sparse flag. It also feeds (with tempdoc 713's
   parent-representation verdict) whether the parent whole-doc `splade` encode on chunked docs still
   earns its place.
+- **713 verdict delivered (2026-07-11, F-035):** the dense parent earns its place — branch fusion
+  always consumes the whole-doc branch, so a degraded parent representation actively dilutes the
+  chunk branch (−0.204 vector without the single-pass). The same structural argument plausibly
+  applies to the sparse parent, but 712 should measure it, not inherit the dense result.
 - **Cheapest evidence:** tempdoc 712 §Step 4 (ON HOLD, GPU-sequenced after 713's pending
   measurement) — `jseval run --start-backend --clean` on legal-clerc-200 with the flag on vs off,
   recording enrichment wall-clock + docs/s as first-class outputs, plus a short-doc control corpus.
