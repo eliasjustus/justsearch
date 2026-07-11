@@ -22,7 +22,6 @@ public final class SchemaFields {
 
   // Content fields
   public static final String CONTENT = "content";
-  public static final String CONTENT_ALL = "content_all";
   /** Small stored preview used for result list snippets (bounded length). */
   public static final String CONTENT_PREVIEW = "content_preview";
   public static final String TITLE = "title";
