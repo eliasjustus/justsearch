@@ -131,3 +131,220 @@ it is the sole gate on an otherwise-well-scoped, fork-resolving simplification. 
 
 Because the arm was fully determined during this reading pass (zero-code) and the GPU was idle, the
 A/B was launched now to overlap its compute with the theorize/design writing (§Measurement).
+
+---
+
+## Theorization (2026-07-11) — before design
+
+### TH-1. Three ways to frame the question
+
+1. **"Redundant parent vector"** (charter's): does the whole-doc single-pass earn its cost on top
+   of chunk vectors? Binary retire/keep.
+2. **"Which dense representation is canonical"** (710/E-5 fork lens): a chunked doc's dense identity
+   has TWO authorities today — the parent whole-doc vector and the per-chunk vectors, reconciled at
+   query time by `chunk_merge` (MaxP). The question is less "is single-pass redundant" than "is the
+   dense doc-vector a fork we should collapse."
+3. **"Granularity vs context-length attribution"**: F-031 attributed the 0.06→0.34 vector revival to
+   *context length* (one 8192-tok pass beats window-mean) — but that was measured against **dead
+   chunks** (F-032). Post-F-032, how much of vector-mode quality is *chunk granularity* vs *parent
+   context-length* is itself unmeasured. The zero-code A/B (parent window-mean vs parent single-pass,
+   chunks alive in both) is precisely the attribution experiment for framing 3, not only the
+   retire/keep experiment for framing 1.
+
+### TH-2. The corpus-generalization trap (largest hidden assumption)
+
+The charter's "retire it" framing implicitly assumes the legal-clerc result generalizes. It likely
+does **not**, and this is the most important theorization finding:
+- F-031 shipped with **measured controls**: enron-qa **+7% vector / +1.3% hybrid**, scifact neutral.
+  Enron long emails chunk and *benefit* from the single-pass. Retiring it globally would knowingly
+  reintroduce a **−7% enron vector regression** — a `fix-root-causes` / evidence-regression the
+  register would catch.
+- So even a clean legal-parity result does **not** license a global default flip. The honest space
+  of outcomes is three, not two:
+  - (a) parity on legal **and** controls neutral → consolidate globally (simplest, fork resolved);
+  - (b) parity on legal but controls (enron) regress → the single-pass is a **corpus-dependent
+    lever** (same shape as F-004 CC-weights, FW-001 CE-gating) — keep it, and the finding is
+    "whole-doc context helps where doc semantics are coherent (email threads), is redundant where
+    they are not (legal citation docs)";
+  - (c) legal itself regresses → F-031 earns its keep outright, close "keep both."
+- Therefore the design must treat **enron-qa (and scifact) as required controls**, not optional
+  follow-ups — a default change is only in scope under outcome (a).
+
+### TH-3. What the zero-code arm does and does NOT isolate
+
+The arm sets the parent for chunked docs to **window-mean** (still present in the merge), not
+**absent**. So it measures single-pass-parent vs window-mean-parent (chunks alive in both), not
+parent-present vs parent-absent. Reasoning ladder:
+- If window-mean-parent+chunks ≈ single-pass-parent+chunks → the parent *representation quality* is
+  near-irrelevant on this corpus; MaxP over chunk vectors dominates the merge (consistent with 691
+  §M chunk-CLS MaxP 0.64 ≥ live 0.618). Then dropping the parent vector *entirely* for chunked docs
+  is low-risk — but confirming that needs a second, non-zero-code arm (parent-absent). Prefer to
+  reason from the zero-code result first (charter guidance) and only build the parent-absent probe
+  if the parent still looks load-bearing.
+- If single-pass-parent > window-mean-parent materially → context-length is a real contributor even
+  with chunks alive; F-031's mechanism survives F-032 and the machinery stays.
+
+### TH-4. Cost honesty (interrogate the charter's premise)
+
+The charter motivates removal partly by cost ("101/198 parents took the deferral path, 8192-tok
+batch-1 passes + second-RMW complexity"). But 711 measured the current-defaults arm as
+throughput-**neutral** (130.8 s engine vs 141.2 s control — engine faster, noise). Two things follow:
+the second-RMW complexity was already deleted by F-032 (single bundled write per doc), so that cost
+is gone regardless of 713; and the residual single-pass GPU compute did not move the wall. The case
+for consolidation therefore rests on **structural simplicity + fork resolution**, and the write-up
+must not overstate a cost saving the measurement won't support. The A/B's enrichment-wall column is
+the honest test — report it even (especially) if ~zero.
+
+### TH-5. Recurring system shapes
+
+- **One-canonical-representation applied to the dense vector** (553/636 lineage, already the rule for
+  `SearchTrace`). The dense doc-vector is a candidate fork; 713 either collapses it or consciously
+  declares it a *governed* dual-representation with a per-member reason to change (as BM25/SPLADE/
+  dense legs are deliberately plural). Multiplicity is fine when each member answers a *different*
+  question (AHA); it is a fork when both answer "what is this doc's dense vector" and will drift.
+- **Landscape-change lever re-evaluation.** F-032 changed the substrate F-031 was tuned against.
+  "A leg-reviving fix should re-open the levers tuned against the dead-leg state" is a reusable
+  practice this tempdoc is the first instance of — worth an observation, not a hard rule.
+
+---
+
+## Design (2026-07-11)
+
+The design is **outcome-selected by the A/B** (§Measurement); all three branches are specified so
+the founder can approve the whole decision tree, not just one path. Scope is deliberately matched to
+the zero-code arm: it supports the *parent = window-mean* form (search-side unchanged), not
+*parent absent* (which would need a second arm + a search-side change and is out of scope here).
+
+### D-1. Orphan map (what a retirement removes — verified in source)
+
+If the A/B licenses retiring the single-pass (outcome a), these are the exact orphaned surfaces —
+their deletion/tombstoning is **this tempdoc's work**, not a later sweep:
+- `CombinedEnrichmentBackfillOps` Phase 3a-i fold-in (`:372-431`): `lateChunkingDocIds`/
+  `lateChunkingContents`, the `isLateChunkingParent` gate (`:335-339`), the `singlePass`/
+  `longDocWindowed`/`arenaOomWindowed` counters, `isArenaOomFailure`, `hasChunkDocs`, `NO_SPANS`,
+  and the `BackfillContext.lateChunkingEnabled` field + its wiring in `BackfillScheduler` /
+  `IndexingLoop` / `InferenceCompositionRoot`.
+- Config surface: `justsearch.embed.late_chunking_enabled` + `late_chunking_context_length`
+  (`ResolvedConfigBuilder:1058-1075`, `EnvRegistry:~320-334`, the `ResolvedConfig` fields, the YAML
+  keys, `ResolvedConfigBuilderTest`).
+- **`EmbeddingProvider.embedWithSpans` and its whole span-handling path**: verified to have exactly
+  **one production caller** (`:386`, always `NO_SPANS`). The `charSpans` argument is
+  **production-dead already** — it is the span-mean chunk-vector technique (arXiv:2409.04701) that
+  691 measured and *did NOT ship* (offline 0.64→0.41 on CLS-pooled models). Retiring the single-pass
+  therefore also orphans the span path end-to-end (`OnnxEmbeddingEncoder.embedWithSpans` +
+  `EmbeddingService.embedWithSpans` + `EmbeddingShape` span machinery + the two
+  `…LateChunking…`/`…LongDocForensic…` encoder tests). This is a meaningful simplification — but it
+  removes a *tested, deliberately-retained* capability, so the plan tombstones it with a pointer to
+  the 691 §M evidence rather than silently deleting, in case a future non-CLS encoder (708's lane)
+  revisits canonical late chunking.
+
+Not touched by any branch: chunk-vector writing (`chunkVectorsEnabled` path, F-032), `chunk_merge`
+search fusion, non-chunked-doc embedding (one whole-doc vector via the normal batch — those docs
+never enter the single-pass because `hasChunkDocs` is false), and the encoder itself (708).
+
+### D-2. Branch A — global consolidation (if legal parity AND enron/scifact controls neutral)
+
+Flip `justsearch.embed.late_chunking_enabled` default to **false**, then delete the orphan surface in
+D-1 (a default flip alone leaves dead config; the tempdoc-is-your-contract rule means the retirement
+is the deletion, not just the flip). Result: chunked docs' parent vector = window-mean (cheap,
+already computed in the normal batch), and the dense authority for chunked docs is carried by
+chunk vectors + `chunk_merge` MaxP. The parent vector remains present (window-mean) so the search
+side and the union-recall/leak gates are structurally unchanged; only its *derivation* simplifies.
+Non-chunked docs: identical to today.
+
+### D-3. Branch B — corpus-dependent lever (if legal parity but enron/scifact regress)
+
+The single-pass is **not** a redundant fork; it is a corpus-adaptive quality lever (F-004 / FW-001
+family). Design conclusion: **keep it, default-on, document the boundary** — "whole-doc context
+revives the parent vector where document semantics are coherent (email threads, academic abstracts)
+and is redundant where chunk granularity already separates the content (legal citation docs)."
+No new structure: building runtime corpus-detection to toggle it would add exactly the per-corpus
+apparatus F-004 already declined to build (mode selection is left to the operator). 713 closes as a
+**finding**, not a code change. This is the most likely outcome given TH-2.
+
+### D-4. Branch C — F-031 vindicated (if legal itself regresses)
+
+The single-pass earns its keep even on the corpus that motivated the doubt. Close "keep both";
+record the measured legal regression as F-031's standing justification. No code change.
+
+### D-5. Reach — the design's principle and its retirement condition
+
+- **Principle (name): one canonical dense representation per document; multiple dense *vectors* are
+  legitimate only when each answers a different retrieval question.** The parent whole-doc vector and
+  the per-chunk vectors are a *fork* iff they both answer "what is this doc's dense identity" and are
+  merged as interchangeable (today's `chunk_merge`). They are *not* a fork if the parent answers
+  "whole-doc topical gist" and chunks answer "best-matching passage" — distinct questions, MaxP is
+  the reconciliation. **Where else it applies:** SPLADE has the same parent/chunk structure
+  (`chunk_merge` on the sparse leg too) — the same question could be asked of the SPLADE parent.
+  **Existing violation candidate:** none proven; 713's A/B is the instrument that decides whether the
+  *dense* pair is a fork or a governed dual-representation.
+- **Evidence it earns its keep:** the A/B resolves the dense pair one way or the other with a single
+  measurement; if the principle is real, the same one-measurement test transfers to the SPLADE pair
+  without new apparatus.
+- **Retirement condition:** if the A/B shows the parent and chunk vectors are genuinely
+  non-substitutable on *every* tested corpus (each contributes independently everywhere), then
+  "collapse the fork" is the wrong frame — they are a deliberate dual-representation and the principle
+  retires into "governed multiplicity," not "one authority." Do not keep invoking a
+  fork-collapse principle against a pair the evidence says is genuinely dual.
+- **Guard against premature abstraction:** no generalized "representation registry" or SPLADE-side
+  change is built now — 713 only touches the dense pair its measurement covers. The SPLADE
+  transfer is *recorded as candidate scope*, not built.
+
+---
+
+## Implementation plan (2026-07-11) — FOR FOUNDER APPROVAL
+
+No plan-mode/ExitPlanMode is available to this run, so this is written as an approval-gated plan.
+**No feature code has been written; no PR opened.** Only the tempdoc and the decisive measurement
+(read-only eval) are produced this session. Nothing below executes without an explicit go-ahead.
+
+### Step 0 — decisive A/B (this session; §Measurement holds results)
+
+Zero-code. `mixed/legal-clerc-200`, modes `vector,hybrid`, byte-identical corpus, back-to-back
+detached runs on the same machine (711 template):
+- **CONTROL** = shipped defaults (`late_chunking_enabled=true`): expected ≈ vector 0.618 / hybrid
+  0.559 (reproduces `b88e76e`; a same-session re-run removes cross-commit doubt).
+- **ARM** = `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`, chunk vectors on: the never-measured cell.
+- Counter/confound capture per run (worker log): `singlePass` / `longDocWindowed` / `arenaOomWindowed`
+  and `chunk_vector` doc-count, to prove both arms reached full COMPLETED enrichment (control for
+  under-enrichment before reading any delta — `interrogate-results`).
+- Decision rule vs the corpus ±2σ envelope: parity-or-better → Branch A candidate (pending controls);
+  regression → Branch C.
+
+### Step 0b — required controls BEFORE any default flip (gates Branch A)
+
+Per TH-2, a legal-parity result does **not** license a global default change on its own, because
+F-031 shipped a measured **+7% enron vector** gain. Run the same two-arm A/B on **`mixed/enron-qa`**
+and **`beir/scifact`**. Only if both are neutral (within envelope) does Branch A proceed; if enron
+regresses, the outcome is Branch B.
+
+### Step 1 — Branch A execution (ONLY if Step 0 + 0b clear it) — approval-gated
+
+1. Flip the `late_chunking_enabled` default to `false` in `ResolvedConfigBuilder` and delete the
+   orphan surface enumerated in **D-1** in the same PR (teardown rides along — the config flip alone
+   would leave dead machinery, violating tempdoc-is-your-contract).
+2. Tombstone (not silent-delete) the `embedWithSpans` span path with a pointer to 691 §M, since it is
+   a deliberately-retained but now production-dead capability (D-1).
+3. **Delegable to a `sonnet` subagent** (bounded, mechanical, verifiable): the orphan deletion +
+   test-fixture updates, with a self-contained brief listing the exact D-1 sites and the acceptance
+   criterion "`./gradlew.bat build -x test` green + `:modules:worker-services:test` +
+   `:modules:worker-core:test` + `:modules:configuration:test` green." Orchestrator keeps: the A/B
+   judgment, the register update, and the merge.
+4. Validation: `spotlessApply` → `build -x test` → the three module test suites → a fresh
+   full-mode gate run on legal-clerc (`lexical,splade,vector,hybrid`) confirming union-recall ≥ 0.87
+   / relevance + leak gates green (the F-032 publish-step shape) → re-confirm enron/scifact controls.
+5. Register: update the `mixed/legal-clerc-200` baseline block (new default rows), move the charter
+   cell from "never measured" to a Finding (new F-0xx, honest F-032-landscape framing), add the
+   enron/scifact control rows, run `node scripts/docs/skills-sync.mjs` if the register is touched.
+
+### Step 2 — Branch B or C (doc-only) — no approval needed beyond register update
+
+Record the finding (corpus-dependent lever / F-031 vindicated) in the register Findings + the
+`late_chunking` config note; no code change. Add the SPLADE-parent transfer (D-5) to Open Questions
+if Branch A/B suggests it is live. Fold observation shards; update this tempdoc status to closed.
+
+### Out of scope (explicit)
+
+Parent-vector-*absent* variant (needs a second arm + search-side `chunk_merge` change); the encoder-
+domain question (708); any SPLADE-side change (recorded as candidate scope only); building runtime
+corpus-detection to auto-toggle the lever (F-004 already declined that apparatus).
