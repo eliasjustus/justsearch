@@ -31,7 +31,7 @@
         "unique": { "type": "boolean" },
         "rmwPolicy": {
           "type": "string",
-          "$comment": "Read-modify-write disposition for a non-stored, non-docValues data-bearing field (tempdoc 711). 'preserve-reread' re-reads the field from the index and carries it forward; 'reset-status:<statusFieldId>' resets the named docValues-backed status field so a backfill re-derives the dropped data.",
+          "$comment": "Read-modify-write disposition, required at startup for every non-stored, non-docValues field of any type (tempdoc 711; type-generalized by tempdoc 714). 'preserve-reread' (vector fields only) re-reads the field from the index and carries it forward; 'reset-status:<statusFieldId>' resets the named docValues-backed status field so a backfill re-derives the dropped data. A field whose data is legitimately recomputed on every write would need a new disposition value here — extend the vocabulary when such a field exists, not before.",
           "pattern": "^(preserve-reread|reset-status:[a-z0-9_]+)$"
         },
         "analyzer": { "type": "string" },

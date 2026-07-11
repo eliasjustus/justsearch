@@ -706,6 +706,9 @@ public record ResolvedConfig(
    * @param mmrMaxCandidates max MMR candidates
    * @param includeSurroundingContext whether to include surrounding context
    * @param chunkVectorsEnabled whether chunk-level vector retrieval is enabled
+   * @param chunkSpladeEnabled whether chunk-level SPLADE enrichment is enabled (tempdoc 712:
+   *     encodes chunk docs' {@code chunk_content} into the {@code splade} FeatureField so the
+   *     chunk-merge sparse sub-leg has data; default false — evidence-gated flip, F-033/Q-017)
    * @param ragTopK env var override for RAG top-k (justsearch.rag.top_k)
    * @param citationMatchThreshold cosine similarity threshold for citation matching
    * @param maxChunksPerArticle 385: max chunks per parent document in RAG context (diversity cap)
@@ -719,6 +722,7 @@ public record ResolvedConfig(
       int mmrMaxCandidates,
       boolean includeSurroundingContext,
       boolean chunkVectorsEnabled,
+      boolean chunkSpladeEnabled,
       int ragTopK,
       String citationMatchThreshold,
       int maxChunksPerArticle) {}
