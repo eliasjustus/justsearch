@@ -1984,6 +1984,18 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: environment?` `anchor: PdfOcrEngineTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
 - [ ] PdfOcrEngineTest.interruptDestroysAllRegisteredChildren FAILED on main-push CI (run 29129172631, 691 squash) while the identical job passed on the PR run minutes earlier — 691's diff has zero OCR overlap; matches the 706 OCR-CI-flake lineage (PR #128 hardened a sibling flake). Rerun triggered to confirm flake; if it recurs, the interrupt/child-destroy test needs the same hardening treatment — `modules/worker-services PdfOcrEngineTest` (2026-07-10)
 
+### obs:unanchored-general-77 — main checkout shows models/*.onnx (gte, ner, reranker, splade) as untracked (??) despite .gitattribu
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] main checkout shows models/*.onnx (gte, ner, reranker, splade) as untracked (??) despite .gitattributes LFS patterns and merged 691 PRs — git lfs ls-files fails 'bad revision' for them; possibly never git-added on main. Needs LFS-state triage — `models/` (2026-07-11)
+
+### obs:fields-v1 — content_all (text, stored:false, docValues:false) is also destroyed by readModifyWrite — outside tem
+`kind: defect?` `anchor: SSOT/catalogs/fields.v1.json` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] content_all (text, stored:false, docValues:false) is also destroyed by readModifyWrite — outside tempdoc 711's vector/splade fragile scope, so it declares no rmwPolicy and is not preserved; a doc drops out of content_all search after any subset-field RMW — `SSOT/catalogs/fields.v1.json:74` (2026-07-11)
+
+### obs:modelcapabilityresolver — Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the ver
+`kind: environment?` `anchor: modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the version in use; used throughout ModelCapabilityResolver.resolvePrefixes/resolveLabelMapping — `modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` (surfaced under -Xlint:deprecation, out of scope for tempdoc 711 Item 3) (2026-07-11)
+
 ## Parked
 
 ### obs:batch-557-deferred — 557 deferred residuals (Q2 tri-state env-blocked; minor MacroDryRun wording)
