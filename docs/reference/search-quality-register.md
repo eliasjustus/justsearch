@@ -747,6 +747,24 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-036: live chunk-SPLADE revives the sparse leg 4.4× in isolation but is hybrid-NEUTRAL at +108% enrichment cost on legal-clerc-200 → default stays OFF (tempdoc 712, 2026-07-11; the live-tier answer to F-033/Q-017)
+
+- **Answer:** the `rag.chunk_splade.enabled` flag realizes F-033's offline revival on the live
+  engine's *isolated* sparse leg but the gain does not survive fusion. Clean same-session A/B on
+  legal-clerc-200, both arms health-verified (`chunk_merge` leg active, dense identical 0.6187 vs
+  0.6184 confirming comparability): `splade` mode 0.0591 → **0.2588** (4.4×); **`hybrid` (production)
+  0.5625 → 0.5592** — flat, within noise, marginally negative; enrichment wall 132 s → 275 s
+  (**+108%**). Short-doc control (battlefield-en-v1) flag-on hybrid 0.9517 = baseline, no regression.
+- **Mechanism:** on this corpus the dense + cross-encoder signals already rank the relevant long
+  docs, so the revived sparse leg overlaps rather than adds at the fusion stage — the same
+  isolated-win-doesn't-fuse pattern as F-004 (mode optimality is corpus-dependent) and CE-hurts-enron.
+- **Decision:** default **OFF**; the flag is a corpus-specific lever for a future sparse-dominant
+  workload. The 712 foundation (the flag + the fix for chunk docs being silently marked
+  splade-COMPLETED without encoding) shipped in #145 regardless of the default.
+- **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
+  anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
+  offline result is F-033; this is its live-tier resolution.
+
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 
 - **Answer:** production SPLADE hard-truncates every document to `maxSeqLen=512` tokens
@@ -1481,7 +1499,7 @@ above)*
   SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
   domain. The dense half stands as F-031/F-032 scoped it.
 
-### Q-017: Does the offline chunk-SPLADE revival (F-033) hold once integrated into the live engine (ANN + Lucene FeatureField saturation + fusion), and at what enrichment cost? → OPEN (tempdoc 712)
+### Q-017: Does the offline chunk-SPLADE revival (F-033) hold once integrated into the live engine (ANN + Lucene FeatureField saturation + fusion), and at what enrichment cost? → ANSWERED (tempdoc 712, F-036; verdict: keep default-OFF)
 
 - **Question:** F-033 measured, offline, that per-chunk SPLADE lifts legal-clerc-200 sparse nDCG@10
   from 0.054 (production-mirror truncated) to 0.327 (max-pool doc-merge) / 0.545 (chunk-MaxP). Those
@@ -1501,9 +1519,20 @@ above)*
   always consumes the whole-doc branch, so a degraded parent representation actively dilutes the
   chunk branch (−0.204 vector without the single-pass). The same structural argument plausibly
   applies to the sparse parent, but 712 should measure it, not inherit the dense result.
-- **Cheapest evidence:** tempdoc 712 §Step 4 (ON HOLD, GPU-sequenced after 713's pending
-  measurement) — `jseval run --start-backend --clean` on legal-clerc-200 with the flag on vs off,
-  recording enrichment wall-clock + docs/s as first-class outputs, plus a short-doc control corpus.
+- **ANSWER (2026-07-11, live A/B on legal-clerc-200, both arms health-verified chunk_merge-active
+  → F-036):** the flag revives the sparse leg in isolation but does NOT improve production hybrid,
+  at more than double the enrichment cost. Clean same-session arms (both healthy): `splade`
+  0.0591 → **0.2588** (4.4×, real); `vector` 0.6187 → 0.6184 (unchanged — flag doesn't touch dense,
+  which cross-validates arm comparability); **`hybrid` 0.5625 → 0.5592 (flat/noise-negative)**;
+  enrichment wall 132 s → 275 s (**+108%**). Short-doc control (battlefield-en-v1, flag-on) hybrid
+  0.9517 — matches its baseline, no regression. **Verdict: keep default-OFF.** The isolated 4.4×
+  sparse-leg gain is fully absorbed by the dense+CE signals in fusion on this corpus (the
+  F-004/CE-hurts-enron pattern); the flag stays an available corpus-specific lever. The 712
+  foundation (flag + the silent data-less-COMPLETED fix) is already shipped (#145).
+- **Caveat surfaced:** the first (confounded) A/B arm and 713's control both hit an INTERMITTENT
+  fresh-build anomaly where the whole `chunk_merge` leg is silently absent (vector 0.34 not 0.62).
+  Chartered separately as **tempdoc 717** — it is a defect on the shipped default path, unrelated to
+  this flag.
 - **Design/plan:** tempdoc 712 (§Mechanism correction + §Implementation log; steps 1–3 landed
   flag-gated default-off on branch `worktree-712-sparse`).
 
