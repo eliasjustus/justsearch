@@ -204,6 +204,16 @@ final class OnlineModeOps {
 
   CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
       String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens, SamplingParams.VDU, null);
+  }
+
+  /**
+   * Tempdoc 677 Stage 2: sampling/seed-override overload — the agreement probe calls this with
+   * {@link SamplingParams#VDU_PROBE} and a fixed seed instead of the deterministic {@link
+   * SamplingParams#VDU} the 3-arg overload above always uses.
+   */
+  CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
     requireOnline("Vision");
 
     String base64Image = Base64.getEncoder().encodeToString(imageBytes);
@@ -225,7 +235,7 @@ final class OnlineModeOps {
             emitRequestStarted(RequestKind.VISION, enqueueNanos);
             try {
               VisionCompletionResult result =
-                  sendVisionRequestDetailed(prompt, base64Image, maxTokens);
+                  sendVisionRequestDetailed(prompt, base64Image, maxTokens, sampling, seed);
               outcome = RequestOutcome.OK;
               return result;
             } finally {
@@ -778,11 +788,12 @@ final class OnlineModeOps {
 
   private String sendChatRequest(
       List<Map<String, Object>> messages, int maxTokens, SamplingParams sampling) {
-    return sendChatRequestDetailed(messages, maxTokens, sampling, false).content();
+    return sendChatRequestDetailed(messages, maxTokens, sampling, false, null).content();
   }
 
   /**
-   * Sends a non-streaming chat completion request, optionally requesting per-token logprobs.
+   * Sends a non-streaming chat completion request, optionally requesting per-token logprobs and/or
+   * an explicit seed.
    *
    * <p>Tempdoc 677 S1 (plumbing only, no gating): {@code requestLogprobs} is opt-in. Today only
    * {@link #sendVisionRequestDetailed} passes {@code true} — {@link #sendChatRequest} (used by
@@ -791,12 +802,18 @@ final class OnlineModeOps {
    * for every non-vision caller. {@code finish_reason} is extracted unconditionally (cheap);
    * the logprob-derived scalars ({@code meanLogprob}, {@code lowConfidenceFraction}) are null
    * when the server did not return {@code logprobs} on the response.
+   *
+   * <p>Tempdoc 677 Stage 2: {@code seed}, when non-null, is sent as llama-server's {@code seed}
+   * request field. Only the Stage-2 agreement probe (via {@link #sendVisionRequestDetailed})
+   * passes a non-null seed today — {@link #sendChatRequest} always passes {@code null}, so this
+   * is likewise behavior-neutral for every existing caller.
    */
   private VisionCompletionResult sendChatRequestDetailed(
       List<Map<String, Object>> messages,
       int maxTokens,
       SamplingParams sampling,
-      boolean requestLogprobs) {
+      boolean requestLogprobs,
+      Long seed) {
     try {
       Map<String, Object> body = new java.util.HashMap<>();
       body.put("model", resolveModelIdForRequests());
@@ -804,6 +821,9 @@ final class OnlineModeOps {
       body.put("max_tokens", maxTokens);
       if (requestLogprobs) {
         body.put("logprobs", true);
+      }
+      if (seed != null) {
+        body.put("seed", seed);
       }
       if (sampling != null) {
         body.put("temperature", sampling.temperature());
@@ -904,7 +924,7 @@ final class OnlineModeOps {
   }
 
   private VisionCompletionResult sendVisionRequestDetailed(
-      String prompt, String base64Image, int maxTokens) {
+      String prompt, String base64Image, int maxTokens, SamplingParams sampling, Long seed) {
     try {
       List<Map<String, Object>> content = new ArrayList<>();
       content.add(Map.of("type", "text", "text", prompt));
@@ -917,7 +937,8 @@ final class OnlineModeOps {
 
       List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", content));
 
-      return sendChatRequestDetailed(messages, maxTokens, SamplingParams.VDU, true);
+      return sendChatRequestDetailed(
+          messages, maxTokens, sampling != null ? sampling : SamplingParams.VDU, true, seed);
 
     } catch (RuntimeException e) {
       throw e; // avoid double-wrapping RuntimeExceptions from sendChatRequestDetailed

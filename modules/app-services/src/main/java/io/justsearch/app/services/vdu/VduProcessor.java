@@ -282,7 +282,7 @@ public class VduProcessor {
             GateVerdict stage1Verdict =
                 VduAbstentionGate.outputVerdict(aggregateSignals(sentPageResults));
 
-            if (stage1Verdict.rejected()) {
+            if (stage1Verdict.band() == GateVerdict.Band.REJECT) {
                 // Pass 2 is not a check — it summarizes Pass 1's own output, trusting it
                 // unconditionally (tempdoc 677 code map finding). Do not summarize suspect text:
                 // skip Pass 2 entirely for a document the gate already rejected.
@@ -291,7 +291,22 @@ public class VduProcessor {
                 return new VduResult(extractedText, null, pageImages.size(), stage1Verdict);
             }
 
-            // Pass 2: Summarize and extract entities (timed) — unchanged, gate passed.
+            // Tempdoc 677 Stage 2: an AMBIGUOUS Stage-1 band is not yet a decision — re-sample the
+            // single worst-signal page once (temperature/seed varied) and compare it against its
+            // own Pass 1 text. Low agreement resolves to a rejection; high agreement resolves to a
+            // pass, and processing continues into Pass 2 exactly as the PASS band would.
+            GateVerdict resolvedVerdict = stage1Verdict;
+            if (stage1Verdict.band() == GateVerdict.Band.AMBIGUOUS) {
+                resolvedVerdict = runAgreementProbe(legiblePageIndices, pageImages, sentPageResults, filePath);
+                if (resolvedVerdict.rejected()) {
+                    LOG.info("VDU Stage 2 rejected output for {} (agreement={}, probedPage={})",
+                        filePath.getFileName(), resolvedVerdict.agreement(), resolvedVerdict.probedPage());
+                    return new VduResult(extractedText, null, pageImages.size(), resolvedVerdict);
+                }
+            }
+
+            // Pass 2: Summarize and extract entities (timed) — unchanged, gate passed (directly at
+            // Stage 1, or resolved to a pass by Stage 2 above).
             long pass2StartNanos = System.nanoTime();
             String enrichment;
             try {
@@ -316,7 +331,7 @@ public class VduProcessor {
             LOG.info("VDU complete for {}: {} chars, {} pages, {}ms",
                 filePath.getFileName(), extractedText.length(), pageImages.size(), elapsed);
 
-            return new VduResult(extractedText, enrichment, pageImages.size(), stage1Verdict);
+            return new VduResult(extractedText, enrichment, pageImages.size(), resolvedVerdict);
 
         } catch (IOException e) {
             LOG.error("VDU I/O error for: {}", filePath, e);
@@ -376,9 +391,9 @@ public class VduProcessor {
             maxContrast = Math.max(maxContrast, measures.rmsContrast());
         }
         return new GateVerdict(
-            true, VduAbstentionGate.STAGE_INPUT_LEGIBILITY,
+            true, GateVerdict.Band.REJECT, VduAbstentionGate.STAGE_INPUT_LEGIBILITY,
             null, null, null, null,
-            maxLaplacian, maxContrast);
+            maxLaplacian, maxContrast, null, null);
     }
 
     /**
@@ -451,6 +466,89 @@ public class VduProcessor {
 
         return new AggregatedPageSignals(
             meanLogprob, lowConfidenceFraction, totalTokenCount, aggregateFinishReason);
+    }
+
+    /**
+     * Tempdoc 677 Stage 2: fixed seed for the re-sample agreement probe's HTTP request. Varying
+     * temperature (see {@link SamplingParams#VDU_PROBE}) is what makes the probe capable of
+     * disagreeing with Pass 1's own output; the seed is fixed (not random) purely so that
+     * re-processing the same document twice reproduces the same probe result — useful for
+     * debugging a rejection — not because the specific value carries any meaning.
+     */
+    private static final long STAGE2_PROBE_SEED = 677L;
+
+    /**
+     * Tempdoc 677 Stage 2: resolves an AMBIGUOUS Stage-1 verdict by re-sampling ONE page — the
+     * page whose Pass 1 signals were worst among those sent to the model ({@link
+     * #worstSignalIndex}) — and comparing its original Pass 1 text against the re-sample via
+     * {@link VduAbstentionGate#jaccardAgreement}.
+     *
+     * <p><b>Why only one page, not every page:</b> probing every page would cost N extra
+     * inference calls per ambiguous document; the worst-signal page is the most informative single
+     * page to re-sample (if the document's output is confabulated, the worst page is the most
+     * likely to expose it) — one extra call per ambiguous document is the price of resolving the
+     * ambiguity (tempdoc 677 task: "run the probe on the SINGLE page with the worst page-level
+     * signals... one extra inference per ambiguous doc, the worst page is the most informative").
+     *
+     * @param legiblePageIndices indices into {@code pageImages} that were sent to the model, in
+     *     the same order as {@code sentPageResults}
+     * @param pageImages every rendered page image (the full Stage 0 list)
+     * @param sentPageResults Pass 1 results for the pages sent, same order/index as {@code
+     *     legiblePageIndices}
+     * @param filePath the document being processed (log context only)
+     * @return the Stage 2 verdict: {@link GateVerdict#rejected()} when the probe disagrees with
+     *     Pass 1 (agreement below {@link VduAbstentionGate#AGREEMENT_FLOOR}), otherwise a passing
+     *     verdict; either way {@link GateVerdict#agreement()} and {@link GateVerdict#probedPage()}
+     *     (1-based) are populated as evidence
+     */
+    private GateVerdict runAgreementProbe(
+        List<Integer> legiblePageIndices,
+        List<Path> pageImages,
+        List<OnlineAiService.VisionCompletionResult> sentPageResults,
+        Path filePath) throws IOException {
+        int worstIdx = worstSignalIndex(sentPageResults);
+        int pageIndex = legiblePageIndices.get(worstIdx);
+        String originalPageText = sentPageResults.get(worstIdx).content();
+
+        byte[] imageBytes = imagePreparer.prepare(pageImages.get(pageIndex));
+        OnlineAiService.VisionCompletionResult probeResult =
+            aiService.visionCompletionDetailed(
+                    PASS1_PROMPT, imageBytes, PASS1_MAX_TOKENS,
+                    SamplingParams.VDU_PROBE, STAGE2_PROBE_SEED)
+                .orTimeout(VDU_VISION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .join();
+
+        double agreement = VduAbstentionGate.jaccardAgreement(originalPageText, probeResult.content());
+        LOG.info("VDU Stage 2 agreement probe for {} page {}: agreement={}",
+            filePath.getFileName(), pageIndex + 1, agreement);
+
+        return VduAbstentionGate.agreementVerdict(agreement).withProbedPage(pageIndex + 1);
+    }
+
+    /**
+     * Picks the index (into {@code sentPageResults}, NOT {@code pageImages}) of the page with the
+     * worst per-page confidence signal — the lowest {@code meanLogprob} among pages that reported
+     * one. A page with no logprob signal (NO SIGNAL, null) is never picked over one that reported
+     * an actual value, since there's nothing to compare a re-sample against for a page the gate
+     * has no opinion on. If EVERY page has a null meanLogprob (uniform NO SIGNAL — the whole
+     * reason this document reached the AMBIGUOUS band via the lowConfidenceFraction arm instead),
+     * this falls back to page 0 — an arbitrary but harmless choice, since no signal exists to
+     * distinguish any page from any other in that case.
+     */
+    private static int worstSignalIndex(List<OnlineAiService.VisionCompletionResult> sentPageResults) {
+        int worst = 0;
+        Double worstLogprob = null;
+        for (int i = 0; i < sentPageResults.size(); i++) {
+            Double logprob = sentPageResults.get(i).meanLogprob();
+            if (logprob == null) {
+                continue;
+            }
+            if (worstLogprob == null || logprob < worstLogprob) {
+                worstLogprob = logprob;
+                worst = i;
+            }
+        }
+        return worst;
     }
 
     /**

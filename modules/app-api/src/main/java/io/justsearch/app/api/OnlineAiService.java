@@ -312,8 +312,9 @@ public interface OnlineAiService {
    * Vision completion with finish_reason and logprob-derived confidence signals attached.
    * Tempdoc 677 S1: plumbing only, no abstention/gating behavior yet.
    *
-   * <p>Default implementation returns a failed future. Implementations backed by a
-   * vision-capable llama-server should override.
+   * <p>Delegates to {@link #visionCompletionDetailed(String, byte[], int, SamplingParams, Long)}
+   * with the implementation's own vision default sampling ({@link SamplingParams#VDU} in
+   * practice) and no seed override — this is the overload every VDU Pass 1 call uses.
    *
    * @param prompt instruction prompt (e.g., "extract text from this image")
    * @param imageBytes raw image bytes (PNG/JPG)
@@ -322,6 +323,32 @@ public interface OnlineAiService {
    */
   default CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
       String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens, SamplingParams.VDU, null);
+  }
+
+  /**
+   * Vision completion with an explicit sampling/seed override.
+   *
+   * <p>Tempdoc 677 Stage 2: the abstention gate's re-sample agreement probe uses this overload to
+   * re-run Pass 1 once more at {@link SamplingParams#VDU_PROBE} (varied temperature) and a fixed
+   * seed, so the probe can actually disagree with a confabulated Pass 1 output instead of
+   * deterministically reproducing it. Every other caller (interactive chat, summarize, Q&amp;A,
+   * VDU Pass 1 itself via the 3-arg overload, VDU Pass 2 enrichment) is untouched by this
+   * overload's existence — none of them call it.
+   *
+   * <p>Default implementation returns a failed future. Implementations backed by a
+   * vision-capable llama-server should override.
+   *
+   * @param prompt instruction prompt (e.g., "extract text from this image")
+   * @param imageBytes raw image bytes (PNG/JPG)
+   * @param maxTokens max tokens to generate
+   * @param sampling sampling parameters for this call; {@code null} uses the server's own default
+   * @param seed explicit RNG seed for llama-server's {@code seed} request field, or {@code null}
+   *     to omit it (the server then picks its own, typically random per request)
+   * @return future containing the generated text plus finish_reason/logprob-derived signals
+   */
+  default CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
     return CompletableFuture.failedFuture(
         new UnsupportedOperationException(
             "OnlineAiService.visionCompletionDetailed unsupported"));

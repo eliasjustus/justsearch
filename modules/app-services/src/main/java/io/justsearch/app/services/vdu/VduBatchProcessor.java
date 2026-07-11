@@ -388,7 +388,8 @@ public class VduBatchProcessor {
      * @param verdict the rejecting gate verdict ({@link GateVerdict#rejected()} must be true)
      * @param pageCount the document's total page count
      * @return JSON string: {@code {"gate": {"stage", "meanLogprob", "lowConfidenceFraction",
-     *     "tokenCount", "finishReason", "laplacianVariance", "rmsContrast"}, "pageCount"}}
+     *     "tokenCount", "finishReason", "laplacianVariance", "rmsContrast", "agreement",
+     *     "probedPage"}, "pageCount"}}
      */
     private String buildGateRejectionEnrichment(GateVerdict verdict, int pageCount) {
         try {
@@ -412,6 +413,13 @@ public class VduBatchProcessor {
             }
             if (verdict.rmsContrast() != null) {
                 gateNode.put("rmsContrast", verdict.rmsContrast());
+            }
+            // Tempdoc 677 Stage 2 evidence — present only for a stage="agreement" rejection.
+            if (verdict.agreement() != null) {
+                gateNode.put("agreement", verdict.agreement());
+            }
+            if (verdict.probedPage() != null) {
+                gateNode.put("probedPage", verdict.probedPage());
             }
 
             var node = mapper.createObjectNode();

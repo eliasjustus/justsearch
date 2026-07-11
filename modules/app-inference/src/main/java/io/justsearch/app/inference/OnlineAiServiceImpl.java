@@ -160,6 +160,13 @@ public final class OnlineAiServiceImpl
     return manager.visionCompletionDetailed(prompt, imageBytes, maxTokens);
   }
 
+  /** Tempdoc 677 Stage 2: sampling/seed-override overload — see {@link InferenceLifecycleManager}. */
+  @Override
+  public CompletableFuture<OnlineAiService.VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
+    return manager.visionCompletionDetailed(prompt, imageBytes, maxTokens, sampling, seed);
+  }
+
   @Override
   public String activeModelId() {
     return manager.lastKnownModelId();

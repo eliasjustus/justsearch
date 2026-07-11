@@ -1,10 +1,9 @@
 ---
 title: "VDU extraction abstention gate: the vision model hallucinates plausible text on scans it cannot read, and that text is indexed as real document content with no confidence check anywhere on the output path"
 type: tempdocs
-status: "open — DESIGN SETTLED (2026-07-10, takeover session §Investigation + design pass): three-stage cheap-first cascade (input-legibility gate → same-call logprob/finish_reason/OCR-cross-check → seed-varied agreement probe) + new REJECTED_SUSPECT_TEXT outcome retaining baseline. Implementation not started; first implementation step is the live mmproj-logprobs probe. Original filing context: a live-observed production correctness defect (624 twenty-second pass, 2026-07-03); 607 owns routing, 671 reason-code truth, 672 wiring — this doc owns extraction OUTPUT quality/abstention."
-updated: 2026-07-10
+status: "open — IMPLEMENTATION IN PROGRESS (2026-07-11, worktree impl-677): Stage 0 (input legibility) + Stage 1 (same-call logprob/finish_reason, now CALIBRATED) + Stage 2 (seed-varied agreement probe, now implemented) all wired into VduProcessor/VduBatchProcessor, plus REJECTED_SUSPECT_TEXT outcome retaining baseline — see §Implementation log for the full slice history (S2-core/S1/S3/S2-wire/S5). Remaining: FE provenance cases, live-stack pass. Original filing context: a live-observed production correctness defect (624 twenty-second pass, 2026-07-03); 607 owns routing, 671 reason-code truth, 672 wiring — this doc owns extraction OUTPUT quality/abstention."
+updated: 2026-07-11
 created: 2026-07-03
-updated: 2026-07-03
 author: agent retrospective (624 scan-battlefield session), filed by agent — STUB
 category: vdu / extraction-quality / indexing-correctness / worker
 related:
@@ -187,8 +186,22 @@ Slices, each committed separately on this branch:
   (scope-isolation test); per-token arrays reduced then discarded.
 - **S3**: `ImageLegibility` (Laplacian variance + RMS contrast, 512px-bounded, conjunctive
   floors) — standalone, calibration-free.
-- **S2-wire** (in flight): `VduAbstentionGate` stages 0+1 wired into VduProcessor/
-  VduBatchProcessor; PROVISIONAL thresholds pending calibration.
+- **S2-wire**: `VduAbstentionGate` stages 0+1 wired into VduProcessor/VduBatchProcessor;
+  PROVISIONAL thresholds pending calibration.
+- **S5** (this slice): Stage-1 floors recalibrated from PROVISIONAL to CALIBRATED per
+  §Calibration below (three-band REJECT/AMBIGUOUS/PASS logic — `GateVerdict.Band`, extending
+  the prior binary `rejected`). Stage 2 (agreement probe) implemented: on an AMBIGUOUS Stage-1
+  verdict, `VduProcessor` re-samples the single worst-signal page once at `SamplingParams.VDU_PROBE`
+  (temp 0.8) + a fixed seed (`OnlineAiService.visionCompletionDetailed`'s new sampling/seed
+  overload — `OnlineModeOps`/`InferenceLifecycleManager`/`OnlineAiServiceImpl` plumbed through,
+  llama-server's `seed` request field added to `sendChatRequestDetailed`), computes Jaccard
+  word-set agreement (`VduAbstentionGate.jaccardAgreement`) against the page's own Pass 1 text,
+  and rejects (stage=`agreement`) below `AGREEMENT_FLOOR` (0.5). Gate evidence gains `agreement` +
+  `probedPage` fields (`VduBatchProcessor.buildGateRejectionEnrichment`, nulls omitted).
+  Interactive chat/summarize/Q&A/Pass 2 untouched — the new overload is vision-only and every
+  existing caller keeps passing a null seed. 42/42 mutation-covered mutants killed on the
+  `vdu-abstention-gate` seam (`report-pit-strength.mjs`); `check-logic-seams.mjs --mode gate` and
+  the `test-efficacy` gate both pass.
 
 **Design refinement vs the original sketch (recorded, not silent):** Stage-0 pre-call skips use
 the same `REJECTED` status as post-call output rejection — the gate evidence's `stage` field
@@ -197,12 +210,15 @@ abstention gate stopped this (before or after the call)"; `COMPLETED_EMPTY` keep
 established meaning "the model itself found nothing". One honest umbrella beats a third status
 value's wire/FE ripple. Additional S2-wire decisions: partial-legibility documents still send
 their legible pages; pass-2 enrichment is skipped for rejected documents (never summarize
-suspect text); truncation (finish_reason=length) alone does not reject.
+suspect text); truncation (finish_reason=length) alone does not reject. S5 adds: Stage 2 probes
+only the single worst-signal page (lowest per-page meanLogprob among pages sent; a page with no
+logprob signal is never picked over one that reported a value) rather than every page — one
+extra inference per ambiguous document, not N; an AMBIGUOUS Stage-1 band is never itself the
+document-level verdict handed to `VduBatchProcessor` — `VduProcessor` always resolves it to PASS
+or REJECT via Stage 2 before returning.
 
-**Remaining after S2-wire:** FE provenance cases (COMPLETED_EMPTY fall-through fix + REJECTED),
-Stage-2 agreement probe (seed-varied re-extraction, ambiguous band only), threshold calibration
-on golden/synth-scan-v1 vs legible realdocs scans (thresholds are PROVISIONAL until then), and
-the live-stack pass (static-green ≠ live-working).
+**Remaining after S5:** FE provenance cases (`COMPLETED_EMPTY` fall-through fix + `REJECTED`) and
+the live-stack pass (static-green ≠ live-working) — both still open, out of this slice's scope.
 
 ## Calibration (2026-07-11, direct llama-server harness — durable record)
 

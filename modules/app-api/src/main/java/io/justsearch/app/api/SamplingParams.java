@@ -13,6 +13,7 @@ import java.util.Set;
  *   <li>{@link #THINKING} — Higher temperature for chain-of-thought reasoning (Qwen3 recommended)
  *   <li>{@link #DETERMINISTIC} — Low temperature for structured/factual output
  *   <li>{@link #VDU} — Slightly creative for document understanding extraction
+ *   <li>{@link #VDU_PROBE} — Varied temperature for the tempdoc 677 Stage 2 re-sample probe
  *   <li>{@link #AGENT} — Balanced for agent tool calling with multi-step reasoning
  * </ul>
  *
@@ -113,6 +114,16 @@ public record SamplingParams(
    * {@code reasoning_content} (lost) instead of {@code content} when thinking is enabled.
    */
   public static final SamplingParams VDU = new SamplingParams(0.0, 0.9, null, null, false);
+
+  /**
+   * Tempdoc 677 Stage 2: re-sample preset for the abstention gate's agreement probe. Identical to
+   * {@link #VDU} except temperature 0.8 (vs. {@code VDU}'s 0.0) — the probe exists to re-sample
+   * an AMBIGUOUS Stage-1 output and see whether it agrees with itself; re-sampling at temperature
+   * 0 would just reproduce the exact same (possibly confabulated) output deterministically,
+   * telling the gate nothing (tempdoc 677 code map: "a naive re-sample repeats the same
+   * hallucination; a consistency probe must vary seed/temperature explicitly").
+   */
+  public static final SamplingParams VDU_PROBE = new SamplingParams(0.8, 0.9, null, null, false);
 
   /**
    * Preset for agent tool calling, tuned to Qwen3.5 recommended sampling.

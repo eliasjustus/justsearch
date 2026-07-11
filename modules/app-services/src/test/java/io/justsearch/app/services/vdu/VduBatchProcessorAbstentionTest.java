@@ -44,7 +44,8 @@ class VduBatchProcessorAbstentionTest {
     when(vduProcessor.hasVisionCapability()).thenReturn(true);
     GateVerdict rejectedVerdict =
         new GateVerdict(
-            true, VduAbstentionGate.STAGE_INPUT_LEGIBILITY, null, null, null, null, 5.0, 0.01);
+            true, GateVerdict.Band.REJECT, VduAbstentionGate.STAGE_INPUT_LEGIBILITY,
+            null, null, null, null, 5.0, 0.01, null, null);
     when(vduProcessor.process(any(Path.class)))
         .thenReturn(new VduProcessor.VduResult("", null, 2, rejectedVerdict));
 
@@ -85,6 +86,52 @@ class VduBatchProcessorAbstentionTest {
     // Stage 1 fields are null on this (Stage 0) verdict and must be omitted, not written null.
     assertFalse(enrichment.contains("meanLogprob"));
     assertFalse(enrichment.contains("lowConfidenceFraction"));
+  }
+
+  @Test
+  @DisplayName("a Stage 2 (agreement) rejection carries agreement + probedPage evidence")
+  void stage2RejectionCarriesAgreementEvidence() throws Exception {
+    VduProcessor vduProcessor = mock(VduProcessor.class);
+    when(vduProcessor.hasVisionCapability()).thenReturn(true);
+    GateVerdict agreementRejectedVerdict =
+        VduAbstentionGate.agreementVerdict(0.1).withProbedPage(2);
+    when(vduProcessor.process(any(Path.class)))
+        .thenReturn(new VduProcessor.VduResult("suspect text", null, 3, agreementRejectedVerdict));
+
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    Path file = writeFile("doc3.png");
+    when(client.countPendingVdu()).thenReturn(1);
+    when(client.queryPendingVduDocIds()).thenReturn(List.of(file.toString()));
+    when(client.markVduProcessing(anyString(), anyInt())).thenReturn(0);
+    when(client.updateVduResult(
+            anyString(), any(), any(VduUpdateOutcome.class), anyString(), anyInt()))
+        .thenReturn(true);
+
+    VduBatchProcessor batchProcessor =
+        new VduBatchProcessor(
+            vduProcessor, gpuCapabilitiesService(), () -> client, VduMetricCatalog.noop(),
+            new VduCapabilityState());
+
+    batchProcessor.processPendingFiles();
+
+    ArgumentCaptor<String> contentCaptor = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> enrichmentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(client)
+        .updateVduResult(
+            eq(file.toString()),
+            contentCaptor.capture(),
+            eq(VduUpdateOutcome.VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT),
+            enrichmentCaptor.capture(),
+            eq(3));
+
+    assertNull(contentCaptor.getValue(), "the suspect text must be omitted from the wire");
+    String enrichment = enrichmentCaptor.getValue();
+    assertTrue(enrichment.contains(VduAbstentionGate.STAGE_AGREEMENT), enrichment);
+    assertTrue(enrichment.contains("\"agreement\":0.1"), enrichment);
+    assertTrue(enrichment.contains("\"probedPage\":2"), enrichment);
+    // Stage 0/1 fields are null on this (Stage 2) verdict and must be omitted, not written null.
+    assertFalse(enrichment.contains("laplacianVariance"));
+    assertFalse(enrichment.contains("meanLogprob"));
   }
 
   @Test

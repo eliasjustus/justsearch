@@ -55,6 +55,17 @@ final class FakeVisionOnlineAiService implements OnlineAiService {
   @Override
   public CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
       String prompt, byte[] imageBytes, int maxTokens) {
+    return visionCompletionDetailed(prompt, imageBytes, maxTokens, SamplingParams.VDU, null);
+  }
+
+  /**
+   * Tempdoc 677 Stage 2: the agreement probe calls the 5-arg overload — routed through the same
+   * queue/call-count tracking as the 3-arg overload above so a test can queue [pass1Result,
+   * probeResult] and assert on a single unified call count.
+   */
+  @Override
+  public CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
     visionCallImageBytes.add(imageBytes);
     VisionCompletionResult result =
         queuedVisionResults.isEmpty() ? defaultVisionResult : queuedVisionResults.poll();

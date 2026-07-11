@@ -76,9 +76,11 @@ final class VduProcessorAbstentionTest {
 
     VduProcessor.VduResult result = processor.process(image);
 
-    assertEquals(1, aiService.getVisionCallCount(), "Stage 0 passed, so the model IS called");
+    assertEquals(1, aiService.getVisionCallCount(),
+        "REJECT band must not run the Stage 2 probe — a single call total");
     assertEquals(0, aiService.getChatCompletionCallCount(), "pass 2 must be skipped once rejected");
     assertTrue(result.gateVerdict().rejected());
+    assertEquals(GateVerdict.Band.REJECT, result.gateVerdict().band());
     assertEquals(VduAbstentionGate.STAGE_OUTPUT_CONFIDENCE, result.gateVerdict().stage());
     assertEquals(-2.0, result.gateVerdict().meanLogprob());
     assertNull(result.enrichment(), "pass 2 skipped means no enrichment");
@@ -89,7 +91,7 @@ final class VduProcessorAbstentionTest {
   }
 
   @Test
-  @DisplayName("healthy signals: gate passes, SUCCESS path unchanged (pass 2 runs)")
+  @DisplayName("healthy signals: gate passes, SUCCESS path unchanged (pass 2 runs), no Stage 2 probe")
   void healthySignalsPassGate() throws Exception {
     Path image = writeSharpTextImage("healthy.png");
     aiService.withDefaultVisionResult(
@@ -99,10 +101,72 @@ final class VduProcessorAbstentionTest {
     VduProcessor.VduResult result = processor.process(image);
 
     assertFalse(result.gateVerdict().rejected());
+    assertEquals(GateVerdict.Band.PASS, result.gateVerdict().band());
     assertNull(result.gateVerdict().stage());
+    assertEquals(1, aiService.getVisionCallCount(),
+        "PASS band must not run the Stage 2 probe — a single call total");
     assertEquals(1, aiService.getChatCompletionCallCount(), "pass 2 must run when the gate passes");
     assertEquals("Hello World transcription", result.extractedText());
     assertEquals("{\"summary\":\"a document\"}", result.enrichment());
+  }
+
+  @Test
+  @DisplayName("Stage 2: AMBIGUOUS Stage-1 signals + low probe agreement reject at stage=agreement")
+  void ambiguousSignalsLowAgreementRejects() throws Exception {
+    Path image = writeSharpTextImage("ambiguous-low.png");
+    // meanLogprob=-0.2 breaches AMBIGUOUS_MEAN_LOGPROB_FLOOR (-0.09) but not
+    // REJECT_MEAN_LOGPROB_FLOOR (-0.35); lowConfidenceFraction=0.01 breaches
+    // AMBIGUOUS_LOW_CONFIDENCE_FRACTION_CEILING (0.005) but not REJECT's (0.06) — Stage 1 band is
+    // AMBIGUOUS, not REJECT.
+    VisionCompletionResult pass1Result =
+        new VisionCompletionResult(
+            "original document transcription content here", "stop", 60, -0.2, 0.01);
+    VisionCompletionResult probeResult =
+        new VisionCompletionResult(
+            "completely different unrelated confabulated zzz words", "stop", 60, -0.2, 0.01);
+    aiService.withVisionResults(pass1Result, probeResult);
+
+    VduProcessor.VduResult result = processor.process(image);
+
+    assertEquals(2, aiService.getVisionCallCount(),
+        "AMBIGUOUS band must run exactly one Stage 2 probe call (pass 1 + probe)");
+    assertEquals(0, aiService.getChatCompletionCallCount(),
+        "pass 2 must be skipped once Stage 2 rejects");
+    assertTrue(result.gateVerdict().rejected());
+    assertEquals(GateVerdict.Band.REJECT, result.gateVerdict().band());
+    assertEquals(VduAbstentionGate.STAGE_AGREEMENT, result.gateVerdict().stage());
+    assertEquals(1, result.gateVerdict().probedPage());
+    assertNotNull(result.gateVerdict().agreement());
+    assertTrue(
+        result.gateVerdict().agreement() < VduAbstentionGate.AGREEMENT_FLOOR,
+        "disjoint pass1/probe text must measure low agreement: " + result.gateVerdict().agreement());
+    assertNull(result.enrichment(), "pass 2 skipped means no enrichment");
+  }
+
+  @Test
+  @DisplayName("Stage 2: AMBIGUOUS Stage-1 signals + high probe agreement resolve to SUCCESS (pass 2 runs)")
+  void ambiguousSignalsHighAgreementPasses() throws Exception {
+    Path image = writeSharpTextImage("ambiguous-high.png");
+    VisionCompletionResult pass1Result =
+        new VisionCompletionResult(
+            "stable document transcription content words", "stop", 60, -0.2, 0.01);
+    VisionCompletionResult probeResult =
+        new VisionCompletionResult(
+            "stable document transcription content words", "stop", 60, -0.2, 0.01);
+    aiService.withVisionResults(pass1Result, probeResult);
+    aiService.withChatCompletionResult("{\"summary\":\"resolved\"}");
+
+    VduProcessor.VduResult result = processor.process(image);
+
+    assertEquals(2, aiService.getVisionCallCount(),
+        "AMBIGUOUS band must run exactly one Stage 2 probe call (pass 1 + probe)");
+    assertEquals(1, aiService.getChatCompletionCallCount(),
+        "pass 2 must run once Stage 2 resolves to a pass");
+    assertFalse(result.gateVerdict().rejected());
+    assertEquals(1, result.gateVerdict().probedPage());
+    assertEquals(1.0, result.gateVerdict().agreement(), "identical pass1/probe text must agree fully");
+    assertEquals("stable document transcription content words", result.extractedText());
+    assertEquals("{\"summary\":\"resolved\"}", result.enrichment());
   }
 
   @Test

@@ -958,6 +958,12 @@ public class InferenceLifecycleManager
     return onlineOps.visionCompletionDetailed(prompt, imageBytes, maxTokens);
   }
 
+  /** Tempdoc 677 Stage 2: sampling/seed-override overload — see {@link OnlineModeOps}. */
+  public CompletableFuture<VisionCompletionResult> visionCompletionDetailed(
+      String prompt, byte[] imageBytes, int maxTokens, SamplingParams sampling, Long seed) {
+    return onlineOps.visionCompletionDetailed(prompt, imageBytes, maxTokens, sampling, seed);
+  }
+
   public CompletableFuture<String> summarize(String content, int maxTokens) {
     return onlineOps.summarize(content, maxTokens);
   }

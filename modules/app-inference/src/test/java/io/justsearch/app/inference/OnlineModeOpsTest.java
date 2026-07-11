@@ -974,6 +974,71 @@ class OnlineModeOpsTest {
     assertEquals(0, result.tokenCount());
   }
 
+  // ==================== visionCompletionDetailed sampling/seed override (tempdoc 677 S2) ====================
+
+  @Test
+  void visionCompletionDetailed_5arg_sendsSeedAndOverrideTemperature() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"probe text\"},\"finish_reason\":\"stop\"}]}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    VisionCompletionResult result =
+        ops.visionCompletionDetailed(
+                "Extract text", new byte[] {1, 2, 3}, 200, SamplingParams.VDU_PROBE, 677L)
+            .get(5, TimeUnit.SECONDS);
+
+    assertEquals("probe text", result.content());
+
+    String body = capturedBody.get();
+    assertNotNull(body, "Server should have received a request body");
+    assertTrue(body.contains("\"seed\":677"), "seed must be sent on the request: " + body);
+    assertTrue(
+        body.contains("\"temperature\":0.8"),
+        "sampling override (VDU_PROBE, temp 0.8) must be sent: " + body);
+  }
+
+  @Test
+  void visionCompletionDetailed_3arg_omitsSeed() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"text\"},\"finish_reason\":\"stop\"}]}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    ops.visionCompletionDetailed("Extract text", new byte[] {1, 2, 3}, 200)
+        .get(5, TimeUnit.SECONDS);
+
+    String body = capturedBody.get();
+    assertNotNull(body, "Server should have received a request body");
+    assertFalse(
+        body.contains("\"seed\""),
+        "the plain 3-arg overload (used by Pass 1) must never send a seed: " + body);
+  }
+
   @Test
   void visionCompletion_stringVariantStillReturnsJustContent() throws Exception {
     server.removeContext("/v1/chat/completions");
