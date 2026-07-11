@@ -528,3 +528,8 @@ Gate note: this run used modes `vector,hybrid` only, so the full-mode union-reca
 are not judgeable from it (mode-set-truncated union); direction is provably non-degrading
 (strictly more vectors present, nothing else changed). Standard full-mode gate runs belong to
 the publish step.
+
+**Publish-step gate run (2026-07-11, full-mode `lexical,splade,vector,hybrid` at b88e76e):**
+lexical 0.6891 / splade 0.0591 / vector 0.6184 / hybrid 0.5609 (both two-mode numbers
+reproduced within noise); union recall **0.925** > 0.87 baseline (floor 0.82); relevance gate
+green (floor 0.4964); leak gate green (ceiling 0.255). Register baseline rows updated.

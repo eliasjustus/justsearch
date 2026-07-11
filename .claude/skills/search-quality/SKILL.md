@@ -226,9 +226,16 @@ catalog — see Corpus provenance note above)*
 | (HEAD default, late-chunking ON) | (default) | (default) | splade | 0.0591 | — | 0.150 | splade | A | e83653a | 691 §N |
 | (HEAD default, late-chunking ON) | (default) | (default) | hybrid | **0.5497** | 0.415 | 0.695 | cross_encoder+dense+hybrid+query_classification | A | e83653a | 691 §N |
 | (late-chunking ON + `JUSTSEARCH_EMBED_GPU_MEM_MB=6144`) | (default) | (default) | vector | **0.3401** | 0.240 | 0.430 | dense | A | e83653a | 691 §N |
+| (HEAD default, RMW preservation = F-032) | (default) | (default) | lexical | 0.6891 | 0.510 | — | bm25+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | splade | 0.0591 | 0.005 | — | splade+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | vector | **0.6184** | 0.410 | — | dense+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | hybrid | **0.5609** | 0.425 | — | cross_encoder+dense+hybrid+chunk_merge | A | b88e76e | 711 |
 
-**Best known:** (HEAD default, late-chunking ON) / hybrid = **0.5497** (691 §Phase N, 2026-07-11 —
-supersedes 666's 0.521; the pre-691 rows above are the flag-off ablation).
+**Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
+2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
+chunk vectors were ALL silently destroyed post-write, F-032; all pre-711 vector/hybrid rows above
+are now dead-chunk-vector ablations). Union recall 0.925 (> 0.87 baseline); relevance + leak gates
+green at b88e76e.
 **Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
 retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
 observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
@@ -651,9 +658,10 @@ above)*
   vectors dead; §J-B's offline parent-only replication (0.3403) agreed with it precisely
   *because* chunks contributed nothing. The remaining vector-vs-lexical gap for 708's
   encoder-domain question is now 0.618 vs 0.686, not 0.34 vs 0.69.
-- **Caveats:** run used modes `vector,hybrid`, so full-mode union-recall/leak pins were not
-  re-judged (mode-set-truncated union); strictly-more-vectors is direction-safe, full-mode
-  gates due at merge. Baseline rows below are NOT yet updated pending that gate run.
+- **Gates (full-mode run at b88e76e, publish step):** lexical 0.6891 / splade 0.0591 / vector
+  0.6184 / hybrid 0.5609; union recall **0.925** (baseline 0.87, floor 0.82), relevance gate
+  (floor 0.4964) and leak gate (ceiling 0.255) both green. Baseline rows updated in the
+  legal-clerc block above.
 - **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
   vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
 
