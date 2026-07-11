@@ -1,7 +1,10 @@
 # 716 — jseval run-artifact coherence + worktree ergonomics
 
-- **status:** open — takeover + theorize + design + plan complete (2026-07-11); verdict DO IT NOW;
-  implementation plan awaits FOUNDER go-ahead, no code changed
+- **status:** IMPLEMENTED (2026-07-11, worktree `worktree-716-jseval`) — plan approved by
+  orchestrator with two riders (docs: search-quality-register + skills-sync; migration:
+  legacy-root read fallback with WARN); all phases + riders landed, full suite 1634 passed /
+  2 pre-registered reds. Live defaults-compose repro deferred to publish-time (§Implementation
+  log). Merge pending founder direction.
 - **created:** 2026-07-11
 
 ## Charter question
@@ -657,3 +660,95 @@ code was written to test these against)
 3. Confirm `tests/test_backend.py`'s exact line range and per-test protected-set dependency
    before deleting/rewriting any of it (this investigation read only through line 205 of
    `backend.py`, not the paired test file in full).
+
+---
+
+## Implementation log (2026-07-11 — all phases landed, worktree `worktree-716-jseval`)
+
+Orchestrator approved the plan with two riders; both implemented. Commits: `00d1573`
+(Phases 0-2), `576635a` (Phases 3-4), `5d353e8` (Phase 5 docs), plus this log.
+
+### As-built, per phase
+
+- **Phase 0** — `_paths.py`: `DEFAULT_JSEVAL_DATA_DIR` (= `scripts/jseval/tmp/`) and
+  `DEFAULT_BACKEND_DATA_DIR` (= `<repo>/tmp/headless-eval-data`, mirrors `start_backend`'s
+  fallback) added; `DEFAULT_EVAL_RESULTS` now derived. No-op pinned by
+  `test_paths.py::TestJsevalDataDirConstants` (literal-path equality vs the pre-716 value).
+- **Phase 1** — all 8 gate `--data-dir` options (plan said 7; grep found 8 — `gate`,
+  `relevance-gate`, `perf-gate`, 2× recall-accounting, 2× datasets-projection, 1× re-produce)
+  plus `release` and the two calibrate readers default to `DEFAULT_JSEVAL_DATA_DIR`;
+  `required=True`/`exists=True` dropped so the domain exit-2 message wins over click's generic
+  path error (pinned by `test_data_dir_composition.py::test_gate_defaults_still_fail_closed...`).
+  Defaults-only compose pinned by `...::test_gate_defaults_to_jseval_data_dir_and_finds_run`.
+- **Phase 2** — flag-name decision (delegated to implementation): **deviation from the design
+  section's letter, conforming to its principle.** The design text said "backend target keeps
+  `--data-dir`"; as-built, `cmd_calibrate`'s `--data-dir` now means the jseval-owned envelope
+  root — the same meaning as its two sibling calibrate commands and all 8 gates — and the
+  backend target moved to the new explicit `--backend-data-dir` (default: env
+  `JUSTSEARCH_DATA_DIR`, else `DEFAULT_BACKEND_DATA_DIR`). Rationale: keeping `--data-dir` =
+  backend-target would have left `calibrate` the one command in its own file where the flag
+  means something different — the exact same-flag-two-meanings disease this tempdoc deletes.
+  `calibrate()` signature split into `backend_data_dir`/`envelope_dir`. Operator-visible change:
+  a pre-716 `calibrate --data-dir X` invocation now files the envelope under `X` (as before)
+  but runs the backend at env/default instead of `X` — pass `--backend-data-dir X` for the old
+  isolation behavior (docs updated accordingly).
+- **Migration rider (as directed)** — `cohort_baselines.candidate_roots()` (primary first, then
+  env `JUSTSEARCH_DATA_DIR`, then `DEFAULT_BACKEND_DATA_DIR`, deduped) + `resolve_envelope_path`
+  / `resolve_span_distributions_path` / `warn_legacy_hit`. Wired into `calibrate.read_envelope`
+  (preserving the corrupt-file fall-through semantics), `gate._find_envelope` (scan per root),
+  `recalibrate-nightly-baseline`, and `encoder_drift._load_baseline`. Old-location-only fixtures
+  resolve + WARN — pinned by `test_cohort_baselines.py::TestPre716LegacyRootFallback` (5 tests).
+  `conftest.py` gained an autouse fixture isolating the legacy roots so a developer machine's
+  real `tmp/headless-eval-data` can't leak into the suite.
+- **`run.py` split** — `envelope_data_dir` (manifest embedding) now always the jseval root
+  (envelope embedding works at defaults; pre-716 it required an exported env var);
+  `worker_data_dir` (telemetry copy into the run dir) stays env-derived, now defaulting to
+  `DEFAULT_BACKEND_DATA_DIR` so defaults `--start-backend` runs get telemetry copied too.
+- **Phase 3** — `backend.py` `_protected` retired: `_attempt_wipe`/`_clean_data_dir` lose the
+  parameter, `--clean` wipes the whole dir; fail-closed verify/sweep/hard-error unchanged.
+  `TestStartBackendCleanPreservesCohortBaselines` deliberately FLIPPED to
+  `TestStartBackendCleanWipesEverything` (the preservation contract moved to its new home —
+  `test_calibrate.py::test_envelope_filed_under_envelope_dir_not_backend_dir`). This exercises
+  711 Item 4's own declared retirement condition, not a weakening.
+- **Phase 4** — `cli.main()` calls `_assert_matching_checkout()`: refuses (ClickException,
+  exit 1) when `module_checkout_root()` ≠ `cwd_checkout_root()`, printing the exact
+  `PYTHONPATH=<cwd-root>/scripts/jseval` remedy; escape hatch
+  `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL=1`. Open question #2 resolved as preferred: the CWD
+  walk was extracted from `_resolve_repo_root` into pure helpers (`cwd_checkout_root`,
+  `module_checkout_root`) shared by both — no signature change to `_resolve_repo_root` itself.
+  Pinned by `test_cli_entry.py` (mismatch/escape-hatch/match/outside-checkout/live-consistency).
+  Note: click does not invoke the group callback for a bare `--help`, so `jseval --help`
+  bypasses the check — harmless (help executes no stale logic).
+- **Phase 5 + docs rider** — `search-quality-register.md` §Cross-run-noise envelope path
+  updated + `node scripts/docs/skills-sync.mjs` re-run (regenerated `jseval` and
+  `search-quality` SKILL.md); `jseval-pipeline-reference.md` (observability root + calibrate
+  split + `--clean` rows + Output Structure), `08-observability.md` (envelope workflow),
+  both how-tos (procedures at the new defaults), CLAUDE.md pitfall row (trap now
+  self-diagnosing). `prose-tier-register` gate: pass. `common-workflows.md`'s `--clean` line
+  verified already-accurate (no protected-set claim).
+- **Phase 6** — full suite after every phase; final: **1634 passed, 2 failed** — both the
+  pre-registered `test_correction_probe` reds (`expected-state.v1.json`), +19 net-new tests over
+  the 1615 pre-implementation baseline.
+
+### Deviations / deferrals (named, not silent)
+
+1. **Calibrate flag-meaning swap** (above) — deviation from the design section's letter, with
+   rationale; operator-visible behavior change documented in the how-to + `--help`.
+2. **`encoder_drift._resolve_data_dir`'s `run_dir.parent` last-ditch fallback retired** — it
+   pointed at `<eval-results>/cohort_baselines/`, a layout nothing ever wrote; replaced by the
+   jseval root + legacy-root fallback chain.
+3. **Live defaults-compose repro deferred to publish-time** — the plan's Phase-6 live check (a
+   defaults `run --start-backend` + defaults gate against the real repro from
+   `observations.md:1933`/`:548`) needs a Gradle-built backend in this worktree; the approved
+   verification bar for this pass was the full suite. The CLI-level compose test
+   (`test_data_dir_composition.py`) covers the wiring; the live repro should ride the
+   pre-publish verification pass (`static-green ≠ live-working` applies — flagged, not skipped
+   silently).
+4. **Pre-existing dead code logged, not fixed**: `encoder_drift._write_baseline` has zero call
+   sites — observation shard entry filed.
+
+### Orphan check (design §Orphans — all delivered in this same change)
+
+`_protected` set + threading: gone. `release.py` ad hoc `.parent` default: replaced by the
+shared constant. `cmd_calibrate` "Override JUSTSEARCH_DATA_DIR" help: rewritten. All five named
+doc surfaces updated; CLAUDE.md row rewritten.
