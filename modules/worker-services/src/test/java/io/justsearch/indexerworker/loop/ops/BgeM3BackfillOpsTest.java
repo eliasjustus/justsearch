@@ -166,8 +166,7 @@ class BgeM3BackfillOpsTest {
                     "1".equals(updates.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT))
                         && !updates.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)
                         && !updates.containsKey(SchemaFields.EMBEDDING_RETRY_COUNT)
-                        && !updates.containsKey(SchemaFields.EMBEDDING_STATUS)),
-            eq(true));
+                        && !updates.containsKey(SchemaFields.EMBEDDING_STATUS)));
   }
 
   @Test
@@ -203,7 +202,6 @@ class BgeM3BackfillOpsTest {
                     "1".equals(updates.get(SchemaFields.EMBEDDING_RETRY_COUNT))
                         && !updates.containsKey(SchemaFields.EMBEDDING_STATUS)
                         && !updates.containsKey(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT)
-                        && !updates.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)),
-            eq(true));
+                        && !updates.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)));
   }
 }

@@ -53,7 +53,7 @@ abstract class RuntimeTestBase {
               { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """
@@ -93,7 +93,7 @@ abstract class RuntimeTestBase {
               { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """
@@ -125,7 +125,7 @@ abstract class RuntimeTestBase {
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "mime", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter", "facet"] },
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "multiValued": true, "roles": ["filter", "facet"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """
