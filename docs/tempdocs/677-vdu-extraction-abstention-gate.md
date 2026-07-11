@@ -155,3 +155,22 @@ tests in the 671 style (outcome injectivity); live-stack pass per `static-green 
 degrades gracefully to Stages 0+2 if absent; (b) whether `REJECTED` warrants FE surfacing beyond
 provenance; (c) threshold governance — config (OcrRoutingConfig-style) vs constants with
 derivation comments.
+
+## Probe result (2026-07-11, implementation step 0): mmproj logprobs CONFIRMED
+
+Live probe against the shipped cuda12 llama-server (Qwen3.5-9B-Q4_K_M + mmproj-F16, `-np 1
+--cache-ram 0`, direct `/v1/chat/completions`): **per-token logprobs populate for vision/mmproj
+requests** (`"logprobs": true` in the request body; `choices[0].logprobs.content[]` in the
+response). `chat_template_kwargs: {"enable_thinking": false}` confirmed required — with thinking
+on, reasoning tokens consume max_tokens and `content` comes back empty.
+
+First separation datum (VDU-shape prompt, temperature 0):
+- legible test image → exact transcription; mean logprob **-0.058**, min -0.27, 0% tokens < -1.0
+- noise image → model refused/described (did not transcribe); mean **-0.442**, min -1.79,
+  **14% tokens < -1.0**
+
+Stage 1 of the cascade is therefore fully viable; no degraded-mode fallback needed. Caveat for
+calibration: the noise image produced REFUSAL-shaped output, not the fluent confabulation this
+doc's defect exhibits — thresholds must be calibrated on `golden/synth-scan-v1` (known ~100%
+fluent-confabulation) vs legible real scans, not on refusal cases. Probe scripts in the session
+scratchpad; numbers above are the durable record.
