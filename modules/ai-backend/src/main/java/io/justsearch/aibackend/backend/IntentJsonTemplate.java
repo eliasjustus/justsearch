@@ -35,7 +35,7 @@ public final class IntentJsonTemplate {
     ArrayNode clauses = root.withArray("clauses");
     ObjectNode clause = clauses.addObject();
     clause.put("type", degraded ? "fallback" : "text");
-    clause.put("field", "content_all");
+    clause.put("field", "content");
     clause.put("value", text == null ? "" : text);
 
     ArrayNode tokensNode = clause.putArray("tokens");

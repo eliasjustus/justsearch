@@ -409,6 +409,7 @@ public final class ResolvedConfigBuilder {
     putYamlInt("rag.mmr.max_candidates", root, "rag.mmr.max_candidates");
     putYamlBoolean("rag.context.include_surrounding", root, "rag.context.include_surrounding");
     putYamlBoolean("rag.chunk_vectors.enabled", root, "rag.chunk_vectors.enabled");
+    putYamlBoolean("rag.chunk_splade.enabled", root, "rag.chunk_splade.enabled");
     // 347: RAG env/sysprop overrides now handled by EnvRegistry entries.
   }
 
@@ -1518,6 +1519,7 @@ public final class ResolvedConfigBuilder {
         Math.max(1, Math.min(200, resolveInt("rag.mmr.max_candidates", 20))),
         resolveBoolean("rag.context.include_surrounding", false),
         resolveBoolean("rag.chunk_vectors.enabled", true),
+        resolveBoolean("rag.chunk_splade.enabled", false),
         resolveInt("justsearch.rag.top_k", 5),
         resolveString("justsearch.citation.match_threshold", ""),
         Math.max(1, Math.min(10, resolveInt("rag.max_chunks_per_article", 2))));

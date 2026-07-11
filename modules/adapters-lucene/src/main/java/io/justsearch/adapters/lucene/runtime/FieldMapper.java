@@ -175,25 +175,33 @@ public final class FieldMapper {
   static final String RMW_RESET_STATUS_PREFIX = "reset-status:";
 
   /**
-   * Fail-fast catalog validation (tempdoc 711): every non-stored, non-docValues data-bearing field
-   * (type {@code vector} or {@code splade}) must declare a parseable {@code rmwPolicy} so the
-   * read-modify-write choke point knows how to preserve it; stored or docValues-backed fields, which
-   * survive RMW already, must NOT declare one. A {@code reset-status:<target>} target must exist in
-   * the catalog and be docValues-backed. Called alongside {@link #validatePrimaryKeySupport()}.
+   * Fail-fast catalog validation (tempdoc 711, generalized to every type by tempdoc 714): every
+   * non-stored, non-docValues field — regardless of type — must declare a parseable
+   * {@code rmwPolicy} so the read-modify-write choke point knows how to preserve it; stored or
+   * docValues-backed fields, which survive RMW already, must NOT declare one.
+   * {@code preserve-reread} is only legal on {@code vector} fields (the engine's re-read lane is a
+   * float-vector read-back; on any other type it would silently no-op instead of preserving). A
+   * {@code reset-status:<target>} target must exist in the catalog and be docValues-backed. Called
+   * alongside {@link #validatePrimaryKeySupport()}.
    */
   void validateRmwPolicies() {
     for (FieldDef def : byId.values()) {
-      boolean dataBearing = "vector".equals(def.type) || "splade".equals(def.type);
-      boolean fragile = dataBearing && !def.stored && !def.docValues;
+      boolean fragile = !def.stored && !def.docValues;
       if (fragile) {
         String policy = def.rmwPolicy;
         if (policy == null || policy.isBlank()) {
           throw new IllegalStateException(
               "Field " + def.id + " (type " + def.type + ") is non-stored and non-docValues "
-                  + "data-bearing but declares no rmwPolicy — RMW would silently destroy it "
-                  + "(tempdoc 711)");
+                  + "but declares no rmwPolicy — RMW would silently destroy it "
+                  + "(tempdocs 711/714)");
         }
         if (policy.equals(RMW_PRESERVE_REREAD)) {
+          if (!"vector".equals(def.type)) {
+            throw new IllegalStateException(
+                "Field " + def.id + " (type " + def.type + ") declares rmwPolicy 'preserve-reread' "
+                    + "but only vector fields support index re-read — the engine would silently "
+                    + "no-op instead of preserving (tempdoc 714)");
+          }
           continue;
         }
         if (policy.startsWith(RMW_RESET_STATUS_PREFIX)) {

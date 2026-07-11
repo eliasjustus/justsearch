@@ -126,6 +126,31 @@
       "law": "The Worker self-exits iff an explicit shutdown is signalled, OR — past the startup grace — the Main (Head) heartbeat is stale AND Head is not known-alive (tempdoc 630). A stale heartbeat ALONE does not kill: it must be corroborated by Head-PID death (HeadLiveness != ALIVE), because an OS suspend/resume yields a benign stale beat while Head (PID persisting across suspend) is alive. HeadLiveness.UNKNOWN (no PID signal) preserves the pre-630 heartbeat-only behavior. A flipped Head-liveness comparison silently re-introduces the false-suicide-on-every-wake, or (the unsafe direction) lets a real orphan outlive a dead Head.",
       "guard": "test:WorkerLivenessDecisionTest",
       "note": "The Worker's heartbeat-suicide functional core; the impure shell (MmfWorkerSignalBus.shouldDie + headLiveness) gathers nowMs/heartbeat/Head-PID-liveness and interprets the boolean verbatim. The liveness-continuity precondition (tempdoc 630) dual to the 627 Observation-Actuation Closure: an invalid (suspend-confounded) staleness observation must not actuate."
+    },
+    {
+      "id": "legibility-floor-check",
+      "gradlePath": ":modules:app-services",
+      "targetClass": "io.justsearch.app.services.vdu.LegibilityMeasures",
+      "targetTests": [
+        "io.justsearch.app.services.vdu.LegibilityMeasuresTest",
+        "io.justsearch.app.services.vdu.ImageLegibilityTest"
+      ],
+      "pure": true,
+      "law": "belowFloor(lapFloor, contrastFloor) = laplacianVariance < lapFloor AND rmsContrast < contrastFloor — strictly conjunctive, never either-signal-alone. A flip to OR would abstain on pure noise (high Laplacian variance, low real signal) or on sparse-but-legible text (low contrast alone), defeating VDU's purpose of reading documents OCR already failed on (tempdoc 677 Stage 0 CAUTION).",
+      "guard": "test:LegibilityMeasuresTest + test:ImageLegibilityTest",
+      "note": "Tempdoc 677 S3: the input-legibility signal underlying VduAbstentionGate's Stage 0. Deferred from the prior (S3) slice; registered here per this slice's item 6."
+    },
+    {
+      "id": "vdu-abstention-gate",
+      "gradlePath": ":modules:app-services",
+      "targetClass": "io.justsearch.app.services.vdu.VduAbstentionGate",
+      "targetTests": [
+        "io.justsearch.app.services.vdu.VduAbstentionGateTest"
+      ],
+      "pure": true,
+      "law": "inputVerdict rejects iff LegibilityMeasures.belowFloor(LAPLACIAN_FLOOR, CONTRAST_FLOOR). outputVerdict rejects iff (meanLogprob != null AND meanLogprob < MEAN_LOGPROB_FLOOR) OR (lowConfidenceFraction != null AND lowConfidenceFraction > LOW_CONFIDENCE_FRACTION_CEILING) OR (finishReason != null AND finishReason NOT IN {\"stop\", \"length\"}). A null meanLogprob/lowConfidenceFraction (NO SIGNAL) must NEVER itself contribute to rejection — only the finish-reason arm may still fire. A silent flip of any comparison either indexes fabricated text as real content (false pass) or discards genuinely legible extractions (false abstain) — tempdoc 677's core defect.",
+      "guard": "test:VduAbstentionGateTest",
+      "note": "Tempdoc 677 Stages 0+1: the abstention cascade's verdict logic, consumed by VduProcessor/VduBatchProcessor (the IO-heavy model-call orchestration and aggregation stay in VduProcessor)."
     }
   ]
 }
