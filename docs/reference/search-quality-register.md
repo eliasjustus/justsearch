@@ -1373,6 +1373,10 @@ above)*
   639 (candidate-set integrity / ANN recall, stub) owns the ANN-recall sub-question and should not be
   forked — a diagnosis pass here should attribute the collapse before 639 or a new doc claims the fix.
   F-023/F-025's staged-recall instrumentation (leg-recall decomposition) is the ready-made diagnostic.
+- **Suggested approach:** run the staged-recall/leg-recall decomposition on legal-clerc; inspect
+  whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
+  compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
+  for representation/granularity if that's the finding).
 - **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
   mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
   SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
@@ -1382,21 +1386,23 @@ above)*
 
 - **Question:** F-033 measured, offline, that per-chunk SPLADE lifts legal-clerc-200 sparse nDCG@10
   from 0.054 (production-mirror truncated) to 0.327 (max-pool doc-merge) / 0.545 (chunk-MaxP). Those
-  are exact-retrieval ceilings. Does the engine-integrated `chunk_splade` leg (a new non-stored
-  FeatureField on chunk docs, fused via the existing `chunk_merge`) realize a comparable gain in
-  `splade` and `hybrid` mode against live gates, and what is the enrichment-throughput cost of the
-  ~19× SPLADE forward-pass multiplier once amortized over already-enriched chunk docs?
+  are exact-retrieval ceilings. Does the engine-integrated chunk-sparse sub-leg realize a comparable
+  gain in `splade` and `hybrid` mode against live gates, and what is the enrichment-throughput cost
+  of the ~19× SPLADE forward-pass multiplier once amortized over already-enriched chunk docs?
+  As-built shape (712 steps 1–3, 2026-07-11): the search side already existed
+  (`searchChunksSplade` over the existing `splade` FeatureField on chunk docs, fused via
+  `chunk_merge`); the fix is producer enrollment — the combined pass now encodes chunk docs'
+  `chunk_content` instead of silently marking them COMPLETED — behind
+  `rag.chunk_splade.enabled` / `JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED`, **default OFF**.
 - **Why it matters:** it is the truth-tier confirmation of F-033 (`static-green ≠ live-working`) and
-  the go/no-go for shipping the sparse chunk leg. It also decides whether the parent whole-doc
-  `splade` encode on chunked docs still earns its place (teardown candidate).
-- **Cheapest evidence:** the tempdoc 712 §Implementation-plan step 4 — `jseval run --start-backend
-  --clean` on legal-clerc-200 with the chunk-splade flag on vs off. Prereq: the field + producer +
-  fusion (712 plan steps 1–3), which is why this is OPEN not ANSWERED.
-- **Design/plan:** tempdoc 712 (designed; implementation awaiting founder approval).
-- **Suggested approach:** run the staged-recall/leg-recall decomposition on legal-clerc; inspect
-  whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
-  compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
-  for representation/granularity if that's the finding).
+  the go/no-go for the default-on flip of the chunk-sparse flag. It also feeds (with tempdoc 713's
+  parent-representation verdict) whether the parent whole-doc `splade` encode on chunked docs still
+  earns its place.
+- **Cheapest evidence:** tempdoc 712 §Step 4 (ON HOLD, GPU-sequenced after 713's pending
+  measurement) — `jseval run --start-backend --clean` on legal-clerc-200 with the flag on vs off,
+  recording enrichment wall-clock + docs/s as first-class outputs, plus a short-doc control corpus.
+- **Design/plan:** tempdoc 712 (§Mechanism correction + §Implementation log; steps 1–3 landed
+  flag-gated default-off on branch `worktree-712-sparse`).
 
 ### Q-014: Does any procedurally-generated `golden/` corpus clear the descriptor-collision gate, and is any of them suitable for an agent-utility (not just retrieval-quality) measurement?
 

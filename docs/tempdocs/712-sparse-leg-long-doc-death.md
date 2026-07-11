@@ -1,7 +1,9 @@
 # 712 — Sparse-leg long-doc death: SPLADE 512-token truncation confirmed (F-030/F-031/F-032's sparse sibling)
 
-- **status:** designed — implementation plan awaiting founder approval (takeover + theorize +
-  design + plan complete 2026-07-11; offline experiment run; NO implementation started)
+- **status:** steps 1–3 implemented flag-gated default-OFF (founder approval + riders,
+  2026-07-11); step 4 (live jseval A/B) ON HOLD pending GPU sequencing with tempdoc 713; step 5
+  parent-splade teardown DEFERRED to 713's parent-representation verdict. See §Implementation log
+  — including a mechanism correction the implementation investigation forced on the takeover text.
 - **created:** 2026-07-11
 - **updated:** 2026-07-11
 
@@ -29,7 +31,9 @@ document with max-pool merge scores **0.3274** (6.1×) and chunk-level MaxP scor
 - 691 §G named "SPLADE whole-doc projection" as candidate scope; 710's restraint list explicitly
   deferred it pending its own evidence. This tempdoc is that evidence pass.
 - NOTE: chunk docs carry no SPLADE fields at all (711 E2 audit: `SpladeBackfillOps` has zero
-  `is_chunk` handling; chunks get dense-only enrichment).
+  `is_chunk` handling; chunks get dense-only enrichment). *(Correct as an index-state observation,
+  but the mechanism claim was refined during implementation — see §Mechanism correction: chunks ARE
+  seeded `splade_status=PENDING` and the combined pass marks them COMPLETED without encoding.)*
 
 ---
 
@@ -53,7 +57,8 @@ Confirmed by source (not inference), primary-source `file:line`:
 - **Backfill encodes whole-doc parent content.** `SpladeBackfillOps`
   (`SpladeBackfillOps.java:88-95`) fetches `CHUNK_CONTENT` first, else `getDocumentContent` (parent
   body). Chunk docs are never enqueued `splade_status=PENDING` (711 E2), so in practice only whole
-  parents are SPLADE-encoded — each truncated to its first 512 tokens.
+  parents are SPLADE-encoded — each truncated to its first 512 tokens. *(Refined during
+  implementation — the enqueue claim was wrong in mechanism; see §Mechanism correction.)*
 
 ### The shipped model IS the one F-030(678) blamed
 
@@ -365,3 +370,125 @@ be delegated.
   offline); the 691 register tracks enrichment docs/s baselines. — **measured in step 4.**
 - Register: `docs/reference/search-quality-register.md` (read before, updated at close). Related
   findings: F-013 (splade quality vs BGE-M3 sparse), F-030/F-031/F-032.
+
+---
+
+## Mechanism correction (implementation investigation, 2026-07-11)
+
+The pre-implementation deep-read of the enrichment and search paths falsified two mechanism claims
+in the takeover/plan text above. The *finding* (truncation kills the sparse leg; chunk coverage
+revives it) stands unchanged; the *integration shape* changed:
+
+1. **`chunk_splade`/`chunk_splade_rank` are NOT phantom field keys and no new field is needed.**
+   They are the chunk-sparse sub-leg's *evidence-score keys*, emitted by the existing 3-way chunk
+   branch fusion (`HybridFusionUtils.fuseWithCC3(..., "chunk_", ...)` from
+   `SearchExecutor.executeChunkBranchFusion`). The **entire search side already exists and is
+   live**: `ChunkSearchOps.searchChunksSplade` queries the **existing `splade` FeatureField on
+   chunk docs** (`is_chunk=true`-filtered, `ChunkSearchOps.java:275-312`); the parent splade leg
+   explicitly excludes chunks (`TextQueryOps.java:501`); `SearchPlanner.planChunkMerge` already
+   flows the query's splade weights into chunk merge (`SearchPlanner.java:278-283`); the executor
+   fuses the sub-leg at `ccWeightSplade` when `pipeline.spladeEnabled` and weights are present
+   (`SearchExecutor.java:607-608,837-841`). Sparse needs no `chunk_vector`-style field fork —
+   FeatureFields are term postings, query-time filterable; the dense fields are split only because
+   KNN graphs cannot be.
+2. **Chunk docs ARE enqueued for SPLADE — the producer then silently drops them.**
+   `ChunkDocumentWriter.java:179` seeds every chunk doc `splade_status=PENDING`; the combined
+   pass's splade-status query picks them up (no `is_chunk` filter, parent-cache population in
+   `CombinedEnrichmentBackfillOps`). But chunk docs carry `CHUNK_CONTENT`, never `CONTENT`, so
+   they hit the blank-`CONTENT` early-out, which marked `splade_status=COMPLETED` **without
+   encoding** — a silent data-less COMPLETED (the F-032 bug-class, this time at enrollment rather
+   than RMW). That single early-out branch — not a missing field, producer, or fusion leg — is why
+   the chunk-sparse sub-leg had no data.
+
+Consequence: the fix is a **producer enrollment change behind a flag**, not a schema + producer +
+fusion build. The approved plan's steps collapsed accordingly (details in §Implementation log).
+
+## Implementation log (steps 1–3, founder-approved with riders, 2026-07-11)
+
+**Riders applied:** (1) flag-gated default-OFF in this PR, mirroring 691's late-chunking pattern;
+default-on flip is a separate evidence-gated decision. Step 4 (live A/B) ON HOLD for GPU
+sequencing with tempdoc 713; when run it must record enrichment wall-clock + docs/s and a
+short-doc control corpus. (2) reset-status target must be stored/docValues-backed, fail-fast test
+rides with step 1. (3) parent-whole-doc-splade teardown DEFERRED to tempdoc 713's verdict.
+
+### Step 1 — config flag (no schema change; deviation from approved plan, see rider-2 note)
+
+- `ResolvedConfig.Rag.chunkSpladeEnabled` (record field + javadoc), resolved by
+  `ResolvedConfigBuilder.buildRag()` as `resolveBoolean("rag.chunk_splade.enabled", false)`
+  — **default false**; yaml contribution `putYamlBoolean("rag.chunk_splade.enabled", ...)`;
+  `EnvRegistry.RAG_CHUNK_SPLADE_ENABLED` (`JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED`); documented in
+  `docs/reference/configuration/environment-variables.md`.
+- **Rider-2 deviation + confirmation:** the plan's new `chunk_splade` field + `chunk_splade_status`
+  are NOT created — chunk sparse rides the existing `splade` field + `splade_status` bookkeeping
+  (the shape the whole existing search/RMW stack already speaks). `splade_status` is
+  `stored:false, docValues:true` (docValues is the half every consumer uses: the RMW reset-status
+  lane reads it via `readKeywordDocValue`, the batched enrollment fetch and pending queries are
+  docValues reads). The rider's substance — reset-status target must never be another fragile
+  field — is enforced at startup by `FieldMapper.validateRmwPolicies` (`FieldMapper.java:199-213`:
+  target must exist and be docValues-backed), with 711's fail-fast tests already covering the
+  reject paths (`RmwFieldPreservationTest.startupFailFastRejects*`). Note `chunk_embedding_status`
+  is `stored:true, docValues:true`; `splade_status` is docValues-only — consistent with the parent
+  splade bookkeeping it extends, and sufficient for every read path in play.
+
+### Step 2 — producer: encode chunk docs' sparse postings in the combined bundled write
+
+`CombinedEnrichmentBackfillOps` (flag threaded as `BackfillContext.chunkSpladeEnabled`, wired from
+`BackfillScheduler` via `rag().chunkSpladeEnabled()`):
+
+- **Chunk lane** (chunk-cache pickup): alongside the dense enrollment, enroll `chunk_content` for
+  SPLADE when the flag is on. Enrolls on PENDING **and on COMPLETED**: this lane's own RMW cannot
+  carry postings it does not re-derive — omitting splade would destroy the data and reset-status
+  it back to PENDING (711's engine), costing a destroy→re-queue→re-encode cycle; re-encoding into
+  the same bundled write is strictly cheaper. FAILED is respected (poison-pill).
+- **Parent lane, blank-`CONTENT` early-out** (splade-status-query pickup): when the flag is on and
+  `CHUNK_CONTENT` is non-blank, enroll for encoding instead of marking COMPLETED; also re-derive
+  on COMPLETED when the pass writes the doc anyway (same RMW-destroy reasoning). Flag OFF keeps
+  the historical mark-COMPLETED-without-data byte-identically.
+- Both lanes feed the existing Phase-3b splade encode + the existing Phase-4 single-batched-write —
+  the F-032 one-RMW-per-doc invariant is preserved by construction (no new write site).
+
+### Step 3 — fusion: zero production change (verification only)
+
+The search side was already complete (§Mechanism correction). Evidence it works end-to-end with
+data present: `RmwFieldPreservationTest.chunkSpladeSearchableAndRmwDowngradesStatus` (new) indexes
+a chunk doc with sparse postings through the real Lucene runtime, retrieves it through the
+production `searchChunksSplade` query (`is_chunk` filter included), then proves the F-032
+no-silent-loss guard: an unrelated RMW drops the postings but downgrades `splade_status` to
+PENDING for re-derivation. Worker-services' existing trace/leg-set conformance suites stay green.
+
+### Tests added (all green)
+
+- `CombinedEnrichmentBackfillOpsTest` (worker-services): `chunkSpladeOff_...` (pins flag-off
+  byte-identical silent-COMPLETED), `chunkSpladeOn_parentLanePickup_...` (encode from
+  CHUNK_CONTENT, one bundled write), `chunkSpladeOn_chunkLane_...` (CHUNK_VECTOR + SPLADE in one
+  write; COMPLETED re-derived, the anti-churn rule), `chunkSpladeOn_spladeFailedRespected_...`
+  (poison-pill not resurrected).
+- `RmwFieldPreservationTest` (adapters-lucene): `chunkSpladeSearchableAndRmwDowngradesStatus`
+  (+ `createRuntimeWithChunkSplade` catalog fixture).
+
+### What did NOT change
+
+- `SSOT/catalogs/fields.v1.json` (both copies) — untouched; no regen needed.
+- Search execution / planner / fusion code — untouched.
+- `SpladeBackfillOps` (individual mode) — untouched; it already encoded chunk docs correctly via
+  its CHUNK_CONTENT-first fetch when individual mode is active (pre-existing inconsistency with
+  the combined pass, now resolved on the combined side behind the flag).
+
+### Rider-3 symmetry note (recorded instead of teardown)
+
+Whether the parent whole-doc `splade` encode on chunked parents still earns its place once chunk
+sparse data exists is the sparse half of the question tempdoc 713 is concurrently deciding for
+dense (what the parent doc should carry). Do not decide it here: two representation decisions in
+one week from two tempdocs risks contradiction. Revisit after 713's verdict + this tempdoc's
+step-4 A/B; the candidate teardown is the truncated parent-splade encode (its 0.0539 offline
+showing says it contributes ~nothing on long-doc corpora, but the short-doc control must weigh in
+first).
+
+### Step 4 (ON HOLD — do not run without explicit go)
+
+`jseval run --start-backend --clean` on `mixed/legal-clerc-200`,
+`JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED=true` vs default-off: `splade` + `hybrid` nDCG@10, union
+recall, leak/relevance gates, **enrichment wall-clock + docs/s as first-class outputs** (the
+offline ~19× sparse-encode multiplier is an acceptance question), plus one short-doc control
+corpus (e.g. `beir/scifact`) for regression. Default-on flip is a separate, evidence-gated
+decision after those numbers exist.
