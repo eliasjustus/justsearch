@@ -86,7 +86,6 @@ public final class IndexingOverheadProfiler {
         fields.put(SchemaFields.DOC_UID, docId + "#0");
         fields.put(SchemaFields.TITLE, title);
         fields.put(SchemaFields.CONTENT, body);
-        fields.put(SchemaFields.CONTENT_ALL, title + " " + body);
         fields.put(SchemaFields.MODIFIED_AT, System.currentTimeMillis());
         rawFields.add(fields);
         bytesTotal += body.getBytes(StandardCharsets.UTF_8).length;
