@@ -49,7 +49,9 @@ class ModelCapabilityResolverTest {
             new ModelManifest.Capabilities(
                 "cls", 8192, 768, "fp32", "fp16", "", "", "test-declared"));
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.ALL, false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
     assertEquals(8192, caps.trainedContextLength());
@@ -72,7 +74,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
   }
@@ -88,7 +92,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
   }
@@ -101,7 +107,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(1024, caps.embeddingDimension());
   }
@@ -117,7 +125,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(8192, caps.trainedContextLength());
     assertTrue(
@@ -136,7 +146,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(4096, caps.trainedContextLength(), "should prefer the smaller (safer) value");
     assertTrue(
@@ -155,7 +167,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(0, caps.trainedContextLength());
   }
@@ -173,7 +187,9 @@ class ModelCapabilityResolverTest {
         """);
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(ModelCapabilities.PoolingMode.MEAN, caps.poolingMode());
     assertEquals("search_document: ", caps.documentPrefix());
@@ -192,7 +208,9 @@ class ModelCapabilityResolverTest {
             null,
             new ModelManifest.Capabilities(null, null, null, null, null, "", null, null));
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals("", caps.documentPrefix(), "declared empty string must be preserved, not treated as absent");
     assertNull(caps.queryPrefix(), "genuinely undeclared prefix must stay null, not default to \"\"");
@@ -208,7 +226,9 @@ class ModelCapabilityResolverTest {
     // capabilities; no ecosystem or legacy sidecar files present either.
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.ALL, false);
 
     assertEquals(ModelCapabilities.PoolingMode.UNKNOWN, caps.poolingMode());
     assertEquals(0, caps.trainedContextLength());
@@ -225,7 +245,9 @@ class ModelCapabilityResolverTest {
     ModelManifest manifest =
         new ModelManifest("model_int8.onnx", "model_fp16.onnx", null, null, null);
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("ner", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "ner", modelDir, manifest, CapabilityRequirements.NER, false);
 
     assertEquals(ModelPrecision.INT8, caps.cpuPrecision());
     assertEquals(ModelPrecision.FP16, caps.gpuPrecision());
@@ -242,7 +264,9 @@ class ModelCapabilityResolverTest {
     IllegalStateException ex =
         assertThrows(
             IllegalStateException.class,
-            () -> ModelCapabilityResolver.resolve("embedding", modelDir, manifest, true));
+            () ->
+                ModelCapabilityResolver.resolve(
+                    "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, true));
     assertTrue(ex.getMessage().contains("capability_contract_strict"));
   }
 
@@ -261,8 +285,101 @@ class ModelCapabilityResolverTest {
             "labels.json",
             new ModelManifest.Capabilities("mean", 512, 384, "fp32", "fp16", "", "", null));
 
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("ner", modelDir, manifest, true);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "ner", modelDir, manifest, CapabilityRequirements.NER, true);
 
     assertTrue(caps.warnings().isEmpty());
+  }
+
+  @Test
+  @DisplayName("NER role resolves a manifest without pooling/prefixes with zero warnings")
+  void nerRoleIgnoresPoolingAndPrefixes(@TempDir Path modelDir) throws IOException {
+    Files.writeString(modelDir.resolve("labels.json"), """
+        { "id2label": { "0": "O", "1": "B-PER" } }
+        """);
+    // Deliberately no pooling or prefix source anywhere (no manifest fields, no
+    // 1_Pooling/config.json, no config_sentence_transformers.json, no legacy sidecars) — NER
+    // never pools token embeddings and never applies a task-instruction prefix, so a manifest
+    // that simply never declares them should be a fully healthy NER config, not a degraded one.
+    ModelManifest manifest =
+        new ModelManifest(
+            "model.onnx",
+            "model_fp16.onnx",
+            "tokenizer.json",
+            "pooling_config.json",
+            "labels.json",
+            new ModelManifest.Capabilities(null, 512, null, "fp32", "fp16", null, null, null));
+
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "ner", modelDir, manifest, CapabilityRequirements.NER, false);
+
+    assertEquals(ModelCapabilities.PoolingMode.UNKNOWN, caps.poolingMode());
+    assertNull(caps.documentPrefix());
+    assertNull(caps.queryPrefix());
+    assertEquals(2, caps.labelMapping().size(), "sanity: label mapping was still resolved for NER");
+    assertTrue(
+        caps.warnings().isEmpty(),
+        "NER never pools or prefixes — an undeclared pooling mode / prefix must not warn for this"
+            + " role: "
+            + caps.warnings());
+  }
+
+  @Test
+  @DisplayName("embedding role resolves a manifest without labels with zero label warning")
+  void embeddingRoleIgnoresLabels(@TempDir Path modelDir) {
+    // No labels.json (or the manifest-default config.json) anywhere in modelDir — embedding has
+    // no label taxonomy, so an absent label config must not warn for this role.
+    ModelManifest manifest =
+        new ModelManifest(
+            "model.onnx",
+            "model_fp16.onnx",
+            "tokenizer.json",
+            "pooling_config.json",
+            null,
+            new ModelManifest.Capabilities("cls", 8192, 768, "fp32", "fp16", "", "", null));
+
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
+
+    assertTrue(caps.labelMapping().isEmpty());
+    assertTrue(
+        caps.warnings().stream().noneMatch(w -> w.contains("label")),
+        "embedding never reads a label taxonomy — an absent label config must not warn for this"
+            + " role: "
+            + caps.warnings());
+  }
+
+  @Test
+  @DisplayName("embedding role still WARNs (and strict-fails) on undeclared pooling")
+  void embeddingRoleStillWarnsOnMissingPooling(@TempDir Path modelDir) {
+    // Every embedding-required fact declared except pooling.
+    ModelManifest manifest =
+        new ModelManifest(
+            "model.onnx",
+            "model_fp16.onnx",
+            "tokenizer.json",
+            "pooling_config.json",
+            null,
+            new ModelManifest.Capabilities(null, 8192, 768, "fp32", "fp16", "", "", null));
+
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
+
+    assertTrue(
+        caps.warnings().stream().anyMatch(w -> w.contains("pooling")),
+        "pooling is required for embedding — an undeclared pooling mode must still warn: "
+            + caps.warnings());
+
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                ModelCapabilityResolver.resolve(
+                    "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, true));
+    assertTrue(ex.getMessage().contains("capability_contract_strict"));
   }
 }
