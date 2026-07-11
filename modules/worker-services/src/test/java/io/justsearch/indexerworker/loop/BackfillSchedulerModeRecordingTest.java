@@ -150,7 +150,7 @@ class BackfillSchedulerModeRecordingTest {
               return new LuceneRuntimeTypes.BatchUpdateResult(count, 0);
             });
     lenient()
-        .when(indexingCoordinator.updateDocumentsBatch(anyList(), org.mockito.ArgumentMatchers.anyBoolean()))
+        .when(indexingCoordinator.updateDocumentsBatch(anyList()))
         .thenAnswer(
             inv -> {
               List<Map.Entry<String, Map<String, Object>>> batch = inv.getArgument(0);

@@ -278,7 +278,7 @@ public final class SpladeBackfillOps {
             SchemaFields.SPLADE_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 

@@ -60,8 +60,9 @@ public final class FieldMapper {
     final Integer vectorDim; // nullable
     final String analyzerKey; // nullable
     final boolean multiValued;
+    final String rmwPolicy; // nullable (tempdoc 711)
 
-    FieldDef(String id, String type, boolean stored, boolean docValues, List<String> roles, Integer vectorDim, String analyzerKey, boolean multiValued) {
+    FieldDef(String id, String type, boolean stored, boolean docValues, List<String> roles, Integer vectorDim, String analyzerKey, boolean multiValued, String rmwPolicy) {
       this.id = id;
       this.type = type;
       this.stored = stored;
@@ -70,6 +71,7 @@ public final class FieldMapper {
       this.vectorDim = vectorDim;
       this.analyzerKey = analyzerKey;
       this.multiValued = multiValued;
+      this.rmwPolicy = rmwPolicy;
     }
 
     /** Creates a FieldDef from the configuration POJO. */
@@ -82,7 +84,8 @@ public final class FieldMapper {
           pojo.roles(),
           pojo.vectorDimension(),
           pojo.analyzer(),
-          pojo.multiValued()
+          pojo.multiValued(),
+          pojo.rmwPolicy()
       );
     }
   }
@@ -165,6 +168,68 @@ public final class FieldMapper {
   Map<String, FieldDef> fieldDefs() { return java.util.Collections.unmodifiableMap(byId); }
 
   String idField() { return primaryKeyField.id; }
+
+  /** RMW policy that re-reads the field from the index and carries it forward (tempdoc 711). */
+  static final String RMW_PRESERVE_REREAD = "preserve-reread";
+  /** RMW policy prefix that resets a named docValues-backed status field so a backfill re-derives. */
+  static final String RMW_RESET_STATUS_PREFIX = "reset-status:";
+
+  /**
+   * Fail-fast catalog validation (tempdoc 711): every non-stored, non-docValues data-bearing field
+   * (type {@code vector} or {@code splade}) must declare a parseable {@code rmwPolicy} so the
+   * read-modify-write choke point knows how to preserve it; stored or docValues-backed fields, which
+   * survive RMW already, must NOT declare one. A {@code reset-status:<target>} target must exist in
+   * the catalog and be docValues-backed. Called alongside {@link #validatePrimaryKeySupport()}.
+   */
+  void validateRmwPolicies() {
+    for (FieldDef def : byId.values()) {
+      boolean dataBearing = "vector".equals(def.type) || "splade".equals(def.type);
+      boolean fragile = dataBearing && !def.stored && !def.docValues;
+      if (fragile) {
+        String policy = def.rmwPolicy;
+        if (policy == null || policy.isBlank()) {
+          throw new IllegalStateException(
+              "Field " + def.id + " (type " + def.type + ") is non-stored and non-docValues "
+                  + "data-bearing but declares no rmwPolicy — RMW would silently destroy it "
+                  + "(tempdoc 711)");
+        }
+        if (policy.equals(RMW_PRESERVE_REREAD)) {
+          continue;
+        }
+        if (policy.startsWith(RMW_RESET_STATUS_PREFIX)) {
+          String target = policy.substring(RMW_RESET_STATUS_PREFIX.length());
+          FieldDef targetDef = byId.get(target);
+          if (targetDef == null) {
+            throw new IllegalStateException(
+                "Field " + def.id + " rmwPolicy reset-status target '" + target
+                    + "' does not exist in the catalog");
+          }
+          if (!targetDef.docValues) {
+            throw new IllegalStateException(
+                "Field " + def.id + " rmwPolicy reset-status target '" + target
+                    + "' must be docValues-backed so the status can be restored across RMW");
+          }
+          continue;
+        }
+        throw new IllegalStateException(
+            "Field " + def.id + " has unknown rmwPolicy '" + policy + "'");
+      }
+      if (def.rmwPolicy != null && !def.rmwPolicy.isBlank()) {
+        throw new IllegalStateException(
+            "Field " + def.id + " declares rmwPolicy '" + def.rmwPolicy + "' but is stored or "
+                + "docValues-backed (RMW preserves it already) — remove the policy");
+      }
+    }
+  }
+
+  /** Catalog fields that declare an {@code rmwPolicy} (drives the RMW preservation engine). */
+  java.util.List<FieldDef> rmwPolicyFields() {
+    java.util.List<FieldDef> out = new ArrayList<>();
+    for (FieldDef def : byId.values()) {
+      if (def.rmwPolicy != null && !def.rmwPolicy.isBlank()) out.add(def);
+    }
+    return out;
+  }
 
   void validatePrimaryKeySupport() {
     if (!primaryKeyField.docValues) {
@@ -314,7 +379,9 @@ public final class FieldMapper {
       String analyzer = n.has("analyzer") ? n.path("analyzer").asText(null) : null;
       if (analyzer != null && analyzer.isBlank()) analyzer = null;
       boolean multiValued = n.path("multiValued").asBoolean(false);
-      map.put(id, new FieldDef(id, type, stored, docValues, roles, dim, analyzer, multiValued));
+      String rmwPolicy = n.has("rmwPolicy") ? n.path("rmwPolicy").asText(null) : null;
+      if (rmwPolicy != null && rmwPolicy.isBlank()) rmwPolicy = null;
+      map.put(id, new FieldDef(id, type, stored, docValues, roles, dim, analyzer, multiValued, rmwPolicy));
     }
     return map;
   }
