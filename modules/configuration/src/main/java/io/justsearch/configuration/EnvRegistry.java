@@ -1090,6 +1090,8 @@ public enum EnvRegistry {
         "JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT"),
     /** Enable chunk-level vector retrieval for RAG. */
     RAG_CHUNK_VECTORS_ENABLED("rag.chunk_vectors.enabled", "JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED"),
+    /** Enable chunk-level SPLADE enrichment (tempdoc 712; default false, evidence-gated). */
+    RAG_CHUNK_SPLADE_ENABLED("rag.chunk_splade.enabled", "JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED"),
 
     // ==================== Worker Limits (tempdoc 347 D2: sysProp = configKey) ====================
 
