@@ -185,7 +185,11 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     // not parsed by this encoder — detectPoolingStrategy's own file read is retired.
     io.justsearch.ort.ModelCapabilities capabilities =
         io.justsearch.ort.ModelCapabilityResolver.resolve(
-            "embedding", modelDir, manifest, capabilityContractStrict);
+            "embedding",
+            modelDir,
+            manifest,
+            io.justsearch.ort.CapabilityRequirements.EMBEDDING,
+            capabilityContractStrict);
     PoolingStrategy poolingStrategy = toPoolingStrategy(capabilities.poolingMode());
     return new EmbeddingAssembly(
         sessions,

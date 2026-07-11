@@ -35,7 +35,9 @@ class ModelCapabilityResolverGteLiveTest {
     Path modelDir = discovery.modelDir();
 
     ModelManifest manifest = ModelManifest.load(modelDir);
-    ModelCapabilities caps = ModelCapabilityResolver.resolve("embedding", modelDir, manifest, false);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
     assertEquals(8192, caps.trainedContextLength());

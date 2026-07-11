@@ -55,34 +55,65 @@ public final class ModelCapabilityResolver {
   private ModelCapabilityResolver() {}
 
   /**
-   * Resolves capabilities for {@code modelDir}. Logs every degraded/undeclared fact at WARN.
+   * Resolves capabilities for {@code modelDir}. Logs every degraded/undeclared fact at WARN — but
+   * only for facts {@code requirements} names; a fact the consuming role never reads is never
+   * resolved and never warned about (tempdoc 710 Wave 2 Move 2 — see {@link
+   * CapabilityRequirements} for why: an always-fires WARN on a healthy config trains operators to
+   * ignore warnings).
    *
    * @param packageId short encoder identifier for log lines (e.g. {@code "embedding"}, {@code
    *     "ner"}) — mirrors {@code InferenceCompositionRoot.resolveVariant}'s {@code packageId}
    * @param modelDir directory containing the manifest, model files, and any ecosystem/legacy
    *     sidecar files
    * @param manifest the already-loaded manifest for {@code modelDir}
+   * @param requirements which facts this role reads; every other fact stays at its "undeclared"
+   *     sentinel with zero warnings
    * @param strict when {@code true}, a non-empty warning list throws {@link IllegalStateException}
    *     instead of returning a degraded {@link ModelCapabilities} — {@code
    *     justsearch.models.capability_contract_strict}
-   * @throws IllegalStateException if {@code strict} and any fact was undeclared/ambiguous
+   * @throws IllegalStateException if {@code strict} and any required fact was undeclared/ambiguous
    */
   public static ModelCapabilities resolve(
-      String packageId, Path modelDir, ModelManifest manifest, boolean strict) {
+      String packageId,
+      Path modelDir,
+      ModelManifest manifest,
+      CapabilityRequirements requirements,
+      boolean strict) {
     List<String> warnings = new ArrayList<>();
 
-    ModelCapabilities.PoolingMode poolingMode = resolvePoolingMode(modelDir, manifest, warnings);
-    int contextLength = resolveContextLength(modelDir, manifest, warnings);
-    int dimension = resolveDimension(modelDir, manifest, warnings);
-    if (dimension <= 0) {
-      dimension = probeStaticEmbeddingDimension(modelDir, manifest, warnings);
+    ModelCapabilities.PoolingMode poolingMode =
+        requirements.requires(CapabilityRequirements.Fact.POOLING)
+            ? resolvePoolingMode(modelDir, manifest, warnings)
+            : ModelCapabilities.PoolingMode.UNKNOWN;
+    int contextLength =
+        requirements.requires(CapabilityRequirements.Fact.CONTEXT_LENGTH)
+            ? resolveContextLength(modelDir, manifest, warnings)
+            : 0;
+    int dimension = 0;
+    if (requirements.requires(CapabilityRequirements.Fact.DIMENSION)) {
+      dimension = resolveDimension(modelDir, manifest, warnings);
+      if (dimension <= 0) {
+        dimension = probeStaticEmbeddingDimension(modelDir, manifest, warnings);
+      }
     }
-    ModelPrecision cpuPrecision =
-        resolvePrecision(manifest.capabilities().cpuPrecision(), manifest.cpu(), "cpu", warnings);
-    ModelPrecision gpuPrecision =
-        resolvePrecision(manifest.capabilities().gpuPrecision(), manifest.gpu(), "gpu", warnings);
-    String[] prefixes = resolvePrefixes(modelDir, manifest, warnings);
-    Map<String, String> labelMapping = resolveLabelMapping(modelDir, manifest, warnings);
+    ModelPrecision cpuPrecision = null;
+    ModelPrecision gpuPrecision = null;
+    if (requirements.requires(CapabilityRequirements.Fact.PRECISION)) {
+      cpuPrecision =
+          resolvePrecision(
+              manifest.capabilities().cpuPrecision(), manifest.cpu(), "cpu", warnings);
+      gpuPrecision =
+          resolvePrecision(
+              manifest.capabilities().gpuPrecision(), manifest.gpu(), "gpu", warnings);
+    }
+    String[] prefixes =
+        requirements.requires(CapabilityRequirements.Fact.PREFIXES)
+            ? resolvePrefixes(modelDir, manifest, warnings)
+            : new String[] {null, null};
+    Map<String, String> labelMapping =
+        requirements.requires(CapabilityRequirements.Fact.LABELS)
+            ? resolveLabelMapping(modelDir, manifest, warnings)
+            : Map.of();
 
     for (String warning : warnings) {
       log.warn("{}: model capability degraded — {}", packageId, warning);
