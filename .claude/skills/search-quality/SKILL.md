@@ -70,6 +70,8 @@ Query variants of the same corpus get distinct slugs.
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
+| golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. |
+| golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. |
 
 ---
 
@@ -221,13 +223,30 @@ catalog — see Corpus provenance note above)*
 | (HEAD default) | (default) | (default) | lexical | 0.686 | — | — | bm25 | A | 84b305b | 666 |
 | (HEAD default) | (default) | (default) | splade | 0.059 | — | — | splade | A | 84b305b | 666 |
 | (HEAD default) | (default) | (default) | hybrid | **0.521** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
+| (HEAD default, late-chunking ON = new default) | (default) | (default) | vector | **0.2967** | 0.220 | 0.365 | dense | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | lexical | 0.6888 | — | 0.855 | bm25 | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | splade | 0.0591 | — | 0.150 | splade | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | hybrid | **0.5497** | 0.415 | 0.695 | cross_encoder+dense+hybrid+query_classification | A | e83653a | 691 §N |
+| (late-chunking ON + `JUSTSEARCH_EMBED_GPU_MEM_MB=6144`) | (default) | (default) | vector | **0.3401** | 0.240 | 0.430 | dense | A | e83653a | 691 §N |
+| (HEAD default, RMW preservation = F-032) | (default) | (default) | lexical | 0.6891 | 0.510 | — | bm25+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | splade | 0.0591 | 0.005 | — | splade+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | vector | **0.6184** | 0.410 | — | dense+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | hybrid | **0.5609** | 0.425 | — | cross_encoder+dense+hybrid+chunk_merge | A | b88e76e | 711 |
 
-**Best known:** (HEAD default) / hybrid = **0.521** (first measurement — no ablations run yet).
+**Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
+2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
+chunk vectors were ALL silently destroyed post-write, F-032; all pre-711 vector/hybrid rows above
+are now dead-chunk-vector ablations). Union recall 0.925 (> 0.87 baseline); relevance + leak gates
+green at b88e76e.
 **Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
 retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
 observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
 form, `queries/test.single-removed.direct.tsv`, distinct from the old known-item task — see Corpus
 provenance note above). No cc/encoder ablation pass has been run yet.
+**Note (691, 2026-07-11):** the long-doc single-pass VECTOR path (default-on since 691 Phase 4)
+revives the dense leg 5.0× at shipped defaults (0.060→0.2967; 0.3401 with a 6144MB embed arena —
+the residual gap is ~20 near-8k-token docs OOM-falling-back to windowed at the 3072 default). See
+F-031. Union-recall 0.890 (> the 0.87 pin) on the same run; leak + relevance gates green.
 
 ### mixed/miracl-de-2k
 
@@ -584,6 +603,69 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+
+### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
+
+- **Answer:** the production whole-doc `VECTOR` for chunked (>2000-char) docs was a mean of
+  512-token-window CLS vectors; embedding the whole doc in ONE batch-1 pass (up to 8192 tokens,
+  `OnnxEmbeddingEncoder.embedWithSpans`, `justsearch.embed.late_chunking_*`) lifts legal-clerc-200
+  `vector` nDCG@10 **0.060 → 0.2967 at shipped defaults (5.0×) / 0.3401 with a 6144MB embed arena
+  (5.7×)**, hybrid 0.523→0.5497, union-recall 0.890 (> the 0.87 pin), leak + relevance gates green.
+  Controls: enron-qa +7% vector / +1.3% hybrid (no BM25-dominant regression); scifact neutral.
+  **Default ON since 691 Phase 4** (D-004 template completed). Measured cost: background enrichment
+  slower on long-doc corpora (enron 7.7→4.5 docs/s, measured at a 3072MB arena). **Update
+  2026-07-11 (founder decision): the embed arena default is now 6144MB** — shipped defaults
+  deliver the full 0.3401 ceiling with zero OOM-fallbacks; the 0.2967 row documents the
+  3072-arena ablation.
+- **Scope reconciliation with F-030(678):** 678's elimination campaign tested gating, query shape,
+  granularity, and naturalness — context length was NOT a tested axis. This finding does not
+  overturn the encoder-domain-mismatch verdict; it SPLITS the deficit: roughly half the dense death
+  was the window-mean representation (recovered here: 0.06→0.34), the remainder (vector 0.34 vs
+  lexical 0.69) stays with the encoder-domain question (708's lane). Supporting offline datapoint
+  (691 §Phase M): pure chunk-CLS exact-NN MaxP reaches nDCG@10 0.64 / R@10 0.85 on this corpus —
+  the encoder separates legal content at chunk granularity far better than any whole-doc
+  representation, evidence 708 should weigh.
+- **What did NOT ship (measured against):** deriving `CHUNK_VECTOR`s from the same pass (canonical
+  late chunking, arXiv:2409.04701) — on this CLS-pooled model, span-mean chunk vectors regress
+  hard (offline: nDCG@10 0.640→0.407; the method's authors state CLS models are incompatible).
+  Chunk docs keep their per-chunk CLS path.
+- **Structural caveat (for any future enrichment pass):** `KnnFloatVectorField` is non-stored and
+  silently destroyed by any later read-modify-write; the combined pass's one-RMW-per-doc bundling
+  is the invariant that keeps vectors alive (691 §N-5 — a separate VECTOR-writing pass gets erased
+  by the next stage's RMW with status still COMPLETED). Logged for tempdoc 710.
+- **Evidence:** tempdoc 691 §Phase J/M/N (arm tables, five-defect forensic chain, gate reports);
+  artifacts `tmp/691-ab2/` (per-arm summary.json + worker.log copies); reproduction commands in
+  691 §K-5.
+
+### F-032: ALL chunk vectors were silently destroyed post-write at shipped HEAD — catalog-declared RMW preservation recovers them, legal vector 0.3401 → 0.6180 (tempdoc 711 Item 1, 2026-07-11; supersedes F-031's "structural caveat" with the structural fix)
+
+- **Answer:** `WritePathOps.readModifyWrite` rebuilt docs from stored fields only, so every
+  non-stored field absent from an update map was destroyed on rewrite. Live probe over the
+  on-disk index at base `f12ded5` after a defaults pipeline run on legal-clerc-200: parent
+  `vector` = 198 present, **`chunk_vector` = 0 of 4,293 present** — the `chunk_merge` leg of
+  vector mode had zero chunk vectors to merge. A second confirmed loss: SPLADE FeatureField
+  data destroyed while `splade_status` stayed COMPLETED (`preserveSplade=true` preserved the
+  status of data it could not preserve). Fix (711 Item 1): every non-stored/non-docValues
+  data-bearing field declares an `rmwPolicy` in `fields.v1.json` (`preserve-reread` for
+  vector/chunk_vector via Lucene ordinal read-back at the held searcher snapshot;
+  `reset-status:splade_status` with COMPLETED→PENDING downgrade for splade), enforced once
+  inside `readModifyWrite` with startup fail-fast for undeclared fragile fields;
+  `preserveSplade` threading deleted (36 sites).
+- **Measured (same-day A/B, byte-identical corpus sha256 630f5376…, shipped defaults):**
+  CONTROL `f12ded5` vector nDCG@10 **0.3401** (reproduces the F-031 pin to 4 decimals) /
+  hybrid 0.5446, chunk_vector docs 0; ENGINE vector **0.6180** / hybrid **0.5592**,
+  chunk_vector docs 4,293/4,293; wall 141.2 s vs 130.8 s (no throughput cost). New best-known
+  legal-clerc defaults: vector 0.6180, hybrid 0.5592.
+- **Reframes F-031:** the "0.3401 ceiling" was measured against an index with all chunk
+  vectors dead; §J-B's offline parent-only replication (0.3403) agreed with it precisely
+  *because* chunks contributed nothing. The remaining vector-vs-lexical gap for 708's
+  encoder-domain question is now 0.618 vs 0.686, not 0.34 vs 0.69.
+- **Gates (full-mode run at b88e76e, publish step):** lexical 0.6891 / splade 0.0591 / vector
+  0.6184 / hybrid 0.5609; union recall **0.925** (baseline 0.87, floor 0.82), relevance gate
+  (floor 0.4964) and leak gate (ceiling 0.255) both green. Baseline rows updated in the
+  legal-clerc block above.
+- **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
+  vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
 
 ### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
@@ -1401,7 +1483,7 @@ query-time stages search against.
 | 3   | **Text Analysis**        | `SsotAnalyzerRegistry`         | `ICUTokenizer → NFC → LowerCase` — locale-invariant, no per-language analyzer ([ADR-0043](../decisions/0043-multilingual-by-construction-no-per-language-levers.md))  |
 | 4   | **Chunking**             | `ChunkDocumentWriter`          | Splits docs >2,000 chars into 500-token chunks (50-token overlap); linked via `parent_doc_id` |
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
-| 6   | **Dense Embedding**      | `EmbeddingService` (llama.cpp) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk)             |
+| 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
 | 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
 | 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |

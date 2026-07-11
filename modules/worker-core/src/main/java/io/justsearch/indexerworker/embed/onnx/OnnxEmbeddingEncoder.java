@@ -3,11 +3,13 @@ package io.justsearch.indexerworker.embed.onnx;
 
 import ai.djl.huggingface.tokenizers.Encoding;
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import ai.djl.huggingface.tokenizers.jni.CharSpan;
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 import io.justsearch.indexerworker.metrics.EncoderOrtRunSpans;
+import io.justsearch.ort.NativeSessionHandle;
 import io.justsearch.ort.OrtCudaStatus;
 import io.justsearch.ort.SessionHandle;
 import io.opentelemetry.api.trace.Span;
@@ -17,7 +19,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.LongBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -60,6 +61,10 @@ public final class OnnxEmbeddingEncoder implements Closeable {
   // --- Tokenizer ---
   private final HuggingFaceTokenizer tokenizer;
   private final int maxSeqLen;
+  // Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for embedWithSpans, independent of
+  // maxSeqLen. Falls back to maxSeqLen when the shape's value is <= 0 (defensive — DISABLED /
+  // test paths that don't wire the late-chunking config).
+  private final int lateChunkingMaxSeqLen;
   private final boolean needsTokenTypeIds;
 
   // --- Chunking ---
@@ -71,6 +76,12 @@ public final class OnnxEmbeddingEncoder implements Closeable {
 
   // --- Embedding dimension (detected from model output) ---
   private volatile int embeddingDimension;
+  // Tempdoc 710 Wave 2 Move 1: declared dimension from the capability contract, 0 if undeclared.
+  // Cross-check only — the reactive first-inference detection above stays authoritative for
+  // embeddingDimension(); a mismatch is WARNed once, not silently overridden either direction.
+  private final int declaredEmbeddingDimension;
+  private final java.util.concurrent.atomic.AtomicBoolean warnedDimensionMismatch =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
 
   // --- Per-call profiling (356->357: shared accumulator, pull model) ---
   private final io.justsearch.indexerworker.metrics.EncoderProfileAccumulator profiler =
@@ -97,19 +108,34 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       SessionHandle sessions, EmbeddingShape shape, HuggingFaceTokenizer tokenizer) {
     this.sessions = sessions;
     this.maxSeqLen = shape.maxSequenceLength();
+    this.lateChunkingMaxSeqLen =
+        shape.lateChunkingMaxSequenceLength() > 0 ? shape.lateChunkingMaxSequenceLength() : maxSeqLen;
     this.chunkSize = Math.min(512, maxSeqLen);
     this.chunkOverlap = 128;
     this.needsTokenTypeIds = shape.needsTokenTypeIds();
     this.tokenizer = tokenizer;
     this.poolingStrategy = shape.poolingStrategy();
+    this.declaredEmbeddingDimension = shape.declaredEmbeddingDimension();
 
     log.info(
-        "OnnxEmbeddingEncoder initialized: maxSeqLen={}, tokenTypeIds={}, poolingStrategy={}",
+        "OnnxEmbeddingEncoder initialized: maxSeqLen={}, lateChunkingMaxSeqLen={}, tokenTypeIds={},"
+            + " poolingStrategy={}",
         maxSeqLen,
+        lateChunkingMaxSeqLen,
         needsTokenTypeIds,
         poolingStrategy);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("embed", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run() invocation
+    // through this SessionHandle's leases records itself — call sites (including runHidden's
+    // late-chunking path) can no longer forget (the class of gap that shipped as the S-B3
+    // runHidden blind spot, closed at the source by Wave 0 and now made structural). Null-guarded
+    // because OnnxEmbeddingEncoderPoolingTest constructs this encoder with sessions=null to unit
+    // test poolSpan/pool in isolation (tempdoc 691 Wave 0) — those pure functions never touch
+    // sessions, so the constructor staying I/O-free for that path is intentional.
+    if (sessions != null) {
+      sessions.setOrtRunRecorder(profiler::recordOrtCall);
+    }
   }
 
   /**
@@ -118,17 +144,29 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * {@code InferenceCompositionRoot.composeEmbedAssembly} (variant-driven path) and by test
    * harnesses + the worker-embed service lazy-init path.
    *
+   * @param lateChunkingMaxSeqLen single-pass whole-doc token limit for {@link #embedWithSpans}
+   *     (tempdoc 691 Phase 2); {@code <= 0} falls back to {@code maxSeqLen}
+   * @param capabilityContractStrict when {@code true}, an undeclared/ambiguous model-capability
+   *     fact throws instead of degrading with a WARN — {@code
+   *     justsearch.models.capability_contract_strict} (tempdoc 710 Wave 2 Move 1)
    * @throws OrtException if session input-name probe fails
    * @throws UncheckedIOException if tokenizer load fails
+   * @throws IllegalStateException if {@code capabilityContractStrict} and a capability fact is
+   *     undeclared/ambiguous
    */
   public static EmbeddingAssembly buildAssembly(
-      SessionHandle sessions, Path modelDir, int maxSeqLen) throws OrtException {
+      SessionHandle sessions,
+      Path modelDir,
+      int maxSeqLen,
+      int lateChunkingMaxSeqLen,
+      boolean capabilityContractStrict)
+      throws OrtException {
     // Tempdoc 397 §14.24 FD-ProbeDeletion: probe input names via the assembler helper.
     // Tempdoc 374 sandbox round 4 issue H: previously hardcoded model.onnx, which
     // broke when Install AI only downloaded model_fp16.onnx on a CUDA-functional
     // host. resolveExistingModelFile picks whichever declared variant is on disk.
-    Path probeModel =
-        io.justsearch.ort.ModelManifest.loadOrDefault(modelDir).resolveExistingModelFile(modelDir);
+    io.justsearch.ort.ModelManifest manifest = io.justsearch.ort.ModelManifest.loadOrDefault(modelDir);
+    Path probeModel = manifest.resolveExistingModelFile(modelDir);
     io.justsearch.ort.OrtSessionAssembler.ProbedNames probed =
         io.justsearch.ort.OrtSessionAssembler.probeModelNames(
             sessions.environment(), probeModel);
@@ -143,9 +181,38 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       throw new UncheckedIOException(
           "Failed to load embedding tokenizer from " + tokenizerPath, e);
     }
-    PoolingStrategy poolingStrategy = detectPoolingStrategy(modelDir, "pooling_config.json");
+    // Tempdoc 710 Wave 2 Move 1: capabilities resolved ONCE here (the composition choke point),
+    // not parsed by this encoder — detectPoolingStrategy's own file read is retired.
+    io.justsearch.ort.ModelCapabilities capabilities =
+        io.justsearch.ort.ModelCapabilityResolver.resolve(
+            "embedding",
+            modelDir,
+            manifest,
+            io.justsearch.ort.CapabilityRequirements.EMBEDDING,
+            capabilityContractStrict);
+    PoolingStrategy poolingStrategy = toPoolingStrategy(capabilities.poolingMode());
     return new EmbeddingAssembly(
-        sessions, new EmbeddingShape(maxSeqLen, needsTokenTypeIds, poolingStrategy), tokenizer);
+        sessions,
+        new EmbeddingShape(
+            maxSeqLen,
+            needsTokenTypeIds,
+            poolingStrategy,
+            lateChunkingMaxSeqLen,
+            capabilities.embeddingDimension()),
+        tokenizer,
+        capabilities);
+  }
+
+  /**
+   * Maps the ort-common capability fact to this encoder's pooling enum. {@code UNKNOWN} (no
+   * source declared a pooling mode) falls back to the historical default ({@code MEAN_POOL}) —
+   * {@link io.justsearch.ort.ModelCapabilityResolver} already logged a WARN naming the gap at the
+   * choke point, so this mapping doesn't re-warn.
+   */
+  private static PoolingStrategy toPoolingStrategy(io.justsearch.ort.ModelCapabilities.PoolingMode mode) {
+    return mode == io.justsearch.ort.ModelCapabilities.PoolingMode.CLS
+        ? PoolingStrategy.CLS
+        : PoolingStrategy.MEAN_POOL;
   }
 
   /**
@@ -202,10 +269,17 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * <ul>
    *   <li>Item 4 (E6' shrinkage-off config) — validated with 6144 MB arena,
    *       zero OOMs at batch=16;</li>
-   *   <li>arena_extend_strategy = kNextPowerOfTwo (reduces fragmentation,
-   *       same root cause as SPLADE PRESPARSE OOMs at batch=16);</li>
-   *   <li>Adaptive sub-batching with OOM retry — capacity-aware fallback in
-   *       the encoder itself.</li>
+   *   <li>{@code arena_extend_strategy = kNextPowerOfTwo} — NOT a known fix (tempdoc 710 R-3a
+   *       correction, tempdoc 394 Runs B+C 2026-04-20): it is the CUDA EP default, trading
+   *       {@code kSameAsRequested}'s external-fragmentation risk for over-reservation risk: as a
+   *       *global* setting it was already tried and reverted (regressed SPLADE ortP50 by 65% for
+   *       zero net pipeline win). An untried embed-only per-session variant (~8s projected gain,
+   *       tempdoc 394 item 4) remains a candidate, but any adoption needs its own A/B with
+   *       VRAM-headroom measurement, not a "lands and fixes it" assumption;</li>
+   *   <li>Raising this constant itself — distinct from the sub-batch OOM fallback ladder
+   *       ({@link #embedPreTokenizedBatch}, tempdoc 710 Move 3) added below, which improves
+   *       failure-mode coverage (a sub-batch OOM no longer nulls the whole caller batch) but does
+   *       not by itself make batch=16 safe to raise to as the default.</li>
    * </ul>
    *
    * <p>Historical constraint (tempdoc 334 Phase 8): batch=16 also failed at
@@ -331,44 +405,169 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       try (Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
-          OrtSession session = lease.session();
-          try (OrtSession.Result result = session.run(inputs, lease.runOptions())) {
-            long tExtract = System.nanoTime();
-            long ortElapsed = tExtract - tOrt;
-            profiler.recordOrtCall(ortElapsed);
 
+          long tExtract;
+          float[][][] hidden;
+          try (OrtSession.Result result = lease.run(inputs)) {
+            tExtract = System.nanoTime();
+            // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
             // last_hidden_state: [batchSize, maxLen, dim]
-            float[][][] hidden = (float[][][]) result.get(0).getValue();
-            int dim = hidden[0][0].length;
-
-            if (embeddingDimension == 0) {
-              embeddingDimension = dim;
+            hidden = (float[][][]) result.get(0).getValue();
+          } catch (OrtException e) {
+            // Tempdoc 710 Move 3: without this, an OOM here propagates as OrtException ->
+            // BackendException (OnnxEmbeddingBackend.embedBatch) -> null for the WHOLE caller
+            // batch (EmbeddingService.embedDocumentBatch), even though only this ONE sub-batch
+            // OOM'd; EmbeddingBackfillOps then re-embeds every doc in the caller batch one at a
+            // time. Fallback ladder (mirrors SpladeEncoder's GPU->CPU pattern, but batch-1-on-GPU
+            // first): (a) retry each doc in the failed sub-batch as its own batch=1 run on the
+            // SAME GPU session/lease — batch=1 fits where the larger batch fragmented (measured
+            // §J-4/tempdoc 691); (b) only if a doc ALSO arena-OOMs at batch=1, fall back to
+            // sessions.acquireCpu() for that one doc; (c) non-arena OrtExceptions propagate
+            // unchanged.
+            if (lease.isCpu() || !NativeSessionHandle.isBfcArenaFailure(e)) {
+              throw e;
             }
-
-            List<float[]> vectors = new ArrayList<>(batchSize);
-            for (int b = 0; b < batchSize; b++) {
-              vectors.add(l2Normalize(pool(hidden[b], allMask[b], dim)));
-            }
-            profiler.addPhaseNs("extract", System.nanoTime() - tExtract);
-            // callCount() is approximate — concurrent threads may skip or double-fire
-            // at interval boundaries. Acceptable for periodic diagnostic logging.
-            long calls = profiler.callCount();
-            if (calls % PROFILE_LOG_INTERVAL == 0) {
-              var snap = profiler.snapshot();
-              if (snap != null) {
-                log.info(
-                    "Embed per-call profile ({}calls): {}, ort=[{}], batch={}, seqLen={}",
-                    calls, snap.formatAvgPhases(calls), snap.formatOrtDist(), batchSize, maxLen);
-              }
-            }
-            return vectors;
+            log.info(
+                "Embed GPU arena allocation failed for batch (batchSize={}, seqLen={}), falling"
+                    + " back to batch-1 singles on GPU: {}",
+                batchSize,
+                maxLen,
+                e.getMessage());
+            final int fallbackSeqLen = maxLen;
+            hidden =
+                runOomFallbackLadder(
+                    batchSize,
+                    i ->
+                        runSingleHidden(
+                            lease, allIds[i], allMask[i], allTypeIds[i], fallbackSeqLen),
+                    i -> {
+                      try (var cpuLease = sessions.acquireCpu()) {
+                        return runSingleHidden(
+                            cpuLease, allIds[i], allMask[i], allTypeIds[i], fallbackSeqLen);
+                      }
+                    });
+            // Tempdoc 710 Move 2: each per-doc GPU/CPU retry in the ladder above is its own
+            // lease.run() call and records itself individually at the choke point — no outer
+            // recordOrtCall here (that would double-count against the per-doc recordings).
+            tExtract = System.nanoTime();
           }
+
+          int dim = hidden[0][0].length;
+          recordDetectedDimension(dim);
+
+          List<float[]> vectors = new ArrayList<>(batchSize);
+          for (int b = 0; b < batchSize; b++) {
+            vectors.add(l2Normalize(pool(hidden[b], allMask[b], dim)));
+          }
+          profiler.addPhaseNs("extract", System.nanoTime() - tExtract);
+          // callCount() is approximate — concurrent threads may skip or double-fire
+          // at interval boundaries. Acceptable for periodic diagnostic logging.
+          long calls = profiler.callCount();
+          if (calls % PROFILE_LOG_INTERVAL == 0) {
+            var snap = profiler.snapshot();
+            if (snap != null) {
+              log.info(
+                  "Embed per-call profile ({}calls): {}, ort=[{}], batch={}, seqLen={}",
+                  calls, snap.formatAvgPhases(calls), snap.formatOrtDist(), batchSize, maxLen);
+            }
+          }
+          return vectors;
         }
       } finally {
         ortSpan.end();
       }
     }
   }
+
+  /** Functional seam for the per-doc GPU/CPU fallback runner used by {@link
+   * #runOomFallbackLadder}. Package-private for tests (tempdoc 710 Move 3). */
+  @FunctionalInterface
+  interface SingleDocRunner {
+    float[][] run(int index) throws OrtException;
+  }
+
+  /**
+   * Orchestrates the per-doc GPU-batch1-then-CPU fallback ladder for a sub-batch's BFCArena OOM.
+   * Isolated from ORT tensor/session construction (tempdoc 710 Move 3) so the retry-order /
+   * exception-routing logic is unit-testable with fake runners that throw synthetic {@link
+   * OrtException}s — a real GPU OOM cannot be reproduced in a unit test.
+   *
+   * @param batchSize number of docs in the failed sub-batch
+   * @param gpuSingleRunner runs doc index i as a batch=1 forward pass on the GPU session that
+   *     just OOM'd at the larger batch size
+   * @param cpuSingleRunner runs doc index i as a batch=1 forward pass on the CPU session;
+   *     invoked only when {@code gpuSingleRunner} ALSO throws a BFC-arena failure for that doc
+   * @return per-doc hidden states, ordered to match the caller's sub-batch order
+   * @throws OrtException the first non-arena-OOM exception from either runner, unmodified
+   */
+  static float[][][] runOomFallbackLadder(
+      int batchSize, SingleDocRunner gpuSingleRunner, SingleDocRunner cpuSingleRunner)
+      throws OrtException {
+    float[][][] hidden = new float[batchSize][][];
+    for (int i = 0; i < batchSize; i++) {
+      try {
+        hidden[i] = gpuSingleRunner.run(i);
+      } catch (OrtException single) {
+        if (!NativeSessionHandle.isBfcArenaFailure(single)) {
+          throw single;
+        }
+        log.warn(
+            "Embed GPU arena allocation failed for single doc (index={}) even at batch=1,"
+                + " falling back to CPU session: {}",
+            i,
+            single.getMessage());
+        EncoderOrtRunSpans.emitCpuFallbackEvent("gpu_bfc_arena", "embed");
+        hidden[i] = cpuSingleRunner.run(i);
+      }
+    }
+    return hidden;
+  }
+
+  /**
+   * Runs a batch=1 forward pass on the given lease and returns per-token hidden states.
+   *
+   * <p>Takes the {@link SessionHandle.Lease} itself (tempdoc 710 Move 2), not an unpacked
+   * session/RunOptions pair, so the run goes through {@link SessionHandle.Lease#run} — the choke
+   * point every ORT call must pass through — regardless of whether the caller passes the
+   * already-acquired GPU-batch lease (OOM ladder's GPU-batch1 retry) or a fresh CPU lease (the
+   * ladder's CPU fallback).
+   */
+  private float[][] runSingleHidden(
+      SessionHandle.Lease lease, long[] ids, long[] mask, long[] typeIds, int seqLen)
+      throws OrtException {
+    long[] shape1 = {1, seqLen};
+    OrtEnvironment env = sessions.environment();
+    try (OnnxTensor idsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(ids), shape1);
+        OnnxTensor maskTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(mask), shape1);
+        OnnxTensor typesTensor =
+            needsTokenTypeIds
+                ? OnnxTensor.createTensor(env, LongBuffer.wrap(typeIds), shape1)
+                : null) {
+      Map<String, OnnxTensor> singleInputs = new HashMap<>();
+      singleInputs.put("input_ids", idsTensor);
+      singleInputs.put("attention_mask", maskTensor);
+      if (typesTensor != null) {
+        singleInputs.put("token_type_ids", typesTensor);
+      }
+      try (OrtSession.Result result = lease.run(singleInputs)) {
+        float[][][] out = (float[][][]) result.get(0).getValue();
+        return out[0];
+      }
+    }
+  }
+
+  /**
+   * Upper bound on total input CHARS per native {@code batchEncode} call in {@link
+   * #embedBatchWithChunking}'s Phase 1. Mirrors {@code SpladeEncoder.TOKENIZE_GROUP_CHAR_BUDGET}
+   * (tempdoc 686 crash fix; ported here by tempdoc 710 Move 3): the tokenizer runs with
+   * truncation disabled (see {@link #buildAssembly}'s {@code "truncation": "false"}), so a single
+   * native call over the caller's FULL text list can materialize arbitrarily large encodings
+   * simultaneously — the same landmine SPLADE hit for full-document text with an unbounded
+   * caller list. Grouping by input chars bounds peak per-call native materialization to one
+   * group regardless of caller batch size, while preserving exact tokenization results (batching
+   * granularity only — same tokenizer, same per-text output).
+   */
+  private static final long TOKENIZE_GROUP_CHAR_BUDGET = 512_000;
 
   /**
    * Batch-embeds texts with chunking support for long documents.
@@ -390,30 +589,48 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       return List.of(embed(texts.get(0)));
     }
 
-    // Phase 1: Tokenize all texts, chunk long ones, track doc→chunk mapping
+    // Phase 1: Tokenize in memory-bounded groups (tempdoc 686/710 crash-fix port — see
+    // TOKENIZE_GROUP_CHAR_BUDGET), chunk long ones, track doc→chunk mapping. Groups are
+    // processed in original order and appended to flatChunks/chunkMapping sequentially, so
+    // grouping changes only native-call granularity, not output order or values.
     long tTok = System.nanoTime();
     List<long[][]> flatChunks = new ArrayList<>();
     // chunkMapping[i] = {startIndexInFlatChunks, chunkCount} for text i
     int[][] chunkMapping = new int[texts.size()][2];
 
     int chunkedCount = 0;
-    for (int i = 0; i < texts.size(); i++) {
-      Encoding enc = tokenizer.encode(texts.get(i));
-      long[] ids = enc.getIds();
-      long[] mask = enc.getAttentionMask();
-      long[] typeIds = enc.getTypeIds();
-
-      if (ids.length <= maxSeqLen) {
-        // Short text: single chunk (no truncation needed)
-        chunkMapping[i] = new int[] {flatChunks.size(), 1};
-        flatChunks.add(new long[][] {ids, mask, typeIds});
-      } else {
-        // Long text: create overlapping chunks
-        List<long[][]> chunks = createChunks(ids, mask, typeIds);
-        chunkMapping[i] = new int[] {flatChunks.size(), chunks.size()};
-        flatChunks.addAll(chunks);
-        chunkedCount++;
+    int n = texts.size();
+    int groupStart = 0;
+    while (groupStart < n) {
+      int groupEnd = groupStart;
+      long groupChars = 0;
+      while (groupEnd < n
+          && (groupEnd == groupStart
+              || groupChars + texts.get(groupEnd).length() <= TOKENIZE_GROUP_CHAR_BUDGET)) {
+        groupChars += texts.get(groupEnd).length();
+        groupEnd++;
       }
+      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      for (int j = 0; j < groupEncodings.length; j++) {
+        int i = groupStart + j;
+        Encoding enc = groupEncodings[j];
+        long[] ids = enc.getIds();
+        long[] mask = enc.getAttentionMask();
+        long[] typeIds = enc.getTypeIds();
+
+        if (ids.length <= maxSeqLen) {
+          // Short text: single chunk (no truncation needed)
+          chunkMapping[i] = new int[] {flatChunks.size(), 1};
+          flatChunks.add(new long[][] {ids, mask, typeIds});
+        } else {
+          // Long text: create overlapping chunks
+          List<long[][]> chunks = createChunks(ids, mask, typeIds);
+          chunkMapping[i] = new int[] {flatChunks.size(), chunks.size()};
+          flatChunks.addAll(chunks);
+          chunkedCount++;
+        }
+      }
+      groupStart = groupEnd;
     }
     profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
 
@@ -452,6 +669,28 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     return embeddingDimension;
   }
 
+  /**
+   * Records the dimension observed from an ORT output tensor on (at most) the first call, and
+   * cross-checks it against {@link #declaredEmbeddingDimension} (tempdoc 710 Wave 2 Move 1). A
+   * mismatch is WARNed once — the reactive detection stays authoritative; the declared value is a
+   * sanity check, not an override (mirrors {@link
+   * io.justsearch.ort.ModelCapabilityResolver}'s precision sanity check).
+   */
+  private void recordDetectedDimension(int dim) {
+    if (embeddingDimension == 0) {
+      embeddingDimension = dim;
+    }
+    if (declaredEmbeddingDimension > 0
+        && dim != declaredEmbeddingDimension
+        && warnedDimensionMismatch.compareAndSet(false, true)) {
+      log.warn(
+          "Embedding dimension mismatch: declared capability={} but first inference observed={}"
+              + " — reactive detection kept authoritative",
+          declaredEmbeddingDimension,
+          dim);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Single-chunk embedding
   // ---------------------------------------------------------------------------
@@ -470,16 +709,32 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     long[] truncMask = truncate(mask, seqLen);
     long[] truncTypeIds = truncate(typeIds, seqLen);
 
+    float[][] hidden = runHidden(truncIds, truncMask, truncTypeIds, seqLen);
+    int dim = hidden[0].length;
+    return l2Normalize(pool(hidden, truncMask, dim));
+  }
+
+  /**
+   * Runs a single-document [1, seqLen] ORT forward pass and returns the per-token hidden states
+   * ({@code last_hidden_state[0]}, shape {@code [seqLen, dim]}) without pooling.
+   *
+   * <p>Extracted from {@link #embedSingle} (tempdoc 691 §Phase G) so that late-chunking ({@link
+   * #embedWithSpans}) and the plain single-vector path share the exact same ORT-run + tensor-build
+   * logic — the whole-doc vector each derives is therefore bit-identical by construction. Callers
+   * are responsible for truncating {@code ids}/{@code mask}/{@code typeIds} to {@code seqLen}
+   * before calling.
+   */
+  private float[][] runHidden(long[] ids, long[] mask, long[] typeIds, int seqLen)
+      throws OrtException {
     long[] shape = {1, seqLen};
 
     OrtEnvironment env = sessions.environment();
-    try (OnnxTensor inputIdsTensor =
-            OnnxTensor.createTensor(env, LongBuffer.wrap(truncIds), shape);
+    try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(ids), shape);
         OnnxTensor attentionMaskTensor =
-            OnnxTensor.createTensor(env, LongBuffer.wrap(truncMask), shape);
+            OnnxTensor.createTensor(env, LongBuffer.wrap(mask), shape);
         OnnxTensor tokenTypeIdsTensor =
             needsTokenTypeIds
-                ? OnnxTensor.createTensor(env, LongBuffer.wrap(truncTypeIds), shape)
+                ? OnnxTensor.createTensor(env, LongBuffer.wrap(typeIds), shape)
                 : null) {
 
       Map<String, OnnxTensor> inputs = new HashMap<>();
@@ -490,27 +745,125 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       }
 
       // Tempdoc 400 LR2-a/LR2-b: span starts before acquire; see batched path above.
-      Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(ORT_TRACER, "embed", 1, truncMask.length);
+      Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(ORT_TRACER, "embed", 1, mask.length);
       try (Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
-          OrtSession session = lease.session();
-          try (OrtSession.Result result = session.run(inputs, lease.runOptions())) {
+          try (OrtSession.Result result = lease.run(inputs)) {
+            // Tempdoc 710 Move 2: ORT-call timing is now recorded at the Lease choke point
+            // (structural — was tempdoc 691 Wave 0's per-call-site fix for the B-5 blind spot;
+            // the choke point makes the whole class of gap impossible rather than patched).
             // last_hidden_state: [1, seqLen, dim]
             float[][][] hidden = (float[][][]) result.get(0).getValue();
             int dim = hidden[0][0].length;
+            recordDetectedDimension(dim);
 
-            if (embeddingDimension == 0) {
-              embeddingDimension = dim;
-            }
-
-            return l2Normalize(pool(hidden[0], truncMask, dim));
+            return hidden[0];
           }
         }
       } finally {
         ortSpan.end();
       }
     }
+  }
+
+  /**
+   * Late chunking (tempdoc 691 §Phase G/H, arXiv:2409.04701): embeds {@code content} once and
+   * derives both the whole-document vector and one vector per character span from the same
+   * token-level forward pass, instead of running a separate ORT pass per chunk.
+   *
+   * <p>Returns {@code null} if {@code content} exceeds {@link #lateChunkingMaxSeqLen} tokens — the
+   * raised single-pass ceiling for this path (tempdoc 691 Phase 2; independent of {@link
+   * #maxSeqLen}, the base batch path's limit). Docs beyond it fall back to the existing per-chunk
+   * {@link #embed} path. The length check runs before any per-token character-offset
+   * materialization: {@code getCharTokenSpans()} on an unbounded {@link Encoding} previously
+   * caused a native OOM crash for very large documents (tempdoc 686, {@code SpladeEncoder}), so
+   * this primitive only touches it once the token count is confirmed small.
+   *
+   * @param content the full document text
+   * @param charSpans {@code [startCharInclusive, endCharExclusive)} ranges into {@code content}
+   *     (e.g. from {@code CHUNK_START_CHAR}/{@code CHUNK_END_CHAR}); one output vector per span.
+   *     An empty array embeds the whole doc in one pass and returns zero chunk vectors (tempdoc
+   *     691 Phase 2 VECTOR-only mode).
+   * @return the doc vector plus one chunk vector per span, or {@code null} if {@code content}
+   *     exceeds {@link #lateChunkingMaxSeqLen} tokens
+   * @throws OrtException if ONNX inference fails
+   */
+  public EmbedResult embedWithSpans(String content, int[][] charSpans) throws OrtException {
+    Encoding encoding = tokenizer.encode(content);
+    long[] ids = encoding.getIds();
+
+    if (ids.length > lateChunkingMaxSeqLen) {
+      return null;
+    }
+
+    long[] mask = encoding.getAttentionMask();
+    long[] typeIds = encoding.getTypeIds();
+    CharSpan[] tokSpans = encoding.getCharTokenSpans();
+
+    float[][] hidden = runHidden(ids, mask, typeIds, ids.length);
+    int dim = hidden[0].length;
+    float[] docVector = l2Normalize(pool(hidden, mask, dim));
+
+    List<float[]> chunkVectors = new ArrayList<>(charSpans.length);
+    for (int[] span : charSpans) {
+      float[] chunkVector = poolSpan(hidden, mask, tokSpans, span[0], span[1], dim);
+      if (chunkVector == null) {
+        // Defensive fallback: no token intersected this span. Embed the substring in
+        // isolation so a chunk never surfaces a null/zero vector to the caller.
+        Encoding subEncoding = tokenizer.encode(content.substring(span[0], span[1]));
+        chunkVector =
+            embedSingle(subEncoding.getIds(), subEncoding.getAttentionMask(), subEncoding.getTypeIds());
+      }
+      chunkVectors.add(chunkVector);
+    }
+
+    return new EmbedResult(docVector, chunkVectors, charSpans.length);
+  }
+
+  /**
+   * Masked-mean pooling restricted to the tokens whose char span intersects {@code [startChar,
+   * endChar)} — {@link #pool}'s formula, scoped to one chunk's token subset. Tokens with a null or
+   * zero-width char span (CLS/SEP/PAD and other special tokens — the DJL/tokenizers-rust JNI
+   * binding reports these as a {@code (0, 0)} sentinel rather than a real offset) are excluded, as
+   * are masked-out (padding) tokens.
+   *
+   * @return the L2-normalized pooled vector, or {@code null} if no token intersects the span
+   */
+  // package-private for tests (tempdoc 691 Wave 0)
+  float[] poolSpan(
+      float[][] hidden, long[] mask, CharSpan[] tokSpans, int startChar, int endChar, int dim) {
+    float[] pooled = new float[dim];
+    float count = 0.0f;
+    int len = Math.min(hidden.length, tokSpans.length);
+    for (int t = 0; t < len; t++) {
+      if (mask[t] != 1) {
+        continue;
+      }
+      CharSpan tokSpan = tokSpans[t];
+      if (tokSpan == null) {
+        continue;
+      }
+      int tokStart = tokSpan.getStart();
+      int tokEnd = tokSpan.getEnd();
+      if (tokStart == tokEnd) {
+        continue; // zero-width sentinel: token has no source-text offset
+      }
+      if (tokEnd <= startChar || tokStart >= endChar) {
+        continue; // no intersection with [startChar, endChar)
+      }
+      count += 1.0f;
+      for (int d = 0; d < dim; d++) {
+        pooled[d] += hidden[t][d];
+      }
+    }
+    if (count == 0.0f) {
+      return null;
+    }
+    for (int d = 0; d < dim; d++) {
+      pooled[d] /= count;
+    }
+    return l2Normalize(pooled);
   }
 
   // ---------------------------------------------------------------------------
@@ -614,39 +967,11 @@ public final class OnnxEmbeddingEncoder implements Closeable {
   // ---------------------------------------------------------------------------
 
   /**
-   * Detects pooling strategy from a pooling config file in the model directory. Expected format:
-   * {@code {"pooling_mode": "cls"}} or {@code {"pooling_mode": "mean"}}. Defaults to {@link
-   * PoolingStrategy#MEAN_POOL} if no config file exists or the value is unrecognized.
-   *
-   * @param modelDir directory containing model files
-   * @param poolingConfigFile name of the pooling config file (from manifest)
-   */
-  private static PoolingStrategy detectPoolingStrategy(Path modelDir, String poolingConfigFile) {
-    Path configFile = modelDir.resolve(poolingConfigFile);
-    if (Files.exists(configFile)) {
-      try {
-        String content = Files.readString(configFile);
-        // Simple JSON parsing — look for "pooling_mode" value
-        if (content.contains("\"cls\"")) {
-          log.info("Embedding pooling strategy: CLS (from {})", poolingConfigFile);
-          return PoolingStrategy.CLS;
-        } else if (content.contains("\"mean\"")) {
-          log.info("Embedding pooling strategy: MEAN_POOL (from {})", poolingConfigFile);
-          return PoolingStrategy.MEAN_POOL;
-        }
-      } catch (IOException e) {
-        log.debug("Failed to read {}, using default: {}", poolingConfigFile, e.getMessage());
-      }
-    }
-    log.debug("Embedding pooling strategy: MEAN_POOL (default)");
-    return PoolingStrategy.MEAN_POOL;
-  }
-
-  /**
    * Applies the configured pooling strategy to extract a single vector from token-level hidden
    * states.
    */
-  private float[] pool(float[][] tokenHiddenStates, long[] attentionMask, int dim) {
+  // package-private for tests (tempdoc 691 Wave 0)
+  float[] pool(float[][] tokenHiddenStates, long[] attentionMask, int dim) {
     if (poolingStrategy == PoolingStrategy.CLS) {
       // CLS pooling: take the first token's hidden state
       return tokenHiddenStates[0].clone();

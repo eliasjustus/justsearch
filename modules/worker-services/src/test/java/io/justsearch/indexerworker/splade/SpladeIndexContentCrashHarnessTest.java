@@ -33,6 +33,39 @@ import org.junit.jupiter.api.condition.EnabledIf;
  * <p>A poison document ⇒ deterministic crash at a fixed position (named by the progress file
  * tmp/686-crash-harness-progress.txt, written before each batch). No crash over the full corpus
  * ⇒ input-independent native-state/scale issue instead.
+ *
+ * <h2>How to run this test (tempdoc 710 Move 6 / {@code obs:spladeindexcontentcrashharnesstest})</h2>
+ *
+ * <p>This class carries no {@code @Tag} — it gates purely on {@link #assetsAvailable()} (local
+ * SPLADE tokenizer + a captured Lucene index snapshot under {@code tmp/}). A prior investigation
+ * session (2026-07-10, {@code obs:spladeindexcontentcrashharnesstest}) hit {@code "No tests found
+ * for given includes"} running this class and attributed it to {@code @Tag("evidence")}
+ * invisibility. Re-verified live during this Move 6 pass:
+ *
+ * <ol>
+ *   <li>There IS a real, repo-wide {@code evidence}/{@code experiment} tag exclusion — {@code
+ *       conventions.jvm-base} ({@code build-logic/src/main/kotlin/conventions/
+ *       JvmBaseConventionsPlugin.kt}) excludes both tags from every module's default {@code test}
+ *       task unless {@code -PincludeExperiment=true} is passed. It just doesn't apply to THIS
+ *       class today, since it isn't tagged.
+ *   <li>The error the prior session actually hit is independently reproducible without any tag at
+ *       all: Gradle's {@code --tests} filter, run UNSCOPED from the repo root (bare {@code
+ *       ./gradlew.bat test --tests SpladeIndexContentCrashHarnessTest}), applies to every
+ *       subproject's {@code test} task, and any subproject with zero matching classes (e.g.
+ *       {@code :modules:infra-core}, {@code :modules:core-contracts}) fails the WHOLE build with
+ *       that exact message — nothing to do with this class's tag or gating.
+ * </ol>
+ *
+ * <p>Run it correctly by scoping to the owning module (works regardless of which of the two
+ * traps above the tag ends up hitting, since {@code -PincludeExperiment=true} is a no-op for an
+ * untagged class):
+ *
+ * <pre>{@code
+ * ./gradlew.bat :modules:worker-services:test --tests "SpladeIndexContentCrashHarnessTest"
+ * }</pre>
+ *
+ * <p>When assets aren't present it shows up as a normal JUnit {@code <skipped/>} in {@code
+ * modules/worker-services/build/test-results/test/} — not a silent no-op.
  */
 @DisplayName("686: SPLADE tokenizer crash harness over real index contents")
 class SpladeIndexContentCrashHarnessTest {

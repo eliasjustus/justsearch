@@ -8,15 +8,14 @@ public final class LoopPacingPolicy {
   private static final long BREATH_HOLD_MS = 500L;
   private static final long IDLE_SLEEP_MS = 1000L;
   private static final long ACTIVE_IDLE_SLEEP_MS = 100L;
-  private static final int POLL_BATCH_SIZE = 16;
-  private static final int EMBEDDING_BACKFILL_BATCH_SIZE = 100;
-  private static final int NER_BACKFILL_BATCH_SIZE = 100;
-  private static final int DISAMBIGUATION_BACKFILL_BATCH_SIZE = 500;
-  private static final int SPLADE_BACKFILL_BATCH_SIZE = 200;
-  private static final int SPLADE_INTERLEAVE_BATCH_SIZE = 10;
-  private static final long SPLADE_INTERLEAVE_INTERVAL_MS = 5_000L;
-  private static final long COMMIT_INTERVAL_MS = 10_000L;
-  private static final int MAX_DOCS_BEFORE_COMMIT = 1000;
+
+  // Tempdoc 710 Wave-1.5 Move 4: pollBatchSize / embeddingBackfillBatchSize /
+  // nerBackfillBatchSize / disambiguationBackfillBatchSize / spladeBackfillBatchSize /
+  // spladeInterleaveBatchSize / spladeInterleaveIntervalMs / commitIntervalMs /
+  // maxDocsBeforeCommit moved off bare constants here onto
+  // ResolvedConfig.Ai.BackfillPacing (justsearch.backfill.* config surface). Callers now read
+  // the resolved pacing snapshot directly; isTimeCommitTriggered/isBufferCommitTriggered below
+  // take the threshold as a parameter instead of a static field.
 
   private LoopPacingPolicy() {}
 
@@ -39,23 +38,6 @@ public final class LoopPacingPolicy {
    */
   public static long idleSleepMs(boolean recentlyActive) {
     return recentlyActive ? ACTIVE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
-  }
-
-  public static int pollBatchSize() {
-    return POLL_BATCH_SIZE;
-  }
-
-  public static int embeddingBackfillBatchSize() {
-    return EMBEDDING_BACKFILL_BATCH_SIZE;
-  }
-
-
-  public static long commitIntervalMs() {
-    return COMMIT_INTERVAL_MS;
-  }
-
-  public static int maxDocsBeforeCommit() {
-    return MAX_DOCS_BEFORE_COMMIT;
   }
 
   /**
@@ -91,31 +73,20 @@ public final class LoopPacingPolicy {
     return !running || userActive || backfillBlocked;
   }
 
-  public static int nerBackfillBatchSize() {
-    return NER_BACKFILL_BATCH_SIZE;
+  /**
+   * @param commitIntervalMs the configured time-based commit threshold ({@link
+   *     io.justsearch.configuration.resolved.ResolvedConfig.Ai.BackfillPacing#commitIntervalMs()}).
+   */
+  public static boolean isTimeCommitTriggered(
+      long timeSinceCommitMs, long indexedSinceCommit, long commitIntervalMs) {
+    return timeSinceCommitMs >= commitIntervalMs && indexedSinceCommit > 0;
   }
 
-  public static int disambiguationBackfillBatchSize() {
-    return DISAMBIGUATION_BACKFILL_BATCH_SIZE;
-  }
-
-  public static int spladeBackfillBatchSize() {
-    return SPLADE_BACKFILL_BATCH_SIZE;
-  }
-
-  public static int spladeInterleaveBatchSize() {
-    return SPLADE_INTERLEAVE_BATCH_SIZE;
-  }
-
-  public static long spladeInterleaveIntervalMs() {
-    return SPLADE_INTERLEAVE_INTERVAL_MS;
-  }
-
-  public static boolean isTimeCommitTriggered(long timeSinceCommitMs, long indexedSinceCommit) {
-    return timeSinceCommitMs >= COMMIT_INTERVAL_MS && indexedSinceCommit > 0;
-  }
-
-  public static boolean isBufferCommitTriggered(long indexedSinceCommit) {
-    return indexedSinceCommit >= MAX_DOCS_BEFORE_COMMIT;
+  /**
+   * @param maxDocsBeforeCommit the configured buffer-based commit threshold ({@link
+   *     io.justsearch.configuration.resolved.ResolvedConfig.Ai.BackfillPacing#maxDocsBeforeCommit()}).
+   */
+  public static boolean isBufferCommitTriggered(long indexedSinceCommit, int maxDocsBeforeCommit) {
+    return indexedSinceCommit >= maxDocsBeforeCommit;
   }
 }

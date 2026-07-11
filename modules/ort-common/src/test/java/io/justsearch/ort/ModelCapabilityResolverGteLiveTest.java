@@ -1,0 +1,50 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.ort;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import io.justsearch.configuration.model.ModelPrecision;
+import io.justsearch.ort.testing.ModelDirTestResolver;
+import java.nio.file.Path;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Live-model-gated regression test (tempdoc 710 Wave 2 Move 1): the real {@code
+ * models/onnx/gte-multilingual-base/model_manifest.json} authored in this wave must resolve to
+ * exactly (CLS, 8192, 768, empty document/query prefixes) — the facts verified against the real
+ * HF repo in the tempdoc's S-C.R research pass.
+ *
+ * <p>Gated on the manifest + tokenizer files only (not the multi-hundred-MB {@code
+ * model_fp16.onnx} weight file — every fact this test asserts is manifest-declared, so the ORT
+ * boot-probe/precision-sanity-check paths never fire; they no-op when the weight file is absent).
+ * Uses {@link ModelDirTestResolver} (tempdoc 710 Move 6) so this test resolves the model directory
+ * the same way every other asset-gated test in the suite does.
+ */
+@DisplayName("ModelCapabilityResolver — live gte-multilingual-base manifest")
+class ModelCapabilityResolverGteLiveTest {
+
+  @Test
+  @DisplayName("gte-multilingual-base resolves to (CLS, 8192, 768, empty prefixes)")
+  void gteResolvesToDeclaredCapabilities() {
+    ModelDirTestResolver.Discovery discovery =
+        ModelDirTestResolver.discover(
+            "models/onnx/gte-multilingual-base", null, "model_manifest.json", "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription());
+    Path modelDir = discovery.modelDir();
+
+    ModelManifest manifest = ModelManifest.load(modelDir);
+    ModelCapabilities caps =
+        ModelCapabilityResolver.resolve(
+            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
+
+    assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
+    assertEquals(8192, caps.trainedContextLength());
+    assertEquals(768, caps.embeddingDimension());
+    assertEquals("", caps.documentPrefix());
+    assertEquals("", caps.queryPrefix());
+    assertEquals(ModelPrecision.FP16, caps.cpuPrecision());
+    assertEquals(ModelPrecision.FP16, caps.gpuPrecision());
+  }
+}

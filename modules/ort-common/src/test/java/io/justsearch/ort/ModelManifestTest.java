@@ -191,4 +191,58 @@ class ModelManifestTest {
 
     assertEquals(tempDir.resolve("model.onnx"), m.resolveExistingModelFile(tempDir));
   }
+
+  // Tempdoc 710 Wave 2 Move 1: capabilities section joins the existing manifest (one manifest,
+  // not two).
+
+  @Test
+  void fiveArgConstructorNormalizesCapabilitiesToEmpty() {
+    ModelManifest m = new ModelManifest("model.onnx", "model_fp16.onnx", null, null, null);
+
+    assertEquals(ModelManifest.Capabilities.EMPTY, m.capabilities());
+  }
+
+  @Test
+  void loadParsesCapabilitiesSection() throws Exception {
+    Files.writeString(
+        tempDir.resolve(ModelManifest.MANIFEST_FILE),
+        """
+        {
+          "cpu": "model.onnx",
+          "gpu": "model_fp16.onnx",
+          "capabilities": {
+            "pooling_mode": "cls",
+            "context_length": 8192,
+            "embedding_dimension": 768,
+            "cpu_precision": "fp32",
+            "gpu_precision": "fp16",
+            "document_prefix": "",
+            "query_prefix": ""
+          }
+        }
+        """);
+
+    ModelManifest m = ModelManifest.load(tempDir);
+
+    assertEquals("cls", m.capabilities().poolingMode());
+    assertEquals(8192, m.capabilities().contextLength());
+    assertEquals(768, m.capabilities().embeddingDimension());
+    assertEquals("fp32", m.capabilities().cpuPrecision());
+    assertEquals("fp16", m.capabilities().gpuPrecision());
+    assertEquals("", m.capabilities().documentPrefix());
+    assertEquals("", m.capabilities().queryPrefix());
+  }
+
+  @Test
+  void loadWithoutCapabilitiesSectionNormalizesToEmpty() throws Exception {
+    Files.writeString(
+        tempDir.resolve(ModelManifest.MANIFEST_FILE),
+        """
+        { "cpu": "model.onnx" }
+        """);
+
+    ModelManifest m = ModelManifest.load(tempDir);
+
+    assertEquals(ModelManifest.Capabilities.EMPTY, m.capabilities());
+  }
 }

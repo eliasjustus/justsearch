@@ -53,7 +53,9 @@ final class EmbeddingServiceTelemetryEmitTest {
             false,
             0,
             0L,
-            2048);
+            2048,
+            false,
+            8192);
     service = EmbeddingService.createWithBackend(backend, config, events);
   }
 

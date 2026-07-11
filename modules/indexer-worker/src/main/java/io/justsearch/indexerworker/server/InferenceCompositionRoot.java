@@ -201,15 +201,24 @@ public final class InferenceCompositionRoot {
               arbiter,
               events);
       EmbeddingAssembly assembly =
-          OnnxEmbeddingEncoder.buildAssembly(sessions, embedCfg.modelPath(), embedCfg.contextLength());
+          OnnxEmbeddingEncoder.buildAssembly(
+              sessions,
+              embedCfg.modelPath(),
+              embedCfg.contextLength(),
+              embedCfg.lateChunkingContextLength(),
+              cfg.ai().capabilityContractStrict());
       handles.add(assembly.sessions());
       policies.put(
           EncoderRole.EMBEDDING,
           ModelSessionPolicyResolver.resolve(EncoderRole.EMBEDDING, cfg, hardware, variant));
       return Optional.of(assembly);
-    } catch (OrtException e) {
+    } catch (Exception e) {
+      // Tempdoc 710 Wave 2 Move 1: widened from OrtException — ModelCapabilityResolver throws
+      // IllegalStateException under justsearch.models.capability_contract_strict, and that must
+      // degrade this lane to Optional.empty() the same way a session-creation failure does, not
+      // abort the whole composition.
       log.error(
-          "Embedding ORT session creation failed — variant resolved but assembler threw."
+          "Embedding composition failed — variant resolved but assembly/session creation threw."
               + " Embedding will be unavailable.",
           e);
       return Optional.empty();
@@ -242,7 +251,7 @@ public final class InferenceCompositionRoot {
       Path modelDir = variant.modelFile().getParent();
       NerAssembly assembly =
           io.justsearch.indexerworker.ner.BertNerInference.buildAssembly(
-              sessions, modelDir, nerCfg.maxSequenceLength());
+              sessions, modelDir, nerCfg.maxSequenceLength(), cfg.ai().capabilityContractStrict());
       handles.add(assembly.sessions());
       policies.put(
           EncoderRole.NER,
@@ -377,6 +386,16 @@ public final class InferenceCompositionRoot {
               variant,
               arbiter,
               events);
+      // Tempdoc 710 Move 2: the reranker lane was structurally absent from observability (no
+      // registerEncoder, S-B3). CrossEncoderReranker lives in the `reranker` module, which does
+      // not depend on worker-core (where EncoderProfileAccumulator/OperationalMetrics live), so
+      // registration + choke-point binding happens here at the composition root instead of in
+      // the encoder's own constructor (the pattern the other four encoders use).
+      io.justsearch.indexerworker.metrics.EncoderProfileAccumulator rerankerProfiler =
+          new io.justsearch.indexerworker.metrics.EncoderProfileAccumulator("ort");
+      io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
+          .registerEncoder(EncoderRole.RERANKER.consumerName(), rerankerProfiler);
+      sessions.setOrtRunRecorder(rerankerProfiler::recordOrtCall);
       RerankerAssembly assembly =
           CrossEncoderReranker.buildAssembly(
               sessions,
@@ -431,6 +450,14 @@ public final class InferenceCompositionRoot {
               variant,
               () -> false,
               events);
+      // Tempdoc 710 Move 2: the citation lane was likewise structurally absent from
+      // observability. Same reasoning as composeRerankerRole above — CitationScorer lives in
+      // the `reranker` module, so registration + choke-point binding happens here.
+      io.justsearch.indexerworker.metrics.EncoderProfileAccumulator citationProfiler =
+          new io.justsearch.indexerworker.metrics.EncoderProfileAccumulator("ort");
+      io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
+          .registerEncoder(EncoderRole.CITATION.consumerName(), citationProfiler);
+      sessions.setOrtRunRecorder(citationProfiler::recordOrtCall);
       RerankerAssembly assembly =
           CitationScorer.buildAssembly(
               sessions,

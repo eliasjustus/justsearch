@@ -5,12 +5,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import ai.onnxruntime.OrtException;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
+import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -153,6 +155,11 @@ class CombinedEnrichmentBackfillOpsTest {
 
   private CombinedEnrichmentBackfillOps.BackfillContext context(
       boolean embedEnabled, boolean spladeEnabled, boolean nerEnabled) {
+    return context(embedEnabled, spladeEnabled, nerEnabled, false);
+  }
+
+  private CombinedEnrichmentBackfillOps.BackfillContext context(
+      boolean embedEnabled, boolean spladeEnabled, boolean nerEnabled, boolean lateChunkingEnabled) {
     return new CombinedEnrichmentBackfillOps.BackfillContext(
         documentFieldOps,
         indexingCoordinator,
@@ -166,6 +173,8 @@ class CombinedEnrichmentBackfillOpsTest {
         100,
         LoggerFactory.getLogger(CombinedEnrichmentBackfillOpsTest.class),
         false,
+        lateChunkingEnabled,
+        50,
         new ArrayDeque<>(),
         new ArrayDeque<>(),
         new int[] {0});
@@ -173,6 +182,18 @@ class CombinedEnrichmentBackfillOpsTest {
 
   private CombinedEnrichmentBackfillOps.BackfillContext embedOnlyContext() {
     return context(true, false, false);
+  }
+
+  /** Seeds a chunk doc (IS_CHUNK/PARENT_DOC_ID/CHUNK_INDEX/span fields) directly into fakeIndex. */
+  private void seedChunkDoc(
+      String chunkId, String parentId, int chunkIndex, int startChar, int endChar, String status) {
+    Map<String, Object> state = fakeIndex.computeIfAbsent(chunkId, k -> new HashMap<>());
+    state.put(SchemaFields.IS_CHUNK, "true");
+    state.put(SchemaFields.PARENT_DOC_ID, parentId);
+    state.put(SchemaFields.CHUNK_INDEX, String.valueOf(chunkIndex));
+    state.put(SchemaFields.CHUNK_START_CHAR, String.valueOf(startChar));
+    state.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(endChar));
+    state.put(SchemaFields.CHUNK_EMBEDDING_STATUS, status);
   }
 
   @Test
@@ -184,7 +205,8 @@ class CombinedEnrichmentBackfillOpsTest {
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
     poisonContents.add("poison content");
 
-    boolean didWork = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
 
     assertTrue(didWork);
     Map<String, Object> docState = fakeIndex.get("doc-bad");
@@ -194,7 +216,6 @@ class CombinedEnrichmentBackfillOpsTest {
         docState.get(SchemaFields.EMBEDDING_STATUS),
         "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
     verify(documentFieldOps, never()).getDocumentField(anyString(), anyString());
   }
@@ -210,7 +231,8 @@ class CombinedEnrichmentBackfillOpsTest {
     poisonContents.add("poison content");
 
     for (int cycle = 1; cycle < SchemaFields.EMBEDDING_MAX_RETRIES; cycle++) {
-      boolean didWork = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+      boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
@@ -220,7 +242,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     // Final cycle: retry count reaches EMBEDDING_MAX_RETRIES -> FAILED.
     boolean lastCycleDidWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
     assertTrue(lastCycleDidWork);
     Map<String, Object> docState = fakeIndex.get("doc-bad");
     assertEquals(
@@ -229,7 +251,8 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals(SchemaFields.EMBEDDING_STATUS_FAILED, docState.get(SchemaFields.EMBEDDING_STATUS));
 
     // Poison-pill stops being re-selected: a further cycle finds nothing pending and does no work.
-    boolean ranAgain = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+    boolean ranAgain =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
     verify(embeddingProvider, times(SchemaFields.EMBEDDING_MAX_RETRIES))
         .embedDocumentBatch(anyList());
@@ -243,7 +266,8 @@ class CombinedEnrichmentBackfillOpsTest {
         "good content",
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
 
-    boolean didWork = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
 
     assertTrue(didWork);
     Map<String, Object> docState = fakeIndex.get("doc-ok");
@@ -267,7 +291,8 @@ class CombinedEnrichmentBackfillOpsTest {
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
     poisonContents.add("poison content");
 
-    boolean didWork = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
 
     assertTrue(didWork);
     Map<String, Object> okState = fakeIndex.get("doc-ok");
@@ -280,7 +305,6 @@ class CombinedEnrichmentBackfillOpsTest {
 
     // Tempdoc-312 invariant: exactly one batched write per cycle, never a per-doc updateDocument.
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
   }
 
@@ -295,7 +319,8 @@ class CombinedEnrichmentBackfillOpsTest {
 
     for (int cycle = 1; cycle < SchemaFields.SPLADE_MAX_RETRIES; cycle++) {
       boolean didWork =
-          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
+          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false))
+              .anyWorkDone();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.SPLADE_RETRY_COUNT));
@@ -310,7 +335,8 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals(SchemaFields.SPLADE_STATUS_FAILED, docState.get(SchemaFields.SPLADE_STATUS));
 
     boolean ranAgain =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false))
+            .anyWorkDone();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
   }
 
@@ -363,7 +389,8 @@ class CombinedEnrichmentBackfillOpsTest {
 
     for (int cycle = 1; cycle < SchemaFields.NER_MAX_RETRIES; cycle++) {
       boolean didWork =
-          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true));
+          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true))
+              .anyWorkDone();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.NER_RETRY_COUNT));
@@ -377,7 +404,8 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals(SchemaFields.NER_STATUS_FAILED, docState.get(SchemaFields.NER_STATUS));
 
     boolean ranAgain =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true));
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true))
+            .anyWorkDone();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
   }
 
@@ -400,7 +428,8 @@ class CombinedEnrichmentBackfillOpsTest {
         .thenReturn(List.of(new NerResult(List.of("Alice"), List.of(), List.of())));
 
     boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true));
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true))
+            .anyWorkDone();
 
     assertTrue(didWork);
     Map<String, Object> state = fakeIndex.get("doc-multi");
@@ -413,7 +442,253 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals("Alice", state.get(SchemaFields.ENTITY_PERSONS_TEXT));
 
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Tempdoc 691 forensics fold-in: the late-chunking single-pass embed strategy is now a
+  // sub-phase INSIDE the combined pass's own embed phase (Phase 3a-i), not a separate RMW pass.
+  // A separate pass's VECTOR write used to be silently destroyed by this pass's later
+  // SPLADE/NER-only RMW for the same doc (Lucene RMW drops non-stored fields absent from the
+  // current write — VECTOR is non-stored) — live evidence: vector nDCG 0.016 on legal-clerc.
+  // Folding the strategy in means the vector always lands in the SAME per-doc update map as
+  // SPLADE/NER, so every doc still gets exactly one bundled write. §Phase M's CLS-pooling finding
+  // still holds: this strategy is VECTOR-only, chunk docs keep their existing separate per-chunk
+  // CLS embed path untouched.
+  // ---------------------------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: chunked parent's VECTOR comes from embedWithSpans (whole doc, empty"
+          + " span array) and lands in the SAME per-doc update map as its SPLADE/NER results — one"
+          + " bundled write, embedDocumentBatch never called for this doc's content")
+  void lateChunking_flagOn_chunkedParent_singlePassVectorBundledWithSpladeAndNer() throws Exception {
+    seedDoc(
+        "parent-1",
+        "parent content here, long enough to be chunked",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING,
+            SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-1", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    seedChunkDoc("chunk-2", "parent-1", 1, 10, 20, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    float[] docVector = {1f, 2f};
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenReturn(new EmbeddingService.ChunkedEmbedding(docVector, List.of(), 1));
+    when(spladeEncoder.encodeBatch(anyList()))
+        .thenReturn(new ArrayList<>(List.of(Map.of("tok", 1.0f))));
+    when(nerService.extractEntitiesBatch(anyList()))
+        .thenReturn(List.of(new NerResult(List.of("Alice"), List.of(), List.of())));
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true, true))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    verify(embeddingProvider, times(1))
+        .embedWithSpans(
+            eq("parent content here, long enough to be chunked"),
+            argThat(spans -> spans.length == 0));
+    verify(embeddingProvider, never()).embedDocumentBatch(anyList());
+
+    Map<String, Object> parentState = fakeIndex.get("parent-1");
+    assertArrayEquals(docVector, (float[]) parentState.get(SchemaFields.VECTOR));
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertEquals("0", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertEquals(SchemaFields.SPLADE_STATUS_COMPLETED, parentState.get(SchemaFields.SPLADE_STATUS));
+    assertEquals(SchemaFields.NER_STATUS_COMPLETED, parentState.get(SchemaFields.NER_STATUS));
+    assertEquals("Alice", parentState.get(SchemaFields.ENTITY_PERSONS_TEXT));
+
+    // Chunk docs are untouched — VECTOR-only mode never derives a CHUNK_VECTOR, and
+    // chunkVectorsEnabled=false in this harness keeps them out of the batch entirely.
+    Map<String, Object> chunk1State = fakeIndex.get("chunk-1");
+    assertNull(chunk1State.get(SchemaFields.CHUNK_VECTOR));
+    Map<String, Object> chunk2State = fakeIndex.get("chunk-2");
+    assertNull(chunk2State.get(SchemaFields.CHUNK_VECTOR));
+
+    // Tempdoc-312 invariant: exactly one batched write, containing VECTOR+SPLADE+NER together
+    // for parent-1 — the whole point of the fold-in is that no separate RMW can drop the vector.
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(
+                list ->
+                    list.size() == 1
+                        && list.get(0).getKey().equals("parent-1")
+                        && list.get(0).getValue().containsKey(SchemaFields.VECTOR)
+                        && list.get(0).getValue().containsKey(SchemaFields.SPLADE)
+                        && list.get(0).getValue().containsKey(SchemaFields.NER_STATUS)));
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: embedWithSpans returns null (content exceeds the raised single-pass"
+          + " limit) — folds INLINE into the ordinary windowed batch (embedDocumentBatch), still"
+          + " ONE bundled write for the parent")
+  void lateChunking_flagOn_overLimitParent_nullEmbedWithSpans_foldsIntoWindowedBatch() {
+    seedDoc(
+        "parent-long",
+        "content that exceeds the raised single-pass limit",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class))).thenReturn(null);
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    verify(embeddingProvider, times(1)).embedWithSpans(anyString(), any(int[][].class));
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(
+            argThat(
+                texts ->
+                    texts.size() == 1
+                        && texts.contains("content that exceeds the raised single-pass limit")));
+
+    Map<String, Object> parentState = fakeIndex.get("parent-long");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertNotNull(parentState.get(SchemaFields.VECTOR));
+    Map<String, Object> chunkState = fakeIndex.get("chunk-1");
+    assertNull(chunkState.get(SchemaFields.CHUNK_VECTOR));
+
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-long")));
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: GPU arena-OOM (wrapped RuntimeException) on the single-pass call —"
+          + " folds INLINE into the windowed batch same as the over-limit null case")
+  void lateChunking_flagOn_arenaOom_foldsIntoWindowedBatch() {
+    seedDoc(
+        "parent-oom",
+        "poison parent content",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+    seedChunkDoc("chunk-1", "parent-oom", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    OrtException arenaOom =
+        new OrtException(
+            "BFCArena::AllocateRawInternal: Available memory of 536870912 is smaller than"
+                + " requested bytes of 1073741824");
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenThrow(
+            new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(argThat(texts -> texts.contains("poison parent content")));
+
+    Map<String, Object> parentState = fakeIndex.get("parent-oom");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_COMPLETED,
+        parentState.get(SchemaFields.EMBEDDING_STATUS),
+        "windowed fallback success completes the parent, same as any other embed success");
+    assertEquals("0", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertNotNull(parentState.get(SchemaFields.VECTOR));
+    verify(indexingCoordinator, times(1))
+        .updateDocumentsBatch(
+            argThat(list -> list.size() == 1 && list.get(0).getKey().equals("parent-oom")));
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: embedWithSpans throws a non-arena-OOM exception — PARENT ONLY gets"
+          + " retry-count escalation (tempdoc 700 parity), not marked complete; SPLADE still"
+          + " succeeds independently in the same bundled write")
+  void lateChunking_flagOn_embedWithSpansThrowsNonArenaOom_escalatesParentOnly_spladeStillBundled()
+      throws Exception {
+    seedDoc(
+        "parent-bad",
+        "poison parent content",
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
+            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-bad", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
+        .thenThrow(new RuntimeException("ORT boom"));
+    when(spladeEncoder.encodeBatch(anyList()))
+        .thenReturn(new ArrayList<>(List.of(Map.of("tok", 1.0f))));
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, false, true))
+            .anyWorkDone();
+
+    assertTrue(didWork, "a failure-escalation write is still recorded as work");
+    verify(embeddingProvider, never()).embedDocumentBatch(anyList());
+
+    Map<String, Object> parentState = fakeIndex.get("parent-bad");
+    assertEquals("1", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_PENDING,
+        parentState.get(SchemaFields.EMBEDDING_STATUS),
+        "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
+    // SPLADE succeeded independently in the SAME per-doc entry, not clobbered by the embed
+    // failure.
+    assertEquals(SchemaFields.SPLADE_STATUS_COMPLETED, parentState.get(SchemaFields.SPLADE_STATUS));
+
+    Map<String, Object> chunkState = fakeIndex.get("chunk-1");
+    assertNull(chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+
+    verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag ON: a chunkless parent (no PARENT_DOC_ID-matching chunk docs) uses the"
+          + " normal windowed batch — embedWithSpans is never called for it")
+  void lateChunking_flagOn_chunklessParent_usesNormalWindowedBatch() {
+    seedDoc(
+        "parent-chunkless",
+        "chunkless parent content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    verify(embeddingProvider, never()).embedWithSpans(anyString(), any());
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(
+            argThat(texts -> texts.size() == 1 && texts.contains("chunkless parent content")));
+
+    Map<String, Object> parentState = fakeIndex.get("parent-chunkless");
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertNotNull(parentState.get(SchemaFields.VECTOR));
+  }
+
+  @Test
+  @DisplayName(
+      "late-chunking flag OFF: strict no-op vs today — combined pass embeds a chunked parent via"
+          + " the ordinary windowed batch, embedWithSpans is never called")
+  void lateChunkingOff_chunkedParentStillEmbedsInCombinedPass_embedWithSpansNeverCalled() {
+    seedDoc(
+        "parent-chunked",
+        "chunked parent content",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedChunkDoc("chunk-1", "parent-chunked", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, false))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    verify(embeddingProvider, never()).embedWithSpans(anyString(), any());
+    Map<String, Object> parentState = fakeIndex.get("parent-chunked");
+    assertEquals(SchemaFields.EMBEDDING_STATUS_COMPLETED, parentState.get(SchemaFields.EMBEDDING_STATUS));
+    assertNotNull(parentState.get(SchemaFields.VECTOR));
+    verify(embeddingProvider, times(1))
+        .embedDocumentBatch(argThat(texts -> texts.contains("chunked parent content")));
   }
 }

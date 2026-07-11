@@ -1,0 +1,13 @@
+{
+  "cpu": "model.onnx",
+  "gpu": "model_fp16.onnx",
+  "tokenizer": "tokenizer.json",
+  "label_config": "config.json",
+  "capabilities": {
+    "context_length": 512,
+    "embedding_dimension": 768,
+    "cpu_precision": "int8",
+    "gpu_precision": "fp16",
+    "_comment": "Davlan/distilbert-base-multilingual-cased-ner-hrl (docs/reference/model-inventory.md). context_length=this dir's config.json max_position_embeddings. embedding_dimension=this dir's config.json 'dim' field (DistilBERT's naming for hidden size, not 'hidden_size' — declared explicitly here since ModelCapabilityResolver's ecosystem-file reader only checks 'hidden_size', matching the BERT/GTE convention, not DistilBERT's). precision per model-inventory.md: cpu=model.onnx is INT8, gpu=model_fp16.onnx is FP16. pooling_mode/prefixes deliberately undeclared — NER is a per-token classification head (BioTagDecoder consumes raw logits), not a pooled-embedding model; neither concept applies. Tempdoc 710 Wave 2 Move 1 manifest authoring pass."
+  }
+}

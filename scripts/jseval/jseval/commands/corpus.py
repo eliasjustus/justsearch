@@ -294,7 +294,7 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
     finally:
         if backend_proc is not None:
             from .. import backend as backend_mod
-            backend_mod.stop_backend(backend_proc.proc)
+            backend_mod.stop_backend(backend_proc.proc, data_dir=backend_proc.data_dir)
 
     meta_path = dataset_dir / "metadata.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
@@ -459,7 +459,7 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
     finally:
         if backend_proc is not None:
             from .. import backend as backend_mod
-            backend_mod.stop_backend(backend_proc.proc)
+            backend_mod.stop_backend(backend_proc.proc, data_dir=backend_proc.data_dir)
 
     out = {"dataset": f"golden/{dataset}", "n_queries": len(queries), "modes": rows, "control": ctrl}
     if ctx.obj.get("json"):

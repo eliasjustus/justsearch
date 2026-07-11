@@ -542,9 +542,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] ingest.prepare_corpus skips re-materialization when tmp/eval-corpora/golden/<name> is non-empty, so regenerating+rebuilding a golden corpus silently re-ingests the STALE cache (corpus-fidelity --clean only clears the Lucene index, not this cache) → nDCG 0.0 from qrels/index mismatch. Consider clearing the cache on corpus-build, or a --clean-cache flag — `scripts/jseval/jseval/ingest.py:235` (2026-06-24)
 
 ### obs:backend — jseval `--start-backend` evals collide with concurrent jseval backend workflows (recert/calibrate/ot
-`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 2` `first: 2026-06-24` `last: 2026-07-07`
+`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 3` `first: 2026-06-24` `last: 2026-07-10`
 - [ ] jseval `--start-backend` evals collide with concurrent jseval backend workflows (recert/calibrate/other sessions) — all default to port 33221 + `tmp/headless-eval-data` with no mutual-exclusion lock; `--clean` rmtree's the shared dir mid-use; `quick_health` is blind to jseval-managed backends. Symptoms: 120s startup timeout / 503 / 504. Fix: isolate `--base-url <port>` + `JUSTSEARCH_DATA_DIR`. — `scripts/jseval/jseval/backend.py:37,64` (2026-06-24)
 - [ ] jseval --pipeline abort procedure (taskkill the backend PID reported in stderr 'Backend healthy on port...(PID=N)') only kills the head/API process, not the spawned worker child java process — after aborting B2a (691 Phase B) the worker process (Xmx1g, PID 20544) was found still running/consuming GPU alongside the next run's worker (B2b, PID 40120) until manually taskkilled; a recurring-benchmark abort helper should kill the worker child too, or jseval should track+kill it — new friction vs 691 §A-5 — `scripts/jseval/jseval/backend.py` (2026-07-07)
+- [ ] jseval --clean did NOT wipe tmp/headless-eval-data in this worktree — stale index (2123 docs) + watched_roots.json survived across runs, causing BLOCKED_LEGACY + forced-reindex churn + double ingestion waves on every pipeline run (confounded two 691 A/B arms before manual wipe). Its 'Cleaning data directory (preserving cohort_baselines/...)' log printed but index/ remained. Needs jseval-owner triage (645 lineage) — `scripts/jseval/jseval/backend.py` (2026-07-10)
 
 ### obs:gitleaks — gitleaks.toml allowlists `third_party/.*` as 'vendored upstream (llama.cpp etc.)' — that tree was re
 `kind: defect?` `anchor: docs/business/go-to-market/cutover-package/gitleaks.toml` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
@@ -555,8 +556,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Canonical drift: `docs/explanation/16-gpu-booster-pack.md` presents the GPU Booster Pack as the current GPU-runtime delivery mechanism, but tempdoc 632 recorded the founder correction that the booster pack is LEGACY and the live mechanism is the AI-brain install (AiInstallService downloading the model-registry cuda-runtime package). Doc needs a reframe (pre-existing drift, surfaced by 632's NVIDIA accept-and-document work) — `docs/explanation/16-gpu-booster-pack.md` (2026-06-24)
 
 ### obs:search-quality-register — Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / '
-`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
+`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 2` `first: 2026-06-24` `last: 2026-07-10`
 - [ ] Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / 'default-on not recommended' (`docs/reference/search-quality-register.md:585-605`), but shipped code has BOTH leg-arbitration + recall-complete default TRUE (`ResolvedConfigBuilder.java:1497,1513`) per tempdoc 636 final decision; F-024 + a recall-complete D-row also need reconciling. (2026-06-24, tempdoc 636 take-over) (2026-06-24)
+- [ ] search-quality-register.md has TWO entries numbered F-030 (tempdoc 678 encoder-domain-mismatch, ~line 595, and tempdoc 706 OCR comparability, ~line 579) — pre-existing numbering collision found during 691 Phase-L takeover; register owner should renumber one — `docs/reference/search-quality-register.md` (2026-07-10)
 
 ### obs:skills-sync — skills-sync.mjs is NON-IDEMPOTENT: each run APPENDS the generated source block instead of replacing
 `kind: defect?` `anchor: scripts/docs/skills-sync.mjs` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
@@ -611,8 +613,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Engine robustness (for 636/643): fusion CAN bury a RETRIEVED gold below the returned top-10 when one leg is degraded (CASCADE_LEAK); the recall-complete splice is not wired into the shipped 3-way CC path and SPLADE is unprotected (`HybridSearchOps.java:477-490`, `SearchExecutor.java runThreeWay`). Latent, non-biting on healthy realistic corpora (MIRACL CASCADE_LEAK≈0.03) — measured in tempdoc 701 E3 (2026-07-08)
 
 ### obs:resolvedconfigbuilder — D-004 leg-arbitration also has stale 'default off' docstrings while it resolves true (`ResolvedConfi
-`kind: defect?` `anchor: ResolvedConfigBuilder.java` `seen: 1` `first: 2026-06-30` `last: 2026-06-30`
+`kind: defect?` `anchor: ResolvedConfigBuilder.java` `seen: 2` `first: 2026-06-30` `last: 2026-07-10`
 - [ ] D-004 leg-arbitration also has stale 'default off' docstrings while it resolves true (`ResolvedConfigBuilder.java:1492-1497`); the class/`EnvRegistry.java:953-966`/`retrievalSignals.ts` comments still say off. Same drift class as the recall-complete-pool 'default off' comments. Found during tempdoc 643 design pass. (2026-06-30)
+- [ ] Stale comment cross-reference: ResolvedConfigBuilder.java:1022 says 'Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB' but that constant no longer exists in OnnxEmbeddingEncoder.java (grep repo-wide: zero matches) — dead pointer, no compile-time enforcement of the claimed invariant — `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java:1022` (2026-07-10)
 
 ### obs:511-aggregate-surfacing-substrate — Finish the in-flight tempdoc-citation-rule cleanup — `docs/tempdocs/README.md` and `docs/tempdocs/51
 `kind: defect?` `anchor: docs/tempdocs/511-aggregate-surfacing-substrate.md` `seen: 1`
@@ -1804,8 +1807,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Benchmarks module's default relative model-dir args (e.g. models/onnx/gte-multilingual-base) resolve against rootProject.projectDir, but a fresh git worktree has only empty scaffold dirs for models/ (the actual .onnx LFS binaries are untracked-in-main-only per repo git status) — any bench run from a worktree needs an explicit absolute --*-model-dir= override pointing at the main checkout — `modules/benchmarks/build.gradle.kts` (encoderBatchSweepBench task) / F:\justsearch-public\models\onnx\gte-multilingual-base (2026-07-07)
 
 ### obs:onnxembeddingencoder — Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embed
-`kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+`kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 2` `first: 2026-07-07` `last: 2026-07-11`
 - [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
+- [ ] OnnxEmbeddingEncoder.buildAssembly hardcodes tokenizer path as modelDir.resolve("tokenizer.json") instead of modelDir.resolve(manifest.tokenizer()) — BertNerInference correctly uses the manifest field; embedding encoder ignores a declared non-default tokenizer filename — `modules/worker-core/src/main/java/io/justsearch/indexerworker/embed/onnx/OnnxEmbeddingEncoder.java:159` (2026-07-11)
 
 ### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal
 `kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 2` `first: 2026-07-07` `last: 2026-07-09`
@@ -1912,7 +1916,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: report-build-attribution.mjs` `seen: 1` `first: 2026-07-09` `last: 2026-07-09`
 - [ ] Git worktrees have no node_modules of their own — Node's module resolution silently walks up to the main checkout's node_modules, masking missing-dependency bugs in local/worktree testing that only surface on a true clean CI runner. Caught when PR #116's CI failed with ERR_MODULE_NOT_FOUND for cross-spawn despite passing locally in a worktree — scripts/ci/report-build-attribution.mjs (2026-07-09)
 
-### obs:verify-runtime-config-matrix — runtime-config-ownership-matrix.md is stale vs verify-runtime-config-matrix.mjs (exit 1): 6 missing 
+### obs:verify-runtime-config-matrix — runtime-config-ownership-matrix.md is stale vs verify-runtime-config-matrix.mjs (exit 1): 6 missing
 `kind: environment?` `anchor: verify-runtime-config-matrix.mjs` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
 - [ ] runtime-config-ownership-matrix.md is stale vs verify-runtime-config-matrix.mjs (exit 1): 6 missing env/sysprop pairs (JUSTSEARCH_MODE + 5x JUSTSEARCH_RERANK_JUDGE_*) — pre-existing drift unrelated to 706's two new index.ocr rows, found while verifying those (2026-07-10)
 
@@ -1955,6 +1959,42 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-missing-7 — STALE observation correction: obs:vdu-pdf-fixtures-local-env claims eng.traineddata missing — on 202
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
 - [ ] STALE observation correction: obs:vdu-pdf-fixtures-local-env claims eng.traineddata missing — on 2026-07-10 the file EXISTED at F:/scoop/persist/tesseract/tessdata/ (was overwritten with tessdata_fast variant during 686 setup, disclosed in 686); tesseract verified working. Retire or re-scope the observation. (2026-07-10)
+
+### obs:bgem3backfillops — BgeM3BackfillOps writes VECTOR+EMBEDDING_STATUS unconditionally on chunk docs (queries SPLADE_STATUS
+`kind: follow-up?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/BgeM3BackfillOps.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] BgeM3BackfillOps writes VECTOR+EMBEDDING_STATUS unconditionally on chunk docs (queries SPLADE_STATUS=PENDING across parents AND chunks but never routes to CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS) — chunk docs get the wrong field pair, chunk status never completes, and the plain provider can re-embed the same chunk with a DIFFERENT model (mixed embedding spaces); NER-readiness gate can block permanently. Live-bug candidate IF any deployment enables BGE-M3 — needs triage. Found by 710 S-B1 audit — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/BgeM3BackfillOps.java:171-181` (2026-07-10)
+
+### obs:sessionoptionsapplier — ORT arena shrinkage (memory.enable_memory_arena_shrinkage=gpu:0) is enabled on EVERY run via Session
+`kind: follow-up?` `anchor: modules/ort-common/src/main/java/io/justsearch/ort/SessionOptionsApplier.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] ORT arena shrinkage (memory.enable_memory_arena_shrinkage=gpu:0) is enabled on EVERY run via SessionOptionsApplier.java:109-115, but ORT issue reports say it is unreliable for CUDA (doesn't cleanly free after peak-then-small) and adds per-run latency — never validated locally; cheap A/B candidate on next throughput dev-stack session. Found by 710 S-C.R research pass — `modules/ort-common/src/main/java/io/justsearch/ort/SessionOptionsApplier.java:109` (2026-07-10)
+
+### obs:writepathops — STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by
+`kind: follow-up?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by any subsequent readModifyWrite; chunk docs get re-queued (WritePathOps.java:471) but PARENT docs do not — any new enrichment pass that writes VECTOR in its own RMW before another stage's RMW loses the vector with status still COMPLETED (no error, no signal). The combined pass's one-RMW bundling is the only thing upholding this undeclared invariant. Candidate for 710 (invariant should be declared/enforced or vectors preserved in RMW) — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java:471` (2026-07-10)
+
+### obs:bertnerinference — NER tokenizer construction lacked explicit truncation=false/padding=false (unlike SPLADE/embed's tok
+`kind: follow-up?` `anchor: modules/worker-core/src/main/java/io/justsearch/indexerworker/ner/BertNerInference.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] NER tokenizer construction lacked explicit truncation=false/padding=false (unlike SPLADE/embed's tokenizer setup) — latent because inferBatch only ever called single-text tokenizer.encode() before tempdoc 710 Move 3 introduced batchEncode(); fixed as part of Move 3, but the underlying DJL batchEncode-vs-encode default-padding asymmetry is worth a general note for any future tokenizer construction site — `modules/worker-core/src/main/java/io/justsearch/indexerworker/ner/BertNerInference.java:108` (2026-07-10)
+
+### obs:jvmbaseconventionsplugin — Correction to obs:spladeindexcontentcrashharnesstest: the real "evidence"/"experiment" tag exclusion
+`kind: defect?` `anchor: build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Correction to obs:spladeindexcontentcrashharnesstest: the real "evidence"/"experiment" tag exclusion DOES exist (build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt:95-98, gated on -PincludeExperiment=true, project-wide) — my first pass missed it because I only grepped **/*.kts and this convention lives in a .kt file. SpladeIndexContentCrashHarnessTest itself carries no @Tag so the mechanism doesn't apply to IT specifically, but a SEPARATE, independently-reproduced trap also produces the exact same 'No tests found for given includes' message regardless of tags: Gradle's unscoped --tests filter at the repo root applies to every subproject's test task, and any subproject with 0 matching classes fails the whole build. Both mechanisms are now documented at their respective sites (class javadoc + a new comment at the exclusion site) — `build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt:95` (2026-07-11)
+
+### obs:pdfocrenginetest — PdfOcrEngineTest.interruptDestroysAllRegisteredChildren FAILED on main-push CI (run 29129172631, 691
+`kind: environment?` `anchor: PdfOcrEngineTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] PdfOcrEngineTest.interruptDestroysAllRegisteredChildren FAILED on main-push CI (run 29129172631, 691 squash) while the identical job passed on the PR run minutes earlier — 691's diff has zero OCR overlap; matches the 706 OCR-CI-flake lineage (PR #128 hardened a sibling flake). Rerun triggered to confirm flake; if it recurs, the interrupt/child-destroy test needs the same hardening treatment — `modules/worker-services PdfOcrEngineTest` (2026-07-10)
+
+### obs:unanchored-general-77 — main checkout shows models/*.onnx (gte, ner, reranker, splade) as untracked (??) despite .gitattribu
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] main checkout shows models/*.onnx (gte, ner, reranker, splade) as untracked (??) despite .gitattributes LFS patterns and merged 691 PRs — git lfs ls-files fails 'bad revision' for them; possibly never git-added on main. Needs LFS-state triage — `models/` (2026-07-11)
+
+### obs:fields-v1 — content_all (text, stored:false, docValues:false) is also destroyed by readModifyWrite — outside tem
+`kind: defect?` `anchor: SSOT/catalogs/fields.v1.json` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] content_all (text, stored:false, docValues:false) is also destroyed by readModifyWrite — outside tempdoc 711's vector/splade fragile scope, so it declares no rmwPolicy and is not preserved; a doc drops out of content_all search after any subset-field RMW — `SSOT/catalogs/fields.v1.json:74` (2026-07-11)
+
+### obs:modelcapabilityresolver — Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the ver
+`kind: environment?` `anchor: modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the version in use; used throughout ModelCapabilityResolver.resolvePrefixes/resolveLabelMapping — `modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` (surfaced under -Xlint:deprecation, out of scope for tempdoc 711 Item 3) (2026-07-11)
 
 ## Parked
 

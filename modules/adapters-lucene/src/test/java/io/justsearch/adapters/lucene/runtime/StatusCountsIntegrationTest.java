@@ -128,7 +128,7 @@ class StatusCountsIntegrationTest {
               { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "chunk_embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "splade_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """

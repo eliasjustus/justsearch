@@ -31,6 +31,10 @@ import org.slf4j.LoggerFactory;
  *       limit in MB (default 2048)
  *   <li>{@code JUSTSEARCH_EMBED_CONTEXT_LENGTH} / {@code justsearch.embed.context_length} — max
  *       context length in tokens (default 2048)
+ *   <li>{@code JUSTSEARCH_EMBED_LATE_CHUNKING_CONTEXT_LENGTH} / {@code
+ *       justsearch.embed.late_chunking_context_length} — single-pass whole-doc VECTOR limit for
+ *       the late-chunking path (tempdoc 691 Phase 2; default 8192, clamped to [contextLength,
+ *       8192])
  * </ul>
  */
 public record EmbeddingConfig(
@@ -40,12 +44,19 @@ public record EmbeddingConfig(
     boolean gpuEnabled,
     int gpuDeviceId,
     long gpuMemLimitBytes,
-    int contextLength) {
+    int contextLength,
+    // Tempdoc 691 Phase 1: late-chunking embed pass (single forward pass for a chunked parent +
+    // its chunk docs) — default off.
+    boolean lateChunkingEnabled,
+    // Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for the late-chunking path. 0 (as
+    // in DISABLED) is a defensive sentinel — callers must fall back to contextLength/maxSeqLen
+    // when this is <= 0.
+    int lateChunkingContextLength) {
 
   private static final Logger log = LoggerFactory.getLogger(EmbeddingConfig.class);
 
   public static final EmbeddingConfig DISABLED =
-      new EmbeddingConfig(false, null, "auto", false, 0, 0, 2048);
+      new EmbeddingConfig(false, null, "auto", false, 0, 0, 2048, false, 0);
 
   /** Convenience: reads from {@link ConfigStore#global()}. Prefer {@link #from} in new code. */
   public static EmbeddingConfig fromEnv() {
@@ -90,11 +101,13 @@ public record EmbeddingConfig(
     int gpuDeviceId = embed.gpuDeviceId();
     int gpuMemMb = embed.gpuMemMb();
     int contextLength = embed.contextLength();
+    boolean lateChunkingEnabled = embed.lateChunkingEnabled();
+    int lateChunkingContextLength = embed.lateChunkingContextLength();
 
     EmbeddingConfig embeddingConfig =
         new EmbeddingConfig(
             enabled, modelPath, backend, gpuEnabled, gpuDeviceId, gpuMemMb * 1024L * 1024,
-            contextLength);
+            contextLength, lateChunkingEnabled, lateChunkingContextLength);
 
     if (embeddingConfig.isReady()) {
       log.info(

@@ -151,14 +151,15 @@ a failed SPLADE load does not abort the whole Worker.
 
 ### 3. Assembler — single apply site for ORT setters
 
-`OrtSessionAssembler` has **three** external entry points, and only
-three:
+`OrtSessionAssembler` has these external entry points:
 
 | Entry | Caller | Purpose |
 |---|---|---|
 | `buildManager(Composition, GpuArbiter) → SessionHandle` | `InferenceCompositionRoot.compose` (only) | Variant-driven production path |
 | `verifyModelSession(env, modelPath, gpuConfig) → OrtSession` | `ModelVerifier` Gradle task | Dev tool (`./gradlew :modules:worker-core:verifyModel`) |
 | `probeModelNames(env, modelPath) → ProbedNames` | Each encoder's `buildAssembly` static factory | Short-lived probe for input/output names |
+| `probeOutputTensorInfo(env, modelPath, outputName) → Optional<ProbedTensorInfo>` | `ModelCapabilityResolver` | Boot-time graph probe for the embedding-dimension capability fact (no inference run) |
+| `probeCustomMetadata(env, modelPath) → Map<String, String>` | `ModelCapabilityResolver` | Reads ONNX `metadata_props` embedded at model-build time (tempdoc 711 Item 3) — one probe session per `resolve` call, shared across every capability fact checked against embedded metadata |
 
 Both `buildManager` and `verifyModelSession` route setter calls through
 the same package-private helper:

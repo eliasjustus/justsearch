@@ -3,7 +3,6 @@ package io.justsearch.indexerworker.embed.onnx;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,37 +55,21 @@ final class EmbeddingBatchSweepTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    Path repoRoot = Path.of(System.getProperty("user.dir"));
-    Path candidate = repoRoot;
-    for (int i = 0; i < 5; i++) {
-      Path modelsDir = candidate.resolve("models/onnx/embedding");
-      if (Files.exists(modelsDir.resolve("model.onnx"))
-          && Files.exists(modelsDir.resolve("tokenizer.json"))) {
-        modelDir = modelsDir;
-        break;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) break;
-    }
-
-    if (modelDir == null) {
-      String envPath = System.getenv("JUSTSEARCH_EMBED_ONNX_MODEL_PATH");
-      if (envPath != null && !envPath.isBlank()) {
-        Path envDir = Path.of(envPath);
-        if (Files.exists(envDir.resolve("model.onnx"))
-            && Files.exists(envDir.resolve("tokenizer.json"))) {
-          modelDir = envDir;
-        }
-      }
-    }
-
-    assumeTrue(modelDir != null, "ONNX embedding model not found — skipping EXP-4");
+    // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest).
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery discovery =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/onnx/embedding",
+            "JUSTSEARCH_EMBED_ONNX_MODEL_PATH",
+            "model.onnx",
+            "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription() + " — skipping EXP-4");
+    modelDir = discovery.modelDir();
     // Tempdoc 397 §14.28 U1: testFixtures helper wraps OrtSessionAssembler.buildManager.
     io.justsearch.ort.SessionHandle sessions =
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
             "embed-test", modelDir);
     io.justsearch.indexerworker.embed.onnx.EmbeddingAssembly assembly =
-        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN);
+        OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0, false);
     encoder =
         new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());
   }
