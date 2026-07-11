@@ -145,6 +145,52 @@ class RmwFieldPreservationTest {
         this::createRuntimeWithVectorAndSplade);
   }
 
+  /**
+   * Tempdoc 712 (chunk-level SPLADE): sparse postings written on a chunk doc are retrievable
+   * through the production chunk-sparse query ({@code searchChunksSplade}, {@code is_chunk=true}
+   * filtered), and an unrelated RMW cannot silently lose them — the data is dropped (no re-read
+   * lane for FeatureFields) but {@code splade_status} downgrades to PENDING so the backfill
+   * re-derives. The F-032 no-silent-loss guard, applied to the chunk sparse leg.
+   */
+  @Test
+  void chunkSpladeSearchableAndRmwDowngradesStatus() throws Exception {
+    withConfig(
+        (runtime) -> {
+          Map<String, Object> chunk = new HashMap<>();
+          chunk.put(SchemaFields.DOC_ID, "chunk-0");
+          chunk.put(SchemaFields.DOC_UID, "chunk-0#0");
+          chunk.put(SchemaFields.PATH, "test/doc-0.txt");
+          chunk.put(SchemaFields.IS_CHUNK, "true");
+          chunk.put(SchemaFields.PARENT_DOC_ID, "doc-0");
+          chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
+          chunk.put(SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f));
+          chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+          chunk.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+          commit(runtime);
+
+          var result = runtime.chunkSearchOps().searchChunksSplade(Map.of("alpha", 1.0f), 10, null);
+          assertEquals(1, result.hits().size(), "chunk sparse postings must be retrievable");
+          assertEquals("chunk-0", result.hits().get(0).docId());
+
+          assertTrue(
+              runtime.indexingCoordinator().updateDocument(
+                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+          commit(runtime);
+
+          assertEquals(
+              0,
+              runtime.chunkSearchOps().searchChunksSplade(Map.of("alpha", 1.0f), 10, null)
+                  .hits().size(),
+              "SPLADE data is dropped by the rewrite (no re-read lane)");
+          assertEquals(
+              SchemaFields.SPLADE_STATUS_PENDING,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.SPLADE_STATUS),
+              "status must downgrade to PENDING so the backfill re-derives the chunk's sparse data");
+        },
+        this::createRuntimeWithChunkSplade);
+  }
+
   /** chunk_vector on a chunk doc survives an RMW that touches only a chunk lifecycle field. */
   @Test
   void chunkVectorSurvivesRmw() throws Exception {
@@ -320,6 +366,25 @@ class RmwFieldPreservationTest {
             { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
             { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" },
             { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
+          ]
+        }
+        """);
+  }
+
+  private RunningRuntime createRuntimeWithChunkSplade() {
+    return open(
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "path", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "chunk_content", "type": "text", "stored": true, "docValues": false },
+            { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
+            { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
+            { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" }
           ]
         }
         """);
