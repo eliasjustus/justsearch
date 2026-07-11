@@ -1971,6 +1971,18 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: follow-up?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
 - [ ] STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by any subsequent readModifyWrite; chunk docs get re-queued (WritePathOps.java:471) but PARENT docs do not — any new enrichment pass that writes VECTOR in its own RMW before another stage's RMW loses the vector with status still COMPLETED (no error, no signal). The combined pass's one-RMW bundling is the only thing upholding this undeclared invariant. Candidate for 710 (invariant should be declared/enforced or vectors preserved in RMW) — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java:471` (2026-07-10)
 
+### obs:bertnerinference — NER tokenizer construction lacked explicit truncation=false/padding=false (unlike SPLADE/embed's tok
+`kind: follow-up?` `anchor: modules/worker-core/src/main/java/io/justsearch/indexerworker/ner/BertNerInference.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] NER tokenizer construction lacked explicit truncation=false/padding=false (unlike SPLADE/embed's tokenizer setup) — latent because inferBatch only ever called single-text tokenizer.encode() before tempdoc 710 Move 3 introduced batchEncode(); fixed as part of Move 3, but the underlying DJL batchEncode-vs-encode default-padding asymmetry is worth a general note for any future tokenizer construction site — `modules/worker-core/src/main/java/io/justsearch/indexerworker/ner/BertNerInference.java:108` (2026-07-10)
+
+### obs:jvmbaseconventionsplugin — Correction to obs:spladeindexcontentcrashharnesstest: the real "evidence"/"experiment" tag exclusion
+`kind: defect?` `anchor: build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Correction to obs:spladeindexcontentcrashharnesstest: the real "evidence"/"experiment" tag exclusion DOES exist (build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt:95-98, gated on -PincludeExperiment=true, project-wide) — my first pass missed it because I only grepped **/*.kts and this convention lives in a .kt file. SpladeIndexContentCrashHarnessTest itself carries no @Tag so the mechanism doesn't apply to IT specifically, but a SEPARATE, independently-reproduced trap also produces the exact same 'No tests found for given includes' message regardless of tags: Gradle's unscoped --tests filter at the repo root applies to every subproject's test task, and any subproject with 0 matching classes fails the whole build. Both mechanisms are now documented at their respective sites (class javadoc + a new comment at the exclusion site) — `build-logic/src/main/kotlin/conventions/JvmBaseConventionsPlugin.kt:95` (2026-07-11)
+
+### obs:pdfocrenginetest — PdfOcrEngineTest.interruptDestroysAllRegisteredChildren FAILED on main-push CI (run 29129172631, 691
+`kind: environment?` `anchor: PdfOcrEngineTest` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
+- [ ] PdfOcrEngineTest.interruptDestroysAllRegisteredChildren FAILED on main-push CI (run 29129172631, 691 squash) while the identical job passed on the PR run minutes earlier — 691's diff has zero OCR overlap; matches the 706 OCR-CI-flake lineage (PR #128 hardened a sibling flake). Rerun triggered to confirm flake; if it recurs, the interrupt/child-destroy test needs the same hardening treatment — `modules/worker-services PdfOcrEngineTest` (2026-07-10)
+
 ## Parked
 
 ### obs:batch-557-deferred — 557 deferred residuals (Q2 tri-state env-blocked; minor MacroDryRun wording)
