@@ -10,8 +10,11 @@ import io.justsearch.app.util.TempFileManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -207,23 +210,62 @@ public class VduProcessor {
                 pageImages = List.of(filePath);
             }
 
-            // Pass 1: Extract text from each page (timed)
+            // Tempdoc 677 Stage 0: measure input legibility on every page BEFORE any model call
+            // (ImagePreparer.prepare() also reads the file, but re-reads it via a fresh
+            // ImageIO.read() here so this measurement runs on the raw page image, independent of
+            // ImagePreparer's own resize path — ImagePreparer is intentionally not touched by
+            // this slice). Below-floor pages are skipped from the model call entirely; if EVERY
+            // page is below floor, abstain without calling the model at all (Stage 0 CAUTION,
+            // see VduAbstentionGate javadoc: catch only "no textual signal for anything").
+            List<LegibilityMeasures> pageMeasures = new ArrayList<>(pageImages.size());
+            List<Integer> legiblePageIndices = new ArrayList<>();
+            for (Path pageImage : pageImages) {
+                BufferedImage rawImage = ImageIO.read(pageImage.toFile());
+                if (rawImage == null) {
+                    throw new IOException("Failed to read image (unsupported format?): " + pageImage);
+                }
+                LegibilityMeasures measures = ImageLegibility.measure(rawImage);
+                pageMeasures.add(measures);
+                if (!VduAbstentionGate.inputVerdict(measures).rejected()) {
+                    legiblePageIndices.add(pageMeasures.size() - 1);
+                }
+            }
+
+            if (legiblePageIndices.isEmpty()) {
+                GateVerdict stage0Verdict = buildStage0RejectVerdict(pageMeasures);
+                LOG.info("VDU Stage 0 rejected all {} page(s) for {} (no input legibility signal)",
+                    pageImages.size(), filePath.getFileName());
+                return new VduResult("", null, pageImages.size(), stage0Verdict);
+            }
+            if (legiblePageIndices.size() < pageImages.size()) {
+                // Partial legibility: some pages are below the Stage 0 floor but not all. Still
+                // send the legible ones — the model may genuinely read them; only a document
+                // where NO page carries any textual signal abstains at Stage 0.
+                LOG.info("VDU Stage 0: sending {}/{} legible pages for {}",
+                    legiblePageIndices.size(), pageImages.size(), filePath.getFileName());
+            }
+
+            // Pass 1: Extract text from each legible page (timed)
             long pass1StartNanos = System.nanoTime();
             String extractedText;
+            List<OnlineAiService.VisionCompletionResult> sentPageResults =
+                new ArrayList<>(legiblePageIndices.size());
             try {
                 StringBuilder allText = new StringBuilder();
-                for (int i = 0; i < pageImages.size(); i++) {
-                    LOG.debug("Processing page {}/{}", i + 1, pageImages.size());
+                for (int idx : legiblePageIndices) {
+                    LOG.debug("Processing page {}/{}", idx + 1, pageImages.size());
 
-                    byte[] imageBytes = imagePreparer.prepare(pageImages.get(i));
-                    String pageText = aiService.visionCompletion(PASS1_PROMPT, imageBytes, PASS1_MAX_TOKENS)
-                        .orTimeout(VDU_VISION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                        .join();
+                    byte[] imageBytes = imagePreparer.prepare(pageImages.get(idx));
+                    OnlineAiService.VisionCompletionResult pageResult =
+                        aiService.visionCompletionDetailed(PASS1_PROMPT, imageBytes, PASS1_MAX_TOKENS)
+                            .orTimeout(VDU_VISION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                            .join();
+                    sentPageResults.add(pageResult);
 
                     if (pageImages.size() > 1) {
-                        allText.append("--- Page ").append(i + 1).append(" ---\n");
+                        allText.append("--- Page ").append(idx + 1).append(" ---\n");
                     }
-                    allText.append(pageText).append("\n\n");
+                    allText.append(pageResult.content()).append("\n\n");
                 }
                 extractedText = allText.toString().trim();
             } finally {
@@ -235,7 +277,21 @@ public class VduProcessor {
                     extractedText.substring(0, Math.min(500, extractedText.length())));
             }
 
-            // Pass 2: Summarize and extract entities (timed)
+            // Tempdoc 677 Stage 1: aggregate the same-call confidence signals across the pages
+            // actually sent, then consult the gate before trusting Pass 1's output.
+            GateVerdict stage1Verdict =
+                VduAbstentionGate.outputVerdict(aggregateSignals(sentPageResults));
+
+            if (stage1Verdict.rejected()) {
+                // Pass 2 is not a check — it summarizes Pass 1's own output, trusting it
+                // unconditionally (tempdoc 677 code map finding). Do not summarize suspect text:
+                // skip Pass 2 entirely for a document the gate already rejected.
+                LOG.info("VDU Stage 1 rejected output for {} (suspect confabulation)",
+                    filePath.getFileName());
+                return new VduResult(extractedText, null, pageImages.size(), stage1Verdict);
+            }
+
+            // Pass 2: Summarize and extract entities (timed) — unchanged, gate passed.
             long pass2StartNanos = System.nanoTime();
             String enrichment;
             try {
@@ -260,7 +316,7 @@ public class VduProcessor {
             LOG.info("VDU complete for {}: {} chars, {} pages, {}ms",
                 filePath.getFileName(), extractedText.length(), pageImages.size(), elapsed);
 
-            return new VduResult(extractedText, enrichment, pageImages.size());
+            return new VduResult(extractedText, enrichment, pageImages.size(), stage1Verdict);
 
         } catch (IOException e) {
             LOG.error("VDU I/O error for: {}", filePath, e);
@@ -301,8 +357,117 @@ public class VduProcessor {
         return text.substring(0, maxChars) + "\n... [truncated]";
     }
 
-    /** Result of VDU processing. */
-    public record VduResult(String extractedText, String enrichment, int pageCount) {}
+    /**
+     * Builds the document-level Stage 0 rejection verdict when EVERY page is below the input
+     * legibility floor. {@link VduAbstentionGate#inputVerdict} only judges a single page; this
+     * aggregates the (all-rejected) per-page measurements into one verdict for the caller.
+     *
+     * <p>Reports the MAX laplacianVariance and MAX rmsContrast independently across all pages —
+     * i.e. the strongest per-signal counter-evidence against rejecting (the page that came
+     * closest to passing on that signal), even though each still failed both floors. The two
+     * maxima are not necessarily from the same page; this is evidence for a human/log reader, not
+     * a value fed back into a decision, so that mismatch is immaterial.
+     */
+    private static GateVerdict buildStage0RejectVerdict(List<LegibilityMeasures> pageMeasures) {
+        double maxLaplacian = Double.NEGATIVE_INFINITY;
+        double maxContrast = Double.NEGATIVE_INFINITY;
+        for (LegibilityMeasures measures : pageMeasures) {
+            maxLaplacian = Math.max(maxLaplacian, measures.laplacianVariance());
+            maxContrast = Math.max(maxContrast, measures.rmsContrast());
+        }
+        return new GateVerdict(
+            true, VduAbstentionGate.STAGE_INPUT_LEGIBILITY,
+            null, null, null, null,
+            maxLaplacian, maxContrast);
+    }
+
+    /**
+     * Reduces the per-page {@link OnlineAiService.VisionCompletionResult}s from every page sent
+     * to the model into the document-level {@link AggregatedPageSignals} that {@link
+     * VduAbstentionGate#outputVerdict} consumes (tempdoc 677 Stage 1).
+     *
+     * <p>{@code meanLogprob}/{@code lowConfidenceFraction} are token-weighted means (a page's
+     * result contributes proportionally to its own token count) rather than a simple average or
+     * a max — a max would be "too twitchy" per the tempdoc's task brief (one thin page dominating
+     * the whole-document verdict), and an unweighted average lets a short page count as much as a
+     * long one. Pages with no logprob signal (null) do not contribute to either weighted sum —
+     * NO SIGNAL must not be conflated with a real low value.
+     *
+     * <p>{@code finishReason} aggregation applies a priority: an anomalous (non-{@code "stop"},
+     * non-{@code "length"}) reason on ANY page wins outright (it is the strongest evidence);
+     * otherwise {@code "length"} if any page was truncated; otherwise {@code "stop"} if every
+     * reporting page completed cleanly; otherwise {@code null} if no page reported a reason at
+     * all. {@link VduAbstentionGate#outputVerdict} itself excludes {@code "length"} from
+     * triggering rejection alone, so this method does not need to special-case it beyond ordering
+     * it below a genuinely anomalous reason.
+     */
+    private static AggregatedPageSignals aggregateSignals(
+        List<OnlineAiService.VisionCompletionResult> sentPageResults) {
+        double weightedLogprobSum = 0.0;
+        long weightedLogprobTokens = 0;
+        double weightedFractionSum = 0.0;
+        long weightedFractionTokens = 0;
+        int totalTokenCount = 0;
+        String anomalousFinishReason = null;
+        boolean sawTruncation = false;
+        boolean sawStop = false;
+
+        for (OnlineAiService.VisionCompletionResult result : sentPageResults) {
+            totalTokenCount += result.tokenCount();
+            if (result.meanLogprob() != null && result.tokenCount() > 0) {
+                weightedLogprobSum += result.meanLogprob() * result.tokenCount();
+                weightedLogprobTokens += result.tokenCount();
+            }
+            if (result.lowConfidenceFraction() != null && result.tokenCount() > 0) {
+                weightedFractionSum += result.lowConfidenceFraction() * result.tokenCount();
+                weightedFractionTokens += result.tokenCount();
+            }
+            String finishReason = result.finishReason();
+            if (finishReason == null) {
+                continue;
+            }
+            if ("stop".equals(finishReason)) {
+                sawStop = true;
+            } else if ("length".equals(finishReason)) {
+                sawTruncation = true;
+            } else if (anomalousFinishReason == null) {
+                anomalousFinishReason = finishReason;
+            }
+        }
+
+        Double meanLogprob = weightedLogprobTokens > 0 ? weightedLogprobSum / weightedLogprobTokens : null;
+        Double lowConfidenceFraction =
+            weightedFractionTokens > 0 ? weightedFractionSum / weightedFractionTokens : null;
+        String aggregateFinishReason;
+        if (anomalousFinishReason != null) {
+            aggregateFinishReason = anomalousFinishReason;
+        } else if (sawTruncation) {
+            aggregateFinishReason = "length";
+        } else if (sawStop) {
+            aggregateFinishReason = "stop";
+        } else {
+            aggregateFinishReason = null;
+        }
+
+        return new AggregatedPageSignals(
+            meanLogprob, lowConfidenceFraction, totalTokenCount, aggregateFinishReason);
+    }
+
+    /**
+     * Result of VDU processing.
+     *
+     * @param gateVerdict the tempdoc 677 abstention cascade's verdict on this document —
+     *     {@link GateVerdict#passed()} when neither Stage 0 nor Stage 1 rejected it. The 3-arg
+     *     constructor below defaults to {@code passed()} for callers (tests, mocks) predating the
+     *     gate that have no opinion on it.
+     */
+    public record VduResult(String extractedText, String enrichment, int pageCount, GateVerdict gateVerdict) {
+
+        /** Back-compat constructor: assumes the gate passed (no rejection). */
+        public VduResult(String extractedText, String enrichment, int pageCount) {
+            this(extractedText, enrichment, pageCount, GateVerdict.passed());
+        }
+    }
 
     /** VDU-specific exception for better error handling. */
     public static class VduException extends Exception {

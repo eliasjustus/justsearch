@@ -76,10 +76,12 @@ public final class SchemaFields {
   public static final String VDU_STATUS_COMPLETED_EMPTY = "COMPLETED_EMPTY";
 
   /**
-   * Tempdoc 677: VDU ran and returned non-empty text, but the abstention gate judged the output
-   * untrustworthy (suspected confabulation on an unreadable input). Baseline content was RETAINED
-   * — honest absence instead of confident fabrication. Terminal like COMPLETED_EMPTY (no
-   * re-queue; poison-pill discipline).
+   * Tempdoc 677: the abstention gate judged the extraction untrustworthy, either because VDU ran
+   * and returned non-empty text that failed a post-call confidence check (suspected confabulation
+   * on an unreadable input), or because the input-legibility gate skipped the model call entirely
+   * (no page carried any textual signal at all). Baseline content was RETAINED either way —
+   * honest absence instead of confident fabrication. Terminal like COMPLETED_EMPTY (no re-queue;
+   * poison-pill discipline).
    */
   public static final String VDU_STATUS_REJECTED = "REJECTED";
 

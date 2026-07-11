@@ -125,6 +125,14 @@ public class VduBatchProcessor {
         catalog.outcomeTotal.increment(VduOutcomeTags.of(VduOutcome.SKIPPED));
     }
 
+    // Tempdoc 677: the abstention gate rejection is counted as a distinct FAILED-bucket outcome
+    // (see VduOutcome — no dedicated REJECTED tag exists yet, and adding one is outside this
+    // slice's scope). recordFailed()'s existing tag is reused rather than adding a new enum
+    // constant purely for this call site.
+    private void recordRejected() {
+        recordFailed();
+    }
+
     public int processPendingFiles() {
         RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
         if (knowledgeClient == null) {
@@ -237,29 +245,53 @@ public class VduBatchProcessor {
                 // This avoids misleading "COMPLETED but empty" states where content was never updated.
                 String extractedText = result.extractedText();
                 boolean hasText = extractedText != null && !extractedText.isBlank();
+                GateVerdict gateVerdict = result.gateVerdict();
 
                 io.justsearch.ipc.VduUpdateOutcome outcome;
                 String enrichment;
-                if (hasText) {
+                String contentForWire;
+                if (gateVerdict.rejected()) {
+                    // Tempdoc 677: the abstention gate judged this document's output untrustworthy
+                    // (Stage 0: no page carried any input-legibility signal, or Stage 1: the
+                    // model's own logprob/finish-reason signals were suspect). Checked BEFORE
+                    // hasText so a Stage 0 rejection (no model call, extractedText is blank) is
+                    // still reported as REJECTED_SUSPECT_TEXT rather than falling through to the
+                    // SUCCESS_EMPTY branch below.
+                    outcome = io.justsearch.ipc.VduUpdateOutcome.VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT;
+                    // Omit the model's suspect text from the wire entirely — the worker ignores
+                    // extracted_content for this outcome anyway (baseline is retained), and
+                    // omitting it keeps a possibly-fabricated string out of the payload.
+                    contentForWire = null;
+                    enrichment = buildGateRejectionEnrichment(gateVerdict, result.pageCount());
+                    LOG.info("VDU output rejected by abstention gate (stage={}) for: {}",
+                        gateVerdict.stage(), docId);
+                } else if (hasText) {
                     outcome = io.justsearch.ipc.VduUpdateOutcome.VDU_UPDATE_OUTCOME_SUCCESS_TEXT;
+                    contentForWire = extractedText;
                     enrichment = result.enrichment();
                 } else {
                     // VDU succeeded but produced no text (e.g., blank image, handwriting)
                     outcome = io.justsearch.ipc.VduUpdateOutcome.VDU_UPDATE_OUTCOME_SUCCESS_EMPTY;
+                    contentForWire = null;
                     enrichment = buildNoTextEnrichment(result.pageCount(), result.enrichment());
                     LOG.info("VDU produced no text for: {} (pageCount={})", docId, result.pageCount());
                 }
 
                 boolean updated = knowledgeClient.updateVduResult(
                     docId,
-                    hasText ? extractedText : null,
+                    contentForWire,
                     outcome,
                     enrichment,
                     result.pageCount()
                 );
 
                 if (updated) {
-                    if (hasText) {
+                    if (gateVerdict.rejected()) {
+                        recordRejected();
+                        failed++;
+                        LOG.info("VDU rejected ({}/{}): {}",
+                            failed, pendingDocIds.size(), filePath.getFileName());
+                    } else if (hasText) {
                         recordCompleted();
                         processed++;
                         LOG.info("VDU completed ({}/{}): {}",
@@ -342,6 +374,55 @@ public class VduBatchProcessor {
         } catch (Exception e) {
             // Fallback to simple string if JSON building fails
             return "{\"error\":\"no_text_detected\",\"pageCount\":" + pageCount + "}";
+        }
+    }
+
+    /**
+     * Builds the {@code vdu_enrichment} JSON for a document the tempdoc 677 abstention gate
+     * rejected — the gate's evidence trail under a {@code "gate"} key, so the rejection is
+     * auditable (which stage, which signals tripped it) rather than a bare status flag. Fields
+     * that are {@code null} on {@code verdict} (not applicable to the rejecting stage, or NO
+     * SIGNAL from the server) are omitted from the JSON entirely via explicit null-guards below,
+     * rather than written as a JSON {@code null}, to keep the evidence trail free of noise.
+     *
+     * @param verdict the rejecting gate verdict ({@link GateVerdict#rejected()} must be true)
+     * @param pageCount the document's total page count
+     * @return JSON string: {@code {"gate": {"stage", "meanLogprob", "lowConfidenceFraction",
+     *     "tokenCount", "finishReason", "laplacianVariance", "rmsContrast"}, "pageCount"}}
+     */
+    private String buildGateRejectionEnrichment(GateVerdict verdict, int pageCount) {
+        try {
+            var mapper = new tools.jackson.databind.ObjectMapper();
+            var gateNode = mapper.createObjectNode();
+            gateNode.put("stage", verdict.stage());
+            if (verdict.meanLogprob() != null) {
+                gateNode.put("meanLogprob", verdict.meanLogprob());
+            }
+            if (verdict.lowConfidenceFraction() != null) {
+                gateNode.put("lowConfidenceFraction", verdict.lowConfidenceFraction());
+            }
+            if (verdict.tokenCount() != null) {
+                gateNode.put("tokenCount", verdict.tokenCount());
+            }
+            if (verdict.finishReason() != null) {
+                gateNode.put("finishReason", verdict.finishReason());
+            }
+            if (verdict.laplacianVariance() != null) {
+                gateNode.put("laplacianVariance", verdict.laplacianVariance());
+            }
+            if (verdict.rmsContrast() != null) {
+                gateNode.put("rmsContrast", verdict.rmsContrast());
+            }
+
+            var node = mapper.createObjectNode();
+            node.set("gate", gateNode);
+            if (pageCount > 0) {
+                node.put("pageCount", pageCount);
+            }
+            return mapper.writeValueAsString(node);
+        } catch (Exception e) {
+            // Fallback to a minimal but still-honest string if JSON building fails.
+            return "{\"gate\":{\"stage\":\"" + verdict.stage() + "\"},\"pageCount\":" + pageCount + "}";
         }
     }
 

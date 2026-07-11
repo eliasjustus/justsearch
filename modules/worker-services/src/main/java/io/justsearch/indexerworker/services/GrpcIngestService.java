@@ -704,10 +704,12 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           log.info("updateVduResult: VDU failed for doc: {}", docId);
         }
         case VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT -> {
-          // Tempdoc 677: the abstention gate judged the model's non-empty output
-          // untrustworthy (suspected confabulation on an unreadable input). RETAIN the
-          // baseline content — no content/language overwrite, no re-embedding, no chunk
-          // regeneration — and record the honest terminal state (no re-queue).
+          // Tempdoc 677: the abstention gate judged the extraction untrustworthy — either the
+          // model's non-empty output failed a post-call confidence check (suspected
+          // confabulation), or the input-legibility gate skipped the model call entirely (no
+          // page carried any textual signal). RETAIN the baseline content — no content/language
+          // overwrite, no re-embedding, no chunk regeneration — and record the honest terminal
+          // state (no re-queue) either way.
           updates.put(SchemaFields.VDU_PROCESSED, "true");
           updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_REJECTED);
           log.info(
