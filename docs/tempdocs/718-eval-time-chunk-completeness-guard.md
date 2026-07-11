@@ -252,3 +252,24 @@ running the guard's own verdict over the archived summaries —
 So the guard demonstrably catches the exact failure it was built for. Enforcement is conservative:
 it fires ONLY on a positively-`degenerate` verdict — missing block (pre-guard runs), `ok`, and
 `chunk-free` all pass silently (backward-compatible, mirrors `compare_engine_sets`'s skip-on-unknown).
+
+## Live smoke (2026-07-11) — the guard caught a real degeneracy end-to-end, and the multi-signal design was load-bearing
+
+One fresh `--clean` legal-clerc-200 run from this worktree. The 717 anomaly **struck this very
+build**, and the embedded guard caught it — a live end-to-end validation better than a clean pass:
+
+- `summary.json` carried a real `chunk_completeness` block: `expected=194, observed=4293,
+  verdict="degenerate", reasons=["chunk_merge absent from vector mode's pipeline_tracking.observed"]`.
+  Embed path (offline expectation + status counts threaded through `_build_summary`) works on a real run.
+- **The count/coverage signals were HEALTHY:** `chunkDocCount=4293, chunkEmbeddingCompletedCount=4293,
+  chunkVectorCoveragePercent=100.0, pending=0, failed=0` — a fully-enriched chunk index. Only the
+  `chunk_merge` query-time corroborator fired the verdict. **A count-only oracle would have certified
+  this degenerate run as healthy** — the multi-signal design (index counts AND the query-time leg) is
+  what catches this flavor. Strong validation of including `chunk_merge`, not just chunk counts.
+- Retrieval was genuinely halved (vector nDCG 0.34 vs healthy 0.62), so the degeneracy is real, not a
+  telemetry gap.
+
+**This also refined tempdoc 717's hypothesis** (see 717 §Refinement): the chunk vectors are present
+and 100%-covered, so the degeneracy is NOT a build-side chunk-vector-death (the framing 712/713 and
+this author assumed) — it is a **query-time `chunk_merge` non-activation** despite a healthy chunk
+index. 718's live smoke produced that clue as a byproduct of validating the guard.

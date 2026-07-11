@@ -65,3 +65,29 @@ bar before any fix).
   it recurred), 713 (§M-5 where it was first quarantined), 691 (late-chunking / combined pass).
 - Register: F-032, F-035, F-036; the health-gate convention (`chunk_merge` in vector legs) that
   712/713 adopted is the interim guard until this is fixed.
+
+## §Refinement (2026-07-11, from tempdoc 718's live smoke) — hypothesis CORRECTED: query-time, not build-time
+
+A fresh `--clean` legal-clerc build for 718's live smoke hit the anomaly and was fully instrumented
+this time. The result **falsifies this charter's original "chunk vectors dead" framing** (inherited
+from 712/713, where the degenerate index was wiped before probing):
+
+- The degenerate build had `chunkDocCount=4293, chunkEmbeddingCompletedCount=4293,
+  chunkVectorCoveragePercent=100.0, pending=0, failed=0` — **the chunk vectors are all present and
+  100% covered.** The build side (CombinedEnrichmentBackfillOps chunk production + vector write) worked.
+- Yet vector nDCG was 0.34 (vs healthy 0.62) and `chunk_merge` fired for **zero** queries.
+
+**So the degeneracy is QUERY-TIME, not build-time:** a fully-enriched chunk index (vectors present +
+covered) whose `chunk_merge` leg silently fails to activate at search time. The investigation should
+therefore start at the **query-time chunk-merge activation path** — `SearchExecutor` (the
+`search/chunk_merge` span at `SearchExecutor.java:527`), `SearchPlanner.planChunkMerge`,
+`ChunkSearchOps.searchChunksSplade`/chunk-vector retrieval, and whatever gates whether the chunk
+branch is consulted — NOT the enrichment/write path (which this evidence exonerates). Candidate
+mechanisms: a readiness/visibility race where the searcher opens before the chunk segment is
+merged/visible; a chunk-vector reader init that silently no-ops on a fresh index; a `chunkVectorsReady`
+flag consulted at query planning that is stale-false right after a fresh build.
+
+**Cheapest first evidence (updated):** the loop-N-fresh-builds harness (still valid) should capture,
+per run, BOTH the `chunk_completeness` block (718 now embeds it) AND — on a degenerate hit — probe
+whether the chunk vectors are queryable directly (a manual chunk-vector ANN query) vs merely present,
+to localize the query-time gate that's misfiring. F-032's build-side lineage is likely NOT the culprit.
