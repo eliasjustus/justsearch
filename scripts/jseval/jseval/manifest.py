@@ -246,9 +246,10 @@ def compute_manifest(
     - If passed explicitly (non-None), that value wins unchanged.
     - Else if ``envelope_data_dir`` is set, the manifest's
       ``manifest_hash`` is looked up under
-      ``<envelope_data_dir>/non_determinism_envelopes/`` via
-      :func:`jseval.calibrate.read_envelope`; a hit embeds the envelope,
-      a miss leaves the field ``None``.
+      ``<envelope_data_dir>/cohort_baselines/`` via
+      :func:`jseval.calibrate.read_envelope` (which also consults the
+      Phase-2 sidecar dir and the pre-716 legacy roots); a hit embeds
+      the envelope, a miss leaves the field ``None``.
     - Else the field stays ``None`` — an uncalibrated cohort.
 
     Consumers that observe ``None`` must treat cross-run deltas

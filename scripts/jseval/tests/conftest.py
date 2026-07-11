@@ -98,6 +98,26 @@ def make_span():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_pre716_legacy_roots(monkeypatch, tmp_path):
+    """Point the tempdoc-716 legacy-root read fallback away from the real machine.
+
+    `cohort_baselines.candidate_roots` consults env `JUSTSEARCH_DATA_DIR` and
+    `_paths.DEFAULT_BACKEND_DATA_DIR` as read fallbacks for pre-716
+    calibration state. Un-isolated, a developer machine's real
+    `tmp/headless-eval-data` (or an exported JUSTSEARCH_DATA_DIR) could leak
+    envelopes into tests that expect a miss. Tests that exercise the fallback
+    re-point these explicitly (their monkeypatch writes win — same
+    function-scoped monkeypatch, later write).
+    """
+    import jseval._paths as _paths
+
+    monkeypatch.delenv("JUSTSEARCH_DATA_DIR", raising=False)
+    monkeypatch.setattr(
+        _paths, "DEFAULT_BACKEND_DATA_DIR", tmp_path / "no-legacy-root-in-tests",
+    )
+
+
+@pytest.fixture(autouse=True)
 def _disable_shared_dataset_cache_by_default(monkeypatch):
     """Default every test to `dataset_cache`'s pre-709 (cache-disabled) behavior.
 

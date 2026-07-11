@@ -203,28 +203,26 @@ def _load_json(path: Path):
 
 
 def _resolve_data_dir(run_dir: Path) -> Path | None:
-    """Infer the data_dir for baseline lookups.
+    """Return the primary data_dir for baseline lookups.
 
-    Priority:
-    1. ``JUSTSEARCH_DATA_DIR`` env var (same mechanism Phase-2 uses
-       in jseval.run).
-    2. ``run_dir.parent`` if it looks like the eval-results root
-       (last-ditch fallback; cohort_baselines/ will be alongside
-       the run directories).
-
-    Returns ``None`` when neither source is available — the projection
-    then reports ``status="no-data-dir"`` and skips baseline I/O.
+    Tempdoc 716: the jseval-owned data root is the canonical baseline home.
+    Pre-716 legacy roots (env ``JUSTSEARCH_DATA_DIR``, the backend data dir)
+    are consulted as read fallbacks by ``_load_baseline`` via
+    :func:`jseval.cohort_baselines.candidate_roots`. The old
+    ``run_dir.parent`` last-ditch fallback (``<eval-results>/
+    cohort_baselines/`` — a layout nothing ever wrote) is retired.
     """
-    env = os.environ.get("JUSTSEARCH_DATA_DIR")
-    if env:
-        return Path(env)
-    return run_dir.parent  # eval-results root as best-effort fallback
+    from .._paths import DEFAULT_JSEVAL_DATA_DIR
+
+    return DEFAULT_JSEVAL_DATA_DIR
 
 
 def _load_baseline(data_dir: Path, cohort_hash: str) -> dict | None:
     from .. import cohort_baselines
 
-    path = cohort_baselines.span_distributions_path(data_dir, cohort_hash)
+    path = cohort_baselines.resolve_span_distributions_path(data_dir, cohort_hash)
+    if path is None:
+        return None
     return _load_json(path)
 
 

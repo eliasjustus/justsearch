@@ -41,15 +41,18 @@ This document is the operator procedure for capturing the baseline.
 
 ## Prerequisites
 
-1. A calibrated cohort (`<data_dir>/cohort_baselines/<hash>/envelope.json`
-   exists). Produced by `jseval calibrate` — see
+1. A calibrated cohort (`<data-dir>/cohort_baselines/<hash>/envelope.json`
+   exists — default data-dir since tempdoc 716: the jseval data root,
+   `scripts/jseval/tmp/`). Produced by `jseval calibrate` — see
    `docs/how-to/recalibrate-phase3-baseline.md` for that procedure.
 2. `JUSTSEARCH_INDEX_TRACING_LEVEL=detailed` exported when producing
    the source runs — otherwise `encoder.ort_run` spans are not
    emitted and the baseline has no data.
 3. At least 3 `jseval run` directories, each at the same
    `manifest_hash`, mirroring their `traces.ndjson` into the run dir
-   (automatic when `JUSTSEARCH_DATA_DIR` is set during the run).
+   (automatic for `--start-backend` runs; for a run against an external
+   backend, export `JUSTSEARCH_DATA_DIR` so jseval can find its
+   telemetry).
 
 ## Procedure
 
@@ -69,11 +72,10 @@ axes).
 ### 2. Capture the baseline
 
 ```bash
-export JUSTSEARCH_DATA_DIR=/path/to/data/dir   # absolute path
-
+# --data-dir defaults to the jseval data root (scripts/jseval/tmp/) since
+# tempdoc 716; pass it only for a non-default calibration root.
 python -m jseval calibrate-drift-baseline \
     --cohort-hash <HASH> \
-    --data-dir "$JUSTSEARCH_DATA_DIR" \
     --from-runs /path/to/run1 /path/to/run2 /path/to/run3
 ```
 
@@ -83,7 +85,8 @@ The subcommand:
 2. Merges `encoder.ort_run` span durations per encoder across all
    runs (cap at `MAX_SAMPLES_PER_ENCODER` — currently 5000 per
    encoder per cohort).
-3. Writes `<data_dir>/cohort_baselines/<hash>/span_distributions.json`.
+3. Writes `<data-dir>/cohort_baselines/<hash>/span_distributions.json`
+   (default: `scripts/jseval/tmp/cohort_baselines/...`).
 
 ### 3. Verify
 
@@ -102,8 +105,10 @@ cat <run_dir>/projections/encoder_drift.json | python -m json.tool
 Expected: `"status": "ok"` and per-encoder `"drift_flagged": false`
 with `"psi_score"` close to zero. If `"status": "no-baseline"`,
 re-check that the file at
-`<data_dir>/cohort_baselines/<cohort_hash>/span_distributions.json`
-exists and the cohort_hash in the fresh run matches.
+`<data-dir>/cohort_baselines/<cohort_hash>/span_distributions.json`
+(default root: `scripts/jseval/tmp/`; pre-716 backend-data-dir locations
+still resolve read-only, with a deprecation WARN) exists and the
+cohort_hash in the fresh run matches.
 
 ## When the baseline should be rotated
 

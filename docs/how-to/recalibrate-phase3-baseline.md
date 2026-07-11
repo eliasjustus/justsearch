@@ -57,13 +57,17 @@ uses:
 
 ```bash
 export JUSTSEARCH_INDEX_TRACING_LEVEL=detailed
-export JUSTSEARCH_DATA_DIR=tmp/recalibration-data
-rm -rf "$JUSTSEARCH_DATA_DIR"  # clean slate, cold-start cost captured
+# Tempdoc 716: --data-dir is where the envelope is FILED (the jseval-owned
+# root); --backend-data-dir is the isolated backend dir the calibration
+# sub-runs execute against (their fail-closed --clean wipes it each run).
+CALIB_DIR=tmp/recalibration-calib
+BACKEND_DIR=tmp/recalibration-data
 
 cd scripts/jseval
 python -m jseval calibrate \
     --dataset scifact --modes full --runs 5 --max-queries 50 \
-    --data-dir "$JUSTSEARCH_DATA_DIR"
+    --data-dir "$CALIB_DIR" \
+    --backend-data-dir "$BACKEND_DIR"
 ```
 
 Estimated wall time: ~25 min (5 runs × ~5 min).
@@ -75,14 +79,16 @@ envelope:
 
 ```bash
 python -m jseval recalibrate-nightly-baseline \
-    --data-dir "$JUSTSEARCH_DATA_DIR" \
+    --data-dir "$CALIB_DIR" \
     --cohort-hash <HASH> \
     --output /tmp/nightly-baseline.env
 ```
 
 The `<HASH>` comes from the calibration log (`cohort identified:
-<hash>...`) or from the filename under
-`$JUSTSEARCH_DATA_DIR/cohort_baselines/`.
+<hash>...`) or from the directory name under
+`$CALIB_DIR/cohort_baselines/`. (When calibration ran at defaults,
+omit `--data-dir` — it defaults to the jseval data root,
+`scripts/jseval/tmp/`.)
 
 The helper writes a line like:
 
@@ -105,10 +111,10 @@ the new value explicitly on future manual invocations:
 
 ```bash
 python -m jseval gate \
-    --data-dir "$JUSTSEARCH_DATA_DIR" \
+    --data-dir "$CALIB_DIR" \
     --baseline-stdev 0.00142 \
     --tolerance-pct 10 \
-    --report-out "$JUSTSEARCH_DATA_DIR/gate-report.json"
+    --report-out "$CALIB_DIR/gate-report.json"
 ```
 
 Commit message template for the doc update:

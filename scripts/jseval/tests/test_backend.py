@@ -294,21 +294,27 @@ class TestStartBackendDataDirResolution:
         assert info.data_dir == absolute
 
 
-class TestStartBackendCleanPreservesCohortBaselines:
-    """Regression: --clean must preserve cohort_baselines/ + legacy sidecars."""
+class TestStartBackendCleanWipesEverything:
+    """Tempdoc 716: the tempdoc-400 protected-set carve-out is retired.
+
+    Calibration state no longer lives in the backend data dir (it is filed
+    under the jseval-owned root — see test_calibrate.py's physical-separation
+    test), so --clean wipes the WHOLE dir; leftover pre-716 calibration state
+    inside a backend dir is reachable read-only via the legacy-root fallback
+    until the next wipe, never load-bearing."""
 
     @patch("jseval.backend.subprocess.Popen")
     @patch("jseval.backend._wait_for_health", return_value=True)
-    def test_clean_preserves_cohort_baselines(self, _health, mock_popen,
-                                              tmp_path):
+    def test_clean_wipes_entire_data_dir_no_protected_set(self, _health, mock_popen,
+                                                          tmp_path):
         data_dir = tmp_path / "data"
+        # Pre-716 leftover calibration state: now wiped like everything else.
         (data_dir / "cohort_baselines" / "hash-a").mkdir(parents=True)
         (data_dir / "cohort_baselines" / "hash-a" / "envelope.json").write_text(
             "{}", encoding="utf-8")
         (data_dir / "non_determinism_envelopes").mkdir()
         (data_dir / "non_determinism_envelopes" / "legacy.json").write_text(
             "{}", encoding="utf-8")
-        # Simulated transient state that SHOULD be wiped.
         (data_dir / "index").mkdir()
         (data_dir / "index" / "segments.json").write_text("{}", encoding="utf-8")
         (data_dir / "app.lock").write_text("", encoding="utf-8")
@@ -318,12 +324,9 @@ class TestStartBackendCleanPreservesCohortBaselines:
 
         start_backend(data_dir=data_dir, clean=True)
 
-        # Protected.
-        assert (data_dir / "cohort_baselines" / "hash-a" / "envelope.json").is_file()
-        assert (data_dir / "non_determinism_envelopes" / "legacy.json").is_file()
-        # Wiped.
-        assert not (data_dir / "index").exists()
-        assert not (data_dir / "app.lock").exists()
+        # Everything wiped; the dir itself remains for the new run.
+        assert data_dir.is_dir()
+        assert list(data_dir.iterdir()) == []
 
 
 class TestStartBackendModelsDirResolution:
@@ -563,7 +566,7 @@ class TestCleanFailsClosedOnStuckHandle:
              patch("jseval.backend._sweep_orphan_worker",
                    return_value=[(4242, ["java", "..."])]) as mock_sweep:
             with pytest.raises(RuntimeError) as excinfo:
-                _clean_data_dir(data_dir, protected=set())
+                _clean_data_dir(data_dir)
         mock_sweep.assert_called_once_with(data_dir)
         assert "stuck" in str(excinfo.value)
         assert "4242" in str(excinfo.value)

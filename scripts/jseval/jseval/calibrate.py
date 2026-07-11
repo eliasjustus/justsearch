@@ -77,23 +77,28 @@ def read_envelope(data_dir: Path, cohort_hash: str) -> dict | None:
     """Load the calibrated envelope for a cohort, or None if missing.
 
     Tries the Phase-3 layout first
-    (``<data_dir>/cohort_baselines/<cohort_hash>/envelope.json``); falls
-    back to the Phase-2 sidecar (``<data_dir>/non_determinism_envelopes/
-    <cohort_hash>.json``) when the new path is absent. Missing envelope
-    returns ``None`` (not an error — callers treat it as uncalibrated).
+    (``<data_dir>/cohort_baselines/<cohort_hash>/envelope.json``), then the
+    Phase-2 sidecar (``<data_dir>/non_determinism_envelopes/
+    <cohort_hash>.json``), then the same pair under the pre-716 legacy roots
+    (the backend data dir — tempdoc 716 migration shim, WARNs on a legacy
+    hit). Missing envelope returns ``None`` (not an error — callers treat it
+    as uncalibrated).
     """
     from . import cohort_baselines
 
-    new_path = cohort_baselines.envelope_path(data_dir, cohort_hash)
-    legacy_path = cohort_baselines.legacy_envelope_path(data_dir, cohort_hash)
-    for path in (new_path, legacy_path):
-        if not path.is_file():
-            continue
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            log.debug("envelope sidecar unreadable at %s: %s", path, e)
-            continue
+    for i, root in enumerate(cohort_baselines.candidate_roots(data_dir)):
+        for path in (cohort_baselines.envelope_path(root, cohort_hash),
+                     cohort_baselines.legacy_envelope_path(root, cohort_hash)):
+            if not path.is_file():
+                continue
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as e:
+                log.debug("envelope sidecar unreadable at %s: %s", path, e)
+                continue
+            if i > 0:
+                cohort_baselines.warn_legacy_hit(path)
+            return doc
     return None
 
 
@@ -281,7 +286,8 @@ def calibrate(
     dataset: str,
     modes: list[str],
     runs: int,
-    data_dir: Path,
+    backend_data_dir: Path,
+    envelope_dir: Path,
     max_queries: int,
 ) -> dict:
     """Repeat ``runs`` identical jseval smokes and persist the envelope.
@@ -293,7 +299,15 @@ def calibrate(
     regression signal — cohort hash should be stable across identical
     reruns since :mod:`jseval.manifest` excludes runtime state).
 
-    Returns the envelope dict and writes it to the sidecar registry.
+    Tempdoc 716: ``backend_data_dir`` is the Worker-owned
+    ``JUSTSEARCH_DATA_DIR`` the calibration sub-runs execute against
+    (wiped by their ``--clean``); ``envelope_dir`` is the jseval-owned
+    root the resulting envelope is filed under. Pre-716 these were one
+    conflated ``data_dir`` — the reason ``--clean`` needed a
+    protected-set carve-out.
+
+    Returns the envelope dict and writes it to the registry under
+    ``envelope_dir``.
     """
     if runs < 2:
         raise ValueError("runs must be >= 2 to compute stdev")
@@ -304,7 +318,7 @@ def calibrate(
             dataset=dataset,
             modes=modes,
             max_queries=max_queries,
-            data_dir=data_dir,
+            data_dir=backend_data_dir,
             run_num=i + 1,
             total=runs,
         )
@@ -325,7 +339,7 @@ def calibrate(
 
     assert cohort_hash is not None  # runs>=2 guard above ensures the loop executed
     envelope = compute_envelope(per_run, cohort_hash=cohort_hash, n_runs=runs)
-    write_envelope(data_dir, cohort_hash, envelope)
+    write_envelope(envelope_dir, cohort_hash, envelope)
     log.info(
         "envelope written for cohort %s (%d modes, %d metrics total)",
         cohort_hash[:16],

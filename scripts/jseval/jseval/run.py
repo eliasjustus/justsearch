@@ -302,12 +302,22 @@ def execute_run(
     # 4. Build summary + run manifest (tempdoc 400 LR1-a)
     search_config = _snapshot_search_config(base_url)
     state_snapshots = manifest_mod.capture_state_snapshots(base_url)
-    # Phase 2.2b: point compute_manifest at the data dir so calibrated
+    # Phase 2.2b: point compute_manifest at the envelope root so calibrated
     # envelopes (written by `jseval calibrate`) are auto-embedded when the
-    # run's cohort_hash matches a sidecar in
-    # <data_dir>/non_determinism_envelopes/.
-    envelope_data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
-    envelope_data_dir = Path(envelope_data_dir_env) if envelope_data_dir_env else None
+    # run's cohort_hash matches. Tempdoc 716: envelopes are filed under the
+    # jseval-owned data root (read_envelope falls back to the pre-716
+    # legacy roots, incl. env JUSTSEARCH_DATA_DIR, with a WARN). The worker
+    # data dir stays a separate concern — it is where the Worker writes
+    # telemetry/, which write_run copies into the run dir.
+    from ._paths import DEFAULT_BACKEND_DATA_DIR, DEFAULT_JSEVAL_DATA_DIR
+    envelope_data_dir = DEFAULT_JSEVAL_DATA_DIR
+    worker_data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
+    # Default to the eval-mode backend dir so a defaults-only
+    # `run --start-backend` still gets its telemetry copied (write_run
+    # skips missing files, so a foreign/dev data dir is harmless).
+    worker_data_dir = (
+        Path(worker_data_dir_env) if worker_data_dir_env else DEFAULT_BACKEND_DATA_DIR
+    )
     # Phase 6 / 6.5: manifest override for LR5-d synthetic bisection.
     # When JUSTSEARCH_MANIFEST_OVERRIDE is set AND the
     # JUSTSEARCH_MANIFEST_OVERRIDE_DANGEROUS safety flag is "1", skip
@@ -354,7 +364,7 @@ def execute_run(
     if output_dir:
         run_dir = artifacts_mod.write_run(
             summary, mode_results, qrels, Path(output_dir), query_records,
-            data_dir=envelope_data_dir,
+            data_dir=worker_data_dir,
         )
         log.info("Artifacts written to %s", run_dir)
 
