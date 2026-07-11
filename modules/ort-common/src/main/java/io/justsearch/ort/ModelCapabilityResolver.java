@@ -81,7 +81,6 @@ public final class ModelCapabilityResolver {
         resolvePrecision(manifest.capabilities().cpuPrecision(), manifest.cpu(), "cpu", warnings);
     ModelPrecision gpuPrecision =
         resolvePrecision(manifest.capabilities().gpuPrecision(), manifest.gpu(), "gpu", warnings);
-    sanityCheckPrecision(modelDir, manifest, cpuPrecision, gpuPrecision, warnings);
     String[] prefixes = resolvePrefixes(modelDir, manifest, warnings);
     Map<String, String> labelMapping = resolveLabelMapping(modelDir, manifest, warnings);
 
@@ -320,66 +319,6 @@ public final class ModelCapabilityResolver {
       case "fp16" -> ModelPrecision.FP16;
       case "int8" -> ModelPrecision.INT8;
       case "gguf" -> ModelPrecision.GGUF;
-      default -> null;
-    };
-  }
-
-  /**
-   * Best-effort sanity check (never a source of truth, S-C.R) of the resolved precision against
-   * the ONNX graph's actual output element type. Mismatches are recorded as warnings but do NOT
-   * override the declared/legacy-inferred precision — mixed-precision graphs make I/O dtype a
-   * check, not authoritative.
-   */
-  private static void sanityCheckPrecision(
-      Path modelDir,
-      ModelManifest manifest,
-      ModelPrecision cpuPrecision,
-      ModelPrecision gpuPrecision,
-      List<String> warnings) {
-    ModelPrecision declared = gpuPrecision != null ? gpuPrecision : cpuPrecision;
-    if (declared == null || declared == ModelPrecision.GGUF) {
-      return;
-    }
-    try {
-      Path modelFile = manifest.resolveExistingModelFile(modelDir);
-      if (!Files.isRegularFile(modelFile)) {
-        return;
-      }
-      OrtEnvironment env = OrtEnvironment.getEnvironment();
-      OrtSessionAssembler.ProbedNames names = OrtSessionAssembler.probeModelNames(env, modelFile);
-      for (String outputName : names.outputs()) {
-        Optional<OrtSessionAssembler.ProbedTensorInfo> info =
-            OrtSessionAssembler.probeOutputTensorInfo(env, modelFile, outputName);
-        if (info.isEmpty()) {
-          continue;
-        }
-        ModelPrecision observed = mapOnnxType(info.get().type());
-        if (observed != null && observed != declared) {
-          warnings.add(
-              "declared precision "
-                  + declared
-                  + " does not match observed output '"
-                  + outputName
-                  + "' element type "
-                  + info.get().type()
-                  + " ("
-                  + observed
-                  + ") for "
-                  + modelFile.getFileName()
-                  + " — sanity check only, declared value kept");
-        }
-        return;
-      }
-    } catch (OrtException e) {
-      warnings.add("precision sanity-check probe failed: " + e.getMessage());
-    }
-  }
-
-  private static ModelPrecision mapOnnxType(OnnxJavaType type) {
-    return switch (type) {
-      case FLOAT -> ModelPrecision.FP32;
-      case FLOAT16 -> ModelPrecision.FP16;
-      case INT8, UINT8 -> ModelPrecision.INT8;
       default -> null;
     };
   }

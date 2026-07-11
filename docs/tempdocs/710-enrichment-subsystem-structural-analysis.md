@@ -595,6 +595,31 @@ kills the class structurally — costlier, adapters-lucene hot path). Recorded i
 (conditions store) + F-031's structural caveat; decision belongs to the Wave-2 arc with founder
 review.
 
+## Wave 1.5 + Wave 2 — IMPLEMENTED (2026-07-11, branch worktree-710-wave2)
+
+- **Move 4 (C1):** all 12 enrichment pacing constants → typed `justsearch.backfill.*` config
+  (defaults identical, derivations kept as comments); `chunkSlotsPerBatch` named+configurable
+  (691 F-1 cited); BGE-M3 strays unified; SPLADE gpu_mem_mb doc drift + dead comment fixed.
+- **Move 1 (C2):** `ModelCapabilities` + `ModelCapabilityResolver` in ort-common — one resolution
+  per model dir at the composition choke point (manifest capabilities → ST ecosystem files (both
+  1_Pooling schema generations; sentence_bert/config.json cross-check preferring the smaller;
+  tokenizer_config model_max_length never read) → legacy sidecars (deprecated readers) → WARN,
+  never silent). `detectPoolingStrategy` + `loadPrefixes`/`extractJsonString` DELETED; precision
+  declaration-first (filename heuristic narrowed to WARN-logged fallback); NER label fallback
+  loud; declared-vs-reactive dimension cross-check; strict-mode flag default-off (657-gated per
+  the S-D compatibility plan). Capability manifests authored for gte/ner/reranker/splade from
+  their real source files.
+- **Empirical correction to S-C.R R-1:** the "sanity-check precision against ORT I/O element
+  types" idea is VOID in practice — fp16-weight exports emit fp32 OUTPUT tensors (both our fp16
+  models), so the check false-positived on every correctly-declared model; REMOVED after the
+  live validation caught it. Weight precision is declaration-only (+ filename legacy fallback).
+- **Live validation (battlefield pipeline, fresh dist):** parity EXACT vs Wave-1 reference
+  (vector 1.0000 / hybrid 0.9517, comparable=True); all 4 lanes init; the run exercised the
+  FALLBACK path by design (runtime models resolve from the main checkout, which gets the new
+  manifests only at merge) — fallback WARNs fired exactly as specified, retrieval unaffected.
+  Post-merge acceptance check: a live boot against the merged models dir must show zero
+  capability WARNs for the declared models (orchestrator TODO at publish time).
+
 ## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
