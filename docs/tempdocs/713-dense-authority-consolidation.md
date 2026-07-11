@@ -1,9 +1,10 @@
 # 713 — Dense-representation authority: is the parent single-pass vector redundant now that chunk vectors live? (post-F-032 missing cell)
 
-- **status:** measured (2026-07-11) — missing cell = vector **0.4147** / hybrid **0.5339** (conf B);
-  provisional verdict **BRANCH C: keep both** (single-pass parent NOT redundant, −0.20 vector without
-  it). One GPU-gated follow-up pending (§M-5 fresh-build probe — also a suspected NEW fresh-ingest
-  chunk-death defect at main). No code changes; see §Revised plan.
+- **status:** MEASUREMENT-COMPLETE (2026-07-11) — verdict **BRANCH C: keep both**. Missing cell =
+  vector **0.4147** / hybrid **0.5339**; same-session fresh-build defaults control **0.6185** /
+  **0.5588** (−0.204 vector without the single-pass). §M-5 suspected defect REFUTED (fresh-build
+  probe: 4293/4293 chunk vectors alive; register 0.6184 pin stands). Register updated (F-035).
+  No code changes; merge is founder-gated.
 - **created:** 2026-07-11
 - **updated:** 2026-07-11
 
@@ -487,3 +488,35 @@ orphan deletion. Steps 0b and 1 above are dead paths (kept as dated history). Re
    should measure, not inherit.
 4. **No code changes in this tempdoc.** Close after item 1 resolves; status until then:
    measurement-complete-at-B-confidence, follow-up pending.
+
+---
+
+## §M-5 RESOLUTION (2026-07-11, same day) — fresh-build probe run: suspected defect REFUTED
+
+Executed once the GPU freed (verified: no java/llama compute; only Gradle/Kotlin daemons).
+Fresh-build defaults run (full manual `tmp/headless-eval-data` wipe first, so genuinely fresh),
+same command shape, git `bc4bcd8`; index probed and worker log captured immediately on completion:
+
+| check | result |
+|---|---|
+| vector nDCG@10 / hybrid | **0.6185** / **0.5588** (≈ 711's 0.6184/0.5609 pin — reproduced) |
+| vector legs | `branch_fusion, chunk_merge, dense, query_classification` |
+| index probe (live-filtered) | `live_docs=4492, live_chunk_docs=4293, live_vector=199, live_chunk_vector=4293` — **4293/4293 alive** |
+| combined-pass counters | `singlePass=127, longDocWindowed=93, arenaOomWindowed=0` (across 94 batches) |
+| run dir | `tmp/eval-results/20260711T161445_mixed_legal-clerc-200`; log archived `m5-worker.log` (scratchpad) |
+
+**Consequences:**
+1. **The M-5 suspected fresh-ingest chunk-death defect is REFUTED** — fresh build + single-pass ON
+   preserves all chunk vectors and reproduces the register pin. The register's 0.6184 row STANDS
+   (now with direct probe verification). The original control (0.3403, chunks-dead signature) is an
+   **unreproduced one-off anomaly** — quarantined at C confidence, mechanism unknown (same code,
+   same corpus, same machine; possible transient environmental interference). Re-open only if the
+   signature (vector ≈0.34 + missing `chunk_merge` leg) recurs.
+2. **The headline A/B is now same-session and de-confounded on the control side:**
+   fresh defaults **0.6185** vs single-pass-OFF **0.4147** = **−0.204 vector**; hybrid 0.5588 vs
+   0.5339 = −0.025. **BRANCH C (keep both) confirmed.** Residual caveat: the arm was an
+   incremental rebuild (register row stays conf B with note); its cell content is probe-verified,
+   and no plausible channel turns a −0.204 delta into a build-shape artifact.
+3. Register updated (F-035 + four baseline rows + block note + Q-017 verdict note) on the merged
+   branch (origin/main merged — F-033/F-034/677 landed); `skills-sync` run. This tempdoc is
+   **measurement-complete**; remaining work is the merge itself (founder-gated).
