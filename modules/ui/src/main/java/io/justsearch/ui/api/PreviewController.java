@@ -312,6 +312,11 @@ public final class PreviewController {
    *   <li>{@code "vdu_pending"} - VDU is pending, showing Tika output (may be garbage)</li>
    *   <li>{@code "vdu_processing"} - VDU is currently processing</li>
    *   <li>{@code "vdu_failed"} - VDU failed, showing Tika output (may be garbage)</li>
+   *   <li>{@code "vdu_empty"} - VDU ran and found no text, showing the base extraction method's
+   *       output (tempdoc 677: previously fell through silently, hiding that VDU ran)</li>
+   *   <li>{@code "vdu_rejected"} - VDU ran but the tempdoc-677 abstention gate rejected the output
+   *       as untrustworthy (or skipped the call on an illegible input); baseline content is
+   *       retained and shown</li>
    *   <li>{@code "ocr"} - OCR baseline extraction</li>
    *   <li>{@code "tika"} - Normal Tika extraction (VDU not needed or not applicable)</li>
    * </ul>
@@ -328,6 +333,8 @@ public final class PreviewController {
         case "PENDING" -> "vdu_pending";
         case "PROCESSING" -> "vdu_processing";
         case "FAILED" -> "vdu_failed";
+        case "COMPLETED_EMPTY" -> "vdu_empty";
+        case "REJECTED" -> "vdu_rejected";
         default -> baseTextProvenance(extractionMethod);
       };
     }

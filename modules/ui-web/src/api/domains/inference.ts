@@ -38,9 +38,14 @@ interface PreviewResponse {
   path?: string | null;
   source?: string | null;
   // VDU provenance fields (added for D_vdu_provenance)
-  /** Text provenance: 'tika', 'ocr', 'vdu', 'vdu_pending', 'vdu_processing', or 'vdu_failed' */
+  /**
+   * Text provenance: 'tika', 'ocr', 'vdu', 'vdu_pending', 'vdu_processing', 'vdu_failed',
+   * 'vdu_empty' (tempdoc 677: VDU ran and found no text), or 'vdu_rejected' (tempdoc 677
+   * abstention gate: VDU output was untrustworthy or the call was skipped on an illegible
+   * input — baseline content is retained)
+   */
   textProvenance?: TextProvenance | null;
-  /** VDU status: 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', or 'NOT_NEEDED' */
+  /** VDU status: 'PENDING', 'PROCESSING', 'COMPLETED', 'COMPLETED_EMPTY', 'REJECTED', 'FAILED', or 'NOT_NEEDED' */
   vduStatus?: VduStatus | null;
   /** Whether VDU processing has completed for this document */
   vduProcessed?: boolean;
@@ -53,10 +58,25 @@ interface PreviewResponse {
 }
 
 /** Text provenance values indicating how the preview content was extracted */
-type TextProvenance = 'tika' | 'ocr' | 'vdu' | 'vdu_pending' | 'vdu_processing' | 'vdu_failed';
+type TextProvenance =
+  | 'tika'
+  | 'ocr'
+  | 'vdu'
+  | 'vdu_pending'
+  | 'vdu_processing'
+  | 'vdu_failed'
+  | 'vdu_empty'
+  | 'vdu_rejected';
 
 /** VDU processing status values */
-type VduStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'NOT_NEEDED';
+type VduStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'COMPLETED'
+  | 'COMPLETED_EMPTY'
+  | 'REJECTED'
+  | 'FAILED'
+  | 'NOT_NEEDED';
 
 interface VisualExtractionEvidence {
   schemaVersion?: number;
