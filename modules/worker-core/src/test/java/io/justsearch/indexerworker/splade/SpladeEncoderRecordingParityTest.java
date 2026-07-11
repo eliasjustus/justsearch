@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.justsearch.indexerworker.metrics.EncoderProfileSnapshot;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -35,17 +34,12 @@ final class SpladeEncoderRecordingParityTest {
 
   @BeforeAll
   static void setUp() throws Exception {
-    Path candidate = Path.of(System.getProperty("user.dir"));
-    for (int i = 0; i < 8 && candidate != null; i++) {
-      Path spladeDir = candidate.resolve("models/splade/naver-splade-v3");
-      if (Files.exists(spladeDir.resolve("model.onnx"))
-          && Files.exists(spladeDir.resolve("tokenizer.json"))) {
-        modelDir = spladeDir;
-        break;
-      }
-      candidate = candidate.getParent();
-    }
-    assumeTrue(modelDir != null, "SPLADE model not found — skipping");
+    // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest).
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery discovery =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/splade/naver-splade-v3", null, "model.onnx", "tokenizer.json");
+    assumeTrue(discovery.modelDir() != null, discovery.missDescription());
+    modelDir = discovery.modelDir();
 
     SpladeConfig config = new SpladeConfig(true, modelDir, 512, false, 0, 0, "onnx", "log1p");
     io.justsearch.ort.SessionHandle sessions =

@@ -546,27 +546,7 @@ public final class CombinedEnrichmentBackfillOps {
             Map<String, Object> updates = updatesByDocId.get(docId);
             updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
             updates.put(SchemaFields.NER_RETRY_COUNT, "0");
-            if (!result.isEmpty()) {
-              if (!result.persons().isEmpty()) {
-                updates.put(SchemaFields.ENTITY_PERSONS_RAW, new ArrayList<>(result.persons()));
-                updates.put(
-                    SchemaFields.ENTITY_PERSONS_TEXT, String.join(" ", result.persons()));
-              }
-              if (!result.organizations().isEmpty()) {
-                updates.put(
-                    SchemaFields.ENTITY_ORGANIZATIONS_RAW,
-                    new ArrayList<>(result.organizations()));
-                updates.put(
-                    SchemaFields.ENTITY_ORGANIZATIONS_TEXT,
-                    String.join(" ", result.organizations()));
-              }
-              if (!result.locations().isEmpty()) {
-                updates.put(
-                    SchemaFields.ENTITY_LOCATIONS_RAW, new ArrayList<>(result.locations()));
-                updates.put(
-                    SchemaFields.ENTITY_LOCATIONS_TEXT, String.join(" ", result.locations()));
-              }
-            }
+            NerBackfillOps.applyEntityFieldUpdates(updates, result);
             nerProcessed++;
           } catch (Exception e) {
             context

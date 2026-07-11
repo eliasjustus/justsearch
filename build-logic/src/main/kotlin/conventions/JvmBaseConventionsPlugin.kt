@@ -92,6 +92,11 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
             if (!isWindowsHost) {
               excluded.add("windows")
             }
+            // Tempdoc 710 Move 6 (obs:spladeindexcontentcrashharnesstest): "evidence"/"experiment"
+            // -tagged tests (sweep benchmarks, crash forensics harnesses) are excluded from every
+            // module's default `test` task — including a bare `--tests ClassName` selection, which
+            // silently reports "No tests found for given includes" with no hint why. Opt in with
+            // -PincludeExperiment=true (unlocks BOTH tags despite the flag's singular name).
             if (!includeExperiment) {
               excluded.add("evidence")
               excluded.add("experiment")

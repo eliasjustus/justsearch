@@ -170,4 +170,53 @@ class NerBackfillOpsTest {
               eq(true));
     }
   }
+
+  @Nested
+  @DisplayName("applyEntityFieldUpdates()")
+  class ApplyEntityFieldUpdates {
+
+    @Test
+    @DisplayName("no-op when result is empty")
+    void noop_whenResultEmpty() {
+      Map<String, Object> updates = new java.util.HashMap<>();
+
+      NerBackfillOps.applyEntityFieldUpdates(updates, NerResult.EMPTY);
+
+      assertTrue(updates.isEmpty());
+    }
+
+    @Test
+    @DisplayName("writes RAW list and space-joined TEXT for every non-empty entity type")
+    void writesRawAndText_forEveryNonEmptyEntityType() {
+      Map<String, Object> updates = new java.util.HashMap<>();
+      NerResult result =
+          new NerResult(
+              List.of("Ada Lovelace", "Alan Turing"), List.of("NASA"), List.of("Paris", "Berlin"));
+
+      NerBackfillOps.applyEntityFieldUpdates(updates, result);
+
+      assertEquals(List.of("Ada Lovelace", "Alan Turing"), updates.get(SchemaFields.ENTITY_PERSONS_RAW));
+      assertEquals("Ada Lovelace Alan Turing", updates.get(SchemaFields.ENTITY_PERSONS_TEXT));
+      assertEquals(List.of("NASA"), updates.get(SchemaFields.ENTITY_ORGANIZATIONS_RAW));
+      assertEquals("NASA", updates.get(SchemaFields.ENTITY_ORGANIZATIONS_TEXT));
+      assertEquals(List.of("Paris", "Berlin"), updates.get(SchemaFields.ENTITY_LOCATIONS_RAW));
+      assertEquals("Paris Berlin", updates.get(SchemaFields.ENTITY_LOCATIONS_TEXT));
+    }
+
+    @Test
+    @DisplayName("omits RAW/TEXT fields for entity types with no extracted values")
+    void omitsFields_forEmptyEntityTypes() {
+      Map<String, Object> updates = new java.util.HashMap<>();
+      NerResult result = new NerResult(List.of("Ada Lovelace"), List.of(), List.of());
+
+      NerBackfillOps.applyEntityFieldUpdates(updates, result);
+
+      assertTrue(updates.containsKey(SchemaFields.ENTITY_PERSONS_RAW));
+      assertTrue(updates.containsKey(SchemaFields.ENTITY_PERSONS_TEXT));
+      assertFalse(updates.containsKey(SchemaFields.ENTITY_ORGANIZATIONS_RAW));
+      assertFalse(updates.containsKey(SchemaFields.ENTITY_ORGANIZATIONS_TEXT));
+      assertFalse(updates.containsKey(SchemaFields.ENTITY_LOCATIONS_RAW));
+      assertFalse(updates.containsKey(SchemaFields.ENTITY_LOCATIONS_TEXT));
+    }
+  }
 }
