@@ -1,5 +1,12 @@
 {
   "cpu": "model.onnx",
   "gpu": "model_fp16.onnx",
-  "tokenizer": "tokenizer.json"
+  "tokenizer": "tokenizer.json",
+  "capabilities": {
+    "context_length": 512,
+    "embedding_dimension": 768,
+    "cpu_precision": "fp32",
+    "gpu_precision": "fp16",
+    "_comment": "opensearch-project/opensearch-neural-sparse-encoding-multilingual-v1 (this dir's own build.json + config.json). context_length=config.json max_position_embeddings, embedding_dimension=config.json hidden_size (internal transformer width; SPLADE's actual output is a sparse activation over the vocabulary via PRESPARSE ops — output_idx/output_weights — not a dense pooled vector). precision per build.json: model.onnx is 'CPU — FP32 baked-PRESPARSE', model_fp16.onnx is 'GPU — FP16 baked-PRESPARSE'. pooling_mode/prefixes deliberately undeclared — sparse activation model, neither concept applies. Tempdoc 710 Wave 2 Move 1 manifest authoring pass."
+  }
 }

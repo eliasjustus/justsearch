@@ -986,7 +986,8 @@ public final class ResolvedConfigBuilder {
         buildProfiling(),
         resolveString("justsearch.sparse_model", "splade"),
         resolveBoolean("justsearch.dev.hotreload", false),
-        buildBackfillPacing());
+        buildBackfillPacing(),
+        resolveBoolean("justsearch.models.capability_contract_strict", false));
   }
 
   /**

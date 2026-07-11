@@ -767,6 +767,22 @@ public enum EnvRegistry {
         "JUSTSEARCH_BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE",
         "10"),
 
+    // ==================== Model Capability Contract (tempdoc 710 Wave 2 Move 1) ====================
+
+    /**
+     * When {@code true}, a model-capability fact ({@code io.justsearch.ort.ModelCapabilities} —
+     * pooling mode, trained context length, embedding dimension, precision, prefixes) left
+     * undeclared by every source (manifest {@code capabilities}, sentence-transformers ecosystem
+     * files, legacy sidecar) is a startup failure for that encoder lane instead of a WARN +
+     * documented fallback (TEI fail-closed precedent, tempdoc 710 S-C.R). Default {@code false} —
+     * held off until tempdoc 657 ships capability manifests inside install packs; flipping true
+     * today would fail every lane whose model directory predates Wave 2's authored manifests.
+     */
+    CAPABILITY_CONTRACT_STRICT(
+        "justsearch.models.capability_contract_strict",
+        "JUSTSEARCH_MODELS_CAPABILITY_CONTRACT_STRICT",
+        "false"),
+
     // ==================== Reranker Configuration ====================
 
     /** Enable document reranking (auto if model found). */

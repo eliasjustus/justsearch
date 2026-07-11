@@ -23,8 +23,6 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * ONNX Runtime wrapper for NER inference with optional GPU acceleration.
@@ -100,11 +98,17 @@ public final class BertNerInference implements Closeable {
    * {@link NerService} fallback (dev-mode path). Loads manifest, tokenizer, and label mapping
    * eagerly; reads input names from the session to populate {@link NerShape}.
    *
+   * @param capabilityContractStrict when {@code true}, an undeclared/ambiguous model-capability
+   *     fact throws instead of degrading with a WARN — {@code
+   *     justsearch.models.capability_contract_strict} (tempdoc 710 Wave 2 Move 1)
    * @throws OrtException if session input-name probe fails
    * @throws UncheckedIOException if tokenizer load fails
+   * @throws IllegalStateException if {@code capabilityContractStrict} and a capability fact is
+   *     undeclared/ambiguous
    */
   public static NerAssembly buildAssembly(
-      SessionHandle sessions, Path modelDir, int maxSequenceLength) throws OrtException {
+      SessionHandle sessions, Path modelDir, int maxSequenceLength, boolean capabilityContractStrict)
+      throws OrtException {
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path tokenizerPath = modelDir.resolve(manifest.tokenizer());
     HuggingFaceTokenizer tokenizer;
@@ -142,45 +146,31 @@ public final class BertNerInference implements Closeable {
         io.justsearch.ort.OrtSessionAssembler.probeModelNames(sessions.environment(), probePath);
     boolean needsTokenTypeIds = probed.inputs().contains("token_type_ids");
     NerShape shape = new NerShape(maxSequenceLength, needsTokenTypeIds);
-    BioTagDecoder.LabelMapping labelMapping = loadLabelMapping(modelDir, manifest.labelConfig());
-    return new NerAssembly(sessions, shape, tokenizer, labelMapping);
+    // Tempdoc 710 Wave 2 Move 1: capabilities resolved ONCE here (the composition choke point) —
+    // label mapping is no longer parsed independently by this encoder; ModelCapabilityResolver
+    // already read the manifest-declared label config file's id2label and WARNed if absent.
+    io.justsearch.ort.ModelCapabilities capabilities =
+        io.justsearch.ort.ModelCapabilityResolver.resolve(
+            "ner", modelDir, manifest, capabilityContractStrict);
+    BioTagDecoder.LabelMapping labelMapping = toLabelMapping(capabilities.labelMapping());
+    return new NerAssembly(sessions, shape, tokenizer, labelMapping, capabilities);
   }
 
   /**
-   * Loads label mapping from the manifest-declared config file's {@code id2label} field, falling
-   * back to the legacy dslim/bert-base-NER default if the config file is absent. Moved from
-   * {@link NerService} in tempdoc 397 §14.24 FD-NER so {@link #buildAssembly} can populate the
-   * {@link NerAssembly} in a single pass.
+   * Projects the ort-common capability contract's raw {@code id -> label} map into this module's
+   * {@link BioTagDecoder.LabelMapping} type. Empty (undeclared — {@link
+   * ModelCapabilityResolver} already logged a WARN naming the gap at the choke point) falls back
+   * to the legacy dslim/bert-base-NER default, loud at WARN here too since this is the last
+   * fallback actually taken (was silent {@code log.debug} pre-Wave-2 — tempdoc 710 orphan #6).
    */
-  private static BioTagDecoder.LabelMapping loadLabelMapping(
-      Path modelDir, String labelConfigFile) {
-    Path configFile = modelDir.resolve(labelConfigFile);
-    if (!java.nio.file.Files.exists(configFile)) {
-      log.debug(
-          "No {} in NER model dir, using legacy default label mapping", labelConfigFile);
+  private static BioTagDecoder.LabelMapping toLabelMapping(Map<String, String> id2label) {
+    if (id2label == null || id2label.isEmpty()) {
+      log.warn("NER label mapping undeclared — using legacy dslim/bert-base-NER default mapping");
       return BioTagDecoder.LabelMapping.bertBaseNer();
     }
-    try {
-      JsonNode root = new ObjectMapper().readTree(configFile.toFile());
-      JsonNode id2label = root.get("id2label");
-      if (id2label == null || !id2label.isObject()) {
-        log.debug("No id2label in {}, using default label mapping", labelConfigFile);
-        return BioTagDecoder.LabelMapping.bertBaseNer();
-      }
-      Map<String, String> mapping = new HashMap<>();
-      for (var entry : id2label.properties()) {
-        mapping.put(entry.getKey(), entry.getValue().asText());
-      }
-      BioTagDecoder.LabelMapping result = BioTagDecoder.LabelMapping.fromId2Label(mapping);
-      log.info(
-          "NER label mapping loaded from {}: {} labels",
-          labelConfigFile,
-          result.id2label().length);
-      return result;
-    } catch (Exception e) {
-      log.warn("Failed to load NER label mapping from {}, using default", labelConfigFile, e);
-      return BioTagDecoder.LabelMapping.bertBaseNer();
-    }
+    BioTagDecoder.LabelMapping result = BioTagDecoder.LabelMapping.fromId2Label(id2label);
+    log.info("NER label mapping resolved: {} labels", result.id2label().length);
+    return result;
   }
 
   /**

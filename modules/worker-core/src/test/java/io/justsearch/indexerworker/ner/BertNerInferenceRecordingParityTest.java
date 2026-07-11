@@ -43,7 +43,7 @@ final class BertNerInferenceRecordingParityTest {
     io.justsearch.ort.SessionHandle sessions =
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
             "ner-recording-parity-test", modelDir);
-    NerAssembly assembly = BertNerInference.buildAssembly(sessions, modelDir, 512);
+    NerAssembly assembly = BertNerInference.buildAssembly(sessions, modelDir, 512, false);
     encoder = new BertNerInference(assembly.sessions(), assembly.shape(), assembly.tokenizer());
   }
 

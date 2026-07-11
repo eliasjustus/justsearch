@@ -74,7 +74,7 @@ final class OnnxEmbeddingEncoderBoundedTokenizeTest {
     // OnnxEmbeddingEncoderLongDocForensicTest for the same precaution.
     sharedSessions = buildFp32CpuSession("embed-bounded-tokenize-test", modelFile);
     EmbeddingAssembly assembly =
-        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, MAX_SEQ_LEN, MAX_SEQ_LEN);
+        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, MAX_SEQ_LEN, MAX_SEQ_LEN, false);
     encoder = new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());
     tokenizer = assembly.tokenizer();
   }

@@ -235,7 +235,11 @@ public record ResolvedConfig(
       Profiling profiling,
       String sparseModel,
       boolean devHotReload,
-      BackfillPacing backfillPacing) {
+      BackfillPacing backfillPacing,
+      // Tempdoc 710 Wave 2 Move 1: undeclared model-capability facts fail startup for that
+      // encoder lane instead of WARN + fallback (default false until 657 ships manifests in
+      // packs — see EnvRegistry.CAPABILITY_CONTRACT_STRICT).
+      boolean capabilityContractStrict) {
 
     /** BGE-M3 multi-vector retrieval configuration. */
     public record BgeM3(

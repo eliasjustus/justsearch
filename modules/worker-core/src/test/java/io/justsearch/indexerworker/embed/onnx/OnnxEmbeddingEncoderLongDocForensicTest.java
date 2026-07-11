@@ -84,12 +84,12 @@ final class OnnxEmbeddingEncoderLongDocForensicTest {
     sharedSessions = buildFp32CpuSession("embed-longdoc-forensic", modelFile);
 
     EmbeddingAssembly assembly8k =
-        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, 8192, 8192);
+        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, 8192, 8192, false);
     e8k = new OnnxEmbeddingEncoder(assembly8k.sessions(), assembly8k.shape(), assembly8k.tokenizer());
     tokenizer8k = assembly8k.tokenizer();
 
     EmbeddingAssembly assembly2k =
-        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, 2048, 8192);
+        OnnxEmbeddingEncoder.buildAssembly(sharedSessions, modelDir, 2048, 8192, false);
     e2k = new OnnxEmbeddingEncoder(assembly2k.sessions(), assembly2k.shape(), assembly2k.tokenizer());
     tokenizer2k = assembly2k.tokenizer();
   }

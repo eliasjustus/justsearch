@@ -1,15 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ort;
 
+import ai.onnxruntime.NodeInfo;
+import ai.onnxruntime.OnnxJavaType;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 import ai.onnxruntime.OrtSession.SessionOptions;
+import ai.onnxruntime.TensorInfo;
 import io.justsearch.configuration.model.ExecutionProvider;
 import io.justsearch.ort.telemetry.AssemblerEvent;
 import io.justsearch.ort.telemetry.AssemblerFailureKind;
 import io.justsearch.ort.telemetry.OrtSessionTelemetryEvents;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Translates an {@link io.justsearch.configuration.model.VariantSelection}-driven
@@ -138,6 +143,46 @@ public final class OrtSessionAssembler {
       probeOpts.setIntraOpNumThreads(1);
       try (OrtSession probe = env.createSession(modelPath.toString(), probeOpts)) {
         return new ProbedNames(probe.getInputNames(), probe.getOutputNames());
+      }
+    }
+  }
+
+  /**
+   * Static tensor shape + element type for a named output, read from the ONNX graph declaration
+   * without running inference.
+   *
+   * @param shape declared shape; a dimension of {@code -1} means dynamic (batch/sequence axes are
+   *     typically dynamic; the trailing embedding-dimension axis is typically static)
+   * @param type ONNX Runtime's Java element type (e.g. {@code FLOAT}, {@code FLOAT16})
+   */
+  public record ProbedTensorInfo(long[] shape, OnnxJavaType type) {}
+
+  /**
+   * Reads a single output tensor's static shape/dtype metadata via {@link
+   * OrtSession#getOutputInfo()} — no inference run. Used by {@link ModelCapabilityResolver}
+   * (tempdoc 710 Wave 2 Move 1) as a boot-time probe for the embedding-dimension capability fact
+   * (when the graph's trailing output axis is statically known) and as a sanity check for the
+   * declared precision capability against the graph's actual output element type. Both uses are
+   * best-effort: a dynamic shape or a non-tensor output yields {@link Optional#empty()} rather
+   * than failing the caller.
+   *
+   * @param outputName name of the output to inspect; if absent from the graph, returns {@link
+   *     Optional#empty()}
+   * @throws OrtException if the probe session cannot be created (e.g., model file missing)
+   */
+  public static Optional<ProbedTensorInfo> probeOutputTensorInfo(
+      OrtEnvironment env, Path modelPath, String outputName) throws OrtException {
+    try (SessionOptions probeOpts = new SessionOptions()) {
+      probeOpts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
+      probeOpts.setInterOpNumThreads(1);
+      probeOpts.setIntraOpNumThreads(1);
+      try (OrtSession probe = env.createSession(modelPath.toString(), probeOpts)) {
+        Map<String, NodeInfo> outputInfo = probe.getOutputInfo();
+        NodeInfo node = outputInfo.get(outputName);
+        if (node == null || !(node.getInfo() instanceof TensorInfo tensorInfo)) {
+          return Optional.empty();
+        }
+        return Optional.of(new ProbedTensorInfo(tensorInfo.getShape(), tensorInfo.type));
       }
     }
   }
