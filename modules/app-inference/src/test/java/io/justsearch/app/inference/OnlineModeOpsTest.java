@@ -7,6 +7,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.OnlineAiService.AiUsage;
+import io.justsearch.app.api.OnlineAiService.VisionCompletionResult;
 import io.justsearch.app.api.SamplingParams;
 import io.justsearch.app.api.Mode;
 import java.net.InetAddress;
@@ -877,6 +878,217 @@ class OnlineModeOpsTest {
     assertTrue(
         body.contains("data:image/jpeg;base64,"),
         "Request body should contain JPEG data URI prefix");
+  }
+
+  // ==================== visionCompletionDetailed logprobs plumbing (tempdoc 677 S1) ====================
+
+  @Test
+  void visionCompletionDetailed_requestsLogprobsAndReducesToScalars() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              ("{\"choices\":[{\"message\":{\"content\":\"extracted text\"},"
+                      + "\"finish_reason\":\"stop\",\"logprobs\":{\"content\":["
+                      + "{\"token\":\"a\",\"logprob\":-0.05},"
+                      + "{\"token\":\"b\",\"logprob\":-0.10},"
+                      + "{\"token\":\"c\",\"logprob\":-1.50},"
+                      + "{\"token\":\"d\",\"logprob\":-0.20}]}}]}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    VisionCompletionResult result =
+        ops.visionCompletionDetailed("Extract text", new byte[] {1, 2, 3}, 200)
+            .get(5, TimeUnit.SECONDS);
+
+    assertEquals("extracted text", result.content());
+    assertEquals("stop", result.finishReason());
+    assertEquals(4, result.tokenCount());
+    assertEquals(-0.4625, result.meanLogprob(), 1e-9);
+    assertEquals(0.25, result.lowConfidenceFraction(), 1e-9);
+
+    String body = capturedBody.get();
+    assertNotNull(body, "Server should have received a request body");
+    assertTrue(
+        body.contains("\"logprobs\":true"),
+        "Vision request should opt into per-token logprobs: " + body);
+  }
+
+  @Test
+  void visionCompletionDetailed_nullSignalsWhenServerOmitsLogprobs() throws Exception {
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"no logprobs here\"},"
+                      .concat("\"finish_reason\":\"stop\"}]}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    VisionCompletionResult result =
+        ops.visionCompletionDetailed("Extract text", new byte[] {1, 2, 3}, 200)
+            .get(5, TimeUnit.SECONDS);
+
+    assertEquals("no logprobs here", result.content());
+    assertEquals("stop", result.finishReason());
+    assertEquals(0, result.tokenCount());
+    assertNull(result.meanLogprob());
+    assertNull(result.lowConfidenceFraction());
+  }
+
+  @Test
+  void visionCompletionDetailed_extractsLengthFinishReason() throws Exception {
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"truncated ou\"},"
+                      .concat("\"finish_reason\":\"length\"}]}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    VisionCompletionResult result =
+        ops.visionCompletionDetailed("Extract text", new byte[] {1, 2, 3}, 5)
+            .get(5, TimeUnit.SECONDS);
+
+    assertEquals("length", result.finishReason());
+    assertEquals(0, result.tokenCount());
+  }
+
+  // ==================== visionCompletionDetailed sampling/seed override (tempdoc 677 S2) ====================
+
+  @Test
+  void visionCompletionDetailed_5arg_sendsSeedAndOverrideTemperature() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"probe text\"},\"finish_reason\":\"stop\"}]}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    VisionCompletionResult result =
+        ops.visionCompletionDetailed(
+                "Extract text", new byte[] {1, 2, 3}, 200, SamplingParams.VDU_PROBE, 677L)
+            .get(5, TimeUnit.SECONDS);
+
+    assertEquals("probe text", result.content());
+
+    String body = capturedBody.get();
+    assertNotNull(body, "Server should have received a request body");
+    assertTrue(body.contains("\"seed\":677"), "seed must be sent on the request: " + body);
+    assertTrue(
+        body.contains("\"temperature\":0.8"),
+        "sampling override (VDU_PROBE, temp 0.8) must be sent: " + body);
+  }
+
+  @Test
+  void visionCompletionDetailed_3arg_omitsSeed() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"text\"},\"finish_reason\":\"stop\"}]}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    ops.visionCompletionDetailed("Extract text", new byte[] {1, 2, 3}, 200)
+        .get(5, TimeUnit.SECONDS);
+
+    String body = capturedBody.get();
+    assertNotNull(body, "Server should have received a request body");
+    assertFalse(
+        body.contains("\"seed\""),
+        "the plain 3-arg overload (used by Pass 1) must never send a seed: " + body);
+  }
+
+  @Test
+  void visionCompletion_stringVariantStillReturnsJustContent() throws Exception {
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] responseBody =
+              ("{\"choices\":[{\"message\":{\"content\":\"extracted text\"},"
+                      + "\"finish_reason\":\"stop\",\"logprobs\":{\"content\":["
+                      + "{\"token\":\"a\",\"logprob\":-0.05}]}}]}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    String result =
+        ops.visionCompletion("Extract text", new byte[] {1, 2, 3}, 200).get(5, TimeUnit.SECONDS);
+
+    assertEquals("extracted text", result);
+  }
+
+  @Test
+  void chatCompletion_doesNotRequestLogprobs() throws Exception {
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] requestBody = exchange.getRequestBody().readAllBytes();
+          capturedBody.set(new String(requestBody, StandardCharsets.UTF_8));
+
+          byte[] responseBody =
+              "{\"choices\":[{\"message\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, responseBody.length);
+          exchange.getResponseBody().write(responseBody);
+          exchange.close();
+        });
+
+    ops.chatCompletion(List.of(Map.of("role", "user", "content", "hello")), 50)
+        .get(5, TimeUnit.SECONDS);
+
+    String body = capturedBody.get();
+    assertNotNull(body);
+    assertFalse(
+        body.contains("logprobs"),
+        "Interactive chat path must not request logprobs (tempdoc 677 S1 scope): " + body);
   }
 
   // ==================== streamChat error ====================

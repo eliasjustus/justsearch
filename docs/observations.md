@@ -556,9 +556,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Canonical drift: `docs/explanation/16-gpu-booster-pack.md` presents the GPU Booster Pack as the current GPU-runtime delivery mechanism, but tempdoc 632 recorded the founder correction that the booster pack is LEGACY and the live mechanism is the AI-brain install (AiInstallService downloading the model-registry cuda-runtime package). Doc needs a reframe (pre-existing drift, surfaced by 632's NVIDIA accept-and-document work) — `docs/explanation/16-gpu-booster-pack.md` (2026-06-24)
 
 ### obs:search-quality-register — Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / '
-`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 2` `first: 2026-06-24` `last: 2026-07-10`
+`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 3` `first: 2026-06-24` `last: 2026-07-11`
 - [ ] Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / 'default-on not recommended' (`docs/reference/search-quality-register.md:585-605`), but shipped code has BOTH leg-arbitration + recall-complete default TRUE (`ResolvedConfigBuilder.java:1497,1513`) per tempdoc 636 final decision; F-024 + a recall-complete D-row also need reconciling. (2026-06-24, tempdoc 636 take-over) (2026-06-24)
 - [ ] search-quality-register.md has TWO entries numbered F-030 (tempdoc 678 encoder-domain-mismatch, ~line 595, and tempdoc 706 OCR comparability, ~line 579) — pre-existing numbering collision found during 691 Phase-L takeover; register owner should renumber one — `docs/reference/search-quality-register.md` (2026-07-10)
+- [ ] Residual hybrid-vs-lexical gap on legal-clerc post-F-032 (hybrid 0.5592/0.5609 vs lexical 0.6891 at b88e76e) is fusion territory — out of 708 scope, needs its own owner — `docs/reference/search-quality-register.md` (2026-07-11)
 
 ### obs:skills-sync — skills-sync.mjs is NON-IDEMPOTENT: each run APPENDS the generated source block instead of replacing
 `kind: defect?` `anchor: scripts/docs/skills-sync.mjs` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
@@ -787,9 +788,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Latent right-drawer overlap: jf-agent-activity-panel / jf-interaction-retrospective-panel / jf-advisory-inbox-drawer share one `flex-direction:column` right-drawer slot with NO mutual-exclusion; two open at once stack/overlap, and AdvisoryInboxDrawer stays `display:flex` (translateX) when closed (residual slot). Needs a single-drawer arbiter — `OverlayHost.ts`/`Shell.ts` (2026-06-03)
 
 ### obs:lambdamartbenchmarktest — Environmental flake: LambdaMartBenchmarkTest p50 latency >5ms threshold under heavy machine load (mu
-`kind: environment?` `anchor: modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` `seen: 2` `first: 2026-06-03` `last: 2026-07-07`
+`kind: environment?` `anchor: modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` `seen: 4` `first: 2026-06-03` `last: 2026-07-11`
 - [ ] Environmental flake: LambdaMartBenchmarkTest p50 latency >5ms threshold under heavy machine load (multiple dev stacks + GPU). Passes on unloaded machine; unrelated to 565. `modules/app-services/.../gpl/LambdaMartBenchmarkTest.java` (2026-06-03)
 - [ ] LambdaMartBenchmarkTest (app-services integrationTest) is load-flaky: 'p50 under 5ms' threshold failed at 5.79ms under concurrent-build load, passed cleanly in isolation (--rerun-tasks). A 5ms p50 latency assertion on a shared CI/dev machine is inherently machine-load-sensitive; consider widening the threshold or marking it @Tag("benchmark") excluded from the gating build — `modules/app-services/src/integrationTest/.../gpl/LambdaMartBenchmarkTest.java` (2026-07-07)
+- [ ] Pre-existing flaky perf test unrelated to VDU logprobs work — LambdaMartBenchmarkTest p50 latency 16.1ms exceeded 5ms threshold under load, unrelated to app-inference/app-api changes — `modules/app-services/src/integrationTest/java/io/justsearch/app/services/gpl/LambdaMartBenchmarkTest.java` (2026-07-11)
+- [ ] LambdaMartBenchmarkTest (integrationTest, gpl package) is flaky under machine load — failed once during a full 'gradlew build -x test' run (5ms median / 30ms p99 latency assertion breached), passed cleanly in isolation immediately after; unrelated to vdu/ImageLegibility work — `modules/app-services/src/integrationTest/java/io/justsearch/app/services/gpl/LambdaMartBenchmarkTest.java:76` (2026-07-11)
 
 ### obs:autonomydial — a11y: axe color-contrast fail (serious, WCAG AA) on the active affordance/autonomy-dial button — whi
 `kind: defect?` `anchor: AutonomyDial.ts` `seen: 1`
@@ -1807,14 +1810,17 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Benchmarks module's default relative model-dir args (e.g. models/onnx/gte-multilingual-base) resolve against rootProject.projectDir, but a fresh git worktree has only empty scaffold dirs for models/ (the actual .onnx LFS binaries are untracked-in-main-only per repo git status) — any bench run from a worktree needs an explicit absolute --*-model-dir= override pointing at the main checkout — `modules/benchmarks/build.gradle.kts` (encoderBatchSweepBench task) / F:\justsearch-public\models\onnx\gte-multilingual-base (2026-07-07)
 
 ### obs:onnxembeddingencoder — Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embed
-`kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 2` `first: 2026-07-07` `last: 2026-07-11`
+`kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 3` `first: 2026-07-07` `last: 2026-07-11`
 - [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
 - [ ] OnnxEmbeddingEncoder.buildAssembly hardcodes tokenizer path as modelDir.resolve("tokenizer.json") instead of modelDir.resolve(manifest.tokenizer()) — BertNerInference correctly uses the manifest field; embedding encoder ignores a declared non-default tokenizer filename — `modules/worker-core/src/main/java/io/justsearch/indexerworker/embed/onnx/OnnxEmbeddingEncoder.java:159` (2026-07-11)
+- [ ] OnnxEmbeddingEncoder.createChunks raw id-slice windows CLS-pool a non-[CLS] token on windows 2+ (708 offline A/B: 0.105 vs 0.745 R@10 with proper per-window special tokens); F-031's single-pass path moots it up to 8192 tokens, but any residual window-mean path for docs >8192 tokens still carries the artifact — `modules/worker-core/src/main/java/io/justsearch/indexerworker/embed/onnx/OnnxEmbeddingEncoder.java:525` (2026-07-11)
 
 ### obs:combinedenrichmentbackfillops — CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal
-`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 2` `first: 2026-07-07` `last: 2026-07-09`
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 4` `first: 2026-07-07` `last: 2026-07-11`
 - [ ] CombinedEnrichmentBackfillOps.java:335-336 comment claims per-doc NER at 2.0ms/call is near-optimal (batching regressed in item 22 due to padding waste); live 691-B1 measurement (golden/battlefield-en-v1, JUSTSEARCH_NER_GPU_MEM_MB=2048) shows encoderProfiles.ner.ortP50Us=33947us (34ms) and baseline E2 showed 28803us (28.8ms) — both ~15-17x the claimed 2.0ms/call, and batchTiming.totalMs.ner (202.5s/240.1s across 5 macro-cycles) still dominates ~69-75% of enrichment wall despite raising the NER GPU arena — the per-doc call cost itself, not just the OOM/fallback path, deserves re-measurement against the 'item 22' baseline — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:335` (2026-07-07)
 - [ ] CombinedEnrichmentBackfillOps SPLADE phase (encodeBatch try/catch, ~line 320-331): a size-mismatch/exception mid-loop leaves partial writes already put into updatesByDocId for docs processed before the throw, while spladeFailed is separately set to the full spladeDocIds.size() — double-counts and is inconsistent, though not a crash-loop risk since the exception is caught locally — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:320` (2026-07-09)
+- [ ] Combined pass parent lane stamps parent-status markers (EMBEDDING_STATUS/NER_STATUS COMPLETED) onto chunk docs picked up via the splade-status query — chunk docs end up carrying parent lifecycle fields they never own — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:330` (2026-07-11)
+- [ ] A chunk doc pending both chunk_embedding and splade sits in BOTH combined-pass caches (parentIdCache via splade-status query, chunkIdCache via chunk-embedding query) and can be popped twice into one batch — double-added to embedDocIds, double-embedded — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:199-260` (2026-07-11)
 
 ### obs:agent-retrieval-eval — util-smoke C-arm cells attempt ReadMcpResourceDirTool (server=filesystem) against the staged corpus-
 `kind: defect?` `anchor: scripts/jseval/jseval/agent_retrieval_eval.py` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
@@ -1893,8 +1899,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] jseval readiness off-by-one hangs large MIRACL fetches: `corpus-fetch-miracl --n-docs 40000` materialized 40000 docs but readiness floor expected 40001 (one passage rejected as empty), so the run blocks on `indexed_doc_count_below_floor(40000/40001)` until timeout — floor should tolerate rejected/empty docs (found tempdoc 701 E4) (2026-07-08)
 
 ### obs:corpus-fetch — jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line wit
-`kind: defect?` `anchor: corpus_fetch.py` `seen: 1` `first: 2026-07-09` `last: 2026-07-09`
+`kind: defect?` `anchor: corpus_fetch.py` `seen: 2` `first: 2026-07-09` `last: 2026-07-10`
 - [ ] jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line with `timeout=None` and NO progress output (`corpus_fetch.py:204-216`), so a ~200-doc sample can silently run 15-40+ min with a 0-byte log — looks like a hang but isn't. Add progress logging / a size hint / a bounded timeout (found tempdoc 701 R2) (2026-07-09)
+- [ ] Repeated multi-GB downloads per worktree: datasets (CLERC re-fetched per worktree since datasets/ is gitignored+per-tree and teardown deletes it) and ML scratch (per-worktree HF_HOME/venv) — models/ solved this via shared main-checkout resolution; corpus fetchers + HF_HOME need the same shared-cache pattern (recipe+signature-keyed, still gitignored/transient for licensing) — `scripts/jseval/jseval/corpus_fetch.py` (2026-07-10)
 
 ### obs:runtime-config-ownership-matrix — runtime-config-ownership-matrix stale: verify-runtime-config-matrix fails on 6 env/sysprop pairs mis
 `kind: environment?` `anchor: docs/reference/configuration/runtime-config-ownership-matrix.md` `seen: 1` `first: 2026-07-08` `last: 2026-07-08`
@@ -1995,6 +2002,30 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:modelcapabilityresolver — Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the ver
 `kind: environment?` `anchor: modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
 - [ ] Pre-existing: Jackson tools.jackson.databind JsonNode.isTextual()/asText() are deprecated in the version in use; used throughout ModelCapabilityResolver.resolvePrefixes/resolveLabelMapping — `modules/ort-common/src/main/java/io/justsearch/ort/ModelCapabilityResolver.java` (surfaced under -Xlint:deprecation, out of scope for tempdoc 711 Item 3) (2026-07-11)
+
+### obs:unanchored-general-78 — Recurring orchestration failure mode (2x this session): a stopped/idle subagent is NOT re-woken when
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Recurring orchestration failure mode (2x this session): a stopped/idle subagent is NOT re-woken when its own backgrounded shell jobs complete — completion notifications are lost if they fire while the agent is between turns; orchestrator had to detect completion via on-disk evidence (result-file mtimes, GPU idle) and manually SendMessage-resume both times. Candidate agent-lessons.md entry: long-running background jobs inside subagents need orchestrator-side completion polling, or the subagent should poll rather than background-and-wait — platform behavior, not repo bug (2026-07-11)
+
+### obs:legibilitymeasures — seam-hint fired for new LegibilityMeasures.belowFloor (silent wrong-value risk: AND vs OR floor logi
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/vdu/LegibilityMeasures.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] seam-hint fired for new LegibilityMeasures.belowFloor (silent wrong-value risk: AND vs OR floor logic) — not registered in governance/logic-seams.v1.json because tempdoc 677 S3 task scope was explicitly diff-limited to the new class+tests; a later wiring slice should register it — `modules/app-services/src/main/java/io/justsearch/app/services/vdu/LegibilityMeasures.java` (2026-07-11)
+
+### obs:imagelegibility — seam-hint also fired for ImageLegibility (Laplacian/RMS-contrast math — silent wrong-value risk on t
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/vdu/ImageLegibility.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] seam-hint also fired for ImageLegibility (Laplacian/RMS-contrast math — silent wrong-value risk on the formulas); same rationale as the LegibilityMeasures note applies (scope-limited slice, defer registration to the wiring slice) — `modules/app-services/src/main/java/io/justsearch/app/services/vdu/ImageLegibility.java` (2026-07-11)
+
+### obs:documentpane — Stale comments in DocumentPane.ts reference retired InspectorPane.ts (e.g. line 10, line 60 'Mirrors
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Stale comments in DocumentPane.ts reference retired InspectorPane.ts (e.g. line 10, line 60 'Mirrors InspectorPane's local VisualExtractionEvidence shape') — that component was removed (only referenced in UnifiedChatView.test.ts's 'retired jf-inspector-pane never appears' regression test); the comments should point at the actual current pattern origin instead — `modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts:10,60` (2026-07-11)
+
+### obs:677-vdu-extraction-abstention-gate — tempdoc 677 frontmatter has a duplicate YAML `updated:` key (lines 5 and 7, pre-existing) — `docs/te
+`kind: environment?` `anchor: docs/tempdocs/677-vdu-extraction-abstention-gate.md` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] tempdoc 677 frontmatter has a duplicate YAML `updated:` key (lines 5 and 7, pre-existing) — `docs/tempdocs/677-vdu-extraction-abstention-gate.md:5-7` (2026-07-11)
+
+### obs:supervisiondecision — SupervisionDecision has 3 pre-existing surviving ConditionalsBoundaryMutator mutants (backoffMs L99/
+`kind: environment?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] SupervisionDecision has 3 pre-existing surviving ConditionalsBoundaryMutator mutants (backoffMs L99/L104, decide L80) — worker-supervision seam already reports 88% strength in report-pit-strength.mjs, unrelated to tempdoc 677 work — `modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` (2026-07-11)
 
 ## Parked
 
