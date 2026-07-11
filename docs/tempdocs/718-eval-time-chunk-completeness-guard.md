@@ -1,6 +1,6 @@
 # 718 — Eval-time chunk-completeness validity guard: refuse to score a degenerate index
 
-- **status:** open — CHARTER + INITIAL DESIGN 2026-07-11 (design-level; no implementation yet)
+- **status:** open — DESIGN SETTLED 2026-07-11 (theorize→design→plan complete; ready for delegated implementation)
 - **created:** 2026-07-11
 - **author-role:** orchestrator (Fable) — design/judgment; implementation delegatable to sonnet
 - **relation:** containment for tempdoc 717 (the cure); unblocks tempdoc 715 (release
@@ -26,7 +26,7 @@ This is a **measurement-integrity** defect distinct from 717's **enrichment-corr
 a degenerate build." Containment is valuable even if 717's root cause takes weeks — and the guard's
 detection oracle *is* 717's cheapest-evidence harness (loop N builds, flag the degenerate ones).
 
-## Design direction (theorize-level; to be tightened in a design pass)
+## Design direction (theorize-level — superseded by §Settled design below, kept for the reasoning trail)
 
 A **chunk-completeness envelope** enforced at the eval boundary, fail-closed by default, matching the
 repo's existing validity-envelope idiom rather than inventing a parallel one.
@@ -87,10 +87,147 @@ session (712-ab run-1 OFF arm = degenerate; 712-ab2 both arms = healthy) — con
 predicate cleanly separates them — before wiring it into the run path. This is a pure-parse check on
 existing artifacts, no runs.
 
-## Open questions for the design pass
+## Settled design (2026-07-11 — grounded in the jseval-seam investigation, file:line in §Evidence)
 
-- Legs-gate vs on-disk-count vs both (fast/indirect vs authoritative/heavier)?
-- The "corpus has chunks" oracle that survives the degeneracy it guards (Design §3 subtlety).
-- Boundary with 704 Pillar 3: is 718 an *instance* to fold into that program, or its own guard that
-  P3 later generalizes? (Read 704 before deciding — avoid forking its frame.)
-- Does the guard belong in `jseval run` (per-run), the gates (per-consume), or both?
+### The anti-spoof oracle (the crux — resolves the Design §3 subtlety)
+
+A missing chunk sub-system reads bit-for-bit identical to a legitimately chunk-free corpus at the
+*pipeline output* layer: `chunkDocCount=0, chunkVectorCoveragePercent=0.0` both ways
+(`LuceneRuntimeTypes.coveragePercent()` returns 0.0 when total==0 — no vacuous 100%). No
+attempted-vs-completed counter exists. So the observed signal alone **cannot** distinguish
+"short docs, nothing to chunk" from "build degenerated." The disambiguator must come from a
+source the degeneracy cannot touch:
+
+- **EXPECTED (offline, spoof-proof):** compute from the corpus *text* the count of documents whose
+  content length ≥ the production chunk threshold (`ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS = 2000`,
+  the same gate `IndexingDocumentOps` applies). This is a pure read of `corpus.jsonl`, computed
+  before/independent of any ingest — the enrichment pipeline's own failure can never move it.
+  `expected_chunk_docs > 0` ⟺ "this corpus SHOULD produce chunk docs."
+- **OBSERVED (post-enrichment, ground truth):** `chunkDocCount` + `chunkVectorCoveragePercent` from
+  `/api/status` `worker.enrichment.chunk.*` (a live Lucene `TermQuery(IS_CHUNK,true)` count — jseval
+  already reads these in `readiness.py`), plus `chunk_merge ∈ per_mode.vector.pipeline_tracking.observed`
+  as a query-time corroborator (server-projected from `searchTrace`, validated to separate this
+  session's degenerate (0.34, no chunk_merge) from healthy (0.62, chunk_merge) runs — offline check,
+  §Evidence).
+
+- **VERDICT:** `expected>0 AND (observed chunkDocCount==0 OR coverage<floor OR chunk_merge absent)`
+  → **degenerate** (fail closed). `expected==0` → **chunk-free** (legitimately, pass). Both signals
+  present and consistent → **ok**.
+
+**One dual-source-of-truth caveat, named:** the `2000` threshold lives in Java
+(`ChunkDocumentWriter.java:28`); a jseval-side mirror can drift if that constant changes. Mitigation
+(design decision): pin it in one jseval constant with a comment citing the Java site + a cross-check
+note, and — cheapest durable fix — file a follow-up to expose the threshold via `/api/status` or a
+config surface so the oracle reads it rather than mirrors it. Using a *conservative* margin (expect
+chunks only when a doc materially exceeds 2000, e.g. ≥ 2× or the corpus has many long docs) further
+de-sensitizes the guard to a small threshold change. Never make the guard stricter than the producer.
+
+### Shape (conforms to the 644 idiom exactly — pure verdict + separate enforcement + named escape hatch)
+
+1. **Pure verdict function** `chunk_completeness_verdict(expected_chunk_docs, observed_chunk_doc_count,
+   observed_coverage_pct, chunk_merge_observed, *, coverage_floor) -> {expected, observed, verdict,
+   reasons}`, verdict ∈ `{ok, degenerate, chunk-free}`, `reasons: list[str]` (never boolean-only —
+   matches `ComparabilityResult`/`compare_engine_sets`).
+2. **Embedded in the summary** — computed in `_build_summary` (`run.py:445-512`) from the offline
+   corpus-length expectation + the status counts the harness already fetches, attached as a run-scoped
+   `chunk_completeness` block (sibling of `manifest`/`corpus_identity`) so **every run self-documents**.
+3. **Enforcement at the gate seam** — `assert_chunk_completeness(run_dir, *, allow_incomplete=False)`
+   in `ratchet_kernel.py`, called right after `resolve_run_dir(...)` alongside `assert_cohort_engines`
+   — the single shared seam all four ratchet gates pass through — so one insertion protects
+   relevance/perf/leak/union-recall at once. On `degenerate` and not overridden: JSON-to-stderr
+   `{"exit_code":2,"error":...,"expected":...,"observed":...}` + `sys.exit(2)` + inline remedy,
+   mirroring `assert_cohort_engines` byte-for-byte in structure.
+4. **Named escape hatch** — `--allow-chunk-incompleteness` flag per gate command +
+   `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` env var, mirroring `--allow-engine-mismatch` /
+   `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL`. Never silent.
+
+### Why both seams (not one)
+
+644 already runs both halves: an advisory `comparable`/`comparability_reasons` field in the summary
+AND a fail-closed `assert_cohort_engines` at gates. 718 mirrors it: the embedded verdict makes every
+run legible and greppable (and gives 715's re-baseline a per-corpus completeness record); the gate
+enforcement is what actually stops a degenerate run from silently moving a ratchet floor or landing in
+the release scorecard.
+
+## Orphans (retired/retrofitted by this design — same PR)
+
+- The **ad-hoc prose health-gate** I introduced in tempdocs 712 (§Step-4 "a run is valid only if
+  `chunk_merge` in vector legs") and 713 (§M-5 quarantine) — replaced by this mechanism; those prose
+  lines become a pointer to the `chunk_completeness` verdict + `assert_chunk_completeness`. (Both are
+  already-merged docs; the pointer update rides in this PR's register/tempdoc edits, not a rewrite of
+  the merged tempdocs.)
+- Nothing in code is deleted — this is additive machinery. `readiness.py`'s existing
+  `chunk_doc_count > 0` skip (`:159`) stays (it's the correct short-doc guard for *readiness*); 718
+  adds the *expectation* half it lacks.
+
+## Reach / principle (judged)
+
+**Principle:** *a measurement harness must fail closed on a silently-degraded measurement SUBSTRATE
+(the index content being measured), not only on a failed measurement or a bad environment.* The repo
+already applies fail-closed to the *environment* (644 engine set, 716 dirty data dir / cross-checkout);
+718 extends the same reflex to the *index content*. This is an **instance of 704 Pillar 3's stated
+principle** ("assertions covered forbidden states, never expected states"; P3 explicitly names
+"enrichment coverage" as a preflight check) — but 704 frames P3's *vehicle* as 675's executor-v2
+"validity certificate," which is unimplemented. 718 is the narrow, shippable down-payment in the
+`jseval` seam now, not a fork of that program.
+- **Candidate scope beyond chunks:** missing-SPLADE-coverage and missing-NER-coverage indexes are the
+  same class (an expected-enrichment lane silently absent). Do NOT build those now
+  (`structural-defects-no-repeat`) — the chunk case is the twice-observed one; generalize only when a
+  second enrichment-lane degeneracy is observed. The verdict function's signature is left shaped so a
+  second lane could be added without a parallel structure.
+- **Earning-its-keep evidence:** the guard fires on a real degenerate run (e.g. the next 717
+  recurrence, or 715's re-baseline) before a human notices, and no wrong number reaches a
+  register/scorecard/ratchet after it lands.
+- **Retirement condition:** 675's executor-v2 unified validity certificate absorbs it (718 migrates in,
+  not duplicates), OR 717's root-cause fix makes a partial-enrichment index impossible by construction
+  (then the guard relaxes to a warn — belt-and-braces).
+
+## Implementation plan (delegable to a sonnet subagent; orchestrator reviews + verifies)
+
+All in `scripts/jseval/` + docs; **no worker/enrichment code** (that is 717's lane — code-disjoint).
+
+1. **Offline expectation helper** — a function computing `expected_chunk_docs` from a corpus's
+   `corpus.jsonl` (count docs with `len(content) >= CHUNK_THRESHOLD_CHARS`), threshold pinned in one
+   constant with a comment citing `ChunkDocumentWriter.java:28` + the dual-source note. Unit tests:
+   long-doc corpus → expected>0; short-doc corpus → expected==0; boundary at the threshold.
+2. **Pure verdict** `chunk_completeness_verdict(...)` (new module or `comparability.py`-adjacent),
+   dataclass result `{expected, observed, verdict, reasons}`. Unit tests over the truth table
+   incl. the two 0-chunk cases (chunk-free vs degenerate) — seeded from THIS session's archived
+   summaries (712-ab OFF = degenerate, 712-ab2 = healthy) as fixtures.
+3. **Embed in summary** — wire into `_build_summary` (`run.py:445-512`): pass the offline expectation
+   (computed from the run's corpus) + the status chunk counts jseval already has at completion, attach
+   the `chunk_completeness` block. Pin its presence with a run-shape test.
+4. **Enforcement** — `assert_chunk_completeness(run_dir, *, allow_incomplete=False)` in
+   `ratchet_kernel.py` mirroring `assert_cohort_engines` (JSON-to-stderr + exit 2 + remedy); insert the
+   call at the shared gate seam after `resolve_run_dir` in all four ratchet gate commands
+   (`commands/gates.py`). Escape hatch flag + env var. Tests: degenerate run → exit 2; chunk-free run →
+   pass; override → pass with warning.
+5. **Docs + retrofit** — document the guard in the jseval pipeline reference; repoint the 712/713 prose
+   health-gate to it (register note); add the follow-up observation to expose the 2000 threshold via
+   API so the oracle can stop mirroring the constant.
+6. **Verify** — full jseval suite bare-exit-asserted (the 2 `test_correction_probe` reds are
+   pre-registered). **Live smoke (GPU, orchestrator-run, sequenced after 717's agent):** one healthy
+   legal-clerc run → verdict `ok` embedded + gate passes; assert the guard would have caught this
+   session's degenerate arm by running the verdict over its archived summary (no new degenerate build
+   needed — the fixture proves the catch).
+
+## Design summary (plain language)
+
+**Part 1 — what the design does.** Right now nothing stops the eval harness from scoring a
+half-built index as if it were healthy — a bug (717) can silently produce an index missing its
+chunk data, and every measurement (including the public release scorecard) would just report the
+wrong, worse number. 718 gives the harness an immune response: before it trusts a run, it checks
+"does this corpus have long documents that *should* have been chunked?" — computed straight from the
+raw text, so the buggy pipeline can't lie about it — and compares that to what the index actually
+contains. If long docs are present but the chunk data isn't, the harness refuses to certify the run
+and says why, instead of silently publishing a bad number. It's the same fail-closed reflex the repo
+already uses for a dirty workspace or a mismatched engine set, now pointed at the index content itself.
+
+**Part 2 — the reach.** The real principle is broader than chunks: *a measurement tool should refuse
+to measure a silently-broken subject, not just a broken environment.* The same hole exists for the
+other enrichment lanes (keyword/entity coverage) — but I deliberately did not build those; the chunk
+case is the one we've actually seen fail twice, and over-building for unseen cases is the exact
+anti-pattern this codebase warns against. I shaped the verdict so a second lane could slot in later
+without a parallel structure. And this is explicitly a down-payment on a bigger program (704's
+"validity certificate," 675's executor) — small and shippable now, designed to be absorbed later
+rather than compete with it, with a clear condition for when it should retire.
