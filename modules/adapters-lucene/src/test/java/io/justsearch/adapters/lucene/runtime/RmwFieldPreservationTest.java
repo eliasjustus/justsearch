@@ -258,6 +258,50 @@ class RmwFieldPreservationTest {
     assertTrue(ex.getMessage().contains("docValues-backed"), ex.getMessage());
   }
 
+  /**
+   * Startup fail-fast is type-generic (tempdoc 714): a fragile field of a non-vector/splade type
+   * (here text — the content_all shape) without a policy must be rejected, not silently shipped.
+   */
+  @Test
+  void startupFailFastRejectsUndeclaredFragileNonVectorField() throws Exception {
+    String badJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "ghost_text", "type": "text", "stored": false, "docValues": false, "roles": [], "analyzer": "icu" }
+          ]
+        }
+        """;
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> new FieldMapper(json(badJson)).validateRmwPolicies());
+    assertTrue(ex.getMessage().contains("ghost_text"), ex.getMessage());
+    assertTrue(ex.getMessage().contains("rmwPolicy"), ex.getMessage());
+  }
+
+  /**
+   * Startup fail-fast: preserve-reread is only legal on vector fields (tempdoc 714) — on any other
+   * type the engine's float-vector re-read would silently no-op instead of preserving.
+   */
+  @Test
+  void startupFailFastRejectsPreserveRereadOnNonVectorField() throws Exception {
+    String badJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "ghost_text", "type": "text", "stored": false, "docValues": false, "roles": [], "analyzer": "icu", "rmwPolicy": "preserve-reread" }
+          ]
+        }
+        """;
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> new FieldMapper(json(badJson)).validateRmwPolicies());
+    assertTrue(ex.getMessage().contains("preserve-reread"), ex.getMessage());
+    assertTrue(ex.getMessage().contains("only vector fields"), ex.getMessage());
+  }
+
   // ---- helpers ----
 
   private void indexDoc(RunningRuntime runtime, String id, float[] vec, String spladeStatus) {
