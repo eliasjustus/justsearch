@@ -492,3 +492,38 @@ recall, leak/relevance gates, **enrichment wall-clock + docs/s as first-class ou
 offline ~19× sparse-encode multiplier is an acceptance question), plus one short-doc control
 corpus (e.g. `beir/scifact`) for regression. Default-on flip is a separate, evidence-gated
 decision after those numbers exist.
+
+## Step 4 — live A/B result (2026-07-11): keep default-OFF (F-036, answers Q-017)
+
+Two live A/B runs on `mixed/legal-clerc-200` (byte-identical corpus sha 630f5376), flag OFF vs
+ON, modes `splade,vector,hybrid`, `--embedding --splade --pipeline --start-backend --clean`.
+
+**Run 1 (confounded):** the OFF arm's fresh build came up degenerate — the whole `chunk_merge`
+leg absent on every mode (vector legs `[dense, query_classification]`, no chunk leg). This is
+the intermittent fresh-build anomaly (see tempdoc 717). Raw deltas were confounded by
+chunk-leg liveness, so a clean rerun was done.
+
+**Run 2 (clean — both arms health-verified `chunk_merge`-active):**
+
+| mode | OFF | ON | flag effect |
+|---|---|---|---|
+| splade (isolated sparse) | 0.0591 | **0.2588** | +4.4× — real |
+| vector (dense; flag-invariant control) | 0.6187 | 0.6184 | none (confirms arm comparability) |
+| **hybrid (production)** | **0.5625** | **0.5592** | flat / noise-negative |
+| enrichment wall | 132 s | 275 s | **+108%** |
+
+Short-doc control (`golden/battlefield-en-v1`, flag-on): hybrid 0.9517 = its baseline, no
+regression.
+
+**Verdict:** the sparse leg genuinely revives 4.4× in isolation, but that gain is fully absorbed
+by the dense + cross-encoder signals at fusion — production hybrid does not move — while
+enrichment cost more than doubles. **Default stays OFF.** The flag is a corpus-specific lever;
+the foundation (flag + silent-COMPLETED fix) already shipped (#145). The parent-splade teardown
+(step 5) remains deferred — 713's F-035 kept the dense parent for the symmetric reason (fusion
+consumes the whole-doc branch); the sparse parent question is not reopened here.
+
+**Reproduction:** `JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED={unset|true} python -m jseval run
+--dataset mixed/legal-clerc-200 --modes splade,vector,hybrid --embedding --splade --pipeline
+--start-backend --clean`. Per-arm summaries + worker logs archived (scratchpad 712-ab / 712-ab2).
+Health gate: a run is valid only if `per_mode.vector.pipeline_tracking.observed` contains
+`chunk_merge` (else it hit the tempdoc-717 anomaly and must be rerun).
