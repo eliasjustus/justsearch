@@ -188,6 +188,31 @@ public final class OrtSessionAssembler {
   }
 
   /**
+   * Reads the ONNX file's {@code metadata_props} custom-metadata map via a short-lived probe
+   * session ({@link ai.onnxruntime.OrtSession.SessionOptions.OptLevel#NO_OPT}, single-threaded) —
+   * mirrors {@link #probeModelNames(OrtEnvironment, Path)}. Used by {@link
+   * ModelCapabilityResolver} (tempdoc 711 Item 3) as the embedded-metadata rung, one session per
+   * {@code resolve} call (not per fact) — every capability fact the resolver checks against
+   * embedded metadata reads from the same returned map.
+   *
+   * @return the model's custom metadata (reverse-DNS keys, e.g. {@code io.justsearch.pooling_mode})
+   *     stamped at model-build time by {@code scripts/models/_common.py stamp_capabilities}; empty
+   *     if the model file declares none
+   * @throws OrtException if the probe session cannot be created (e.g., model file missing)
+   */
+  public static Map<String, String> probeCustomMetadata(OrtEnvironment env, Path modelPath)
+      throws OrtException {
+    try (SessionOptions probeOpts = new SessionOptions()) {
+      probeOpts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
+      probeOpts.setInterOpNumThreads(1);
+      probeOpts.setIntraOpNumThreads(1);
+      try (OrtSession probe = env.createSession(modelPath.toString(), probeOpts)) {
+        return probe.getMetadata().getCustomMetadata();
+      }
+    }
+  }
+
+  /**
    * Builds an {@link OrtSession} for model verification — the {@code verifyModel} Gradle task in
    * {@code worker-core}. Narrow public entry that routes through the same
    * {@link SessionOptionsApplier} apply path as production session construction (tempdoc 397
