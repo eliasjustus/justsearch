@@ -80,9 +80,15 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
               help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
                    "set differ — e.g. cross-encoder on vs off). Use only when comparing degraded "
                    "numbers deliberately.")
+@click.option("--allow-chunk-incompleteness", is_flag=True,
+              help="Override the tempdoc-718 chunk-completeness refusal (the run's index "
+                   "observed no/incomplete chunk docs despite the corpus needing them — likely "
+                   "the tempdoc-717 degenerate build). Also settable via "
+                   "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1. Use only when certifying a "
+                   "deliberately chunk-incomplete run.")
 @click.pass_context
 def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
-                       allow_engine_mismatch):
+                       allow_engine_mismatch, allow_chunk_incompleteness):
     """Q-010 relevance ratchet (tempdoc 580 §4c) — fail on nDCG@10 regression.
 
     Reads the latest eval-results run's summary.json for DATASET and compares
@@ -118,6 +124,9 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
     # tempdoc 644: refuse to compare a run whose realized engine set differs from the baseline's
     # (e.g. a CE-off worktree run vs a CE-on baseline) — apples-to-oranges. Backward-compatible.
     _rk.assert_cohort_engines(rd, baselines, allow_mismatch=allow_engine_mismatch)
+    # tempdoc 718: refuse a run whose index shipped without its chunk sub-system (the 717
+    # degenerate build) despite the corpus needing one. Backward-compatible (no-verdict skips).
+    _rk.assert_chunk_completeness(rd, allow_incomplete=allow_chunk_incompleteness)
     run_summary = json.loads((rd / "summary.json").read_text(encoding="utf-8"))
     report = _rgate.evaluate(baselines_doc, run_summary, dataset)
     _rk.finalize_report(report, run_dir=rd, baselines_path=baselines,
@@ -146,9 +155,14 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
 @click.option("--allow-engine-mismatch", is_flag=True,
               help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
                    "set differ — e.g. cross-encoder on vs off).")
+@click.option("--allow-chunk-incompleteness", is_flag=True,
+              help="Override the tempdoc-718 chunk-completeness refusal (the run's index "
+                   "observed no/incomplete chunk docs despite the corpus needing them — likely "
+                   "the tempdoc-717 degenerate build). Also settable via "
+                   "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
 @click.pass_context
 def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, update_baseline,
-                  allow_engine_mismatch):
+                  allow_engine_mismatch, allow_chunk_incompleteness):
     """Performance ratchet (tempdoc 640) — fail on a latency/throughput/footprint regression.
 
     The perf-metric-family sibling of ``relevance-gate``. Reads the latest eval-results run's
@@ -190,6 +204,9 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
     # tempdoc 644: refuse a cross-engine-set comparison (run vs baseline realized engines differ);
     # also protects --update-baseline from pinning a degraded (e.g. CE-off) run. Backward-compatible.
     _rk.assert_cohort_engines(rd, baselines, allow_mismatch=allow_engine_mismatch)
+    # tempdoc 718: refuse a run whose index shipped without its chunk sub-system; also protects
+    # --update-baseline from pinning a chunk-degenerate run. Backward-compatible (no-verdict skips).
+    _rk.assert_chunk_completeness(rd, allow_incomplete=allow_chunk_incompleteness)
 
     if update_baseline:
         # Re-pin the floor from this (green) run -- measured, never hand-typed (review fix #3).
@@ -254,8 +271,14 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
 @click.option("--allow-engine-mismatch", is_flag=True,
               help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
                    "set differ — e.g. cross-encoder on vs off).")
+@click.option("--allow-chunk-incompleteness", is_flag=True,
+              help="Override the tempdoc-718 chunk-completeness refusal (the run's index "
+                   "observed no/incomplete chunk docs despite the corpus needing them — likely "
+                   "the tempdoc-717 degenerate build). Also settable via "
+                   "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
 @click.pass_context
-def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_engine_mismatch):
+def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_engine_mismatch,
+                  allow_chunk_incompleteness):
     """Recall-leak ratchet (tempdoc 636 / register D-005) — fail on leak-rate regression.
 
     Reads the latest eval-results run's staged_recall_accounting projection for
@@ -282,8 +305,11 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
 
     # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
     # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
-    _rk.assert_cohort_engines(
-        _rk.resolve_run_dir(run_dir, data_dir), baselines, allow_mismatch=allow_engine_mismatch)
+    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir)
+    _rk.assert_cohort_engines(_resolved_rd, baselines, allow_mismatch=allow_engine_mismatch)
+    # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
+    # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.
+    _rk.assert_chunk_completeness(_resolved_rd, allow_incomplete=allow_chunk_incompleteness)
     # Tempdoc 683: leak now uses the same `current_release` pointer as relevance/perf — ceilings
     # project from the release's optional per-corpus `leak` section, with `fallback_baselines`
     # (the previously pinned measured values) governing any corpus the release doesn't carry.
@@ -315,9 +341,14 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
 @click.option("--allow-engine-mismatch", is_flag=True,
               help="Override the tempdoc-644 homogeneity refusal (run vs baseline realized engine "
                    "set differ — e.g. cross-encoder on vs off).")
+@click.option("--allow-chunk-incompleteness", is_flag=True,
+              help="Override the tempdoc-718 chunk-completeness refusal (the run's index "
+                   "observed no/incomplete chunk docs despite the corpus needing them — likely "
+                   "the tempdoc-717 degenerate build). Also settable via "
+                   "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1.")
 @click.pass_context
 def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
-                          allow_engine_mismatch):
+                          allow_engine_mismatch, allow_chunk_incompleteness):
     """Recall-completeness ratchet (tempdoc 701 / register D-005) — fail on a union-recall drop.
 
     Reads the latest eval-results run's staged_recall_accounting projection for DATASET and
@@ -344,8 +375,11 @@ def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out
 
     # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
     # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
-    _rk.assert_cohort_engines(
-        _rk.resolve_run_dir(run_dir, data_dir), baselines, allow_mismatch=allow_engine_mismatch)
+    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir)
+    _rk.assert_cohort_engines(_resolved_rd, baselines, allow_mismatch=allow_engine_mismatch)
+    # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
+    # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.
+    _rk.assert_chunk_completeness(_resolved_rd, allow_incomplete=allow_chunk_incompleteness)
     # Mirrors leak-gate's tempdoc 683 pattern: floors project from the release's optional
     # per-corpus `union_recall` section, with `fallback_baselines` governing any corpus the
     # release doesn't carry.
