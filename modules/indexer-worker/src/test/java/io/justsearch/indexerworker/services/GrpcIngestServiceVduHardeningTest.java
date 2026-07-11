@@ -227,6 +227,52 @@ final class GrpcIngestServiceVduHardeningTest {
   }
 
   @Nested
+  @DisplayName("REJECTED_SUSPECT_TEXT retains baseline (tempdoc 677 abstention gate)")
+  class RejectedSuspectTextSemantics {
+
+    @Test
+    @DisplayName("REJECTED_SUSPECT_TEXT keeps baseline content despite non-blank extracted text")
+    void rejectedSuspectTextRetainsBaseline() throws Exception {
+      String docId = indexTestDocument("rejected1");
+      String originalContent = lifecycle.documentFieldOps().getDocumentContent(docId);
+      String originalEmbeddingStatus =
+          lifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.EMBEDDING_STATUS);
+
+      // The gate rejected fluent-but-suspect model output — it arrives non-blank by definition.
+      UpdateVduResultRequest request = UpdateVduResultRequest.newBuilder()
+          .setDocId(docId)
+          .setOutcome(VduUpdateOutcome.VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT)
+          .setExtractedContent("A confident bibliography of mathematics history books.")
+          .setVduEnrichment("{\"gate\":{\"stage\":\"logprob\",\"meanLogprob\":-1.9}}")
+          .setPageCount(1)
+          .build();
+      CapturingObserver<UpdateVduResultResponse> observer = new CapturingObserver<>();
+
+      service.updateVduResult(request, observer);
+
+      assertTrue(observer.completed);
+      assertTrue(observer.value.getSuccess());
+
+      // Honest terminal status, and the fabricated text must NOT reach the index.
+      assertEquals(
+          SchemaFields.VDU_STATUS_REJECTED,
+          lifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.VDU_STATUS));
+      assertEquals(
+          originalContent,
+          lifecycle.documentFieldOps().getDocumentContent(docId),
+          "rejected output must not overwrite baseline content");
+      assertEquals(
+          originalEmbeddingStatus,
+          lifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.EMBEDDING_STATUS),
+          "rejection must not trigger re-embedding");
+      // Gate evidence travels via the enrichment JSON (honest evidence trail).
+      assertEquals(
+          "{\"gate\":{\"stage\":\"logprob\",\"meanLogprob\":-1.9}}",
+          lifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.VDU_ENRICHMENT));
+    }
+  }
+
+  @Nested
   @DisplayName("Explicit VduUpdateOutcome semantics (Phase A)")
   class ExplicitOutcomeSemantics {
 
