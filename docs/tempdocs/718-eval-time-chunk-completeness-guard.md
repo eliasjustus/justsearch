@@ -231,3 +231,24 @@ anti-pattern this codebase warns against. I shaped the verdict so a second lane 
 without a parallel structure. And this is explicitly a down-payment on a bigger program (704's
 "validity certificate," 675's executor) — small and shippable now, designed to be absorbed later
 rather than compete with it, with a clear condition for when it should retire.
+
+## Implementation + real-data validation (2026-07-11)
+
+Implemented in `scripts/jseval/` (Python only; worker/enrichment code untouched — 717's lane):
+`chunk_completeness.py` (`expected_chunk_docs`, `chunk_completeness_verdict`,
+`ChunkCompletenessResult`), `run._compute_chunk_completeness` embedding the block into every
+`summary.json`, `ratchet_kernel.assert_chunk_completeness` wired after `assert_cohort_engines` in all
+four ratchet gates, `--allow-chunk-incompleteness` / `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` escape
+hatch. Full jseval suite green (1676 passed; the 2 `test_correction_probe` reds are pre-registered).
+
+**Proven against this session's REAL degenerate run (no GPU needed — the definitive catch test):**
+running the guard's own verdict over the archived summaries —
+- `expected_chunk_docs(legal-clerc-200)` = **194** (offline, from corpus text — matches F-033's
+  194/198-are-long-docs);
+- 712-ab OFF (the run that actually degenerated this session) → **`degenerate`** (would have been
+  refused): reasons = chunk_doc_count==0, coverage 0.0 < floor, chunk_merge absent;
+- 712-ab2 OFF + ON (healthy) → **`ok`**.
+
+So the guard demonstrably catches the exact failure it was built for. Enforcement is conservative:
+it fires ONLY on a positively-`degenerate` verdict — missing block (pre-guard runs), `ok`, and
+`chunk-free` all pass silently (backward-compatible, mirrors `compare_engine_sets`'s skip-on-unknown).
