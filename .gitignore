@@ -211,6 +211,29 @@ __pycache__/
 # Mirror of .claude/skills/ created by some agent tools
 .agents/
 
+# Private orchestration prompt-library skills (session-local; NOT public repo content).
+# These are the operator's own /takeover, /design, /plan, etc. methodology prompts —
+# they must never be committed. Listed explicitly so tracked repo skills (jseval,
+# search-quality, governance, …) are unaffected. (Leak remediation — see below.)
+.claude/skills/collision-check/
+.claude/skills/derisk/
+.claude/skills/design/
+.claude/skills/fe-design/
+.claude/skills/goal/
+.claude/skills/payback/
+.claude/skills/plan/
+.claude/skills/polish/
+.claude/skills/present-status/
+.claude/skills/publish/
+.claude/skills/research/
+.claude/skills/review-changes/
+.claude/skills/review-tempdoc-fit/
+.claude/skills/session-closeout/
+.claude/skills/session-retro/
+.claude/skills/takeover/
+.claude/skills/theorize/
+.claude/skills/time-calibration/
+
 # Evaluation datasets (large, fetched on demand)
 datasets/
 

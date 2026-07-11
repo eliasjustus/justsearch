@@ -1,7 +1,0 @@
----
-description: "Investigate a tempdoc thoroughly (research, codebase, experiments) without starting design or implementation, ending in an explicit go/no-go verdict."
-argument-hint: "<tempdoc-number>"
-arguments: tempdoc_number
----
-
-Take over tempdoc $tempdoc_number. First, make sure you're working in a dedicated worktree — enter one if you're not already in one, don't do this work directly on main. Then read the entire tempdoc thoroughly. Then, perform an autonomous investigation: search the internet, examine the codebase, and run experiments as needed, to fully understand the idea, motivation, and proposed solution in the tempdoc. Think critically about the tempdoc's solutions, you may question assumptions and suggest alternative designs. Remember that all work should go into this tempdoc. Do not start any new tempdocs unless the work is clearly unrelated and not a simple update to observations.md. End your investigation with an explicit verdict: should this tempdoc be done at all, and now? What is the cheapest piece of evidence that would validate or invalidate the need for it, and does that evidence already exist? What existing thing does it displace or duplicate? "This should not be done" and "this should wait for evidence X" are normal, expected outcomes — recommend one when warranted, don't treat implementation as the default destiny of every tempdoc. At the end you should shortly summarise your findings for me in plain language, including that verdict. Don't begin implementation or design work yet.
