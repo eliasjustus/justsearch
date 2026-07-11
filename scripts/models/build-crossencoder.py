@@ -29,7 +29,15 @@ import shutil
 import sys
 from pathlib import Path
 
-from _common import get_tool_versions, posix_relpath, resolve_hf_commit, sha256_file, verify_model
+from _common import (
+    get_tool_versions,
+    load_manifest_capabilities,
+    posix_relpath,
+    resolve_hf_commit,
+    sha256_file,
+    stamp_capabilities,
+    verify_model,
+)
 
 
 def download_hf_file(repo_id: str, remote_path: str, dest_path: Path, tmp_dir: Path):
@@ -81,6 +89,18 @@ def main():
     # Verify
     verify_model(model_path)
 
+    # Stamp declared capabilities into ONNX metadata_props (tempdoc 711 Item 3) — a
+    # build-time projection of model_manifest.json's `capabilities` section, if the
+    # manifest has one yet. Legacy dirs without a manifest capabilities section are
+    # skipped, not crashed.
+    manifest_capabilities = load_manifest_capabilities(output_dir)
+    if manifest_capabilities:
+        stamped_keys = stamp_capabilities(model_path, manifest_capabilities)
+        print(f"  Stamped {len(stamped_keys)} metadata_props key(s) into {model_path.name}")
+    else:
+        print(f"  No model_manifest.json capabilities section in {output_dir} — skipping metadata_props stamping")
+        stamped_keys = []
+
     # Compute hash and write build.json
     model_sha = sha256_file(model_path)
     tool_versions = get_tool_versions()
@@ -97,6 +117,7 @@ def main():
                     f"Pre-built INT8 ONNX downloaded from {args.hf_model}",
                 ],
                 "output_sha256": model_sha,
+                "stamped_metadata_keys": stamped_keys,
             },
         },
         "build_command": f"python scripts/models/build-crossencoder.py --hf-model {args.hf_model} --output-dir {posix_relpath(args.output_dir)}",
