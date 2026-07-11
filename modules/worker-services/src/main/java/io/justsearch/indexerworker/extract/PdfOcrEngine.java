@@ -48,6 +48,8 @@ final class PdfOcrEngine {
   private static final Logger DEFAULT_LOG = LoggerFactory.getLogger(PdfOcrEngine.class);
   static final int DEFAULT_RENDER_DPI = 300;
   private static final long DEFAULT_BUDGET_MS = 30_000L;
+  /** Bounded wait for worker unwind in {@link #shutdownAndAwaitTermination(ExecutorService)}. */
+  private static final long POOL_TERMINATION_AWAIT_MS = 5_000L;
 
   /** Substitutable process starter so tests can inject stub children (no real tesseract needed). */
   @FunctionalInterface
@@ -319,7 +321,7 @@ final class PdfOcrEngine {
       truncated = true;
     }
 
-    shutdown(pool);
+    shutdownAndAwaitTermination(pool);
     killAll(live);
     deleteRecursively(tempDir);
     if (interrupted) {
@@ -346,7 +348,7 @@ final class PdfOcrEngine {
 
   private OcrEngineResult finishAfterCleanup(
       ExecutorService pool, Set<Process> live, Path tempDir, OcrEngineResult result) {
-    shutdown(pool);
+    shutdownAndAwaitTermination(pool);
     killAll(live);
     deleteRecursively(tempDir);
     return result;
@@ -503,9 +505,29 @@ final class PdfOcrEngine {
     }
   }
 
-  private void shutdown(ExecutorService pool) {
-    if (pool != null) {
-      pool.shutdownNow();
+  /**
+   * Signals cancellation, then blocks (bounded) until every worker thread has actually unwound.
+   * The bounded wait is what lets the subsequent {@link #killAll(Set)} sweep be trusted: a worker
+   * interrupted between {@code starter.start()} returning and its own {@code live.add(process)}
+   * (i.e., not yet registered) still finishes registering and then dies on its own
+   * {@code catch (InterruptedException)} — {@code destroyForcibly} then deregister — because that
+   * thread's interrupted status was already set by {@link #cancelAll} / {@code shutdownNow}, so
+   * its next blocking call throws immediately. Returning to the caller (and thus to
+   * {@code killAll}) without waiting for that unwind left a real window where a spawned child had
+   * neither been swept by {@code killAll} (not registered yet) nor destroyed by its own worker
+   * (which hadn't gotten there yet) — observed as a CI-only flake on a slow/oversubscribed
+   * GitHub-hosted runner (run 29159503718,
+   * {@code PdfOcrEngineTest.interruptDestroysAllRegisteredChildren}).
+   */
+  private void shutdownAndAwaitTermination(ExecutorService pool) {
+    if (pool == null) {
+      return;
+    }
+    pool.shutdownNow();
+    try {
+      pool.awaitTermination(POOL_TERMINATION_AWAIT_MS, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
   }
 

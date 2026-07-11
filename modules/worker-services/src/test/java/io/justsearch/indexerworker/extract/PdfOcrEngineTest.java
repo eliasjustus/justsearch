@@ -157,6 +157,65 @@ final class PdfOcrEngineTest {
     }
   }
 
+  /**
+   * Regression for the CI-only flake (run 29159503718): a worker interrupted between {@code
+   * starter.start()} returning and its own {@code live.add(process)} — i.e., not yet
+   * registered — must still end up force-destroyed. The 3rd starter call to run deliberately
+   * pauses for the full window via {@link #uninterruptibleSleep} (immune to the engine's cancel
+   * signal, modeling a scheduler pause) so its {@code live.add(process)} and {@code
+   * process.waitFor(...)} both run strictly *after* the engine's cancel/interrupt signal and after
+   * a naive, non-waiting {@code shutdownNow()} would already have returned to the caller. Without
+   * {@code shutdownAndAwaitTermination} blocking for the pool to actually quiesce before the final
+   * {@code killAll} sweep, this reproduces the miss deterministically; with it, that worker thread
+   * still finishes unwinding (its pre-set interrupted status makes the next {@code
+   * Process.waitFor} throw immediately) before the sweep runs.
+   */
+  @Test
+  @Timeout(30)
+  void interruptDestroysChildStillRegisteringWhenCancelFires() throws Exception {
+    Path pdf = blankPdf(3);
+    List<StubProcess> spawned = Collections.synchronizedList(new java.util.ArrayList<>());
+    CountDownLatch allStarted = new CountDownLatch(3);
+    AtomicInteger callIndex = new AtomicInteger();
+    PdfOcrEngine engine =
+        engine(
+            CONFIG,
+            4,
+            cmd -> {
+              StubProcess stub = new StubProcess(0, 60_000L); // blocks far longer than the test
+              spawned.add(stub);
+              int thisCall = callIndex.getAndIncrement();
+              allStarted.countDown();
+              if (thisCall == 2) {
+                // Simulate a scheduler pause landing between "spawned" (visible to the latch) and
+                // this starter returning control to runTesseract's live.add(process) — the
+                // registration gap. Uninterruptible-for-the-full-window: an interrupt landing
+                // mid-pause must NOT shorten it (a plain try/sleep/catch lets the FIRST interrupt
+                // truncate the wait early, making the race non-deterministic — observed ~20%
+                // failure rate — because it then races a SECOND, independent interrupt delivery
+                // from shutdownNow() against killAll() instead of reliably outlasting both).
+                uninterruptibleSleep(300L);
+              }
+              return stub;
+            });
+
+    AtomicReference<PdfOcrEngine.OcrEngineResult> out = new AtomicReference<>();
+    Thread worker = new Thread(() -> out.set(engine.ocrPdf(pdf, Integer.MAX_VALUE)), "engine-under-test");
+    worker.start();
+    assertTrue(allStarted.await(10, TimeUnit.SECONDS), "all page children should have spawned");
+    worker.interrupt();
+    worker.join(TimeUnit.SECONDS.toMillis(15));
+
+    assertFalse(worker.isAlive(), "engine must unwind promptly on interrupt");
+    assertEquals(3, spawned.size());
+    for (StubProcess stub : spawned) {
+      assertTrue(
+          stub.wasForceDestroyed(),
+          "every registered child must be destroyForcibly'd, including one still registering when"
+              + " cancellation fired");
+    }
+  }
+
   @Test
   @Timeout(30)
   void oversizePageIsSkippedBeforeRenderWithoutSpawn() throws Exception {
@@ -272,6 +331,24 @@ final class PdfOcrEngineTest {
         StandardCharsets.UTF_8);
     long block = pageIndex >= 0 && pageIndex < blockMsByPage.length ? blockMsByPage[pageIndex] : 0L;
     return new StubProcess(0, block);
+  }
+
+  /**
+   * Sleeps the full {@code millis} window regardless of how many interrupts land during it —
+   * models a scheduler pause the engine's cancel signal cannot shorten, as opposed to a plain
+   * try/sleep/catch (which lets the first interrupt truncate the wait, making the reproduction
+   * timing-dependent instead of deterministic).
+   */
+  private static void uninterruptibleSleep(long millis) {
+    long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+    long remainingMs;
+    while ((remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime())) > 0) {
+      try {
+        Thread.sleep(remainingMs);
+      } catch (InterruptedException ignored) {
+        // Deliberately swallowed and not re-asserted: see method javadoc.
+      }
+    }
   }
 
   private static int pageIndexOf(List<String> command) {
