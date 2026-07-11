@@ -596,7 +596,6 @@ kills the class structurally — costlier, adapters-lucene hot path). Recorded i
 review.
 
 ## Log
-## Log
 
 - 2026-07-10: chartered; S-A + S-B subagent surveys launched (read-only).
 - 2026-07-10: all four surveys returned; condensed evidence + S-C synthesis recorded above.
