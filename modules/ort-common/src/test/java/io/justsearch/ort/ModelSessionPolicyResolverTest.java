@@ -98,8 +98,8 @@ class ModelSessionPolicyResolverTest {
     @Test
     void arenaCapFromResolvedConfig() {
       var policy = resolveEmbedding(fp16OnCuda());
-      // ResolvedConfigBuilder.buildEmbedding defaults gpu_mem_mb to 3072
-      assertEquals(3072L * BYTES_PER_MB, policy.gpu().arenaCapBytes());
+      // ResolvedConfigBuilder.buildEmbedding defaults gpu_mem_mb to 6144 (691 §N/F-031)
+      assertEquals(6144L * BYTES_PER_MB, policy.gpu().arenaCapBytes());
     }
 
     @Test
@@ -238,9 +238,9 @@ class ModelSessionPolicyResolverTest {
             .arenaCapBytes();
 
     // Defaults from ResolvedConfigBuilder's per-encoder builders:
-    //   embed 3072, splade 4096, ner 2048 (tempdoc 691, was 512), reranker 2048 MB;
+    //   embed 6144 (691 §N/F-031, was 3072), splade 4096, ner 2048 (691, was 512), reranker 2048 MB;
     //   citation CPU-only → 0.
-    assertEquals(3072L * BYTES_PER_MB, embed);
+    assertEquals(6144L * BYTES_PER_MB, embed);
     assertEquals(4096L * BYTES_PER_MB, splade);
     assertEquals(2048L * BYTES_PER_MB, ner);
     assertEquals(2048L * BYTES_PER_MB, reranker);
@@ -258,7 +258,7 @@ class ModelSessionPolicyResolverTest {
   @Test
   @DisplayName("CPU variant zeros arenaCapBytes — policy record is self-describing (§14.28 U2)")
   void cpuVariantProducesZeroArenaCap() {
-    // Given: embedding configured with 3072 MB arena but the VARIANT resolved to CPU EP
+    // Given: embedding configured with the default arena but the VARIANT resolved to CPU EP
     // (degraded hardware case: user configured GPU but hardware lacks CUDA).
     VariantSelection cpuVariant = fp32OnCpu();
     long arenaCap =
@@ -274,6 +274,6 @@ class ModelSessionPolicyResolverTest {
         ModelSessionPolicyResolver.resolve(EncoderRole.EMBEDDING, CFG, HW, fp16OnCuda())
             .gpu()
             .arenaCapBytes();
-    assertEquals(3072L * BYTES_PER_MB, cudaCap);
+    assertEquals(6144L * BYTES_PER_MB, cudaCap);
   }
 }
