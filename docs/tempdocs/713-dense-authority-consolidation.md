@@ -1,7 +1,9 @@
 # 713 — Dense-representation authority: is the parent single-pass vector redundant now that chunk vectors live? (post-F-032 missing cell)
 
-- **status:** takeover complete — verdict CONDITIONAL GO (2026-07-11); theorize/design/plan +
-  decisive A/B in progress this session; implementation gated on founder approval
+- **status:** measured (2026-07-11) — missing cell = vector **0.4147** / hybrid **0.5339** (conf B);
+  provisional verdict **BRANCH C: keep both** (single-pass parent NOT redundant, −0.20 vector without
+  it). One GPU-gated follow-up pending (§M-5 fresh-build probe — also a suspected NEW fresh-ingest
+  chunk-death defect at main). No code changes; see §Revised plan.
 - **created:** 2026-07-11
 - **updated:** 2026-07-11
 
@@ -238,6 +240,11 @@ their deletion/tombstoning is **this tempdoc's work**, not a later sweep:
   the 691 §M evidence rather than silently deleting, in case a future non-CLS encoder (708's lane)
   revisits canonical late chunking.
 
+Arm-validity confirmation: `BackfillScheduler.java:394-395` passes `rag().chunkVectorsEnabled()`
+and `ai().embedding().lateChunkingEnabled()` as two **independent** flags into the `BackfillContext`
+— so `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false` toggles only the parent single-pass and leaves
+chunk-vector writing on. The zero-code arm is genuinely "chunks alive, parent reverts to window-mean."
+
 Not touched by any branch: chunk-vector writing (`chunkVectorsEnabled` path, F-032), `chunk_merge`
 search fusion, non-chunked-doc embedding (one whole-doc vector via the normal batch — those docs
 never enter the single-pass because `hasChunkDocs` is false), and the encoder itself (708).
@@ -348,3 +355,135 @@ if Branch A/B suggests it is live. Fold observation shards; update this tempdoc 
 Parent-vector-*absent* variant (needs a second arm + search-side `chunk_merge` change); the encoder-
 domain question (708); any SPLADE-side change (recorded as candidate scope only); building runtime
 corpus-detection to auto-toggle the lever (F-004 already declined that apparatus).
+
+---
+
+## Measurement (2026-07-11) — the missing cell, measured; plus an unexpected second finding
+
+Two-arm A/B executed 15:46–15:58 local, back-to-back detached runs, byte-identical corpus
+(`datasets/mixed/legal-clerc-200`, corpus.jsonl sha256 `630f5376…` — same bytes as the F-032
+provenance), git `7b7c485` (= origin/main `2d324ca` + docs-only commits; verified: the diff
+`b88e76e ↔ 4e9a17f`(#139 squash) is **docs-only**, so the running code is byte-identical to the
+state that measured 711's 0.6180).
+
+Reproduction commands (from the worktree, `PYTHONPATH=<wt>/scripts/jseval PYTHONUTF8=1`):
+
+```
+# CONTROL (shipped defaults, late-chunking ON):
+python -m jseval run --dataset mixed/legal-clerc-200 --modes vector,hybrid --embedding --pipeline --start-backend --clean --json
+# ARM (the missing cell — parent single-pass OFF, chunk vectors ON):
+JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false python -m jseval run --dataset mixed/legal-clerc-200 --modes vector,hybrid --embedding --pipeline --start-backend --clean --json
+```
+
+Run dirs: `tmp/eval-results/20260711T135127_mixed_legal-clerc-200` (control) /
+`…T135536_…` (arm), both in this worktree.
+
+### M-1. Results
+
+| arm | vector nDCG@10 | vector R@10 | vector P@1 | hybrid nDCG@10 | observed legs (vector) | enrich docs/s |
+|---|---|---|---|---|---|---|
+| CONTROL (defaults, single-pass ON, **fresh build**) | **0.3403** | 0.435 | 0.235 | 0.4891 | `dense, query_classification` — **no chunk_merge** | 1.0 |
+| ARM (single-pass OFF, chunks ON, **incremental rebuild** — see M-3) | **0.4147** | 0.725 | 0.150 | 0.5339 | `branch_fusion, chunk_merge, dense, query_classification` | 1.3 |
+| (register reference: 711 engine @ b88e76e, single-pass ON, chunks alive) | 0.6180 | — | 0.410 | 0.5592 | `dense+chunk_merge` | — |
+
+### M-2. Cell-validity evidence (the ARM is a valid "missing cell" measurement)
+
+- **Chunk vectors alive:** direct Lucene probe over the arm-final on-disk index (live-doc-filtered
+  `VecProbe` over `tmp/headless-eval-data/index/default/indices/g-20260711-135135`, run before the
+  dir was wiped): `live_docs=4492, live_chunk_docs=4293, live_vector=199, live_chunk_vector=4293`
+  — **4293/4293 chunk vectors present**, matching 711's engine-run count exactly.
+- **Single-pass genuinely OFF:** the arm's worker log shows `singlePass=0, longDocWindowed=0,
+  arenaOomWindowed=0` in **all 94** combined-pass batches — no single-pass call ran; parents got
+  window-mean vectors.
+- **Enrichment complete, no failures:** every batch line shows `fail=0`; `--pipeline` readiness
+  (fail-closed) held queries until embed/splade/ner/chunk all COMPLETED. Arm worker log archived
+  in the session scratchpad (`arm-incremental-worker.log`).
+- **Counter caveat:** the CONTROL's worker log and index were destroyed by the arm's startup
+  before the anomaly below was understood — the control's `singlePass≈135/longDocWindowed≈101`
+  expectation and chunk-vector count are **inferred from its query-time signature, not captured**.
+  Recorded honestly; the follow-up run re-captures them.
+
+### M-3. Confounds and the honest read (interrogate-results)
+
+1. **The CONTROL failed to reproduce the register's 0.6184/0.6180** — it reproduced the
+   **dead-chunk pin to 4 decimals** (0.3403 ≈ F-031's 0.3401 / 691 §J-B's 0.3403) with
+   `chunk_merge` absent from observed legs: the exact chunks-dead signature of F-032's control —
+   despite the F-032 preservation fix (#139, `4e9a17f`) being verifiably in the running code
+   (`rmwPolicy` ×3 in both `fields.v1.json` copies, `WritePathOps`, `RmwFieldPreservationTest`).
+2. **The two arms were NOT both fresh builds.** At this base, jseval `--clean` still had the
+   protected set (`index/` + `watched_roots.json` survive — retired by 716, which merged after
+   this base): the index generation dir `g-20260711-135135` was created during the CONTROL and
+   **reused by the ARM**, which re-indexed the freshly-materialized (new-mtime) corpus files as
+   updates over the control's index. So control = fresh build, arm = incremental rebuild — the
+   flag axis is **confounded with build freshness** within this session.
+3. **Coherent hypothesis unifying 1+2 (unproven; GPU-blocked from verification this session):**
+   at current main, a **fresh ingest with the single-pass ON still ends with dead chunk vectors**
+   (the control), while rebuild/RMW paths preserve them (the arm — F-032's fix covers
+   `readModifyWrite`). 711's own engine run used the same protected-set jseval and may have run
+   against a previously-used data dir (incremental), which would reconcile its 4293/4293 with my
+   control's death. Not excluded: a timing/commit-cadence race specific to the slow single-pass
+   batches, or environmental interference (a game held ~0.7–1.7GB VRAM / ~33% GPU during both
+   runs — equal across arms; and the 4-decimal 0.3403 reproduction argues against an OOM-degraded
+   run, since F-031 pins that exact value for zero-OOM single-pass parents).
+4. **Cross-run comparability of the headline delta:** the decisive comparison (arm 0.4147 vs
+   chunks-alive+single-pass 0.6180) crosses sessions (mine vs 711's) but not code (docs-only
+   diff), corpus (byte-identical), machine, or harness. Given the 0.3401→0.3403 4-decimal
+   reproducibility this corpus shows, a −0.203 vector delta is far outside noise.
+
+### M-4. What the measurement says about the charter question — provisional verdict: BRANCH C (keep both)
+
+With chunk vectors alive in both, **parent window-mean vs parent single-pass = vector 0.4147 vs
+0.6180 (−0.203, −33%) and hybrid 0.5339 vs 0.5592 (−0.045)**. The parent single-pass vector is
+**NOT redundant** — chunk-MaxP + `chunk_merge` does not substitute for it. Mechanism (TH-3's
+reasoning ladder, resolved): the whole-doc branch participates in branch fusion regardless, so with
+the single-pass OFF it contributes 0.06-quality window-mean *noise* that dilutes the healthy chunk
+branch — the arm's 0.4147 sits between window-mean-only (0.060) and the chunk ceiling (~0.64).
+The F-031 lever survives the F-032 landscape change: **keep both representations.** Per D-5's own
+retirement condition, the fork-collapse frame retires here, not the machinery — the dense
+parent/chunk pair is a *governed dual-representation* (parent = whole-doc gist that branch fusion
+always consumes; chunks = best-passage evidence).
+
+Enrichment-cost side: 1.0 vs 1.3 docs/s (single-pass slower, directionally as expected, but
+GPU-contention-caveated and secondary — the quality regression alone decides).
+
+**Confidence: B, not A**, pending (i) a fresh-build flag-OFF run + probe (de-confound M-3.2) and
+(ii) resolution of the control anomaly (M-3.3) — both GPU-blocked this session. Parity-or-better
+was the retirement gate; a −0.20 vector regression is decisively on the keep side even at B
+confidence. The enron/scifact Branch-A controls (Step 0b) are **moot** — Branch A is off the table.
+
+### M-5. NEW second finding requiring follow-up (outside 713's charter, inside its blast radius)
+
+If M-3.3 is confirmed, this is a **live re-manifestation of the F-032 bug-class on the
+fresh-ingest path at current main**: shipped defaults on a fresh index may still end with all
+chunk vectors dead — meaning the register's headline legal-clerc defaults row (vector 0.6184) may
+hold only for incrementally-(re)built indexes. Follow-up (one GPU slot, ~10 min): a fresh-build
+defaults run (full manual data-dir wipe — `--clean` alone does not suffice at bases before 716's
+protected-set retirement) + the `VecProbe` live-count + worker.log capture. Confirmed → its own
+fix tempdoc (likely preservation/write-ordering on the initial chunk-enrichment flow) + register
+correction. Refuted → my control was environment-interfered; re-pin the control cell and lift this
+tempdoc's confidence to A. **Until resolved, do not treat the register's 0.6184 as a fresh-build
+guarantee.**
+
+---
+
+## Revised plan (2026-07-11, post-measurement) — supersedes Steps 0b/1/2 above
+
+The measured outcome selects **Branch C/D-4 (keep both)** — no retirement, no default flip, no
+orphan deletion. Steps 0b and 1 above are dead paths (kept as dated history). Remaining work:
+
+1. **Follow-up measurement (GPU-gated, next session or when GPU frees):** the M-5 fresh-build
+   probe run — settles both the new-defect question and this tempdoc's confidence tier. This is
+   the only remaining evidence item.
+2. **Register update at merge:** add the missing-cell row to the `mixed/legal-clerc-200` block
+   (vector 0.4147 / hybrid 0.5339, conf **B**, legs from M-1, git 7b7c485, src 713) + a note
+   naming the confounds; record the Branch-C finding (new F-0xx: "parent single-pass vector is
+   NOT redundant post-F-032 — window-mean parent noise dilutes branch fusion; keep both") and the
+   M-5 open question (new Q-0xx) — the register on main has moved (F-033/F-034 landed); apply
+   against main's copy at merge time, then `node scripts/docs/skills-sync.mjs`.
+3. **Feed 712/Q-017:** Q-017 explicitly waits on 713's parent-representation verdict for the
+   "does the parent whole-doc SPLADE encode still earn its place" question — the answer this
+   measurement supports: the dense parent earns its place *because branch fusion always consumes
+   the whole-doc branch*; the same structural argument applies to the sparse parent, but 712
+   should measure, not inherit.
+4. **No code changes in this tempdoc.** Close after item 1 resolves; status until then:
+   measurement-complete-at-B-confidence, follow-up pending.
