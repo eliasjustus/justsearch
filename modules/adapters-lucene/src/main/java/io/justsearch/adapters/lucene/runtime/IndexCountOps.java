@@ -4,10 +4,13 @@ package io.justsearch.adapters.lucene.runtime;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.ChunkEmbeddingCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.EmbeddingCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SpladeFeatureCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.ChunkVectorPresence;
 import io.justsearch.indexing.SchemaFields;
 import java.io.IOException;
 import java.util.Map;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.FloatVectorValues;
+import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.BooleanClause;
@@ -20,6 +23,7 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.util.Bits;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +43,10 @@ public final class IndexCountOps {
   private final SearcherBridge bridge;
   private volatile CorpusProfile cachedProfile;
   private volatile long cachedProfileVersion = -1L;
+  // Tempdoc 717: artifact-truthful chunk-vector presence, reader-version cached like the corpus
+  // profile so the per-query serve-time gate does not re-iterate vectors on every search.
+  private volatile ChunkVectorPresence cachedChunkVectorPresence;
+  private volatile long cachedChunkVectorPresenceVersion = -1L;
 
   IndexCountOps(SearcherBridge bridge) {
     this.bridge = bridge;
@@ -169,6 +177,64 @@ public final class IndexCountOps {
     } catch (IOException e) {
       log.debug("Failed to query chunk embedding counts: {}", e.getMessage());
       return new ChunkEmbeddingCounts(0, 0, 0, 0);
+    }
+  }
+
+  /**
+   * Counts live chunk documents that actually carry a {@code chunk_vector} value (tempdoc 717) —
+   * the artifact-truthful complement to {@link #queryChunkEmbeddingCounts()}, which counts the
+   * {@code chunk_embedding_status} bookkeeping field and can therefore read COMPLETED while the
+   * vector is absent (the F-032 "status lies" class). Reader-version cached like {@link
+   * #getOrComputeCorpusProfile()} so the per-query serve-time gate does not re-iterate vectors on
+   * every search.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public ChunkVectorPresence queryChunkVectorPresenceCount() {
+    long currentVersion = getReaderVersion();
+    ChunkVectorPresence cached = cachedChunkVectorPresence;
+    if (cached != null && cachedChunkVectorPresenceVersion == currentVersion) {
+      return cached;
+    }
+    ChunkVectorPresence computed = computeChunkVectorPresence();
+    cachedChunkVectorPresence = computed;
+    cachedChunkVectorPresenceVersion = currentVersion;
+    return computed;
+  }
+
+  /**
+   * Enumerates each leaf's {@code chunk_vector} {@link FloatVectorValues}, filtering deleted docs
+   * via {@code liveDocs}. The KNN structures are not purged of tombstones until merge, so {@code
+   * FloatVectorValues.size()} would overcount deleted-but-unmerged docs (tempdoc 717 §Derisk U2) —
+   * a per-doc {@code liveDocs} check is required. {@code chunk_vector} is written only on chunk
+   * docs, so a doc carrying it is a live chunk doc with a vector. Same complexity class as the
+   * status {@code TermQuery} counts (walks only vector-bearing docs per segment, not all docs).
+   */
+  private ChunkVectorPresence computeChunkVectorPresence() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        int totalChunks = searcher.count(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")));
+        int vectorsPresent = 0;
+        for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
+          FloatVectorValues values = leaf.reader().getFloatVectorValues(SchemaFields.CHUNK_VECTOR);
+          if (values == null) {
+            continue; // this segment indexed no chunk_vector
+          }
+          Bits liveDocs = leaf.reader().getLiveDocs();
+          KnnVectorValues.DocIndexIterator iter = values.iterator();
+          for (int doc = iter.nextDoc();
+              doc != DocIdSetIterator.NO_MORE_DOCS;
+              doc = iter.nextDoc()) {
+            if (liveDocs == null || liveDocs.get(doc)) {
+              vectorsPresent++;
+            }
+          }
+        }
+        return new ChunkVectorPresence(totalChunks, vectorsPresent);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to count chunk vector presence: {}", e.getMessage());
+      return new ChunkVectorPresence(0, 0);
     }
   }
 

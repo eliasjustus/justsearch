@@ -208,6 +208,72 @@ class CombinedEnrichmentBackfillOpsTest {
   }
 
   @Test
+  @DisplayName(
+      "tempdoc 717 (P1): a blank-content chunk is escalated (retry), never marked COMPLETED without"
+          + " a vector")
+  void blankContentChunk_escalatesInsteadOfMarkingCompleted() {
+    // A pending chunk with NO chunk_content and no CONTENT fallback — a fetch/consistency anomaly.
+    // The old behavior marked CHUNK_EMBEDDING_STATUS=COMPLETED with no embed (a silent data-less
+    // COMPLETED, the F-032 "status lies" class). It must now escalate via the retry seam.
+    seedChunkDoc("chunk-blank", "parent-0", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    boolean didWork =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(
+                context(true, false, false, false, true, false))
+            .anyWorkDone();
+
+    assertTrue(didWork);
+    Map<String, Object> chunkState = fakeIndex.get("chunk-blank");
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_PENDING,
+        chunkState.get(SchemaFields.CHUNK_EMBEDDING_STATUS),
+        "a blank-content chunk must NOT be marked COMPLETED without a vector (tempdoc 717 P1)");
+    assertEquals(
+        "1",
+        chunkState.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT),
+        "the chunk is escalated via the retry-count seam instead");
+  }
+
+  @Test
+  @DisplayName(
+      "tempdoc 717 (P1): a persistently blank-content chunk reaches FAILED at max retries and stops"
+          + " being reselected")
+  void blankContentChunk_reachesFailedAtMaxRetries() {
+    seedChunkDoc("chunk-blank", "parent-0", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+
+    for (int cycle = 1; cycle < SchemaFields.EMBEDDING_MAX_RETRIES; cycle++) {
+      boolean didWork =
+          CombinedEnrichmentBackfillOps.processCombinedBackfill(
+                  context(true, false, false, false, true, false))
+              .anyWorkDone();
+      assertTrue(didWork, "cycle " + cycle + " should still find the pending chunk");
+      Map<String, Object> state = fakeIndex.get("chunk-blank");
+      assertEquals(String.valueOf(cycle), state.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+      assertEquals(
+          SchemaFields.EMBEDDING_STATUS_PENDING,
+          state.get(SchemaFields.CHUNK_EMBEDDING_STATUS),
+          "must not be FAILED before EMBEDDING_MAX_RETRIES");
+    }
+
+    // Final cycle: retry count reaches EMBEDDING_MAX_RETRIES -> FAILED (never COMPLETED).
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+            context(true, false, false, false, true, false))
+        .anyWorkDone();
+    Map<String, Object> state = fakeIndex.get("chunk-blank");
+    assertEquals(
+        String.valueOf(SchemaFields.EMBEDDING_MAX_RETRIES),
+        state.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+    assertEquals(
+        SchemaFields.EMBEDDING_STATUS_FAILED, state.get(SchemaFields.CHUNK_EMBEDDING_STATUS));
+
+    boolean ranAgain =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(
+                context(true, false, false, false, true, false))
+            .anyWorkDone();
+    assertFalse(ranAgain, "a FAILED chunk must not be re-selected for another attempt");
+  }
+
+  @Test
   @DisplayName("embedding failure increments retry count on the batched write (no status change)")
   void embeddingFailure_incrementsRetryCount_onSingleCycle() {
     seedDoc(

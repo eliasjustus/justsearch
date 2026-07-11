@@ -338,8 +338,10 @@ class IndexingLoopTest {
     }
 
     @Test
-    @DisplayName("deriveParentMetadata leaves token count null when SPLADE encoder is missing")
-    void deriveParentMetadataWithoutSpladeLeavesTokenCountNull() {
+    @DisplayName(
+        "deriveParentMetadata falls back to a token estimate when the SPLADE encoder is missing"
+            + " (tempdoc 717: never null → no short-corpus mis-classification)")
+    void deriveParentMetadataWithoutSpladeFallsBackToEstimate() {
       ExtractionResult extraction = new ExtractionResult("Alpha beta gamma", null, "text/plain");
 
       IndexingDocumentOps.ParentIndexMetadata metadata =
@@ -349,7 +351,15 @@ class IndexingLoopTest {
               null,
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class));
 
-      assertNull(metadata.parentTokenCount(), "missing SPLADE encoder should omit parent_token_count");
+      // Tempdoc 717: a missing SPLADE encoder (the fresh-build startup race) must NOT leave
+      // parent_token_count null — that fed the corpus-profile classifier a 0 median and
+      // mis-classified long corpora as "short", silently skipping the chunk_merge leg. It now falls
+      // back to the always-available character estimate; the exact SPLADE count is still used when
+      // the encoder is ready (see deriveParentMetadataUsesSpladeTokenCount above).
+      assertNotNull(
+          metadata.parentTokenCount(), "missing SPLADE must not omit parent_token_count");
+      // "Alpha beta gamma" = 16 chars → chars/3 estimate = 5.
+      assertEquals(5L, metadata.parentTokenCount());
     }
 
     @Test
