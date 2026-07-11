@@ -247,6 +247,10 @@ provenance note above). No cc/encoder ablation pass has been run yet.
 revives the dense leg 5.0× at shipped defaults (0.060→0.2967; 0.3401 with a 6144MB embed arena —
 the residual gap is ~20 near-8k-token docs OOM-falling-back to windowed at the 3072 default). See
 F-031. Union-recall 0.890 (> the 0.87 pin) on the same run; leak + relevance gates green.
+**Note (712, 2026-07-11):** the `splade` rows (0.059/0.0591) are substantially a 512-token
+truncation artifact — offline, per-chunk SPLADE covering the whole doc revives the sparse leg to
+0.327 (max-pool merge) / 0.545 (chunk-MaxP), the sparse sibling of F-031/F-032. See F-033 + Q-017.
+No engine-integrated chunk-splade row exists yet.
 
 ### mixed/miracl-de-2k
 
@@ -666,6 +670,33 @@ above)*
   legal-clerc block above.
 - **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
   vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
+
+### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
+
+- **Answer:** production SPLADE hard-truncates every document to `maxSeqLen=512` tokens
+  (`SpladeEncoder.encode`/batch paths: `seqLen = min(len, maxSeqLen)`; the `SpladeTruncationEvidence`
+  sidecar only *records* the loss, never windows). On legal-clerc-200, 194/198 docs exceed 512
+  tokens (median 6,615 → the encoder sees ~7.7% of the median case doc). An offline A/B on the
+  **byte-identical** corpus (corpus.jsonl sha256 `630f5376…`, same as F-032) using the
+  production-shipped ONNX model (`models/splade/naver-splade-v3` = opensearch-neural-sparse-encoding-
+  multilingual-v1) measured: **A truncated whole-doc nDCG@10 0.0539** (reproduces the shipped
+  splade-mode 0.0591 — fidelity anchor), **B per-term max-pool chunk-merge 0.3274 (6.1×)**,
+  **B chunk-level MaxP 0.5445 (10.1×)**. Recall drives it: R@10 0.14→0.775, R@100 0.69→0.945.
+  Anti-dilution signature: `sum`-merge (0.089) ≪ `max`-merge — the relevant terms are in *some*
+  chunk, not diluted across all. Per-query B beats A 104–15 (max) / 154–6 (MaxP).
+- **Refines F-030(678):** 678's granularity arm was a product-RAG A/B on dense+BM25 chunks and
+  never measured chunk-level SPLADE, so its "encoder-domain mismatch at any granularity" verdict did
+  not cover this. The multilingual SPLADE encoder *does* separate legal content at chunk
+  granularity; the deadness was representation (truncation). Consistent with the dense sibling
+  (chunk-CLS MaxP 0.64, 691 §M). The residual gap (sparse chunk-MaxP 0.545 vs lexical 0.686) stays
+  with the encoder-domain question (708's lane).
+- **Caveat (offline ceiling):** B numbers are offline exact-retrieval ceilings (no ANN / Lucene
+  saturation / fusion), same treatment as the dense 0.64 datapoint; the load-bearing result is the
+  **A/B delta**. The engine-integrated number is unmeasured (see Q-017).
+- **Reproduction:** `PYTHONUTF8=1 python scripts/jseval/experiments/splade_chunk_truncation_check_712.py
+  --dataset-dir datasets/mixed/legal-clerc-200 --model-dir <models>/splade/naver-splade-v3
+  --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
+  Evidence: tempdoc 712 §Takeover experiment.
 
 ### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
@@ -1351,6 +1382,26 @@ above)*
   639 (candidate-set integrity / ANN recall, stub) owns the ANN-recall sub-question and should not be
   forked — a diagnosis pass here should attribute the collapse before 639 or a new doc claims the fix.
   F-023/F-025's staged-recall instrumentation (leg-recall decomposition) is the ready-made diagnostic.
+- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
+  mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
+  SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
+  domain. The dense half stands as F-031/F-032 scoped it.
+
+### Q-017: Does the offline chunk-SPLADE revival (F-033) hold once integrated into the live engine (ANN + Lucene FeatureField saturation + fusion), and at what enrichment cost? → OPEN (tempdoc 712)
+
+- **Question:** F-033 measured, offline, that per-chunk SPLADE lifts legal-clerc-200 sparse nDCG@10
+  from 0.054 (production-mirror truncated) to 0.327 (max-pool doc-merge) / 0.545 (chunk-MaxP). Those
+  are exact-retrieval ceilings. Does the engine-integrated `chunk_splade` leg (a new non-stored
+  FeatureField on chunk docs, fused via the existing `chunk_merge`) realize a comparable gain in
+  `splade` and `hybrid` mode against live gates, and what is the enrichment-throughput cost of the
+  ~19× SPLADE forward-pass multiplier once amortized over already-enriched chunk docs?
+- **Why it matters:** it is the truth-tier confirmation of F-033 (`static-green ≠ live-working`) and
+  the go/no-go for shipping the sparse chunk leg. It also decides whether the parent whole-doc
+  `splade` encode on chunked docs still earns its place (teardown candidate).
+- **Cheapest evidence:** the tempdoc 712 §Implementation-plan step 4 — `jseval run --start-backend
+  --clean` on legal-clerc-200 with the chunk-splade flag on vs off. Prereq: the field + producer +
+  fusion (712 plan steps 1–3), which is why this is OPEN not ANSWERED.
+- **Design/plan:** tempdoc 712 (designed; implementation awaiting founder approval).
 - **Suggested approach:** run the staged-recall/leg-recall decomposition on legal-clerc; inspect
   whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
   compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
