@@ -188,6 +188,22 @@ vs the 2000-char floor).
 
 ### E5-D RESULTS — chunk-granularity probe (2026-07-10, same session)
 
+> **CORRECTION (2026-07-11, tempdoc 708 closure; measurement-authority annotation — original text
+> below kept intact per register convention):** this probe unknowingly ran against an index whose
+> chunk vectors had ALL been silently destroyed post-write — F-032 (tempdoc 711, PR #139): at that
+> HEAD, `WritePathOps.readModifyWrite` erased every non-stored field on rewrite, and a live probe
+> at base `f12ded5` measured **`chunk_vector` = 0 of 4,293 present** on this exact corpus. The
+> "chunk-hybrid" arm therefore had no dense chunk vectors to use, and finding (1) below — "dense
+> adds only +3.0 points even at chunk granularity — granularity alone is not the recovery lever" —
+> is an artifact of the RMW bug, NOT evidence about granularity. The corrected picture (tempdoc
+> 708 offline bake-off + F-031/F-032): the same incumbent encoder at chunk granularity reaches
+> **R@10 0.855 / nDCG@10 0.643 offline (chunk-MaxP, exact-NN)**, and shipped defaults post-fix
+> measure legal `vector` nDCG@10 **0.6180** (F-032) — granularity (plus the F-031 single-pass
+> whole-doc construction) WAS the recovery lever. Finding (2) (the lexical RAG surface's 0.68
+> gold-in-context) is unaffected — its arm used BM25 chunks only. The "encoder-domain mismatch"
+> attribution this section fed into F-030(678) is superseded in mechanism — see the F-030(678)
+> refinement note in `docs/reference/search-quality-register.md`.
+
 **Corpus stats (mechanical):** CLERC docs are extreme-length — median 28,487 chars, mean 35,508,
 p75 46,186, max 129,915; 97% exceed the 2,000-char chunking floor; 44% exceed 32k chars. The
 whole-doc mean-pooled vector averages over ~30k chars — maximal dilution conditions.
