@@ -86,8 +86,11 @@ legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
 tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
 
 **Cross-run noise vs signal** — before flagging a nDCG@10 change as a
-regression, consult the cohort envelope: `<data_dir>/cohort_baselines/
-<hash>/envelope.json` gives σ per metric (tempdoc 400 LR1-b). Deltas
+regression, consult the cohort envelope: `scripts/jseval/tmp/
+cohort_baselines/<hash>/envelope.json` — the jseval-owned data root where
+calibration state is filed since tempdoc 716 (readers fall back to a
+pre-716 backend data dir with a WARN) — gives σ per metric (tempdoc 400
+LR1-b). Deltas
 inside ±2σ are noise. For encoder-level latency distribution drift
 (different question — "did ORT session.run() durations shift even
 without a nDCG change?"), use `jseval calibrate-drift-baseline` + the

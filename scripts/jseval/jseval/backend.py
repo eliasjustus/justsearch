@@ -90,15 +90,14 @@ def start_backend(
         raise FileNotFoundError(f"{gradlew_name} not found at {gradlew}")
 
     if clean and resolved_data.is_dir():
-        # Tempdoc 400 Phase 3: preserve cohort_baselines/ (envelope +
-        # span_distributions facets) and non_determinism_envelopes/
-        # (legacy Phase-2 sidecars) across --clean so long-term
-        # calibration survives ingest resets. Everything else in the
-        # data dir is index/queue/telemetry state that --clean is
-        # meant to wipe.
-        log.info("Cleaning data directory: %s (preserving cohort_baselines/, non_determinism_envelopes/)", resolved_data)
-        _protected = {"cohort_baselines", "non_determinism_envelopes"}
-        _clean_data_dir(resolved_data, protected=_protected)
+        # Tempdoc 716: nothing durable lives in the backend data dir anymore —
+        # calibration state (cohort_baselines/, non_determinism_envelopes/) is
+        # filed under the jseval-owned data root (_paths.DEFAULT_JSEVAL_DATA_DIR),
+        # so the tempdoc-400 protected-set carve-out is retired and --clean
+        # wipes the whole dir. Fail-closed semantics (verify + orphan sweep +
+        # hard error on survivors, tempdoc 711 item 4) are unchanged.
+        log.info("Cleaning data directory: %s", resolved_data)
+        _clean_data_dir(resolved_data)
 
     env = os.environ.copy()
     env["JUSTSEARCH_DATA_DIR"] = str(resolved_data)
@@ -168,18 +167,17 @@ def start_backend(
     return BackendInfo(proc=proc, data_dir=resolved_data)
 
 
-def _attempt_wipe(resolved_data: Path, protected: set[str]) -> list[Path]:
-    """Delete every non-protected top-level entry of resolved_data.
+def _attempt_wipe(resolved_data: Path) -> list[Path]:
+    """Delete every top-level entry of resolved_data.
 
     Returns the children that failed to delete instead of swallowing the
     error — tempdoc 711 item 4's root cause was a bare ``except OSError:
     pass`` here, which let a Worker holding index/ open produce a silent
-    no-op wipe.
+    no-op wipe. (The tempdoc-400 protected-set parameter is retired —
+    tempdoc 716: calibration state no longer lives in this dir.)
     """
     failures: list[Path] = []
     for child in resolved_data.iterdir():
-        if child.name in protected:
-            continue
         try:
             if child.is_dir():
                 shutil.rmtree(child)
@@ -191,15 +189,15 @@ def _attempt_wipe(resolved_data: Path, protected: set[str]) -> list[Path]:
     return failures
 
 
-def _clean_data_dir(resolved_data: Path, *, protected: set[str]) -> None:
-    """Wipe resolved_data (except top-level ``protected`` entries), failing CLOSED.
+def _clean_data_dir(resolved_data: Path) -> None:
+    """Wipe resolved_data entirely, failing CLOSED.
 
     Tempdoc 711 item 4: attempts every deletion and collects failures rather
     than swallowing them. On any failure, runs the orphan-Worker sweep (the
     Worker JVM has been observed to survive the Head's process-tree kill —
-    see ``_sweep_orphan_worker``) and retries. If a non-protected entry still
-    exists afterward, raises rather than letting the caller proceed on a
-    dirty data dir — the log line "Cleaning data directory..." must only be
+    see ``_sweep_orphan_worker``) and retries. If an entry still exists
+    afterward, raises rather than letting the caller proceed on a dirty
+    data dir — the log line "Cleaning data directory..." must only be
     followed by a run when the postcondition actually holds.
     """
     # Capture forensics for a lock-file-identified orphan BEFORE any deletion
@@ -214,7 +212,7 @@ def _clean_data_dir(resolved_data: Path, *, protected: set[str]) -> None:
     if precheck is not None:
         _log_worker_forensics(precheck[0], precheck[1], resolved_data)
 
-    failures = _attempt_wipe(resolved_data, protected)
+    failures = _attempt_wipe(resolved_data)
     swept: list[tuple[int, list[str]]] = []
 
     if failures:
@@ -226,11 +224,9 @@ def _clean_data_dir(resolved_data: Path, *, protected: set[str]) -> None:
         swept = _sweep_orphan_worker(resolved_data)
         if precheck is not None and not any(pid == precheck[0] for pid, _ in swept):
             swept.append(precheck)
-        failures = _attempt_wipe(resolved_data, protected)
+        failures = _attempt_wipe(resolved_data)
 
-    survivors = sorted(
-        child.name for child in resolved_data.iterdir() if child.name not in protected
-    )
+    survivors = sorted(child.name for child in resolved_data.iterdir())
     if survivors:
         holder = ""
         if swept:

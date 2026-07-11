@@ -8,11 +8,14 @@ import logging
 
 import click
 
+from .._paths import DEFAULT_JSEVAL_DATA_DIR
+
 log = logging.getLogger(__name__)
 
 
 @click.command("gate")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing cohort_baselines/ + eval-results/.")
 @click.option("--baseline-stdev", required=True, type=float,
               help="Reference stdev(nDCG@10) from B2 calibration (gate threshold).")
@@ -61,7 +64,8 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
 
 
 @click.command("relevance-gate")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (the latest run's summary.json is checked).")
 @click.option("--dataset", required=True,
               help="Dataset slug to gate (e.g. beir/scifact).")
@@ -121,7 +125,8 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
 
 
 @click.command("perf-gate")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (the latest run's summary.json is checked).")
 @click.option("--dataset", required=True,
               help="Dataset slug to gate (e.g. beir/scifact).")
@@ -234,7 +239,8 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
 
 
 @click.command("leak-gate")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (the latest run's projection is checked).")
 @click.option("--dataset", required=True,
               help="Dataset slug to gate (e.g. mixed/enron-qa).")
@@ -294,7 +300,8 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
 
 
 @click.command("union-recall-gate")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (the latest run's projection is checked).")
 @click.option("--dataset", required=True,
               help="Dataset slug to gate (e.g. mixed/enron-qa).")
@@ -397,7 +404,8 @@ def cmd_llm_gate(ctx, bench_file, baselines, report_out, update_baseline):
 
 
 @click.command("leak-gate-derive")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (each dataset's latest run projection is read).")
 @click.option("--datasets", required=True, help="Comma-separated dataset slugs to pin (e.g. beir/scifact,mixed/enron-qa).")
 @click.option("--out", type=click.Path(), default=None,
@@ -485,7 +493,8 @@ def cmd_leak_gate_derive(ctx, data_dir, datasets, out, tolerance):
 
 
 @click.command("union-recall-gate-derive")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (each dataset's latest run projection is read).")
 @click.option("--datasets", required=True, help="Comma-separated dataset slugs to pin (e.g. beir/scifact,mixed/enron-qa).")
 @click.option("--out", type=click.Path(), default=None,
@@ -804,7 +813,8 @@ def cmd_changeset_new(ctx, gate, dataset, tempdoc, reason, changesets_dir):
 
 
 @click.command("recall-profile")
-@click.option("--data-dir", required=True, type=click.Path(exists=True, resolve_path=True),
+@click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
+              show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
               help="Data dir containing eval-results/ (the latest run per dataset is re-produced).")
 @click.option("--datasets", required=True, help="Comma-separated dataset slugs (e.g. scifact,mixed/enron-qa).")
 @click.option("--report-out", type=click.Path(), default=None, help="Write the full profile JSON here.")
