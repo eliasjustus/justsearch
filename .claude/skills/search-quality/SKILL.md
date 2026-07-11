@@ -604,7 +604,10 @@ above)*
   (5.7×)**, hybrid 0.523→0.5497, union-recall 0.890 (> the 0.87 pin), leak + relevance gates green.
   Controls: enron-qa +7% vector / +1.3% hybrid (no BM25-dominant regression); scifact neutral.
   **Default ON since 691 Phase 4** (D-004 template completed). Measured cost: background enrichment
-  slower on long-doc corpora (enron 7.7→4.5 docs/s at the 3072MB default arena).
+  slower on long-doc corpora (enron 7.7→4.5 docs/s, measured at a 3072MB arena). **Update
+  2026-07-11 (founder decision): the embed arena default is now 6144MB** — shipped defaults
+  deliver the full 0.3401 ceiling with zero OOM-fallbacks; the 0.2967 row documents the
+  3072-arena ablation.
 - **Scope reconciliation with F-030(678):** 678's elimination campaign tested gating, query shape,
   granularity, and naturalness — context length was NOT a tested axis. This finding does not
   overturn the encoder-domain-mismatch verdict; it SPLITS the deficit: roughly half the dense death

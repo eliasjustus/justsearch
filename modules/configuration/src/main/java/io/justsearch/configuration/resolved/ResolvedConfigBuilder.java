@@ -1041,16 +1041,19 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.embed.backend", "auto"),
         resolveEmbedGpuEnabled(),
         resolveInt("justsearch.embed.gpu.device_id", 0),
-        // 391/E-J-N8: raised from 2048 → 3072 to accommodate
-        // gte-multilingual-base (628 MB FP16, post-358) activations —
-        // 2048 MB fragments under the larger MLP intermediate tensors
-        // (10 BFCArena failures observed in 391's 2026-04-19 re-measurement).
+        // History: 2048 → 3072 (391/E-J-N8: gte-multilingual-base FP16 MLP activations
+        // fragmented 2048); 3072 → 6144 (691 §N / F-031, founder decision 2026-07-11: the
+        // default-on batch-1 long-doc single-pass (≤8192 tokens) fragments a 3072 arena —
+        // ~20 OOM-fallbacks on legal-clerc, 33 double-pays on enron; 6144 measured zero-OOM
+        // and recovers vector nDCG@10 0.2967 → 0.3401. Caps are per-session budgets, not
+        // pre-allocations (F-010); GPU mutual exclusion + arena shrinkage + windowed fallback
+        // keep smaller-VRAM boxes degrading gracefully).
         // This is the single source of truth for the embed GPU arena limit — EmbeddingConfig.from
         // reads justsearch.embed.gpu_mem_mb via ai().embedding().gpuMemMb() directly, with no
         // other compiled-in default to keep in sync (the dead "OnnxEmbeddingEncoder.
         // DEFAULT_GPU_MEM_MB" pointer this comment used to carry no longer resolves to any
         // constant in that class).
-        resolveInt("justsearch.embed.gpu_mem_mb", 3072),
+        resolveInt("justsearch.embed.gpu_mem_mb", 6144),
         contextLength,
         // Tempdoc 691 Phase 4: long-doc single-pass VECTOR — DEFAULT ON since §Phase N
         // (default-off → measured → default-on; gates green, see 691 §N-6/N-7).
