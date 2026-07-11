@@ -34,20 +34,38 @@ def _resolve_repo_root() -> Path:
         if candidate.is_dir():
             return candidate
 
-    module_root = Path(__file__).resolve().parents[3]
+    cwd_root = cwd_checkout_root()
+    if cwd_root is not None:
+        return cwd_root
 
-    # Walk up from CWD looking for a .git entry (file = worktree, dir = repo).
+    return module_checkout_root()
+
+
+def module_checkout_root() -> Path:
+    """The checkout root the *imported* jseval package lives in.
+
+    This is fixed at import-resolution time (editable install / PYTHONPATH),
+    independent of CWD — the other half of the tempdoc-716 cross-checkout
+    check in ``jseval.cli``.
+    """
+    return Path(__file__).resolve().parents[3]
+
+
+def cwd_checkout_root() -> Path | None:
+    """The JustSearch checkout root containing CWD, or None.
+
+    Walks up from CWD looking for a ``.git`` entry (file = worktree,
+    dir = repo). Sanity-check: an unrelated git repo elsewhere on disk
+    shouldn't claim ownership — require a ``scripts/jseval`` peer directory
+    so we only match when CWD looks like a JustSearch checkout.
+    """
     cwd = Path.cwd().resolve()
     for ancestor in (cwd, *cwd.parents):
         if (ancestor / ".git").exists():
-            # Sanity-check: an unrelated git repo elsewhere on disk shouldn't
-            # claim ownership. Require a `scripts/jseval` peer directory so
-            # we only redirect when CWD looks like a JustSearch checkout.
             if (ancestor / "scripts" / "jseval").is_dir():
                 return ancestor
-            break  # found a .git but not JustSearch — fall through to module_root
-
-    return module_root
+            break  # found a .git but not JustSearch
+    return None
 
 
 REPO_ROOT: Path = _resolve_repo_root()
