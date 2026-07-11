@@ -176,8 +176,8 @@ class RmwFieldPreservationTest {
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
               { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
-              { "id": "splade", "type": "splade", "stored": false, "docValues": false },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" },
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;

@@ -575,7 +575,7 @@ class PathUpdateIntegrationTest {
               { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """
@@ -605,7 +605,7 @@ class PathUpdateIntegrationTest {
               { "id": "embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "ner_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "multiValued": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;

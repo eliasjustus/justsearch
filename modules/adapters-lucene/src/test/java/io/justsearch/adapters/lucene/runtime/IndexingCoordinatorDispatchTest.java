@@ -202,7 +202,7 @@ class IndexingCoordinatorDispatchTest {
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "splade_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "splade_retry_count", "type": "long", "stored": true, "docValues": true },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;

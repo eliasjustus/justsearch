@@ -537,7 +537,7 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
               { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
               { "id": "title", "type": "%s", "stored": true, "docValues": %s },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """

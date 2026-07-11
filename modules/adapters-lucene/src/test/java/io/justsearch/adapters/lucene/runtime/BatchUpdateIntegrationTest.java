@@ -698,7 +698,7 @@ class BatchUpdateIntegrationTest {
               { "id": "path", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "splade_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
@@ -728,7 +728,7 @@ class BatchUpdateIntegrationTest {
               { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
               { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
@@ -760,7 +760,7 @@ class BatchUpdateIntegrationTest {
               { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
               { "id": "field_a", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "field_b", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
