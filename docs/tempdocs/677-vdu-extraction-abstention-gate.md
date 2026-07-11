@@ -174,3 +174,32 @@ calibration: the noise image produced REFUSAL-shaped output, not the fluent conf
 doc's defect exhibits — thresholds must be calibrated on `golden/synth-scan-v1` (known ~100%
 fluent-confabulation) vs legible real scans, not on refusal cases. Probe scripts in the session
 scratchpad; numbers above are the durable record.
+
+## Implementation log (2026-07-11, worktree impl-677)
+
+Slices, each committed separately on this branch:
+- **Step 0 (probe)**: mmproj logprobs confirmed (§Probe result above).
+- **S2-core**: `VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT` + `VDU_STATUS_REJECTED` + worker
+  branch retaining baseline (no overwrite/re-embed/re-chunk; evidence in vdu_enrichment).
+  Regression: fabricated non-blank text cannot reach the index.
+- **S1**: `visionCompletionDetailed` → `VisionCompletionResult(content, finishReason,
+  tokenCount, meanLogprob, lowConfidenceFraction)`; logprobs requested for the vision path ONLY
+  (scope-isolation test); per-token arrays reduced then discarded.
+- **S3**: `ImageLegibility` (Laplacian variance + RMS contrast, 512px-bounded, conjunctive
+  floors) — standalone, calibration-free.
+- **S2-wire** (in flight): `VduAbstentionGate` stages 0+1 wired into VduProcessor/
+  VduBatchProcessor; PROVISIONAL thresholds pending calibration.
+
+**Design refinement vs the original sketch (recorded, not silent):** Stage-0 pre-call skips use
+the same `REJECTED` status as post-call output rejection — the gate evidence's `stage` field
+(`input_legibility` vs `logprob`) carries the distinction. Rationale: `REJECTED` = "the
+abstention gate stopped this (before or after the call)"; `COMPLETED_EMPTY` keeps its
+established meaning "the model itself found nothing". One honest umbrella beats a third status
+value's wire/FE ripple. Additional S2-wire decisions: partial-legibility documents still send
+their legible pages; pass-2 enrichment is skipped for rejected documents (never summarize
+suspect text); truncation (finish_reason=length) alone does not reject.
+
+**Remaining after S2-wire:** FE provenance cases (COMPLETED_EMPTY fall-through fix + REJECTED),
+Stage-2 agreement probe (seed-varied re-extraction, ambiguous band only), threshold calibration
+on golden/synth-scan-v1 vs legible realdocs scans (thresholds are PROVISIONAL until then), and
+the live-stack pass (static-green ≠ live-working).
