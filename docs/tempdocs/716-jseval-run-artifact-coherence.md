@@ -752,3 +752,42 @@ Orchestrator approved the plan with two riders; both implemented. Commits: `00d1
 `_protected` set + threading: gone. `release.py` ad hoc `.parent` default: replaced by the
 shared constant. `cmd_calibrate` "Override JUSTSEARCH_DATA_DIR" help: rewritten. All five named
 doc surfaces updated; CLAUDE.md row rewritten.
+
+### Live pre-publish check (2026-07-11, GPU slot assigned — closes deferral #3)
+
+All commands from this worktree with `PYTHONPATH=<worktree>/scripts/jseval PYTHONUTF8=1`;
+worktree made runnable first (`npm ci` + `gradlew :modules:ui:installDist
+:modules:indexer-worker:installDist`, BUILD SUCCESSFUL).
+
+1. **Corpus substitution (named deviation):** the directive's `battlefield-en-v1` has no
+   committed source under `scripts/jseval/635-corpora/` (only `battlefield-en-scale-v1`,
+   2736 docs × 2500 words — the 691 throughput corpus, too heavy for a serial GPU slot).
+   Used the committed small corpus instead: `jseval corpus-build --source
+   635-corpora/needle-burial-v1 --name needle-burial-v1` → 280 docs / 20 queries. This
+   invocation is itself live proof of the Phase-4 check's no-false-positive path (matching
+   checkout → no refusal).
+2. **Defaults run:** `python -m jseval run --dataset golden/needle-burial-v1 --modes hybrid
+   --start-backend --clean --pipeline` with **no `--output-dir`** — exit 0; backend healthy in
+   8s; models auto-resolved from the main checkout (644); artifacts at
+   `scripts/jseval/tmp/eval-results/20260711T163008_golden_needle-burial-v1/` (summary.json,
+   manifest.json, projections/, telemetry NDJSON — the run.py worker-data-dir default landed
+   the telemetry copy at defaults, as designed). Bonus live evidence: `stop_backend`'s
+   orphan sweep fired for real — `WARNING jseval.backend: Killing orphan Worker PID=37784` —
+   the 711 sweep catching an actual surviving Worker in this very run.
+3. **Gate compose (the Tax-1 repro, observations.md:1933):** `python -m jseval relevance-gate
+   --dataset golden/needle-burial-v1 --report-out tmp/716-live-gate-report.json` with **no
+   `--data-dir`/`--run-dir`** — exit 0; report `run_dir` =
+   `...\scripts\jseval\tmp\eval-results\20260711T163008_golden_needle-burial-v1` (run
+   DISCOVERED via the new default), domain outcome `baseline-pinned: skip` (un-pinned golden
+   dataset). The pre-716 failure mode `"no eval-results run with summary.json"` did not occur.
+4. **Legacy-fallback WARN (migration rider, live):** planted an old-layout envelope at
+   `tmp/headless-eval-data/cohort_baselines/716-live-fixture/envelope.json`, then
+   `python -m jseval recalibrate-nightly-baseline --cohort-hash 716-live-fixture` with **no
+   `--data-dir`** — the deprecation WARN fired naming the exact legacy path, the value
+   resolved (`PHASE3_BASELINE_NDCG10_STDEV=0.00123`), exit 0. Fixture removed after.
+5. **Shutdown verified:** port 33221 free, zero `java.exe` with `headless-eval-data` on the
+   command line, `nvidia-smi` compute list back to desktop baseline (no java/llama/gradle).
+
+Result: the run→gate defaults compose end-to-end live, the migration fallback works against a
+real old-layout fixture, and 711's fail-closed sweep demonstrated live during teardown.
+Deferral #3 is closed; no code changes were needed as a result of the live check.
