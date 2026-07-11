@@ -658,6 +658,45 @@ above)*
 - **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
   vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
 
+### F-033: offline encoder bake-off on legal-clerc-200 — NO MODEL SWAP; the incumbent was never domain-limited, and no eligible multilingual candidate significantly beats it (tempdoc 708, 2026-07-11; closes the encoder-choice question F-030(678) spawned)
+
+- **Answer:** a Gate-0-anchored offline exact-NN bake-off (42 runs, byte-identical register corpus
+  `90d4300d…baf1`, harness `scripts/jseval/experiments/encoder_bakeoff_708.py`, run JSONs with
+  per-query gold ranks in the 708 worktree's `tmp/eval-results/708-bakeoff/`) screened 6 eligible
+  general-multilingual encoders (D-003-screened, Apache/MIT: Qwen3-Embedding-0.6B,
+  arctic-embed-{m,l}-v2.0, bge-m3, multilingual-e5-large, granite-278m) against the incumbent
+  `gte-multilingual-base` across three doc-side constructions (W1 production-mirror window-mean /
+  W2 single-pass long-context / C chunk-MaxP 500-50) × two query shapes (verbose, kw). **Gate 0
+  PASSED** — the harness reproduces the engine's F-030(678) dense numbers to Δ0.005 (W1 0.105/0.150
+  vs engine 0.100/0.145; nDCG 0.061 ≈ vector-mode 0.060), so deltas are engine-meaningful.
+  **Verdict: NO MODEL SWAP.** The incumbent itself clears the pre-registered FIX band once the
+  production construction is bypassed (verbose R@10: W2@2048 0.655, W2@8192 0.745, chunk-MaxP
+  **0.855** = BM25-verbose parity, nDCG 0.643); at chunk granularity no candidate is significantly
+  better (paired sign tests vs anchor-C on per-query gold ranks: arctic-l 0.865/0.671, p=0.085;
+  arctic-m 0.860/0.659, p=0.488; bge-m3 0.860/0.639, p=1.0; me5 0.770; granite 0.715; arctic-l's
+  +0.028 nDCG costs ~2× footprint + ~1.7× encode slowdown). Branch FIX was realized by the
+  691/711 construction fixes (F-031 + F-032) — shipped legal vector nDCG@10 0.6180 captures ~96%
+  of the incumbent's offline chunk-granularity ceiling (0.643).
+- **Attribution completed (the anchor-fav control):** production W1's 0.105 is dominated by
+  **CLS-pooling raw id-slice windows without a [CLS] token** (windows 2+ in
+  `OnnxEmbeddingEncoder.createChunks`) — the same model, same window-mean construction, with proper
+  per-window special tokens scores **0.745** (= W2@8192). Mean-pool dilution and granularity account
+  for the rest (0.745 → 0.855). Logged for any residual >8192-token window-mean path.
+- **Secondary findings:** (1) **kw-shape queries are weak for dense across every model and
+  condition** (max R@10 0.400) — dense needs sentence-shaped queries; the dense-side mirror of
+  F-030(678)'s BM25-verbosity monotonicity. (2) SPLADE on legal remains unrecovered (0.0591 at
+  b88e76e) and was deliberately not reopened — the eligible multilingual learned-sparse field is
+  effectively one model deep. (3) License/eligibility record: jina-v3/v4 (CC-BY-NC/Qwen-Research),
+  voyage-law-2 + Isaacus Kanon 2 (legal-specialized, proprietary API) named-and-excluded per D-003.
+- **Conditions/caveats:** offline torch fp16 exact-NN screen, not engine runs (Gate 0 is the
+  bridge); 198-doc corpus (no 4k stress — Phase 5 re-scoped to nothing since no swap ships);
+  qwen3-0.6b W2/C skipped (founder-ratified: dominated at W1 0.530, ~6× slower, 60+ min W2 run
+  killed). Candidate C/W-conditions used per-model-favorable recipes (own prefixes/pooling, proper
+  special tokens) — biased FOR candidates, strengthening the no-swap conclusion.
+- **Evidence:** tempdoc 708 (final table, protocol application, sign tests, run pointers); F-030(678)
+  refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
+  was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
+
 ### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
@@ -676,6 +715,20 @@ above)*
 
 ### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
 
+- **REFINEMENT (2026-07-11, tempdoc 708 closure — original text below kept intact; annotate-don't-rewrite):**
+  the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-033: the
+  encoder (gte-multilingual-base) was never domain-limited on legal text. The dense death this finding
+  attributed to the representation decomposes into (a) **window-mean whole-doc construction dilution**
+  (F-031: one long-context pass lifts legal vector 5-6×, shipped default-on) and (b) **chunk vectors
+  silently destroyed post-write** (F-032: `chunk_vector` 0/4,293 present at the HEAD every pillar-5 probe
+  ran against; RMW-policy fix ships legal vector nDCG@10 0.6180). In particular, this finding's "chunk
+  granularity adds only +3.0 pts" clause is an **artifact of F-032** (the chunk-hybrid arm had zero chunk
+  vectors) — the corrected measurements are offline chunk-MaxP **R@10 0.855 / nDCG@10 0.643** with the
+  same incumbent encoder (708 bake-off, Gate-0-anchored) and shipped post-fix vector **0.6180** (F-032).
+  A dated correction annotation sits on tempdoc 678 §E5-D itself. What SURVIVES of this finding: the raw
+  measurements (accurate for that HEAD), the gate/fusion exoneration (702), the BM25-verbosity
+  monotonicity, the SPLADE profile (still unrecovered — splade 0.0591 at b88e76e), and the RAG-surface
+  product finding. The encoder-choice question it spawned (708) closed **NO MODEL SWAP** — see F-033.
 - **Answer:** a four-stage elimination campaign on `mixed/legal-clerc-200` (198 docs / 200 queries,
   fixed qrels throughout, all runs `comparable=True`, staged-recall reconciliation 0 mismatches)
   attributed F-029's dead semantic legs. Raw pre-fusion R@10 by query shape: dense **0.100**

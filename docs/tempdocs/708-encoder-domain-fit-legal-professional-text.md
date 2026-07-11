@@ -1,7 +1,7 @@
 ---
 title: "Encoder-domain fit on legal/professional text: can any locally-runnable multilingual embedding (and/or learned-sparse) model separate legal-shaped documents by content — the F-030 follow-up (dense R@10 ≤0.145 and SPLADE ≤0.165 at EVERY query shape and granularity on CLERC)"
 type: tempdocs
-status: "PAUSED for 691 coordination (founder directive 2026-07-10) — Gate 0 PASSED, 20-run partial screen recorded below (incumbent clears the FIX band once window-mean construction is removed: W2 0.745, chunk-MaxP 0.855 = lexical parity); NO Phase 5/6, NO register updates until post-691-merge rebase. Earlier same day: takeover→theorize→design→plan COMPLETE (verdict GO). Originally a STUB filed 2026-07-10 at founder request (NO implementation, NO model-swap shipping, NO spend beyond local compute without a separate go-ahead). Owner question spawned by F-030 (search-quality register) / tempdoc 678 §Final attribution verdict; named a new unowned piece in 704's pillar-5 resolution note."
+status: "CLOSED 2026-07-11 — VERDICT: NO MODEL SWAP. Bake-off complete (42 signature-bound runs, Gate 0 PASSED at delta 0.005): the incumbent gte-multilingual-base was never domain-limited — F-030(678)'s encoder-domain-mismatch verdict is superseded in mechanism by construction defects (F-031 window-mean/missing-CLS dilution + F-032 RMW chunk-vector destruction, both shipped fixed via 691/711); no eligible candidate significantly beats the incumbent at chunk granularity (sign tests p=0.085/0.488/1.0); shipped legal vector nDCG 0.6180 captures ~96% of the offline ceiling 0.643. Registers updated (F-033 + F-030 refinement + 678 E5-D correction + inference-runtime). Full pipeline history below (takeover GO -> theorize -> design -> plan -> execute -> 691-pause -> resume-close)."
 created: 2026-07-10
 author: agent (Fable orchestration), filed at founder direction after the pillar-5 attribution campaign closed
 category: search-quality / dense-retrieval / model-selection / inference-runtime
@@ -626,6 +626,91 @@ position embeddings — cap `max_len` at the model limit at resume, one-line fix
 - **Scratch kept intact for resume** (`tmp/708-bakeoff/`: venv + all 7 model snapshots, ~12 GB; datasets
   regenerated and signature-verified) — no teardown, no re-download needed. Result JSONs are the durable
   record regardless.
+
+### RESUMED + CLOSED (2026-07-11, founder go-ahead post-691/711 merge)
+
+**State absorbed at resume (read on disk):** origin/main merged (d1004a2); **F-031** (tempdoc 691,
+PR #131) shipped the single-pass long-doc whole-doc vector default-on — this doc's W2 construction is
+in production; **F-032** (tempdoc 711, PR #139) found ALL chunk vectors silently destroyed post-write
+at the HEAD every pillar-5 probe (and this doc's Gate-0 target) measured against (`chunk_vector`
+0/4,293 present; `WritePathOps.readModifyWrite` RMW bug, fixed via catalog-declared `rmwPolicy`);
+shipped legal `vector` nDCG@10 is now **0.6180**, hybrid 0.5592.
+
+**Screen completed at resume:** anchor-fav control, bge-m3, me5-large, granite-W1 refix (max_len cap),
+and arctic-m-v2 (two rescues: `trust_remote_code=True` recipe fix aa342c4, then `xformers` — the
+Snowflake mGTE remote code hard-requires it on CUDA; non-fatal triton warnings). **Founder-ratified
+skip, recorded per no-silent-caps:** qwen3-0.6b W2/C + `qwen3-0.6b-cite` DROPPED — dominated at W1
+(0.530 verbose), ~6× slower than siblings (1.35 docs/s), W2-verbose attempt killed after 60+ min.
+
+**FINAL RESULTS TABLE (42 runs, all corpus-signature-bound `90d4300d…baf1`; cells = R@10/R@100/nDCG@10,
+verbose | kw; docs/s = doc-side encode throughput at C, RTX 4070 fp16 torch; run JSONs
+`tmp/eval-results/708-bakeoff/`):**
+
+| Model (fp16) | W1 window-mean | W2 single-pass (native ctx) | C chunk-MaxP 500/50 | docs/s |
+|---|---|---|---|---|
+| **anchor = incumbent, prod recipe** (628 MB) | **0.105**/0.775/0.061 \| 0.150/0.625/0.069 | @2048: 0.655/0.935/0.468 \| 0.290/0.755/0.180 · @8192: **0.745**/0.955/0.526 \| 0.330/0.780/0.212 | **0.855**/0.975/**0.643** \| 0.335/0.805/0.223 | 9.7 |
+| anchor-fav (same model, proper per-window [CLS]/[SEP]) | **0.745**/0.950/0.558 \| 0.310/0.800/0.187 | — (covered by anchor) | — | 9.2 |
+| arctic-m-v2 (≈610 MB) | 0.775/0.950/0.580 \| 0.300/0.780/0.210 | @8192: 0.690/0.935/0.496 \| 0.300/0.785/0.191 | 0.860/0.970/0.659 \| 0.365/0.785/0.254 | 10.0 |
+| arctic-l-v2 (≈1.1 GB) | 0.790/0.960/0.590 \| 0.330/0.780/0.218 | @8192: 0.775/0.960/0.555 \| 0.350/0.765/0.236 | **0.865**/0.965/**0.671** \| 0.395/0.830/0.267 | 5.6 |
+| bge-m3 (≈1.1 GB) | 0.700/0.950/0.522 \| 0.280/0.750/0.178 | @8192: 0.650/0.930/0.499 \| 0.290/0.725/0.190 | 0.860/0.970/0.639 \| 0.330/0.780/0.210 | 6.2 |
+| me5-large (≈1.1 GB) | 0.655/0.905/0.460 \| 0.315/0.775/0.199 | @512: 0.430/0.845/0.297 \| 0.220/0.700/0.148 | 0.770/0.955/0.602 \| 0.400/0.800/0.255 | 6.0 |
+| granite-278m (≈556 MB) | 0.645/0.910/0.475 \| 0.235/0.745/0.160 | @512: 0.445/0.865/0.298 \| 0.245/0.675/0.157 | 0.715/0.955/0.512 \| 0.325/0.770/0.214 | 12.9 |
+| qwen3-0.6b (≈1.2 GB) | 0.530/0.890/0.377 \| 0.135/0.665/0.077 | skipped (ratified) | skipped (ratified) | 1.35 (W1) |
+
+**Attribution complete (anchor-fav landed):** production W1 0.105 → anchor-fav W1 **0.745** — the
+dominant defect in the production whole-doc vector was **CLS-pooling raw id-slice windows that lack a
+[CLS] token** (windows 2+, `OnnxEmbeddingEncoder.createChunks`), compounded by mean-pool dilution;
+with proper per-window special tokens the same window-mean construction equals single-pass W2@8192
+(0.745 = 0.745). Chunk granularity adds the rest (0.855). Residual >8192-token window-mean path logged
+to the observations inbox.
+
+### Phase 5 — RE-SCOPED TO NOTHING (founder directive at resume)
+
+No 4k stress, no multilingual non-inferiority screens: the FIX shipped via 691/711 as a
+*construction* change on the incumbent model (no model change → no multilingual regression surface;
+the incumbent already holds the register's MIRACL/scifact baselines). No candidate integration is on
+the table, so the survivor gates have no subject. The screen stands as a do-not-re-derive completeness
+record.
+
+### Phase 6 — VERDICT (pre-registered protocol applied to the full table)
+
+**NO MODEL SWAP.**
+1. **Gate 0:** PASSED (offline 0.105/0.150 vs engine 0.100/0.145; nDCG 0.061 ≈ 0.060).
+2. **FIX band (R@10 ≥ ~0.6 verbose):** cleared by the **incumbent itself** in every non-production
+   construction — W2@2048 0.655, W2@8192 0.745, chunk-MaxP 0.855 (= BM25-verbose parity), and even
+   window-mean-with-real-[CLS] 0.745. **Branch FIX was realized by construction fixes (F-031 + F-032),
+   not model choice**; shipped HEAD (legal vector nDCG 0.6180) captures ~96% of the incumbent's
+   offline chunk-granularity ceiling (0.643).
+3. **Candidate ordering — no significant winner:** paired sign tests on per-query gold ranks
+   (C-verbose vs anchor-C): arctic-l 58/40/102, **p=0.085 (n.s.)**; arctic-m 55/47/98, **p=0.488**;
+   bge-m3 57/56/87, **p=1.0**. arctic-l's +0.028 nDCG costs ~2× footprint (657 tier hit) + ~1.7×
+   slower encode; arctic-m (same size class, official ONNX) is statistically indistinguishable. No
+   margin clears swap costs (reindex, registry/tier updates, regression sweep, re-baselining).
+4. **The SCOPE branch is moot as formulated:** legal-shaped retrieval is NOT beyond locally-runnable
+   multilingual encoders — the incumbent handles it at the right construction/granularity. Surviving
+   scoped truths: **kw-shape queries are weak for dense across every model and condition** (max
+   0.400 — dense needs sentence-shaped queries; mirrors F-030's BM25-verbosity monotonicity), and
+   **SPLADE remains unrecovered on legal** (0.0591 shipped) — a separate representation question
+   deliberately not reopened (the eligible multilingual learned-sparse field is one model deep).
+5. **Register updates made:** F-033 (verdict + table pointer, search-quality); dated refinement note
+   on F-030(678); dated correction annotation on tempdoc 678 §E5-D (the "+3.0 pts at chunk
+   granularity" was an F-032 artifact — that probe's chunk-hybrid arm had zero chunk vectors);
+   inference-runtime register F-014 (screen footprint/throughput + the xformers/CLS-artifact runtime
+   notes). Residual fusion gap (hybrid 0.5592 vs lexical 0.6891) routed to the observations inbox —
+   out of 708 scope.
+
+### 691/711 reconciliation — realized (updated from "presumptive", 2026-07-11)
+
+The §691-coordination section above wrote "691 is the presumptive vehicle for Branch FIX" — now
+**realized and shipped**: F-031 (single-pass whole-doc vector, default-on) is the W2 construction this
+screen validated offline before 691 merged; F-032 (RMW preservation) unlocked the chunk-granularity
+quality this screen measured as the offline ceiling. The offline→engine agreement (0.643 offline
+C-MaxP nDCG vs 0.6180 shipped vector-mode) is the first confirmation datapoint for the
+"offline representation screen before engine integration" principle named in §Reach.
+
+**Teardown:** `tmp/708-bakeoff/` scratch (venv + model snapshots + local-models, ~16 GB) deleted at
+closure; result JSONs (`tmp/eval-results/708-bakeoff/`, 43 files incl. smoke) and the committed
+harness kept.
 
 ### Open founder decisions this plan surfaces
 
