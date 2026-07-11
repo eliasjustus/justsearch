@@ -388,3 +388,84 @@ with orchestrator review per chunk. Nothing here needs haiku.
 
 Implementation must branch from current `main` (this design was authored in the stale
 `691-takeover` worktree; the Wave-2 resolver classes live on main, not here).
+
+## §Item 1 implementation log (2026-07-11)
+
+Implemented on branch `worktree-711-rmw` off `origin/main` f12ded5. Five commits, each
+green (compile + affected module tests): Step 0 characterization, Step 1 catalog+schema,
+Step 2 parse+validate, Steps 3–5 engine+teardown+tests.
+
+### Step-0 finding (the data-loss truth, empirically confirmed)
+
+Both silent-loss bugs reproduce against pre-engine `main` (green characterization tests,
+then flipped):
+- **(a) vector destruction** — a NER-style RMW (`updates = entity_persons_raw` only) on a
+  vector-bearing doc drops the vector: after the RMW `searchVector` returns the doc **0**
+  times (it had 1 hit before).
+- **(b) second silent-loss bug, CONFIRMED** — with `preserveSplade=true`, a doc holding
+  SPLADE FeatureField data **and** `splade_status=COMPLETED` loses the FeatureField data
+  (a `FeatureField.newSaturationQuery` count goes 1 → **0**) while `splade_status` **stays
+  COMPLETED**. The doc thus claims to be SPLADE-encoded but carries zero SPLADE postings.
+  This is now fixed: the reset-status lane downgrades COMPLETED → PENDING whenever the
+  `splade` field is absent from the update map, forcing a re-encode (data still can't be
+  re-read, but the status no longer lies).
+
+### What changed
+
+- **Catalog + schema**: `rmwPolicy` (string, `preserve-reread` | `reset-status:<statusFieldId>`)
+  added to `field-catalog.schema.json` (pattern-constrained) and to both `fields.v1.json`
+  copies: `vector`/`chunk_vector` → `preserve-reread`, `splade` → `reset-status:splade_status`.
+  Manifest regenerated; ssot-catalog-sync deep-equal holds.
+- **Parse + fail-fast**: `FieldCatalogDef.FieldDef` and `FieldMapper.FieldDef` carry
+  `rmwPolicy`; `FieldMapper.validateRmwPolicies()` (wired next to `validatePrimaryKeySupport`
+  in `ComponentsFactory`) requires every non-stored/non-docValues `vector`/`splade` field to
+  declare a parseable policy, requires a `reset-status` target to exist and be docValues-backed,
+  and forbids a policy on any stored/docValues (non-fragile) field. Unknown policy → ISE.
+- **Engine** (`WritePathOps.readModifyWrite` → `applyRmwPolicies`): for each catalog field with
+  an `rmwPolicy` absent from the caller's updates — `preserve-reread` re-reads the float vector
+  (Lucene 10.4 ordinal read-back, derisk E1; defensive `.clone()`) and carries it forward
+  (null ⇒ vectorless doc ⇒ no-op); `reset-status` drives the status field
+  (COMPLETED|missing → PENDING + retry reset; FAILED/non-terminal preserved; caller status wins).
+  The bespoke SPLADE restore/reset/safety-net block was deleted.
+- **Teardown**: `preserveSplade` removed from `IndexWriteOperation` records,
+  `IndexingCoordinator`, and `WritePathOps` (collapsed to 2-arg); all **17** literal-`true`
+  caller sites updated. `grep preserveSplade` over `src/main` = **0** (over `src/test` = 0 too).
+  `updateDocumentPaths`' vector/NER loss-compensation resets (`EMBEDDING_STATUS`/`NER_STATUS`
+  =PENDING + retry) removed — a move preserves the vector and the stored NER fields.
+
+### Tests (all green)
+
+- New `RmwFieldPreservationTest` (**8**): vector survives NER-style RMW; vector survives
+  VDU-only RMW; missing-vector RMW no-op; same-doc-twice-in-one-batch preserves vector;
+  SPLADE-drop → status downgrade; chunk_vector survives; startup fail-fast rejects an
+  undeclared fragile field; startup fail-fast rejects a non-docValues reset-status target.
+  Vector assertions are bit-exact (`assertArrayEquals`) via a low-level float-vector read-back.
+- `BatchUpdateIntegrationTest`: the 6 `preserveSplade` tests rewritten to the reset-status
+  semantics (COMPLETED→PENDING downgrade single + batch, FAILED preserved, non-terminal PENDING
+  preserved, caller-override wins, missing→PENDING heal); catalog gained a `splade` field so the
+  lane fires; race test de-`preserveSplade`d.
+- `PathUpdateIntegrationTest`: the 3 loss-compensation tests **flipped** to the preserve
+  contract (embedding/chunk-embedding stay COMPLETED; ner_status not reset) and renamed —
+  design-mandated (the resets were removed), not a weakening.
+- Mock/signature updates: `NerBackfillOpsTest`, `EmbeddingBackfillOpsTest`,
+  `CombinedEnrichmentBackfillOpsTest`, `BgeM3BackfillOpsTest`, `BackfillSchedulerModeRecordingTest`,
+  `IndexingCoordinatorDispatchTest`, `OpsAbsorbedLogicTest` (VduStatusTransitionsTest needed none —
+  already 2-arg).
+- Verified: `:adapters-lucene:test` (507 green), `:worker-services:test`, `:indexer-worker:test`,
+  `:configuration:test`, `:ssot-tools:test` all green; `build -x test -PskipWebBuild=true` green.
+  Live-stack pipeline verification (design's F-030 oracle + perf) is left to the orchestrator.
+
+### Deviations from the design (with rationale)
+
+1. **Retry-field derivation by convention.** The policy grammar names only the status field, so
+   the paired retry counter is derived `<prefix>_status` → `<prefix>_retry_count` and used only
+   if that field exists in the catalog (`splade_status` → `splade_retry_count`). The design said
+   "restore its retry counter" without specifying the linkage.
+2. **Safety-net folded in.** The old standalone "missing splade_status → PENDING heal" is now the
+   `existingStatus == null` arm of the reset-status lane (same outcome, one code path).
+3. **`FieldCatalogDef.FieldDef` delegating 8-arg constructor** (rmwPolicy=null) added so the ~60
+   positional callers (`forTesting`/`forChunkTesting`/tests) compile unchanged; only the
+   vector/chunk_vector factory rows pass the 9-arg with `preserve-reread`.
+4. **`content_all` left out of scope** (logged to the observations inbox): it is `text`,
+   stored:false, docValues:false, so it too is dropped by RMW — but it is neither `vector` nor
+   `splade`, so it is outside the design's fragile scope and declares no policy. Flagged, not fixed.
