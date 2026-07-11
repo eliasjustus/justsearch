@@ -254,3 +254,33 @@ Caveats recorded honestly: legible set is synthetic clean renders (real-world le
 will show nonzero lowConfFraction — the ambiguity band costs them one extra inference, not a
 rejection; the live-stack pass should spot-check this); sample n=30/360; thresholds cite this
 section as their derivation.
+
+## Live-stack verification (2026-07-11 — static-green ≠ live-working closed)
+
+Stack launched FROM this branch's dist (`distFrom` worktree impl-677); AI runtime activated
+(cuda12 + Qwen3.5-9B + mmproj). Five `golden/synth-scan-v1` scans (both confab modes) ingested
+via a real watched root, routed to VDU demand (pendingVduCount=5), processed by the real
+offline pipeline (`core.trigger-offline-processing` operation + the 672 auto-trigger's second
+cycle). Terminal states, read from the live index:
+
+- `zelash106`, `mirric82`, `brelven179` → **`vdu_status=REJECTED`** with gate evidence in
+  `vdu_enrichment` (e.g. `{"gate":{"stage":"agreement","agreement":0.062,"probedPage":1}}`);
+  preview `textProvenance="vdu_rejected"` confirmed via the real `/api/preview`.
+- `vordell125`, `druthorn119` (the long-confab pair) → honest **`FAILED` ("VDU timeout
+  exceeded")** — the Stage-2 probe doubled their inference (~700-token pass-1 + probe) past the
+  per-document VDU timeout. Safe outcome (nothing indexed), but a tuning item (below).
+- **Net: 5/5 confabulation documents kept out of the index; zero fabricated content indexed;
+  baseline retained everywhere.** Before this branch, all five would have been indexed as real
+  content (677's original evidence run: 100% confabulation indexed).
+
+Evidence durability: worker-log updateVduResult lines + live index reads recorded here;
+session-output-grade beyond that. Ops notes hit on the way (for the next live pass): the MCP
+dev-ingest resolves repo-relative paths against the MAIN checkout; `distFrom` worktree runs
+need the cuda12 variant + `.dev-data` model settings seeded before `ai_activate`; a folder-files
+read can race NRT refresh mid-VDU-cycle (poll to terminal states before concluding).
+
+**Tuning follow-up (open, small):** cap the Stage-2 probe's max_tokens (~256) and make the
+agreement metric truncation-robust (overlap coefficient or compare first-N words), and/or
+extend the per-doc VDU budget when a probe runs — so long-confab docs get REJECTED (with
+evidence) rather than timing out to FAILED. Both terminal states are safe; REJECTED is the
+more informative one.
