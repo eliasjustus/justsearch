@@ -40,6 +40,29 @@ class TestMainRepoRoot:
             assert paths.main_repo_root() == repo
 
 
+class TestJsevalDataDirConstants:
+    """Tempdoc 716: DEFAULT_JSEVAL_DATA_DIR is the canonical jseval-owned root."""
+
+    def test_eval_results_is_child_of_jseval_data_dir(self):
+        assert paths.DEFAULT_EVAL_RESULTS == paths.DEFAULT_JSEVAL_DATA_DIR / "eval-results"
+
+    def test_eval_results_value_unchanged_by_716_refactor(self):
+        # The 716 constant introduction must be a no-op for every existing
+        # --output-dir default: same literal path as the pre-716 definition.
+        assert paths.DEFAULT_EVAL_RESULTS == (
+            paths.REPO_ROOT / "scripts" / "jseval" / "tmp" / "eval-results"
+        )
+
+    def test_jseval_data_dir_is_jseval_tmp(self):
+        assert paths.DEFAULT_JSEVAL_DATA_DIR == paths.REPO_ROOT / "scripts" / "jseval" / "tmp"
+
+    def test_backend_data_dir_matches_backend_default(self, monkeypatch):
+        # Mirrors backend.start_backend's `resolved_root / "tmp" / "headless-eval-data"`
+        # fallback — the two definitions must not drift.
+        monkeypatch.undo()  # conftest's autouse legacy-root isolation patches this constant
+        assert paths.DEFAULT_BACKEND_DATA_DIR == paths.REPO_ROOT / "tmp" / "headless-eval-data"
+
+
 class TestSharedModelsDir:
     def test_prefers_main_models(self, tmp_path):
         main = tmp_path / "main"

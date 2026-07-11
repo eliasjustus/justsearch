@@ -8,7 +8,7 @@ import logging
 
 import click
 
-from .._paths import DEFAULT_EVAL_RESULTS
+from .._paths import DEFAULT_JSEVAL_DATA_DIR
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 @click.option("--latest-per-dataset", is_flag=True,
               help="Auto-discover: the most recent run per dataset under --data-dir's eval-results "
                    "(via the manifest index). compose() then validates they are one cohort.")
-@click.option("--data-dir", type=click.Path(), default=lambda: str(DEFAULT_EVAL_RESULTS.parent),
+@click.option("--data-dir", type=click.Path(), default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
               help="Data dir whose eval-results/ holds runs (for --latest-per-dataset).")
 @click.option("--default-mode", default="hybrid", show_default=True,
               help="Production-default search mode whose metrics are the per-corpus headline.")

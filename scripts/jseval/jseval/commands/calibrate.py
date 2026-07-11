@@ -9,11 +9,14 @@ import logging
 
 import click
 
+from .._paths import DEFAULT_BACKEND_DATA_DIR, DEFAULT_JSEVAL_DATA_DIR
+
 log = logging.getLogger(__name__)
 
 
 @click.command("recalibrate-nightly-baseline")
-@click.option("--data-dir", type=click.Path(exists=True, resolve_path=True), required=True,
+@click.option("--data-dir", type=click.Path(resolve_path=True),
+              default=lambda: str(DEFAULT_JSEVAL_DATA_DIR), show_default="scripts/jseval/tmp",
               help="Data dir containing cohort_baselines/ (new layout).")
 @click.option("--cohort-hash", required=True,
               help="Cohort whose envelope should be sampled.")
@@ -39,10 +42,12 @@ def cmd_recalibrate_nightly_baseline(ctx, data_dir, cohort_hash, metric,
     """
     from .. import cohort_baselines
 
-    env_path = cohort_baselines.envelope_path(Path(data_dir), cohort_hash)
-    if not env_path.is_file():
+    env_path = cohort_baselines.resolve_envelope_path(Path(data_dir), cohort_hash)
+    if env_path is None:
         click.echo(
-            f"Error: envelope not found at {env_path}. "
+            f"Error: envelope not found under "
+            f"{cohort_baselines.envelope_path(Path(data_dir), cohort_hash)} "
+            f"(or any pre-716 legacy root). "
             f"Run `jseval calibrate --dataset X` first.",
             err=True,
         )
@@ -74,7 +79,8 @@ def cmd_recalibrate_nightly_baseline(ctx, data_dir, cohort_hash, metric,
 @click.command("calibrate-drift-baseline")
 @click.option("--cohort-hash", required=True,
               help="manifest_hash of the cohort to calibrate.")
-@click.option("--data-dir", type=click.Path(resolve_path=True), required=True,
+@click.option("--data-dir", type=click.Path(resolve_path=True),
+              default=lambda: str(DEFAULT_JSEVAL_DATA_DIR), show_default="scripts/jseval/tmp",
               help="Base data dir hosting cohort_baselines/.")
 @click.option("--from-runs", type=click.Path(exists=True, resolve_path=True), multiple=True,
               required=True,
@@ -138,9 +144,16 @@ def cmd_calibrate_drift_baseline(ctx, cohort_hash, data_dir, from_runs,
          " default per tempdoc 400 B2 (measured stdev(nDCG@10)=0.00108"
          " at N=5). Higher N narrows the CI but doubles calibration time.")
 @click.option(
-    "--data-dir", type=click.Path(resolve_path=True), default=None,
-    help="Override JUSTSEARCH_DATA_DIR. Defaults to the eval-mode data"
-         " dir used by `jseval run --start-backend`.")
+    "--data-dir", type=click.Path(resolve_path=True),
+    default=lambda: str(DEFAULT_JSEVAL_DATA_DIR), show_default="scripts/jseval/tmp",
+    help="jseval-owned root the calibrated envelope is filed under"
+         " (cohort_baselines/) — same meaning as every other command's"
+         " --data-dir (tempdoc 716).")
+@click.option(
+    "--backend-data-dir", type=click.Path(resolve_path=True), default=None,
+    help="Worker-owned JUSTSEARCH_DATA_DIR the calibration sub-runs execute"
+         " against (their --clean wipes it). Defaults to JUSTSEARCH_DATA_DIR"
+         " or the eval-mode default used by `jseval run --start-backend`.")
 @click.option(
     "--max-queries", default=50, show_default=True, type=int,
     help="Cap queries per run for cheaper calibration. 0 = all. The same"
@@ -152,7 +165,8 @@ def cmd_calibrate(
     dataset: str,
     modes: str,
     runs: int,
-    data_dir: str | None,
+    data_dir: str,
+    backend_data_dir: str | None,
     max_queries: int,
 ) -> None:
     """Calibrate the non-determinism envelope for a cohort (LR1-b).
@@ -162,18 +176,23 @@ def cmd_calibrate(
     layout, §26.6 Decision 2). Subsequent ``jseval run`` invocations
     with matching cohort identity look the envelope up and embed it
     into their manifest.
+
+    Tempdoc 716: ``--data-dir`` is where the envelope is FILED (the
+    jseval-owned root); ``--backend-data-dir`` is the Worker data dir the
+    calibration sub-runs execute against. Pre-716 one flag conflated both.
     """
     from ..calibrate import calibrate as _calibrate
 
-    data_dir_path = (
-        Path(data_dir) if data_dir
-        else Path(os.environ.get("JUSTSEARCH_DATA_DIR", "tmp/headless-eval-data"))
+    backend_dir_path = (
+        Path(backend_data_dir) if backend_data_dir
+        else Path(os.environ.get("JUSTSEARCH_DATA_DIR", str(DEFAULT_BACKEND_DATA_DIR)))
     )
     result = _calibrate(
         dataset=dataset,
         modes=[m.strip() for m in modes.split(",") if m.strip()],
         runs=runs,
-        data_dir=data_dir_path,
+        backend_data_dir=backend_dir_path,
+        envelope_dir=Path(data_dir),
         max_queries=max_queries,
     )
     if ctx.obj.get("json"):
