@@ -216,7 +216,6 @@ class CombinedEnrichmentBackfillOpsTest {
         docState.get(SchemaFields.EMBEDDING_STATUS),
         "must not be marked FAILED before EMBEDDING_MAX_RETRIES is reached");
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
     verify(documentFieldOps, never()).getDocumentField(anyString(), anyString());
   }
@@ -306,7 +305,6 @@ class CombinedEnrichmentBackfillOpsTest {
 
     // Tempdoc-312 invariant: exactly one batched write per cycle, never a per-doc updateDocument.
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
   }
 
@@ -444,7 +442,6 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals("Alice", state.get(SchemaFields.ENTITY_PERSONS_TEXT));
 
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
-    verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap(), anyBoolean());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
   }
 

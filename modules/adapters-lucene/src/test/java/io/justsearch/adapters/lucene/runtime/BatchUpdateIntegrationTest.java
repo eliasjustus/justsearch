@@ -232,27 +232,24 @@ class BatchUpdateIntegrationTest {
   }
 
   /**
-   * Regression: a RMW with {@code preserveSplade=true} must NOT silently drop
-   * {@code splade_status} even when the field is {@code stored:false, docValues:true}
-   * (production schema). Before the fix, NER backfill (which calls preserveSplade=true
-   * with no SPLADE fields in updates) caused the status to be lost, leaving docs
-   * invisible to both the PENDING backfill query and the COMPLETED counter — SPLADE
-   * coverage stalled below 100 % forever on any corpus with NER-processed parents.
+   * reset-status lane (tempdoc 711): an RMW that omits the {@code splade} field on a COMPLETED doc
+   * drops the SPLADE FeatureField data, so the engine must downgrade {@code splade_status} to
+   * PENDING (and reset its retry counter) to force a re-encode — even though the caller only touched
+   * an unrelated (NER) field. Before 711 this path either preserved COMPLETED (silent data loss) or
+   * dropped the status entirely.
    */
   @Test
-  void preserveSpladeTruePreservesSpladeStatusWhenNonStored() throws Exception {
+  void rmwDowngradesCompletedSpladeStatusToPendingWhenDataDropped() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     try {
-      base = Files.createTempDirectory("justsearch-preserve-splade-test-");
+      base = Files.createTempDirectory("justsearch-splade-downgrade-test-");
       cfg = writeTestConfig(base);
       System.setProperty("justsearch.config", cfg.toString());
 
       var runtime = createRuntimeWithNonStoredSpladeStatus();
 
-      // Primary-index a doc with splade_status=PENDING, then simulate SPLADE backfill
-      // marking it COMPLETED.
       runtime.indexingCoordinator().indexSingle(
           new IndexDocument(
               Map.of(
@@ -261,30 +258,28 @@ class BatchUpdateIntegrationTest {
                   SchemaFields.PATH, "test/doc-0.txt",
                   SchemaFields.CONTENT, "content that has been SPLADE-encoded",
                   SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
-                  SchemaFields.SPLADE_RETRY_COUNT, "0")));
+                  SchemaFields.SPLADE_RETRY_COUNT, "3")));
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Simulate a NER backfill: preserveSplade=true, no SPLADE fields in updates.
+      // NER-style RMW: no SPLADE fields in updates → SPLADE data is dropped by the rewrite.
       boolean updated =
           runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of("entity_persons_raw", "Alice"),
-              true);
+              "doc-0", Map.of("entity_persons_raw", "Alice"));
       assertTrue(updated);
 
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Before the fix, getDocumentField would return null here because splade_status
-      // was silently dropped during the RMW rewrite. After the fix, the previous
-      // COMPLETED value is restored from doc-values and survives the write.
       String statusAfter =
           runtime.documentFieldOps().getDocumentField("doc-0", SchemaFields.SPLADE_STATUS);
       assertEquals(
-          SchemaFields.SPLADE_STATUS_COMPLETED,
+          SchemaFields.SPLADE_STATUS_PENDING,
           statusAfter,
-          "splade_status must survive a preserveSplade=true RMW even when stored=false");
+          "COMPLETED must downgrade to PENDING — the SPLADE data was just dropped, re-encode needed");
+      String retryAfter =
+          runtime.documentFieldOps().getDocumentField("doc-0", SchemaFields.SPLADE_RETRY_COUNT);
+      assertEquals("0", retryAfter, "retry counter must reset on the COMPLETED->PENDING downgrade");
 
       runtime.close();
     } finally {
@@ -292,24 +287,19 @@ class BatchUpdateIntegrationTest {
     }
   }
 
-  // ---- Tempdoc 393 item 1.3: RMW state-matrix coverage ----
+  // ---- reset-status lane state-matrix coverage (tempdoc 711) ----
   //
-  // The fix at WritePathOps.readModifyWrite has three branches that interact with
-  // splade_status (lines 306-321 doc-values restore; 329-334 reset-to-PENDING;
-  // 340-345 safety-net PENDING). The existing test covers only one cell of the
-  // {caller-provides × doc-has × preserveSplade} matrix. These tests cover the
-  // remaining critical cells — especially the FAILED-status preservation case,
-  // since resurrecting permanently-failed docs as PENDING would mask real
-  // failures and waste encoder cycles re-trying.
+  // The reset-status lane preserves FAILED / non-terminal statuses, downgrades COMPLETED to PENDING
+  // (data dropped), heals a missing status to PENDING, and always yields to a caller-supplied status.
 
-  /** caller=N, doc=FAILED, preserveSplade=T — HIGHEST PRIORITY: FAILED must survive. */
+  /** doc=FAILED, updates=entity — FAILED must survive (resurrecting it would mask real failures). */
   @Test
-  void preserveSpladeTruePreservesFailedStatusWhenNonStored() throws Exception {
+  void rmwPreservesFailedSpladeStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     try {
-      base = Files.createTempDirectory("justsearch-preserve-failed-test-");
+      base = Files.createTempDirectory("justsearch-splade-failed-test-");
       cfg = writeTestConfig(base);
       System.setProperty("justsearch.config", cfg.toString());
 
@@ -329,9 +319,7 @@ class BatchUpdateIntegrationTest {
 
       boolean updated =
           runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of("entity_persons_raw", "Alice"),
-              true);
+              "doc-0", Map.of("entity_persons_raw", "Alice"));
       assertTrue(updated);
 
       runtime.commitOps().commitAndTrack();
@@ -342,8 +330,11 @@ class BatchUpdateIntegrationTest {
       assertEquals(
           SchemaFields.SPLADE_STATUS_FAILED,
           statusAfter,
-          "FAILED status must survive preserveSplade=true RMW — resurrecting FAILED "
-              + "as PENDING would mask real failures and waste encoder cycles");
+          "FAILED status must survive an unrelated RMW — resurrecting FAILED as PENDING would mask "
+              + "real failures and waste encoder cycles");
+      String retryAfter =
+          runtime.documentFieldOps().getDocumentField("doc-0", SchemaFields.SPLADE_RETRY_COUNT);
+      assertEquals("5", retryAfter, "retry counter must be preserved alongside a preserved status");
 
       runtime.close();
     } finally {
@@ -351,9 +342,9 @@ class BatchUpdateIntegrationTest {
     }
   }
 
-  /** caller=Y, doc=COMPLETED, preserveSplade=T — caller's explicit value must win. */
+  /** doc=COMPLETED, updates carry splade_status=PENDING — the caller's explicit value must win. */
   @Test
-  void callerProvidedStatusOverridesDocValuesRestore() throws Exception {
+  void callerSuppliedSpladeStatusOverridesEngine() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
@@ -375,13 +366,12 @@ class BatchUpdateIntegrationTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Caller explicitly supplies SPLADE_STATUS=PENDING (e.g., content changed,
-      // needs re-encoding). Must override the COMPLETED value from doc-values.
+      // Caller explicitly supplies SPLADE_STATUS in the update map — the reset-status lane must
+      // yield to it (here it happens to match the engine's own downgrade, but the point is the
+      // engine does not fight a caller-provided status).
       boolean updated =
           runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING),
-              true);
+              "doc-0", Map.of(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING));
       assertTrue(updated);
 
       runtime.commitOps().commitAndTrack();
@@ -392,7 +382,7 @@ class BatchUpdateIntegrationTest {
       assertEquals(
           SchemaFields.SPLADE_STATUS_PENDING,
           statusAfter,
-          "Caller-supplied SPLADE_STATUS must override the doc-values restore");
+          "Caller-supplied SPLADE_STATUS must win over the reset-status engine");
 
       runtime.close();
     } finally {
@@ -400,14 +390,14 @@ class BatchUpdateIntegrationTest {
     }
   }
 
-  /** caller=N, doc=COMPLETED, preserveSplade=F — reset-to-PENDING branch must fire. */
+  /** doc=PENDING (non-terminal), updates=entity — a non-terminal status is preserved as-is. */
   @Test
-  void preserveSpladeFalseResetsCompletedToPending() throws Exception {
+  void rmwPreservesNonTerminalSpladeStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     try {
-      base = Files.createTempDirectory("justsearch-reset-branch-test-");
+      base = Files.createTempDirectory("justsearch-splade-pending-test-");
       cfg = writeTestConfig(base);
       System.setProperty("justsearch.config", cfg.toString());
 
@@ -419,18 +409,15 @@ class BatchUpdateIntegrationTest {
                   SchemaFields.DOC_ID, "doc-0",
                   SchemaFields.DOC_UID, "doc-0#0",
                   SchemaFields.PATH, "test/doc-0.txt",
-                  SchemaFields.CONTENT, "content",
-                  SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
-                  SchemaFields.SPLADE_RETRY_COUNT, "0")));
+                  SchemaFields.CONTENT, "content awaiting SPLADE",
+                  SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING,
+                  SchemaFields.SPLADE_RETRY_COUNT, "2")));
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // preserveSplade=false (default) + no SPLADE_STATUS in updates → reset branch.
       boolean updated =
           runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of("entity_persons_raw", "Alice"),
-              false);
+              "doc-0", Map.of("entity_persons_raw", "Alice"));
       assertTrue(updated);
 
       runtime.commitOps().commitAndTrack();
@@ -441,7 +428,10 @@ class BatchUpdateIntegrationTest {
       assertEquals(
           SchemaFields.SPLADE_STATUS_PENDING,
           statusAfter,
-          "preserveSplade=false must reset COMPLETED to PENDING so backfill re-encodes");
+          "a non-terminal PENDING status must survive an unrelated RMW unchanged");
+      String retryAfter =
+          runtime.documentFieldOps().getDocumentField("doc-0", SchemaFields.SPLADE_RETRY_COUNT);
+      assertEquals("2", retryAfter, "retry counter must be preserved for a non-terminal status");
 
       runtime.close();
     } finally {
@@ -449,23 +439,21 @@ class BatchUpdateIntegrationTest {
     }
   }
 
-  /** caller=N, doc=none, preserveSplade=T — safety-net must heal to PENDING. */
+  /** doc=none (no status anywhere), updates=entity — a missing status heals to PENDING. */
   @Test
-  void safetyNetInjectsPendingWhenStatusMissingEverywhere() throws Exception {
+  void rmwHealsMissingSpladeStatusToPending() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     try {
-      base = Files.createTempDirectory("justsearch-safety-net-test-");
+      base = Files.createTempDirectory("justsearch-splade-heal-test-");
       cfg = writeTestConfig(base);
       System.setProperty("justsearch.config", cfg.toString());
 
       var runtime = createRuntimeWithNonStoredSpladeStatus();
 
-      // Simulate a pre-fix corrupted doc: index WITHOUT splade_status. Under current
-      // ingest paths this never happens (IndexingDocumentOps.java:225 always sets
-      // PENDING), but the safety net's purpose is to heal docs that got corrupted
-      // by a prior RMW run before the fix landed.
+      // Index WITHOUT splade_status (a pre-fix corrupted doc). The reset-status lane must heal it
+      // to PENDING so it becomes visible to the backfill.
       Map<String, Object> fields = new HashMap<>();
       fields.put(SchemaFields.DOC_ID, "doc-0");
       fields.put(SchemaFields.DOC_UID, "doc-0#0");
@@ -475,12 +463,9 @@ class BatchUpdateIntegrationTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // RMW with preserveSplade=true; neither updates map nor doc-values has status.
       boolean updated =
           runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of("entity_persons_raw", "Alice"),
-              true);
+              "doc-0", Map.of("entity_persons_raw", "Alice"));
       assertTrue(updated);
 
       runtime.commitOps().commitAndTrack();
@@ -491,7 +476,7 @@ class BatchUpdateIntegrationTest {
       assertEquals(
           SchemaFields.SPLADE_STATUS_PENDING,
           statusAfter,
-          "Safety net must inject PENDING so healed docs become visible to backfill");
+          "a missing status must heal to PENDING so the doc becomes visible to backfill");
 
       runtime.close();
     } finally {
@@ -499,51 +484,51 @@ class BatchUpdateIntegrationTest {
     }
   }
 
-  /** caller=N, doc=COMPLETED, preserveSplade=T — COMPLETED must survive (common NER backfill case). */
+  /** Batch RMW path: COMPLETED downgrades to PENDING per doc when SPLADE data is dropped. */
   @Test
-  void preserveSpladeTruePreservesCompletedStatusWhenNonStored() throws Exception {
+  void rmwBatchDowngradesCompletedSpladeStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     try {
-      base = Files.createTempDirectory("justsearch-preserve-completed-test-");
+      base = Files.createTempDirectory("justsearch-splade-batch-test-");
       cfg = writeTestConfig(base);
       System.setProperty("justsearch.config", cfg.toString());
 
       var runtime = createRuntimeWithNonStoredSpladeStatus();
 
-      // Common production shape: SPLADE has successfully completed; NER backfill
-      // subsequently RMWs the doc with preserveSplade=true. The doc-values restore
-      // must preserve COMPLETED so the doc doesn't re-enter the PENDING queue.
-      runtime.indexingCoordinator().indexSingle(
-          new IndexDocument(
-              Map.of(
-                  SchemaFields.DOC_ID, "doc-0",
-                  SchemaFields.DOC_UID, "doc-0#0",
-                  SchemaFields.PATH, "test/doc-0.txt",
-                  SchemaFields.CONTENT, "content that was SPLADE-completed",
-                  SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
-                  SchemaFields.SPLADE_RETRY_COUNT, "0")));
+      for (int i = 0; i < 2; i++) {
+        runtime.indexingCoordinator().indexSingle(
+            new IndexDocument(
+                Map.of(
+                    SchemaFields.DOC_ID, "doc-" + i,
+                    SchemaFields.DOC_UID, "doc-" + i + "#0",
+                    SchemaFields.PATH, "test/doc-" + i + ".txt",
+                    SchemaFields.CONTENT, "content " + i,
+                    SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
+                    SchemaFields.SPLADE_RETRY_COUNT, "0")));
+      }
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      boolean updated =
-          runtime.indexingCoordinator().updateDocument(
-              "doc-0",
-              Map.of("entity_persons_raw", "Alice"),
-              true);
-      assertTrue(updated);
+      List<Map.Entry<String, Map<String, Object>>> batchUpdates = new ArrayList<>();
+      for (int i = 0; i < 2; i++) {
+        batchUpdates.add(Map.entry("doc-" + i, Map.of("entity_persons_raw", "Alice")));
+      }
+      var result = runtime.indexingCoordinator().updateDocumentsBatch(batchUpdates);
+      assertEquals(2, result.updatedCount());
 
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      String statusAfter =
-          runtime.documentFieldOps().getDocumentField("doc-0", SchemaFields.SPLADE_STATUS);
-      assertEquals(
-          SchemaFields.SPLADE_STATUS_COMPLETED,
-          statusAfter,
-          "COMPLETED status must survive NER backfill RMW — otherwise the doc "
-              + "bounces back to PENDING and the backfill re-encodes unnecessarily");
+      for (int i = 0; i < 2; i++) {
+        String statusAfter =
+            runtime.documentFieldOps().getDocumentField("doc-" + i, SchemaFields.SPLADE_STATUS);
+        assertEquals(
+            SchemaFields.SPLADE_STATUS_PENDING,
+            statusAfter,
+            "batch RMW must downgrade each COMPLETED doc to PENDING when SPLADE data is dropped");
+      }
 
       runtime.close();
     } finally {
@@ -607,14 +592,14 @@ class BatchUpdateIntegrationTest {
           CountDownLatch go = new CountDownLatch(1);
           CountDownLatch done = new CountDownLatch(2);
 
-          // Thread A writes field_a="A"; Thread B writes field_b="B". Both use
-          // preserveSplade=true to match the NER backfill shape. Barrier ensures
-          // both threads are poised at updateDocument before releasing.
+          // Thread A writes field_a="A"; Thread B writes field_b="B" (the NER-backfill shape:
+          // an RMW touching only a subset of fields). Barrier ensures both threads are poised at
+          // updateDocument before releasing.
           Runnable writerA = () -> {
             try {
               ready.countDown();
               go.await();
-              runtime.indexingCoordinator().updateDocument(docIdFinal, Map.of("field_a", "A"), true);
+              runtime.indexingCoordinator().updateDocument(docIdFinal, Map.of("field_a", "A"));
             } catch (Exception e) {
               writeFailures.incrementAndGet();
             } finally {
@@ -625,7 +610,7 @@ class BatchUpdateIntegrationTest {
             try {
               ready.countDown();
               go.await();
-              runtime.indexingCoordinator().updateDocument(docIdFinal, Map.of("field_b", "B"), true);
+              runtime.indexingCoordinator().updateDocument(docIdFinal, Map.of("field_b", "B"));
             } catch (Exception e) {
               writeFailures.incrementAndGet();
             } finally {
@@ -698,7 +683,7 @@ class BatchUpdateIntegrationTest {
               { "id": "path", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "splade_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
@@ -727,8 +712,9 @@ class BatchUpdateIntegrationTest {
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
               { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
+              { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" },
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
@@ -760,7 +746,7 @@ class BatchUpdateIntegrationTest {
               { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
               { "id": "field_a", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "field_b", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;

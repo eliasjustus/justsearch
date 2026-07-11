@@ -152,7 +152,7 @@ public final class EmbeddingBackfillOps {
         }
         long tListEnd = System.nanoTime();
         if (!batchUpdates.isEmpty()) {
-          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
           processed += result.updatedCount();
         }
         long tWriteEnd = System.nanoTime();
@@ -240,7 +240,7 @@ public final class EmbeddingBackfillOps {
         updates.put(SchemaFields.VECTOR, vector);
         updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
         updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, "0");
-        context.indexingCoordinator().updateDocument(docId, updates, true);
+        context.indexingCoordinator().updateDocument(docId, updates);
         processed = 1;
       } else {
         markedFailed =
@@ -267,7 +267,7 @@ public final class EmbeddingBackfillOps {
 
       if (updates.containsKey(SchemaFields.EMBEDDING_STATUS)) {
         log.warn("Embedding permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
         log.debug(
@@ -276,7 +276,7 @@ public final class EmbeddingBackfillOps {
             SchemaFields.EMBEDDING_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 
@@ -410,7 +410,7 @@ public final class EmbeddingBackfillOps {
               updates.put(SchemaFields.CHUNK_VECTOR, vector);
               updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
               updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
-              context.indexingCoordinator().updateDocument(chunkId, updates, true);
+              context.indexingCoordinator().updateDocument(chunkId, updates);
               processed++;
             } else {
               markedFailed +=
@@ -447,7 +447,7 @@ public final class EmbeddingBackfillOps {
           }
         }
         if (!batchUpdates.isEmpty()) {
-          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
           processed += result.updatedCount();
         }
       }
@@ -494,7 +494,7 @@ public final class EmbeddingBackfillOps {
             chunkId,
             retryCount,
             reason);
-        indexingCoordinator.updateDocument(chunkId, updates, true);
+        indexingCoordinator.updateDocument(chunkId, updates);
         return 1;
       } else {
         log.debug(
@@ -503,7 +503,7 @@ public final class EmbeddingBackfillOps {
             SchemaFields.EMBEDDING_MAX_RETRIES,
             chunkId,
             reason);
-        indexingCoordinator.updateDocument(chunkId, updates, true);
+        indexingCoordinator.updateDocument(chunkId, updates);
         return 0;
       }
 

@@ -93,7 +93,7 @@ public final class FieldCatalogDef {
                 new FieldDef("vdu_enrichment", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("vdu_page_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("vector", "vector", false, false, List.of("vector"),
-                        new VectorSpec(vectorDim), null, false)
+                        new VectorSpec(vectorDim), null, false, "preserve-reread")
         ));
     }
 
@@ -130,7 +130,7 @@ public final class FieldCatalogDef {
                 new FieldDef("vdu_enrichment", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("vdu_page_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("vector", "vector", false, false, List.of("vector"),
-                        new VectorSpec(vectorDim), null, false),
+                        new VectorSpec(vectorDim), null, false, "preserve-reread"),
                 // Chunk-related fields (RAG + citations)
                 new FieldDef("is_chunk", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("parent_doc_id", "keyword", true, true, List.of("filter"), null, null, false),
@@ -142,7 +142,7 @@ public final class FieldCatalogDef {
                 new FieldDef("chunk_end_char", "long", true, true, List.of("filter", "sort"), null, null, false),
                 // Phase 6: chunk embeddings
                 new FieldDef("chunk_vector", "vector", false, false, List.of("chunk_vector"),
-                        new VectorSpec(vectorDim), null, false),
+                        new VectorSpec(vectorDim), null, false, "preserve-reread"),
                 new FieldDef("chunk_embedding_status", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("chunk_embedding_retry_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 // Frontmatter metadata fields (362)
@@ -189,7 +189,7 @@ public final class FieldCatalogDef {
             if ("vector".equals(f.type()) && f.vector() != null) {
                 updated.add(new FieldDef(
                         f.id(), f.type(), f.stored(), f.docValues(),
-                        f.roles(), new VectorSpec(newDim), f.analyzer(), f.multiValued()));
+                        f.roles(), new VectorSpec(newDim), f.analyzer(), f.multiValued(), f.rmwPolicy()));
             } else {
                 updated.add(f);
             }
@@ -210,6 +210,7 @@ public final class FieldCatalogDef {
         private final VectorSpec vector;
         private final String analyzer;
         private final boolean multiValued;
+        private final String rmwPolicy;
 
         @JsonCreator
         public FieldDef(
@@ -220,7 +221,8 @@ public final class FieldCatalogDef {
                 @JsonProperty("roles") List<String> roles,
                 @JsonProperty("vector") VectorSpec vector,
                 @JsonProperty("analyzer") String analyzer,
-                @JsonProperty("multiValued") boolean multiValued) {
+                @JsonProperty("multiValued") boolean multiValued,
+                @JsonProperty("rmwPolicy") String rmwPolicy) {
             this.id = Objects.requireNonNull(id, "id");
             this.type = Objects.requireNonNull(type, "type");
             this.stored = stored;
@@ -229,6 +231,20 @@ public final class FieldCatalogDef {
             this.vector = vector;
             this.analyzer = analyzer;
             this.multiValued = multiValued;
+            this.rmwPolicy = rmwPolicy;
+        }
+
+        /** Convenience constructor for callers that do not declare an {@code rmwPolicy}. */
+        public FieldDef(
+                String id,
+                String type,
+                boolean stored,
+                boolean docValues,
+                List<String> roles,
+                VectorSpec vector,
+                String analyzer,
+                boolean multiValued) {
+            this(id, type, stored, docValues, roles, vector, analyzer, multiValued, null);
         }
 
         public String id() { return id; }
@@ -239,6 +255,9 @@ public final class FieldCatalogDef {
         public VectorSpec vector() { return vector; }
         public String analyzer() { return analyzer; }
         public boolean multiValued() { return multiValued; }
+
+        /** Read-modify-write disposition (tempdoc 711); null unless declared. */
+        public String rmwPolicy() { return rmwPolicy; }
 
         /**
          * Returns the vector dimension, or null if this is not a vector field.

@@ -276,7 +276,7 @@ class PathUpdateIntegrationTest {
   }
 
   @Test
-  void updateDocumentPathsSetsEmbeddingStatusPending() throws Exception {
+  void updateDocumentPathsPreservesEmbeddingStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     try {
@@ -309,14 +309,15 @@ class PathUpdateIntegrationTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Update paths — should reset embedding_status to PENDING
+      // Update paths — a MOVE/RENAME does not change content, so the vector is preserved by the
+      // RMW engine (tempdoc 711) and embedding_status must NOT be reset to PENDING.
       int updated = runtime.indexingCoordinator().updateDocumentPaths(oldPath, newPath);
       assertEquals(1, updated);
 
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Verify embedding_status was set to PENDING
+      // Verify embedding_status stayed COMPLETED (no loss-compensation re-queue).
       var result =
           runtime.readPathOps().search(
               new MatchAllDocsQuery(),
@@ -326,9 +327,9 @@ class PathUpdateIntegrationTest {
               null);
       assertEquals(1, result.hits().size());
       assertEquals(
-          "PENDING",
+          "COMPLETED",
           result.hits().get(0).fields().get(SchemaFields.EMBEDDING_STATUS),
-          "embedding_status should be reset to PENDING after path update");
+          "embedding_status should be preserved (not reset) after a path update — the vector is kept");
 
       runtime.close();
     } finally {
@@ -414,7 +415,7 @@ class PathUpdateIntegrationTest {
   }
 
   @Test
-  void updateDocumentPathsSetsNerStatusPending() throws Exception {
+  void updateDocumentPathsDoesNotResetNerStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     try {
@@ -452,8 +453,8 @@ class PathUpdateIntegrationTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Verify ner_status was set to PENDING via TermQuery on its StringField
-      // (ner_status is stored=false but has filter role, so it gets a StringField)
+      // NER entity fields are stored, so a MOVE preserves them; the loss-compensation reset was
+      // removed (tempdoc 711). A path update must NOT stamp ner_status=PENDING.
       var result =
           runtime.readPathOps().search(
               new org.apache.lucene.search.TermQuery(
@@ -463,8 +464,8 @@ class PathUpdateIntegrationTest {
               Set.of(SchemaFields.DOC_ID),
               LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
               null);
-      assertEquals(1, result.hits().size(), "ner_status should be PENDING after path update");
-      assertEquals(newPath, result.hits().get(0).docId());
+      assertEquals(
+          0, result.hits().size(), "ner_status must NOT be reset to PENDING after a path update");
 
       runtime.close();
     } finally {
@@ -477,7 +478,7 @@ class PathUpdateIntegrationTest {
   }
 
   @Test
-  void updateDocumentPathsResetsChunkEmbeddingStatus() throws Exception {
+  void updateDocumentPathsPreservesChunkEmbeddingStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     try {
@@ -529,7 +530,8 @@ class PathUpdateIntegrationTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      // Verify ALL documents (parent + chunk) have embedding_status=PENDING
+      // Verify ALL documents (parent + chunk) keep embedding_status=COMPLETED — the vectors are
+      // preserved across the move (tempdoc 711), so the loss-compensation re-queue was removed.
       var result =
           runtime.readPathOps().search(
               new MatchAllDocsQuery(),
@@ -540,9 +542,9 @@ class PathUpdateIntegrationTest {
       assertEquals(2, result.hits().size());
       for (var hit : result.hits()) {
         assertEquals(
-            "PENDING",
+            "COMPLETED",
             hit.fields().get(SchemaFields.EMBEDDING_STATUS),
-            "All docs should have embedding_status=PENDING, is_chunk="
+            "All docs should keep embedding_status=COMPLETED, is_chunk="
                 + hit.fields().get(SchemaFields.IS_CHUNK));
       }
 
@@ -575,7 +577,7 @@ class PathUpdateIntegrationTest {
               { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "content", "type": "text", "stored": true, "docValues": false },
               { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": %d } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": %d } }
             ]
           }
           """
@@ -605,7 +607,7 @@ class PathUpdateIntegrationTest {
               { "id": "embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "ner_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "multiValued": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
             ]
           }
           """;
