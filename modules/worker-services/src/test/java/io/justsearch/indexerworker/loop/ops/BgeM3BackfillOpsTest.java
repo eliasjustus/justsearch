@@ -74,7 +74,7 @@ class BgeM3BackfillOpsTest {
     when(indexingCoordinator.updateDocumentsBatch(anyList()))
         .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
 
-    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context());
+    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context()).success();
 
     assertTrue(result);
     // Content came from CHUNK_CONTENT — getDocumentContent (the parent-doc fallback) must not
@@ -114,7 +114,7 @@ class BgeM3BackfillOpsTest {
     when(indexingCoordinator.updateDocumentsBatch(anyList()))
         .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
 
-    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context());
+    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context()).success();
 
     assertTrue(result);
     verify(indexingCoordinator)
@@ -155,7 +155,7 @@ class BgeM3BackfillOpsTest {
             "chunk-bad", SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT))
         .thenReturn("0");
 
-    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context());
+    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context()).success();
 
     assertTrue(result, "not systemic: one doc in the batch succeeded");
     verify(indexingCoordinator)
@@ -192,7 +192,7 @@ class BgeM3BackfillOpsTest {
     when(documentFieldOps.getDocumentField("parent-bad", SchemaFields.EMBEDDING_RETRY_COUNT))
         .thenReturn("0");
 
-    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context());
+    boolean result = BgeM3BackfillOps.processBgeM3Backfill(context()).success();
 
     assertTrue(result, "not systemic: one doc in the batch succeeded");
     verify(indexingCoordinator)

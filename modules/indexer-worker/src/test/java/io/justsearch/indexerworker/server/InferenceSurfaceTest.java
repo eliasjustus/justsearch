@@ -77,6 +77,9 @@ class InferenceSurfaceTest {
     public void setLifecycleCallback(io.justsearch.ort.GpuLifecycleCallback callback) {}
 
     @Override
+    public void setOrtRunRecorder(io.justsearch.ort.OrtRunRecorder recorder) {}
+
+    @Override
     public void close() {
       closeCount.incrementAndGet();
       if (throwOnClose) {

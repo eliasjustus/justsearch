@@ -28,7 +28,16 @@ public record EnrichmentProgressView(
     // for the investigation that surfaced this.
     boolean embeddingEnabled,
     boolean spladeEnabled,
-    boolean nerEnabled) {
+    boolean nerEnabled,
+    // Tempdoc 710 Move 2 item 4: which backfill pass ran last idle cycle —
+    // "combined" | "individual" | "idle". Previously unobservable: batchTiming/
+    // enrichmentCompleted counters froze in individual mode with no signal explaining why
+    // (710 S-B3 finding).
+    String backfillMode) {
+  public EnrichmentProgressView {
+    backfillMode = backfillMode == null ? "idle" : backfillMode;
+  }
+
   public static EnrichmentProgressView empty() {
     return EnrichmentProgressViewBuilder.builder()
         .chunk(ChunkCoverageView.empty())
@@ -38,6 +47,7 @@ public record EnrichmentProgressView(
         .embeddingEnabled(true)
         .spladeEnabled(true)
         .nerEnabled(true)
+        .backfillMode("idle")
         .build();
   }
 }

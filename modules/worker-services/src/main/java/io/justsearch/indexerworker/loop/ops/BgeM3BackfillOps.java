@@ -50,12 +50,16 @@ public final class BgeM3BackfillOps {
       Logger log) {}
 
   /**
-   * Processes a batch of BGE-M3 backfill documents. Returns {@code true} on success (or partial
-   * success), {@code false} when the entire batch failed systemically.
+   * Processes a batch of BGE-M3 backfill documents.
+   *
+   * @return outcome whose {@code success()} preserves the original "not a systemic failure"
+   *     signal ({@code true} on success or partial success, {@code false} when the entire batch
+   *     failed systemically); the record also carries docsProcessed/elapsedMs for {@link
+   *     BackfillScheduler}'s per-stage metrics recording (tempdoc 710 Move 2 item 4).
    */
-  public static boolean processBgeM3Backfill(BackfillContext context) {
+  public static StageOutcome processBgeM3Backfill(BackfillContext context) {
+    long t0 = System.nanoTime();
     try {
-      long t0 = System.nanoTime();
       List<String> pendingIds =
           context
               .documentFieldOps()
@@ -66,13 +70,13 @@ public final class BgeM3BackfillOps {
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
-        return true;
+        return StageOutcome.none();
       }
 
       BgeM3Encoder encoder = context.encoderSupplier().get();
       if (encoder == null) {
         context.log().debug("BGE-M3 backfill: encoder unavailable, stopping batch");
-        return true;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing BGE-M3 backfill for {} documents", pendingIds.size());
@@ -80,7 +84,7 @@ public final class BgeM3BackfillOps {
       int failed = 0;
 
       if (shouldInterrupt(context)) {
-        return true;
+        return StageOutcome.elapsedSince(t0);
       }
 
       // Phase 1: Collect content for all pending docs
@@ -125,11 +129,11 @@ public final class BgeM3BackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed);
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       if (shouldInterrupt(context)) {
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Phase 2: Batch encode with BGE-M3 (produces both dense + sparse)
@@ -195,9 +199,9 @@ public final class BgeM3BackfillOps {
                   "BGE-M3 encoding unavailable: entire batch of {} docs failed — {}",
                   perDocFailed,
                   e.getMessage());
-          return false;
+          return new StageOutcome(false, processed, (System.nanoTime() - t0) / 1_000_000);
         }
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
       long encodeMs = (System.nanoTime() - t2) / 1_000_000;
 
@@ -250,11 +254,11 @@ public final class BgeM3BackfillOps {
               writeMs,
               commitMs,
               docs > 0 ? totalMs / docs : 0);
-      return true;
+      return new StageOutcome(true, processed, totalMs);
 
     } catch (Exception e) {
       context.log().error("Error during BGE-M3 backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - t0) / 1_000_000);
     }
   }
 

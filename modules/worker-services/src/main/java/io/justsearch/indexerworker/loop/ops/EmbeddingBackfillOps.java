@@ -29,10 +29,17 @@ public final class EmbeddingBackfillOps {
       int batchSize,
       Logger log) {}
 
-  public static void processEmbeddingBackfill(BackfillContext context) {
+  /**
+   * Processes one batch of parent-doc embedding backfill.
+   *
+   * @return the batch outcome (tempdoc 710 Move 2 item 4) — {@link BackfillScheduler} records
+   *     per-stage timing/counts from this instead of relying on a metrics call inside the op.
+   */
+  public static StageOutcome processEmbeddingBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     if (!context.allowEmbeddingWritesSupplier().getAsBoolean()) {
       context.log().trace("Embedding backfill skipped: writes blocked by compatibility controller");
-      return;
+      return StageOutcome.none();
     }
 
     try {
@@ -43,7 +50,7 @@ public final class EmbeddingBackfillOps {
               context.batchSize());
 
       if (pendingIds.isEmpty()) {
-        return;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing embedding backfill for {} documents", pendingIds.size());
@@ -54,7 +61,7 @@ public final class EmbeddingBackfillOps {
       // Check for interruption before batch work
       EmbeddingProvider embeddingProvider = context.embeddingProviderSupplier().get();
       if (checkInterrupt(context, embeddingProvider, "Backfill")) {
-        return;
+        return StageOutcome.elapsedSince(methodStart);
       }
 
       // Phase 1: Batch-fetch content for all pending docs (single searcher acquisition)
@@ -79,14 +86,14 @@ public final class EmbeddingBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed, markedFailed);
-        return;
+        return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       long t1 = System.nanoTime();
 
       // Re-check interruption after content collection
       if (checkInterrupt(context, context.embeddingProviderSupplier().get(), "Backfill")) {
-        return;
+        return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 2: Batch embed all collected content
@@ -167,9 +174,11 @@ public final class EmbeddingBackfillOps {
           (t3 - t0) / 1_000_000);
 
       commitIfNeeded(context, processed, failed, markedFailed);
+      return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during embedding backfill", e);
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 
@@ -298,11 +307,18 @@ public final class EmbeddingBackfillOps {
     return updates;
   }
 
-  /** @return true if any chunks were processed (for tight-loop control) */
-  public static boolean processChunkEmbeddingBackfill(BackfillContext context) {
+  /**
+   * Processes one batch of chunk-doc embedding backfill.
+   *
+   * @return outcome whose {@code success()} preserves the original "any chunks processed"
+   *     tight-loop-control signal (tempdoc 710 Move 2 item 4 — the record also carries
+   *     docsProcessed/elapsedMs for {@link BackfillScheduler}'s per-stage metrics recording)
+   */
+  public static StageOutcome processChunkEmbeddingBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     if (!context.allowEmbeddingWritesSupplier().getAsBoolean()) {
       context.log().trace("Chunk embedding backfill skipped: writes blocked by compatibility controller");
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
 
     try {
@@ -313,7 +329,7 @@ public final class EmbeddingBackfillOps {
               context.batchSize());
 
       if (pendingChunkIds.isEmpty()) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       context
@@ -325,7 +341,7 @@ public final class EmbeddingBackfillOps {
 
       EmbeddingProvider embeddingProvider = context.embeddingProviderSupplier().get();
       if (checkInterrupt(context, embeddingProvider, "Chunk backfill")) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 1: Collect chunk content
@@ -360,11 +376,12 @@ public final class EmbeddingBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitChunkIfNeeded(context, processed, failed, markedFailed);
-        return failed > 0;
+        return new StageOutcome(
+            failed > 0, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       if (checkInterrupt(context, context.embeddingProviderSupplier().get(), "Chunk backfill")) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 2: Batch embed
@@ -436,11 +453,12 @@ public final class EmbeddingBackfillOps {
       }
 
       commitChunkIfNeeded(context, processed, failed, markedFailed);
-      return processed > 0 || failed > 0;
+      return new StageOutcome(
+          processed > 0 || failed > 0, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during chunk embedding backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 

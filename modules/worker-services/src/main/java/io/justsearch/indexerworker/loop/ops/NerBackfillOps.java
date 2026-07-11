@@ -35,7 +35,14 @@ public final class NerBackfillOps {
       int batchSize,
       Logger log) {}
 
-  public static void processNerBackfill(BackfillContext context) {
+  /**
+   * Processes one batch of NER backfill.
+   *
+   * @return the batch outcome (tempdoc 710 Move 2 item 4) — {@link BackfillScheduler} records
+   *     per-stage timing/counts from this instead of relying on a metrics call inside the op.
+   */
+  public static StageOutcome processNerBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     try {
       List<String> pendingIds =
           context
@@ -44,7 +51,7 @@ public final class NerBackfillOps {
                   SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING, context.batchSize());
 
       if (pendingIds.isEmpty()) {
-        return;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing NER backfill for {} documents", pendingIds.size());
@@ -139,9 +146,11 @@ public final class NerBackfillOps {
                 failed,
                 markedFailed);
       }
+      return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during NER backfill", e);
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 

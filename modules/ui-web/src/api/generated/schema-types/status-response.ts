@@ -256,6 +256,7 @@ export interface StatusResponse {
       writerQueueDepth?: number;
     };
     enrichment?: {
+      backfillMode?: string | null;
       batchTiming?: {
         batchCount?: Record<string, number> | null;
         totalMs?: Record<string, number> | null;
@@ -576,6 +577,7 @@ export const statusResponseSchema = z.strictObject({
       "writerQueueDepth": z.number().int().optional(),
     }).optional(),
     "enrichment": z.strictObject({
+      "backfillMode": z.string().nullable().optional(),
       "batchTiming": z.strictObject({
         "batchCount": z.record(z.string(), z.number().int()).nullable().optional(),
         "totalMs": z.record(z.string(), z.number().int()).nullable().optional(),

@@ -87,6 +87,10 @@ public final class BertNerInference implements Closeable {
         useTokenTypeIds);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("ner", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run() invocation
+    // through this SessionHandle's leases records itself — call sites can no longer forget
+    // (the class of gap that shipped as tempdoc 691 B-5).
+    sessions.setOrtRunRecorder(profiler::recordOrtCall);
   }
 
   /**
@@ -207,8 +211,6 @@ public final class BertNerInference implements Closeable {
     long[] shape = {1, seqLen};
 
     try (var lease = sessions.acquire()) {
-      OrtSession activeSession = lease.session();
-
       try (OnnxTensor inputIdsTensor =
               OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(inputIds), shape);
           OnnxTensor attentionMaskTensor =
@@ -245,19 +247,19 @@ public final class BertNerInference implements Closeable {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
           try {
             try (Scope _ = ortSpan.makeCurrent();
-                 OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
+                 OrtSession.Result result = lease.run(inputs)) {
             long t3 = System.nanoTime();
             // NER output shape: [1, seqLen, numLabels]
             float[][][] output3d = (float[][][]) result.get(0).getValue();
             float[][] logits = output3d[0]; // Remove batch dimension
             long t4 = System.nanoTime();
 
-            // Aggregate profiling
+            // Aggregate profiling. ORT-call timing is now recorded at the Lease choke point
+            // (tempdoc 710 Move 2) via the recorder bound in the constructor; t2/t3 stay only
+            // as the extract-phase boundary.
             profiler.addPhaseNs("tokenize", t1 - t0);
             profiler.addPhaseNs("tensor", t2 - t1);
-            long ortElapsed = t3 - t2;
             profiler.addPhaseNs("extract", t4 - t3);
-            profiler.recordOrtCall(ortElapsed);
             // callCount() is approximate — concurrent threads may skip or double-fire
             // at interval boundaries. Acceptable for periodic diagnostic logging.
             long calls = profiler.callCount();
@@ -404,8 +406,6 @@ public final class BertNerInference implements Closeable {
       long[] shape = {batchSize, padLen};
 
       try (var lease = sessions.acquire()) {
-        OrtSession activeSession = lease.session();
-
         try (OnnxTensor inputIdsTensor =
                 OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(flatIds), shape);
             OnnxTensor attentionMaskTensor =
@@ -432,13 +432,13 @@ public final class BertNerInference implements Closeable {
                 ORT_TRACER, "ner", batchSize, padLen);
             ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
             try {
-              // Tempdoc 691 B-5: mirror the single-doc path's encoder-profile recording —
-              // without it, batched-healthy runs report ortP50 from a handful of stray
-              // batch=1 calls, silently corrupting NER attribution.
-              long ortStart = System.nanoTime();
+              // Tempdoc 710 Move 2: ORT-call timing is recorded at the Lease choke point
+              // (lease.run below) via the recorder bound in the constructor — no per-call-site
+              // recordOrtCall needed here (this is the exact NER batched-path gap tempdoc 691
+              // B-5 shipped under the old per-call-site regime; the choke point makes it
+              // structurally impossible to omit again).
               try (Scope _ = ortSpan.makeCurrent();
-                   OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
-                profiler.recordOrtCall(System.nanoTime() - ortStart);
+                   OrtSession.Result result = lease.run(inputs)) {
                 float[][][] output3d = (float[][][]) result.get(0).getValue();
                 for (int j = 0; j < batchSize; j++) {
                   int origIdx = sortedIndices[batchStart + j];

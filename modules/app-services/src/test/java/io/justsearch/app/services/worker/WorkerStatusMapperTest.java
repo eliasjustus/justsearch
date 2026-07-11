@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.justsearch.app.api.status.OrtCudaView;
 import io.justsearch.app.api.status.WorkerOperationalView;
 import io.justsearch.ipc.CoreStatus;
+import io.justsearch.ipc.EnrichmentCoverage;
 import io.justsearch.ipc.GpuDiagnostics;
 import io.justsearch.ipc.HealthCheckResponse;
 import io.justsearch.ipc.OrtCudaProbeResult;
@@ -83,6 +84,38 @@ final class WorkerStatusMapperTest {
     assertEquals(7L, out.visualExtraction().visualTextNeededCount());
     assertEquals(3L, out.visualExtraction().visualEnrichmentNeededCount());
     assertEquals("vdu.circuit_open", out.visualExtraction().vduBlockedReason());
+  }
+
+  // ==================== Enrichment / backfillMode passthrough tests (tempdoc 710 Move 2) ====================
+
+  @Test
+  @DisplayName("backfillMode round-trips from EnrichmentCoverage proto to EnrichmentProgressView")
+  void backfillModeRoundTripsFromWireToView() {
+    StatusResponse status =
+        StatusResponse.newBuilder()
+            .setCore(CoreStatus.newBuilder().build())
+            .setEnrichment(EnrichmentCoverage.newBuilder().setBackfillMode("combined").build())
+            .build();
+
+    WorkerOperationalView out = WorkerStatusMapper.toUiStatusMap(status);
+
+    assertEquals("combined", out.enrichment().backfillMode());
+  }
+
+  @Test
+  @DisplayName("backfillMode passes through \"individual\" and \"idle\" values unmodified")
+  void backfillModePassesThroughOtherModes() {
+    for (String mode : new String[] {"individual", "idle"}) {
+      StatusResponse status =
+          StatusResponse.newBuilder()
+              .setCore(CoreStatus.newBuilder().build())
+              .setEnrichment(EnrichmentCoverage.newBuilder().setBackfillMode(mode).build())
+              .build();
+
+      WorkerOperationalView out = WorkerStatusMapper.toUiStatusMap(status);
+
+      assertEquals(mode, out.enrichment().backfillMode());
+    }
   }
 
   // ==================== ORT CUDA passthrough tests ====================

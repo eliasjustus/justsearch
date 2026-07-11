@@ -120,6 +120,16 @@ public final class OnnxEmbeddingEncoder implements Closeable {
         poolingStrategy);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("embed", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run() invocation
+    // through this SessionHandle's leases records itself — call sites (including runHidden's
+    // late-chunking path) can no longer forget (the class of gap that shipped as the S-B3
+    // runHidden blind spot, closed at the source by Wave 0 and now made structural). Null-guarded
+    // because OnnxEmbeddingEncoderPoolingTest constructs this encoder with sessions=null to unit
+    // test poolSpan/pool in isolation (tempdoc 691 Wave 0) — those pure functions never touch
+    // sessions, so the constructor staying I/O-free for that path is intentional.
+    if (sessions != null) {
+      sessions.setOrtRunRecorder(profiler::recordOrtCall);
+    }
   }
 
   /**
@@ -353,13 +363,12 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       try (Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
-          OrtSession session = lease.session();
 
           long tExtract;
           float[][][] hidden;
-          try (OrtSession.Result result = session.run(inputs, lease.runOptions())) {
+          try (OrtSession.Result result = lease.run(inputs)) {
             tExtract = System.nanoTime();
-            profiler.recordOrtCall(tExtract - tOrt);
+            // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
             // last_hidden_state: [batchSize, maxLen, dim]
             hidden = (float[][][]) result.get(0).getValue();
           } catch (OrtException e) {
@@ -382,32 +391,23 @@ public final class OnnxEmbeddingEncoder implements Closeable {
                 batchSize,
                 maxLen,
                 e.getMessage());
-            OrtSession.RunOptions gpuRunOptions = lease.runOptions();
             final int fallbackSeqLen = maxLen;
             hidden =
                 runOomFallbackLadder(
                     batchSize,
                     i ->
                         runSingleHidden(
-                            session,
-                            gpuRunOptions,
-                            allIds[i],
-                            allMask[i],
-                            allTypeIds[i],
-                            fallbackSeqLen),
+                            lease, allIds[i], allMask[i], allTypeIds[i], fallbackSeqLen),
                     i -> {
                       try (var cpuLease = sessions.acquireCpu()) {
                         return runSingleHidden(
-                            cpuLease.session(),
-                            cpuLease.runOptions(),
-                            allIds[i],
-                            allMask[i],
-                            allTypeIds[i],
-                            fallbackSeqLen);
+                            cpuLease, allIds[i], allMask[i], allTypeIds[i], fallbackSeqLen);
                       }
                     });
+            // Tempdoc 710 Move 2: each per-doc GPU/CPU retry in the ladder above is its own
+            // lease.run() call and records itself individually at the choke point — no outer
+            // recordOrtCall here (that would double-count against the per-doc recordings).
             tExtract = System.nanoTime();
-            profiler.recordOrtCall(tExtract - tOrt);
           }
 
           int dim = hidden[0][0].length;
@@ -483,14 +483,17 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     return hidden;
   }
 
-  /** Runs a batch=1 forward pass on the given session and returns per-token hidden states. */
+  /**
+   * Runs a batch=1 forward pass on the given lease and returns per-token hidden states.
+   *
+   * <p>Takes the {@link SessionHandle.Lease} itself (tempdoc 710 Move 2), not an unpacked
+   * session/RunOptions pair, so the run goes through {@link SessionHandle.Lease#run} — the choke
+   * point every ORT call must pass through — regardless of whether the caller passes the
+   * already-acquired GPU-batch lease (OOM ladder's GPU-batch1 retry) or a fresh CPU lease (the
+   * ladder's CPU fallback).
+   */
   private float[][] runSingleHidden(
-      OrtSession session,
-      OrtSession.RunOptions runOptions,
-      long[] ids,
-      long[] mask,
-      long[] typeIds,
-      int seqLen)
+      SessionHandle.Lease lease, long[] ids, long[] mask, long[] typeIds, int seqLen)
       throws OrtException {
     long[] shape1 = {1, seqLen};
     OrtEnvironment env = sessions.environment();
@@ -506,7 +509,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       if (typesTensor != null) {
         singleInputs.put("token_type_ids", typesTensor);
       }
-      try (OrtSession.Result result = session.run(singleInputs, runOptions)) {
+      try (OrtSession.Result result = lease.run(singleInputs)) {
         float[][][] out = (float[][][]) result.get(0).getValue();
         return out[0];
       }
@@ -684,13 +687,10 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       try (Scope _ = ortSpan.makeCurrent()) {
         try (var lease = sessions.acquire()) {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
-          OrtSession session = lease.session();
-          long tOrt = System.nanoTime();
-          try (OrtSession.Result result = session.run(inputs, lease.runOptions())) {
-            // Tempdoc 691 Wave 0 (B-5): runHidden is the shared forward pass for embedSingle
-            // and embedWithSpans, but only the batched embed() path fed the profiler before
-            // this — record here too so EncoderProfileAccumulator isn't blind to those calls.
-            profiler.recordOrtCall(System.nanoTime() - tOrt);
+          try (OrtSession.Result result = lease.run(inputs)) {
+            // Tempdoc 710 Move 2: ORT-call timing is now recorded at the Lease choke point
+            // (structural — was tempdoc 691 Wave 0's per-call-site fix for the B-5 blind spot;
+            // the choke point makes the whole class of gap impossible rather than patched).
             // last_hidden_state: [1, seqLen, dim]
             float[][][] hidden = (float[][][]) result.get(0).getValue();
             int dim = hidden[0][0].length;

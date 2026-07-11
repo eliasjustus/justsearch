@@ -5,18 +5,10 @@ import ai.onnxruntime.OrtException;
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.EMBED;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.FETCH;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.NER;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.SPLADE;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.TOTAL;
-import static io.justsearch.indexerworker.metrics.BatchTimingKeys.WRITE;
-
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.metrics.EncoderOrtRunSpans;
-import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.ner.NerResult;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -89,13 +81,51 @@ public final class CombinedEnrichmentBackfillOps {
       int[] batchesSinceCommit) {}
 
   /**
+   * Outcome of one {@link #processCombinedBackfill} call (tempdoc 710 Move 2 item 4).
+   *
+   * <p>{@code OperationalMetrics.recordStageTiming}/{@code recordEnrichmentCompleted}/{@code
+   * recordBatchTiming} were previously called from a {@code finally} block INSIDE this method —
+   * the sole caller, which meant individual-backfill-mode counters froze (710 S-B3 finding).
+   * Recording moves to {@link BackfillScheduler} (the only component that knows which pass ran);
+   * this record carries exactly what that {@code finally} block used to read directly.
+   *
+   * @param anyWorkDone the original return value ({@code written > 0}) — drives the tight-loop /
+   *     {@code useCombined} control flow in {@link BackfillScheduler}.
+   * @param recordTiming the original {@code recordTiming} flag: {@code true} once processing got
+   *     past the early-return/interruption checks (mirrors the pre-move gate on whether the
+   *     {@code finally} block recorded anything at all). {@code false} means every count/timing
+   *     field below is a meaningless zero and must NOT be recorded.
+   * @param embedProcessed / spladeProcessed / nerProcessed document counts (not batch counts).
+   * @param embedMs / spladeMs / nerMs / fetchMs / writeMs / totalMs per-phase wall-clock ms.
+   */
+  public record CombinedOutcome(
+      boolean anyWorkDone,
+      boolean recordTiming,
+      int embedProcessed,
+      int spladeProcessed,
+      int nerProcessed,
+      long embedMs,
+      long spladeMs,
+      long nerMs,
+      long fetchMs,
+      long writeMs,
+      long totalMs) {
+
+    /** No pending work / interrupted before any stage ran — nothing to record. */
+    public static CombinedOutcome none() {
+      return new CombinedOutcome(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+  }
+
+  /**
    * Processes a batch of documents through all available enrichments in a single pass. Each
    * document is read once, enriched with embedding + SPLADE + NER as needed, and written once via a
    * single batch RMW call.
    *
-   * @return true if any work was done (for backfillDidWork tracking)
+   * @return the batch outcome; {@code outcome.anyWorkDone()} replaces the pre-Move-2 boolean
+   *     return for backfillDidWork/tight-loop tracking.
    */
-  public static boolean processCombinedBackfill(BackfillContext context) {
+  public static CombinedOutcome processCombinedBackfill(BackfillContext context) {
     // Timing/count accumulators hoisted so they survive exceptions (350).
     int embedProcessed = 0;
     int spladeProcessed = 0;
@@ -174,7 +204,7 @@ public final class CombinedEnrichmentBackfillOps {
       }
 
       if (context.parentIdCache().isEmpty() && context.chunkIdCache().isEmpty()) {
-        return false;
+        return CombinedOutcome.none();
       }
 
       // Pop batchSize parents + chunkSlots chunks from caches
@@ -190,7 +220,7 @@ public final class CombinedEnrichmentBackfillOps {
       }
 
       if (pendingIds.isEmpty()) {
-        return false;
+        return CombinedOutcome.none();
       }
 
       long t0 = System.nanoTime();
@@ -321,7 +351,7 @@ public final class CombinedEnrichmentBackfillOps {
 
       // Check for interruption
       if (!context.runningSupplier().getAsBoolean() || context.signalBus().isUserActive()) {
-        return false;
+        return CombinedOutcome.none();
       }
 
       // Past early returns — any work from here should be recorded.
@@ -617,27 +647,40 @@ public final class CombinedEnrichmentBackfillOps {
               written,
               totalMs);
 
-      return written > 0;
+      // 710 Move 2 item 4: per-stage enrichment counts/timing are no longer recorded here —
+      // recordTiming carries "past the early-return/interruption checks" forward on the returned
+      // outcome (mirrors the pre-move finally-block gate) so BackfillScheduler can record from
+      // completed-stage data even when a later stage throws (the same "survives exceptions in
+      // later stages" property the old finally block had — see the catch block below).
+      return new CombinedOutcome(
+          written > 0,
+          recordTiming,
+          embedProcessed,
+          spladeProcessed,
+          nerProcessed,
+          embedMs,
+          spladeMs,
+          nerMs,
+          fetchMs,
+          writeMs,
+          totalMs);
 
     } catch (Exception e) {
       context.log().error("Error during combined enrichment backfill", e);
-      return false;
-    } finally {
-      // 335 §10, 354: Record per-stage enrichment counts and timing for /api/status.
-      // In a finally block so timing from completed stages survives exceptions
-      // in later stages (e.g., embed succeeds but Lucene write throws).
-      if (recordTiming) {
-        var metrics = OperationalMetrics.getInstance();
-        metrics.recordEnrichmentCompleted(EMBED, embedProcessed);
-        metrics.recordEnrichmentCompleted(SPLADE, spladeProcessed);
-        metrics.recordEnrichmentCompleted(NER, nerProcessed);
-        metrics.recordStageTiming(EMBED, embedProcessed, embedMs);
-        metrics.recordStageTiming(SPLADE, spladeProcessed, spladeMs);
-        metrics.recordStageTiming(NER, nerProcessed, nerMs);
-        metrics.recordBatchTiming(FETCH, fetchMs);
-        metrics.recordBatchTiming(WRITE, writeMs);
-        metrics.recordBatchTiming(TOTAL, totalMs);
-      }
+      return recordTiming
+          ? new CombinedOutcome(
+              false,
+              true,
+              embedProcessed,
+              spladeProcessed,
+              nerProcessed,
+              embedMs,
+              spladeMs,
+              nerMs,
+              fetchMs,
+              writeMs,
+              totalMs)
+          : CombinedOutcome.none();
     }
     } finally {
       enrichmentSpan.end();
