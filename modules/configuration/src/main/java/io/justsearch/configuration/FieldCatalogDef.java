@@ -93,7 +93,7 @@ public final class FieldCatalogDef {
                 new FieldDef("vdu_enrichment", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("vdu_page_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("vector", "vector", false, false, List.of("vector"),
-                        new VectorSpec(vectorDim), null, false, "preserve-reread")
+                        new VectorSpec(vectorDim), null, false, "preserve-reread-or-reset:embedding_status")
         ));
     }
 
@@ -130,7 +130,7 @@ public final class FieldCatalogDef {
                 new FieldDef("vdu_enrichment", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("vdu_page_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("vector", "vector", false, false, List.of("vector"),
-                        new VectorSpec(vectorDim), null, false, "preserve-reread"),
+                        new VectorSpec(vectorDim), null, false, "preserve-reread-or-reset:embedding_status"),
                 // Chunk-related fields (RAG + citations)
                 new FieldDef("is_chunk", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("parent_doc_id", "keyword", true, true, List.of("filter"), null, null, false),
@@ -142,7 +142,7 @@ public final class FieldCatalogDef {
                 new FieldDef("chunk_end_char", "long", true, true, List.of("filter", "sort"), null, null, false),
                 // Phase 6: chunk embeddings
                 new FieldDef("chunk_vector", "vector", false, false, List.of("chunk_vector"),
-                        new VectorSpec(vectorDim), null, false, "preserve-reread"),
+                        new VectorSpec(vectorDim), null, false, "preserve-reread-or-reset:chunk_embedding_status"),
                 new FieldDef("chunk_embedding_status", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("chunk_embedding_retry_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 // Frontmatter metadata fields (362)

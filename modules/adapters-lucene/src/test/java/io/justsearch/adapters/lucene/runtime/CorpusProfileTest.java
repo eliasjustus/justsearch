@@ -112,6 +112,47 @@ class CorpusProfileTest {
       assertTrue(CorpusProfile.EMPTY.isShortCorpus());
       assertFalse(CorpusProfile.EMPTY.isLongCorpus());
     }
+
+    /**
+     * Tempdoc 717 regression: a corpus with chunks but NO token data ({@code parent_token_count}
+     * left unpopulated by a SPLADE-load race at index time) must NOT be classified short — {@code
+     * medianTokenCount()==0} means <em>unknown</em>, not <em>short</em>. This is exactly the
+     * degenerate legal-clerc state (198 parents, 4293 chunks, zero token data) that intermittently
+     * skipped the {@code chunk_merge} leg and halved dense quality (0.34 vs 0.62).
+     */
+    @Test
+    void chunksButNoTokenDataIsNotShort() {
+      var profile = new CorpusProfile(198, 4293, 0, 0, new int[] {0, 0, 0, 0, 0, 0});
+      assertEquals(0, profile.medianTokenCount(), "no token data → median unknown (0)");
+      assertFalse(
+          profile.isShortCorpus(),
+          "a corpus that produced chunks must not be short on absent token data");
+    }
+
+    /**
+     * Tempdoc 717: the fail-open on missing token data does NOT over-open — a corpus with no token
+     * data AND genuinely few chunks (chunkRate &lt; 0.05) is still short via the chunkRate gate.
+     */
+    @Test
+    void noTokenDataButFewChunksStillShort() {
+      var profile = new CorpusProfile(100, 2, 0, 0, new int[6]); // chunkRate 0.02 < 0.05
+      assertTrue(profile.isShortCorpus());
+    }
+
+    /**
+     * Tempdoc 717 (review Finding 1): a large chunked corpus where only a MINORITY of parents have
+     * token data must not be classified short off that unreliable median — the token-median test
+     * requires majority coverage. Here 5 of 200 parents are covered (all short), but 190 chunks →
+     * fail open.
+     */
+    @Test
+    void minorityTokenCoverageDoesNotTrustMedian() {
+      var profile = new CorpusProfile(200, 190, 640, 5, new int[] {5, 0, 0, 0, 0, 0});
+      assertEquals(128, profile.medianTokenCount(), "median over the tiny covered subset is low");
+      assertFalse(
+          profile.isShortCorpus(),
+          "a minority-coverage median must not classify a chunked corpus short");
+    }
   }
 
   @Nested

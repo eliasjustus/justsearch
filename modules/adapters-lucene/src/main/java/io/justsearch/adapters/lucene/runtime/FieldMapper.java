@@ -173,6 +173,14 @@ public final class FieldMapper {
   static final String RMW_PRESERVE_REREAD = "preserve-reread";
   /** RMW policy prefix that resets a named docValues-backed status field so a backfill re-derives. */
   static final String RMW_RESET_STATUS_PREFIX = "reset-status:";
+  /**
+   * RMW policy prefix (tempdoc 717): preserve-reread with a reset-status fallback. Re-reads the
+   * vector; if the re-read returns null (a documented-normal outcome — the value is genuinely
+   * absent in the snapshot), resets the named docValues-backed status field so a backfill
+   * re-derives, instead of silently carrying nothing forward and leaving the status lying (the
+   * F-032 "status lies" hole that plain {@code preserve-reread} left open).
+   */
+  static final String RMW_PRESERVE_REREAD_OR_RESET_PREFIX = "preserve-reread-or-reset:";
 
   /**
    * Fail-fast catalog validation (tempdoc 711, generalized to every type by tempdoc 714): every
@@ -204,19 +212,22 @@ public final class FieldMapper {
           }
           continue;
         }
+        if (policy.startsWith(RMW_PRESERVE_REREAD_OR_RESET_PREFIX)) {
+          // Tempdoc 717: preserve-reread with a reset-status fallback. The re-read lane is a
+          // float-vector read-back (vector-only), and a null re-read must downgrade the paired
+          // status so a backfill re-derives rather than leaving it lying (the F-032 hole).
+          if (!"vector".equals(def.type)) {
+            throw new IllegalStateException(
+                "Field " + def.id + " (type " + def.type + ") declares rmwPolicy "
+                    + "'preserve-reread-or-reset' but only vector fields support index re-read "
+                    + "(tempdoc 717)");
+          }
+          validateResetTarget(
+              def, policy.substring(RMW_PRESERVE_REREAD_OR_RESET_PREFIX.length()));
+          continue;
+        }
         if (policy.startsWith(RMW_RESET_STATUS_PREFIX)) {
-          String target = policy.substring(RMW_RESET_STATUS_PREFIX.length());
-          FieldDef targetDef = byId.get(target);
-          if (targetDef == null) {
-            throw new IllegalStateException(
-                "Field " + def.id + " rmwPolicy reset-status target '" + target
-                    + "' does not exist in the catalog");
-          }
-          if (!targetDef.docValues) {
-            throw new IllegalStateException(
-                "Field " + def.id + " rmwPolicy reset-status target '" + target
-                    + "' must be docValues-backed so the status can be restored across RMW");
-          }
+          validateResetTarget(def, policy.substring(RMW_RESET_STATUS_PREFIX.length()));
           continue;
         }
         throw new IllegalStateException(
@@ -227,6 +238,25 @@ public final class FieldMapper {
             "Field " + def.id + " declares rmwPolicy '" + def.rmwPolicy + "' but is stored or "
                 + "docValues-backed (RMW preserves it already) — remove the policy");
       }
+    }
+  }
+
+  /**
+   * Validates a reset-status target field name (shared by the {@code reset-status:} and {@code
+   * preserve-reread-or-reset:} lanes): it must exist in the catalog and be docValues-backed so
+   * {@code WritePathOps} can read and restore the status across an RMW.
+   */
+  private void validateResetTarget(FieldDef def, String target) {
+    FieldDef targetDef = byId.get(target);
+    if (targetDef == null) {
+      throw new IllegalStateException(
+          "Field " + def.id + " rmwPolicy reset target '" + target
+              + "' does not exist in the catalog");
+    }
+    if (!targetDef.docValues) {
+      throw new IllegalStateException(
+          "Field " + def.id + " rmwPolicy reset target '" + target
+              + "' must be docValues-backed so the status can be restored across RMW");
     }
   }
 

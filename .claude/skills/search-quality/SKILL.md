@@ -1541,7 +1541,18 @@ above)*
 - **Caveat surfaced:** the first (confounded) A/B arm and 713's control both hit an INTERMITTENT
   fresh-build anomaly where the whole `chunk_merge` leg is silently absent (vector 0.34 not 0.62).
   Chartered separately as **tempdoc 717** — it is a defect on the shipped default path, unrelated to
-  this flag.
+  this flag. **717 resolution (live probe, 2026-07-11) — NOT vector loss:** the probe reproduced the
+  degenerate build and proved the chunks + `chunk_vector`s are 100% healthy; the `chunk_merge` leg is
+  skipped at query time via `SKIPPED_SHORT_CORPUS` because a SPLADE-load race at index time leaves
+  `parent_token_count` unpopulated on a small fast-indexed corpus → `CorpusProfile` sees median 0 →
+  a long corpus is mis-classified "short". Fixed by always-populating `parent_token_count` (an
+  index-time estimate fallback so it never depends on the SPLADE-load race) + making `isShortCorpus`
+  fail-open for chunks on unreliable token data. Live-validated: 3/3 fresh builds healthy (vector
+  ≈0.62, `chunk_merge` present). This retires the 712/713 hand-checked `chunk_merge`-leg convention
+  (the anomaly can no longer arise). The `chunk_vector` presence-truthful readiness/coverage/serve
+  gates that shipped alongside are **complementary F-032-class hardening** (they close a latent
+  "status lies" gap), NOT the fix for this bug — they read 100% vector coverage on the degenerate
+  build and cannot catch a short-corpus leg-skip.
 - **Design/plan:** tempdoc 712 (§Mechanism correction + §Implementation log; steps 1–3 landed
   flag-gated default-off on branch `worktree-712-sparse`).
 

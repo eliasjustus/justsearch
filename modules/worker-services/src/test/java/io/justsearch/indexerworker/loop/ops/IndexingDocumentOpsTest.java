@@ -2,10 +2,54 @@ package io.justsearch.indexerworker.loop.ops;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.indexerworker.extract.ContentExtractor;
 import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link IndexingDocumentOps} metadata helpers. */
 class IndexingDocumentOpsTest {
+
+  @Test
+  void estimateTokenCount_nonBlankAndBlank() {
+    // chars/3: a 2000-char doc (the chunk threshold) estimates ~666 tokens.
+    assertEquals(666L, IndexingDocumentOps.estimateTokenCount("x".repeat(2000)));
+    assertTrue(IndexingDocumentOps.estimateTokenCount("y".repeat(40_000)) > 512);
+    assertEquals(0L, IndexingDocumentOps.estimateTokenCount(null));
+    assertEquals(0L, IndexingDocumentOps.estimateTokenCount("   "));
+  }
+
+  /**
+   * Tempdoc 717 (review Finding 2): a document long enough to have been chunked (≥ 2000 chars) must
+   * estimate ABOVE the 512-token short threshold — for ANY script — so a chunked corpus is never
+   * mis-classified "short". CJK packs more tokens per char, so a chunk-length CJK doc is only more
+   * clearly long; the char-uniform estimate never under-classifies a chunked doc.
+   */
+  @Test
+  void estimateTokenCount_chunkLengthDocReadsAboveShortThreshold() {
+    assertTrue(
+        IndexingDocumentOps.estimateTokenCount("x".repeat(2000)) > 512, "ASCII 2000-char doc");
+    assertTrue(
+        IndexingDocumentOps.estimateTokenCount("字".repeat(2000)) > 512, "CJK 2000-char doc");
+  }
+
+  /**
+   * Tempdoc 717: when the SPLADE encoder isn't ready at index time (the fresh-build startup race),
+   * {@code parent_token_count} must still be populated via the char estimate — otherwise the
+   * corpus-profile classifier sees no token data → median 0 → mis-classifies a long corpus "short"
+   * → the {@code chunk_merge} leg is skipped and dense quality halves.
+   */
+  @Test
+  void deriveParentMetadata_nullSpladeStillPopulatesTokenCount() {
+    var extraction =
+        new ContentExtractor.ExtractionResult("word ".repeat(3000), "title", "text/plain");
+    var meta =
+        IndexingDocumentOps.deriveParentMetadata(
+            java.nio.file.Path.of("doc.txt"), extraction, null, null);
+    assertNotNull(
+        meta.parentTokenCount(), "token count must not be null when SPLADE is unavailable");
+    assertTrue(
+        meta.parentTokenCount() > 512,
+        "a long doc must estimate above the 512-token short threshold");
+  }
 
   @Test
   void parsePublishedAt_corpusFormat() {
