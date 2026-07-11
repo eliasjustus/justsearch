@@ -469,3 +469,33 @@ then flipped):
 4. **`content_all` left out of scope** (logged to the observations inbox): it is `text`,
    stored:false, docValues:false, so it too is dropped by RMW — but it is neither `vector` nor
    `splade`, so it is outside the design's fragile scope and declares no policy. Flagged, not fixed.
+
+## Items 2–4 implementation log (2026-07-11, orchestrator record; work on sibling branches)
+
+- **Item 4 (branch `worktree-711-jseval`, commits 04dfb72/4084bd0):** fail-closed `--clean` +
+  double-keyed orphan-Worker sweep (lock-file PID/start-time AND exact
+  `-Djustsearch.data.dir=` cmdline; single-key match refuses to kill), forensics logged before
+  wipe/kill, hard error naming survivors after one kill-and-retry cycle; `stop_backend` now
+  takes the data dir and sweeps. 12 new tests incl. a real Windows held-open-handle failure
+  test; full jseval suite 1596 passed (2 pre-existing registered reds). **Live-proven the same
+  day:** during the Item-2 back-to-back fidelity runs, the sweep detected and killed a real
+  orphaned Worker (PID 33916) left by the first run's stop — the exact defect class, caught in
+  production conditions on its first outing.
+- **Item 2 (branch `worktree-711-jseval`, commit 5f8c758):** per-mode re-measure at HEAD
+  defaults via `jseval corpus-fidelity --modes hybrid,vector --embedding --start-backend
+  --clean` (both corpora materialized from committed sources in the worktree; zero code
+  touches, as derisk E5 predicted). **battlefield-en-v1: hybrid 0.9517, vector 1.0000 — out of
+  band in BOTH modes post-F-031** (design expected only vector saturation; hybrid saturated
+  too), no longer a difficulty discriminator; **battlefield-de-v1: hybrid 0.5924 (exact match
+  to the 624 certification), vector 0.58 — in-band, remains valid.** Register Dataset Catalog
+  rows added with mode-scope notes; the durable record is the register (the materialized
+  `datasets/` metadata is gitignored — derisk E5's "committed metadata.json" was corrected
+  here: only `scripts/jseval/624-corpora/*/meta.json` generation provenance is committed).
+- **Item 3 (branch `worktree-711-stamping`, commits 73bcfc5/c174bce):** `stamp_capabilities` +
+  `load_manifest_capabilities` in `scripts/models/_common.py`, wired post-hoc into all four
+  build scripts (uniform load/stamp/save; `stamped_metadata_keys` recorded in build.json;
+  graceful skip for manifest-less dirs); resolver rung between manifest and ecosystem files in
+  all five fact methods, one probe session per resolve via new
+  `OrtSessionAssembler.probeCustomMetadata`; manifest wins with disagreement WARN. Two tiny
+  committed fixtures (429/145 bytes) + 3 new tests; ort-common suite green incl. the live gte
+  resolution test. No committed model was restamped (forward-only per design).
