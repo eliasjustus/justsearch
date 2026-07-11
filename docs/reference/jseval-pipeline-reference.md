@@ -92,6 +92,45 @@ Re-pin after a deliberate change: `perf-gate --update-baseline` (re-pins from th
 `scripts/jseval/{relevance,perf,llm-gen,utility-ratchet}-baselines.v1.json` + `leak-gate-baselines.v1.json`.
 Exit codes: 0 = within band, 1 = regression, 2 = data/projection missing.
 
+### Chunk-completeness validity guard (tempdoc 718)
+
+A fresh `--clean` index build can silently ship with its chunk (RAG passage) sub-system absent
+(tempdoc 717) — the run reports `COMPLETED`, gates pass, and vector-mode nDCG is simply worse (a
+measured case: 0.34 instead of a healthy 0.62), with no error anywhere. This is a
+**measurement-integrity** hole distinct from 717's enrichment-correctness bug: any consumer that
+reads the degenerate index (release scorecard, ratchets, a founder A/B) scores it as healthy.
+
+Every `run` embeds a `chunk_completeness` block in `summary.json` (sibling of `manifest` /
+`corpus_identity`): `{"expected": N, "observed": M, "verdict": "ok"|"chunk-free"|"degenerate",
+"reasons": [...]}`. `expected` is computed OFFLINE from the corpus's `corpus.jsonl` — a count of
+docs whose materialized content (`title + "\n\n" + text`) reaches the 2000-char chunk threshold —
+before/independent of any ingest, so a degenerate enrichment pipeline can never move it (the
+anti-spoof property: a build that suppresses chunk-doc *creation* still can't fake the *offline*
+expectation). `observed` is `chunkDocCount`/`chunkVectorCoveragePercent` from the run-completion
+`/api/status`, corroborated by `chunk_merge` in vector mode's `pipeline_tracking.observed`. A
+`chunk-free` verdict (`expected == 0`, e.g. a short-doc BEIR/golden corpus) is a legitimate pass,
+distinguished from a `degenerate` verdict (`expected > 0` but the index shows none/incomplete
+chunk docs) — the two 0-chunk cases that are otherwise bit-identical at the pipeline-output layer.
+
+All four ratchet gates (`relevance-gate`, `perf-gate`, `leak-gate`, `union-recall-gate`) refuse an
+un-overridden `degenerate` run before evaluating anything, exit code 2:
+
+```bash
+python -m jseval relevance-gate --data-dir <dir> --dataset golden/legal-clerc
+# {"exit_code": 2, "error": "chunk-completeness guard: ...", "expected": 340, "observed": 0, ...}
+```
+
+Escape hatch (deliberate chunk-incomplete certification only): `--allow-chunk-incompleteness` per
+gate command, or `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` — mirrors `--allow-engine-mismatch` /
+`JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL`. A run predating the guard (no `chunk_completeness` block)
+is treated as `ok` — backward-compatible. Implementation: `jseval/chunk_completeness.py`
+(`expected_chunk_docs`, `chunk_completeness_verdict`) + `ratchet_kernel.assert_chunk_completeness`.
+
+**Known dual-source-of-truth risk:** the 2000-char threshold is pinned in
+`jseval/chunk_completeness.py` as a mirror of `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`
+(Java) and will silently drift if the Java constant ever changes — see the follow-up observation
+proposing `/api/status` expose the threshold so the oracle reads it instead of mirroring it.
+
 ### Diagnostics
 
 ```bash
