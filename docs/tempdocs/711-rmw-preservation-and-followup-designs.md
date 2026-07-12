@@ -1,6 +1,7 @@
 # 711 — RMW field-preservation + 691/710 follow-up designs
 
-- **status:** open — DESIGN SETTLED + DERISKED 2026-07-11, ready for implementation (§Derisk results)
+- **status:** DONE — MERGED to main 2026-07-11. [STATUS RECONCILIATION 2026-07-12: header was stale ("ready for implementation"); all three items shipped — catalog-declared RMW field preservation (F-032, legal vector 0.34→0.62) as PR #139 (4e9a17f), fail-closed jseval `--clean` + orphan-Worker sweep + battlefield per-mode re-measure as PR #141 (bfee8b1), ONNX metadata_props capability stamping as PR #140 (cf2cf09). Reconciled during the 705 takeover.]
+- **status (original, superseded above):** open — DESIGN SETTLED + DERISKED 2026-07-11, ready for implementation (§Derisk results)
 - **created:** 2026-07-11
 - **provenance:** the four undesigned follow-ups from the 691/710 close-out (founder takeover
   directive 2026-07-11). Items: (1) RMW structural fix, (2) battlefield difficulty re-baseline,
