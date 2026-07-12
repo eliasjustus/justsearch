@@ -1389,6 +1389,17 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   }
 
   /**
+   * Exclusive upper bound for a half-open prefix range: the normalized prefix with its final
+   * character incremented, so {@code path >= lower AND path < upper} selects exactly the paths
+   * under {@code lower} without SQL {@code LIKE} wildcard hazards. Callers must pass a non-empty
+   * normalized prefix ({@link PathNormalizer#normalizePathPrefix} guarantees a trailing separator,
+   * so the last char is well-defined and never a high sentinel).
+   */
+  private static String upperBoundExclusive(String lower) {
+    return lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+  }
+
+  /**
    * Lists FAILED jobs whose path is under the given prefix (tempdoc 599 §16/B1). Combines the
    * {@link #listFailedJobs(int)} projection with the half-open range predicate from
    * {@link #countByPathPrefix(String)} — same normalization + PK-index-friendly, wildcard-safe
@@ -1405,8 +1416,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         log.warn("listFailedJobsByPathPrefix called with empty prefix, refusing");
         return List.of();
       }
-      String upper =
-          lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+      String upper = upperBoundExclusive(lower);
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
@@ -1515,9 +1525,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       // LIKE 'prefix%', so `_`/`%` inside a normalized path are treated literally rather than
       // as SQL wildcards (which would over-delete unrelated jobs) — mirrors the wildcard-safe
       // listFailedJobsByPathPrefix/countByPathPrefix range queries.
-      String upper =
-          normalized.substring(0, normalized.length() - 1)
-              + (char) (normalized.charAt(normalized.length() - 1) + 1);
+      String upper = upperBoundExclusive(normalized);
       String sql = "DELETE FROM jobs WHERE path >= ? AND path < ?";
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
@@ -1565,10 +1573,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         log.warn("countByPathPrefix called with empty prefix, refusing");
         return new JobQueue.JobStateCounts(0L, 0L, 0L, 0L, 0L);
       }
-      // Half-open upper bound: same string with the final char incremented. normalizePathPrefix
-      // guarantees a trailing separator, so the last char is well-defined and not a high sentinel.
-      String upper =
-          lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+      String upper = upperBoundExclusive(lower);
 
       String sql = "SELECT state, COUNT(*) FROM jobs WHERE path >= ? AND path < ? GROUP BY state";
 
