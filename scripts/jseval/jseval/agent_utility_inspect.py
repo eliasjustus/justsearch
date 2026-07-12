@@ -463,10 +463,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         # and the arms are contemporaneous (temporal-confound fix).
         eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
                  max_samples=concurrency, log_format="json",
-                 eval_set_id=eval_set_id,
-                 # Re-invoking a fully-completed set at the same log_dir otherwise errors
-                 # 'log file not associated with a task'; allow it for resume/re-run ergonomics.
-                 log_dir_allow_dirty=True)
+                 eval_set_id=eval_set_id)
     finally:
         shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)
     return log_dir
