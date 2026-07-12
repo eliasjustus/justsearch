@@ -1,9 +1,9 @@
 ---
 title: "Document-extraction improvement & extraction-tax reduction: a general direction frame that asks whether and how JustSearch should change how it turns files into indexable content — holding both faces of the 'extraction tax' (the QUALITY tax: structure/content lost at extraction → nDCG lost on complex documents; and the COST tax: time/compute spent per document at indexing time) as one problem, with the HOW left deliberately open. Picks up the Tier-3 slot that tempdoc 252 shipped Tier 1 for and explicitly deferred, per 252's own 'open a new tempdoc citing this one' resume policy. Routes already-owned pieces (677 output-quality/abstention, 686 real-doc corpus + parse pressure, 691 enrichment throughput, 607 routing authority) to their owners rather than absorbing them."
 type: tempdocs
-status: "open — takeover investigation complete (2026-07-10), verdict: WAIT-FOR-EVIDENCE. The question is real but currently unanswerable at this doc's own credibility bar: every load-bearing question is gated on 686's real-document corpus (doesn't exist) and 677's confabulation defect (measuring a defective target). Reopen triggers recorded in §Takeover investigation. No design or implementation performed; awaiting founder decision on sequencing (686/677 first)."
+status: "RE-INVESTIGATED 2026-07-12 (§Re-investigation) — both 07-10 reopen triggers now MET (686 corpus + 677 gate merged), verdict REVISED to CLOSE-WITH-SPLIT: the extraction-tax question is substantially ANSWERED by routed owners (Tier-1 structure landed; 677 fixed output correctness; 706 fixed baseline OCR cost 5-7×; the parallel retrieval campaign F-030→F-034 exonerated extraction as a live quality bottleneck). Quality/layout-tier face → CLOSE with revisit-trigger (evidence-starved: no ground-truth extraction-quality metric exists, declined twice by 252/607). VDU-cost-swap face → ROUTE to 374 as a now-cheap local bake-off (PaddleOCR-VL 1.6 0.9B vs incumbent 9B on 686's corpus; 677's gate = hallucination check). Recommend founder close 705. No design/implementation performed."
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-12
 author: agent (Opus orchestration) — opened at founder request as the takeover frame for an extraction-quality/tax investigation; not a design. Cites 252's explicit resume policy ("if this work should resume, open a new tempdoc citing this one by title").
 category: indexing / extraction / ingestion-quality / performance / search-quality
 related:
@@ -340,3 +340,89 @@ here public-safely) found nothing that overturns the verdict and three things th
   Carry it on the candidate list next to F5's PaddleOCR-VL — both are contingent on exactly the
   two reopen triggers above. Priority signals in the same material rank layout/table extraction
   below cheaper already-identified search-quality levers, consistent with WAIT-FOR-EVIDENCE.
+
+---
+
+## Re-investigation (2026-07-12, worktree `takeover-705b`) — both triggers now met; verdict revised
+
+Both reopen triggers from the 2026-07-10 verdict have since been satisfied, so this pass re-runs
+the verdict against current `main` (not a fresh landscape guess). Two evidence legs: a
+displacement/residual audit (register findings F-029..F-035, tempdocs 686/706/707, codebase grep)
+and a landscape cost re-check (PaddleOCR-VL/DeepDoc/dots.ocr/olmOCR state, mid-July 2026). **No
+design or implementation.**
+
+### R1 — The triggers are met, but the ground shifted under the doc
+
+- **Trigger 1 (686 real corpus + run): MET.** Full-corpus run 2 (post-706 engine): 615/620 docs,
+  **extraction_method TIKA_STRUCTURED 54% / OCR_TIKA 46%**, vdu_status **PENDING 19.7%**. The
+  distribution 705 wanted exists (686 §run 2). But 686 measured cost/distribution only — **no
+  ground-truth extraction-quality metric was built** (705's own Q4), and 707 explicitly declines
+  to build it ("PDF variants are 686's question"). So the doc's *own* credibility bar is still
+  unmet even though its blocker cleared.
+- **Trigger 2 (677 output correctness): MET.** The abstention gate merged (PR #147), live-verified
+  (5/5 confabulations kept out of the index). The "measuring a defective target" confound is gone.
+- **New, decisive context the 07-10 verdict could not see:** the retrieval-quality campaign that
+  ran in parallel (findings F-030→F-035) traced the entire "dense/SPLADE dead on legal" saga to
+  **enrichment/representation bugs — window-mean dilution (F-031), silent chunk-vector destruction
+  (F-032), SPLADE 512-token truncation (F-033) — and a bake-off that closed NO MODEL SWAP (F-034)**.
+  **Zero** of these implicate extraction quality. Extraction was, in effect, *exonerated* as a
+  live retrieval bottleneck by the very campaign that would have surfaced it.
+
+### R2 — 705 conflated two faces; they now have different verdicts
+
+**Quality face — "extend extraction beyond Tier-1 toward a layout/table tier" → CLOSE with a
+revisit-trigger.** Tier-1 structure landed (office docs); 677 fixed output correctness; 706 fixed
+OCR cost; the retrieval campaign found no extraction-quality bottleneck. The layout-tier bet
+(Docling/ColPali) was declined twice (252 Phase 5, 607 §20) and 708 explicitly says visual
+retrieval/ColPali is "do not re-propose without the trigger." It remains **evidence-starved on its
+own bar** — the cheapest validating evidence (a ground-truth extraction-quality metric on real
+complex PDFs/tables showing a retrieval loss the current pipeline can't recover) **does not exist
+and no one is building it**. Reopening it now would re-derive 252/607's declined analysis without
+new evidence. **Verdict: close this face**; revisit-trigger = that ground-truth metric gets built
+AND shows a real complex-doc retrieval loss.
+
+**Cost face — swap the 9B VDU extractor for a 0.9B specialized one → NEWLY ACTIONABLE, but route
+to 374, not here.** This is the one thread that genuinely strengthened. 706 closed the *baseline*
+OCR cost (5-7×), but VDU's **13.7s/page on the 9B chat model is untouched on ~20% of real docs**.
+The landscape re-check (2026-07-12) found **PaddleOCR-VL 1.6 (0.9B, Apache-2.0, official llama.cpp
+GGUF with working mmproj vision)** as a real candidate: ~10× fewer params, order-of-magnitude
+cost reduction, and specialized-small models now *beat* general-9B/72B VLMs on OCR text/layout and
+especially on hallucination avoidance (the exact failure 677 just gated). Caveats keeping it from a
+blind swap: mixed on complex nested tables, vendor-reported/benchmark-saturated scores, and
+~5-month-young llama.cpp support with one open server bug (#25339). **This is a model-SELECTION
+decision — 374's domain — not the "extend-beyond-Tier-1 layout tier" question 705 framed.** But
+its cheapest validating evidence is now *cheap and available*: a local bake-off on 686's real
+scanned corpus (exists) measuring ms/page + Table TEDS + hallucination-rate (677's gate is a
+ready-made hallucination check) vs the incumbent Qwen3.5-9B. **Verdict: route a scoped local
+bake-off to 374** — do not swap blind, do not run it under 705.
+
+### Verdict (2026-07-12)
+
+**Should 705 be "done" now? No — because its broad question has been substantially ANSWERED by its
+routed owners, not because it should keep waiting.** The extraction-tax question 705 opened is
+resolved across its faces: structure (Tier-1, done), output correctness (677, done), baseline cost
+(706, done, 5-7×), and — via the parallel retrieval campaign — extraction quality is not a live
+retrieval bottleneck (F-030→F-034). 705 should **CLOSE as a decision frame**, splitting its
+residual:
+
+- **Quality/layout-tier face → CLOSED with revisit-trigger** (evidence-starved, declined twice,
+  no retrieval-quality signal points at extraction).
+- **VDU-cost-swap face → ROUTED to 374** as a now-actionable, cheap, scoped local bake-off
+  (PaddleOCR-VL 1.6 vs incumbent 9B on 686's corpus; 677's gate supplies the hallucination check).
+
+**Cheapest evidence that would reopen the quality face:** a ground-truth extraction-quality metric
+on real complex PDFs/tables (word-overlap / Table TEDS vs labeled text) demonstrating a retrieval
+loss the fixed pipeline can't recover. It does **not** exist; nobody owns building it; and the
+retrieval campaign's findings argue it would likely come back negative. **Cheapest evidence for the
+cost face:** the 374 bake-off above — now inexpensive because the corpus (686) and the
+hallucination metric (677) both exist.
+
+**What this displaces/duplicates:** nothing new. Keeping 705 open as WAIT-FOR-EVIDENCE would now
+*mislead* — it implies imminent extraction-quality work when the honest state is "answered by
+owners; residual routed." Closing it with the two-face split is the accurate record. The only live
+successor thread (the VDU-cost swap) belongs to 374/model-selection, which already holds the
+vision-model-pinning decision.
+
+> RECOMMENDATION TO FOUNDER (one line): close 705; greenlight a cheap PaddleOCR-VL-vs-9B VDU
+> bake-off under 374 if the ~20%-of-docs VDU per-page cost is worth attacking — otherwise 705's
+> whole surface is already handled.
