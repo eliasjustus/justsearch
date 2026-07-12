@@ -3960,6 +3960,7 @@ export class UnifiedChatView extends JfElement {
               ctrl.streamingText,
               ctrl.answerSources ?? [],
               ctrl.answerCitations,
+              false,
             )}
             ${this.renderSourceChips(ctrl.answerSources ?? [], '__live__')}
           </div>`
@@ -3977,15 +3978,20 @@ export class UnifiedChatView extends JfElement {
     answerText: string,
     sources: readonly AgentSource[],
     rawCitations: unknown,
+    // Tempdoc 720 — has the run FINISHED? A live render (settled=false) keeps the mid-stream coverage
+    // readout; a settled render whose matcher tied no sentence to a chunk-precise passage must NOT claim
+    // "Grounded · 0 of N" — it states provenance instead (badge + frame agree via the same settle flag).
+    settled: boolean,
   ): TemplateResult | typeof nothing {
     if (sources.length === 0) return nothing;
     const citations = Array.isArray(rawCitations) ? (rawCitations as AgentSentenceCite[]) : [];
     const cov = groundingCoverage(citations, answerText);
+    const chunkPrecise = sourcesAreChunkPrecise(sources);
     // Tempdoc 603 D-4 — the SOURCED (provenance) state: the answer drew on these documents but they are
     // DOCUMENT-LEVEL (no chunk identity → the per-sentence matcher could not run), so there is no
     // "N of M sentences" verdict to give. Show provenance honestly — NEVER "Grounded · 0 of N" (the
     // over-confidence) — derived from the same authority predicate the frame uses, so badge + frame agree.
-    if (cov.cited === 0 && !sourcesAreChunkPrecise(sources)) {
+    if (cov.cited === 0 && !chunkPrecise) {
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -3996,6 +4002,25 @@ export class UnifiedChatView extends JfElement {
             ${n === 1 ? 'This document was' : `These ${n} documents were`} retrieved and informed the
             answer, but per-sentence grounding was not verified — keyword-only retrieval returned whole
             documents, so each statement could not be tied to a specific passage.
+          </div>
+        </div>
+      </details>`;
+    }
+    // Tempdoc 720 — CHUNK-PRECISE sources but the SETTLED run tied no sentence to a passage: the matcher
+    // finished and matched nothing, so this is provenance-without-verification, NOT "Grounded · 0 of N"
+    // (the C1 over-confidence reproduced in the settled render path). Mid-stream (settled=false) keeps the
+    // coverage readout below, since marks may still arrive.
+    if (cov.cited === 0 && chunkPrecise && settled) {
+      const n = sources.length;
+      return html`<details class="grounding-badge grounding-badge-sourced">
+        <summary class="grounding-badge-summary" role="status">
+          <span>Based on ${n} source${n === 1 ? '' : 's'}</span>
+        </summary>
+        <div class="grounding-why">
+          <div>
+            ${n === 1 ? 'This source was' : `These ${n} sources were`} retrieved and informed the answer,
+            but no statement matched a specific passage above the grounding threshold — treat the wording
+            as the model's own.
           </div>
         </div>
       </details>`;
@@ -4390,8 +4415,18 @@ export class UnifiedChatView extends JfElement {
     // document-level (provenance). Defaults TRUE (the RAG/chunk-native tier); the agent path passes the
     // real predicate so an all-document-level source list frames as `sourced`, not "Grounded · 0 of N".
     chunkPrecise = true,
+    // Tempdoc 720 — has the run finished? A settled render can no longer treat a zero-cite chunk-precise
+    // answer as "marks pending ⇒ grounded"; the streaming render sites pass false, the committed/reloaded
+    // sites pass true. See {@link answerFrame}.
+    settled = false,
   ): AnswerFrame {
-    return answerFrame(shapeId, sourceCount, groundingCoverage(coverageCites, answerText), chunkPrecise);
+    return answerFrame(
+      shapeId,
+      sourceCount,
+      groundingCoverage(coverageCites, answerText),
+      chunkPrecise,
+      settled,
+    );
   }
 
   /**
@@ -4490,6 +4525,9 @@ export class UnifiedChatView extends JfElement {
             cites,
             it.content,
             sourcesAreChunkPrecise(agentSources),
+            // Tempdoc 720 — a committed timeline item is settled (the live answer streams via
+            // `ctrl.streamingText`, not this branch), so a zero-cite chunk-precise answer frames `sourced`.
+            true,
           );
           const degraded = groundingDegraded(this.currentShapeId(), it.attributes.sources.length);
           const partsA = this.recordFloorParts(it.id);
@@ -4518,6 +4556,8 @@ export class UnifiedChatView extends JfElement {
               it.content,
               it.attributes.sources as AgentSource[],
               it.attributes.citations,
+              // Tempdoc 720 — committed timeline item ⇒ settled (see the frameFor call above).
+              true,
             )}
             ${this.renderSourceChips(it.attributes.sources as AgentSource[], it.id)}
             ${this.recordActionBar(it.id)}
@@ -4815,6 +4855,10 @@ export class UnifiedChatView extends JfElement {
           claimCites,
           m.content,
           sourcesAreChunkPrecise(m.sources ?? []),
+          // Tempdoc 720 — renderMessage renders committed messages (the in-progress answer streams via
+          // renderStreamingBlock / ctrl.streamingText), so it is settled: a zero-cite chunk-precise answer
+          // frames `sourced`, not "grounded" over zero sentences.
+          true,
         );
     const degraded = m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount);
     // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration from the message's own
