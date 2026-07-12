@@ -5,8 +5,9 @@
 # directory layout + per-catalog VERSION pattern.
 #
 # Per-catalog buf module — each catalog gets its own VERSION + CHANGELOG so they
-# evolve independently. The root-level :wireGenerate task discovers each catalog
-# directory and runs buf generate against it.
+# evolve independently. Java codegen runs via the protobuf Gradle plugin's
+# generateProto (wrapped by the root-level :wireGenerate task); the buf CLI here
+# drives `buf breaking` in the wire governance gate, not code generation.
 
 version: v2
 modules:
