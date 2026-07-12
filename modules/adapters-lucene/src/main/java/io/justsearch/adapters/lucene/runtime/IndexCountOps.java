@@ -411,6 +411,7 @@ public final class IndexCountOps {
           var scorer = weight.scorer(leaf);
           if (scorer == null) continue;
 
+          Bits liveDocs = leaf.reader().getLiveDocs();
           NumericDocValues ptcDv =
               leaf.reader().getNumericDocValues(SchemaFields.PARENT_TOKEN_COUNT);
 
@@ -419,6 +420,13 @@ public final class IndexCountOps {
               (twoPhase == null) ? scorer.iterator() : twoPhase.approximation();
           int doc;
           while ((doc = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+            // Skip deleted-but-unmerged docs. This raw scorer loop does not go through
+            // IndexSearcher.searchLeaf (which applies liveDocs), so without this check parentCount
+            // and the token buckets would include deleted parents while chunkCount above
+            // (searcher.count) already excludes them — inflating parentCount, deflating chunkRate,
+            // and skewing the token median → the short/long mis-classification class tempdoc 717
+            // fixed, here triggered by deletions instead of the SPLADE-load race (717 followup).
+            if (liveDocs != null && !liveDocs.get(doc)) continue;
             if (twoPhase != null && !twoPhase.matches()) continue;
             parentCount++;
             if (ptcDv != null && ptcDv.advanceExact(doc)) {
