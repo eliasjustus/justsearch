@@ -243,6 +243,7 @@ Scope:
 | `JUSTSEARCH_RERANK_DEADLINE_MS` | `justsearch.rerank.deadline_ms` | Long | Time budget for reranking (default 200ms). |
 | `JUSTSEARCH_RERANK_MIN_HITS` | `justsearch.rerank.min_hits` | Int | Minimum hits to trigger reranking (default 5). |
 | `JUSTSEARCH_RERANK_MAX_SEQ_LEN` | `justsearch.rerank.max_seq_len` | Int | Max sequence length (default 512). |
+| `JUSTSEARCH_RERANK_MAX_AVG_DOC_LENGTH_CHARS` | `justsearch.rerank.max_avg_doc_length_chars` | Int | Max average document length (chars) for reranker eligibility; above this the cross-encoder is skipped. Default 16000. |
 | `JUSTSEARCH_RERANK_GPU_ENABLED` | `justsearch.rerank.gpu.enabled` | Bool | Enables ORT GPU session for Worker-side reranking when a CUDA-capable ORT native runtime is available (default true). Set to `false` to force CPU-only reranking. |
 | `JUSTSEARCH_RERANK_GPU_DEVICE_ID` | `justsearch.rerank.gpu.device_id` | Int | GPU device id for reranking (default 0). |
 | `JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED` | `justsearch.rerank.judge_blend_enabled` | Bool | Tempdoc 643: judge-stage refinement floor — blend the cross-encoder's reorder with the pre-rerank (fusion/LambdaMART) order instead of letting the CE replace it outright, bounding a low-confidence/wrong CE call's regression. Default `false`. |

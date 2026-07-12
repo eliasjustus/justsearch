@@ -11,9 +11,9 @@ description: "Frontend display and interaction issues."
 Issues related to frontend display, user interaction, and experience.
 
 **Key Files:**
-- `modules/ui-web/src/components/`
-- `modules/ui-web/src/stores/`
-- `modules/ui-web/src/hooks/`
+- `modules/ui-web/src/shell-v0/views/`
+- `modules/ui-web/src/shell-v0/state/`
+- `modules/ui-web/src/shell-v0/components/`
 
 ---
 
@@ -41,7 +41,7 @@ Issues related to frontend display, user interaction, and experience.
 - **Severity:** P4
 - **Status:** open
 - **Found:** 2026-01-30
-- **Component:** `modules/ui-web/src/components/views/LibraryView.tsx`
+- **Component:** `modules/ui-web/src/shell-v0/views/LibrarySurface.ts`
 
 **Description:** Library folder cards display path, file count, and last-modified time, but no breakdown of file types within the folder (e.g., "12 PDFs, 3 docs, 5 images").
 
