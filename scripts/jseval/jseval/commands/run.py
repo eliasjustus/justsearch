@@ -284,11 +284,15 @@ def _run_iteration(
 
     if start_backend:
         from .. import backend as backend_mod
-        backend_proc = backend_mod.start_backend(
-            clean=clean, env_overrides=env_overrides or None, llm=llm,
-        )
         port = env_overrides.get(
             "JUSTSEARCH_API_PORT", os.environ.get("JUSTSEARCH_API_PORT", "33221")
+        )
+        # Thread the effective port into start_backend so its own readiness health-check
+        # polls the port the JVM actually binds to (from env_overrides) rather than
+        # backend.py's default 33221 — otherwise the check can false-positive against an
+        # unrelated concurrent backend already listening on 33221.
+        backend_proc = backend_mod.start_backend(
+            clean=clean, env_overrides=env_overrides or None, llm=llm, port=int(port),
         )
         effective_base_url = f"http://127.0.0.1:{port}"
 

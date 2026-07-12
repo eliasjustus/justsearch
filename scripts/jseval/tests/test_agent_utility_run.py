@@ -434,3 +434,23 @@ class TestScanLeakedAnswers:
         n = aur.apply_leak_flags([summary], leaked)
         assert n == 1
         assert summary["per_query"]["q0"]["leak_suspect"] is True
+
+
+# --- _per_query_from_result: errored cells excluded from the paired comparison ---
+
+
+def test_per_query_from_result_excludes_errored_cells():
+    """A cell that errored (timeout/LLM failure) still carries a query plus default
+    correct=False/cost_usd=0; it must NOT be reshaped into a genuine zero-cost,
+    zero-tool, incorrect observation in the paired utility comparison (mirrors the
+    Inspect path's valid-only parity)."""
+    run_result = {
+        "results": [
+            {"query": "q-ok", "correct": True, "cost_usd": 0.5, "tool_calls": []},
+            {"query": "q-err", "error": "timeout", "correct": False,
+             "cost_usd": 0.0, "tool_calls": []},
+        ]
+    }
+    pq = aur._per_query_from_result(run_result)
+    assert "q-ok" in pq
+    assert "q-err" not in pq, "an errored cell must be excluded from per-query stats"

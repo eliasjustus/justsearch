@@ -36,6 +36,12 @@ def _per_query_from_result(run_result: dict) -> dict:
         qid = r.get("query")
         if not qid:
             continue
+        # A cell that errored (timeout/LLM failure) still carries a query plus default
+        # correct=False/cost_usd=0/tool_calls=[]; excluding it here mirrors the Inspect
+        # path's valid-only parity so an errored run is not silently reshaped into a
+        # genuine zero-cost, zero-tool, incorrect observation in the paired comparison.
+        if r.get("error"):
+            continue
         pq[qid] = {
             "correct": bool(r.get("correct")),
             "cost_usd": r.get("cost_usd"),
