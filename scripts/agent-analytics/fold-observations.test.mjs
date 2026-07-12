@@ -134,6 +134,33 @@ try {
     appendObservation({ description: 'anything', root, sessionId: 'sessH', date: '2026-07-06' });
     assert.throws(() => foldShards({ root, apply: false }), /Conditions.*tempdoc 680|tempdoc 680/s);
   });
+
+  // --- anchorless-merge fold-leak fix (tempdoc 721) ---
+  const ANCHORLESS_FIXTURE = [
+    '---', 'title: Observations', '---', '', '# Observations', '', '## Rules', '', '- rule one', '',
+    '## Conditions', '',
+    '### obs:unanchored-package-version — package.json self-presentation version says 1.0.0 stale',
+    '`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`',
+    '- [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description stale placeholder (2026-07-04)',
+    '',
+  ].join('\n');
+  run('fold-leak fix: an anchorless re-observation MERGES into the matching anchorless condition (not a new unanchored-N)', () => {
+    const root = freshRoot(ANCHORLESS_FIXTURE);
+    appendObservation({ description: 'package.json self-presentation version 1.0.0 should be 0.1.0-alpha, description still a stale placeholder', root, sessionId: 'sessI', date: '2026-07-09' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.opened, 0, 'must not open a new unanchored condition');
+    assert.equal(r.merged, 1, 'must merge into the existing anchorless condition');
+    const g = groupBySlug(root, 'unanchored-package-version');
+    assert.equal(g.fields.seen, '2');
+    assert.equal(g.fields.last, '2026-07-09');
+  });
+  run('fold-leak fix stays conservative: a DISSIMILAR anchorless note opens its own condition', () => {
+    const root = freshRoot(ANCHORLESS_FIXTURE);
+    appendObservation({ description: 'the reranker latency budget should be raised for large corpora during warmup', root, sessionId: 'sessJ', date: '2026-07-09' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.opened, 1, 'an unrelated anchorless note must not be force-merged');
+    assert.equal(r.merged, 0);
+  });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
