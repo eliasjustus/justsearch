@@ -1108,7 +1108,7 @@ final class RagContextOps {
   /**
    * Selects the final chunk set using the configured diversification strategy.
    */
-  private List<LuceneRuntimeTypes.SearchHit> diversifyChunks(
+  List<LuceneRuntimeTypes.SearchHit> diversifyChunks(
       String question,
       float[] queryVector,
       List<LuceneRuntimeTypes.SearchHit> hits,
@@ -1123,11 +1123,26 @@ final class RagContextOps {
   }
 
   /**
+   * Returns the text to embed for a hit, preferring chunk content but falling back to whole-document
+   * content. Chunk-level hits (the only current RAG callers) carry {@link SchemaFields#CHUNK_CONTENT};
+   * document-level hits carry {@link SchemaFields#CONTENT} instead (tempdoc 270 U14). Without this
+   * dual lookup a document-level hit would embed to blank and be silently dropped, degrading MMR to
+   * position diversification (tempdoc 720).
+   */
+  static String excerptTextFor(LuceneRuntimeTypes.SearchHit hit) {
+    String chunk = hit.fields().get(SchemaFields.CHUNK_CONTENT);
+    if (chunk != null && !chunk.isBlank()) {
+      return chunk;
+    }
+    return hit.fields().get(SchemaFields.CONTENT);
+  }
+
+  /**
    * Diversifies chunk selection using Maximal Marginal Relevance (MMR) over embeddings.
    *
    * <p>Falls back to position-based diversification when embeddings are unavailable or fail.
    */
-  private List<LuceneRuntimeTypes.SearchHit> diversifyByMmr(
+  List<LuceneRuntimeTypes.SearchHit> diversifyByMmr(
       String question,
       float[] queryVector,
       List<LuceneRuntimeTypes.SearchHit> hits,
@@ -1164,7 +1179,7 @@ final class RagContextOps {
     List<LuceneRuntimeTypes.SearchHit> embeddedHits = new ArrayList<>(candidates.size());
     List<float[]> vectors = new ArrayList<>(candidates.size());
     for (var hit : candidates) {
-      String content = hit.fields().get(SchemaFields.CHUNK_CONTENT);
+      String content = excerptTextFor(hit);
       if (content == null || content.isBlank()) continue;
       try {
         float[] v = embeddingProvider.embedDocument(content);
@@ -1248,7 +1263,7 @@ final class RagContextOps {
    * @param targetK the target number of chunks to return
    * @return diversified list of chunks
    */
-  private List<LuceneRuntimeTypes.SearchHit> diversifyByPosition(
+  List<LuceneRuntimeTypes.SearchHit> diversifyByPosition(
       List<LuceneRuntimeTypes.SearchHit> hits, int targetK) {
 
     if (hits.size() <= targetK) {
