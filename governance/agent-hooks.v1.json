@@ -60,6 +60,10 @@
       "file": "pipe-mask-hint.mjs",
       "role": "advisory"
     },
+    "dataset-cache-hint": {
+      "file": "dataset-cache-hint.mjs",
+      "role": "advisory"
+    },
     "known-state-hint": {
       "file": "known-state-hint.mjs",
       "role": "advisory",
@@ -272,6 +276,10 @@
           },
           {
             "hookId": "pipe-mask-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "dataset-cache-hint",
             "timeout": 5
           },
           {
