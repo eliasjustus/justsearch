@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-06-29.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-12.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -112,6 +112,18 @@ Precedence note:
 | justsearch.ai.host | JUSTSEARCH_AI_HOST | justsearch.ai.host | AI_HOST | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.ai.port | JUSTSEARCH_AI_PORT | justsearch.ai.port | AI_PORT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_API_PORT | justsearch.api.port | API_PORT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_BGE_M3_BATCH_SIZE | justsearch.backfill.bge_m3_batch_size | BACKFILL_BGE_M3_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE | justsearch.backfill.bge_m3_interleave_batch_size | BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_CHUNK_SLOTS_PER_BATCH | justsearch.backfill.chunk_slots_per_batch | BACKFILL_CHUNK_SLOTS_PER_BATCH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_COMMIT_INTERVAL_MS | justsearch.backfill.commit_interval_ms | BACKFILL_COMMIT_INTERVAL_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_DISAMBIGUATION_BATCH_SIZE | justsearch.backfill.disambiguation_batch_size | BACKFILL_DISAMBIGUATION_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_EMBEDDING_BATCH_SIZE | justsearch.backfill.embedding_batch_size | BACKFILL_EMBEDDING_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_MAX_DOCS_BEFORE_COMMIT | justsearch.backfill.max_docs_before_commit | BACKFILL_MAX_DOCS_BEFORE_COMMIT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_NER_BATCH_SIZE | justsearch.backfill.ner_batch_size | BACKFILL_NER_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_POLL_BATCH_SIZE | justsearch.backfill.poll_batch_size | BACKFILL_POLL_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_SPLADE_BATCH_SIZE | justsearch.backfill.splade_batch_size | BACKFILL_SPLADE_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE | justsearch.backfill.splade_interleave_batch_size | BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS | justsearch.backfill.splade_interleave_interval_ms | BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BGE_M3_ENABLED | justsearch.bgem3.enabled | BGE_M3_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BGE_M3_GPU_DEVICE_ID | justsearch.bgem3.gpu_device_id | BGE_M3_GPU_DEVICE_ID | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BGE_M3_GPU_ENABLED | justsearch.bgem3.gpu_enabled | BGE_M3_GPU_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -137,6 +149,8 @@ Precedence note:
 | - | JUSTSEARCH_EMBED_GPU_MEM_MB | justsearch.embed.gpu_mem_mb | EMBED_GPU_MEM_MB | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EMBED_GPU_DEVICE_ID | justsearch.embed.gpu.device_id | EMBED_GPU_DEVICE_ID | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EMBED_GPU_ENABLED | justsearch.embed.gpu.enabled | EMBED_GPU_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EMBED_LATE_CHUNKING_CONTEXT_LENGTH | justsearch.embed.late_chunking_context_length | EMBED_LATE_CHUNKING_CONTEXT_LENGTH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED | justsearch.embed.late_chunking_enabled | EMBED_LATE_CHUNKING_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EMBED_ONNX_MODEL_PATH | justsearch.embed.onnx.model_path | EMBED_ONNX_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_COMMAND | justsearch.extraction.sandbox.command | EXTRACTION_SANDBOX_COMMAND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_EXTRACTION_SANDBOX_MODE | justsearch.extraction.sandbox.mode | EXTRACTION_SANDBOX_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -208,6 +222,8 @@ Precedence note:
 | - | JUSTSEARCH_LLM_VRAM_PROJECTED | justsearch.llm.vram_projected | LLM_VRAM_PROJECTED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MCP_HOST_CONFIG | justsearch.mcp.host.config | MCP_HOST_CONFIG | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MMPROJ_MODEL | justsearch.mmproj.model | MMPROJ_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_MODE | justsearch.mode | MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_MODELS_CAPABILITY_CONTRACT_STRICT | justsearch.models.capability_contract_strict | CAPABILITY_CONTRACT_STRICT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MODELS_DIR | justsearch.models.dir | MODELS_DIR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_NER_CONFIDENCE_THRESHOLD | justsearch.ner.confidence_threshold | NER_CONFIDENCE_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_NER_ENABLED | justsearch.ner.enabled | NER_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -241,6 +257,11 @@ Precedence note:
 | - | JUSTSEARCH_RERANK_GPU_MEM_MB | justsearch.rerank.gpu_mem_mb | RERANK_GPU_MEM_MB | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_GPU_DEVICE_ID | justsearch.rerank.gpu.device_id | RERANK_GPU_DEVICE_ID | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_GPU_ENABLED | justsearch.rerank.gpu.enabled | RERANK_GPU_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE | justsearch.rerank.judge_arbitration_alpha_diverge | RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ENABLED | justsearch.rerank.judge_arbitration_enabled | RERANK_JUDGE_ARBITRATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_RERANK_JUDGE_ARBITRATION_SKIP_ENABLED | justsearch.rerank.judge_arbitration_skip_enabled | RERANK_JUDGE_ARBITRATION_SKIP_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA | justsearch.rerank.judge_blend_alpha | RERANK_JUDGE_BLEND_ALPHA | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED | justsearch.rerank.judge_blend_enabled | RERANK_JUDGE_BLEND_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_MAX_AVG_DOC_LENGTH_CHARS | justsearch.rerank.max_avg_doc_length_chars | RERANK_MAX_AVG_DOC_LENGTH_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_MAX_SEQ_LEN | justsearch.rerank.max_seq_len | RERANK_MAX_SEQ_LEN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_MIN_HITS | justsearch.rerank.min_hits | RERANK_MIN_HITS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -298,6 +319,7 @@ Precedence note:
 | - | JUSTSEARCH_VRAM_THRESHOLD_8GB | justsearch.vram.threshold.8gb | VRAM_THRESHOLD_8GB | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_WORKER_CONFIG_SNAPSHOT | justsearch.worker.config_snapshot | WORKER_CONFIG_SNAPSHOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_POLICY_GPU_ACCELERATION_ENABLED | policy.gpu_acceleration_enabled | POLICY_GPU_ACCELERATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| rag.chunk_splade.enabled | JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED | rag.chunk_splade.enabled | RAG_CHUNK_SPLADE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.chunk_vectors.enabled | JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED | rag.chunk_vectors.enabled | RAG_CHUNK_VECTORS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.context.include_surrounding | JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT | rag.context.include_surrounding | RAG_INCLUDE_SURROUNDING | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.diversify.mode | JUSTSEARCH_RAG_DIVERSIFY_MODE | rag.diversify.mode | RAG_DIVERSIFY_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
