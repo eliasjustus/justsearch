@@ -1,6 +1,6 @@
 ---
 title: Observations backlog triage — 2026-07-12
-status: active — store drained 457→208 (this PR); fix/route/brief backlog tracked below
+status: active — store drained 457→208 (PR A); 6 PRs (#162–#167) opened, each independently reviewed, all review findings resolved (see §Review round); awaiting owner merge decision
 created: 2026-07-12
 updated: 2026-07-12
 ---
@@ -233,8 +233,14 @@ An independent reviewer (reviewer ≠ implementer) audited PR A. Findings action
 
 - **Over-merge risk (fixed):** `sigTokens` stripped all backtick-quoted spans, discarding
   the discriminating file/symbol identifier so two different-artifact notes sharing a
-  template could collide. Now keeps identifier tokens **and** refuses a merge when two
-  anchorless notes name disjoint backtick identifiers (`identTokens`/`disjoint`). Test added.
+  template could collide. The anchorless path now **requires a positively shared named
+  artifact** before a fuzzy text match: `matchGroup` returns null when the entry names no
+  backtick identifier (`identTokens(entryLine).size === 0`), and skips any candidate that
+  shares none of them (`shares(idents, identTokens(gText))`), only then applying the
+  `ANCHORLESS_MERGE_THRESHOLD` (0.6) Jaccard gate. (This is stricter than the review's
+  suggested "refuse if disjoint" — it demands a shared identifier, not merely absence of a
+  conflicting one.) Regression test added: two same-template prose notes with no identifier
+  do **not** merge (`fold-observations.test.mjs`).
 - **Parked absorption (fixed for the anchorless path):** `matchGroup` runs over
   `store.groups`, which includes `## Parked`. A recurrence could silently bump a dismissed
   condition. The new anchorless path now skips parked groups so recurrences resurface. Test added.
@@ -267,3 +273,35 @@ pin exists to record. For traceability, the retirements routed to a pin were:
 
 The pins carry `exitProbe`/`reviewBy` so `observations-triage --probe` proposes their removal when the
 standing red clears — the same propose-then-accept discipline as the store.
+
+## Review round (6 PRs, 2026-07-12)
+
+The triage work shipped as six squash-PRs, each given a dedicated independent reviewer
+(reviewer ≠ implementer). Three returned CHANGES-NEEDED; all findings are resolved and
+pushed. Merge is **pending owner go-ahead** (not merged).
+
+| PR | Branch | Reviewer verdict | Resolution | Evidence |
+|---|---|---|---|---|
+| **#162 A** — fold-leak + backlog drain | `obs-triage-clean` | CHANGES-NEEDED ×2 | Over-merge → shared-identifier requirement (see §Independent-review follow-ups, corrected above); "3 wrongly-retired" → verified false-positive, they are pinned in `expected-state.v1.json` (see §Retired-as-routed pins). | `node scripts/agent-analytics/fold-observations.test.mjs` → 15 passed; CI 10/10 green |
+| **#163 B** — doc/register drift | `obs-triage-docs` | CHANGES-NEEDED | Rewrote `05-ai-architecture.md` §Frontend rendering: orchestration → `shell-v0/views/UnifiedChatView.ts` (`onRagCitationMatches`/`onRagCitationDelta`, verified :5354), callbacks → `api/streams.ts`, model → `components/chat/citationResolve.ts`; removed non-existent `injectCitationMarkers`; `MarkdownRenderer`→`MarkdownBlock`; skills-sync re-propagated. | `check-frontend-stack-claims` OK (101 files); `verify-canonical-doc-links` OK (155); CI 10/10 green |
+| **#164 D** — cost-session pricing | `obs-triage-tooling` | APPROVE + FYIs | Sonnet-5 $2/$10 intro-window caveat documented (standard rate kept, no date-branch); `findPricing` prefix fallback now longest-key-first so a dated id isn't shadowed by its bare prefix. | `node --check` OK; longest-first prefix picks dated key (verified inline) |
+| **#165 C** — worker match-span + job-delete | `obs-triage-code` | APPROVE + nit | Extracted `upperBoundExclusive(String lower)`, deduping the triplicated half-open-bound expr (was at `SqliteJobQueue.java` deleteByPathPrefix/listFailedJobsByPathPrefix/countByPathPrefix). | `:modules:indexer-worker:compileJava` EXIT 0; `JobQueueTest` green |
+| **#166 E** — ui-web FE batch | `obs-triage-fe` | APPROVE + nit | `.gitignore`: `.dev-data*/` → `.dev-data/` + `.dev-data-*/` so it no longer over-matches `.dev-database/`. | `git check-ignore`: `.dev-database/` tracked, `.dev-data-eval/` ignored |
+| **#167 F** — jseval eval cells + port | `obs-triage-jseval` | CHANGES-NEEDED | **Reverted** `log_dir_allow_dirty=True` — reviewer's repro proved identical re-invocation already works via the pre-existing deterministic `eval_set_id` pinning, so `obs:agent-utility-inspect` is already-resolved; the kwarg only masked a config-change-at-same-`log_dir` case by discarding stale logs (a "make-failure-invisible" suppression), and `eval_set_id` doesn't derive `log_dir` so the suggested hash fix wouldn't help either. A genuine config change should fail-closed to a fresh `log_dir`. Two legitimate fixes (errored-cell exclusion, backend-port threading) retained. | `pytest test_agent_utility_run.py` → 18 passed; `agent_utility_inspect.py` now origin-parity |
+
+**CI status at closeout:** #162, #163, #167 confirmed green; #164/#165/#166 pushed and settling
+(re-verify with `gh pr checks <n>` before merge).
+
+### Unverified / deferred (carry forward)
+- **FE tier not executed locally:** PR E/PR B ui-web changes were verified by reading tests +
+  type-reasoning + doc-lints — **not** by running vitest/tsc, because the worktree's ui-web
+  `node_modules` is incomplete (missing `vite`/`@types/node`). CI is the executing tier; confirm
+  the ui-web gate set is green on #166/#163 before merge.
+- **Exact-anchor parked-absorption** (from §Independent-review follow-ups): still deferred — give
+  the exact-anchor `matchGroup` path the same `isParked` skip, with a fold-vs-parked test for both
+  paths. Low-risk (exact string equality), not shipped in PR A.
+- **~233 fan-out retirements** rest on single-oracle evidence, not a full re-audit (16/55 sampled
+  judgment-based retirements were independently re-verified stale).
+- **Remaining backlog** (fixes/routes/briefs enumerated above) is unstarted — PR A drained the safe
+  subset only; the product-code fixes (§PR C list), routes (§Route), and design briefs (§Design
+  briefs) await scoped follow-on work.
