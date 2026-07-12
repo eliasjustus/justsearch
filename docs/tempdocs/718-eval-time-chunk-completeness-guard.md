@@ -1,11 +1,12 @@
 # 718 — Eval-time chunk-completeness validity guard: refuse to score a degenerate index
 
-- **status:** open — DESIGN SETTLED 2026-07-11 (theorize→design→plan complete; ready for delegated implementation)
+- **status:** IMPLEMENTED + MERGED 2026-07-11 (#154) — guard, embedded verdict, ratchet-gate enforcement, and `--allow-chunk-incompleteness` escape hatch all shipped. Post-717-fix takeover reassessment (2026-07-12) confirmed KEEP, fail-closed; one DORMANT false-positive fragility recorded (see §Takeover reassessment) — gated on the `/api/status` short-corpus-verdict enabler, not urgent.
 - **created:** 2026-07-11
 - **author-role:** orchestrator (Fable) — design/judgment; implementation delegatable to sonnet
-- **relation:** containment for tempdoc 717 (the cure); unblocks tempdoc 715 (release
-  re-baseline); instance of tempdoc 704 Pillar 3 (fail-closed validity envelopes) and the
-  644 engine-mismatch / 716 fail-closed-clean lineage.
+- **relation:** containment for tempdoc 717 (the cure — merged #155 query-time fix + #156 liveDocs
+  followup; 718 = the guard, merged #154); unblocks tempdoc 715 (release re-baseline); instance of
+  tempdoc 704 Pillar 3 (fail-closed validity envelopes) and the 644 engine-mismatch / 716
+  fail-closed-clean lineage.
 
 ## Problem
 
@@ -77,8 +78,12 @@ substrate, not only on a failed measurement."** The repo already applies this to
 else it applies: any eval that assumes a fully-enriched index (splade coverage, NER coverage — a
 missing-NER or missing-splade index is the same class). **Earning-its-keep evidence:** the guard
 fires on a real degenerate run before a human notices, and no wrong number reaches a register/scorecard
-after it lands. **Retirement condition:** 717's root cause is fixed AND a build cannot produce a
-partial-enrichment index by construction — then the guard is belt-and-braces and can relax to a warn.
+after it lands. **Retirement condition:** ~~717's root cause is fixed AND a build cannot produce a
+partial-enrichment index by construction — then the guard is belt-and-braces and can relax to a warn.~~
+**CORRECTED 2026-07-12 (see §Takeover reassessment):** this premise is written against the *wrong model* —
+717 turned out to be **query-time**, not partial-enrichment (the index was fully enriched), so "a
+partial-enrichment index is impossible" never becomes the operative condition. **Keep the guard
+fail-closed** as a 717-regression guard + general immune response; do NOT relax to warn.
 
 ## Cheapest first step
 
@@ -179,8 +184,10 @@ principle** ("assertions covered forbidden states, never expected states"; P3 ex
   recurrence, or 715's re-baseline) before a human notices, and no wrong number reaches a
   register/scorecard/ratchet after it lands.
 - **Retirement condition:** 675's executor-v2 unified validity certificate absorbs it (718 migrates in,
-  not duplicates), OR 717's root-cause fix makes a partial-enrichment index impossible by construction
-  (then the guard relaxes to a warn — belt-and-braces).
+  not duplicates). ~~OR 717's root-cause fix makes a partial-enrichment index impossible by construction
+  (then the guard relaxes to a warn — belt-and-braces).~~ **CORRECTED 2026-07-12:** the second clause is
+  void — 717 was query-time, not partial-enrichment, so that condition never triggers (§Takeover
+  reassessment). The 675-absorption clause remains the live retirement path.
 
 ## Implementation plan (delegable to a sonnet subagent; orchestrator reviews + verifies)
 
@@ -273,3 +280,132 @@ build**, and the embedded guard caught it — a live end-to-end validation bette
 and 100%-covered, so the degeneracy is NOT a build-side chunk-vector-death (the framing 712/713 and
 this author assumed) — it is a **query-time `chunk_merge` non-activation** despite a healthy chunk
 index. 718's live smoke produced that clue as a byproduct of validating the guard.
+
+## Takeover reassessment (2026-07-12, post-717-fix; investigation only — no code changed)
+
+Taken over after tempdoc 717's root cause was found and FIXED + merged (#155/#156). This changes
+718's context materially, so the verdict below is *keep + refine*, not *build*.
+
+### Reality check: 718 is DONE, and the header status line is STALE
+718 is **implemented and merged (#154)**: `chunk_completeness.py` (`expected_chunk_docs`,
+`chunk_completeness_verdict`), `run._compute_chunk_completeness` embedding the block in every
+`summary.json`, `ratchet_kernel.assert_chunk_completeness` wired after `assert_cohort_engines` at the
+shared gate seam (all four ratchet gates), and the `--allow-chunk-incompleteness` /
+`JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS` escape hatch. Enforcement, embed, and escape hatch all
+verified present in the shipped code. **The `status:` line ("open — ready for delegated
+implementation") is stale and should be reconciled to "implemented + merged (#154)"** (same class of
+staleness #157 just fixed for 705).
+
+### Verdict: KEEP it, and KEEP it fail-closed — do NOT relax to warn
+717's fix removed the *specific* cause of the `chunk_merge` non-activation (a SPLADE-load race left
+`parent_token_count` unpopulated → `CorpusProfile` mis-classified a long corpus "short" →
+`SKIPPED_SHORT_CORPUS`). But 718's own **retirement condition** ("717's fix makes a partial-enrichment
+index impossible by construction → relax to warn") does **not** actually trigger, for two reasons:
+1. The bug was **query-time, not partial-enrichment** (718's own live smoke proved the index was
+   fully enriched — `chunkDocCount=4293, coverage=100%`). The retirement premise is written against
+   the pre-correction *wrong model*; 717's fix does not make "a partial-enrichment index" the thing
+   that's now impossible.
+2. 717's fix removes the short-corpus cause but not *all* `chunk_merge`-absence causes. The guard's
+   value shifts from "catches an active bug" to a cheap **regression guard for 717** (catches a
+   re-manifestation before a human notices) + immune response to a future degenerate index. For a
+   defect that silently *halves* retrieval quality, a fail-closed regression guard is worth keeping
+   strict. **Recommendation: keep fail-closed; update the retirement condition to reflect the
+   query-time reality.**
+
+### The one substantive defect found: a live FALSE-POSITIVE risk on the gated corpus set
+The oracle's expectation (`expected_chunk_docs` = count of corpus docs with `len(content) ≥ 2000`,
+`chunk_completeness.py:66`) is **more permissive than the planner's actual `chunk_merge`
+eligibility**. The planner runs `chunk_merge` only when `!CorpusProfile.isShortCorpus()` — i.e. the
+corpus is not predominantly short *by median token count* (or by `chunkRate`). So a corpus that has
+**some** ≥2000-char docs (→ `expected_chunk_docs > 0`) but is **predominantly short by median** will
+have `chunk_merge` **legitimately** skipped (`SKIPPED_SHORT_CORPUS`, per F-036 hybrid-neutral), yet
+`chunk_completeness_verdict` fires **`degenerate`** on `expected>0 AND not chunk_merge_observed`
+(`run.py:552`, `chunk_completeness.py:137`) → the gate fails closed on a **healthy** index.
+- **This is untested:** the only live/fixture validation was `legal-clerc-200` (194/198 docs long →
+  never short → no false-positive). The **currently-gated** set includes mixed/short corpora that are
+  exactly the risk shape: `mixed/enron-qa`, `mixed/miracl-de/fr/zh-2k`, `golden/needle-burial-v1`,
+  `golden/util-smoke` (baseline files). None has been checked for "expected>0 but planner-short."
+- **It's the same class of bug 717 was:** a proxy (here, the 2000-char length heuristic) that doesn't
+  match the real gate (the planner's median-based short-corpus test) → wrong verdict on a healthy
+  corpus. 717 fixed exactly this pattern on the *producer* side; 718's oracle re-introduces it on the
+  *checker* side.
+- **The obvious fix is a TRAP (corrected after gathering evidence, below).** I first proposed
+  "honor `chunkMergeReason` — treat `SKIPPED_SHORT_CORPUS` as not-a-strike." **That is wrong:**
+  `SKIPPED_SHORT_CORPUS` is the *exact signature of the 717 bug* (a long corpus mis-classified short
+  → chunk_merge skipped). Treating that reason as legitimate would blind the guard to the very defect
+  it exists to catch. The two are indistinguishable *by the skip reason alone* — the disambiguator
+  has to be whether the corpus is *genuinely* short, which is precisely what the oracle's `expected`
+  is supposed to encode.
+
+### Offline evidence gathered (2026-07-12) — the false-positive is DORMANT, and the char-proxy fix is unsafe
+Ran `expected_chunk_docs()` + the doc-length distribution over the materialized gated corpora
+(median char length is the offline proxy for the planner's median-token short test, ~2000 chars ≈
+~512 tokens):
+
+| corpus | n | expected(≥2000) | median chars | planner verdict | false-positive? |
+|---|---|---|---|---|---|
+| mixed/enron-qa | 5485 | 2927 (53%) | 2151 | not short (median > 2000) → runs chunk_merge | no (borderline) |
+| golden/needle-burial-v1 | 280 | 280 (100%) | 3912 | not short → runs | no |
+| mixed/legal-clerc-200 | 198 | 194 (97%) | 28169 | not short → runs | no |
+| mixed/miracl-de/fr/zh-2k, golden/util-smoke | — | — | not materialized | UNVERIFIED | plausible (miracl = short multilingual passages) |
+
+**Findings:**
+1. **The false-positive is not currently active** on any checkable gated corpus — all three are
+   predominantly long enough that the planner runs `chunk_merge`, so the guard reads `ok`. This
+   *invalidates the urgency* of a fix. The unverified miracl corpora are the only residual risk (a
+   pure offline check when they materialize).
+2. **A char-length-based `expected` fix cannot be made correct**, because the planner's short test is
+   **token**-median and miracl is **multilingual** (CJK packs ~1 token/char vs English ~¼) — no
+   char proxy tracks the token median across languages. Worse, a too-conservative `expected` trades
+   the (dormant) false-*positive* for a false-*negative* — the guard would read a genuinely-long
+   corpus as `expected==0 → chunk-free` and go **blind** to a real degeneracy on it. A false-negative
+   in a fail-closed integrity guard is strictly worse than a false-positive.
+3. **The only correct fix is the already-logged enabler:** expose the producer's short-corpus verdict
+   (or the token threshold / `parent_token_count`) via `/api/status`, so the oracle reads "would the
+   planner run chunk_merge on this corpus" from the producer instead of re-deriving it from a proxy.
+   That is the same "expose `CHUNK_THRESHOLD_CHARS` via API" follow-up already in the inbox
+   (obs `6a51b979…`), generalized. **Until that enabler exists, the fix should WAIT** — the fragility
+   is dormant, and the `--allow-chunk-incompleteness` escape hatch covers the rare live case.
+
+### Revised verdict (post-evidence)
+- **KEEP 718, fail-closed, unchanged code** — the guard works and is not currently mis-firing.
+- **The false-positive is a real but DORMANT design fragility**, not an active defect; **do not rush a
+  char-proxy fix** (it risks a worse false-negative). Gate the proper fix on the API-exposure enabler.
+- **The only warranted work now is documentation:** reconcile the stale `status:` line, correct the
+  retirement condition to the query-time reality, and cross-reference 717's merged fix. (This section.)
+
+### Cheapest evidence
+- *Is the guard still needed?* Already proven — it fired on a real degenerate run (§Live smoke). Its
+  post-717 value (regression guard) is demonstrated by 717's 4/4 healthy live builds all carrying
+  `chunk_merge` → the guard now reads `ok` on healthy builds (no new run needed).
+- *Is the false-positive risk live?* A pure **offline** check: run `expected_chunk_docs()` over each
+  gated golden/mixed `corpus.jsonl` and compare against the planner's `isShortCorpus` verdict (median
+  token count) for that corpus. Any "expected>0 but planner-short" corpus is a live false-positive.
+  **This evidence does not yet exist** (validation covered only legal-clerc). It is cheap (no runs,
+  no GPU) and is the first thing a design pass should gather.
+
+### What it displaces / duplicates
+- Retires the 712/713 ad-hoc prose `chunk_merge`-in-legs health-gate (this tempdoc's stated orphan).
+  717's register edit (#155) *also* references retiring that convention — **complementary, not
+  conflicting**: 717 makes the degenerate state not-arise; 718 automates the check that catches any
+  residual/future occurrence. No duplication of machinery.
+- Explicitly a narrow down-payment on **704 Pillar 3 / 675's executor-v2 validity certificate**
+  (unimplemented) — to be *absorbed* there later, not a competing framework. Correctly scoped.
+
+### Residual work — status after the 2026-07-12 takeover
+1. ✅ **DONE (this pass):** reconciled the stale `status:` line → implemented+merged (#154); corrected
+   the retirement condition to the query-time reality (§§below annotated); cross-referenced 717's
+   merged fix (717 = cure, 718 = guard). Docs-only, no code changed.
+2. ✅ **DONE (this pass) — evidence gathered, and it re-scoped the "fix":** the offline expected-vs-median
+   check over the 3 materialized gated corpora (§Offline evidence above) shows the false-positive is
+   **DORMANT** (all predominantly long → planner runs chunk_merge). It also revealed the proposed
+   "honor `chunkMergeReason`" fix is a **TRAP** (`SKIPPED_SHORT_CORPUS` is the 717 signature) and that
+   any char-length proxy risks a worse false-*negative* on multilingual corpora. **The false-positive
+   fix is therefore GATED on the enabler below, not a quick honor-`chunkMergeReason` edit.**
+3. **NOT DONE — the real enabler (durable follow-up):** expose the producer's short-corpus verdict (or
+   `parent_token_count` / the token threshold) via `/api/status`, so the oracle reads "would the
+   planner run chunk_merge on this corpus" from the producer instead of a proxy. Generalizes the
+   already-logged obs shard `6a51b979…` ("expose CHUNK_THRESHOLD_CHARS via /api/status"). Also verify
+   the false-positive on `mixed/miracl-{de,fr,zh}-2k` / `golden/util-smoke` when they materialize
+   (pure offline check, no runs). Until then the `--allow-chunk-incompleteness` escape hatch covers
+   the rare live case.
