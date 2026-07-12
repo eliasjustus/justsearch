@@ -177,7 +177,7 @@
       "roles": [
         "vector"
       ],
-      "rmwPolicy": "preserve-reread",
+      "rmwPolicy": "preserve-reread-or-reset:embedding_status",
       "vector": {
         "dimension": 768
       }
@@ -190,7 +190,7 @@
       "roles": [
         "chunk_vector"
       ],
-      "rmwPolicy": "preserve-reread",
+      "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status",
       "vector": {
         "dimension": 768
       }

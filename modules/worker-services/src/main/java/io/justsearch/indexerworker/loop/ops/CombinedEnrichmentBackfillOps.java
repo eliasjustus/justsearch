@@ -295,8 +295,17 @@ public final class CombinedEnrichmentBackfillOps {
             chunkContent = contentByDocId.get(docId);
           }
           if (chunkContent == null || chunkContent.isBlank()) {
-            updatesByDocId.get(docId).put(
-                SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+            // Tempdoc 717 (P1): chunk_content is stored and always set at creation
+            // (ChunkDocumentWriter), so a blank read here is a fetch/consistency anomaly, not a
+            // legitimately empty chunk. Marking CHUNK_EMBEDDING_STATUS=COMPLETED would claim a
+            // chunk_vector that will never exist — a silent data-less COMPLETED (the F-032 "status
+            // lies" class). Escalate via the retry-count seam instead: retry next cycle, FAIL at
+            // max — never COMPLETED-without-data.
+            int currentRetryCount =
+                parseRetryCountOrZero(docFields.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+            updatesByDocId
+                .get(docId)
+                .putAll(EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount));
             continue;
           }
           embedDocIds.add(docId);

@@ -221,6 +221,194 @@ class RmwFieldPreservationTest {
         this::createRuntimeWithChunkVector);
   }
 
+  /**
+   * Tempdoc 717 (D-7 regression anchor): the artifact-truthful chunk-vector presence count detects
+   * the silent "chunk-death" state — a chunk marked {@code CHUNK_EMBEDDING_STATUS=COMPLETED} but
+   * carrying no {@code chunk_vector} — that the status-derived count is fooled by.
+   */
+  @Test
+  void chunkVectorPresenceCountDetectsDegenerateState() throws Exception {
+    withConfig(
+        (runtime) -> {
+          Map<String, Object> chunk = new HashMap<>();
+          chunk.put(SchemaFields.DOC_ID, "chunk-0");
+          chunk.put(SchemaFields.DOC_UID, "chunk-0#0");
+          chunk.put(SchemaFields.PATH, "test/doc-0.txt");
+          chunk.put(SchemaFields.IS_CHUNK, "true");
+          chunk.put(SchemaFields.PARENT_DOC_ID, "doc-0");
+          chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
+          chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          // Deliberately NO CHUNK_VECTOR — the degenerate state.
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+          commit(runtime);
+
+          assertNull(
+              readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0"),
+              "precondition: the chunk genuinely has no vector");
+
+          // The status-derived count is fooled — it reports the chunk COMPLETED.
+          var statusCounts = runtime.indexCountOps().queryChunkEmbeddingCounts();
+          assertEquals(1, statusCounts.completed(), "status count reports COMPLETED (the lie)");
+
+          // The artifact-truthful presence count is not fooled (tempdoc 717).
+          var presence = runtime.indexCountOps().queryChunkVectorPresenceCount();
+          assertEquals(1, presence.totalChunks());
+          assertEquals(0, presence.vectorsPresent(), "no live chunk_vector present");
+          assertEquals(0.0, presence.coveragePercent(), 1e-9);
+          assertFalse(presence.isReady(95.0), "readiness must fail closed on a dead chunk leg");
+        },
+        this::createRuntimeWithChunkVector);
+  }
+
+  /**
+   * Tempdoc 717 (P2): a subset-field RMW that omits {@code chunk_vector} on a doc whose vector
+   * re-read is null must downgrade the paired {@code chunk_embedding_status} COMPLETED&rarr;PENDING
+   * (self-healing re-queue), not silently leave the status lying — the {@code
+   * preserve-reread-or-reset} fallback that closes the hole plain {@code preserve-reread} left.
+   */
+  @Test
+  void preserveRereadOrResetDowngradesStatusWhenVectorAbsent() throws Exception {
+    withConfig(
+        (runtime) -> {
+          Map<String, Object> chunk = new HashMap<>();
+          chunk.put(SchemaFields.DOC_ID, "chunk-0");
+          chunk.put(SchemaFields.DOC_UID, "chunk-0#0");
+          chunk.put(SchemaFields.PATH, "test/doc-0.txt");
+          chunk.put(SchemaFields.IS_CHUNK, "true");
+          chunk.put(SchemaFields.PARENT_DOC_ID, "doc-0");
+          chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
+          chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          // COMPLETED but vectorless — the F-032 "status lies" state.
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+          commit(runtime);
+
+          // A subset RMW omitting chunk_vector: the re-read is null, so the fallback must reset.
+          assertTrue(
+              runtime.indexingCoordinator().updateDocument(
+                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+          commit(runtime);
+
+          var counts = runtime.indexCountOps().queryChunkEmbeddingCounts();
+          assertEquals(0, counts.completed(), "status must no longer read COMPLETED");
+          assertEquals(1, counts.pending(), "status downgraded to PENDING for re-embed (tempdoc 717)");
+        },
+        this::createRuntimeWithChunkVector);
+  }
+
+  /**
+   * Tempdoc 717 (P2, parent vector): the same self-heal applies to the parent {@code vector} field
+   * (also {@code preserve-reread-or-reset}). A COMPLETED-but-vectorless parent RMW'd on an unrelated
+   * field must downgrade {@code embedding_status} COMPLETED&rarr;PENDING so a backfill re-embeds.
+   */
+  @Test
+  void preserveRereadOrResetDowngradesParentStatusWhenVectorAbsent() throws Exception {
+    withConfig(
+        (runtime) -> {
+          Map<String, Object> doc = new HashMap<>();
+          doc.put(SchemaFields.DOC_ID, "doc-0");
+          doc.put(SchemaFields.DOC_UID, "doc-0#0");
+          doc.put(SchemaFields.PATH, "test/doc-0.txt");
+          doc.put(SchemaFields.CONTENT, "content for doc-0");
+          doc.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+          doc.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          // COMPLETED but vectorless parent — the F-032 "status lies" state.
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(doc));
+          commit(runtime);
+
+          assertTrue(
+              runtime.indexingCoordinator().updateDocument(
+                  "doc-0", Map.of("entity_persons_raw", "Alice")));
+          commit(runtime);
+
+          var counts = runtime.indexCountOps().queryEmbeddingCounts();
+          assertEquals(0, counts.completed(), "parent status must no longer read COMPLETED");
+          assertEquals(1, counts.pending(), "parent status downgraded to PENDING for re-embed");
+        },
+        this::createRuntimeWithVectorAndSplade);
+  }
+
+  /**
+   * Tempdoc 717: a chunk that legitimately HAS its vector is preserved by {@code
+   * preserve-reread-or-reset} exactly like plain {@code preserve-reread} — the reset fallback only
+   * fires on a null re-read, so the healthy path is unchanged.
+   */
+  @Test
+  void preserveRereadOrResetPreservesPresentVector() throws Exception {
+    withConfig(
+        (runtime) -> {
+          Map<String, Object> chunk = new HashMap<>();
+          chunk.put(SchemaFields.DOC_ID, "chunk-0");
+          chunk.put(SchemaFields.DOC_UID, "chunk-0#0");
+          chunk.put(SchemaFields.PATH, "test/doc-0.txt");
+          chunk.put(SchemaFields.IS_CHUNK, "true");
+          chunk.put(SchemaFields.PARENT_DOC_ID, "doc-0");
+          chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
+          chunk.put(SchemaFields.CHUNK_VECTOR, VEC);
+          chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+          commit(runtime);
+
+          assertTrue(
+              runtime.indexingCoordinator().updateDocument(
+                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+          commit(runtime);
+
+          assertArrayEquals(
+              VEC,
+              readVector(runtime, SchemaFields.CHUNK_VECTOR, "chunk-0"),
+              "present chunk_vector must survive an RMW that omits it (preserve-reread-or-reset)");
+          assertEquals(
+              1,
+              runtime.indexCountOps().queryChunkEmbeddingCounts().completed(),
+              "status stays COMPLETED when the vector was actually preserved");
+        },
+        this::createRuntimeWithChunkVector);
+  }
+
+  /**
+   * Startup fail-fast (tempdoc 717): {@code preserve-reread-or-reset} with a reset target that is
+   * not docValues-backed is rejected — the status could not be restored across RMW.
+   */
+  @Test
+  void startupFailFastRejectsPreserveRereadOrResetTargetNotDocValues() throws Exception {
+    String badJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "chunk_embedding_status", "type": "keyword", "stored": true, "docValues": false, "roles": [] },
+            { "id": "chunk_vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status", "vector": { "dimension": 4 } }
+          ]
+        }
+        """;
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> new FieldMapper(json(badJson)).validateRmwPolicies());
+    assertTrue(ex.getMessage().contains("docValues-backed"), ex.getMessage());
+  }
+
+  /**
+   * Startup fail-fast (tempdoc 717): {@code preserve-reread-or-reset} is vector-only, like plain
+   * preserve-reread — the re-read lane is a float-vector read-back.
+   */
+  @Test
+  void startupFailFastRejectsPreserveRereadOrResetOnNonVectorField() throws Exception {
+    String badJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": [] },
+            { "id": "ghost_text", "type": "text", "stored": false, "docValues": false, "roles": [], "analyzer": "icu", "rmwPolicy": "preserve-reread-or-reset:embedding_status" }
+          ]
+        }
+        """;
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> new FieldMapper(json(badJson)).validateRmwPolicies());
+    assertTrue(ex.getMessage().contains("only vector fields"), ex.getMessage());
+  }
+
   /** Startup fail-fast: a fragile (non-stored, non-docValues) vector field without a policy. */
   @Test
   void startupFailFastRejectsUndeclaredFragileField() throws Exception {
@@ -406,10 +594,12 @@ class RmwFieldPreservationTest {
             { "id": "entity_persons_raw", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "vdu_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "vdu_processed", "type": "boolean", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
             { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
             { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
             { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" },
-            { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
+            { "id": "vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread-or-reset:embedding_status", "vector": { "dimension": 4 } }
           ]
         }
         """);
@@ -446,7 +636,8 @@ class RmwFieldPreservationTest {
             { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "chunk_content", "type": "text", "stored": true, "docValues": false },
             { "id": "chunk_embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-            { "id": "chunk_vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread", "vector": { "dimension": 4 } }
+            { "id": "chunk_embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
+            { "id": "chunk_vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status", "vector": { "dimension": 4 } }
           ]
         }
         """);
