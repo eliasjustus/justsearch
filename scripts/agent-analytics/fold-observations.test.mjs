@@ -139,14 +139,14 @@ try {
   const ANCHORLESS_FIXTURE = [
     '---', 'title: Observations', '---', '', '# Observations', '', '## Rules', '', '- rule one', '',
     '## Conditions', '',
-    '### obs:unanchored-package-version — package.json self-presentation version says 1.0.0 stale',
+    '### obs:unanchored-package-version — `package.json` self-presentation version says 1.0.0 stale',
     '`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`',
-    '- [ ] package.json self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description stale placeholder (2026-07-04)',
+    '- [ ] `package.json` self-presentation bug: version says 1.0.0 (app is 0.1.0-alpha), description stale placeholder (2026-07-04)',
     '',
   ].join('\n');
   run('fold-leak fix: an anchorless re-observation MERGES into the matching anchorless condition (not a new unanchored-N)', () => {
     const root = freshRoot(ANCHORLESS_FIXTURE);
-    appendObservation({ description: 'package.json self-presentation version 1.0.0 should be 0.1.0-alpha, description still a stale placeholder', root, sessionId: 'sessI', date: '2026-07-09' });
+    appendObservation({ description: '`package.json` self-presentation version 1.0.0 should be 0.1.0-alpha, description still a stale placeholder', root, sessionId: 'sessI', date: '2026-07-09' });
     const r = foldShards({ root, apply: true });
     assert.equal(r.opened, 0, 'must not open a new unanchored condition');
     assert.equal(r.merged, 1, 'must merge into the existing anchorless condition');
@@ -188,18 +188,39 @@ try {
     '- [ ] some other general note entirely different words here nothing alike (2026-07-01)',
     '',
     '## Parked', '',
-    '### obs:parked-flake — intermittent widget flake deferred pending a repro signal',
+    '### obs:parked-flake — intermittent `flakeWidget` flake deferred pending a repro signal',
     '`kind: environment?` `anchor: none` `seen: 2` `first: 2026-06-01` `last: 2026-06-10` `status: parked (deferred — revisit on a repro)`',
-    '- [ ] intermittent widget flake deferred pending a repro signal that does not exist yet (2026-06-01)',
+    '- [ ] intermittent `flakeWidget` flake deferred pending a repro signal that does not exist yet (2026-06-01)',
     '',
   ].join('\n');
   run('hardening: a recurrence does not absorb into a PARKED condition — it resurfaces', () => {
     const root = freshRoot(PARKED_FIXTURE);
-    appendObservation({ description: 'intermittent widget flake deferred pending a repro signal that does not exist yet', root, sessionId: 'sP', date: '2026-07-09' });
+    // Shares the `flakeWidget` identifier with the parked condition, so it WOULD fuzzy-match
+    // but for the parked-skip — exercising that guard, not just the no-identifier path.
+    appendObservation({ description: 'intermittent `flakeWidget` flake deferred pending a repro signal that does not exist yet', root, sessionId: 'sP', date: '2026-07-09' });
     const r = foldShards({ root, apply: true });
     assert.equal(r.merged, 0, 'must not silently bump a dismissed (parked) condition');
     assert.equal(r.opened, 1, 'the recurrence opens a fresh condition so triage sees it');
     assert.equal(groupBySlug(root, 'parked-flake').fields.seen, '2', 'parked condition left untouched');
+  });
+
+  const PROSE_FIXTURE = [
+    '---', 'title: Observations', '---', '', '# Observations', '', '## Rules', '', '- rule one', '',
+    '## Conditions', '',
+    '### obs:retry-budget-ingest — consider adding a retry budget to the ingest pipeline before release',
+    '`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`',
+    '- [ ] Consider adding a retry budget to the ingest pipeline before the next release cycle wraps up (2026-07-01)',
+    '',
+  ].join('\n');
+  run('hardening: two same-template PROSE notes (no identifier) do NOT merge on boilerplate Jaccard', () => {
+    // Independent-review repro (tempdoc 721): same template, only a content word differs
+    // (ingest vs summary). Jaccard clears 0.6, but with no shared backtick identifier the
+    // fuzzy path must not activate — these are different subsystems, not a re-observation.
+    const root = freshRoot(PROSE_FIXTURE);
+    appendObservation({ description: 'Consider adding a retry budget to the summary pipeline before the next release cycle wraps up', root, sessionId: 'sQ', date: '2026-07-09' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.merged, 0, 'identifier-less prose must not fuzzy-merge on shared boilerplate');
+    assert.equal(r.opened, 1, 'the different-subsystem note opens its own condition');
   });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });

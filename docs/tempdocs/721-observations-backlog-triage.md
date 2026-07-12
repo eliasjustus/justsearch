@@ -245,3 +245,25 @@ equality, not probabilistic). Follow-up: give the anchor path the same `isParked
 future fold pass, with a fold-vs-parked test for both paths.
 - 16/55 judgment-based retirements were independently re-verified as genuinely stale; the
   other ~233 retirements rest on the fan-out evidence, not a full re-audit.
+
+## Retired-as-routed-to-expected-state pins (traceability)
+
+An independent reviewer flagged three retired conditions as "still red on main, deleted with no
+trace." They are **not** dropped — they were retired because they are already **routed to their
+permanent home**, `scripts/agent-analytics/expected-state.v1.json` (the store's "environment →
+expected-state; the store is a buffer, not a home" rule). Each pin carries an `exitProbe` that fires
+when the condition is gone. Restoring them to `observations.md` would re-create the duplication the
+routing eliminates. The still-red status is expected — these are **known standing reds**, which the
+pin exists to record. For traceability, the retirements routed to a pin were:
+
+| Retired condition(s) | expected-state pin |
+|---|---|
+| `theme-token-closure-red` | `theme-token-closure-red` (RecentsMenu.ts ghost tokens) |
+| `accent-as-text-red` | `accent-as-text-red` (ActionLedgerView.ts) |
+| `correction-eval-queries-missing`, `correction-probe` | `correction-eval-queries-missing` (missing data file) |
+| `vdu-pdf-fixtures-local-env` | `vdu-pdf-fixtures-local-env` (local Tesseract/Tika) |
+| `ui-web-typecheck-ts5101` + TS5101 dups (`unanchored-general-53`/`-57`, `plugincapabilitybundle`, `parser-conformance-test`) | `ui-web-typecheck-ts5101` |
+| `class-size-pin-drift`, `ui-bundle-gate-red` | `governance-gates-standing-red` |
+
+The pins carry `exitProbe`/`reviewBy` so `observations-triage --probe` proposes their removal when the
+standing red clears — the same propose-then-accept discipline as the store.

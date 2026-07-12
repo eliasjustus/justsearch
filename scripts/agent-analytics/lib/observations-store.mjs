@@ -223,9 +223,11 @@ function sigTokens(s) {
 }
 /**
  * Whole backtick-quoted identifiers (normalized), the discriminating nouns of a
- * note (`package.json`, `SqliteJobQueue.foo`). When two anchorless notes each name
- * identifiers and those sets are DISJOINT, they are about different things — refuse
- * the merge regardless of how much boilerplate they share (tempdoc 721 review).
+ * note (`package.json`, `SqliteJobQueue.foo`). The anchorless fuzzy-merge path
+ * activates ONLY when an entry names such an identifier AND shares one with the
+ * candidate — so free-prose notes that share a template but differ in a content
+ * word (e.g. "ingest" vs "summary" pipeline) can never over-merge on boilerplate
+ * Jaccard alone (tempdoc 721 independent review).
  */
 function identTokens(s) {
   const out = new Set();
@@ -235,10 +237,9 @@ function identTokens(s) {
   }
   return out;
 }
-function disjoint(a, b) {
-  if (!a.size || !b.size) return false; // can't discriminate — don't block on this signal
-  for (const x of a) if (b.has(x)) return false;
-  return true;
+function shares(a, b) {
+  for (const x of a) if (b.has(x)) return true;
+  return false;
 }
 function jaccard(a, b) {
   let inter = 0;
@@ -262,10 +263,17 @@ export const ANCHORLESS_MERGE_THRESHOLD = 0.6;
 export function matchGroup(groups, entryLine) {
   const anchors = extractAnchors(entryLine);
   if (anchors.length === 0) {
+    const idents = identTokens(entryLine);
+    // No backtick identifier to key on → don't fuzzy-merge free prose. Two notes that
+    // share a boilerplate template but differ only in a content word ("ingest" vs
+    // "summary" pipeline) clear a high Jaccard yet are different conditions; with no
+    // shared named artifact we cannot tell them apart, so open a new condition rather
+    // than risk collapsing distinct signal (tempdoc 721 review). Fragmenting an
+    // identifier-less re-observation is recoverable noise; over-merging is signal loss.
+    if (idents.size === 0) return null;
     const sym = symptomClass(entryLine);
     const toks = sigTokens(entryLine);
     if (toks.size < 3) return null; // too little signal to match safely
-    const idents = identTokens(entryLine);
     let best = null;
     let bestScore = 0;
     for (const g of groups) {
@@ -274,7 +282,7 @@ export function matchGroup(groups, entryLine) {
       if (a && a !== 'none') continue; // only merge into other anchorless conditions
       if ((g.fields.symptom || symptomClass(g.title)) !== sym) continue;
       const gText = `${g.title} ${g.occurrences[0] || ''}`;
-      if (disjoint(idents, identTokens(gText))) continue; // different named artifacts → not the same condition
+      if (!shares(idents, identTokens(gText))) continue; // require a SHARED named artifact before a fuzzy text match
       const score = jaccard(toks, sigTokens(gText));
       if (score > bestScore) { bestScore = score; best = g; }
     }
