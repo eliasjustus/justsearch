@@ -204,14 +204,53 @@ export function readStore(file) {
 // Matching / merging (the fold's intelligence)
 // ---------------------------------------------------------------------------
 
+/** Significant-token set for the anchorless title-similarity fallback. */
+function sigTokens(s) {
+  return new Set(
+    String(s)
+      .toLowerCase()
+      .replace(/`[^`]*`|\(\d{4}-\d{2}-\d{2}\)|tempdoc\s*\d+|#?\d{2,4}|§[\w.\d-]+/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4),
+  );
+}
+function jaccard(a, b) {
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter += 1;
+  return inter / (a.size + b.size - inter || 1);
+}
+export const ANCHORLESS_MERGE_THRESHOLD = 0.6;
+
 /**
  * Find the condition a raw entry line belongs to, or null.
  * Conservative by design: primary-anchor equality, and when several groups share
  * that anchor, the entry's symptom class must match too (no transitive merging).
+ *
+ * Anchorless fallback (tempdoc 721): an entry with no extractable anchor used to
+ * ALWAYS open a new condition, so every re-observation of the same anchorless note
+ * minted a fresh `unanchored-*` slug instead of bumping `seen` — the backlog-inflating
+ * fold leak. Such an entry now merges into an existing *anchorless* condition of the
+ * same symptom class when their significant-token Jaccard clears the threshold (single
+ * best match only — never transitive, mirroring the same-anchor guard).
  */
 export function matchGroup(groups, entryLine) {
   const anchors = extractAnchors(entryLine);
-  if (anchors.length === 0) return null;
+  if (anchors.length === 0) {
+    const sym = symptomClass(entryLine);
+    const toks = sigTokens(entryLine);
+    if (toks.size < 3) return null; // too little signal to match safely
+    let best = null;
+    let bestScore = 0;
+    for (const g of groups) {
+      const a = String(g.fields.anchor || '').toLowerCase();
+      if (a && a !== 'none') continue; // only merge into other anchorless conditions
+      if ((g.fields.symptom || symptomClass(g.title)) !== sym) continue;
+      const score = jaccard(toks, sigTokens(`${g.title} ${g.occurrences[0] || ''}`));
+      if (score > bestScore) { bestScore = score; best = g; }
+    }
+    return bestScore >= ANCHORLESS_MERGE_THRESHOLD ? best : null;
+  }
   const primary = anchors[0].toLowerCase();
   const short = primary.split('/').pop();
   const candidates = groups.filter((g) => {
