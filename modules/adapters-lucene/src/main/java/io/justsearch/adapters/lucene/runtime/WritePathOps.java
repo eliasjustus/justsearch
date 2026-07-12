@@ -336,6 +336,27 @@ public final class WritePathOps {
           fields.put(def.id, existing);
         }
         // null => the doc has no vector for this field (common mid-ingest) — nothing to preserve.
+      } else if (policy != null
+          && policy.startsWith(FieldMapper.RMW_PRESERVE_REREAD_OR_RESET_PREFIX)) {
+        // Tempdoc 717: preserve-reread with a reset-status fallback. Re-read the vector; if present,
+        // carry it forward. If the re-read is null AND the paired status reads COMPLETED, that is a
+        // genuine "status lies" state (F-032 class) — downgrade it to PENDING so a backfill
+        // re-derives, instead of leaving a COMPLETED status pointing at a vector that is gone (the
+        // hole plain preserve-reread left, tempdoc 714 §Reach). A null / PENDING / FAILED status is
+        // deliberately NOT healed: a doc that never claimed to be embedded (mid-ingest, VDU
+        // rejected/empty) must not be spuriously enrolled — so this lane does NOT reuse the
+        // reset-status lane's null->PENDING healing (that is SPLADE's semantics, tempdoc 717 review).
+        float[] existing = readFloatVector(searcher, globalDocId, def.id);
+        if (existing != null) {
+          fields.put(def.id, existing);
+        } else {
+          String statusField =
+              policy.substring(FieldMapper.RMW_PRESERVE_REREAD_OR_RESET_PREFIX.length());
+          if (!updates.containsKey(statusField)
+              && STATUS_COMPLETED.equals(readKeywordDocValue(searcher, globalDocId, statusField))) {
+            applyResetStatus(searcher, globalDocId, statusField, updates, fields);
+          }
+        }
       } else if (policy != null && policy.startsWith(FieldMapper.RMW_RESET_STATUS_PREFIX)) {
         applyResetStatus(
             searcher,

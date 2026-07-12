@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import MagicMock, patch
 
 from jseval.run import (
     METRIC_CONTRACT,
+    _build_summary,
+    _compute_chunk_completeness,
     _compute_latency_stats,
     _compute_pipeline_tracking,
     _compute_qrels_summary,
@@ -354,3 +357,133 @@ class TestMetricContract:
     def test_static_values(self):
         assert METRIC_CONTRACT["gain_function"] == "linear"
         assert METRIC_CONTRACT["unjudged_policy"] == "not_relevant"
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 718: chunk-completeness block (_compute_chunk_completeness / _build_summary)
+# ---------------------------------------------------------------------------
+
+def _write_golden_corpus(tmp_path, dataset_name, docs):
+    ddir = tmp_path / dataset_name
+    ddir.mkdir(parents=True, exist_ok=True)
+    with (ddir / "corpus.jsonl").open("w", encoding="utf-8") as f:
+        for d in docs:
+            f.write(json.dumps(d) + "\n")
+    return ddir
+
+
+def _status_snapshot(chunk_doc_count, coverage_pct):
+    return {"worker": {"enrichment": {"chunk": {
+        "chunkDocCount": chunk_doc_count,
+        "chunkVectorCoveragePercent": coverage_pct,
+    }}}}
+
+
+def _mode_result(pipeline_tracking_observed=()):
+    return {"pipeline_tracking": {"observed": list(pipeline_tracking_observed)}}
+
+
+class TestComputeChunkCompleteness:
+    def test_healthy_run_is_ok(self, tmp_path):
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense", "chunk_merge"])},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "ok"
+        assert block["expected"] == 1
+        assert block["observed"] == 48
+
+    def test_degenerate_run_is_flagged(self, tmp_path):
+        # The tempdoc-717 case: long docs present, but the index shipped with 0 chunk docs.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"])},  # no chunk_merge
+            _status_snapshot(0, 0.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "degenerate"
+        assert block["expected"] == 1
+        assert block["observed"] == 0
+        assert block["reasons"]
+
+    def test_short_doc_corpus_is_chunk_free(self, tmp_path):
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": "short doc"},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"])},  # no chunk_merge -- must not matter here
+            _status_snapshot(0, 0.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "chunk-free"
+
+    def test_vector_mode_not_run_does_not_penalize_missing_chunk_merge(self, tmp_path):
+        # chunk_merge is a query-time corroborator only meaningful when `vector` mode ran;
+        # a lexical-only run must not be flagged degenerate for lacking it.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"lexical": _mode_result([])},  # no "vector" key at all
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "ok"
+
+    def test_missing_status_snapshot_treated_as_zero_observed(self, tmp_path):
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo", {"vector": _mode_result(["chunk_merge"])}, None, tmp_path,
+        )
+        assert block["verdict"] == "degenerate"
+        assert block["observed"] == 0
+
+    def test_beir_dataset_with_no_local_corpus_jsonl_is_chunk_free(self, tmp_path):
+        # BEIR datasets materialize via ir_datasets; there is no local corpus.jsonl for
+        # `_compute_chunk_completeness` to read, so it must degrade gracefully, never crash.
+        block = _compute_chunk_completeness(
+            "scifact", {"vector": _mode_result([])}, _status_snapshot(0, 0.0), tmp_path,
+        )
+        assert block["verdict"] == "chunk-free"
+
+
+class TestBuildSummaryEmbedsChunkCompleteness:
+    def test_run_shape_carries_chunk_completeness_block(self, tmp_path):
+        from types import SimpleNamespace
+
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        meta = SimpleNamespace(source="golden", name="golden/demo", doc_count=1, query_count=0)
+        mode_results = {
+            "vector": {
+                "aggregate_metrics": {}, "ann_proof": AnnProofResult(status="PASS"),
+                "comparability": ComparabilityResult(comparable=True), "run_evidence": {},
+                "pipeline_tracking": {"observed": ["dense", "chunk_merge"]},
+                "latency_stats": {}, "score_stats": {},
+            },
+        }
+        summary = _build_summary(
+            "golden/demo", ["vector"], mode_results, meta, {},
+            base_dir=tmp_path, status_snapshot=_status_snapshot(48, 100.0),
+        )
+        assert "chunk_completeness" in summary
+        assert summary["chunk_completeness"]["verdict"] == "ok"
+        assert set(summary["chunk_completeness"]) == {"expected", "observed", "verdict", "reasons"}

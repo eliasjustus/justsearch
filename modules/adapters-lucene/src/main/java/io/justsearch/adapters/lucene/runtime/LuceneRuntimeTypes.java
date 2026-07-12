@@ -273,6 +273,29 @@ public final class LuceneRuntimeTypes {
   }
 
   /**
+   * Live-artifact count of chunk vectors actually present in the index (tempdoc 717) — the
+   * artifact-truthful complement to {@link ChunkEmbeddingCounts}, which counts the {@code
+   * chunk_embedding_status} bookkeeping field. A chunk can read {@code chunk_embedding_status=
+   * COMPLETED} while its non-stored {@code chunk_vector} {@code KnnFloatVectorField} is absent (the
+   * F-032 "status lies" class); readiness/serve gates that trust the status can therefore certify a
+   * dead chunk leg. This record verifies the vector itself so those gates cannot be fooled.
+   *
+   * @param totalChunks live chunk documents (IS_CHUNK=true)
+   * @param vectorsPresent live chunk documents that actually carry a {@code chunk_vector} value
+   */
+  public record ChunkVectorPresence(int totalChunks, int vectorsPresent) {
+    /** Presence coverage percentage (0-100), or 0 if no chunks. */
+    public double coveragePercent() {
+      return totalChunks > 0 ? (vectorsPresent * 100.0) / totalChunks : 0.0;
+    }
+
+    /** True if presence coverage >= threshold (typically 95% for RAG readiness). */
+    public boolean isReady(double thresholdPercent) {
+      return totalChunks > 0 && coveragePercent() >= thresholdPercent;
+    }
+  }
+
+  /**
    * Counts of whole documents by embedding status (doc-level vector embeddings).
    *
    * @param total total number of whole (non-chunk) documents
