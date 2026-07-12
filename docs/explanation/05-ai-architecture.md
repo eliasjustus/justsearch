@@ -389,7 +389,7 @@ Fallback chain in `matchCitations()`:
 
 ### Frontend rendering
 
-The frontend (`useAppAI.ts`) handles both prongs:
+The frontend chat/citation layer (`modules/ui-web/src/shell-v0/components/chat/`) handles both prongs:
 
 - `onCitationMatches` **enriches** existing RAG citations with cross-encoder scores — preserves excerpts, offsets, and headings from the `meta` event, only updates `score`
 - `injectCitationMarkers` strips any LLM-generated `[N]` markers before injecting cross-encoder markers (prevents duplication)

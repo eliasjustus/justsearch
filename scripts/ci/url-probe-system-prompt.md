@@ -29,7 +29,7 @@ note:  audience=OPERATOR, confirm=inline
 
 op:    core.rebuild-index
 title: rebuild index
-note:  audience=OPERATOR, confirm=inline
+note:  audience=USER, confirm=inline
 
 op:    core.ping-backend
 title: ping backend
