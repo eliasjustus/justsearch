@@ -49,7 +49,7 @@ Three operational modes:
 | **Online Mode** | Generative LLM | Head (llama-server) |
 | **Offline Mode** | None | Neither |
 
-The embedding model defaults to CPU-only (`JUSTSEARCH_EMBED_GPU_LAYERS` opt-in). The generative LLM gets GPU priority when Online Mode is active.
+The embedding model's GPU use follows the master GPU switch by default (`justsearch.embed.gpu.enabled` when set, else the `justsearch.gpu.enabled` auto-detect master switch, then policy-gated — see `ResolvedConfigBuilder.resolveEmbedGpuEnabled`). The generative LLM gets GPU priority when Online Mode is active.
 
 ## Consequences
 
