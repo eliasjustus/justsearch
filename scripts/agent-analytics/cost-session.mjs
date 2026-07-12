@@ -30,6 +30,9 @@ const PRICING = {
   'claude-opus-4-7':            { input: 5.0,  output: 25.0, cache_write: 6.25,  cache_read: 0.50 },
   'claude-opus-4-6':            { input: 5.0,  output: 25.0, cache_write: 6.25,  cache_read: 0.50 },
   'claude-opus-4-20250514':     { input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.50 },
+  // Standard rate shown; Sonnet-5 has a $2/$10 intro discount through 2026-08-31, so
+  // this slightly OVERstates Sonnet-5 spend during the intro window (accepted — a
+  // date-branch isn't worth it for a cost-report script, and Sonnet-5 is rare here).
   'claude-sonnet-5':            { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
   'claude-sonnet-4-6':          { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
   'claude-sonnet-4-5-20250929': { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
@@ -113,8 +116,10 @@ function findPricing(model) {
   if (!model) return DEFAULT_PRICING;
   // Exact match
   if (PRICING[model]) return PRICING[model];
-  // Prefix match (e.g. 'claude-opus-4-6' matches 'claude-opus-4-6-...')
-  for (const [key, pricing] of Object.entries(PRICING)) {
+  // Prefix match (e.g. 'claude-opus-4-6' matches 'claude-opus-4-6-...'), longest key
+  // first so a specific dated id (`claude-haiku-4-5-20251001`) is not shadowed by its
+  // bare prefix (`claude-haiku-4-5`) when the two ever diverge in price.
+  for (const [key, pricing] of Object.entries(PRICING).sort((a, b) => b[0].length - a[0].length)) {
     if (model.startsWith(key)) return pricing;
   }
   return DEFAULT_PRICING;
