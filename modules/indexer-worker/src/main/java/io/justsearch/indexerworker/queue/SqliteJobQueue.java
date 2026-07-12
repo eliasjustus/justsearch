@@ -1511,10 +1511,18 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         return 0;
       }
 
-      String sql = "DELETE FROM jobs WHERE path LIKE ? || '%'";
+      // Half-open range on the PK-indexed path (path >= lower AND path < upper) instead of
+      // LIKE 'prefix%', so `_`/`%` inside a normalized path are treated literally rather than
+      // as SQL wildcards (which would over-delete unrelated jobs) — mirrors the wildcard-safe
+      // listFailedJobsByPathPrefix/countByPathPrefix range queries.
+      String upper =
+          normalized.substring(0, normalized.length() - 1)
+              + (char) (normalized.charAt(normalized.length() - 1) + 1);
+      String sql = "DELETE FROM jobs WHERE path >= ? AND path < ?";
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
         stmt.setString(1, normalized);
+        stmt.setString(2, upper);
         int deleted = stmt.executeUpdate();
         if (deleted > 0) {
           log.info("deleteByPathPrefix: deleted {} jobs for prefix: {}", deleted, normalized);

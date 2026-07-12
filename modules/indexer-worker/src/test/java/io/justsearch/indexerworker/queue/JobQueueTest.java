@@ -967,6 +967,21 @@ final class JobQueueTest {
   }
 
   @Test
+  void deleteByPathPrefix_treatsUnderscoreLiterally_noWildcardOverDelete() {
+    // '_' is a LIKE single-char wildcard: the old `path LIKE 'foo_bar%'` also matched
+    // sibling 'fooXbar'. The half-open range query must treat '_' literally so only the
+    // intended prefix is deleted.
+    Path underscoreDir = tempDir.resolve("foo_bar"); // the prefix we delete
+    Path wildcardSibling = tempDir.resolve("fooXbar"); // matched by LIKE, must survive
+    jobQueue.enqueue(
+        List.of(underscoreDir.resolve("job.txt"), wildcardSibling.resolve("job.txt")));
+
+    int deleted = jobQueue.deleteByPathPrefix(underscoreDir.toAbsolutePath().toString());
+    assertEquals(1, deleted, "Only the literal foo_bar/ job may be deleted");
+    assertEquals(1, jobQueue.queueDepth(), "The fooXbar/ job must survive the '_' prefix delete");
+  }
+
+  @Test
   void deleteByExactPath_deletesOnlyMatchingJob() {
     Path target = tempDir.resolve("target.txt");
     Path other = tempDir.resolve("other.txt");
