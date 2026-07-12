@@ -226,3 +226,22 @@ on `main` or are CI-excluded/pinned.
   `data-testid`, or drop the harness step.
 - **`coreplugin` audience drift** — `core.health-surface`/`core.activity-surface` are
   `OPERATOR` in FE `CorePlugin.ts` but `USER` in Java `CoreSurfaceCatalog`; align one way.
+
+## Independent-review follow-ups (PR A fold-leak)
+
+An independent reviewer (reviewer ≠ implementer) audited PR A. Findings actioned in this PR:
+
+- **Over-merge risk (fixed):** `sigTokens` stripped all backtick-quoted spans, discarding
+  the discriminating file/symbol identifier so two different-artifact notes sharing a
+  template could collide. Now keeps identifier tokens **and** refuses a merge when two
+  anchorless notes name disjoint backtick identifiers (`identTokens`/`disjoint`). Test added.
+- **Parked absorption (fixed for the anchorless path):** `matchGroup` runs over
+  `store.groups`, which includes `## Parked`. A recurrence could silently bump a dismissed
+  condition. The new anchorless path now skips parked groups so recurrences resurface. Test added.
+
+Deliberately **not** changed here (kept scoped to the anchorless leak): the **pre-existing
+exact-anchor path** has the same parked-absorption interaction (low-risk — exact string
+equality, not probabilistic). Follow-up: give the anchor path the same `isParked` skip in a
+future fold pass, with a fold-vs-parked test for both paths.
+- 16/55 judgment-based retirements were independently re-verified as genuinely stale; the
+  other ~233 retirements rest on the fan-out evidence, not a full re-audit.

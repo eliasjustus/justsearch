@@ -204,16 +204,41 @@ export function readStore(file) {
 // Matching / merging (the fold's intelligence)
 // ---------------------------------------------------------------------------
 
-/** Significant-token set for the anchorless title-similarity fallback. */
+/**
+ * Significant-token set for the anchorless title-similarity fallback. Keeps the
+ * *contents* of backtick-quoted identifiers (a file/symbol name is the most
+ * discriminating part of a note — stripping it made different-artifact notes with
+ * a shared template collide, tempdoc 721 review); drops dates, tempdoc/issue
+ * numbers, §refs, and sub-4-char tokens as noise.
+ */
 function sigTokens(s) {
   return new Set(
     String(s)
       .toLowerCase()
-      .replace(/`[^`]*`|\(\d{4}-\d{2}-\d{2}\)|tempdoc\s*\d+|#?\d{2,4}|§[\w.\d-]+/g, ' ')
+      .replace(/\(\d{4}-\d{2}-\d{2}\)|tempdoc\s*\d+|#?\d{2,4}|§[\w.\d-]+/g, ' ')
       .replace(/[^a-z0-9]+/g, ' ')
       .split(/\s+/)
       .filter((w) => w.length >= 4),
   );
+}
+/**
+ * Whole backtick-quoted identifiers (normalized), the discriminating nouns of a
+ * note (`package.json`, `SqliteJobQueue.foo`). When two anchorless notes each name
+ * identifiers and those sets are DISJOINT, they are about different things — refuse
+ * the merge regardless of how much boilerplate they share (tempdoc 721 review).
+ */
+function identTokens(s) {
+  const out = new Set();
+  for (const m of String(s).matchAll(/`([^`]{2,})`/g)) {
+    const norm = m[1].toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (norm.length >= 3) out.add(norm);
+  }
+  return out;
+}
+function disjoint(a, b) {
+  if (!a.size || !b.size) return false; // can't discriminate — don't block on this signal
+  for (const x of a) if (b.has(x)) return false;
+  return true;
 }
 function jaccard(a, b) {
   let inter = 0;
@@ -240,13 +265,17 @@ export function matchGroup(groups, entryLine) {
     const sym = symptomClass(entryLine);
     const toks = sigTokens(entryLine);
     if (toks.size < 3) return null; // too little signal to match safely
+    const idents = identTokens(entryLine);
     let best = null;
     let bestScore = 0;
     for (const g of groups) {
+      if (isParked(g)) continue; // never absorb a recurrence into a dismissed (parked) condition — let it resurface (tempdoc 721 review)
       const a = String(g.fields.anchor || '').toLowerCase();
       if (a && a !== 'none') continue; // only merge into other anchorless conditions
       if ((g.fields.symptom || symptomClass(g.title)) !== sym) continue;
-      const score = jaccard(toks, sigTokens(`${g.title} ${g.occurrences[0] || ''}`));
+      const gText = `${g.title} ${g.occurrences[0] || ''}`;
+      if (disjoint(idents, identTokens(gText))) continue; // different named artifacts → not the same condition
+      const score = jaccard(toks, sigTokens(gText));
       if (score > bestScore) { bestScore = score; best = g; }
     }
     return bestScore >= ANCHORLESS_MERGE_THRESHOLD ? best : null;

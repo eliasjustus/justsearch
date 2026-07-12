@@ -161,6 +161,46 @@ try {
     assert.equal(r.opened, 1, 'an unrelated anchorless note must not be force-merged');
     assert.equal(r.merged, 0);
   });
+
+  // --- tempdoc 721 independent-review hardening: over-merge + parked absorption ---
+  const TEMPLATE_PKG_FIXTURE = [
+    '---', 'title: Observations', '---', '', '# Observations', '', '## Rules', '', '- rule one', '',
+    '## Conditions', '',
+    '### obs:pkg-self-presentation — `package.json` self-presentation version says 1.0.0 stale',
+    '`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-04` `last: 2026-07-04`',
+    '- [ ] `package.json` self-presentation bug: version says 1.0.0 (should be 0.1.0-alpha), description is a stale placeholder (2026-07-04)',
+    '',
+  ].join('\n');
+  run('hardening: a same-template note about a DIFFERENT file does not merge (disjoint identifiers)', () => {
+    const root = freshRoot(TEMPLATE_PKG_FIXTURE);
+    // Identical boilerplate, only the backticked filename differs (both stoplisted → anchorless).
+    appendObservation({ description: '`settings.json` self-presentation bug: version says 1.0.0 (should be 0.1.0-alpha), description is a stale placeholder', root, sessionId: 'sK', date: '2026-07-09' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.merged, 0, 'shared boilerplate must not merge two different-file notes');
+    assert.equal(r.opened, 1);
+  });
+
+  const PARKED_FIXTURE = [
+    '---', 'title: Observations', '---', '', '# Observations', '', '## Rules', '', '- rule one', '',
+    '## Conditions', '',
+    '### obs:something-else — some other general note entirely different words',
+    '`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`',
+    '- [ ] some other general note entirely different words here nothing alike (2026-07-01)',
+    '',
+    '## Parked', '',
+    '### obs:parked-flake — intermittent widget flake deferred pending a repro signal',
+    '`kind: environment?` `anchor: none` `seen: 2` `first: 2026-06-01` `last: 2026-06-10` `status: parked (deferred — revisit on a repro)`',
+    '- [ ] intermittent widget flake deferred pending a repro signal that does not exist yet (2026-06-01)',
+    '',
+  ].join('\n');
+  run('hardening: a recurrence does not absorb into a PARKED condition — it resurfaces', () => {
+    const root = freshRoot(PARKED_FIXTURE);
+    appendObservation({ description: 'intermittent widget flake deferred pending a repro signal that does not exist yet', root, sessionId: 'sP', date: '2026-07-09' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.merged, 0, 'must not silently bump a dismissed (parked) condition');
+    assert.equal(r.opened, 1, 'the recurrence opens a fresh condition so triage sees it');
+    assert.equal(groupBySlug(root, 'parked-flake').fields.seen, '2', 'parked condition left untouched');
+  });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
