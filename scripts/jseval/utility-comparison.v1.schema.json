@@ -4,11 +4,11 @@
   "title": "Agent-utility comparison record (tempdoc 624)",
   "description": "Condition-paired sibling of the 623 benchmark release. Projects over agent-eval runs cohort-identical on every axis except `condition` (with-tool vs. without-tool), one cell per (corpus, agent_model), aggregating over seed. A separate canonical record, NOT a metric family inside the single-cohort 623 release.",
   "type": "object",
-  "required": ["schema", "composed_at", "cohort", "measured", "coverage"],
+  "required": ["schema", "schema_version", "composed_at", "cohort", "measured", "coverage", "comparability", "claim_verdict", "semantic_digest"],
   "additionalProperties": true,
   "properties": {
     "schema": { "const": "utility-comparison.v1" },
-    "schema_version": { "type": "integer" },
+    "schema_version": { "const": 2 },
     "composed_at": { "type": "string", "description": "ISO timestamp (passed in; scripts can't call Date.now)." },
     "cohort": {
       "type": "object",
@@ -16,7 +16,8 @@
       "required": ["agent_cohort_key", "git_sha"],
       "properties": {
         "agent_cohort_key": { "type": "string", "description": "SHA over {git_sha, cli_version, mcp_tool_surface_hash, judge, prompt_template_hash, decoding, eval_limits}." },
-        "git_sha": { "type": "string" },
+        "git_sha": { "type": ["string", "null"] },
+        "git_dirty": { "type": ["boolean", "null"] },
         "cli_version": { "type": ["string", "null"], "description": "Claude Code CLI version (HAL/Evaluation-Cards provenance: harness version)." },
         "mcp_tool_surface_hash": { "type": ["string", "null"], "description": "Hash of the tools/list payload the agent was offered (R8)." },
         "judge": { "type": "object", "description": "Hybrid scorer identity: {kind: substring-em | llm-judge, model?, version?, prompt_hash?}." },
@@ -24,7 +25,8 @@
         "decoding": { "type": ["object", "null"], "description": "{temperature, max_tokens} (Evaluation-Cards agentic-minimal)." },
         "eval_limits": { "type": ["object", "null"], "description": "Per-query token/step/cost budget." },
         "search_config_cohort_key": { "type": ["string", "null"], "description": "623 config_cohort_key of the with-tool search backend (null for the without-tool arm)." },
-        "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." }
+        "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." },
+        "environment": { "type": ["object", "null"] }
       }
     },
     "conditions": {
@@ -38,7 +40,7 @@
         "type": "object",
         "additionalProperties": {
           "type": "object",
-          "required": ["accuracy", "tokens_unique", "cost_usd"],
+          "required": ["accuracy", "provider_cache_creation_input_tokens", "tokens_unique", "cost_usd", "identity", "primary_arm"],
           "properties": {
             "accuracy": {
               "type": "object",
@@ -56,9 +58,19 @@
                 "seed_envelope_with_tool": { "type": "object" }
               }
             },
+            "provider_cache_creation_input_tokens": {
+              "type": "object",
+              "description": "Provider-reported cache_creation_input_tokens; not a universal unique-content count.",
+              "required": ["baseline", "with_tool", "delta_mean", "delta_ci95"]
+            },
+            "identity": {
+              "type": "object",
+              "required": ["corpus_signature", "requested_model_alias", "resolved_provider_model"]
+            },
+            "primary_arm": {"enum": ["addition_b", "substitution_c"]},
             "tokens_unique": {
               "type": "object",
-              "description": "cache_creation (unique-content) tokens — the contamination-robust headline (D-1). Per-arm distribution (median+p95), not a single mean.",
+              "description": "Deprecated v1 alias for provider_cache_creation_input_tokens.",
               "properties": {
                 "baseline": { "type": "object" },
                 "with_tool": { "type": "object" },
@@ -98,6 +110,12 @@
         "contamination_class": { "type": "string", "enum": ["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"], "description": "Corpus contamination class (C-5) as a first-class label, not a footnote." }
       }
     },
+    "comparability": {"type": "object"},
+    "claim_verdict": {
+      "type": "object",
+      "required": ["status", "accepted", "policy_id", "policy_hash", "gates", "reasons"]
+    },
+    "semantic_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "revision": {
       "type": "object",
       "description": "Present ONLY when this record is a corrected re-derivation of a prior record composed from the same identity-bearing inputs (tempdoc 624 Design 1) -- e.g. a queries.json-leak exclusion, a condition-C re-check, or a judge-rescoring pass. Absent on an original composition. `agent_cohort_key`/`pairing_key` are deliberately invariant across the original and every corrected version, so they cannot themselves distinguish 'this composed record' from 'that other composition of the identical cohort' -- `supersedes` therefore references a file path, not an in-record identity.",

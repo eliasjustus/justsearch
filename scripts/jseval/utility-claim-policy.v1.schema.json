@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "utility-claim-policy.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "policy_id", "status", "primary_estimand", "thresholds", "requirements", "unresolved"],
+  "properties": {
+    "schema": {"const": "utility-claim-policy.v1"},
+    "schema_version": {"const": 1},
+    "policy_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "active", "retired"]},
+    "primary_estimand": {"const": "addition_b"},
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_seeds", "minimum_paired_observations", "maximum_exclusion_rate", "minimum_paired_retention", "minimum_excluded_jaccard", "significance_alpha", "minimum_adoption_rate", "accuracy_noninferiority_margin"],
+      "properties": {
+        "minimum_seeds": {"type": "integer", "minimum": 1},
+        "minimum_paired_observations": {"type": "integer", "minimum": 1},
+        "maximum_exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "minimum_paired_retention": {"type": "number", "minimum": 0, "maximum": 1},
+        "minimum_excluded_jaccard": {"type": "number", "minimum": 0, "maximum": 1},
+        "significance_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "minimum_adoption_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "accuracy_noninferiority_margin": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+      }
+    },
+    "requirements": {"type": "object", "additionalProperties": true},
+    "unresolved": {"type": "array", "items": {"type": "string"}}
+  }
+}

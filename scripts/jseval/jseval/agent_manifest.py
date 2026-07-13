@@ -85,7 +85,7 @@ def judge_identity(
     ``agent_cohort_key`` — so two records scored differently never silently merge.
     """
     ident: dict = {"kind": kind}
-    if kind == "llm-judge":
+    if "llm" in kind:
         ident.update({"model": model, "version": version, "prompt_hash": prompt_hash})
     return ident
 
@@ -108,6 +108,8 @@ def build_agent_manifest(
     non_determinism_envelope: dict | None = None,
     run_id: str | None = None,
     timestamp: str | None = None,
+    source_git_sha: str | None = None,
+    source_git_dirty: bool | None = None,
 ) -> dict:
     """Build one agent-run manifest (a single corpus x model x condition x seed cell).
 
@@ -121,7 +123,8 @@ def build_agent_manifest(
         "run_id": run_id,
         "timestamp": timestamp,
         # harness identity (hashed into agent_cohort_key)
-        "git_sha": _git_sha_full(),
+        "git_sha": source_git_sha if source_git_sha is not None else _git_sha_full(),
+        "git_dirty": source_git_dirty,
         "cli_version": cli_version,
         "mcp_tool_surface_hash": mcp_tool_surface_hash(mcp_tool_surface),
         "judge": judge,
@@ -155,6 +158,7 @@ def agent_cohort_key(manifest: dict) -> str:
     """
     key_surface = {
         "git_sha": manifest.get("git_sha"),
+        "git_dirty": manifest.get("git_dirty"),
         "cli_version": manifest.get("cli_version"),
         "mcp_tool_surface_hash": manifest.get("mcp_tool_surface_hash"),
         "judge": manifest.get("judge"),
@@ -169,7 +173,7 @@ def pairing_key(manifest: dict) -> tuple:
     """The tuple that must match for two runs to form an A<->C pair (R2).
 
     Everything held fixed within a pair *except* ``condition``: the harness
-    cohort key plus the matched range axes ``(corpus signature, agent_model,
+    cohort key plus the matched range axes ``(corpus signature, resolved provider model,
     seed)``. ``condition`` is deliberately absent — it is the paired axis — and so
     is ``search_config_cohort_key`` (it co-varies with condition; including it
     would stop arm A pairing with arm C).
@@ -178,6 +182,6 @@ def pairing_key(manifest: dict) -> tuple:
     return (
         manifest.get("agent_cohort_key") or agent_cohort_key(manifest),
         corpus.get("signature") or corpus.get("sha256") or corpus.get("dataset"),
-        manifest.get("agent_model"),
+        manifest.get("agent_model_version") or manifest.get("agent_model"),
         manifest.get("seed"),
     )

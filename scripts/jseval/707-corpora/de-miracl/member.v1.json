@@ -1,0 +1,24 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "de-miracl",
+  "language": "de",
+  "domain": "encyclopedic",
+  "real_source": {
+    "recipe": "../../666-corpora/miracl-de-2k/recipe.json",
+    "content_scope": "MIRACL German document text sampled through ir_datasets",
+    "license": "Apache-2.0",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": "../../635-corpora/needle-burial-v1",
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "claim_eligible": true,
+  "remaining_gates": ["generate_de_fabricated_gold", "materialize_member", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
+}

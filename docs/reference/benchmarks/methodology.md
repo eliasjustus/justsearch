@@ -71,6 +71,23 @@ Per-corpus nDCG@10 floors are projected from this release and regression-gated i
 (`scripts/jseval/relevance-ratchet-baselines.v1.json` + the relevance gate). The internal
 search-quality register carries the full per-config ablation log (`docs/reference/search-quality-register.md`).
 
+## Agent-utility publication
+
+<!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
+
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in scientific policy intentionally leaves its adoption and non-inferiority thresholds unresolved; choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.
+
+The publication chain is: all attempted Inspect cells -> strict sanitized observation evidence -> pure offline recomposition -> versioned claim-policy verdict -> immutable publication manifest -> explicit accepted-result pointer. Rejected bundles remain replayable but cannot become current. The pointer is `scripts/jseval/public-agent-utility/current.v1.json`.
+
+Replay uses only committed evidence:
+
+```bash
+cd scripts/jseval
+python -m jseval utility-replay --publication <publication-id>
+```
+
+<!-- agent-utility:generated:end -->
+
 ## Reproduce it
 
 From `scripts/jseval` (Windows; a CUDA GPU accelerates inference, CPU also works):

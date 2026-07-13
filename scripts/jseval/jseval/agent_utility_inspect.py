@@ -36,8 +36,10 @@ solver stashes cost / unique-tokens / turns into `state.metadata`.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -157,7 +159,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
 
     def _fresh_capture() -> dict:
         return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
-                "mcp_servers": None, "justsearch_tools": []}
+                "mcp_servers": None, "justsearch_tools": [], "resolved_models": set()}
 
     async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
         """Run one SDK session, writing captured objects INCREMENTALLY into the shared
@@ -183,6 +185,8 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                 await client.query(prompt)
                 async for msg in client.receive_response():
                     if isinstance(msg, AssistantMessage):
+                        if getattr(msg, "model", None):
+                            capture["resolved_models"].add(msg.model)
                         for b in (msg.content or []):
                             if isinstance(b, ToolUseBlock):
                                 capture["attempts"][b.id] = {"tool": b.name, "input": b.input}
@@ -288,6 +292,16 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     state.metadata["mcp_servers"] = servers
     state.metadata["mcp_tools_offered"] = (
         len(justsearch_tools) if servers is not None else None)
+    state.metadata["mcp_tool_names_offered"] = (
+        sorted(set(justsearch_tools)) if servers is not None else None)
+    state.metadata["observed_mcp_tool_surface_hash"] = (
+        hashlib.sha256(json.dumps(
+            {"tool_names": sorted(set(justsearch_tools))},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        if servers is not None else None
+    )
     justsearch_connected = bool(servers) and any(
         (s.get("name") == "justsearch"
          and str(s.get("status", "")).lower() in ("connected", "ready", "ok"))
@@ -306,6 +320,20 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             return
 
     if rmsg is not None:
+        usage = getattr(rmsg, "usage", None) or {}
+        model_usage = getattr(rmsg, "model_usage", None) or {}
+        resolved_models = set(got.get("resolved_models") or ()) | set(model_usage)
+        state.metadata.update({
+            "usage": usage,
+            "model_usage": model_usage,
+            "resolved_model": next(iter(resolved_models), None),
+        })
+        if len(resolved_models) > 1:
+            state.metadata.setdefault(
+                "error",
+                "resolved provider model changed within one cell: "
+                f"{sorted(resolved_models)!r}",
+            )
         if getattr(rmsg, "is_error", False):
             # Forensically complete (tempdoc 675): a bare "result error: None" is
             # unactionable — carry the SDK's own error signals (subtype/stop_reason
@@ -321,7 +349,6 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
-        usage = getattr(rmsg, "usage", None) or {}
         state.metadata.update({
             "cost_usd": getattr(rmsg, "total_cost_usd", None),
             "unique_tokens": usage.get("cache_creation_input_tokens"),
@@ -362,7 +389,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                        # --- cohort identity (task-args → config-change log segregation, A2) ---
                        cli_version: str | None = None, mcp_tool_surface_hash: str | None = None,
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
-                       corpus_dataset: str = "", corpus_signature: str = "") -> Task:
+                       corpus_dataset: str = "", corpus_signature: str = "",
+                       source_identity_json: str = "{}") -> Task:
     """ONE Inspect task over the whole matrix (tempdoc 675 single pool).
 
     Samples are the flat `condition × query` cross-product; `condition` is a sample
@@ -370,6 +398,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
     Inspect resume stays keyed on the cell). The cohort-identity args are what
     `eval_set` segregates logs by."""
     _assert_no_float_task_args(locals())
+    source_identity = json.loads(source_identity_json)
     rows = json.load(open(queries_path, encoding="utf-8"))
     if max_queries:
         rows = rows[:max_queries]
@@ -385,14 +414,97 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
         scorer=substring_scorer(),
         metadata={
             "model": model,
-            "corpus": {"dataset": corpus_dataset, "signature": corpus_signature or corpus_dataset},
+            "corpus": {
+                "dataset": corpus_dataset,
+                "signature": ((source_identity.get("corpus") or {}).get("signature")
+                              or corpus_signature or corpus_dataset),
+                "declared_signature": corpus_signature or None,
+            },
             "cohort": {
                 "model": model, "cli_version": cli_version,
                 "mcp_tool_surface_hash": mcp_tool_surface_hash,
                 "judge_kind": judge_kind, "prompt_template_hash": prompt_template_hash,
+                "source_git_sha": source_identity.get("source_git_sha"),
+                "source_git_dirty": source_identity.get("source_git_dirty"),
+                "search_config_cohort_key": source_identity.get("search_config_cohort_key"),
+                "environment": source_identity.get("environment"),
+                "corpus_identity": source_identity.get("corpus"),
             },
         },
     )
+
+
+def _git_dirty() -> bool | None:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return bool(result.stdout.strip()) if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _capture_or_load_source_identity(
+    *,
+    log_dir: str,
+    corpus_dir: str,
+    corpus_dataset: str,
+    declared_corpus_signature: str,
+    search_config_cohort_key: str | None,
+) -> dict:
+    """Persist source-time identity once and reuse it unchanged on resume."""
+    from jseval.corpus_identity import corpus_signature
+    from jseval.env_fingerprint import capture_env_fingerprint
+    from jseval.manifest import _git_sha_full
+
+    path = Path(log_dir) / "source-identity.v1.json"
+    if path.is_file():
+        identity = json.loads(path.read_text(encoding="utf-8"))
+        expected = {
+            "dataset": corpus_dataset,
+            "declared_signature": declared_corpus_signature or None,
+        }
+        actual = identity.get("corpus") or {}
+        if any(actual.get(key) != value for key, value in expected.items()):
+            raise ValueError("source identity sidecar does not match resumed corpus arguments")
+        if identity.get("search_config_cohort_key") != search_config_cohort_key:
+            raise ValueError("source identity sidecar does not match resumed search config")
+        return identity
+
+    root = Path(corpus_dir)
+    signature = corpus_signature(root)
+    if signature is None:
+        materialized_files = sorted(
+            (path for path in root.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(root).as_posix(),
+        )
+        signature = corpus_signature(root, materialized_files)
+    declared = declared_corpus_signature or None
+    signature_matches = declared == signature if declared else None
+    if declared and len(declared) == 64 and signature_matches is False:
+        raise ValueError(
+            f"declared corpus signature {declared} disagrees with materialized {signature}"
+        )
+    identity = {
+        "schema": "agent-utility-source-identity.v1",
+        "source_git_sha": _git_sha_full(),
+        "source_git_dirty": _git_dirty(),
+        "search_config_cohort_key": search_config_cohort_key,
+        "corpus": {
+            "dataset": corpus_dataset,
+            "declared_signature": declared,
+            "signature": signature,
+            "signature_matches": signature_matches,
+        },
+        "environment": capture_env_fingerprint(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(identity, indent=2, sort_keys=True), encoding="utf-8")
+    return identity
 
 
 def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | None,
@@ -402,7 +514,8 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      max_turns: int = _DEFAULT_MAX_TURNS,
                      cli_version: str | None = None,
                      mcp_tool_surface_hash: str | None = None,
-                     corpus_dataset: str = "", corpus_signature: str = "") -> str:
+                     corpus_dataset: str = "", corpus_signature: str = "",
+                     search_config_cohort_key: str | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
@@ -429,6 +542,14 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
 
     # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
+    source_identity = _capture_or_load_source_identity(
+        log_dir=log_dir,
+        corpus_dir=corpus_dir,
+        corpus_dataset=corpus_dataset,
+        declared_corpus_signature=corpus_signature,
+        search_config_cohort_key=search_config_cohort_key,
+    )
+    source_identity_json = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
     # re-invoking fails with "log file not associated with a task". It ALSO keys the
     # stable staged-corpus path below — tempdoc 675 F0 resume fix: a random `mkdtemp`
@@ -454,6 +575,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                 mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
+                source_identity_json=source_identity_json,
             )
         ]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths

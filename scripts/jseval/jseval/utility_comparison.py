@@ -41,7 +41,7 @@ from jseval.release import canonical_dataset_slug
 
 SCHEMA = "utility-comparison.v1"
 SCHEMA_CROSS_CORPUS = "utility-comparison-cross-corpus.v1"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
@@ -248,6 +248,7 @@ def compose_utility(
     cohort = {
         "agent_cohort_key": cohort_key,
         "git_sha": ref.get("git_sha"),
+        "git_dirty": ref.get("git_dirty"),
         "cli_version": ref.get("cli_version"),
         "mcp_tool_surface_hash": ref.get("mcp_tool_surface_hash"),
         "judge": ref.get("judge"),
@@ -256,16 +257,30 @@ def compose_utility(
         "eval_limits": ref.get("eval_limits"),
         "search_config_cohort_key": search_config,
         "hardware": ref.get("hardware"),
+        "environment": ref.get("environment"),
         "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
         "executor": _executor_stamp(run_summaries),
     }
 
-    # 3. Group by (corpus slug, agent_model) -> per-cell paired comparison.
+    # 3. Group by display axes, but reject hidden content/model identity mixes.
     cells: dict = {}
+    cell_identities: dict = {}
     seeds_seen: set = set()
     for s in run_summaries:
         slug = canonical_dataset_slug((s.get("corpus") or {}).get("dataset"))
         model = s.get("agent_model")
+        manifest = s["manifest"]
+        identity = (
+            (s.get("corpus") or {}).get("signature"),
+            manifest.get("agent_model_version"),
+        )
+        display_key = (slug, model)
+        prior = cell_identities.setdefault(display_key, identity)
+        if prior != identity:
+            raise UtilityComposeError(
+                f"cell {display_key!r} mixes corpus/resolved-model snapshots: "
+                f"{prior!r} vs {identity!r}"
+            )
         cells.setdefault((slug, model), []).append(s)
         seeds_seen.add(s["manifest"].get("seed"))
 
@@ -275,6 +290,12 @@ def compose_utility(
     ):
         cell = _compose_cell(cell_summaries)
         if cell is not None:
+            signature, resolved_model = cell_identities[(slug, model)]
+            cell["identity"] = {
+                "corpus_signature": signature,
+                "requested_model_alias": model,
+                "resolved_provider_model": resolved_model,
+            }
             measured.setdefault(slug, {})[model] = cell
 
     # Run-governance: derive the comparability verdict + tier from the run's
@@ -360,6 +381,7 @@ def _tool_call_assertions(run_summaries: list[dict]) -> dict:
             "cells_with_leak_suspect": 0,
             "cells_with_mcp_surface_verified": 0,
             "cells_mcp_surface_unverified": 0,
+            "observed_mcp_tool_surface_hashes": set(),
         })
         for entry in (s.get("per_query") or {}).values():
             agg["cells_total"] += 1
@@ -387,6 +409,15 @@ def _tool_call_assertions(run_summaries: list[dict]) -> dict:
                 agg["cells_with_mcp_surface_verified"] += 1
             if entry.get("mcp_surface_unverified"):
                 agg["cells_mcp_surface_unverified"] += 1
+            if entry.get("observed_mcp_tool_surface_hash"):
+                agg["observed_mcp_tool_surface_hashes"].add(
+                    entry["observed_mcp_tool_surface_hash"]
+                )
+    for aggregate in by_condition.values():
+        hashes = aggregate.pop("observed_mcp_tool_surface_hashes")
+        if hashes:
+            aggregate["observed_mcp_tool_surface_hashes"] = sorted(hashes)
+            aggregate["observed_mcp_tool_surface_consistent"] = len(hashes) == 1
     return by_condition
 
 
@@ -498,6 +529,11 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
     pairs: dict[str, dict] = {}
     leak_suspect_cells: list[dict] = []
     for seed in shared_seeds:
+        if len(a_by_seed[seed]) != 1 or len(c_by_seed[seed]) != 1:
+            raise UtilityComposeError(
+                f"duplicate summaries for paired seed={seed!r}: "
+                f"baseline={len(a_by_seed[seed])} with_tool={len(c_by_seed[seed])}"
+            )
         a_pq = a_by_seed[seed][0].get("per_query", {})
         c_pq = c_by_seed[seed][0].get("per_query", {})
         for q in sorted(set(a_pq) & set(c_pq)):
@@ -611,6 +647,7 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
 
     pqm_a = {
         obs: {
+            "accuracy_delta": float(bool(p["a_correct"])),
             "cost_usd": float(p["a_cost"] or 0.0),
             "unique_tokens": float(p["a_tok"] or 0),
             "num_turns": float(p["a_turns"] or 0),
@@ -619,6 +656,7 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
     }
     pqm_c = {
         obs: {
+            "accuracy_delta": float(bool(p["c_correct"])),
             "cost_usd": float(p["c_cost"] or 0.0),
             "unique_tokens": float(p["c_tok"] or 0),
             "num_turns": float(p["c_turns"] or 0),
@@ -635,7 +673,7 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
         {"per_query_metrics": pqm_a},
         {"per_query_metrics": pqm_c},
         pseudo_qrels,
-        metrics=["cost_usd", "unique_tokens", "num_turns"],
+        metrics=["accuracy_delta", "cost_usd", "unique_tokens", "num_turns"],
     )
 
     a_cost = [p["a_cost"] for p in pairs.values()]
@@ -650,6 +688,7 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
             "baseline": mc["accuracy_a"],
             "with_tool": mc["accuracy_b"],
             "delta": mc["accuracy_delta"],
+            "delta_ci95": cont["accuracy_delta"]["ci_95"],
             "mcnemar_p": mc["p_value"],
             "mcnemar_test": mc["test"],
             "n_with_tool_fixes": mc["n_b_only_correct"],
@@ -657,8 +696,16 @@ def _stats_from_pairs(pairs: dict) -> dict | None:
             "seed_envelope_baseline": _seed_envelope(per_seed_acc_a),
             "seed_envelope_with_tool": _seed_envelope(per_seed_acc_c),
         },
-        # Token-efficiency is the contamination-robust headline (tempdoc 624 D-1):
-        # cache_creation (unique) tokens, reported as per-arm distributions.
+        # Provider cache-creation input tokens, reported as per-arm distributions.
+        # This counter excludes cache reads; it is not a universal unique-content metric.
+        "provider_cache_creation_input_tokens": {
+            "baseline": _distribution(a_tok),
+            "with_tool": _distribution(c_tok),
+            "delta_mean": cont["unique_tokens"]["delta"],
+            "delta_ci95": cont["unique_tokens"]["ci_95"],
+        },
+        # Deprecated v1 compatibility alias. New claim/publication code uses the
+        # provider-semantic name above and never describes this as unique content.
         "tokens_unique": {
             "baseline": _distribution(a_tok),
             "with_tool": _distribution(c_tok),
@@ -926,6 +973,7 @@ def compose_utility_cross_corpus(
     cohort = {
         "agent_cohort_key": cohort_key,
         "git_sha": ref.get("git_sha"),
+        "git_dirty": ref.get("git_dirty"),
         "cli_version": ref.get("cli_version"),
         "mcp_tool_surface_hash": ref.get("mcp_tool_surface_hash"),
         "judge": ref.get("judge"),
@@ -934,6 +982,7 @@ def compose_utility_cross_corpus(
         "eval_limits": ref.get("eval_limits"),
         "search_config_cohort_key": search_config,
         "hardware": ref.get("hardware"),
+        "environment": ref.get("environment"),
         "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
         "executor": _executor_stamp(run_summaries),
     }
@@ -949,6 +998,24 @@ def compose_utility_cross_corpus(
             seeds_seen.add(s["manifest"].get("seed"))
         cell = _compose_cell(_namespace_for_cross_corpus(model_summaries))
         if cell is not None:
+            resolved_models = {
+                summary["manifest"].get("agent_model_version")
+                for summary in model_summaries
+            }
+            if len(resolved_models) != 1:
+                raise UtilityComposeError(
+                    f"cross-corpus cell for {model!r} mixes resolved provider models: "
+                    f"{sorted(str(value) for value in resolved_models)!r}"
+                )
+            cell["identity"] = {
+                "corpus_signatures": {
+                    canonical_dataset_slug((summary.get("corpus") or {}).get("dataset")):
+                        (summary.get("corpus") or {}).get("signature")
+                    for summary in model_summaries
+                },
+                "requested_model_alias": model,
+                "resolved_provider_model": next(iter(resolved_models)),
+            }
             measured[model] = cell
 
     comparability = None

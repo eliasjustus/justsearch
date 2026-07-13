@@ -15,6 +15,118 @@ from ._common import _attach_revision, _write_bench_output
 log = logging.getLogger(__name__)
 
 
+def _publication_root(value):
+    if value:
+        return Path(value)
+    from .._paths import REPO_ROOT
+
+    return REPO_ROOT / "scripts" / "jseval" / "public-agent-utility"
+
+
+@click.command("utility-publication-build")
+@click.option("--record", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--evidence", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--publication-id", required=True)
+@click.option("--root", default=None, type=click.Path())
+def cmd_utility_publication_build(record, evidence, publication_id, root):
+    """Build an immutable accepted-or-rejected publication bundle."""
+    from ..utility_publication import build_publication
+
+    path = build_publication(
+        root=_publication_root(root), record_path=record, evidence_path=evidence,
+        publication_id=publication_id,
+    )
+    click.echo(f"Wrote {path}")
+
+
+@click.command("utility-publication-select")
+@click.option("--publication-id", default=None)
+@click.option("--clear", is_flag=True)
+@click.option("--reason", required=True)
+@click.option("--root", default=None, type=click.Path())
+def cmd_utility_publication_select(publication_id, clear, reason, root):
+    """Explicitly select one accepted replayable bundle, or clear current."""
+    from ..utility_publication import select_publication
+
+    path = select_publication(
+        root=_publication_root(root), publication_id=publication_id,
+        clear=clear, reason=reason,
+    )
+    click.echo(f"Wrote {path}")
+
+
+@click.command("utility-replay")
+@click.option("--publication", required=True)
+@click.option("--root", default=None, type=click.Path())
+def cmd_utility_replay(publication, root):
+    """Verify hashes, sanitize schema, recomposition, verdict, and semantic digest."""
+    from ..utility_publication import replay_publication
+
+    candidate = Path(publication)
+    if not candidate.exists():
+        candidate = _publication_root(root) / "publications" / publication / "publication.v1.json"
+    result = replay_publication(candidate)
+    click.echo(json.dumps(result, indent=2))
+
+
+@click.command("utility-evidence-export")
+@click.option("--log-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--out", required=True, type=click.Path(dir_okay=False))
+def cmd_utility_evidence_export(log_dir, out):
+    """Export every attempted cell through the strict public allowlist."""
+    from ..utility_evidence import export_log_dir
+
+    path = export_log_dir(log_dir, out)
+    click.echo(f"Wrote {path}")
+
+
+@click.command("utility-recompose")
+@click.option("--log-dir", "log_dirs", multiple=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="Repeatable completed Inspect log directory.")
+@click.option("--evidence", "evidence_paths", multiple=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Repeatable sanitized observation JSONL; requires no agent dependencies.")
+@click.option("--judge-overlay", "judge_overlays", multiple=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Optional, repeatable one-for-one overlay; otherwise use judge-overlay.json if present.")
+@click.option("--contamination-class",
+              type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
+              default="unknown", show_default=True)
+@click.option("--confidence-tier", type=click.Choice(["A", "B", "C"]),
+              default="C", show_default=True)
+@click.option("--output-dir", required=True, type=click.Path())
+@click.pass_context
+def cmd_utility_recompose(ctx, log_dirs, evidence_paths, judge_overlays, contamination_class,
+                          confidence_tier, output_dir):
+    """Pure zero-cost recomposition from completed Inspect evidence."""
+    from ..utility_recompose import finalize_evidence, finalize_logs, write_record
+
+    if bool(log_dirs) == bool(evidence_paths):
+        raise click.UsageError("provide either --log-dir or --evidence (one or more), not both")
+    if evidence_paths and judge_overlays:
+        raise click.UsageError("--judge-overlay applies only to --log-dir input")
+    if evidence_paths:
+        record = finalize_evidence(
+            evidence_paths,
+            contamination_class=contamination_class,
+            confidence_tier=confidence_tier,
+        )
+    else:
+        record = finalize_logs(
+            log_dirs,
+            judge_overlays=(judge_overlays or None),
+            contamination_class=contamination_class,
+            confidence_tier=confidence_tier,
+        )
+    path = write_record(record, output_dir)
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(record, indent=2))
+    else:
+        click.echo(f"Wrote {path}")
+        click.echo(f"semantic_digest={record['semantic_digest']}")
+
+
 @click.command("utility-compose")
 @click.option("--run", "runs", multiple=True, metavar="COND=PATH",
               help="Repeatable. An agent-eval result JSON tagged by condition, "
@@ -115,6 +227,24 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
         confidence_tier=confidence_tier,
     )
     _attach_revision(record, supersedes, revision_reason)
+    from ..utility_claim_policy import evaluate_claim
+    from ..utility_recompose import semantic_digest
+
+    verdict = evaluate_claim(record)
+    verdict["accepted"] = False
+    verdict["status"] = "rejected"
+    verdict["outcome"] = "inconclusive"
+    if "legacy_executor_non_claim_grade" not in verdict["reasons"]:
+        verdict["reasons"].insert(0, "legacy_executor_non_claim_grade")
+    verdict["gates"].append({
+        "name": "record_grade_executor",
+        "observed": "legacy-agent-eval",
+        "threshold": "inspect-ai",
+        "passed": False,
+        "reason": "legacy result-file composition is retained for forensic compatibility only",
+    })
+    record["claim_verdict"] = verdict
+    record["semantic_digest"] = semantic_digest(record)
 
     if ctx.obj.get("json"):
         click.echo(json.dumps(record, indent=2, default=str))
@@ -163,8 +293,8 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
                     log_dir, output_dir):
     """Run the agent-utility matrix THROUGH Inspect AI (resumable) and compose (tempdoc 624).
 
-    Requires the `agent` extra: `pip install jseval[agent]`. condition=task,
-    seed=epoch, sample.id=query, cohort=task-args. `eval_set` makes re-runs resume
+    Requires the `agent` extra: `pip install jseval[agent]`. condition is a sample
+    field, seed=epoch, and cohort=task-args. `eval_set` makes re-runs resume
     (skip completed cells). Then reads the EvalLogs into `utility-comparison.v1`.
     """
     import datetime as _dt
@@ -172,7 +302,6 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
 
     from .. import agent_utility_inspect as aui
     from .. import agent_utility_run as aur
-    from .. import utility_comparison as uc
 
     conds = tuple(c.strip().upper() for c in conditions.split(",") if c.strip())
     cli_version = aur.claude_cli_version()
@@ -209,35 +338,31 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         max_turns=max_turns,
         cli_version=cli_version, mcp_tool_surface_hash=mcp_tool_surface_hash,
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
+        search_config_cohort_key=search_config_key,
     )
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key=search_config_key)
-    # Run-governance: derive the comparability verdict from per-arm loss-accounting.
-    from .. import utility_governance as ug
-    arms = ug.compute_loss_accounting(log_dir)
-    verdict, gmetrics = ug.paired_comparability(arms, calib_readiness)
-    governance = {
-        "comparable": verdict.comparable, "reasons": verdict.reasons, "metrics": gmetrics,
-        "per_arm_loss": {c: {"n_attempted": l.n_attempted, "n_completed": l.n_completed,
-                             "n_excluded": l.n_excluded, "exclusion_rate": round(l.exclusion_rate, 4)}
-                         for c, l in arms.items()},
-    }
-    record = uc.compose_utility(
-        summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
-        external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
-        confidence_tier=confidence_tier, governance=governance,
+    from ..utility_recompose import finalize_logs
+    record = finalize_logs(
+        [log_dir],
+        composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        contamination_class=contamination_class,
+        confidence_tier=confidence_tier,
+        readiness=calib_readiness,
     )
+    comparability = record["comparability"]
     if ctx.obj.get("json"):
         click.echo(json.dumps(record, indent=2, default=str))
     else:
         for slug, by_model in record["measured"].items():
             for m, cell in by_model.items():
-                acc, tok = cell["accuracy"], cell["tokens_unique"]
+                acc = cell["accuracy"]
+                tok = cell["provider_cache_creation_input_tokens"]
                 click.echo(f"[{slug}/{m}] acc {acc['baseline']}->{acc['with_tool']} "
                            f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']}); "
-                           f"unique-tokens median {tok['baseline']['median']}->"
+                           f"provider cache-creation tokens median {tok['baseline']['median']}->"
                            f"{tok['with_tool']['median']} (d_mean={tok['delta_mean']:+})")
-        click.echo(f"COMPARABLE={verdict.comparable}" + ("" if verdict.comparable
-                   else " — reasons: " + "; ".join(verdict.reasons)))
+        click.echo(f"COMPARABLE={comparability['comparable']}" + (
+            "" if comparability["comparable"]
+            else " — reasons: " + "; ".join(comparability["reasons"])))
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
     if output_dir:
@@ -386,11 +511,7 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
     + (optionally) re-composes the JUDGED `utility-comparison.v1`, and (with
     --calibrate) attaches the human-calibration dry run. Requires the `agent`
     extra + a running judge model (`ai_activate`)."""
-    import datetime as _dt
-
     from .. import agent_utility_run as aur
-    from .. import utility_comparison as uc
-    from .. import utility_governance as ug
     from .. import utility_judge as uj
 
     _attach_revision(None, supersedes, revision_reason)  # fail fast before judging
@@ -417,28 +538,26 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
     click.echo(f"Written overlay to {path}")
 
     if output_dir:
-        summaries = aur.eval_logs_to_summaries(
-            log_dir, search_config_cohort_key=search_config_key, judge_overlay=overlay)
+        from ..utility_recompose import finalize_logs, semantic_digest, write_record
+
+        leaked_sets = None
         if exclude_leaked:
             leaked = aur.scan_leaked_cells(log_dir)
-            n_flagged = aur.apply_leak_flags(summaries, leaked)
+            leaked_sets = [leaked]
+            n_flagged = len(leaked)
             click.echo(f"leak-scan: {len(leaked)} leaked cell(s), "
-                       f"{n_flagged} per-query entries flagged (excluded from paired stats)")
-        arms = ug.compute_loss_accounting(log_dir)
-        verdict, gmetrics = ug.paired_comparability(arms)
-        governance = {"comparable": verdict.comparable, "reasons": verdict.reasons,
-                      "metrics": gmetrics,
-                      "per_arm_loss": {c: {"n_excluded": l.n_excluded} for c, l in arms.items()}}
-        record = uc.compose_utility(
-            summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
-            external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
-            confidence_tier=confidence_tier, governance=governance)
+                       f"{n_flagged} unique cells flagged (excluded from paired stats)")
+        record = finalize_logs(
+            [log_dir],
+            judge_overlays=[path],
+            contamination_class=contamination_class,
+            confidence_tier=confidence_tier,
+            search_config_cohort_key=search_config_key,
+            leaked_cells_by_log=leaked_sets,
+        )
         _attach_revision(record, supersedes, revision_reason)
-        # Write BEFORE the print loop: an already-computed record must survive a
-        # crash in the print loop (e.g. a malformed cell field) instead of being
-        # silently lost. Restores this command's own pre-consolidation order (the
-        # cli.py-split refactor moved the write to after the loop here only).
-        _write_bench_output(record, output_dir, "utility-comparison.v1.json")
+        record["semantic_digest"] = semantic_digest(record)
+        write_record(record, output_dir)
         for slug, by_model in record["measured"].items():
             for m, cell in by_model.items():
                 acc = cell["accuracy"]
@@ -699,78 +818,61 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
     stratifies the pooled McNemar+bootstrap-CI comparison by corpus — reusing
     `_arm_comparison`'s existing `stratify_by` machinery, not a new statistics path.
     """
-    import datetime as _dt
-
     from .. import agent_utility_run as aur
-    from .. import utility_comparison as uc
-    from .. import utility_governance as ug
+    from ..utility_recompose import finalize_logs, semantic_digest, write_record
 
     _attach_revision(None, supersedes, revision_reason)  # fail fast before pooling logs
 
-    all_summaries: list = []
-    per_dir = []
     n_flagged = 0
+    leaked_sets = []
     for ld in log_dirs:
-        summaries = aur.eval_logs_to_summaries(ld, search_config_cohort_key=search_config_key)
         if exclude_leaked:
             leaked = aur.scan_leaked_cells(ld)
-            n_flagged += aur.apply_leak_flags(summaries, leaked)
-        all_summaries.extend(summaries)
-        arms = ug.compute_loss_accounting(ld)
-        verdict, gmetrics = ug.paired_comparability(arms)
-        per_dir.append((ld, verdict, gmetrics, arms))
+            n_flagged += len(leaked)
+            leaked_sets.append(leaked)
 
     if exclude_leaked:
         click.echo(f"leak-scan: {n_flagged} per-query entries flagged across "
                    f"{len(log_dirs)} log dir(s) (excluded from paired stats)")
 
-    # A cross-corpus record cannot be more trustworthy than its least-comparable
-    # input: comparable only if EVERY pooled corpus's run was itself comparable.
-    def _label(ld):
-        return Path(ld).name
-
-    governance = {
-        "comparable": all(v.comparable for _, v, _, _ in per_dir),
-        "reasons": [f"{_label(ld)}: {r}" for ld, v, _, _ in per_dir for r in v.reasons],
-        "metrics": {_label(ld): gm for ld, _, gm, _ in per_dir},
-        "per_arm_loss": {
-            f"{_label(ld)}:{c}": {"n_attempted": l.n_attempted, "n_completed": l.n_completed,
-                                  "n_excluded": l.n_excluded, "exclusion_rate": round(l.exclusion_rate, 4)}
-            for ld, _, _, arms in per_dir for c, l in arms.items()
-        },
-    }
-
-    record = uc.compose_utility_cross_corpus(
-        all_summaries, composed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
-        external_baselines=uc.CITED_BASELINES, contamination_class=contamination_class,
-        confidence_tier=confidence_tier, governance=governance,
+    record = finalize_logs(
+        log_dirs,
+        contamination_class=contamination_class,
+        confidence_tier=confidence_tier,
+        search_config_cohort_key=search_config_key,
+        leaked_cells_by_log=(leaked_sets if exclude_leaked else None),
     )
     _attach_revision(record, supersedes, revision_reason)
+    record["semantic_digest"] = semantic_digest(record)
 
     if ctx.obj.get("json"):
         click.echo(json.dumps(record, indent=2, default=str))
     else:
         click.echo(f"corpora={record['corpora']}")
         for m, cell in record["measured"].items():
-            acc, tok = cell["accuracy"], cell["tokens_unique"]
+            acc = cell["accuracy"]
+            tok = cell["provider_cache_creation_input_tokens"]
             click.echo(
                 f"[pooled/{m}] acc {acc['baseline']}->{acc['with_tool']} "
                 f"(d={acc['delta']:+}, McNemar p={acc['mcnemar_p']}); n={cell['n_paired_observations']}; "
-                f"unique-tokens median {tok['baseline']['median']}->{tok['with_tool']['median']} "
+                f"provider cache-creation tokens median {tok['baseline']['median']}->{tok['with_tool']['median']} "
                 f"(d_mean={tok['delta_mean']:+})")
             for slabel, strat in (cell.get("stratified") or {}).get("by_stratum", {}).items():
                 sacc = strat["accuracy"]
                 click.echo(
                     f"    stratum[{slabel}] acc {sacc['baseline']}->{sacc['with_tool']} "
                     f"(d={sacc['delta']:+}, McNemar p={sacc['mcnemar_p']}, n={strat['n_paired_observations']})")
+        governance = record["comparability"]
         click.echo(f"COMPARABLE={governance['comparable']}" + ("" if governance["comparable"]
                    else " — reasons: " + "; ".join(governance["reasons"])))
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
 
-    _write_bench_output(record, output_dir, "utility-comparison-cross-corpus.v1.json")
+    if output_dir:
+        write_record(record, output_dir)
 
 
-COMMANDS = [cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
+COMMANDS = [cmd_utility_publication_build, cmd_utility_publication_select, cmd_utility_replay,
+           cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
            cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_judge_local_swap_smoketest,
            cmd_utility_compose_cross_corpus]

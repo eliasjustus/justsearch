@@ -1,0 +1,24 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "en-legal-clerc",
+  "language": "en",
+  "domain": "legal",
+  "real_source": {
+    "recipe": "../../666-corpora/legal-clerc-4k/recipe.json",
+    "content_scope": "Caselaw Access Project document text only; CLERC queries and annotations are not redistributed or used as injected gold",
+    "license": "Caselaw Access Project bulk data CC0",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": "../../635-corpora/needle-burial-v1",
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "claim_eligible": true,
+  "remaining_gates": ["materialize_cached_6.7GB_source", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
+}

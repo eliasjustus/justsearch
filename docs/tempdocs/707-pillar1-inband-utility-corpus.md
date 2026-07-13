@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "open — DESIGN (2026-07-10). Substrate decision RATIFIED by founder 2026-07-10 (real licensed legal+email distractor mass, EN + DE members, fabricated injected fact-chains as gold — option 1 of 704 pillar 1's three families). Attribution inputs from the 678 §Pillar-5 campaign are folded in (E5-A→D); The E5-C-v2 verdict LANDED same day: BRANCH B (encoder-domain mismatch — dense dead at every query shape; see 678 §Final attribution verdict). §Query construction proceeds on Branch B; the encoder question routes to its own investigation, not here. No implementation yet; no spend authorized here (the ~$3 smoke and the ~$60-90 powered run remain founder gates, 624 §Step-2 definition). — TAKEOVER INVESTIGATION 2026-07-12 (read-only, no code/design/spend): VERDICT = do it, it is on the U0 critical path and unblocked (pillar-5 cleared, consumer 624 unchanged), but (1) the Branch-B §1 premise is SUPERSEDED — 708 closed NO MODEL SWAP, dense on legal is now alive (0.06→0.6185), though production hybrid is still lexical-dominated (0.556<0.689) via an unexplained fusion gap; (2) the one unbuilt piece is the real-text injector, and the cheapest decisive evidence is a ~$0 injection→closed-book-gate feasibility probe that does NOT yet exist. See §Investigation & verdict + the §1 CORRECTION block. — PROBE RUN 2026-07-12 (corrected: closed-book is host-invariant, the real discriminator is retrievability): the real-text injector is now BUILT and the substrate is VALIDATED on real email — injected fabricated gold retrieves at dense 0.92–0.95 / hybrid 0.89–0.92 (R@10 1.0) vs lexical 0.18 against 400 real Enron distractors, chunk leg load-bearing. Remaining: EN-legal (CLERC, F-029) + DE members are the scoped next probes (CLERC needs a 6.7GB fetch); provenance-schema branch for the determinism gate; then founder-gated spend. See §Feasibility probe RESULTS."
+status: "implemented substrate via 719 (2026-07-13) — deterministic real-text injection, commitment, provenance/determinism support, and strict EN-legal/DE/EN-email member recipes exist. CLERC/MIRACL materialization and certification remain; EnronQA is fail-closed as non-claim-eligible because its upstream license is unresolved. No spend is authorized; adoption and powered runs remain founder gates. Historical design/probe findings below remain audit context."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -16,7 +16,21 @@ related:
 ---
 
 > NOTE: Noncanonical working tempdoc. Verify every cited number against the named tempdocs before
-> building on it. This doc is a DESIGN; nothing here authorizes spend.
+> building on it. Nothing here authorizes spend.
+
+## Current implementation fold (2026-07-13; implemented through 719)
+
+The reusable substrate is productionized: `corpus-inject-real` deterministically selects real
+hosts/distractors, appends or interleaves committed fabricated gold, assembles through the existing
+corpus builder, repeats assembly to prove determinism, and commits only recipes, host IDs, and
+fabricated inputs—not licensed host text. Certification recognizes `real-text-injection-v1`.
+Strict member recipes exist for EN legal (CAP/CLERC path), DE MIRACL, and EN EnronQA. The first two
+are claim-eligible subject to materialization and every named gate. EnronQA is explicitly
+`claim_eligible:false`: its upstream dataset card supplies no license, so the recipe fails closed.
+
+Still owner/external gated: the 6.7 GB CLERC fetch, full materialization, closed-book,
+descriptor-collision, union-recall, leak, and regeneration certification, query variants, and any
+paid adoption/powered run. The earlier email probe proves mechanism only; it cannot override license.
 
 # 707 — The pillar-1 in-band utility corpus
 

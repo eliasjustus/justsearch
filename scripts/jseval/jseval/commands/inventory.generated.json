@@ -52,6 +52,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-inject-real",
+    "group": "corpus"
+  },
+  {
     "name": "corpus-probe",
     "group": "corpus"
   },
@@ -272,6 +276,10 @@
     "group": "utility"
   },
   {
+    "name": "utility-evidence-export",
+    "group": "utility"
+  },
+  {
     "name": "utility-gate",
     "group": "gates"
   },
@@ -289,6 +297,22 @@
   },
   {
     "name": "utility-judge-local-swap-smoketest",
+    "group": "utility"
+  },
+  {
+    "name": "utility-publication-build",
+    "group": "utility"
+  },
+  {
+    "name": "utility-publication-select",
+    "group": "utility"
+  },
+  {
+    "name": "utility-recompose",
+    "group": "utility"
+  },
+  {
+    "name": "utility-replay",
     "group": "utility"
   },
   {

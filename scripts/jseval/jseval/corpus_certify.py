@@ -174,6 +174,14 @@ def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
     """
     method = "cross-process-regeneration-diff"
     gp = generation_provenance or {}
+    if gp.get("method") == "real-text-injection-v1":
+        evidence = gp.get("assembly_determinism") or {}
+        return {
+            "passed": evidence.get("passed") is True,
+            "method": evidence.get("method", "same-input-double-assembly"),
+            "digest": evidence.get("digest"),
+            "reason": None if evidence.get("passed") is True else "missing or failed assembly determinism evidence",
+        }
     if gp.get("method") != "procedural-fabricated":
         return {"passed": None, "method": method,
                 "reason": f"not applicable: generation method is {gp.get('method')!r}, "

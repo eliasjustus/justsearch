@@ -23,6 +23,7 @@ not installed.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import types
 from pathlib import Path
@@ -231,6 +232,49 @@ def test_record_cell_stashes_cost_turns_and_tokens_from_rmsg():
     assert "error" not in state.metadata
 
 
+def test_record_cell_stashes_raw_usage_and_resolved_provider_model():
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": ["ok"],
+        "resolved_models": {"claude-haiku-4-5-20251001"},
+        "rmsg": _rmsg(
+            usage={"input_tokens": 11, "cache_creation_input_tokens": 7},
+            model_usage={"claude-haiku-4-5-20251001": {"inputTokens": 18}},
+        ),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["resolved_model"] == "claude-haiku-4-5-20251001"
+    assert state.metadata["usage"]["input_tokens"] == 11
+    assert state.metadata["model_usage"]["claude-haiku-4-5-20251001"]["inputTokens"] == 18
+    assert "error" not in state.metadata
+
+
+def test_source_identity_sidecar_is_capture_time_not_replay_time(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    logs = tmp_path / "logs"
+
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    first = aui._capture_or_load_source_identity(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+    )
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "b" * 40)
+    replay = aui._capture_or_load_source_identity(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+    )
+
+    assert first == replay
+    assert replay["source_git_sha"] == "a" * 40
+    assert replay["corpus"]["signature"] is not None
+
+
 def test_record_cell_result_error_sets_error_and_stops():
     state = _state()
     got = {
@@ -313,6 +357,11 @@ def test_record_cell_condition_b_healthy_surface_no_error():
     aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
 
     assert state.metadata["mcp_tools_offered"] == len(justsearch_tools)
+    assert state.metadata["mcp_tool_names_offered"] == justsearch_tools
+    expected = hashlib.sha256(json.dumps(
+        {"tool_names": justsearch_tools}, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    assert state.metadata["observed_mcp_tool_surface_hash"] == expected
     assert "error" not in state.metadata
     assert "mcp_surface_unverified" not in state.metadata
 

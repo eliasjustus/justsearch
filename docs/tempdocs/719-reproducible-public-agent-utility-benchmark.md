@@ -1,7 +1,7 @@
 ---
 title: "Public agent-utility evidence release: project an accepted 624 comparison record into a zero-cost deterministic replay, durable evidence bundle, and governed public claim; keep paid stochastic reruns separate"
 type: tempdocs
-status: "open — DESIGN SETTLED + DE-RISKED + IMPLEMENTATION PLAN READY 2026-07-13; implementation confidence 5/10. Publication remains blocked on an accepted 624 verdict from certified 707 evidence and on four upstream replay/provenance gaps: consolidated-log loss accounting, source-time identity preservation, a pure single-log Inspect recompose path, and machine-readable claim classification. Current origin/main adds a successful 707 Enron injection probe, but the production EN-legal/DE corpus is still unbuilt. Paid smoke/campaign runs and unresolved scientific thresholds remain owner gates. 719 remains the evidence-release projection only. The current 25.7% survivor statistic is rejected publication input."
+status: "implemented in codex/719-agent-utility-publication — deterministic all-attempt evidence, source identity, pure recomposition, claim-policy, corpus-injection, immutable publication/replay, public projection, and CI seams are code-complete. No result is selected: scientific thresholds, licenses/corpus certification, and paid runs remain owner gates. The 2026-07-12 survivor statistic is retained only as a sanitized rejected replay fixture."
 created: 2026-07-12
 updated: 2026-07-13
 author: agent (Fable, strategy session) — filed at founder request after the token-efficiency competitive-benchmark research
@@ -17,7 +17,61 @@ related:
 
 > NOTE: Noncanonical working tempdoc. The opening stub is retained as history but is superseded by the
 > takeover, research, and settled-design sections below. Verify every cited number against the named
-> records before building on it; no implementation or public measurement has shipped from 719.
+> records before building on it. Historical proposal language below is retained for auditability;
+> the current implementation authority is the fold immediately below.
+
+## Current implementation fold (2026-07-13)
+
+The autonomous implementation is complete without selecting or inventing a scientific claim:
+
+- One all-attempt observation seam now feeds loss accounting, valid-cell composition, sanitization,
+  and replay. It retains native Inspect errors, capture-time source SHA/dirty state, computed corpus
+  identity, resolved provider model, provider usage, judge calibration identity, and the observed
+  offered MCP tool-name surface. Superseded duplicate EvalLog/loss parsers were removed.
+- `utility-recompose` is a pure offline finalizer for logs or sanitized evidence. The versioned claim
+  policy remains deliberately unresolved. The legacy result-file composer is non-claim-grade.
+- The rejected 2026-07-12 pilot is strict allowlisted JSONL evidence. It replays all 48 attempts and
+  rejects the false-green survivor projection through the actual loss accounting.
+- The 707 real-text injection engine and three member recipes are present. CLERC and MIRACL-DE remain
+  eligible for materialization; EnronQA fails closed because its upstream license is unresolved.
+- Immutable bundles, byte hashes, semantic replay, accepted-only pointer selection, supersession,
+  and three generated public projections now exist. The checked-in pointer is `current:null`, so no
+  outward agent-utility number is published. CI enforces the pointer, hashes, replay, and drift.
+
+Remaining work is external authority: settle the two scientific thresholds, resolve member-license
+choices, materialize and certify the corpus, authorize paid runs, and select a result only if it passes.
+
+### Verification and handoff evidence
+
+Branch: `codex/719-agent-utility-publication`. No PR, push, merge, paid call, credentialed call, or
+accepted-result selection was performed.
+
+- `python -m pytest -q scripts/jseval/tests --ignore=.../test_correction_probe.py`:
+  **1692 passed** (2026-07-13). The unfiltered suite reached **1702 passed, 2 failed**; both failures
+  are the pre-existing `test_correction_probe` default-manifest tests, because
+  `scripts/jseval/jseval/data/correction-eval-queries.v1.json` is absent from both this HEAD and the
+  main checkout. This unrelated missing fixture was not fabricated as part of 719.
+- `test_utility_publication.py`, `test_utility_evidence.py`, `test_utility_claim_policy.py`, and
+  `test_corpus_inject.py`: **20 passed** after the final strict-manifest/replay changes.
+- Recomposition of the committed rejected fixture produces semantic digest
+  `1d8951d730c04968137a2d92f55343f742d83bf2f09ceed3dccf5a128fb83689`, `comparable=false`, paired
+  retention `0.5`, A loss `24/16/8`, B loss `24/14/10`, and `claim_verdict.accepted=false`.
+- Serialized single- and cross-corpus records validate against the two v2 schemas. Command inventory
+  check is green at 81 commands. `python -m compileall -q scripts/jseval/jseval` is green.
+- `check-public-agent-utility.mjs`, the three projection `--check` results, outward-number citation
+  tests, workflow-trigger tests/guard, `git diff --check`, canonical-doc links, module-dependency
+  canonical check, runtime-config matrix, `llms.txt --check`, skills sync, and methodology
+  markdownlint are green.
+
+### Explicit deferred checks and owner gates
+
+- The accepted-result renderer/replay branch is exercised with synthetic accepted fixtures in tests;
+  no real accepted record can exist while the checked-in scientific policy is unresolved.
+- Hosted GitHub CI has not run because this branch was not pushed. The local workflow trigger guard is
+  green. The cross-worktree tempdoc-number guard currently reports an unrelated collision between two
+  other worktrees' tempdoc 720 drafts; 719 itself has no number collision.
+- CLERC/MIRACL fetches, member certification, closed-book and retrieval gates, provider replication,
+  and paid adoption/powered campaigns are deliberately unverified until the named owner gates clear.
 
 # 719 — Public agent-utility evidence release
 

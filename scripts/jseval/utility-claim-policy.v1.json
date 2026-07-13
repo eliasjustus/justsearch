@@ -1,0 +1,36 @@
+{
+  "schema": "utility-claim-policy.v1",
+  "schema_version": 1,
+  "policy_id": "agent-utility-public-v1-draft",
+  "status": "draft",
+  "primary_estimand": "addition_b",
+  "thresholds": {
+    "minimum_seeds": 5,
+    "minimum_paired_observations": 100,
+    "maximum_exclusion_rate": 0.15,
+    "minimum_paired_retention": 0.7,
+    "minimum_excluded_jaccard": 0.5,
+    "significance_alpha": 0.05,
+    "minimum_adoption_rate": null,
+    "accuracy_noninferiority_margin": null
+  },
+  "requirements": {
+    "source_identity_complete": true,
+    "clean_source_checkout": true,
+    "computed_corpus_signature": true,
+    "resolved_provider_model": true,
+    "captured_search_config": true,
+    "verified_tool_surface": true,
+    "no_leak_suspect_cells": true,
+    "contamination_classes": ["post-cutoff", "private-synthetic"],
+    "judge_calibration": true,
+    "accuracy_delta_interval": true,
+    "intention_to_treat": true,
+    "per_protocol_is_secondary": true,
+    "per_stratum_promotion": "all_required_strata_pass"
+  },
+  "unresolved": [
+    "thresholds.minimum_adoption_rate",
+    "thresholds.accuracy_noninferiority_margin"
+  ]
+}

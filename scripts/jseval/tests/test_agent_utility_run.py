@@ -19,6 +19,43 @@ import pytest
 from jseval import agent_manifest
 from jseval import agent_utility_run as aur
 
+
+def test_observation_reader_retains_inspect_native_error(tmp_path, monkeypatch):
+    """A crash before solver metadata is stashed still counts as an attempt."""
+    pytest.importorskip("inspect_ai")
+    from types import SimpleNamespace
+
+    from jseval.agent_utility_observations import read_inspect_observations
+    import inspect_ai.log
+
+    log_file = tmp_path / "native-error.json"
+    log_file.touch()
+    fake_log = SimpleNamespace(
+        eval=SimpleNamespace(
+            metadata={
+                "model": "haiku",
+                "corpus": {"dataset": "fixture", "signature": "sig"},
+                "cohort": {},
+            },
+            packages=None,
+        ),
+        samples=[SimpleNamespace(
+            id="C|q7",
+            epoch=1,
+            metadata={"condition": "C"},
+            error=SimpleNamespace(message="native failure"),
+            scores={},
+        )],
+    )
+    monkeypatch.setattr(inspect_ai.log, "read_eval_log", lambda _: fake_log)
+
+    observations = read_inspect_observations(tmp_path)
+    assert len(observations) == 1
+    assert observations[0]["qid"] == "q7"
+    assert observations[0]["condition"] == "C"
+    assert observations[0]["excluded"] is True
+    assert observations[0]["attempted"] is True
+
 _COHORT = {"model": "haiku", "cli_version": "v", "mcp_tool_surface_hash": "h",
            "judge_kind": "substring-em", "prompt_template_hash": "p"}
 

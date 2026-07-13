@@ -13,6 +13,57 @@ from ._common import assert_run_capabilities
 log = logging.getLogger(__name__)
 
 
+@click.command("corpus-inject-real")
+@click.option("--real-corpus", required=True, type=click.Path(exists=True, file_okay=False),
+              help="Transient fetched corpus directory containing corpus.jsonl or docs.jsonl.")
+@click.option("--gold-source", required=True, type=click.Path(exists=True, file_okay=False),
+              help="Committed fabricated 635 source containing docs.jsonl/queries.json/meta.json.")
+@click.option("--name", required=True, help="Materialized datasets/mixed member name.")
+@click.option("--seed", required=True, type=int)
+@click.option("--n-distractors", required=True, type=int)
+@click.option("--style", type=click.Choice(["append", "interleave"]), default="interleave", show_default=True)
+@click.option("--host-min-words", type=int, default=60, show_default=True)
+@click.option("--real-source-id", required=True, help="Stable source/dataset recipe identifier.")
+@click.option("--license-id", required=True, help="SPDX or precise source license identifier.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.option("--commitment-dir", default=None, type=click.Path(),
+              help="Recipe/fabricated-input destination; defaults to scripts/jseval/707-corpora/<name>.")
+@click.pass_context
+def cmd_corpus_inject_real(ctx, real_corpus, gold_source, name, seed, n_distractors,
+                           style, host_min_words, real_source_id, license_id,
+                           datasets_dir, commitment_dir):
+    """Assemble a reproducible real-text + fabricated-gold 707 corpus member."""
+    import tempfile
+
+    from .. import corpus_build, corpus_inject
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else REPO_ROOT / "datasets"
+    commitment = (
+        Path(commitment_dir) if commitment_dir
+        else REPO_ROOT / "scripts" / "jseval" / "707-corpora" / name
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        source = Path(temporary) / "source"
+        source_meta = corpus_inject.build_source(
+            real_corpus, gold_source, source,
+            seed=seed, n_distractors=n_distractors, style=style,
+            real_source_id=real_source_id, license_id=license_id,
+            host_min_words=host_min_words,
+        )
+        metadata = corpus_build.build_golden(source, base / "mixed" / name)
+    corpus_inject.write_commitment(
+        commitment, gold_source, source_meta["generation_provenance"]
+    )
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(metadata, indent=2))
+    else:
+        click.echo(
+            f"Built mixed/{name}: {metadata['corpus_size']} docs, "
+            f"{metadata['query_count']} queries; commitment={commitment}"
+        )
+
+
 @click.command("corpus-build")
 @click.option("--source", required=True, type=click.Path(exists=True),
               help="Committed corpus source dir (scripts/jseval/635-corpora/<name>/).")
@@ -472,5 +523,5 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
 
 
-COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
+COMMANDS = [cmd_corpus_inject_real, cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
             cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]
