@@ -481,10 +481,19 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
    migration story on revision bumps, orphaned 6.3 GB `.tmp-*` staging dir still leaks, and a fresh
    machine cannot re-fetch CLERC anonymously until HF quota/token is addressed (**owner note: a free
    HF token on this box removes the 403 class**).
-4. **Startup-timeout lever + closed-book CLI layout fix** (see Pre-work (a)/(b)) landed with tests.
-5. **Known residual for the gate runs (not yet diagnosed):** the 120 s startup-boundary failure from
-   719's two attempts — next live run sets `JSEVAL_HEALTH_TIMEOUT_SEC=360` and captures the real
-   cold-start cost. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
+4. **Startup-timeout lever + family-qualified `--dataset` on all four gate CLIs** landed with tests
+   (`corpus-certify`, `corpus-fidelity`, `corpus-probe` were `golden/`-hardcoded — the 719 gate
+   attempts could not even point at a 707 member; this, not only the 120 s boundary, blocked them).
+5. **Live shakedown result (2026-07-14, ~01:10):** the full chain is green — with a warm Gradle the
+   backend is healthy in **8 s** (the 719 "120 s boundary" failures were cold-build, now moot),
+   MIRACL-DE-1k ingests + fully enriches in ~47-60 s, and the diagnostic probe confirms the corpus
+   works as designed: control search rank=1, dense 7/20 / hybrid 8/20 head@top10 (mean rank 1.75),
+   **bm25_splade 0/20** — the DE grep-collapse prediction observed live. Calibration runs must use
+   `--embedding` with `hybrid` as the headline mode; bm25_splade-only reads as a false FAIL.
+   **Gate-run chain HALTED by founder (2026-07-14):** one cell completed (de-miracl-1k-short-natural
+   fidelity, rc=0), chain killed cleanly mid-step-2, GPU released. The runbook
+   (`overnight-707-gates.bat`, session scratchpad) is parked; overnight windows are founder-scheduled
+   only — do not fire the chain without an explicit go. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
    written with platform-default newlines, so all recorded corpus signatures are Windows-CRLF-locked
    (a Linux materialization would produce different signatures). Acceptable while the campaign runs
    on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
