@@ -4,7 +4,7 @@
   "language": "en",
   "domain": "legal",
   "real_source": {
-    "recipe": "../../666-corpora/legal-clerc-4k/recipe.json",
+    "recipe": "../../666-corpora/legal-clerc-hosts-14k/recipe.json",
     "content_scope": "Caselaw Access Project document text only; CLERC queries and annotations are not redistributed or used as injected gold",
     "license": "Caselaw Access Project bulk data CC0",
     "license_status": "verified",
@@ -19,6 +19,13 @@
   },
   "sizes": [1000, 10000],
   "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [
+    "mixed/en-legal-clerc-1k-verbose",
+    "mixed/en-legal-clerc-1k-short-natural",
+    "mixed/en-legal-clerc-10k-verbose",
+    "mixed/en-legal-clerc-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
   "claim_eligible": true,
-  "remaining_gates": ["materialize_cached_6.7GB_source", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
+  "remaining_gates": ["member_retrieval_calibration", "closed_book", "union_recall", "leak_floor"]
 }

@@ -36,10 +36,10 @@ function sha256(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function confined(base, relative, label) {
+function confined(base, relative, label, allowedBase = ROOT) {
   const resolved = path.resolve(base, relative);
-  const prefix = path.resolve(ROOT) + path.sep;
-  if (!resolved.startsWith(prefix)) fail(`${label} escapes the repository`);
+  const prefix = path.resolve(allowedBase) + path.sep;
+  if (!resolved.startsWith(prefix)) fail(`${label} escapes its allowed root`);
   return resolved;
 }
 
@@ -70,31 +70,46 @@ if (pointer.current !== null) {
   ) fail("pointer does not select the matching accepted publication");
   exactKeys(manifest.record, ["path", "sha256", "semantic_digest"], "manifest.record");
   exactKeys(manifest.observations, ["path", "sha256"], "manifest.observations");
-  exactKeys(manifest.policy, ["id", "sha256", "status"], "manifest.policy");
+  exactKeys(manifest.policy, ["path", "id", "sha256", "status"], "manifest.policy");
+  if (typeof manifest.policy.id !== "string" || manifest.policy.status !== "active") {
+    fail("selected publication must pin an active identified policy");
+  }
 
-  const recordPath = confined(path.dirname(manifestPath), manifest.record.path, "record path");
-  const observationsPath = confined(path.dirname(manifestPath), manifest.observations.path, "observations path");
+  const recordPath = confined(
+    path.dirname(manifestPath), manifest.record.path, "record path",
+    path.join(path.dirname(PUBLIC_ROOT), "agent-utility-records")
+  );
+  const observationsPath = confined(
+    path.dirname(manifestPath), manifest.observations.path, "observations path",
+    path.dirname(manifestPath)
+  );
+  const policyPath = confined(
+    path.dirname(manifestPath), manifest.policy.path, "policy path",
+    path.dirname(manifestPath)
+  );
   if (sha256(recordPath) !== manifest.record.sha256) fail("canonical record byte hash mismatch");
   if (sha256(observationsPath) !== manifest.observations.sha256) fail("observation evidence byte hash mismatch");
+  if (sha256(policyPath) !== manifest.policy.sha256) fail("policy byte hash mismatch");
   const record = readJson(recordPath, "canonical record");
   if (record.semantic_digest !== manifest.record.semantic_digest || record.claim_verdict?.accepted !== true) {
     fail("selected canonical record is not accepted or has the wrong semantic digest");
   }
 
-  const python = process.platform === "win32" ? "python" : "python3";
-  const replayCode = [
-    "import json, sys",
-    "from jseval.utility_publication import replay_publication",
-    "print(json.dumps(replay_publication(sys.argv[1]), sort_keys=True))",
-  ].join("; ");
-  const replay = spawnSync(python, ["-c", replayCode, manifestPath], {
-    cwd: path.join(ROOT, "scripts", "jseval"),
+  const python = process.env.PYTHON || "python";
+  const replay = spawnSync(
+    python,
+    ["-m", "jseval", "utility-replay", "--publication", manifestPath],
+    {
+    cwd: ROOT,
     encoding: "utf8",
-  });
+    }
+  );
   if (replay.status !== 0) fail(`offline replay failed:\n${replay.stderr || replay.stdout}`);
   console.log(`check-public-agent-utility: replayed ${pointer.current.publication_id}`);
-} else if (pointer.selected_at !== null) {
+} else if (pointer.previous === null && pointer.selected_at !== null) {
   fail("the initial no-result pointer must have selected_at=null");
+} else if (pointer.previous !== null && pointer.selected_at === null) {
+  fail("a withdrawn publication pointer must retain its transition timestamp");
 }
 
 const projection = spawnSync("node", [path.join(ROOT, "scripts", "docs", "gen-public-agent-utility.mjs"), "--check"], {

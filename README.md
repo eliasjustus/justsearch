@@ -34,7 +34,7 @@ Five tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
 
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in scientific policy intentionally leaves its adoption and non-inferiority thresholds unresolved; choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in scientific policy intentionally leaves its adoption, non-inferiority, and efficiency-equivalence thresholds unresolved; choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.
 
 <!-- agent-utility:generated:end -->
 

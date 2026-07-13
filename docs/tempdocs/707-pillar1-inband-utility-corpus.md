@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "implemented substrate via 719 (2026-07-13) — deterministic real-text injection, commitment, provenance/determinism support, and strict EN-legal/DE/EN-email member recipes exist. CLERC/MIRACL materialization and certification remain; EnronQA is fail-closed as non-claim-eligible because its upstream license is unresolved. No spend is authorized; adoption and powered runs remain founder gates. Historical design/probe findings below remain audit context."
+status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -18,19 +18,25 @@ related:
 > NOTE: Noncanonical working tempdoc. Verify every cited number against the named tempdocs before
 > building on it. Nothing here authorizes spend.
 
-## Current implementation fold (2026-07-13; implemented through 719)
+## Current implementation fold (2026-07-13; incomplete through 719 repair)
 
 The reusable substrate is productionized: `corpus-inject-real` deterministically selects real
 hosts/distractors, appends or interleaves committed fabricated gold, assembles through the existing
-corpus builder, repeats assembly to prove determinism, and commits only recipes, host IDs, and
-fabricated inputs—not licensed host text. Certification recognizes `real-text-injection-v1`.
-Strict member recipes exist for EN legal (CAP/CLERC path), DE MIRACL, and EN EnronQA. The first two
-are claim-eligible subject to materialization and every named gate. EnronQA is explicitly
+corpus builder, regenerates in two independent Python processes, and commits only recipes, host IDs, and
+fabricated inputs—not licensed host text. Every cell now has a digest manifest tying those immutable
+inputs and its exact recipe to materialized provenance; certification rejects forged or untied
+cross-process evidence. Certification recognizes `real-text-injection-v1`.
+Strict member recipes exist for EN legal (CAP/CLERC path), DE MIRACL, and EN EnronQA. CLERC and
+MIRACL-DE are materialized at 1k and 10k in separate verbose and deterministic short-natural
+query strata. Their structural records certify signatures, fixed answers/evidence across strata,
+1k-to-10k nesting, zero gold-involved descriptor collisions, and cross-process regeneration. They
+also pin CLERC to Hugging Face revision `ef042f8ab436f78704f17faa0a866d1b2b862f6f` and MIRACL-DE to
+`miracl-v1.0` through `ir_datasets` 0.5.11. They are license-eligible but not scientifically certified. EnronQA is explicitly
 `claim_eligible:false`: its upstream dataset card supplies no license, so the recipe fails closed.
 
-Still owner/external gated: the 6.7 GB CLERC fetch, full materialization, closed-book,
-descriptor-collision, union-recall, leak, and regeneration certification, query variants, and any
-paid adoption/powered run. The earlier email probe proves mechanism only; it cannot override license.
+Still gated: closed-book certification, member retrieval calibration, union recall, leak floor, and
+any paid adoption/powered run. EnronQA additionally requires an approved licensing-clean source.
+The earlier email probe proves mechanism only; it cannot override license.
 
 # 707 — The pillar-1 in-band utility corpus
 

@@ -110,10 +110,12 @@ export function findUncitedNumbers(text, { releaseId, releaseNumbers }) {
   return failures;
 }
 
-function listOutwardFiles(root) {
+export function listOutwardFiles(root) {
   const files = [];
-  const readme = path.join(root, "README.md");
-  if (fs.existsSync(readme)) files.push(readme);
+  for (const name of ["README.md", "RESEARCH.md"]) {
+    const outward = path.join(root, name);
+    if (fs.existsSync(outward)) files.push(outward);
+  }
   const bizRoot = path.join(root, "docs", "business");
   const walk = (dir) => {
     if (!fs.existsSync(dir)) return;

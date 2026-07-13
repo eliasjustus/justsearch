@@ -32,6 +32,7 @@ def read_inspect_observations(
     log_dir: str | Path,
     *,
     judge_overlay: dict | None = None,
+    require_complete: bool = True,
 ) -> list[dict]:
     """Read every flushed Inspect sample into a stable observation dictionary.
 
@@ -45,13 +46,17 @@ def read_inspect_observations(
     files = sorted(root.glob("*.eval")) + sorted(root.glob("*.json"))
     overlay_scores = (judge_overlay or {}).get("scores", {})
 
+    ignored_json = {
+        "eval-set.json", "logs.json", "source-identity.v1.json",
+        "judge-overlay.json",
+    }
     for path in files:
-        if path.name in {"eval-set.json", "logs.json"}:
+        if path.name in ignored_json:
             continue
         try:
             log = read_eval_log(path.as_posix())
-        except Exception:
-            continue
+        except Exception as exc:
+            raise ValueError(f"failed to read candidate EvalLog {path}") from exc
         if not getattr(log, "eval", None):
             continue
 
@@ -111,6 +116,29 @@ def read_inspect_observations(
                 "mcp_tools_deferred": metadata.get("mcp_tools_deferred"),
                 "resolved_model": metadata.get("resolved_model"),
             })
+    if require_complete:
+        expected_sets = {
+            tuple(((item.get("source") or {}).get("cohort") or {})
+                  .get("campaign_identity", {}).get("expected_cells") or [])
+            for item in observations
+            if (((item.get("source") or {}).get("cohort") or {})
+                .get("campaign_identity"))
+        }
+        if len(expected_sets) > 1:
+            raise ValueError("observations mix incompatible expected campaign matrices")
+        if expected_sets:
+            expected = set(next(iter(expected_sets)))
+            actual = {
+                f"{item.get('condition')}|{int(item.get('seed', 0))}|{item.get('qid')}"
+                for item in observations
+            }
+            missing = sorted(expected - actual)
+            extra = sorted(actual - expected)
+            if missing or extra:
+                raise ValueError(
+                    "agent-utility evidence does not match the expected campaign matrix: "
+                    f"missing={missing[:5]!r} extra={extra[:5]!r}"
+                )
     return observations
 
 
@@ -118,10 +146,11 @@ def successful_summaries(
     observations: Iterable[dict],
     *,
     judge_overlay: dict | None = None,
-    search_config_cohort_key: str | None = None,
+    observed_mcp_tool_surface_hash: str | None = None,
 ) -> list[dict]:
     """Project all-attempt observations into the existing valid-cell composer shape."""
     from jseval.agent_manifest import agent_cohort_key, judge_identity
+    from jseval.env_fingerprint import safe_environment_identity
     from jseval.manifest import _sha256_canonical
 
     overlay_judge = dict((judge_overlay or {}).get("judge_identity") or {})
@@ -180,8 +209,9 @@ def successful_summaries(
         manifest = {
             "git_sha": cohort.get("source_git_sha") or cohort.get("git_sha"),
             "git_dirty": cohort.get("source_git_dirty"),
+            "source_git_state": cohort.get("source_git_state"),
             "cli_version": cohort.get("cli_version"),
-            "mcp_tool_surface_hash": cohort.get("mcp_tool_surface_hash"),
+            "mcp_tool_surface_hash": observed_mcp_tool_surface_hash,
             "judge": (overlay_judge
                       or judge_identity(kind=cohort.get("judge_kind", "substring-em"))),
             "prompt_template_hash": cohort.get("prompt_template_hash"),
@@ -193,13 +223,15 @@ def successful_summaries(
             "condition": condition,
             "seed": group["seed"],
             "search_config_cohort_key": (
-                (captured_search_key or search_config_cohort_key) if with_tool else None),
+                captured_search_key if with_tool else None),
             "identity_source": (
                 "captured" if captured_search_key or not with_tool else
-                "replay-override" if search_config_cohort_key else "missing"),
+                "missing"),
             "hardware": cohort.get("hardware"),
-            "environment": cohort.get("environment"),
+            "environment": safe_environment_identity(cohort.get("environment") or {}),
             "corpus_identity": cohort.get("corpus_identity"),
+            "query_identity": cohort.get("query_identity"),
+            "campaign_identity": cohort.get("campaign_identity"),
         }
         manifest["agent_cohort_key"] = agent_cohort_key(manifest)
         summaries.append({
@@ -211,3 +243,47 @@ def successful_summaries(
             "executor": "inspect-ai",
         })
     return summaries
+
+
+def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
+    """Roll up negative and positive tool evidence over every attempted cell."""
+    by_condition: dict[str, dict] = {}
+    for observation in observations:
+        condition = observation.get("condition")
+        if condition is None:
+            continue
+        aggregate = by_condition.setdefault(condition, {
+            "cells_total": 0,
+            "cells_excluded": 0,
+            "cells_with_tool_data": 0,
+            "cells_with_disallowed_violations": 0,
+            "cells_with_leak_suspect": 0,
+            "cells_with_mcp_surface_verified": 0,
+            "cells_mcp_surface_unverified": 0,
+            "observed_mcp_tool_surface_hashes": set(),
+        })
+        aggregate["cells_total"] += 1
+        if observation.get("excluded"):
+            aggregate["cells_excluded"] += 1
+        if observation.get("tool_calls") is not None:
+            aggregate["cells_with_tool_data"] += 1
+        if observation.get("disallowed_tool_calls"):
+            aggregate["cells_with_disallowed_violations"] += 1
+        if observation.get("leak_suspect"):
+            aggregate["cells_with_leak_suspect"] += 1
+        offered = observation.get("mcp_tools_offered")
+        observed_hash = observation.get("observed_mcp_tool_surface_hash")
+        if offered is not None and offered > 0 and observed_hash:
+            aggregate["cells_with_mcp_surface_verified"] += 1
+        if observation.get("mcp_surface_unverified") or (
+            condition in _WITH_TOOL and not observation.get("excluded") and not observed_hash
+        ):
+            aggregate["cells_mcp_surface_unverified"] += 1
+        if observed_hash:
+            aggregate["observed_mcp_tool_surface_hashes"].add(observed_hash)
+
+    for aggregate in by_condition.values():
+        hashes = aggregate["observed_mcp_tool_surface_hashes"]
+        aggregate["observed_mcp_tool_surface_hashes"] = sorted(hashes)
+        aggregate["observed_mcp_tool_surface_consistent"] = bool(hashes) and len(hashes) == 1
+    return by_condition

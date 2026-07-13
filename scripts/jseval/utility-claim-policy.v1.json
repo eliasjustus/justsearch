@@ -12,7 +12,9 @@
     "minimum_excluded_jaccard": 0.5,
     "significance_alpha": 0.05,
     "minimum_adoption_rate": null,
-    "accuracy_noninferiority_margin": null
+    "accuracy_noninferiority_margin": null,
+    "provider_token_equivalence_margin": null,
+    "cost_equivalence_margin_usd": null
   },
   "requirements": {
     "source_identity_complete": true,
@@ -31,6 +33,8 @@
   },
   "unresolved": [
     "thresholds.minimum_adoption_rate",
-    "thresholds.accuracy_noninferiority_margin"
+    "thresholds.accuracy_noninferiority_margin",
+    "thresholds.provider_token_equivalence_margin",
+    "thresholds.cost_equivalence_margin_usd"
   ]
 }

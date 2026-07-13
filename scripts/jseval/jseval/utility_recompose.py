@@ -14,11 +14,13 @@ from pathlib import Path
 from typing import Iterable
 
 from jseval.agent_utility_observations import (
+    all_attempt_tool_call_assertions,
     read_inspect_observations,
     successful_summaries,
 )
 from jseval.utility_comparison import (
     CITED_BASELINES,
+    _stats_from_pairs,
     compose_utility,
     compose_utility_cross_corpus,
 )
@@ -67,6 +69,145 @@ def _namespace_for_loss(observations: Iterable[dict], namespace: str) -> list[di
     return out
 
 
+def _intention_to_treat_estimand(
+    observations: Iterable[dict], *, statistical_alpha: float = 0.05
+) -> dict:
+    """Compose the primary ITT view; errored attempts count as incorrect/non-adoption."""
+    grouped: dict[tuple, dict[str, dict[tuple[int, str], dict]]] = {}
+    for observation in observations:
+        source = observation.get("source") or {}
+        corpus = source.get("corpus") or {}
+        key = (
+            corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
+            observation.get("resolved_model"),
+        )
+        condition = observation.get("condition")
+        if condition not in {"A", "B"}:
+            continue
+        grouped.setdefault(key, {}).setdefault(condition, {})[
+            (int(observation.get("seed", 0)), str(observation.get("qid")))
+        ] = observation
+
+    strata = []
+    for (dataset, signature, model, resolved_model), arms in sorted(
+        grouped.items(), key=lambda item: str(item[0])
+    ):
+        shared = sorted(set(arms.get("A", {})) & set(arms.get("B", {})))
+        pairs = {}
+        adopted = 0
+        usage_complete = True
+        per_protocol_pairs = 0
+        for seed, qid in shared:
+            baseline = arms["A"][(seed, qid)]
+            with_tool = arms["B"][(seed, qid)]
+            a_excluded = bool(baseline.get("excluded"))
+            b_excluded = bool(with_tool.get("excluded"))
+            if not a_excluded and not b_excluded:
+                per_protocol_pairs += 1
+            tool_names = [
+                str(call.get("tool"))
+                for call in (with_tool.get("tool_calls") or [])
+                if isinstance(call, dict) and call.get("tool")
+            ]
+            adopted += int(any(name.startswith("mcp__justsearch") for name in tool_names))
+            values = (
+                baseline.get("cost_usd"), with_tool.get("cost_usd"),
+                baseline.get("unique_tokens"), with_tool.get("unique_tokens"),
+            )
+            usage_complete = usage_complete and all(value is not None for value in values)
+            pairs[f"{seed}|{qid}"] = {
+                "seed": seed,
+                "a_correct": bool(baseline.get("correct")) and not a_excluded,
+                "c_correct": bool(with_tool.get("correct")) and not b_excluded,
+                "a_cost": baseline.get("cost_usd"),
+                "c_cost": with_tool.get("cost_usd"),
+                "a_tok": baseline.get("unique_tokens"),
+                "c_tok": with_tool.get("unique_tokens"),
+                "a_turns": baseline.get("num_turns"),
+                "c_turns": with_tool.get("num_turns"),
+                "a_tool_calls": baseline.get("tool_calls"),
+                "c_tool_calls": with_tool.get("tool_calls"),
+            }
+        stats = (
+            _stats_from_pairs(pairs, statistical_alpha=statistical_alpha)
+            if pairs else None
+        )
+        if stats and not usage_complete:
+            stats["provider_cache_creation_input_tokens"] = {
+                "available": False, "reason": "incomplete ITT usage evidence",
+            }
+            stats["cost_usd"] = {
+                "available": False, "reason": "incomplete ITT usage evidence",
+            }
+        source_cohorts = [
+            ((observation.get("source") or {}).get("cohort") or {})
+            for arm in arms.values() for observation in arm.values()
+        ]
+        query_identities = {
+            _canonical_bytes(item.get("query_identity")) for item in source_cohorts
+        }
+        campaign_identities = {
+            _canonical_bytes(item.get("campaign_identity")) for item in source_cohorts
+        }
+        if len(query_identities) != 1 or len(campaign_identities) != 1:
+            raise ValueError("one ITT stratum mixes query or campaign identities")
+        strata.append({
+            "corpus": dataset,
+            "corpus_signature": signature,
+            "model": model,
+            "resolved_provider_model": resolved_model,
+            "query_identity": json.loads(next(iter(query_identities)).decode("utf-8")),
+            "campaign_identity": json.loads(next(iter(campaign_identities)).decode("utf-8")),
+            "n_paired_observations": len(shared),
+            "n_per_protocol_pairs": per_protocol_pairs,
+            "usage_complete": usage_complete,
+            "accuracy": (stats or {}).get("accuracy"),
+            "provider_cache_creation_input_tokens": (
+                (stats or {}).get("provider_cache_creation_input_tokens")
+            ),
+            "cost_usd": (stats or {}).get("cost_usd"),
+            "adoption": {
+                "with_tool": {
+                    "adopted_cells": adopted,
+                    "eligible_cells": len(shared),
+                    "adoption_rate": adopted / len(shared) if shared else None,
+                }
+            },
+        })
+    return {
+        "primary": "intention_to_treat",
+        "intention_to_treat": {"strata": strata},
+        "per_protocol": {
+            "role": "secondary",
+            "source": "measured",
+        },
+    }
+
+
+def _validate_expected_campaign(observations: list[dict]) -> None:
+    expected_sets = {
+        tuple((((item.get("source") or {}).get("cohort") or {})
+              .get("campaign_identity") or {}).get("expected_cells") or [])
+        for item in observations
+        if (((item.get("source") or {}).get("cohort") or {}).get("campaign_identity"))
+    }
+    if not expected_sets:
+        return
+    if len(expected_sets) != 1:
+        raise ValueError("evidence mixes incompatible expected campaign matrices")
+    expected = set(next(iter(expected_sets)))
+    actual = {
+        f"{item.get('condition')}|{int(item.get('seed', 0))}|{item.get('qid')}"
+        for item in observations
+    }
+    if expected != actual:
+        raise ValueError(
+            "evidence does not match the expected campaign matrix: "
+            f"missing={sorted(expected - actual)[:5]!r} "
+            f"extra={sorted(actual - expected)[:5]!r}"
+        )
+
+
 def finalize_logs(
     log_dirs: Iterable[str | Path],
     *,
@@ -75,7 +216,7 @@ def finalize_logs(
     contamination_class: str = "unknown",
     confidence_tier: str = "C",
     readiness=None,
-    search_config_cohort_key: str | None = None,
+    policy: dict | None = None,
     leaked_cells_by_log: Iterable[set[tuple[str, int, str]] | dict] | None = None,
 ) -> dict:
     """Recompose completed Inspect logs into one canonical scientific record."""
@@ -113,8 +254,62 @@ def finalize_logs(
         contamination_class=contamination_class,
         confidence_tier=confidence_tier,
         readiness=readiness,
-        search_config_cohort_key=search_config_cohort_key,
+        policy=policy,
     )
+
+
+def partial_status_projection(log_dir: str | Path, *, policy: dict | None = None) -> dict:
+    """Project a truthful live status through the shared all-attempt seam.
+
+    This deliberately does not emit a claim verdict: partial evidence is not a
+    scientific record. It does use the selected policy's loss thresholds so the
+    live comparability signal cannot drift from finalization.
+    """
+    from jseval.utility_claim_policy import load_policy
+
+    selected_policy = policy or load_policy()
+    thresholds = selected_policy.get("thresholds") or {}
+    observations = read_inspect_observations(log_dir, require_complete=False)
+    arms = loss_accounting_from_observations(observations)
+    verdict, metrics = paired_comparability(
+        arms,
+        max_exclusion_rate=thresholds.get("maximum_exclusion_rate", 0.15),
+        min_paired_retention=thresholds.get("minimum_paired_retention", 0.70),
+        min_excluded_jaccard=thresholds.get("minimum_excluded_jaccard", 0.50),
+    )
+    result = {
+        "per_arm_loss": {
+            condition: {
+                "n_attempted": loss.n_attempted,
+                "n_planned": loss.n_planned,
+                "n_pending": loss.n_pending,
+                "n_completed": loss.n_completed,
+                "n_excluded": loss.n_excluded,
+                "exclusion_rate": loss.exclusion_rate,
+            }
+            for condition, loss in arms.items()
+        },
+        "comparability": {
+            "comparable": verdict.comparable,
+            "reasons": verdict.reasons,
+            "metrics": metrics,
+        },
+        "measured": None,
+    }
+    observed_hashes = {
+        row.get("observed_mcp_tool_surface_hash")
+        for row in observations
+        if row.get("observed_mcp_tool_surface_hash")
+    }
+    if len(observed_hashes) > 1:
+        raise ValueError("partial observations span multiple MCP tools/list surfaces")
+    summaries = successful_summaries(
+        observations,
+        observed_mcp_tool_surface_hash=next(iter(observed_hashes), None),
+    )
+    if summaries:
+        result["measured"] = compose_utility(summaries, composed_at="partial")["measured"]
+    return result
 
 
 def finalize_evidence(
@@ -123,6 +318,7 @@ def finalize_evidence(
     composed_at: str | None = None,
     contamination_class: str = "unknown",
     confidence_tier: str = "C",
+    policy: dict | None = None,
 ) -> dict:
     from jseval.utility_evidence import read_evidence
 
@@ -132,6 +328,7 @@ def finalize_evidence(
         composed_at=composed_at,
         contamination_class=contamination_class,
         confidence_tier=confidence_tier,
+        policy=policy,
     )
 
 
@@ -142,14 +339,59 @@ def finalize_observation_groups(
     contamination_class: str = "unknown",
     confidence_tier: str = "C",
     readiness=None,
-    search_config_cohort_key: str | None = None,
+    policy: dict | None = None,
 ) -> dict:
+    from jseval.utility_claim_policy import evaluate_claim, load_policy
+
+    selected_policy = policy or load_policy()
+    thresholds = selected_policy.get("thresholds") or {}
     summaries: list[dict] = []
     loss_observations: list[dict] = []
+    all_observations: list[dict] = []
     corpus_identities: set[tuple[str | None, str | None]] = set()
-    for raw_group in observation_groups:
+    groups = list(observation_groups)
+    observed_surface_hashes = {
+        observation.get("observed_mcp_tool_surface_hash")
+        for group in groups
+        for observation in group
+        if observation.get("condition") in {"B", "C"}
+        and observation.get("observed_mcp_tool_surface_hash")
+    }
+    if len(observed_surface_hashes) > 1:
+        raise ValueError("with-tool observations span multiple MCP tools/list surfaces")
+    observed_surface_hash = next(iter(observed_surface_hashes), None)
+    declared_surface_hashes = {
+        ((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface_hash")
+        for group in groups
+        for observation in group
+        if ((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface_hash")
+    }
+    captured_surfaces = {
+        _canonical_bytes(((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface"))
+        for group in groups
+        for observation in group
+        if ((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface")
+    }
+    if len(captured_surfaces) > 1:
+        raise ValueError("evidence spans multiple captured canonical MCP tools/list payloads")
+    if captured_surfaces:
+        from jseval.agent_manifest import mcp_tool_surface_hash
+
+        captured_surface = json.loads(next(iter(captured_surfaces)).decode("utf-8"))
+        captured_hash = mcp_tool_surface_hash(captured_surface)
+        if declared_surface_hashes != {captured_hash}:
+            raise ValueError("captured canonical MCP tools/list disagrees with declared hash")
+    if declared_surface_hashes and (
+        len(declared_surface_hashes) != 1
+        or (observed_surface_hash is not None
+            and next(iter(declared_surface_hashes)) != observed_surface_hash)
+    ):
+        raise ValueError("declared MCP tool-surface hash disagrees with observed tools/list")
+
+    for raw_group in groups:
         if not raw_group:
             raise ValueError("an evidence group contains no observations")
+        _validate_expected_campaign(raw_group)
         # One sanitized evidence file may intentionally carry several corpora.
         # Partition before summary projection so no group silently inherits the
         # first observation's corpus identity.
@@ -161,14 +403,21 @@ def finalize_observation_groups(
         for corpus_identity, observations in sorted(by_corpus.items(), key=lambda item: str(item[0])):
             summaries.extend(successful_summaries(
                 observations,
-                search_config_cohort_key=search_config_cohort_key,
+                observed_mcp_tool_surface_hash=observed_surface_hash,
             ))
+            all_observations.extend(observations)
             corpus_identities.add(corpus_identity)
             namespace = f"{corpus_identity[0]}:{corpus_identity[1]}"
             loss_observations.extend(_namespace_for_loss(observations, namespace))
 
     arms = loss_accounting_from_observations(loss_observations)
-    verdict, metrics = paired_comparability(arms, readiness)
+    verdict, metrics = paired_comparability(
+        arms,
+        readiness,
+        max_exclusion_rate=thresholds.get("maximum_exclusion_rate", 0.15),
+        min_paired_retention=thresholds.get("minimum_paired_retention", 0.70),
+        min_excluded_jaccard=thresholds.get("minimum_excluded_jaccard", 0.50),
+    )
     governance = {
         "comparable": verdict.comparable,
         "reasons": verdict.reasons,
@@ -176,6 +425,8 @@ def finalize_observation_groups(
         "per_arm_loss": {
             condition: {
                 "n_attempted": loss.n_attempted,
+                "n_planned": loss.n_planned,
+                "n_pending": loss.n_pending,
                 "n_completed": loss.n_completed,
                 "n_excluded": loss.n_excluded,
                 "exclusion_rate": round(loss.exclusion_rate, 4),
@@ -184,20 +435,25 @@ def finalize_observation_groups(
         },
     }
     timestamp = composed_at or dt.datetime.now(dt.timezone.utc).isoformat()
+    alpha = thresholds.get("significance_alpha", 0.05)
     kwargs = {
         "composed_at": timestamp,
         "contamination_class": contamination_class,
         "confidence_tier": confidence_tier,
         "governance": governance,
         "external_baselines": CITED_BASELINES,
+        "statistical_alpha": alpha,
     }
     if len(corpus_identities) > 1:
         record = compose_utility_cross_corpus(summaries, **kwargs)
     else:
         record = compose_utility(summaries, **kwargs)
-    from jseval.utility_claim_policy import evaluate_claim
-
-    record["claim_verdict"] = evaluate_claim(record)
+    record["tool_call_assertions"] = all_attempt_tool_call_assertions(all_observations)
+    record["estimands"] = _intention_to_treat_estimand(
+        all_observations, statistical_alpha=alpha
+    )
+    record["statistical_alpha"] = alpha
+    record["claim_verdict"] = evaluate_claim(record, selected_policy)
     record["semantic_digest"] = semantic_digest(record)
     return record
 

@@ -135,25 +135,26 @@ def build_compose_summary(
 
 # --- Inspect-AI path (tempdoc 624 execution design): EvalLogs -> compose input ---
 
-def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None = None,
-                           judge_overlay: dict | None = None) -> list[dict]:
+def eval_logs_to_summaries(log_dir: str, *, judge_overlay: dict | None = None,
+                           require_complete: bool = True) -> list[dict]:
     """Project Inspect EvalLogs into the valid-cell composer input.
 
     The lossless reader first retains every attempted cell, including Inspect
     native errors. This function is intentionally only the valid-cell status
-    projection. ``search_config_cohort_key`` remains a compatibility override
-    for old logs; record-grade logs capture it at source time.
+    projection. Record-grade identity is captured at source time and is never
+    supplied during replay.
     """
     from jseval.agent_utility_observations import (
         read_inspect_observations,
         successful_summaries,
     )
 
-    observations = read_inspect_observations(log_dir, judge_overlay=judge_overlay)
+    observations = read_inspect_observations(
+        log_dir, judge_overlay=judge_overlay, require_complete=require_complete,
+    )
     return successful_summaries(
         observations,
         judge_overlay=judge_overlay,
-        search_config_cohort_key=search_config_cohort_key,
     )
 
 

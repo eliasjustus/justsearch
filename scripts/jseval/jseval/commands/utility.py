@@ -27,14 +27,15 @@ def _publication_root(value):
 @click.option("--record", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--evidence", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--publication-id", required=True)
+@click.option("--policy", default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option("--root", default=None, type=click.Path())
-def cmd_utility_publication_build(record, evidence, publication_id, root):
-    """Build an immutable accepted-or-rejected publication bundle."""
+def cmd_utility_publication_build(record, evidence, publication_id, policy, root):
+    """Build an immutable accepted publication bundle."""
     from ..utility_publication import build_publication
 
     path = build_publication(
         root=_publication_root(root), record_path=record, evidence_path=evidence,
-        publication_id=publication_id,
+        publication_id=publication_id, policy_path=policy,
     )
     click.echo(f"Wrote {path}")
 
@@ -278,7 +279,6 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--calibration", default=None, type=click.Path(exists=True), help="calibration.json from `utility-calibrate` (overrides timeout/concurrency/search-key + filters queries).")
 @click.option("--dataset", required=True, help="Corpus slug, e.g. mixed/multihop-rag.")
 @click.option("--corpus-signature", default=None)
-@click.option("--mcp-tool-surface-hash", default=None, help="Hash of the live /mcp tools/list (cohort identity).")
 @click.option("--search-config-key", default=None, help="623 config_cohort_key of the with-tool backend.")
 @click.option("--contamination-class",
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
@@ -289,7 +289,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.pass_context
 def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, seeds, concurrency,
                     max_queries, max_budget, timeout_s, max_turns, calibration, dataset, corpus_signature,
-                    mcp_tool_surface_hash, search_config_key, contamination_class, confidence_tier,
+                    search_config_key, contamination_class, confidence_tier,
                     log_dir, output_dir):
     """Run the agent-utility matrix THROUGH Inspect AI (resumable) and compose (tempdoc 624).
 
@@ -336,7 +336,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         model=model, conditions=conds, seeds=seeds, concurrency=concurrency,
         log_dir=log_dir, max_queries=max_queries, max_budget=max_budget, timeout_s=timeout_s,
         max_turns=max_turns,
-        cli_version=cli_version, mcp_tool_surface_hash=mcp_tool_surface_hash,
+        cli_version=cli_version,
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
         search_config_cohort_key=search_config_key,
     )
@@ -421,31 +421,26 @@ def cmd_utility_calibrate(ctx, queries, corpus_dir, mcp_config, base_url, model,
 
 @click.command("utility-status")
 @click.argument("log_dir", type=click.Path(exists=True))
-@click.option("--search-config-key", default=None)
 @click.pass_context
-def cmd_utility_status(ctx, log_dir, search_config_key):
+def cmd_utility_status(ctx, log_dir):
     """Live-status projection over PARTIAL Inspect logs (tempdoc 624 §Run-governance):
     completion %, per-arm exclusion (exposes the timeouts Inspect swallows), emerging delta."""
-    from .. import agent_utility_run as aur
-    from .. import utility_comparison as uc
-    from .. import utility_governance as ug
+    from ..utility_recompose import partial_status_projection
 
-    arms = ug.compute_loss_accounting(log_dir)
-    for c, l in sorted(arms.items()):
-        click.echo(f"  {c}: completed={l.n_completed} excluded={l.n_excluded} "
-                   f"({l.exclusion_rate:.0%} of {l.n_attempted} attempted) "
-                   f"pending~{l.n_pending} of {l.n_planned} planned")
-    verdict, m = ug.paired_comparability(arms)
-    click.echo(f"  comparable(so far)={verdict.comparable}  {m}")
-    if not verdict.comparable:
-        for r in verdict.reasons:
+    status = partial_status_projection(log_dir)
+    for condition, loss in sorted(status["per_arm_loss"].items()):
+        click.echo(f"  {condition}: completed={loss['n_completed']} excluded={loss['n_excluded']} "
+                   f"({loss['exclusion_rate']:.0%} of {loss['n_attempted']} attempted) "
+                   f"pending~{loss['n_pending']} of {loss['n_planned']} planned")
+    comparability = status["comparability"]
+    click.echo(
+        f"  comparable(so far)={comparability['comparable']}  {comparability['metrics']}")
+    if not comparability["comparable"]:
+        for r in comparability["reasons"]:
             click.echo(f"    - {r}")
     try:
-        summaries = aur.eval_logs_to_summaries(
-            log_dir, search_config_cohort_key=search_config_key or "partial")
-        if summaries:
-            rec = uc.compose_utility(summaries, composed_at="partial")
-            for slug, by_model in rec["measured"].items():
+        if status["measured"]:
+            for slug, by_model in status["measured"].items():
                 for mdl, cell in by_model.items():
                     acc, tok = cell["accuracy"], cell["tokens_unique"]
                     click.echo(f"  [{slug}/{mdl}] acc {acc['baseline']}->{acc['with_tool']} "
@@ -467,7 +462,6 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
                    "model family than the claude agent under test is the self-preference "
                    "control (C-6).")
 @click.option("--judge-model", default=None, help="Override the served model id (else auto-probed).")
-@click.option("--search-config-key", default=None)
 @click.option("--contamination-class",
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
               default="public-pre-cutoff", show_default=True)
@@ -500,7 +494,7 @@ def cmd_utility_status(ctx, log_dir, search_config_key):
                    "level -- the caller isn't expected to know exactly which fields changed "
                    "when composing from the command line; that's a deliberate, honest default.")
 @click.pass_context
-def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
+def cmd_utility_judge(ctx, log_dir, judge_url, judge_model,
                       contamination_class, confidence_tier, output_dir,
                       calibrate, calibration_n, calibration_seed, exclude_leaked,
                       supersedes, revision_reason):
@@ -552,7 +546,6 @@ def cmd_utility_judge(ctx, log_dir, judge_url, judge_model, search_config_key,
             judge_overlays=[path],
             contamination_class=contamination_class,
             confidence_tier=confidence_tier,
-            search_config_cohort_key=search_config_key,
             leaked_cells_by_log=leaked_sets,
         )
         _attach_revision(record, supersedes, revision_reason)
@@ -780,8 +773,6 @@ def cmd_utility_judge_local_swap_smoketest(ctx, model_path, backend_base_url, ti
 @click.option("--log-dir", "log_dirs", multiple=True, required=True, type=click.Path(exists=True),
               help="Repeatable. One completed `jseval utility-run --log-dir` Inspect log dir per "
                    "corpus (e.g. one per language/battlefield-dimension). Need 2+.")
-@click.option("--search-config-key", default=None,
-              help="623 config_cohort_key of the live search backend (the with-tool arms' identity).")
 @click.option("--contamination-class",
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
               default="public-pre-cutoff", show_default=True)
@@ -804,7 +795,7 @@ def cmd_utility_judge_local_swap_smoketest(ctx, model_path, backend_base_url, ti
                    "when composing from the command line; that's a deliberate, honest default.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
-def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamination_class,
+def cmd_utility_compose_cross_corpus(ctx, log_dirs, contamination_class,
                                      confidence_tier, exclude_leaked, supersedes, revision_reason,
                                      output_dir):
     """Pool multiple corpora's Inspect logs into ONE cross-corpus stratified record (tempdoc 624).
@@ -839,7 +830,6 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, search_config_key, contamina
         log_dirs,
         contamination_class=contamination_class,
         confidence_tier=confidence_tier,
-        search_config_cohort_key=search_config_key,
         leaked_cells_by_log=(leaked_sets if exclude_leaked else None),
     )
     _attach_revision(record, supersedes, revision_reason)

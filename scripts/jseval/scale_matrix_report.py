@@ -8,21 +8,16 @@ concrete numbers so the orchestrator can state the (a) discoverability-defect vs
 already-written logs.
 
 Reuses existing production code rather than re-deriving it:
-  - `jseval.agent_utility_run.eval_logs_to_summaries` (log_dir -> compose-ready
-    summaries; the same reader `utility_comparison.compose_utility` consumes).
+  - `jseval.agent_utility_observations.read_inspect_observations` (the same
+    fail-closed, all-attempt reader used by evidence export and finalization).
   - `jseval.utility_comparison._pair_observations` / `_stats_from_pairs` (the exact
     McNemar + bootstrap-CI cost/token/turn stat path `compose_utility` uses for its
     A-vs-with-tool comparison) -- NOT re-implemented here.
   - `jseval.utility_comparison._adoption_metrics` / `_tool_surfacing_mode` (the
     pre-registered adoption metrics, tempdoc 624 SS M.8 amendment Step 0 item 5).
 
-One thing `eval_logs_to_summaries` does NOT carry forward into `per_query`: the raw
-sample's `attempts` / `first_error` retry-forensics fields (agent_utility_inspect.py
-`state.metadata["attempts"]` / `["first_error"]`), and it silently `continue`s past
-excluded (errored) cells entirely. This script's `_raw_scan` reads the same EvalLog
-files a second, independent time to recover those -- the closest available proxy for
-"did this cell hit a resource limit" (tempdoc item 5b). See `_raw_scan`'s docstring
-for exactly what is and is not reliably sourced.
+The all-attempt seam retains `attempts`, `first_error`, and excluded cells, so this
+report no longer maintains a second permissive log reader.
 
 Usage (from `scripts/jseval/`):
     python scale_matrix_report.py --log-dir 624-run-2026-07-07-pilot/logs
@@ -38,7 +33,10 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
-from jseval.agent_utility_run import eval_logs_to_summaries
+from jseval.agent_utility_observations import (
+    read_inspect_observations,
+    successful_summaries,
+)
 from jseval.utility_comparison import (
     _adoption_metrics,
     _distribution,
@@ -75,9 +73,10 @@ def _find_log_dirs(root: Path) -> list[Path]:
     return sorted(found.keys())
 
 
-def load_summaries(log_dir_args: list[str]) -> tuple[list[dict], list[str]]:
-    """:returns: (all per-cell summaries, the resolved leaf log-dir paths actually read)."""
+def load_summaries(log_dir_args: list[str]) -> tuple[list[dict], list[str], list[dict]]:
+    """:returns: (successful summaries, resolved log dirs, all observations)."""
     summaries: list[dict] = []
+    observations: list[dict] = []
     resolved: list[str] = []
     for d in log_dir_args:
         leaves = _find_log_dirs(Path(d))
@@ -86,62 +85,38 @@ def load_summaries(log_dir_args: list[str]) -> tuple[list[dict], list[str]]:
             continue
         for leaf in leaves:
             resolved.append(str(leaf))
-            summaries.extend(eval_logs_to_summaries(str(leaf)))
-    return summaries, resolved
+            leaf_observations = read_inspect_observations(
+                str(leaf), require_complete=False)
+            observed_hashes = {
+                row.get("observed_mcp_tool_surface_hash")
+                for row in leaf_observations
+                if row.get("observed_mcp_tool_surface_hash")
+            }
+            if len(observed_hashes) > 1:
+                raise ValueError(
+                    f"mixed MCP tool surfaces in {leaf}: {sorted(observed_hashes)!r}")
+            observations.extend(leaf_observations)
+            summaries.extend(successful_summaries(
+                leaf_observations,
+                observed_mcp_tool_surface_hash=next(iter(observed_hashes), None),
+            ))
+    return summaries, resolved, observations
 
 
-# --- raw scan: recovers attempts/first_error/error + EXCLUDED cells, which
-# eval_logs_to_summaries deliberately drops (it only yields non-excluded cells and
-# never carries attempts/first_error into per_query). ----------------------------
-
-def _raw_scan(resolved_log_dirs: list[str]) -> list[dict]:
-    """Re-read the same EvalLog files independently of `eval_logs_to_summaries` to
-    recover retry-forensics fields it does not propagate: `attempts`, `first_error`,
-    `error` (agent_utility_inspect.py `state.metadata`, set unconditionally on every
-    attempt regardless of success/failure).
-
-    This is the ONLY place in this script that sees excluded (errored) cells at all --
-    `eval_logs_to_summaries` explicitly `continue`s past any sample whose
-    `state.metadata["error"]` is set (agent_utility_run.py's `eval_logs_to_summaries`,
-    "excluded cell" branch), so an arm's true attempted-cell count and exclusion rate
-    can only be recovered by scanning the logs a second, independent way.
-
-    :returns: one row per sample: ``{condition, model, seed, qid, attempts,
-        first_error, error, excluded, num_turns, cost_usd}``.
-    """
-    from inspect_ai.log import read_eval_log
-
-    rows: list[dict] = []
-    for ld in resolved_log_dirs:
-        log_files = sorted(Path(ld).glob("*.eval")) + sorted(Path(ld).glob("*.json"))
-        for lf in log_files:
-            if lf.name == "logs.json":
-                continue
-            try:
-                log = read_eval_log(lf.as_posix())
-            except Exception:
-                continue
-            if not getattr(log, "eval", None):
-                continue
-            meta = log.eval.metadata or {}
-            condition = meta.get("condition")
-            model = meta.get("model")
-            for s in (log.samples or []):
-                md = s.metadata or {}
-                seed = int(s.epoch or 1) - 1
-                rows.append({
-                    "condition": condition,
-                    "model": model,
-                    "seed": seed,
-                    "qid": str(s.id),
-                    "attempts": md.get("attempts"),
-                    "first_error": md.get("first_error"),
-                    "error": md.get("error"),
-                    "excluded": bool(md.get("error")),
-                    "num_turns": md.get("num_turns"),
-                    "cost_usd": md.get("cost_usd"),
-                })
-    return rows
+def _raw_rows(observations: list[dict]) -> list[dict]:
+    """Project retry and exclusion facts retained by the shared observation seam."""
+    return [{
+        "condition": row.get("condition"),
+        "model": (row.get("source") or {}).get("model_alias"),
+        "seed": row.get("seed"),
+        "qid": row.get("qid"),
+        "attempts": row.get("attempts"),
+        "first_error": row.get("first_error"),
+        "error": row.get("error"),
+        "excluded": bool(row.get("excluded")),
+        "num_turns": row.get("num_turns"),
+        "cost_usd": row.get("cost_usd"),
+    } for row in observations]
 
 
 def _is_timeout_text(row: dict) -> bool:
@@ -150,7 +125,7 @@ def _is_timeout_text(row: dict) -> bool:
     (agent_utility_inspect.py's `except Exception as e` branch) -- a code-verified,
     reliable signal for "this cell's process was killed by the harness's wall-clock
     timeout", which is NOT the same thing as "hit --max-budget-usd" or a turn cap
-    (see `_raw_scan`'s docstring and the `budget_signal.note` this feeds)."""
+    (see `_raw_rows` and the `budget_signal.note` this feeds)."""
     text = " ".join(str(x) for x in (row.get("first_error"), row.get("error")) if x)
     return "TimeoutExpired" in text
 
@@ -555,13 +530,13 @@ def main() -> int:
     if not all_dirs:
         ap.error("provide at least one --log-dir (or a positional dir)")
 
-    summaries, resolved = load_summaries(all_dirs)
+    summaries, resolved, observations = load_summaries(all_dirs)
     if not summaries:
-        print("No cells found (eval_logs_to_summaries returned nothing for the resolved log dirs).")
+        print("No successful cells found in the resolved log dirs.")
         print(f"Resolved log dirs: {resolved}")
         return 1
 
-    raw_rows = _raw_scan(resolved)
+    raw_rows = _raw_rows(observations)
     report = build_report(summaries, raw_rows)
     print_report(report, resolved)
 

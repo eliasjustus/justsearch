@@ -29,7 +29,7 @@ collapse on our own corpus. Full comparison-class detail: `docs/reference/benchm
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
 
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in scientific policy intentionally leaves its adoption and non-inferiority thresholds unresolved; choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in scientific policy intentionally leaves its adoption, non-inferiority, and efficiency-equivalence thresholds unresolved; choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.
 
 The latest sanitized pilot evidence is retained as a rejected fixture and can be recomposed without credentials, a backend, or model calls. A result can appear here only after an immutable bundle replays, passes the settled policy, and is explicitly selected by the owner.
 
@@ -49,10 +49,13 @@ against them) that hasn't been resourced yet.
 
 ## Reproducing and extending this work
 
-Everything above is runnable from a clone — see
+The retrieval-quality release above is reproducible from a clone — see
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md#reproduce-it) for the
 exact commands and corpus slugs. The corpora, fetch recipes, and evaluation harness are all in the repo;
-nothing needs to be requested from us to start.
+nothing needs to be requested from us to start. Agent-utility evidence is separately replayable at zero
+cost only after an accepted publication exists; a live rerun requires licensed corpus sources, model
+credentials, a running backend, and explicit budget authorization. See
+[`docs/reference/benchmarks/agent-utility.md`](docs/reference/benchmarks/agent-utility.md).
 
 ## Looking for a research or institutional collaborator
 

@@ -3,7 +3,7 @@
   "$id": "707-corpus-member.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "name", "language", "domain", "real_source", "gold_source", "assembly", "sizes", "query_variants", "claim_eligible", "remaining_gates"],
+  "required": ["schema", "name", "language", "domain", "real_source", "gold_source", "assembly", "sizes", "query_variants", "materialized_datasets", "structural_certification", "claim_eligible", "remaining_gates"],
   "properties": {
     "schema": {"const": "707-corpus-member.v1"},
     "name": {"type": "string"},
@@ -35,6 +35,8 @@
     },
     "sizes": {"type": "array", "items": {"type": "integer", "minimum": 1000}, "minItems": 2},
     "query_variants": {"type": "array", "items": {"enum": ["verbose", "short-natural"]}, "minItems": 2},
+    "materialized_datasets": {"type": "array", "items": {"type": "string"}},
+    "structural_certification": {"type": ["string", "null"]},
     "claim_eligible": {"type": "boolean"},
     "remaining_gates": {"type": "array", "items": {"type": "string"}}
   }

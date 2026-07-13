@@ -54,6 +54,10 @@ function loadSelection(root) {
     throw new Error("selected agent-utility record hash mismatch");
   }
   const record = readJson(recordPath);
+  const policyPath = path.resolve(path.dirname(manifestPath), manifest.policy.path);
+  if (sha256(policyPath) !== manifest.policy.sha256) {
+    throw new Error("selected agent-utility policy hash mismatch");
+  }
   if (
     record.semantic_digest !== manifest.record.semantic_digest ||
     record.claim_verdict?.accepted !== true
@@ -64,10 +68,11 @@ function loadSelection(root) {
 }
 
 function cells(record) {
-  const out = [];
-  for (const [corpus, models] of Object.entries(record.measured || {})) {
-    for (const [model, cell] of Object.entries(models || {})) out.push({ corpus, model, cell });
-  }
+  const out = (record.estimands?.intention_to_treat?.strata || []).map((cell) => ({
+    corpus: cell.corpus,
+    model: cell.model,
+    cell,
+  }));
   return out.sort((a, b) => `${a.corpus}/${a.model}`.localeCompare(`${b.corpus}/${b.model}`));
 }
 
@@ -89,9 +94,10 @@ function acceptedTable(record) {
 
 function noResult(selection, target) {
   const reason = selection.pointer.reason;
+  const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
   const common =
-    `No agent-utility result is currently accepted for publication. ${reason} ` +
-    "The checked-in scientific policy intentionally leaves its adoption and non-inferiority thresholds unresolved; " +
+    `No agent-utility result is currently accepted for publication. ${state}${reason} ` +
+    "The checked-in scientific policy intentionally leaves its adoption, non-inferiority, and efficiency-equivalence thresholds unresolved; " +
     "choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.";
   if (target === "readme") return common;
   if (target === "research") {
@@ -113,8 +119,8 @@ function noResult(selection, target) {
     common,
     "",
     "The publication chain is: all attempted Inspect cells -> strict sanitized observation evidence -> pure offline " +
-      "recomposition -> versioned claim-policy verdict -> immutable publication manifest -> explicit accepted-result pointer. " +
-      "Rejected bundles remain replayable but cannot become current. The pointer is " +
+      "recomposition -> versioned claim-policy verdict -> immutable accepted publication manifest -> explicit accepted-result pointer. " +
+      "Rejected evidence remains a test/history fixture rather than a publication bundle. The pointer is " +
       "`scripts/jseval/public-agent-utility/current.v1.json`.",
     "",
     "Replay uses only committed evidence:",
@@ -130,7 +136,8 @@ function accepted(selection, target) {
   const { manifest, record } = selection;
   const lead =
     `Accepted agent-utility publication \`${manifest.publication_id}\` (record ` +
-    `\`${record.semantic_digest.slice(0, 12)}\`) passed policy \`${manifest.policy.id}\` and immutable replay.`;
+    `\`${record.semantic_digest.slice(0, 12)}\`) passed policy \`${manifest.policy.id}\` and immutable replay. ` +
+    `Outcome: **${record.claim_verdict.outcome}**.`;
   if (target === "readme") return `${lead}\n\n${acceptedTable(record)}`;
   const tail =
     `Reproduce it with \`cd scripts/jseval && python -m jseval utility-replay --publication ${manifest.publication_id}\`.`;
@@ -161,7 +168,7 @@ function main() {
   const targets = [
     ["README.md", "readme"],
     ["RESEARCH.md", "research"],
-    [path.join("docs", "reference", "benchmarks", "methodology.md"), "methodology"],
+    [path.join("docs", "reference", "benchmarks", "agent-utility.md"), "reference"],
   ];
   for (const [relative, target] of targets) {
     project(path.join(root, relative), generated(selection, target), check, root);

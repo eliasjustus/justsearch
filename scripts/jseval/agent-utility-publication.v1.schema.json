@@ -9,7 +9,7 @@
     "schema_version": {"const": 1},
     "publication_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
     "created_at": {"type": "string"},
-    "lifecycle_state": {"enum": ["accepted", "rejected", "withdrawn"]},
+    "lifecycle_state": {"const": "accepted"},
     "record": {
       "type": "object", "additionalProperties": false,
       "required": ["path", "sha256", "semantic_digest"],
@@ -29,11 +29,12 @@
     },
     "policy": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "sha256", "status"],
+      "required": ["path", "id", "sha256", "status"],
       "properties": {
-        "id": {"type": ["string", "null"]},
-        "sha256": {"type": ["string", "null"]},
-        "status": {"type": ["string", "null"]}
+        "path": {"type": "string"},
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "status": {"const": "active"}
       }
     },
     "sanitizer_version": {"const": "agent-utility-observation.v1"},

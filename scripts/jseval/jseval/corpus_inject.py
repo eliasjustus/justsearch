@@ -6,6 +6,9 @@ import hashlib
 import json
 import random
 import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 METHOD = "real-text-injection-v1"
@@ -104,6 +107,84 @@ def assemble(
     return docs, report
 
 
+def _cross_process_assembly(
+    real_path: Path,
+    fabricated_path: Path,
+    queries_path: Path,
+    *,
+    seed: int,
+    n_distractors: int,
+    style: str,
+    host_min_words: int,
+    expected_docs: list[dict],
+    expected_digest: str,
+) -> dict:
+    """Run the real assembly twice in independent interpreters and compare bytes."""
+    request = {
+        "real_path": str(real_path.resolve()),
+        "fabricated_path": str(fabricated_path.resolve()),
+        "queries_path": str(queries_path.resolve()),
+        "seed": seed,
+        "n_distractors": n_distractors,
+        "style": style,
+        "host_min_words": host_min_words,
+    }
+    outputs = []
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        request_path = root / "request.json"
+        request_path.write_text(json.dumps(request), encoding="utf-8")
+        for index in range(2):
+            output_path = root / f"result-{index}.json"
+            completed = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), str(request_path), str(output_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "cross-process real-text regeneration failed: "
+                    f"{completed.stderr or completed.stdout}"
+                )
+            outputs.append(output_path.read_bytes())
+    regenerated = [json.loads(body.decode("utf-8")) for body in outputs]
+    passed = (
+        outputs[0] == outputs[1]
+        and all(item.get("docs") == expected_docs for item in regenerated)
+        and all(
+            (item.get("report") or {}).get("assembled_digest") == expected_digest
+            for item in regenerated
+        )
+    )
+    return {
+        "passed": passed,
+        "method": "cross-process-regeneration-diff",
+        "digest": expected_digest if passed else None,
+    }
+
+
+def _assembly_worker(request_path: Path, output_path: Path) -> None:
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    queries = json.loads(Path(request["queries_path"]).read_text(encoding="utf-8"))
+    for index, query in enumerate(queries, 1):
+        query.setdefault("query_variant", "verbose")
+        query.setdefault("query_family_id", f"q{index:04d}")
+    docs, report = assemble(
+        _read_jsonl(Path(request["real_path"])),
+        _read_jsonl(Path(request["fabricated_path"])),
+        queries,
+        seed=int(request["seed"]),
+        n_distractors=int(request["n_distractors"]),
+        style=request["style"],
+        host_min_words=int(request["host_min_words"]),
+    )
+    output_path.write_text(
+        json.dumps({"docs": docs, "report": report}, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
 def build_source(
     real_corpus_dir: str | Path,
     gold_source_dir: str | Path,
@@ -125,28 +206,34 @@ def build_source(
     real_docs = _read_jsonl(real_path)
     fabricated_docs = _read_jsonl(gold_root / "docs.jsonl")
     queries = json.loads((gold_root / "queries.json").read_text(encoding="utf-8"))
+    for index, query in enumerate(queries, 1):
+        query.setdefault("query_variant", "verbose")
+        query.setdefault("query_family_id", f"q{index:04d}")
     gold_meta = json.loads((gold_root / "meta.json").read_text(encoding="utf-8"))
 
     docs, report = assemble(
         real_docs, fabricated_docs, queries, seed=seed, n_distractors=n_distractors,
         style=style, host_min_words=host_min_words,
     )
-    second_docs, second_report = assemble(
-        real_docs, fabricated_docs, queries, seed=seed, n_distractors=n_distractors,
-        style=style, host_min_words=host_min_words,
+    determinism = _cross_process_assembly(
+        real_path,
+        gold_root / "docs.jsonl",
+        gold_root / "queries.json",
+        seed=seed,
+        n_distractors=n_distractors,
+        style=style,
+        host_min_words=host_min_words,
+        expected_docs=docs,
+        expected_digest=report["assembled_digest"],
     )
-    deterministic = report["assembled_digest"] == second_report["assembled_digest"] and docs == second_docs
+    deterministic = determinism["passed"]
     provenance = {
         **report,
         "real_source_id": real_source_id,
         "real_source_sha256": hashlib.sha256(real_path.read_bytes()).hexdigest(),
         "license": license_id,
         "fabrication_provenance": gold_meta.get("generation_provenance"),
-        "assembly_determinism": {
-            "passed": deterministic,
-            "method": "same-input-double-assembly",
-            "digest": report["assembled_digest"],
-        },
+        "assembly_determinism": determinism,
     }
     if not deterministic:
         raise RuntimeError("real-text injection assembly is nondeterministic")
@@ -184,4 +271,24 @@ def write_commitment(
     (root / "recipe.json").write_text(json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for name in ("docs.jsonl", "queries.json", "meta.json"):
         (root / f"fabricated-{name}").write_bytes((gold_root / name).read_bytes())
+    committed = [
+        "recipe.json", "fabricated-docs.jsonl", "fabricated-queries.json",
+        "fabricated-meta.json",
+    ]
+    manifest = {
+        "schema": "707-corpus-commitment.v1",
+        "files": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in committed
+        },
+    }
+    (root / "commitment.v1.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return root
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        raise SystemExit("internal usage: python -m jseval.corpus_inject REQUEST RESULT")
+    _assembly_worker(Path(sys.argv[1]), Path(sys.argv[2]))

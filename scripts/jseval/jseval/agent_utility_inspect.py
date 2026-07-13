@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
@@ -108,8 +109,65 @@ def _mcp_servers_from_config(mcp_config: str | None) -> dict:
     return cfg.get("mcpServers") or {}
 
 
-async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str]]:
-    """Return `(mcp_servers, justsearch_tool_names)` from the SDK's own MCP status.
+def _capture_canonical_mcp_surface(mcp_config: str) -> list[dict]:
+    """Fetch the authoritative full MCP ``tools/list`` payload from the run endpoint."""
+    servers = _mcp_servers_from_config(mcp_config)
+    server = servers.get("justsearch") or {}
+    url = server.get("url")
+    if not url:
+        raise ValueError("justsearch MCP config is missing its HTTP url")
+    tools: list[dict] = []
+    cursor = None
+    while True:
+        params = {"cursor": cursor} if cursor is not None else {}
+        body = json.dumps({
+            "jsonrpc": "2.0", "id": "jseval-source-identity",
+            "method": "tools/list", "params": params,
+        }).encode("utf-8")
+        request = Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "User-Agent": "jseval-agent-utility-source-identity/1",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - configured MCP URL
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("error"):
+            raise RuntimeError(f"MCP tools/list failed: {payload['error']}")
+        result = payload.get("result") or {}
+        page = result.get("tools")
+        if not isinstance(page, list):
+            raise ValueError("MCP tools/list returned a malformed tools page")
+        tools.extend(page)
+        cursor = result.get("nextCursor")
+        if not cursor:
+            break
+    if not tools:
+        raise ValueError("MCP tools/list returned no tools")
+    canonical = []
+    for tool in tools:
+        if not isinstance(tool, dict) or not tool.get("name"):
+            raise ValueError("MCP tools/list contains a malformed tool definition")
+        raw_name = str(tool["name"])
+        item = dict(tool)
+        item["name"] = (
+            raw_name if raw_name.startswith("mcp__") else f"mcp__justsearch__{raw_name}"
+        )
+        if "input_schema" in item and "inputSchema" not in item:
+            item["inputSchema"] = item.pop("input_schema")
+        canonical.append(item)
+    canonical.sort(key=lambda item: item["name"])
+    if len({item["name"] for item in canonical}) != len(canonical):
+        raise ValueError("MCP tools/list contains duplicate tool names")
+    return canonical
+
+
+async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str], list[dict]]:
+    """Return server status, offered names, and canonical full tool definitions.
 
     Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
     `SystemMessage` init does not list the offered tools). Defensive across the
@@ -118,26 +176,41 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str]]
     try:
         status = await client.get_mcp_status()
     except Exception:
-        return None, []
+        return None, [], []
     if not isinstance(status, dict):
-        return None, []
+        return None, [], []
     servers = status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")
     if servers is None:
-        return None, []
+        return None, [], []
     js_tools: list[str] = []
+    js_surface: list[dict] = []
     for srv in servers:
         if srv.get("name") != "justsearch":
             continue
         for t in (srv.get("tools") or []):
             tn = t.get("name") if isinstance(t, dict) else str(t)
-            js_tools.append(tn if str(tn).startswith("mcp__") else f"mcp__justsearch__{tn}")
-    return servers, js_tools
+            normalized_name = tn if str(tn).startswith("mcp__") else f"mcp__justsearch__{tn}"
+            js_tools.append(normalized_name)
+            if isinstance(t, dict):
+                js_surface.append({
+                    "name": normalized_name,
+                    "description": t.get("description"),
+                    "input_schema": t.get("inputSchema", t.get("input_schema")),
+                })
+            else:
+                js_surface.append({
+                    "name": normalized_name,
+                    "description": None,
+                    "input_schema": None,
+                })
+    return servers, js_tools, sorted(js_surface, key=lambda item: item["name"])
 
 
 @solver
 def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                         model: str = "haiku", max_budget: str = "0.50",
-                        timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS):
+                        timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
+                        mcp_tool_surface_json: str = "[]"):
     """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
     `condition` is read from `state.metadata["condition"]` (the single-pool sample
@@ -156,10 +229,17 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     round-trips identically. Converted to float only at the point of use below. Do
     NOT reintroduce any float into the task/solver arg surface."""
     mcp_servers = _mcp_servers_from_config(mcp_config)
+    declared_mcp_tool_surface = json.loads(mcp_tool_surface_json)
+    from jseval.agent_manifest import mcp_tool_surface_hash
+    declared_mcp_tool_surface_hash = (
+        mcp_tool_surface_hash(declared_mcp_tool_surface)
+        if declared_mcp_tool_surface else None
+    )
 
     def _fresh_capture() -> dict:
         return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
-                "mcp_servers": None, "justsearch_tools": [], "resolved_models": set()}
+                "mcp_servers": None, "justsearch_tools": [],
+                "justsearch_tool_surface": [], "resolved_models": set()}
 
     async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
         """Run one SDK session, writing captured objects INCREMENTALLY into the shared
@@ -198,7 +278,8 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                                 capture["results"][b.tool_use_id] = {"is_error": bool(b.is_error)}
                     elif isinstance(msg, ResultMessage):
                         capture["rmsg"] = msg
-                capture["mcp_servers"], capture["justsearch_tools"] = await _mcp_surface(client)
+                (capture["mcp_servers"], capture["justsearch_tools"],
+                 capture["justsearch_tool_surface"]) = await _mcp_surface(client)
         finally:
             shutil.rmtree(query_cwd, ignore_errors=True)
 
@@ -239,7 +320,11 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         # own errors, so it never clobbers an error already set above.
         if capture is not None:
             try:
-                _record_cell(state, capture, condition, disallowed, mcp_config)
+                _record_cell(
+                    state, capture, condition, disallowed, mcp_config,
+                    declared_mcp_tool_surface_hash,
+                    declared_mcp_tool_surface,
+                )
             except Exception as e:  # noqa: BLE001 — a projection bug must never fabricate a cell
                 state.metadata.setdefault(
                     "error", f"record_cell failed: {type(e).__name__}: {str(e)[:200]}")
@@ -252,7 +337,9 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
 
 
 def _record_cell(state: TaskState, got: dict, condition: str,
-                 disallowed: list[str], mcp_config: str | None) -> None:
+                 disallowed: list[str], mcp_config: str | None,
+                 declared_mcp_tool_surface_hash: str | None = None,
+                 declared_mcp_tool_surface: list[dict] | None = None) -> None:
     """Project the captured SDK objects into `state.metadata` (the composer contract).
 
     `tool_calls` (composer-facing) = tools that ACTUALLY EXECUTED — a tool_use with a
@@ -289,19 +376,54 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
     servers = got["mcp_servers"]
     justsearch_tools = got["justsearch_tools"]
+    justsearch_surface = got.get("justsearch_tool_surface") or []
+    if not justsearch_surface and servers is not None:
+        for server in servers:
+            if not isinstance(server, dict) or server.get("name") != "justsearch":
+                continue
+            for tool in server.get("tools") or []:
+                raw_name = tool.get("name") if isinstance(tool, dict) else str(tool)
+                name = raw_name if str(raw_name).startswith("mcp__") else f"mcp__justsearch__{raw_name}"
+                justsearch_surface.append({
+                    "name": name,
+                    "description": tool.get("description") if isinstance(tool, dict) else None,
+                    "input_schema": (
+                        tool.get("inputSchema", tool.get("input_schema"))
+                        if isinstance(tool, dict) else None
+                    ),
+                })
+        justsearch_surface.sort(key=lambda item: item["name"])
     state.metadata["mcp_servers"] = servers
     state.metadata["mcp_tools_offered"] = (
         len(justsearch_tools) if servers is not None else None)
     state.metadata["mcp_tool_names_offered"] = (
         sorted(set(justsearch_tools)) if servers is not None else None)
-    state.metadata["observed_mcp_tool_surface_hash"] = (
-        hashlib.sha256(json.dumps(
-            {"tool_names": sorted(set(justsearch_tools))},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")).hexdigest()
-        if servers is not None else None
+    from jseval.agent_manifest import mcp_tool_surface_hash
+
+    observed_names = sorted(set(justsearch_tools))
+    declared_names = sorted(
+        str(tool.get("name")) for tool in (declared_mcp_tool_surface or [])
+        if tool.get("name")
     )
+    if declared_names and servers is not None and observed_names == declared_names:
+        observed_surface_hash = declared_mcp_tool_surface_hash
+    else:
+        observed_surface_hash = (
+            mcp_tool_surface_hash(justsearch_surface)
+            if servers is not None and justsearch_surface else None
+        )
+    state.metadata["observed_mcp_tool_surface_hash"] = observed_surface_hash
+    if (declared_mcp_tool_surface_hash and observed_surface_hash
+            and declared_mcp_tool_surface_hash != observed_surface_hash):
+        state.metadata.setdefault(
+            "error",
+            "declared MCP tool-surface hash disagrees with observed tools/list",
+        )
+    if declared_names and servers is not None and observed_names != declared_names:
+        state.metadata.setdefault(
+            "error",
+            "offered MCP tool names disagree with captured canonical tools/list",
+        )
     justsearch_connected = bool(servers) and any(
         (s.get("name") == "justsearch"
          and str(s.get("status", "")).lower() in ("connected", "ready", "ok"))
@@ -388,6 +510,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                        timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
                        # --- cohort identity (task-args → config-change log segregation, A2) ---
                        cli_version: str | None = None, mcp_tool_surface_hash: str | None = None,
+                       mcp_tool_surface_json: str = "[]",
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
                        corpus_dataset: str = "", corpus_signature: str = "",
                        source_identity_json: str = "{}") -> Task:
@@ -410,7 +533,10 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
     ]
     return Task(
         dataset=samples,
-        solver=claude_agent_solver(corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns),
+        solver=claude_agent_solver(
+            corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns,
+            mcp_tool_surface_json,
+        ),
         scorer=substring_scorer(),
         metadata={
             "model": model,
@@ -423,29 +549,74 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
             "cohort": {
                 "model": model, "cli_version": cli_version,
                 "mcp_tool_surface_hash": mcp_tool_surface_hash,
+                "mcp_tool_surface": json.loads(mcp_tool_surface_json),
                 "judge_kind": judge_kind, "prompt_template_hash": prompt_template_hash,
                 "source_git_sha": source_identity.get("source_git_sha"),
                 "source_git_dirty": source_identity.get("source_git_dirty"),
+                "source_git_state": source_identity.get("source_git_state"),
                 "search_config_cohort_key": source_identity.get("search_config_cohort_key"),
                 "environment": source_identity.get("environment"),
                 "corpus_identity": source_identity.get("corpus"),
+                "query_identity": source_identity.get("queries"),
+                "campaign_identity": source_identity.get("campaign"),
             },
         },
     )
 
 
-def _git_dirty() -> bool | None:
+def _git_source_state(*, exclude: str | Path | None = None) -> dict | None:
+    """Hash tracked changes and every untracked source byte, excluding run output."""
     try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+        root_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-        return bool(result.stdout.strip()) if result.returncode == 0 else None
+        if root_result.returncode != 0:
+            return None
+        root = Path(root_result.stdout.strip()).resolve()
+        excluded = Path(exclude).resolve() if exclude else None
+        tracked = subprocess.run(
+            ["git", "diff", "--binary", "HEAD", "--"], cwd=root,
+            capture_output=True, timeout=10, check=False,
+        )
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=root,
+            capture_output=True, timeout=10, check=False,
+        )
+        if tracked.returncode != 0 or untracked.returncode != 0:
+            return None
+        untracked_hash = hashlib.sha256()
+        count = 0
+        for raw_path in untracked.stdout.split(b"\0"):
+            if not raw_path:
+                continue
+            relative = raw_path.decode("utf-8", errors="surrogateescape")
+            path = (root / relative).resolve()
+            if excluded and (path == excluded or excluded in path.parents):
+                continue
+            if not path.is_file():
+                continue
+            untracked_hash.update(relative.replace("\\", "/").encode("utf-8"))
+            untracked_hash.update(b"\0")
+            untracked_hash.update(path.read_bytes())
+            untracked_hash.update(b"\0")
+            count += 1
+        return {
+            "tracked_diff_sha256": hashlib.sha256(tracked.stdout).hexdigest(),
+            "untracked_sha256": untracked_hash.hexdigest(),
+            "untracked_count": count,
+            "dirty": bool(tracked.stdout) or count > 0,
+        }
     except Exception:
         return None
+
+
+def _git_dirty() -> bool | None:
+    state = _git_source_state()
+    return state.get("dirty") if state is not None else None
 
 
 def _capture_or_load_source_identity(
@@ -455,25 +626,16 @@ def _capture_or_load_source_identity(
     corpus_dataset: str,
     declared_corpus_signature: str,
     search_config_cohort_key: str | None,
+    queries_path: str | None = None,
+    conditions: tuple[str, ...] | list[str] = (),
+    seeds: int = 0,
+    max_queries: int | None = None,
+    mcp_tool_surface: list[dict] | None = None,
 ) -> dict:
-    """Persist source-time identity once and reuse it unchanged on resume."""
+    """Persist source-time identity and fail closed when resumed inputs drift."""
     from jseval.corpus_identity import corpus_signature
-    from jseval.env_fingerprint import capture_env_fingerprint
+    from jseval.env_fingerprint import safe_environment_identity
     from jseval.manifest import _git_sha_full
-
-    path = Path(log_dir) / "source-identity.v1.json"
-    if path.is_file():
-        identity = json.loads(path.read_text(encoding="utf-8"))
-        expected = {
-            "dataset": corpus_dataset,
-            "declared_signature": declared_corpus_signature or None,
-        }
-        actual = identity.get("corpus") or {}
-        if any(actual.get(key) != value for key, value in expected.items()):
-            raise ValueError("source identity sidecar does not match resumed corpus arguments")
-        if identity.get("search_config_cohort_key") != search_config_cohort_key:
-            raise ValueError("source identity sidecar does not match resumed search config")
-        return identity
 
     root = Path(corpus_dir)
     signature = corpus_signature(root)
@@ -489,19 +651,60 @@ def _capture_or_load_source_identity(
         raise ValueError(
             f"declared corpus signature {declared} disagrees with materialized {signature}"
         )
-    identity = {
+    query_identity = None
+    campaign = None
+    if queries_path is not None:
+        query_path = Path(queries_path)
+        query_bytes = query_path.read_bytes()
+        rows = json.loads(query_bytes.decode("utf-8"))
+        if max_queries:
+            rows = rows[:max_queries]
+        condition_list = sorted(str(item) for item in conditions)
+        expected_cells = [
+            f"{condition}|{seed}|q{index}"
+            for seed in range(int(seeds))
+            for condition in condition_list
+            for index in range(len(rows))
+        ]
+        query_identity = {
+            "sha256": hashlib.sha256(query_bytes).hexdigest(),
+            "row_count": len(rows),
+        }
+        campaign = {
+            "conditions": condition_list,
+            "seeds": int(seeds),
+            "expected_cells": expected_cells,
+        }
+
+    git_state = _git_source_state(exclude=log_dir)
+    stable_identity = {
         "schema": "agent-utility-source-identity.v1",
         "source_git_sha": _git_sha_full(),
-        "source_git_dirty": _git_dirty(),
+        "source_git_dirty": git_state.get("dirty") if git_state is not None else None,
+        "source_git_state": git_state,
         "search_config_cohort_key": search_config_cohort_key,
+        "mcp_tool_surface": mcp_tool_surface,
         "corpus": {
             "dataset": corpus_dataset,
             "declared_signature": declared,
             "signature": signature,
             "signature_matches": signature_matches,
         },
-        "environment": capture_env_fingerprint(),
+        "queries": query_identity,
+        "campaign": campaign,
+        "environment": safe_environment_identity(),
     }
+    path = Path(log_dir) / "source-identity.v1.json"
+    if path.is_file():
+        identity = json.loads(path.read_text(encoding="utf-8"))
+        for key, value in stable_identity.items():
+            if identity.get(key) != value:
+                raise ValueError(
+                    f"source identity sidecar does not match resumed {key}"
+                )
+        return identity
+
+    identity = stable_identity
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(identity, indent=2, sort_keys=True), encoding="utf-8")
     return identity
@@ -513,7 +716,6 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      max_budget: float = 0.50, timeout_s: int = 180,
                      max_turns: int = _DEFAULT_MAX_TURNS,
                      cli_version: str | None = None,
-                     mcp_tool_surface_hash: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "",
                      search_config_cohort_key: str | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
@@ -540,6 +742,14 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         if watched_roots_base_url:
             assert_watched_roots_scoped(watched_roots_base_url, corpus_dir)
 
+    captured_mcp_surface = (
+        _capture_canonical_mcp_surface(mcp_config) if mcp_config else []
+    )
+    from jseval.agent_manifest import mcp_tool_surface_hash as _surface_hash
+    captured_mcp_surface_hash = (
+        _surface_hash(captured_mcp_surface) if captured_mcp_surface else None
+    )
+
     # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
     source_identity = _capture_or_load_source_identity(
@@ -548,6 +758,11 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         corpus_dataset=corpus_dataset,
         declared_corpus_signature=corpus_signature,
         search_config_cohort_key=search_config_cohort_key,
+        queries_path=queries_path,
+        conditions=conditions,
+        seeds=seeds,
+        max_queries=max_queries,
+        mcp_tool_surface=captured_mcp_surface,
     )
     source_identity_json = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
@@ -572,7 +787,10 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                 mcp_config=mcp_config, model=model,
                 max_queries=max_queries, max_budget=str(max_budget), timeout_s=timeout_s,
                 max_turns=max_turns, cli_version=cli_version,
-                mcp_tool_surface_hash=mcp_tool_surface_hash, judge_kind="substring-em",
+                mcp_tool_surface_hash=captured_mcp_surface_hash,
+                mcp_tool_surface_json=json.dumps(
+                    captured_mcp_surface, sort_keys=True, separators=(",", ":")),
+                judge_kind="substring-em",
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
                 source_identity_json=source_identity_json,
@@ -586,6 +804,10 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         eval_set(tasks, log_dir=log_dir, epochs=seeds, model="mockllm/model",
                  max_samples=concurrency, log_format="json",
                  eval_set_id=eval_set_id)
+        if mcp_config:
+            final_mcp_surface = _capture_canonical_mcp_surface(mcp_config)
+            if final_mcp_surface != captured_mcp_surface:
+                raise RuntimeError("canonical MCP tools/list changed during the campaign")
     finally:
         shutil.rmtree(Path(staged_corpus_dir).parent, ignore_errors=True)
     return log_dir

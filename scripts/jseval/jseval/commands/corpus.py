@@ -13,6 +13,77 @@ from ._common import assert_run_capabilities
 log = logging.getLogger(__name__)
 
 
+@click.command("corpus-query-stratum-build")
+@click.option("--source", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--output", required=True, type=click.Path(file_okay=False))
+@click.option("--language", required=True, type=click.Choice(["en", "de"]))
+@click.pass_context
+def cmd_corpus_query_stratum_build(ctx, source, output, language):
+    """Build the committed deterministic short-natural sibling of verbose gold."""
+    from ..corpus_query_strata import build_short_natural_source
+
+    report = build_short_natural_source(source, output, language=language)
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(
+            f"Built {report['query_count']} {language} short-natural queries -> {output}")
+
+
+@click.command("corpus-certify-member")
+@click.option("--member", required=True)
+@click.option("--datasets-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.option("--dataset", "datasets", multiple=True, required=True,
+              help="SIZE:VARIANT:NAME; provide all 1k/10k verbose/short-natural cells.")
+@click.option("--commitment", "commitments", multiple=True, required=True,
+              help="SIZE:VARIANT:PATH; immutable recipe/input commitment for each cell.")
+@click.pass_context
+def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commitments):
+    """Certify zero-cost structural facts for a complete 707 member matrix."""
+    from ..corpus_certify import certify_materialized_family
+
+    matrix: dict[str, dict[str, str]] = {}
+    for value in datasets:
+        try:
+            size, variant, name = value.split(":", 2)
+        except ValueError as exc:
+            raise click.UsageError("--dataset must be SIZE:VARIANT:NAME") from exc
+        matrix.setdefault(size, {})[variant] = name
+    required = {
+        ("1000", "verbose"), ("1000", "short-natural"),
+        ("10000", "verbose"), ("10000", "short-natural"),
+    }
+    actual = {(size, variant) for size, variants in matrix.items() for variant in variants}
+    if actual != required:
+        raise click.UsageError(f"--dataset matrix must be exactly {sorted(required)!r}")
+    commitment_matrix: dict[str, dict[str, str]] = {}
+    for value in commitments:
+        try:
+            size, variant, path = value.split(":", 2)
+        except ValueError as exc:
+            raise click.UsageError("--commitment must be SIZE:VARIANT:PATH") from exc
+        commitment_matrix.setdefault(size, {})[variant] = path
+    commitment_actual = {
+        (size, variant)
+        for size, variants in commitment_matrix.items() for variant in variants
+    }
+    if commitment_actual != required:
+        raise click.UsageError(f"--commitment matrix must be exactly {sorted(required)!r}")
+    report = certify_materialized_family(
+        datasets_dir, member=member, dataset_names=matrix,
+        commitment_dirs=commitment_matrix)
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(f"{member}: {report['status']} -> {target}")
+    if not report["structural_passed"]:
+        raise click.ClickException("structural certification failed")
+
+
 @click.command("corpus-inject-real")
 @click.option("--real-corpus", required=True, type=click.Path(exists=True, file_okay=False),
               help="Transient fetched corpus directory containing corpus.jsonl or docs.jsonl.")
@@ -523,5 +594,5 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
 
 
-COMMANDS = [cmd_corpus_inject_real, cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
+COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member, cmd_corpus_inject_real, cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
             cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]

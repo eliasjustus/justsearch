@@ -1,0 +1,259 @@
+{
+  "method": "real-text-injection-v1",
+  "seed": 707,
+  "style": "interleave",
+  "n_gold_docs": 60,
+  "n_distractors": 9940,
+  "host_min_words": 60,
+  "host_mapping": [
+    {
+      "gold_id": "brelby55",
+      "host_id": "382426#12"
+    },
+    {
+      "gold_id": "cavric6",
+      "host_id": "8405140#1"
+    },
+    {
+      "gold_id": "druash17",
+      "host_id": "10725487#2"
+    },
+    {
+      "gold_id": "drufen48",
+      "host_id": "5659797#25"
+    },
+    {
+      "gold_id": "druvale10",
+      "host_id": "10234523#0"
+    },
+    {
+      "gold_id": "druvale41",
+      "host_id": "10749001#15"
+    },
+    {
+      "gold_id": "falcrag36",
+      "host_id": "8964079#1"
+    },
+    {
+      "gold_id": "faldell9",
+      "host_id": "7606097#3"
+    },
+    {
+      "gold_id": "falholt49",
+      "host_id": "3955373#18"
+    },
+    {
+      "gold_id": "falholt52",
+      "host_id": "11507528#0"
+    },
+    {
+      "gold_id": "harnric43",
+      "host_id": "10296001#11"
+    },
+    {
+      "gold_id": "kanker4",
+      "host_id": "217525#5"
+    },
+    {
+      "gold_id": "kanric58",
+      "host_id": "4743349#1"
+    },
+    {
+      "gold_id": "limcrag42",
+      "host_id": "11410759#15"
+    },
+    {
+      "gold_id": "limdac15",
+      "host_id": "26173#54"
+    },
+    {
+      "gold_id": "limpost14",
+      "host_id": "1117918#7"
+    },
+    {
+      "gold_id": "limric28",
+      "host_id": "8343053#1"
+    },
+    {
+      "gold_id": "limric30",
+      "host_id": "3399848#2"
+    },
+    {
+      "gold_id": "limven7",
+      "host_id": "47817#6"
+    },
+    {
+      "gold_id": "mirholt11",
+      "host_id": "11182347#0"
+    },
+    {
+      "gold_id": "mirker39",
+      "host_id": "10923430#3"
+    },
+    {
+      "gold_id": "mirmire32",
+      "host_id": "11943313#11"
+    },
+    {
+      "gold_id": "nuthpost20",
+      "host_id": "967309#74"
+    },
+    {
+      "gold_id": "olmholt21",
+      "host_id": "4097601#2"
+    },
+    {
+      "gold_id": "olmholt27",
+      "host_id": "3597299#3"
+    },
+    {
+      "gold_id": "olmstone1",
+      "host_id": "1911654#3"
+    },
+    {
+      "gold_id": "olmvale40",
+      "host_id": "7707315#2"
+    },
+    {
+      "gold_id": "olmven23",
+      "host_id": "1010471#9"
+    },
+    {
+      "gold_id": "orrstone56",
+      "host_id": "1340124#3"
+    },
+    {
+      "gold_id": "pellgrove8",
+      "host_id": "2033387#8"
+    },
+    {
+      "gold_id": "pellmire34",
+      "host_id": "715#63"
+    },
+    {
+      "gold_id": "pellthorn5",
+      "host_id": "6629333#14"
+    },
+    {
+      "gold_id": "quenby16",
+      "host_id": "6177082#5"
+    },
+    {
+      "gold_id": "quenpost18",
+      "host_id": "11226387#20"
+    },
+    {
+      "gold_id": "quenwick13",
+      "host_id": "6993674#2"
+    },
+    {
+      "gold_id": "rellgrove31",
+      "host_id": "4831252#3"
+    },
+    {
+      "gold_id": "rellgrove35",
+      "host_id": "10908067#4"
+    },
+    {
+      "gold_id": "rellpost3",
+      "host_id": "11333605#13"
+    },
+    {
+      "gold_id": "rellvale46",
+      "host_id": "3798667#4"
+    },
+    {
+      "gold_id": "skodac60",
+      "host_id": "3130784#11"
+    },
+    {
+      "gold_id": "skovale51",
+      "host_id": "4914052#4"
+    },
+    {
+      "gold_id": "tasmond25",
+      "host_id": "67354#2"
+    },
+    {
+      "gold_id": "tasmond44",
+      "host_id": "11662667#3"
+    },
+    {
+      "gold_id": "tasric24",
+      "host_id": "7921695#2"
+    },
+    {
+      "gold_id": "tasven50",
+      "host_id": "5776480#4"
+    },
+    {
+      "gold_id": "vexdell37",
+      "host_id": "284184#6"
+    },
+    {
+      "gold_id": "vexker22",
+      "host_id": "1102819#57"
+    },
+    {
+      "gold_id": "vexmire33",
+      "host_id": "1121392#22"
+    },
+    {
+      "gold_id": "vexpost29",
+      "host_id": "3411648#6"
+    },
+    {
+      "gold_id": "vorcrag54",
+      "host_id": "789852#4"
+    },
+    {
+      "gold_id": "vorfen38",
+      "host_id": "2687844#13"
+    },
+    {
+      "gold_id": "vorreach45",
+      "host_id": "7677001#3"
+    },
+    {
+      "gold_id": "vorstone53",
+      "host_id": "3131078#7"
+    },
+    {
+      "gold_id": "wendash12",
+      "host_id": "4785048#11"
+    },
+    {
+      "gold_id": "wendby57",
+      "host_id": "1140824#4"
+    },
+    {
+      "gold_id": "wendvale26",
+      "host_id": "2157142#2"
+    },
+    {
+      "gold_id": "zeldell2",
+      "host_id": "9570619#2"
+    },
+    {
+      "gold_id": "zelmire59",
+      "host_id": "9749680#4"
+    },
+    {
+      "gold_id": "zelpost47",
+      "host_id": "8801426#8"
+    },
+    {
+      "gold_id": "zelthorn19",
+      "host_id": "1369244#4"
+    }
+  ],
+  "assembled_digest": "428c962fffcae2cf60bf02496e1741bcc5b7d0e4253fef35aca3c07b21e70b86",
+  "real_source_id": "miracl/de/dev:seed707:hosts30k",
+  "real_source_sha256": "bb2d828be25143d2fce29121d38c9d9284b41128c85973aa5fb6c28cd326d5d2",
+  "license": "Apache-2.0",
+  "assembly_determinism": {
+    "passed": true,
+    "method": "cross-process-regeneration-diff",
+    "digest": "428c962fffcae2cf60bf02496e1741bcc5b7d0e4253fef35aca3c07b21e70b86"
+  }
+}

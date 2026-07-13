@@ -1,0 +1,169 @@
+{
+  "schema": "707-corpus-structural-certification.v1",
+  "member": "de-miracl",
+  "status": "structurally-certified",
+  "datasets": {
+    "1000": {
+      "short-natural": {
+        "dataset": "mixed/de-miracl-1k-short-natural",
+        "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "40451af76ac2a9bb80374bc028cf0920e73fa35e27e2a72e7b425ba29f4eb5c0",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "03a09d7241d686095243f3c7052c846b42a51cc290d4ceeab1bafba8ad4d5824",
+          "recipe_sha256": "2081aca9ac2fd017755b057b8ad5f6542830afe0a35bda1191bbb2f9126012b6"
+        },
+        "descriptor_collision": {
+          "n_groups": 3,
+          "n_docs_involved": 6,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "passed": true
+      },
+      "verbose": {
+        "dataset": "mixed/de-miracl-1k-verbose",
+        "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "3a1f3a1b16801e2cf9e713b83343142bb33054895a53d5d0488f64b3b7cd3bef",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "f76e3d244deaa4367d3188aa800ff1251bd68201dd551348ae45dbf143dc63e2",
+          "recipe_sha256": "f6a41890a7e4fbd3adef69f232152b69fd54c22da01581381b8c4eb328d4b938"
+        },
+        "descriptor_collision": {
+          "n_groups": 3,
+          "n_docs_involved": 6,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "passed": true
+      }
+    },
+    "10000": {
+      "short-natural": {
+        "dataset": "mixed/de-miracl-10k-short-natural",
+        "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "99349d31f71201e4b6486a567e79d7c29181089cd4ca873823ebce63b84869cb",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "2225fd895dcd6de9a3b538742501ba8ea08c805dadb5687f72921a96f1a276b9",
+          "recipe_sha256": "f1048feb70abe8080a2573ee0e52a28f99d9d05df3b4fcc7db0eb2e0f8f8b498"
+        },
+        "descriptor_collision": {
+          "n_groups": 148,
+          "n_docs_involved": 324,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "passed": true
+      },
+      "verbose": {
+        "dataset": "mixed/de-miracl-10k-verbose",
+        "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "428c962fffcae2cf60bf02496e1741bcc5b7d0e4253fef35aca3c07b21e70b86",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "4cfbc765d590e276e515312d63dd080ccde5bf9ba4096e051823923814ebe3d6",
+          "recipe_sha256": "59e66d4d03e8e3d214029f241cdfdc572d94ab8a90d98d38095f8176aa272fe8"
+        },
+        "descriptor_collision": {
+          "n_groups": 148,
+          "n_docs_involved": 324,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "passed": true
+      }
+    }
+  },
+  "family_checks": {
+    "verbose": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "short-natural": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "strata": {
+      "same_family_ids": true,
+      "same_answers_and_evidence": true,
+      "distinct_query_text": true,
+      "same_corpus_and_qrels_per_size": true
+    }
+  },
+  "structural_passed": true,
+  "scientific_gates": {
+    "closed_book": "pending-model-run",
+    "retrieval_calibration": "pending-backend-run",
+    "union_recall": "pending-backend-run",
+    "leak_floor": "pending-backend-run"
+  },
+  "fully_certified": false
+}

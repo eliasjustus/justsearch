@@ -9,8 +9,15 @@ from click.testing import CliRunner
 
 from jseval.agent_utility_observations import successful_summaries
 from jseval.commands.utility import cmd_utility_recompose
+from jseval.agent_manifest import mcp_tool_surface_hash
 from jseval.utility_evidence import read_evidence, sanitize_observation
 from jseval.utility_recompose import finalize_observation_groups, finalize_evidence
+
+_SURFACE = [{
+    "name": "mcp__justsearch__search", "description": "Search",
+    "input_schema": {"type": "object"},
+}]
+_SURFACE_HASH = mcp_tool_surface_hash(_SURFACE)
 
 
 def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
@@ -23,12 +30,33 @@ def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
             "cohort": {
                 "source_git_sha": "a" * 40,
                 "source_git_dirty": False,
+                "source_git_state": {
+                    "tracked_diff_sha256": "0" * 64,
+                    "untracked_sha256": "0" * 64,
+                    "untracked_count": 0,
+                    "dirty": False,
+                },
                 "cli_version": "1",
-                "mcp_tool_surface_hash": "mcp",
+                "mcp_tool_surface_hash": _SURFACE_HASH,
+                "mcp_tool_surface": _SURFACE,
                 "judge_kind": "substring-em",
                 "prompt_template_hash": "prompt",
                 "search_config_cohort_key": "search" if condition == "B" else None,
                 "corpus_identity": {"signature": "c" * 64},
+                "query_identity": {"sha256": "e" * 64, "row_count": 1},
+                "campaign_identity": {
+                    "conditions": ["A", "B"], "seeds": 1,
+                    "expected_cells": ["A|0|q0", "B|0|q0"],
+                },
+                "environment": {
+                    "captured_at": "private timestamp",
+                    "platform": {"system": "Windows", "release": "11", "machine": "AMD64"},
+                    "gpu": {"available": True, "name": "GPU", "driver_version": "1",
+                            "mem_total_mb": 10, "temp_c": 99},
+                    "services": {"PrivateSvc": "RUNNING"},
+                    "top_processes": [{"name": "secret.exe", "pid": 123}],
+                    "power_plan": "private plan",
+                },
             },
         },
         "condition": condition,
@@ -53,7 +81,7 @@ def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
         "mcp_servers": [{"name": "justsearch", "status": "connected", "url": "secret"}],
         "mcp_tools_offered": 1,
         "mcp_tool_names_offered": ["mcp__justsearch__search"],
-        "observed_mcp_tool_surface_hash": "f" * 64,
+        "observed_mcp_tool_surface_hash": _SURFACE_HASH,
         "mcp_surface_unverified": False,
         "mcp_tools_deferred": False,
         "completion": "third-party copyrighted text",
@@ -75,6 +103,11 @@ def test_sanitizer_denies_raw_content_paths_inputs_and_credentials():
     assert "private" not in encoded.lower()
     assert "secret" not in encoded.lower()
     assert baseline["error_class"] == "timeout"
+    environment = baseline["source"]["environment"]
+    assert set(environment) == {"platform", "gpu"}
+    assert set(environment["gpu"]) == {
+        "available", "driver_version", "name", "mem_total_mb",
+    }
 
 
 def test_gate_relevant_negative_fields_change_sanitized_bytes():
@@ -122,6 +155,26 @@ def test_evidence_roundtrip_preserves_semantic_digest(tmp_path):
     assert changed["semantic_digest"] != direct["semantic_digest"]
 
 
+def test_missing_expected_cell_fails_closed():
+    with pytest.raises(ValueError, match="expected campaign matrix"):
+        finalize_observation_groups([[_observation("A")]], composed_at="missing")
+
+
+def test_excluded_unverified_b_cell_remains_in_authoritative_assertions():
+    baseline = _observation("A")
+    excluded = _observation("B", excluded=True)
+    excluded["mcp_surface_unverified"] = True
+    excluded["observed_mcp_tool_surface_hash"] = None
+    record = finalize_observation_groups([[baseline, excluded]], composed_at="excluded")
+
+    assertions = record["tool_call_assertions"]["B"]
+    assert assertions["cells_total"] == 1
+    assert assertions["cells_excluded"] == 1
+    assert assertions["cells_mcp_surface_unverified"] == 1
+    assert record["claim_verdict"]["accepted"] is False
+    assert "verified_tool_surface" in record["claim_verdict"]["reasons"]
+
+
 def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
     path = (
         Path(__file__).parent
@@ -135,10 +188,12 @@ def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
     record = finalize_evidence([path], composed_at="fixture")
     loss = record["comparability"]["per_arm_loss"]
     assert loss["A"] == {
-        "n_attempted": 24, "n_completed": 16, "n_excluded": 8, "exclusion_rate": 0.3333,
+        "n_attempted": 24, "n_planned": 24, "n_pending": 0,
+        "n_completed": 16, "n_excluded": 8, "exclusion_rate": 0.3333,
     }
     assert loss["B"] == {
-        "n_attempted": 24, "n_completed": 14, "n_excluded": 10, "exclusion_rate": 0.4167,
+        "n_attempted": 24, "n_planned": 24, "n_pending": 0,
+        "n_completed": 14, "n_excluded": 10, "exclusion_rate": 0.4167,
     }
     assert record["comparability"]["metrics"]["paired_n_retention"] == 0.5
     assert record["comparability"]["comparable"] is False

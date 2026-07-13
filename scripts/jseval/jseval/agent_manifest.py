@@ -48,24 +48,20 @@ _RANGE_AND_COVARYING_FIELDS = (
 def mcp_tool_surface_hash(tools: list[dict] | None) -> str:
     """Stable hash of the MCP tool surface the agent was offered (R8).
 
-    Hashes the deterministic ``tools/list`` payload — each tool's ``name`` +
-    ``description`` + ``inputSchema`` — sorted by name so ordering is not part of
+    Hashes the complete deterministic ``tools/list`` tool objects, including
+    schemas and annotations, sorted by name so ordering is not part of
     identity. ``None``/empty (the without-tool arm) hashes a sentinel so arm A's
     surface is a stable, distinct identity rather than an error.
     """
     if not tools:
         return _sha256_canonical({"tools": "none"})
-    norm = sorted(
-        (
-            {
-                "name": t.get("name"),
-                "description": t.get("description"),
-                "inputSchema": t.get("inputSchema") or t.get("input_schema"),
-            }
-            for t in tools
-        ),
-        key=lambda t: t.get("name") or "",
-    )
+    norm = []
+    for tool in tools:
+        item = dict(tool)
+        if "input_schema" in item and "inputSchema" not in item:
+            item["inputSchema"] = item.pop("input_schema")
+        norm.append(item)
+    norm.sort(key=lambda t: t.get("name") or "")
     return _sha256_canonical({"tools": norm})
 
 
@@ -150,7 +146,8 @@ def agent_cohort_key(manifest: dict) -> str:
     """Harness-identity equivalence key for a utility-comparison record (R1/R2).
 
     Two runs sharing this key were produced by the *same harness configuration*
-    (same git, CLI, MCP tool surface, judge, prompt, decoding, limits),
+    (same git state, safe environment, CLI, MCP tool surface, judge, prompt,
+    decoding, limits),
     regardless of corpus, model tier, condition, or seed — exactly the axes a
     utility-comparison record ranges over. Excludes the volatile run fields and
     everything in ``_RANGE_AND_COVARYING_FIELDS`` (notably the search-config
@@ -165,6 +162,8 @@ def agent_cohort_key(manifest: dict) -> str:
         "prompt_template_hash": manifest.get("prompt_template_hash"),
         "decoding": manifest.get("decoding"),
         "eval_limits": manifest.get("eval_limits"),
+        "source_git_state": manifest.get("source_git_state"),
+        "environment": manifest.get("environment"),
     }
     return _sha256_canonical(key_surface)
 

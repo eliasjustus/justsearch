@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from jseval.agent_utility_observations import read_inspect_observations
+from jseval.env_fingerprint import safe_environment_identity
 
 SCHEMA = "agent-utility-observation.v1"
 _OBSERVATION_KEYS = {
@@ -19,9 +20,10 @@ _OBSERVATION_KEYS = {
     "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
 }
 _SOURCE_KEYS = {
-    "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty",
-    "cli_version", "mcp_tool_surface_hash", "judge_kind", "prompt_template_hash",
+    "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
+    "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
     "decoding", "eval_limits", "search_config_cohort_key", "environment", "corpus_identity",
+    "query_identity", "campaign_identity",
 }
 
 
@@ -108,15 +110,19 @@ def sanitize_observation(observation: dict) -> dict:
             "packages": source.get("packages") or {},
             "source_git_sha": cohort.get("source_git_sha") or cohort.get("git_sha"),
             "source_git_dirty": cohort.get("source_git_dirty"),
+            "source_git_state": cohort.get("source_git_state"),
             "cli_version": cohort.get("cli_version"),
             "mcp_tool_surface_hash": cohort.get("mcp_tool_surface_hash"),
+            "mcp_tool_surface": cohort.get("mcp_tool_surface"),
             "judge_kind": cohort.get("judge_kind"),
             "prompt_template_hash": cohort.get("prompt_template_hash"),
             "decoding": cohort.get("decoding") or {},
             "eval_limits": cohort.get("eval_limits") or {},
             "search_config_cohort_key": cohort.get("search_config_cohort_key"),
-            "environment": cohort.get("environment"),
+            "environment": safe_environment_identity(cohort.get("environment") or {}),
             "corpus_identity": cohort.get("corpus_identity"),
+            "query_identity": cohort.get("query_identity"),
+            "campaign_identity": cohort.get("campaign_identity"),
         },
     }
 
@@ -161,10 +167,11 @@ def read_evidence(path: str | Path) -> list[dict]:
         cohort = {
             key: source.get(key)
             for key in (
-                "source_git_sha", "source_git_dirty", "cli_version",
-                "mcp_tool_surface_hash", "judge_kind", "prompt_template_hash",
+                "source_git_sha", "source_git_dirty", "source_git_state", "cli_version",
+                "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
                 "decoding", "eval_limits", "search_config_cohort_key",
                 "environment", "corpus_identity",
+                "query_identity", "campaign_identity",
             )
         }
         observations.append({

@@ -19,6 +19,8 @@
   },
   "sizes": [1000, 10000],
   "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [],
+  "structural_certification": null,
   "claim_eligible": false,
   "remaining_gates": ["resolve_source_license_or_replace_email_source", "materialize_member", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
 }

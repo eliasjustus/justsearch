@@ -58,10 +58,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty",
-        "cli_version", "mcp_tool_surface_hash", "judge_kind", "prompt_template_hash",
+        "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
+        "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
         "decoding", "eval_limits", "search_config_cohort_key", "environment",
-        "corpus_identity"
+        "corpus_identity", "query_identity", "campaign_identity"
       ],
       "properties": {
         "model_alias": {"type": ["string", "null"]},
@@ -69,15 +69,19 @@
         "packages": {"type": ["object", "array"]},
         "source_git_sha": {"type": ["string", "null"]},
         "source_git_dirty": {"type": ["boolean", "null"]},
+        "source_git_state": {"type": ["object", "null"]},
         "cli_version": {"type": ["string", "null"]},
         "mcp_tool_surface_hash": {"type": ["string", "null"]},
+        "mcp_tool_surface": {"type": ["array", "null"], "items": {"type": "object"}},
         "judge_kind": {"type": ["string", "null"]},
         "prompt_template_hash": {"type": ["string", "null"]},
         "decoding": {"type": "object"},
         "eval_limits": {"type": "object"},
         "search_config_cohort_key": {"type": ["string", "null"]},
         "environment": {"type": ["object", "null"]},
-        "corpus_identity": {"type": ["object", "null"]}
+        "corpus_identity": {"type": ["object", "null"]},
+        "query_identity": {"type": ["object", "null"]},
+        "campaign_identity": {"type": ["object", "null"]}
       }
     }
   }

@@ -100,6 +100,32 @@ def test_tool_surface_hash_order_independent():
     assert h1 != agent_manifest.mcp_tool_surface_hash(None)  # arm A sentinel differs
 
 
+def test_tool_surface_hash_covers_output_schema_and_annotations():
+    base = [{"name": "search", "inputSchema": {"type": "object"},
+             "outputSchema": {"type": "string"},
+             "annotations": {"readOnlyHint": True}}]
+    changed_output = [{**base[0], "outputSchema": {"type": "integer"}}]
+    changed_annotations = [{**base[0], "annotations": {"readOnlyHint": False}}]
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_output
+    )
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_annotations
+    )
+
+
+def test_configured_alpha_changes_bootstrap_interval():
+    run_a = {"per_query_metrics": {str(i): {"m": 0.0} for i in range(8)}}
+    values = [0.0, 0.0, 0.1, 0.2, 0.4, 0.8, 1.2, 2.0]
+    run_b = {"per_query_metrics": {str(i): {"m": value} for i, value in enumerate(values)}}
+    qrels = {str(i): {} for i in range(8)}
+    wide = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.01)
+    narrow = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.20)
+    assert wide["m"]["ci"][0] <= narrow["m"]["ci"][0]
+    assert wide["m"]["ci"][1] >= narrow["m"]["ci"][1]
+    assert wide["m"]["confidence_level"] == 0.99
+
+
 # --- McNemar (R3) -----------------------------------------------------------
 
 def test_mcnemar_counts_and_delta():
@@ -737,7 +763,7 @@ def test_inspect_path_roundtrip(tmp_path):
               mock_task(condition="C", wrong_q0=False, cost=0.06, tok=2000)],
              log_dir=log_dir, epochs=2, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(
         summaries, composed_at="t", contamination_class="private-synthetic")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
@@ -810,7 +836,7 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
     eval_set([mock_task(condition="A"), mock_task(condition="C")],
              log_dir=log_dir, epochs=1, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["leak_suspect_cells"] == []  # signal sat in a key neither scan reads
@@ -908,7 +934,7 @@ def test_governance_end_to_end(tmp_path):
     verdict, metrics = paired_comparability(arms)
     assert verdict.comparable is False                  # C ~30% + asymmetric exclusion
 
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     gov = {"comparable": verdict.comparable, "reasons": verdict.reasons, "metrics": metrics,
            "per_arm_loss": {c: {"n_excluded": l.n_excluded} for c, l in arms.items()}}
     rec = utility_comparison.compose_utility(
@@ -1023,7 +1049,7 @@ def test_governance_reads_sample_conditions_from_one_consolidated_log(tmp_path):
     assert arms["C"].excluded_query_ids == {"q0", "q1"}
     assert arms["C"].ok_by_seed == {0: {"q2", "q3"}, 1: {"q2", "q3"}}
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     by_condition_seed = {
         (summary["condition"], summary["manifest"]["seed"]): set(summary["per_query"])
         for summary in summaries
@@ -1053,6 +1079,8 @@ def _graded_logs(tmp_path, conds_through):
             idx, tgt = md.get("idx", 0), md.get("tgt", "")
             state.output.completion = tgt if idx <= correct_through else "wrong"
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
+            if md.get("condition") == "B":
+                state.metadata["observed_mcp_tool_surface_hash"] = "h"
             return state
         return solve
 
@@ -1094,7 +1122,7 @@ def test_composer_separates_addition_b_and_substitution_c(tmp_path):
     from jseval import agent_utility_run as aur
     # A correct q0-1 (0.5); B correct q0-2 (0.75); C correct all (1.0).
     log = _graded_logs(tmp_path, {"A": 1, "B": 2, "C": 3})
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "addition_b"                   # REALISTIC arm headlines, never C (C-4)
@@ -1108,7 +1136,7 @@ def test_substitution_only_cell_is_flagged_not_headlined(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
     log = _graded_logs(tmp_path, {"A": 1, "C": 3})               # no B -> substitution-only
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     cell = utility_comparison.compose_utility(summaries, composed_at="t")["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "substitution_c"               # only C available
     assert "headline_caveat" in cell                             # ...but flagged as NOT a deployment headline

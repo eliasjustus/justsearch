@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jseval import corpus_build, corpus_certify, corpus_inject
+from jseval import corpus_build, corpus_certify, corpus_inject, corpus_query_strata
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -54,6 +54,7 @@ def test_real_text_injection_is_deterministic_and_certifiable(tmp_path):
     assert (source_one / "docs.jsonl").read_bytes() == (source_two / "docs.jsonl").read_bytes()
     provenance = meta_one["generation_provenance"]
     assert provenance["assembled_digest"] == meta_two["generation_provenance"]["assembled_digest"]
+    assert provenance["assembly_determinism"]["method"] == "cross-process-regeneration-diff"
     assert corpus_certify.regeneration_determinism_report(provenance)["passed"] is True
 
     materialized = tmp_path / "datasets" / "mixed" / "fixture"
@@ -83,6 +84,34 @@ def test_commitment_contains_fabricated_inputs_and_ids_but_no_real_host_text(tmp
     assert "ochre ferrolite 0047" in committed_text
     assert "host_id" in committed_text
     assert "Real host private sentence" not in committed_text
+    assert corpus_certify._validate_commitment(
+        commitment, meta["generation_provenance"]
+    )["passed"] is True
+
+    recipe_path = commitment / "recipe.json"
+    forged = json.loads(recipe_path.read_text(encoding="utf-8"))
+    forged["assembly_determinism"] = {
+        "passed": True,
+        "method": "cross-process-regeneration-diff",
+        "digest": "f" * 64,
+    }
+    recipe_path.write_text(json.dumps(forged), encoding="utf-8")
+    assert corpus_certify._validate_commitment(
+        commitment, meta["generation_provenance"]
+    )["passed"] is False
+
+
+def test_forged_real_text_determinism_evidence_fails_closed():
+    provenance = {
+        "method": "real-text-injection-v1",
+        "assembled_digest": "a" * 64,
+        "assembly_determinism": {
+            "passed": True,
+            "method": "cross-process-regeneration-diff",
+            "digest": "b" * 64,
+        },
+    }
+    assert corpus_certify.regeneration_determinism_report(provenance)["passed"] is False
 
 
 def test_checked_in_707_member_recipes_are_strict_and_license_fail_closed():
@@ -97,6 +126,30 @@ def test_checked_in_707_member_recipes_are_strict_and_license_fail_closed():
         members.append(member)
         if member["real_source"]["license_status"] != "verified":
             assert member["claim_eligible"] is False
+            assert member["structural_certification"] is None
+        if member["structural_certification"]:
+            certification = json.loads(
+                (path.parent / member["structural_certification"]).read_text(encoding="utf-8"))
+            assert certification["structural_passed"] is True
+            assert certification["fully_certified"] is False
+            assert set(certification["scientific_gates"].values()) <= {
+                "pending-model-run", "pending-backend-run",
+            }
     assert {member["name"] for member in members} == {
         "en-legal-clerc", "de-miracl", "en-email-enronqa",
     }
+
+
+def test_short_natural_query_strata_are_deterministic_and_bounded(tmp_path):
+    en_source = Path(__file__).parents[1] / "635-corpora" / "needle-burial-v1"
+    de_source = Path(__file__).parents[1] / "635-corpora" / "synth-multiling-de-v1"
+    for language, source in (("en", en_source), ("de", de_source)):
+        first = tmp_path / f"{language}-one"
+        second = tmp_path / f"{language}-two"
+        corpus_query_strata.build_short_natural_source(source, first, language=language)
+        corpus_query_strata.build_short_natural_source(source, second, language=language)
+        assert (first / "queries.json").read_bytes() == (second / "queries.json").read_bytes()
+        queries = json.loads((first / "queries.json").read_text(encoding="utf-8"))
+        assert all(query["query_variant"] == "short-natural" for query in queries)
+        assert all(5 <= len(query["query"].split()) <= 12 for query in queries)
+        assert len({query["query_family_id"] for query in queries}) == len(queries)
