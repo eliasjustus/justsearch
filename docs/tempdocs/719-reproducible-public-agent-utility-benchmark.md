@@ -1,7 +1,7 @@
 ---
 title: "Public agent-utility evidence release: project an accepted 624 comparison record into a zero-cost deterministic replay, durable evidence bundle, and governed public claim; keep paid stochastic reruns separate"
 type: tempdocs
-status: "incomplete — the repair is implemented and locally verified on codex/719-agent-utility-publication, but promotion remains blocked on owner-set scientific thresholds, backend/model corpus gates, and a future accepted run. The public pointer remains current:null; the 2026-07-12 survivor statistic is only a rejected history fixture."
+status: "incomplete — level-1 (code-complete) work is implemented, independently verified, and code-quality-hardened on codex/719-agent-utility-publication (see §Post-implementation takeover verification and §Pre-PR fix pass); branch is unpushed pending owner go-ahead (gradle pre-merge build + hosted CI + RESEARCH.md narrative wording are the remaining pre-merge items, §Session handoff). Numeric promotion remains blocked on owner-set scientific thresholds, backend/model corpus gates, and a future accepted run. The public pointer remains current:null; the 2026-07-12 survivor statistic is only a rejected history fixture."
 created: 2026-07-12
 updated: 2026-07-13
 author: agent (Fable, strategy session) — filed at founder request after the token-efficiency competitive-benchmark research
@@ -1773,11 +1773,18 @@ Two implementation agents (disjoint file sets) plus lead review landed the targe
   content between markers byte-unchanged (committed targets stayed in-sync).
 - **#1** `check-public-agent-utility.mjs`: JS now owns only pointer semantics (pointer shape,
   null-state transitions, pointer→manifest confinement/hash/id/lifecycle binding); every
-  bundle-internal check was deleted with a per-deletion mapping to the covering
-  `utility_publication.replay_publication` line or `test_utility_publication.py` test (mapping in
-  the agent report; header comment names the split). Missing-Python now fails with a named
-  binary + remedy via exported `missingPythonMessage()`; `CHECK_PUBLIC_AGENT_UTILITY_ROOT` env
-  override (test-only) added.
+  bundle-internal check was deleted only after mapping it to the covering Python authority:
+  full-manifest and nested-section exact-key checks → `_require_exact_keys` calls in
+  `utility_publication.replay_publication` (~L169-186; `test_replay_rejects_unknown_manifest_fields`);
+  record/observations/policy path confinement → `_confined` (~L190-204;
+  `test_replay_rejects_paths_escaping_the_immutable_bundle`); per-file sha256 → ~L205-210
+  (`test_replay_detects_evidence_tampering`); policy id/status → the manifest↔stored-verdict
+  equality + `policy_digest` byte binding (~L223-229) plus `evaluate_claim`'s `policy_resolved`
+  gate forcing `status=="active"` for any accepted verdict; record `semantic_digest`/`accepted` →
+  superseded by replay's full recomposition via `finalize_evidence` (~L230-241), which is strictly
+  stronger than the deleted field comparison. Missing-Python now fails with a named binary +
+  remedy via exported `missingPythonMessage()`; `CHECK_PUBLIC_AGENT_UTILITY_ROOT` env override
+  (test-only) added.
 - Tests: gen test converted to the repo `ok()` collector idiom + multi-target-drift and
   write-atomicity cases (95 assertions); new `check-public-agent-utility.test.mjs` (22 assertions)
   wired into the required Public claims CI job before the check step.
@@ -1800,3 +1807,39 @@ _canonical_digest` is a third digest-recipe site (cross-importing claim-policy i
 machinery would couple unrelated domains — fold into a neutral shared helper if one ever exists);
 `jseval --help` piped under cp1252 hits the known pre-existing σ/UnicodeEncodeError quirk
 (use `PYTHONUTF8=1`; verified present on committed help text before this pass).
+
+### Session handoff (2026-07-13, end of session 9d3c1869)
+
+Branch `codex/719-agent-utility-publication` at the pre-PR-fix commit; worktree clean; **not
+pushed, no PR** (per standing instruction: publish only on explicit owner go-ahead).
+
+Next actions, in order:
+1. `./gradlew.bat build -x test` on this branch (required pre-merge step; not yet run this
+   session — the diff touches no Java, so expected to be a formality, but it is unverified).
+2. Push, open one squash PR (body should name the three workstreams: 624/675 measurement
+   substrate, 707 corpus materialization, 719 publication boundary), let required CI run. Hosted
+   CI has never seen this branch; the Public claims job installs Python 3.13 + editable jseval in
+   CI for the first time — the one genuinely untested environment.
+3. Owner wording decision before or at PR review: restore a short authored, dated retraction
+   narrative (92%/62% retraction; A-vs-A MCP-config catch) above `RESEARCH.md`'s generated marker,
+   or accept the drier generated-only block. Pure history, cannot drift; ~10-minute change.
+4. Merge only on explicit owner instruction; then the deferred backend corpus gates and the owner
+   policy decisions (campaign matrix, adoption floor, accuracy margin, model cohort, email source,
+   budgets) proceed per the fold at the top of this tempdoc.
+
+Unverified assumptions at handoff (each becomes verified or falsified by step 1-2 above):
+- Hosted CI passes (all local equivalents green; CI environment itself unexercised).
+- Gradle build unaffected (no Java in the diff; not yet demonstrated).
+- The original branch's claimed independent refute-first review (implementation fold above) is an
+  honor-system claim from the prior session; this session's independent verification covered the
+  behavioral attack surfaces and a 4-reviewer code-quality audit, not a line-by-line re-review of
+  all 17.8k lines.
+- The fresh `git clone --no-local` replay was performed by the prior session (fold above); this
+  session re-verified replay in-worktree but did not repeat the clean-clone run after the
+  code-quality fixes (the fixes do not touch replay arithmetic; digest re-verified in-tree).
+
+Deferred/known issues not owned here: `test_correction_probe` 2-red on main (missing
+`correction-eval-queries.v1.json`, logged to observations shard, this session); unrelated
+tempdoc-720 number collision between two other worktrees (pre-existing note in the deferred-checks
+section above); post-merge simplify candidates (monolith decomposition of `evaluate_claim` /
+`corpus_certify.py`, dataclass typing of the observation seam, `corpus_inject._canonical_digest`).
