@@ -23,7 +23,9 @@ not installed.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import subprocess
 import types
 from pathlib import Path
 
@@ -231,6 +233,204 @@ def test_record_cell_stashes_cost_turns_and_tokens_from_rmsg():
     assert "error" not in state.metadata
 
 
+def test_record_cell_stashes_raw_usage_and_resolved_provider_model():
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": ["ok"],
+        "resolved_models": {"claude-haiku-4-5-20251001"},
+        "rmsg": _rmsg(
+            usage={"input_tokens": 11, "cache_creation_input_tokens": 7},
+            model_usage={"claude-haiku-4-5-20251001": {"inputTokens": 18}},
+        ),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["resolved_model"] == "claude-haiku-4-5-20251001"
+    assert state.metadata["usage"]["input_tokens"] == 11
+    assert state.metadata["model_usage"]["claude-haiku-4-5-20251001"]["inputTokens"] == 18
+    assert "error" not in state.metadata
+
+
+def test_source_identity_resume_rejects_git_drift(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    logs = tmp_path / "logs"
+
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    first = aui._capture_or_load_source_identity(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+    )
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "b" * 40)
+    with pytest.raises(ValueError, match="source_git_sha"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+            declared_corpus_signature="", search_config_cohort_key="search-1",
+        )
+
+    assert first["source_git_sha"] == "a" * 40
+    assert first["corpus"]["signature"] is not None
+
+
+def test_source_identity_hashes_untracked_files_but_excludes_its_log_dir(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "fixture@example.test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Fixture"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("tracked", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+    corpus = tmp_path / "corpus-outside-repo"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("corpus", encoding="utf-8")
+    logs = repo / "logs"
+    monkeypatch.chdir(repo)
+
+    kwargs = dict(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+    )
+    first = aui._capture_or_load_source_identity(**kwargs)
+    assert first["source_git_state"]["dirty"] is False
+    # The sidecar created inside logs is run output and must not poison resume.
+    assert aui._capture_or_load_source_identity(**kwargs) == first
+
+    (repo / "new-source.txt").write_text("untracked source", encoding="utf-8")
+    with pytest.raises(ValueError, match="source_git_dirty|source_git_state"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+
+def test_source_identity_resume_rejects_changed_corpus_and_query_bytes(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    logs = tmp_path / "logs"
+
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    monkeypatch.setattr(aui, "_git_source_state", lambda **_: {
+        "tracked_diff_sha256": "0" * 64,
+        "untracked_sha256": "0" * 64,
+        "untracked_count": 0,
+        "dirty": False,
+    })
+    kwargs = dict(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+        queries_path=str(queries), conditions=("A", "B"), seeds=2,
+        mcp_tool_surface=[{
+            "name": "mcp__justsearch__search", "description": "Search",
+            "input_schema": {"type": "object"},
+        }],
+    )
+    captured = aui._capture_or_load_source_identity(**kwargs)
+    assert len(captured["campaign"]["expected_cells"]) == 4
+
+    changed_surface = dict(kwargs)
+    changed_surface["mcp_tool_surface"] = [{
+        "name": "mcp__justsearch__search", "description": "Search",
+        "input_schema": {"type": "object", "required": ["q"]},
+    }]
+    with pytest.raises(ValueError, match="mcp_tool_surface"):
+        aui._capture_or_load_source_identity(**changed_surface)
+
+    (corpus / "doc.txt").write_text("changed corpus", encoding="utf-8")
+    with pytest.raises(ValueError, match="corpus"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    queries.write_text('[{"query":"changed","answer":"a"}]', encoding="utf-8")
+    with pytest.raises(ValueError, match="queries"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+
+def test_source_identity_captures_and_rechecks_corpus_certification(tmp_path, monkeypatch):
+    from jseval.corpus_certify import SCIENTIFIC_GATES
+    from jseval.corpus_identity import corpus_signature
+    from tests.test_corpus_inject import _complete_certificate, _gate_evidence
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    signature = corpus_signature(corpus, [corpus / "doc.txt"])
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    query_gold_sha256 = hashlib.sha256(queries.read_bytes()).hexdigest()
+    gate_rows = {
+        gate: _gate_evidence(
+            gate, dataset="fixture", signature=signature,
+            query_gold_sha256=query_gold_sha256, query_count=1,
+        )
+        for gate in SCIENTIFIC_GATES
+    }
+    certification = tmp_path / "certification.json"
+    certification.write_text(json.dumps(_complete_certificate(
+        "fixture-member", "fixture", signature, gate_rows, query_count=1,
+        query_gold_sha256=query_gold_sha256,
+    )), encoding="utf-8")
+    logs = tmp_path / "logs"
+
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    monkeypatch.setattr(aui, "_git_source_state", lambda **_: {
+        "tracked_diff_sha256": "0" * 64,
+        "untracked_sha256": "0" * 64,
+        "untracked_count": 0,
+        "dirty": False,
+    })
+    kwargs = dict(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature=signature, search_config_cohort_key="search-1",
+        corpus_certification=str(certification),
+        queries_path=str(queries), conditions=("A", "B"), seeds=1,
+    )
+    first = aui._capture_or_load_source_identity(**kwargs)
+    assert first["corpus_certification"]["fully_certified"] is True
+
+    changed = json.loads(certification.read_text(encoding="utf-8"))
+    changed["datasets"]["1000"]["verbose"]["scientific_gates"][
+        "closed_book"
+    ]["threshold"] = {"maximum": 0.01}
+    certification.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="corpus_certification"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+
+def test_source_identity_resume_recomputes_safe_environment(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable", encoding="utf-8")
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    monkeypatch.setattr(aui, "_git_source_state", lambda **_: {
+        "tracked_diff_sha256": "0" * 64, "untracked_sha256": "0" * 64,
+        "untracked_count": 0, "dirty": False,
+    })
+    import jseval.env_fingerprint as env
+    monkeypatch.setattr(env, "safe_environment_identity", lambda: {
+        "platform": {"system": "one"}, "gpu": {"available": False},
+    })
+    kwargs = dict(
+        log_dir=str(tmp_path / "logs"), corpus_dir=str(corpus),
+        corpus_dataset="fixture", declared_corpus_signature="",
+        search_config_cohort_key="search", queries_path=str(queries),
+        conditions=("A", "B"), seeds=1, mcp_tool_surface=[],
+    )
+    aui._capture_or_load_source_identity(**kwargs)
+    monkeypatch.setattr(env, "safe_environment_identity", lambda: {
+        "platform": {"system": "two"}, "gpu": {"available": False},
+    })
+    with pytest.raises(ValueError, match="environment"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+
 def test_record_cell_result_error_sets_error_and_stops():
     state = _state()
     got = {
@@ -268,6 +468,35 @@ def test_record_cell_no_result_message_sets_error():
 # -- replaces the CLI init-event parse with the SDK's own `get_mcp_status()`
 # result, already captured into `got["mcp_servers"]`/`got["justsearch_tools"]`
 # by the solver before `_record_cell` runs). ---
+
+def test_capture_canonical_mcp_surface_keeps_full_tools_list(tmp_path, monkeypatch):
+    config = tmp_path / "mcp.json"
+    config.write_text(json.dumps({
+        "mcpServers": {"justsearch": {"type": "http", "url": "http://localhost/mcp"}},
+    }), encoding="utf-8")
+    payload = {"jsonrpc": "2.0", "id": "x", "result": {"tools": [{
+        "name": "search_query", "description": "Search documents",
+        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "outputSchema": {"type": "object", "required": ["hits"]},
+        "annotations": {"readOnlyHint": True},
+    }]}}
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(aui, "urlopen", lambda request, timeout: Response())
+    assert aui._capture_canonical_mcp_surface(str(config)) == [{
+        "name": "mcp__justsearch__search_query",
+        "description": "Search documents",
+        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "outputSchema": {"type": "object", "required": ["hits"]},
+        "annotations": {"readOnlyHint": True},
+    }]
 
 def test_record_cell_condition_a_exempt_from_surface_assertion():
     """Condition A never carries a real mcp_config -- and even if a caller
@@ -313,8 +542,42 @@ def test_record_cell_condition_b_healthy_surface_no_error():
     aui._record_cell(state, got, "B", build_disallowed_tools("B"), "/mcp.json")
 
     assert state.metadata["mcp_tools_offered"] == len(justsearch_tools)
+    assert state.metadata["mcp_tool_names_offered"] == justsearch_tools
+    from jseval.agent_manifest import mcp_tool_surface_hash
+    expected = mcp_tool_surface_hash([{
+        "name": justsearch_tools[0], "description": None, "input_schema": None,
+    }])
+    assert state.metadata["observed_mcp_tool_surface_hash"] == expected
     assert "error" not in state.metadata
     assert "mcp_surface_unverified" not in state.metadata
+
+
+def test_record_cell_surface_hash_includes_schema_and_rejects_declared_mismatch():
+    """Same-name tools with different schemas are different source identities."""
+    def capture(schema, declared=None):
+        state = _state()
+        got = {
+            "attempts": {}, "results": {}, "texts": [], "rmsg": _rmsg(),
+            "mcp_servers": [{
+                "name": "justsearch", "status": "connected",
+                "tools": [{
+                    "name": "search_query", "description": "Search",
+                    "inputSchema": schema,
+                }],
+            }],
+            "justsearch_tools": ["mcp__justsearch__search_query"],
+        }
+        aui._record_cell(
+            state, got, "B", build_disallowed_tools("B"), "/mcp.json", declared)
+        return state
+
+    string_surface = capture({"type": "object", "properties": {"q": {"type": "string"}}})
+    integer_surface = capture({"type": "object", "properties": {"q": {"type": "integer"}}})
+    assert (string_surface.metadata["observed_mcp_tool_surface_hash"]
+            != integer_surface.metadata["observed_mcp_tool_surface_hash"])
+
+    mismatch = capture({"type": "object"}, declared="0" * 64)
+    assert "declared MCP tool-surface hash disagrees" in mismatch.metadata["error"]
 
 
 def test_record_cell_condition_b_connected_but_no_tools_errors_and_deferred():
@@ -560,6 +823,10 @@ def test_run_utility_eval_proceeds_when_roots_correctly_scoped(tmp_path, monkeyp
     monkeypatch.setattr(aui, "agent_utility_task", lambda **kw: object())
     monkeypatch.setattr(inspect_ai, "eval_set",
                          lambda *a, **k: called.__setitem__("eval_set", True))
+    monkeypatch.setattr(aui, "_capture_canonical_mcp_surface", lambda _: [{
+        "name": "mcp__justsearch__search", "description": "search",
+        "input_schema": {"type": "object"},
+    }])
 
     with patch("jseval.utility_calibrate.httpx.Client") as MockClient:
         _mock_roots_client(MockClient, [str(corpus_dir)])
@@ -571,6 +838,39 @@ def test_run_utility_eval_proceeds_when_roots_correctly_scoped(tmp_path, monkeyp
         )
 
     assert called["eval_set"] is True
+
+
+def test_run_utility_eval_rejects_mcp_schema_drift_during_campaign(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    corpus_dir = tmp_path / "dataset" / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:56300/mcp"}}}',
+        encoding="utf-8",
+    )
+    surfaces = iter([
+        [{"name": "mcp__justsearch__search", "inputSchema": {"type": "object"},
+          "outputSchema": {"type": "string"}}],
+        [{"name": "mcp__justsearch__search", "inputSchema": {"type": "object"},
+          "outputSchema": {"type": "integer"}}],
+    ])
+    monkeypatch.setattr(aui, "_capture_canonical_mcp_surface", lambda _: next(surfaces))
+    monkeypatch.setattr(aui, "agent_utility_task", lambda **kw: object())
+    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+
+    with patch("jseval.utility_calibrate.httpx.Client") as client:
+        _mock_roots_client(client, [str(corpus_dir)])
+        with pytest.raises(RuntimeError, match="tools/list changed"):
+            aui.run_utility_eval(
+                queries_path=str(queries), corpus_dir=str(corpus_dir),
+                mcp_config=str(config), conditions=("A", "B"), seeds=1,
+                concurrency=1, log_dir=str(tmp_path / "logs"),
+            )
 
 
 def test_run_utility_eval_skips_gate_when_no_mcp_config(tmp_path, monkeypatch):

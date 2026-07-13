@@ -71,6 +71,11 @@ Per-corpus nDCG@10 floors are projected from this release and regression-gated i
 (`scripts/jseval/relevance-ratchet-baselines.v1.json` + the relevance gate). The internal
 search-quality register carries the full per-config ablation log (`docs/reference/search-quality-register.md`).
 
+## Agent-utility publication
+
+The paired-agent methodology, evidence contract, policy semantics, and current publication state are
+documented in [`agent-utility.md`](agent-utility.md).
+
 ## Reproduce it
 
 From `scripts/jseval` (Windows; a CUDA GPU accelerates inference, CPU also works):

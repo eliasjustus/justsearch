@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "open — DESIGN (2026-07-10). Substrate decision RATIFIED by founder 2026-07-10 (real licensed legal+email distractor mass, EN + DE members, fabricated injected fact-chains as gold — option 1 of 704 pillar 1's three families). Attribution inputs from the 678 §Pillar-5 campaign are folded in (E5-A→D); The E5-C-v2 verdict LANDED same day: BRANCH B (encoder-domain mismatch — dense dead at every query shape; see 678 §Final attribution verdict). §Query construction proceeds on Branch B; the encoder question routes to its own investigation, not here. No implementation yet; no spend authorized here (the ~$3 smoke and the ~$60-90 powered run remain founder gates, 624 §Step-2 definition). — TAKEOVER INVESTIGATION 2026-07-12 (read-only, no code/design/spend): VERDICT = do it, it is on the U0 critical path and unblocked (pillar-5 cleared, consumer 624 unchanged), but (1) the Branch-B §1 premise is SUPERSEDED — 708 closed NO MODEL SWAP, dense on legal is now alive (0.06→0.6185), though production hybrid is still lexical-dominated (0.556<0.689) via an unexplained fusion gap; (2) the one unbuilt piece is the real-text injector, and the cheapest decisive evidence is a ~$0 injection→closed-book-gate feasibility probe that does NOT yet exist. See §Investigation & verdict + the §1 CORRECTION block. — PROBE RUN 2026-07-12 (corrected: closed-book is host-invariant, the real discriminator is retrievability): the real-text injector is now BUILT and the substrate is VALIDATED on real email — injected fabricated gold retrieves at dense 0.92–0.95 / hybrid 0.89–0.92 (R@10 1.0) vs lexical 0.18 against 400 real Enron distractors, chunk leg load-bearing. Remaining: EN-legal (CLERC, F-029) + DE members are the scoped next probes (CLERC needs a 6.7GB fetch); provenance-schema branch for the determinism gate; then founder-gated spend. See §Feasibility probe RESULTS."
+status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -16,7 +16,38 @@ related:
 ---
 
 > NOTE: Noncanonical working tempdoc. Verify every cited number against the named tempdocs before
-> building on it. This doc is a DESIGN; nothing here authorizes spend.
+> building on it. Nothing here authorizes spend.
+
+## Current implementation fold (2026-07-13; incomplete through 719 repair)
+
+The reusable substrate is productionized: `corpus-inject-real` deterministically selects real
+hosts/distractors, appends or interleaves committed fabricated gold, assembles through the existing
+corpus builder, regenerates in two independent Python processes, and commits only recipes, host IDs, and
+fabricated inputs—not licensed host text. Every cell now has a digest manifest tying those immutable
+inputs and its exact recipe to materialized provenance; certification rejects forged or untied
+cross-process evidence. Certification recognizes `real-text-injection-v1`.
+Strict member recipes exist for EN legal (CAP/CLERC path), DE MIRACL, and EN EnronQA. CLERC and
+MIRACL-DE are materialized at 1k and 10k in separate verbose and deterministic short-natural
+query strata. Their structural records certify signatures, fixed answers/evidence across strata,
+1k-to-10k nesting, zero gold-involved descriptor collisions, and cross-process regeneration. They
+also pin CLERC to Hugging Face revision `ef042f8ab436f78704f17faa0a866d1b2b862f6f` and MIRACL-DE to
+`miracl-v1.0` through `ir_datasets` 0.5.11. They are license-eligible but not scientifically certified. EnronQA is explicitly
+`claim_eligible:false`: its upstream dataset card supplies no license, so the recipe fails closed.
+
+The 719 promotion boundary now extends this certification path: it accepts scientific evidence only
+as an exact four-cell 1k/10k by verbose/short-natural matrix. Gate-specific typed measurements carry
+no thresholds or `passed` assertion: certification recomputes them against the separate checked-in
+pre-run policy, which is deliberately draft until the owner settles its exact cells and thresholds.
+Policy and evidence bind the exact query-and-gold digest separately from the corpus signature. Gate
+artifacts embed the canonical measurement plus backend run-manifest/projection bytes. The source-time
+snapshot embeds and hashes the exact policy, certificate, and gate bytes only when structural, closed-book,
+retrieval-calibration, union-recall, and leak evidence all pass; policy evaluation and replay validate
+those embedded bytes again. Utility-run captures that snapshot and rechecks it on resume. This machinery does
+not upgrade the current structural records; their scientific gates are still pending.
+
+Still gated: closed-book certification, member retrieval calibration, union recall, leak floor, and
+any paid adoption/powered run. EnronQA additionally requires an approved licensing-clean source.
+The earlier email probe proves mechanism only; it cannot override license.
 
 # 707 — The pillar-1 in-band utility corpus
 

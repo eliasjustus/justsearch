@@ -1,0 +1,249 @@
+{
+  "schema": "707-corpus-structural-certification.v1",
+  "member": "en-legal-clerc",
+  "status": "structurally-certified",
+  "datasets": {
+    "1000": {
+      "short-natural": {
+        "dataset": "mixed/en-legal-clerc-1k-short-natural",
+        "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+        "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "a290283958441acb662d434427a904e7dbe7cc407536762d05980ed84c1faaa8",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "647e32725924a86935c48c325757b87dcaddf19a9e154bc54888df9e37f6a342",
+          "recipe_sha256": "b47c9a987f5b72caaa79064d55bd4f2dc736d5b226e3fe5a995f26eaf4311e55"
+        },
+        "descriptor_collision": {
+          "n_groups": 0,
+          "n_docs_involved": 0,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-legal-clerc-1k-verbose",
+        "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+        "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "d157dab63a81907803813c551b0994a6e80831649627d2b017b09983221270a3",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "a1d7541fc9b4b085de470fd63030a33d9b863f62253ae88a12b219a5d28d0a3b",
+          "recipe_sha256": "56908effefbcf78dd692f189f5de212539132799a747bbb33f254fd01cee6be2"
+        },
+        "descriptor_collision": {
+          "n_groups": 0,
+          "n_docs_involved": 0,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    },
+    "10000": {
+      "short-natural": {
+        "dataset": "mixed/en-legal-clerc-10k-short-natural",
+        "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+        "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "41158fa62ad1e612c311e589dcde5369464bb1278a26a7cef19acaf7fcbbc904",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "8d40285a5714f0e1615fe80c71529aed82438b54f1635cd987c4882ec05a312b",
+          "recipe_sha256": "9f91c405b6c70599a3224f9097321cc7dea5d48994df7a4459d0aaf69246423c"
+        },
+        "descriptor_collision": {
+          "n_groups": 0,
+          "n_docs_involved": 0,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-legal-clerc-10k-verbose",
+        "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+        "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "4e5179e7cafb99e27d9957fe267ea48c63f36d1d0fd06d0a956dc3da24d80685",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "a1cbb8cc50abe873159d22f8b1c4154dc84f06e0e58dd2426f375a5a1a2f3a27",
+          "recipe_sha256": "264f3b0fbdb3084e1c7df20488c6b1ac945a01d648e3febf646124f5a94eebbf"
+        },
+        "descriptor_collision": {
+          "n_groups": 0,
+          "n_docs_involved": 0,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    }
+  },
+  "family_checks": {
+    "verbose": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "short-natural": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "strata": {
+      "same_family_ids": true,
+      "same_answers_and_evidence": true,
+      "distinct_query_text": true,
+      "same_corpus_and_qrels_per_size": true
+    }
+  },
+  "structural_passed": true,
+  "scientific_gates": {
+    "closed_book": "pending-model-run",
+    "retrieval_calibration": "pending-backend-run",
+    "union_recall": "pending-backend-run",
+    "leak_floor": "pending-backend-run"
+  },
+  "fully_certified": false
+}

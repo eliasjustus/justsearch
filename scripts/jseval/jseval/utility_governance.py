@@ -13,8 +13,6 @@ that biases a paired A/C comparison.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-
 from jseval.comparability import determine_comparability
 from jseval.types import AnnProofResult, ComparabilityResult, ReadinessResult
 
@@ -68,51 +66,61 @@ class ArmLoss:
         return self.n_excluded / self.n_attempted if self.n_attempted else 0.0
 
 
-def compute_loss_accounting(log_dir: str) -> dict[str, ArmLoss]:
-    """Per-arm loss-accounting from the Inspect EvalLogs (one task per condition).
+def loss_accounting_from_observations(observations: list[dict]) -> dict[str, ArmLoss]:
+    """Pure per-arm accounting over the shared all-attempt observation seam."""
+    aggregates: dict[str, dict] = {}
+    seen_cells: set[tuple[str, int, str]] = set()
 
-    Reads the same logs `eval_logs_to_summaries` reads, but **counts the excluded
-    (errored/timed-out) cells** the projection drops. Returns ``{condition: ArmLoss}``.
-    """
-    from inspect_ai.log import read_eval_log
+    for observation in observations:
+        condition = observation.get("condition")
+        if not condition:
+            raise ValueError("agent-utility observation is missing condition")
+        seed = int(observation.get("seed", 0))
+        qid = str(observation.get("qid"))
+        cell = (condition, seed, qid)
+        if cell in seen_cells:
+            raise ValueError(
+                f"duplicate agent-utility attempt for condition={condition} "
+                f"seed={seed} qid={qid}"
+            )
+        seen_cells.add(cell)
 
-    arms: dict[str, ArmLoss] = {}
-    files = sorted(Path(log_dir).glob("*.eval")) + sorted(Path(log_dir).glob("*.json"))
-    for lf in files:
-        if lf.name in ("eval-set.json", "logs.json"):
-            continue
-        try:
-            log = read_eval_log(lf.as_posix())
-        except Exception:
-            continue
-        if not getattr(log, "eval", None):
-            continue
-        cond = (log.eval.metadata or {}).get("condition")
-        if cond is None:
-            continue
-        completed = 0
-        error_cells = 0
-        excluded_ids: set = set()
-        ok_by_seed: dict = {}
-        all_q: set = set()
-        seeds: set = set()
-        for s in (log.samples or []):
-            qid = str(s.id)
-            seed = int(s.epoch or 1) - 1
-            all_q.add(qid)
-            seeds.add(seed)
-            if (s.metadata or {}).get("error"):
-                error_cells += 1
-                excluded_ids.add(qid)
-            else:
-                completed += 1
-                ok_by_seed.setdefault(seed, set()).add(qid)
-        arms[cond] = ArmLoss(
-            condition=cond, n_seeds=len(seeds) or 1, n_queries=len(all_q),
-            n_completed=completed, n_error_cells=error_cells,
-            excluded_query_ids=excluded_ids, ok_by_seed=ok_by_seed,
+        aggregate = aggregates.setdefault(condition, {
+            "seeds": set(),
+            "qids": set(),
+            "completed": 0,
+            "errors": 0,
+            "excluded": set(),
+            "ok_by_seed": {},
+        })
+        aggregate["seeds"].add(seed)
+        aggregate["qids"].add(qid)
+        if observation.get("excluded"):
+            aggregate["errors"] += 1
+            aggregate["excluded"].add(qid)
+        else:
+            aggregate["completed"] += 1
+            aggregate["ok_by_seed"].setdefault(seed, set()).add(qid)
+
+    return {
+        condition: ArmLoss(
+            condition=condition,
+            n_seeds=len(aggregate["seeds"]) or 1,
+            n_queries=len(aggregate["qids"]),
+            n_completed=aggregate["completed"],
+            n_error_cells=aggregate["errors"],
+            excluded_query_ids=aggregate["excluded"],
+            ok_by_seed=aggregate["ok_by_seed"],
         )
-    return arms
+        for condition, aggregate in sorted(aggregates.items())
+    }
+
+
+def compute_loss_accounting(log_dir: str) -> dict[str, ArmLoss]:
+    """Read Inspect logs losslessly, then account for every attempted cell."""
+    from jseval.agent_utility_observations import read_inspect_observations
+
+    return loss_accounting_from_observations(read_inspect_observations(log_dir))
 
 
 def paired_comparability(

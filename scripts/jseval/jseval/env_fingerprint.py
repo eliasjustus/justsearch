@@ -56,6 +56,26 @@ def capture_env_fingerprint() -> dict:
     return fp
 
 
+def safe_environment_identity(fingerprint: dict | None = None) -> dict:
+    """Return the stable, publication-safe subset used as run identity."""
+    raw = fingerprint if fingerprint is not None else capture_env_fingerprint()
+    platform_info = raw.get("platform") or {}
+    gpu = raw.get("gpu") or {}
+    return {
+        "platform": {
+            "system": platform_info.get("system"),
+            "release": platform_info.get("release"),
+            "machine": platform_info.get("machine"),
+        },
+        "gpu": {
+            "available": bool(gpu.get("available")),
+            "driver_version": gpu.get("driver_version"),
+            "name": gpu.get("name"),
+            "mem_total_mb": gpu.get("mem_total_mb"),
+        },
+    }
+
+
 def _run(cmd: list[str], *, timeout: int = _PROBE_TIMEOUT_S) -> str | None:
     """Run a command, return stdout stripped, or None on any failure."""
     try:
@@ -195,4 +215,4 @@ def _int_or_none(s: str) -> int | None:
         return None
 
 
-__all__ = ["capture_env_fingerprint"]
+__all__ = ["capture_env_fingerprint", "safe_environment_identity"]

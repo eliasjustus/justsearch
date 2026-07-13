@@ -5,9 +5,9 @@ the utility-comparison composer by attaching a cohort-identified agent manifest
 and reshaping per-query results into the ``{qid: {correct, cost_usd,
 unique_tokens, num_turns}}`` form ``compose_utility`` expects.
 
-``unique_tokens`` = ``cache_creation_input_tokens`` — the unique-content metric
-(tempdoc 624 D-1 / R7): cumulative ``cache_read`` re-reads are excluded so the
-token-efficiency comparison is not confounded by prompt caching.
+``unique_tokens`` is the legacy internal name for the provider-reported
+``cache_creation_input_tokens`` counter. It excludes cache reads but is not
+described as a universal unique-content metric.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _per_query_from_result(run_result: dict) -> dict:
         pq[qid] = {
             "correct": bool(r.get("correct")),
             "cost_usd": r.get("cost_usd"),
-            "unique_tokens": r.get("cache_creation_tokens"),  # unique-content (D-1/R7)
+            "unique_tokens": r.get("cache_creation_tokens"),  # provider cache-creation counter
             "num_turns": r.get("num_turns"),
             # Answer-key leak backstop (tempdoc 624 §As-built #7): carries
             # agent_retrieval_eval.find_leak_suspect_tool_calls's verdict through to
@@ -135,125 +135,27 @@ def build_compose_summary(
 
 # --- Inspect-AI path (tempdoc 624 execution design): EvalLogs -> compose input ---
 
-def eval_logs_to_summaries(log_dir: str, *, search_config_cohort_key: str | None = None,
-                           judge_overlay: dict | None = None) -> list[dict]:
-    """Read Inspect EvalLogs (`jseval utility-run`) into `compose_utility` summaries.
+def eval_logs_to_summaries(log_dir: str, *, judge_overlay: dict | None = None,
+                           require_complete: bool = True) -> list[dict]:
+    """Project Inspect EvalLogs into the valid-cell composer input.
 
-    Each task = one condition; each sample carries `epoch` (=seed), `scores`
-    (correct), and stashed `metadata` (cost / unique_tokens / num_turns, A4). We
-    group by (condition, seed) into one summary per cell-arm, attaching a cohort
-    manifest whose `agent_cohort_key` is identical across A and C (the cohort
-    fields live in task metadata) so the composer pairs them. Errored cells are
-    excluded (valid-only, parity with the bespoke aggregation).
-
-    ``judge_overlay`` (from ``utility_judge.judge_logs``) overrides the EM
-    ``correct`` with the hybrid EM->LLM-judge ``final`` verdict and stamps the
-    cohort's `judge` identity to the judge that actually scored it (tempdoc 624 C-6).
+    The lossless reader first retains every attempted cell, including Inspect
+    native errors. This function is intentionally only the valid-cell status
+    projection. Record-grade identity is captured at source time and is never
+    supplied during replay.
     """
-    from pathlib import Path
+    from jseval.agent_utility_observations import (
+        read_inspect_observations,
+        successful_summaries,
+    )
 
-    from inspect_ai.log import read_eval_log
-
-    from jseval.agent_manifest import agent_cohort_key, judge_identity
-    from jseval.manifest import _git_sha_full
-
-    git_sha = _git_sha_full()
-    summaries: list[dict] = []
-    # Glob the log files ourselves + pass forward-slash paths: Inspect's
-    # list_eval_logs returns drive-letter-stripped URIs on Windows that
-    # read_eval_log can't open. Skip the eval_set index ("logs.json") and any
-    # non-EvalLog json (read_eval_log raises ValidationError on those).
-    log_files = sorted(Path(log_dir).glob("*.eval")) + sorted(Path(log_dir).glob("*.json"))
-    for lf in log_files:
-        if lf.name == "logs.json":  # the eval_set manifest, not an EvalLog
-            continue
-        try:
-            log = read_eval_log(lf.as_posix())
-        except Exception:
-            continue  # not an EvalLog (index / partial file)
-        if not getattr(log, "eval", None):
-            continue
-        meta = (log.eval.metadata or {})
-        model = meta.get("model")
-        corpus = meta.get("corpus") or {}
-        cohort = meta.get("cohort") or {}
-
-        overlay_scores = (judge_overlay or {}).get("scores", {})
-        by_cond_seed: dict = {}
-        for s in (log.samples or []):
-            # Exclude on EITHER our own metadata.error OR Inspect's sample-level error
-            # (a cell that crashed before stashing metadata still carries s.error;
-            # never let it enter the paired stats — tempdoc 675 review hardening).
-            if (s.metadata or {}).get("error") or getattr(s, "error", None):
-                continue  # excluded cell
-            # tempdoc 675 single pool: condition is a SAMPLE field now (one task holds
-            # every condition); sample.id is "{cond}|q{i}" — strip to the bare qid so
-            # cross-condition pairing keys (`{cond}|{seed}|{qid}`) stay aligned.
-            condition = (s.metadata or {}).get("condition")
-            seed = int(s.epoch or 1) - 1  # Inspect epochs are 1-based; seed 0-based
-            qid = str(s.id).split("|", 1)[-1]
-            score = (s.scores or {}).get("substring_scorer")
-            correct = bool(score and score.value == "C")
-            ov = overlay_scores.get(f"{condition}|{seed}|{qid}")
-            if ov is not None:  # hybrid judge verdict supersedes EM
-                correct = bool(ov.get("final"))
-            # Real per-call tool-use data (tempdoc 624 §As-built #5 residual-gap
-            # close): `agent_utility_inspect.claude_agent_solver` now runs claude
-            # with `--output-format stream-json --verbose` (mirroring
-            # agent_retrieval_eval.run_agent_eval's exact argv) and stashes the
-            # parsed tool_calls + the two derived assertions
-            # (find_disallowed_tool_calls / find_leak_suspect_tool_calls) into
-            # `state.metadata`. A `None` here (vs. an observed empty `[]`) means
-            # this sample predates the fix (an older EvalLog written by the
-            # `--output-format json` solver) — `tool_call_assertions` below
-            # reports that as "no tool data", never a fabricated zero.
-            tool_calls = (s.metadata or {}).get("tool_calls")
-            disallowed_tool_calls = (s.metadata or {}).get("disallowed_tool_calls")
-            leak_suspect_tool_calls = (s.metadata or {}).get("leak_suspect_tool_calls")
-            # Offered MCP tool-surface capture (tempdoc 624 battlefield retrospective):
-            # `claude_agent_solver` stashes these alongside tool_calls above. A cell
-            # whose surface assertion FAILED already set `error` and was excluded by
-            # the `continue` above, so anything reaching here is either surface-clean,
-            # surface-unverified, or condition A (exempt, both fields absent -> None).
-            by_cond_seed.setdefault((condition, seed), {})[qid] = {
-                "correct": correct,
-                "cost_usd": (s.metadata or {}).get("cost_usd"),
-                "unique_tokens": (s.metadata or {}).get("unique_tokens"),
-                "num_turns": (s.metadata or {}).get("num_turns"),
-                "tool_calls": tool_calls,
-                "disallowed_tool_calls": disallowed_tool_calls,
-                "leak_suspect_tool_calls": leak_suspect_tool_calls,
-                "leak_suspect": bool(leak_suspect_tool_calls),
-                "mcp_servers": (s.metadata or {}).get("mcp_servers"),
-                "mcp_tools_offered": (s.metadata or {}).get("mcp_tools_offered"),
-                "mcp_surface_unverified": bool((s.metadata or {}).get("mcp_surface_unverified")),
-                # Tool-surfacing-mode stamp (tempdoc 624 §M.8 amendment, Step 0
-                # item 4): `claude_agent_solver` stashes this alongside mcp_servers.
-                "mcp_tools_deferred": (s.metadata or {}).get("mcp_tools_deferred"),
-            }
-
-        for (condition, seed), per_query in sorted(by_cond_seed.items()):
-            with_tool = condition in _WITH_TOOL
-            manifest = {
-                "git_sha": git_sha,
-                "cli_version": cohort.get("cli_version"),
-                "mcp_tool_surface_hash": cohort.get("mcp_tool_surface_hash"),
-                "judge": ((judge_overlay or {}).get("judge_identity")
-                          or judge_identity(kind=cohort.get("judge_kind", "substring-em"))),
-                "prompt_template_hash": cohort.get("prompt_template_hash"),
-                "decoding": {"temperature": 0, "max_tokens": None},
-                "eval_limits": {},
-                "corpus": corpus, "agent_model": model, "condition": condition, "seed": seed,
-                "search_config_cohort_key": (search_config_cohort_key if with_tool else None),
-            }
-            manifest["agent_cohort_key"] = agent_cohort_key(manifest)
-            summaries.append({
-                "manifest": manifest, "condition": condition, "agent_model": model,
-                "corpus": corpus, "per_query": per_query,
-                # Executor provenance (Step 0 item 6): the record-grade path.
-                "executor": "inspect-ai",
-            })
-    return summaries
+    observations = read_inspect_observations(
+        log_dir, judge_overlay=judge_overlay, require_complete=require_complete,
+    )
+    return successful_summaries(
+        observations,
+        judge_overlay=judge_overlay,
+    )
 
 
 # --- Answer-key leak text-scan (tempdoc 624 §As-built #7 follow-up, promoted from
@@ -385,6 +287,3 @@ def scan_leaked_answers(results: list[dict], *, condition: str, seed: int) -> di
                 "completion_excerpt": text[:400],
             }
     return leaked
-
-
-_WITH_TOOL = {"B", "C"}

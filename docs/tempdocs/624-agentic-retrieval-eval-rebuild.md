@@ -28,7 +28,24 @@ related:
 > (§Investigation below) — primary-source verification against `main` + external-landscape research.
 > The §Problem…§Next-step above is the original stub; the §Investigation that follows verifies its
 > claims, records the critical analysis, and lists open questions for the (still-deferred) plan.
-> **No implementation plan or design work yet** (per assignment).
+> Historical assignment text below is retained for auditability. The current 2026-07-13 authority
+> fold supersedes its "no implementation" statement.
+
+## Current authority fold (2026-07-13; implemented through 719)
+
+The remaining measurement/provenance defects identified by 719 are closed in the 719 worktree:
+consolidated logs use one all-attempt observation seam; loss accounting reads sample condition;
+source SHA/dirty state, actual corpus identity, resolved provider model, provider usage,
+judge-calibration identity, and the observed offered MCP tool-name surface are captured before
+composition; duplicate legacy readers are removed; and canonical writers converge on pure offline
+recomposition plus a machine-readable claim verdict. Promotion now requires an exact pre-registered
+member/dataset/size/query-variant/model/query-count/seed matrix, applies seed/pair/uncertainty/adoption/
+outcome gates per ITT stratum, requires the complete seed-by-query Cartesian product in both arms,
+and treats aggregate counts as descriptive. Certified-corpus snapshots embed the exact pre-run
+scientific policy, certificate, and typed gate bytes for replay-time re-hash and verdict
+recomputation. The 2026-07-12 pilot is a
+sanitized rejected fixture, not a publication candidate. A new powered result still requires the
+owner-set matrix and thresholds, fully certified 707 snapshots, and paid-run authorization.
 
 # 624 — Agentic-retrieval eval rebuild
 

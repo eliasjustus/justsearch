@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "utility-comparison-cross-corpus.v1",
+  "title": "Cross-corpus agent-utility comparison record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema", "schema_version", "composed_at", "cohort", "corpora", "measured",
+    "seed_count", "confidence_tier", "comparability", "coverage", "claim_verdict",
+    "semantic_digest"
+  ],
+  "properties": {
+    "schema": {"const": "utility-comparison-cross-corpus.v1"},
+    "schema_version": {"const": 2},
+    "composed_at": {"type": "string"},
+    "cohort": {
+      "type": "object",
+      "required": ["agent_cohort_key", "git_sha", "git_dirty", "judge"],
+      "properties": {"git_sha": {"type": ["string", "null"]}}
+    },
+    "corpora": {"type": "array", "minItems": 2, "items": {"type": "string"}, "uniqueItems": true},
+    "measured": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "accuracy", "provider_cache_creation_input_tokens", "cost_usd", "identity",
+          "primary_arm", "n_paired_observations", "stratified"
+        ],
+        "properties": {
+          "identity": {
+            "type": "object",
+            "required": ["corpus_signatures", "requested_model_alias", "resolved_provider_model", "query_identities", "campaign_identities", "corpus_certifications"]
+          },
+          "primary_arm": {"enum": ["addition_b", "substitution_c"]}
+        }
+      }
+    },
+    "seed_count": {"type": "integer", "minimum": 0},
+    "confidence_tier": {"enum": ["A", "B", "C"]},
+    "comparability": {"type": "object"},
+    "coverage": {"type": "object"},
+    "claim_verdict": {
+      "type": "object",
+      "required": ["status", "accepted", "policy_id", "policy_hash", "gates", "reasons"]
+    },
+    "semantic_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

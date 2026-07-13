@@ -1,0 +1,26 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "en-email-enronqa",
+  "language": "en",
+  "domain": "email",
+  "real_source": {
+    "recipe": "../../../search/convert-enronqa-to-beir.py",
+    "content_scope": "MichaelR207/enron_qa_0922 email text",
+    "license": null,
+    "license_status": "unresolved",
+    "redistribute": false
+  },
+  "gold_source": "../../635-corpora/needle-burial-v1",
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [],
+  "structural_certification": null,
+  "claim_eligible": false,
+  "remaining_gates": ["resolve_source_license_or_replace_email_source", "materialize_member", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
+}

@@ -1,0 +1,242 @@
+[
+ {
+  "query": "Welcher Wert folgt ab Standort Kraftwerk, oberes Feuchtgebiet?",
+  "answer": "crimson lansk 0003",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmstone1",
+   "zeldell2",
+   "rellpost3"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0001"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Beobachtungsstation, Höhenzug im Osten?",
+  "answer": "azure quartzine 0006",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanker4",
+   "pellthorn5",
+   "cavric6"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0002"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemühle, Krümmung des Flusses?",
+  "answer": "ochre skack 0009",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limven7",
+   "pellgrove8",
+   "faldell9"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0003"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Aktenlager, früheres Justizgebäude?",
+  "answer": "azure perrin 0012",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "druvale10",
+   "mirholt11",
+   "wendash12"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0004"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Metallwerk, Viertel im Westen?",
+  "answer": "umber vellum 0015",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenwick13",
+   "limpost14",
+   "limdac15"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0005"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Fernrohr, Karpaten-Bergland?",
+  "answer": "indigo ferrolite 0018",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenby16",
+   "druash17",
+   "quenpost18"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0006"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Trambahn, Stadt an den Hängen?",
+  "answer": "russet grist 0021",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "zelthorn19",
+   "nuthpost20",
+   "olmholt21"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0007"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Wasserleitung, Hügel im Süden?",
+  "answer": "russet quartzine 0024",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexker22",
+   "olmven23",
+   "tasric24"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0008"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Verlagshaus, zentrales Marktviertel?",
+  "answer": "pallid quartzine 0027",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "tasmond25",
+   "wendvale26",
+   "olmholt27"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0009"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Küstenfeuer, steiniges Vorgebirge?",
+  "answer": "ochre perrin 0030",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limric28",
+   "vexpost29",
+   "limric30"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0010"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Weinanbaugebiet, lichtdurchflutete Senke?",
+  "answer": "azure perrin 0033",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellgrove31",
+   "mirmire32",
+   "vexmire33"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0011"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Thermalbad, Steilküste am Ufer?",
+  "answer": "umber lansk 0036",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "pellmire34",
+   "rellgrove35",
+   "falcrag36"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0012"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Kraftwerk, immergrüner Forst?",
+  "answer": "umber lansk 0039",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexdell37",
+   "vorfen38",
+   "mirker39"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0013"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Beobachtungsstation, salzhaltiges Flachland?",
+  "answer": "verdant brannik 0042",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmvale40",
+   "druvale41",
+   "limcrag42"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0014"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemühle, Steingrube?",
+  "answer": "azure perrin 0045",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "harnric43",
+   "tasmond44",
+   "vorreach45"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0015"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Aktenlager, Zugang zum Hafen?",
+  "answer": "umber brannik 0048",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellvale46",
+   "zelpost47",
+   "drufen48"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0016"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Metallwerk, trockene Mulde?",
+  "answer": "umber lansk 0051",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falholt49",
+   "tasven50",
+   "skovale51"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0017"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Fernrohr, vereister Bergsee?",
+  "answer": "crimson lansk 0054",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falholt52",
+   "vorstone53",
+   "vorcrag54"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0018"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Trambahn, eingefriedete Anlage?",
+  "answer": "pallid quartzine 0057",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "brelby55",
+   "orrstone56",
+   "wendby57"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0019"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Wasserleitung, Glockenturm?",
+  "answer": "ochre grist 0060",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanric58",
+   "zelmire59",
+   "skodac60"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0020"
+ }
+]

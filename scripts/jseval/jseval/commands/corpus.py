@@ -13,6 +13,208 @@ from ._common import assert_run_capabilities
 log = logging.getLogger(__name__)
 
 
+@click.command("corpus-query-stratum-build")
+@click.option("--source", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--output", required=True, type=click.Path(file_okay=False))
+@click.option("--language", required=True, type=click.Choice(["en", "de"]))
+@click.pass_context
+def cmd_corpus_query_stratum_build(ctx, source, output, language):
+    """Build the committed deterministic short-natural sibling of verbose gold."""
+    from ..corpus_query_strata import build_short_natural_source
+
+    report = build_short_natural_source(source, output, language=language)
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(
+            f"Built {report['query_count']} {language} short-natural queries -> {output}")
+
+
+@click.command("corpus-certify-member")
+@click.option("--member", required=True)
+@click.option("--datasets-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.option("--dataset", "datasets", multiple=True, required=True,
+              help="SIZE:VARIANT:NAME; provide all 1k/10k verbose/short-natural cells.")
+@click.option("--commitment", "commitments", multiple=True, required=True,
+              help="SIZE:VARIANT:PATH; immutable recipe/input commitment for each cell.")
+@click.option("--scientific-evidence", "scientific_evidence", multiple=True,
+              help="SIZE:VARIANT:GATE:PATH; omit all entries for structural-only certification.")
+@click.pass_context
+def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commitments,
+                              scientific_evidence):
+    """Certify structural facts and, when supplied, the full measured 707 gate matrix."""
+    from ..corpus_certify import certify_materialized_family
+
+    matrix: dict[str, dict[str, str]] = {}
+    for value in datasets:
+        try:
+            size, variant, name = value.split(":", 2)
+        except ValueError as exc:
+            raise click.UsageError("--dataset must be SIZE:VARIANT:NAME") from exc
+        if variant in matrix.get(size, {}):
+            raise click.UsageError(f"duplicate --dataset cell {size}:{variant}")
+        matrix.setdefault(size, {})[variant] = name
+    required = {
+        ("1000", "verbose"), ("1000", "short-natural"),
+        ("10000", "verbose"), ("10000", "short-natural"),
+    }
+    actual = {(size, variant) for size, variants in matrix.items() for variant in variants}
+    if actual != required:
+        raise click.UsageError(f"--dataset matrix must be exactly {sorted(required)!r}")
+    commitment_matrix: dict[str, dict[str, str]] = {}
+    for value in commitments:
+        try:
+            size, variant, path = value.split(":", 2)
+        except ValueError as exc:
+            raise click.UsageError("--commitment must be SIZE:VARIANT:PATH") from exc
+        if variant in commitment_matrix.get(size, {}):
+            raise click.UsageError(f"duplicate --commitment cell {size}:{variant}")
+        commitment_matrix.setdefault(size, {})[variant] = path
+    commitment_actual = {
+        (size, variant)
+        for size, variants in commitment_matrix.items() for variant in variants
+    }
+    if commitment_actual != required:
+        raise click.UsageError(f"--commitment matrix must be exactly {sorted(required)!r}")
+    evidence_matrix = None
+    if scientific_evidence:
+        from ..corpus_certify import SCIENTIFIC_GATES
+
+        evidence_matrix = {}
+        for value in scientific_evidence:
+            try:
+                size, variant, gate, path = value.split(":", 3)
+            except ValueError as exc:
+                raise click.UsageError(
+                    "--scientific-evidence must be SIZE:VARIANT:GATE:PATH"
+                ) from exc
+            if gate in evidence_matrix.get(size, {}).get(variant, {}):
+                raise click.UsageError(
+                    f"duplicate --scientific-evidence cell {size}:{variant}:{gate}"
+                )
+            evidence_matrix.setdefault(size, {}).setdefault(variant, {})[gate] = path
+        evidence_actual = {
+            (size, variant, gate)
+            for size, variants in evidence_matrix.items()
+            for variant, gates in variants.items()
+            for gate in gates
+        }
+        evidence_required = {
+            (size, variant, gate)
+            for size, variant in required
+            for gate in SCIENTIFIC_GATES
+        }
+        if evidence_actual != evidence_required:
+            raise click.UsageError(
+                "--scientific-evidence matrix must be exactly complete for every member cell"
+            )
+    report = certify_materialized_family(
+        datasets_dir, member=member, dataset_names=matrix,
+        commitment_dirs=commitment_matrix,
+        scientific_evidence=evidence_matrix)
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(f"{member}: {report['status']} -> {target}")
+    if not report["structural_passed"]:
+        raise click.ClickException("structural certification failed")
+    if scientific_evidence and not report["fully_certified"]:
+        raise click.ClickException("scientific certification failed")
+
+
+@click.command("corpus-scientific-evidence-build")
+@click.option("--member", required=True)
+@click.option("--dataset", required=True)
+@click.option("--dataset-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--gate", required=True,
+              type=click.Choice(["closed_book", "retrieval_calibration", "union_recall", "leak_floor"]))
+@click.option("--measurement", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--run-manifest", type=click.Path(exists=True, dir_okay=False))
+@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.pass_context
+def cmd_corpus_scientific_evidence_build(
+    ctx, member, dataset, dataset_dir, gate, measurement, run_manifest, output,
+):
+    """Bind canonical scientific outputs to exact corpus and query/gold bytes."""
+    from ..corpus_certify import build_scientific_measurement_artifact
+
+    try:
+        artifact = build_scientific_measurement_artifact(
+            member=member,
+            dataset=dataset,
+            dataset_dir=dataset_dir,
+            gate=gate,
+            measurement_path=measurement,
+            run_manifest_path=run_manifest,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(artifact, indent=2))
+    else:
+        click.echo(f"{dataset}:{gate} evidence -> {target}")
+
+
+@click.command("corpus-inject-real")
+@click.option("--real-corpus", required=True, type=click.Path(exists=True, file_okay=False),
+              help="Transient fetched corpus directory containing corpus.jsonl or docs.jsonl.")
+@click.option("--gold-source", required=True, type=click.Path(exists=True, file_okay=False),
+              help="Committed fabricated 635 source containing docs.jsonl/queries.json/meta.json.")
+@click.option("--name", required=True, help="Materialized datasets/mixed member name.")
+@click.option("--seed", required=True, type=int)
+@click.option("--n-distractors", required=True, type=int)
+@click.option("--style", type=click.Choice(["append", "interleave"]), default="interleave", show_default=True)
+@click.option("--host-min-words", type=int, default=60, show_default=True)
+@click.option("--real-source-id", required=True, help="Stable source/dataset recipe identifier.")
+@click.option("--license-id", required=True, help="SPDX or precise source license identifier.")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.option("--commitment-dir", default=None, type=click.Path(),
+              help="Recipe/fabricated-input destination; defaults to scripts/jseval/707-corpora/<name>.")
+@click.pass_context
+def cmd_corpus_inject_real(ctx, real_corpus, gold_source, name, seed, n_distractors,
+                           style, host_min_words, real_source_id, license_id,
+                           datasets_dir, commitment_dir):
+    """Assemble a reproducible real-text + fabricated-gold 707 corpus member."""
+    import tempfile
+
+    from .. import corpus_build, corpus_inject
+    from .._paths import REPO_ROOT
+
+    base = Path(datasets_dir) if datasets_dir else REPO_ROOT / "datasets"
+    commitment = (
+        Path(commitment_dir) if commitment_dir
+        else REPO_ROOT / "scripts" / "jseval" / "707-corpora" / name
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        source = Path(temporary) / "source"
+        source_meta = corpus_inject.build_source(
+            real_corpus, gold_source, source,
+            seed=seed, n_distractors=n_distractors, style=style,
+            real_source_id=real_source_id, license_id=license_id,
+            host_min_words=host_min_words,
+        )
+        metadata = corpus_build.build_golden(source, base / "mixed" / name)
+    corpus_inject.write_commitment(
+        commitment, gold_source, source_meta["generation_provenance"]
+    )
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(metadata, indent=2))
+    else:
+        click.echo(
+            f"Built mixed/{name}: {metadata['corpus_size']} docs, "
+            f"{metadata['query_count']} queries; commitment={commitment}"
+        )
+
+
 @click.command("corpus-build")
 @click.option("--source", required=True, type=click.Path(exists=True),
               help="Committed corpus source dir (scripts/jseval/635-corpora/<name>/).")
@@ -472,5 +674,7 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
 
 
-COMMANDS = [cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
+COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member,
+            cmd_corpus_scientific_evidence_build, cmd_corpus_inject_real,
+            cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
             cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]

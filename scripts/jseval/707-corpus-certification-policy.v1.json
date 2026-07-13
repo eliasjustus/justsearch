@@ -1,0 +1,9 @@
+{
+  "schema": "707-corpus-certification-policy.v1",
+  "status": "draft",
+  "unresolved": [
+    "required_cells",
+    "scientific_thresholds"
+  ],
+  "required_cells": []
+}
