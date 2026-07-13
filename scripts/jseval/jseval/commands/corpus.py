@@ -411,7 +411,8 @@ def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency
         click.echo(json.dumps(out, indent=2))
     else:
         verdict = "PASS" if cert["passed"] else "FAIL"
-        click.echo(f"corpus-certify golden/{dataset}: closed-book acc={cert['closed_book_accuracy']:.3f} "
+        click.echo(f"corpus-certify {dataset if '/' in dataset else f'golden/{dataset}'}: "
+                   f"closed-book acc={cert['closed_book_accuracy']:.3f} "
                    f"(<= {threshold}) -> {verdict}")
         click.echo(f"  memory_independence={result['fidelity']['memory_independence']} "
                    f"(retrieval_difficulty set post-retrieval-run)  written to {meta_path.name}")
@@ -458,7 +459,11 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
     from .._paths import REPO_ROOT
 
     base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
-    dataset_dir = base / "golden" / dataset
+    # 707 members live under mixed/; a family-qualified --dataset resolves as given,
+    # a bare name keeps the historical golden/ resolution (same convention as
+    # corpus-certify).
+    dataset_ref = dataset if "/" in dataset else f"golden/{dataset}"
+    dataset_dir = base / dataset_ref
     mode_list = tuple(m.strip() for m in modes.split(",") if m.strip())
 
     # Self-contained mode: bring up the harness backend, ingest the member, assess, stop.
@@ -491,7 +496,7 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
         if start_backend:
             popen = backend_proc.proc
             ingest_mod.prepare_corpus(
-                f"golden/{dataset}",
+                dataset_ref,
                 config=IngestConfig(
                     base_url=base_url, dense_enabled=embedding, splade_enabled=True,
                     pipeline=True, json_mode=ctx.obj.get("json", False),
@@ -499,7 +504,7 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
                 ),
             )
         result = cf.assess_fidelity(
-            dataset_dir, f"golden/{dataset}", base_url, modes=mode_list,
+            dataset_dir, dataset_ref, base_url, modes=mode_list,
             embedding_enabled=embedding, splade_enabled=True,
             band_low=cf.DEFAULT_BAND_LOW if band_low is None else band_low,
             band_high=cf.DEFAULT_BAND_HIGH if band_high is None else band_high,
@@ -524,7 +529,7 @@ def cmd_corpus_fidelity(ctx, dataset, base_url, datasets_dir, modes, embedding,
         click.echo(json.dumps(result, indent=2))
     else:
         verdict = "PASS" if result["passed"] else "FAIL"
-        click.echo(f"corpus-fidelity golden/{dataset}: nDCG@10={result['retrieval_ndcg']} "
+        click.echo(f"corpus-fidelity {dataset_ref}: nDCG@10={result['retrieval_ndcg']} "
                    f"(band {result['band'][0]}-{result['band'][1]}, in_band={result['in_band']}), "
                    f"difficulty={result['retrieval_difficulty']}, "
                    f"shortcut_leaks={result['shortcut_leak_rate']} -> {verdict}")
@@ -613,7 +618,9 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
     from .._paths import REPO_ROOT
 
     base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
-    dataset_dir = base / "golden" / dataset
+    # Same family-qualification convention as corpus-certify/corpus-fidelity (707 members).
+    dataset_ref = dataset if "/" in dataset else f"golden/{dataset}"
+    dataset_dir = base / dataset_ref
     mode_list = [m.strip() for m in modes.split(",") if m.strip()]
 
     queries: dict[str, str] = {}
@@ -643,7 +650,7 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
         if start_backend:
             popen = backend_proc.proc
             ingest_mod.prepare_corpus(
-                f"golden/{dataset}",
+                dataset_ref,
                 config=IngestConfig(
                     base_url=base_url, dense_enabled=embedding, splade_enabled=True,
                     pipeline=True, json_mode=ctx.obj.get("json", False),
@@ -675,11 +682,11 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             from .. import backend as backend_mod
             backend_mod.stop_backend(backend_proc.proc, data_dir=backend_proc.data_dir)
 
-    out = {"dataset": f"golden/{dataset}", "n_queries": len(queries), "modes": rows, "control": ctrl}
+    out = {"dataset": dataset_ref, "n_queries": len(queries), "modes": rows, "control": ctrl}
     if ctx.obj.get("json"):
         click.echo(json.dumps(out, indent=2))
     else:
-        click.echo(f"corpus-probe golden/{dataset} ({len(queries)} queries):")
+        click.echo(f"corpus-probe {dataset_ref} ({len(queries)} queries):")
         for r in rows:
             click.echo(f"  [{r['mode']:12}] head@top{top_k}: {r['head_at_topk']}  mean_rank={r['mean_rank']}")
         if ctrl is not None:
