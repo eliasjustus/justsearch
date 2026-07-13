@@ -8,6 +8,16 @@ from pathlib import Path
 
 _HEX = frozenset("0123456789abcdef")
 
+SUPPORTED_REQUIREMENTS = frozenset({
+    "source_identity_complete", "clean_source_checkout",
+    "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
+    "captured_search_config", "verified_tool_surface",
+    "no_leak_suspect_cells", "contamination_classes",
+    "judge_calibration", "accuracy_delta_interval",
+    "intention_to_treat", "per_protocol_is_secondary",
+    "per_stratum_promotion",
+})
+
 
 def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX
@@ -32,11 +42,18 @@ def load_policy(path: str | Path | None = None) -> dict:
     return json.loads(Path(path or policy_path()).read_text(encoding="utf-8"))
 
 
-def policy_digest(policy: dict) -> str:
-    encoded = json.dumps(
-        policy, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+def canonical_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_digest(value: object) -> str:
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def policy_digest(policy: dict) -> str:
+    return canonical_digest(policy)
 
 
 def _cells(record: dict) -> list[dict]:
@@ -170,16 +187,7 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         "owner must settle the campaign matrix and scientific margins"
         if unresolved or not required_strata else "",
     )
-    supported_requirements = {
-        "source_identity_complete", "clean_source_checkout",
-        "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
-        "captured_search_config", "verified_tool_surface",
-        "no_leak_suspect_cells", "contamination_classes",
-        "judge_calibration", "accuracy_delta_interval",
-        "intention_to_treat", "per_protocol_is_secondary",
-        "per_stratum_promotion",
-    }
-    unknown_requirements = sorted(set(requirements) - supported_requirements)
+    unknown_requirements = sorted(set(requirements) - SUPPORTED_REQUIREMENTS)
     gate(
         "supported_policy_requirements", unknown_requirements, [],
         not unknown_requirements,

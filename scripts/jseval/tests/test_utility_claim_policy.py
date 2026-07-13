@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
-from jseval.utility_claim_policy import evaluate_claim, load_policy, policy_digest
+from jseval.utility_claim_policy import (
+    SUPPORTED_REQUIREMENTS,
+    evaluate_claim,
+    load_policy,
+    policy_digest,
+)
 from tests.test_corpus_inject import _certification_snapshot_fixture
 
 
@@ -517,3 +523,11 @@ def test_all_outcome_classes_are_reachable_under_one_active_policy():
     verdict = evaluate_claim(inconclusive, policy)
     assert verdict["outcome"] == "inconclusive"
     assert verdict["accepted"] is False
+
+
+def test_supported_requirements_match_schema_properties_exactly():
+    schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    requirements_schema = schema["properties"]["requirements"]
+    assert SUPPORTED_REQUIREMENTS == set(requirements_schema["properties"])
+    assert SUPPORTED_REQUIREMENTS == set(requirements_schema["required"])

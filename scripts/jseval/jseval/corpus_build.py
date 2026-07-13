@@ -28,7 +28,7 @@ from jseval import corpus_generate, materialize
 from jseval.corpus_identity import corpus_signature
 
 
-def _read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path) -> list[dict]:
     out: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -49,7 +49,7 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
     dataset_dir = Path(dataset_dir)
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    docs = _read_jsonl(source_dir / "docs.jsonl")
+    docs = read_jsonl(source_dir / "docs.jsonl")
     queries = json.loads((source_dir / "queries.json").read_text(encoding="utf-8"))
     src_meta = json.loads((source_dir / "meta.json").read_text(encoding="utf-8"))
 

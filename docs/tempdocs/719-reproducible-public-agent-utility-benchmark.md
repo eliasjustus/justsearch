@@ -1761,3 +1761,42 @@ sync tests (#3), unify `_WITH_TOOL` + delete the dead definition and share the d
 partial). Defer monolith decomposition (#4) and dataclass typing (#7) to a deliberate post-merge
 simplify pass — churning a green 151-test correctness boundary for readability alone is not worth
 the risk in the same PR.
+
+### Pre-PR fix pass (2026-07-13; findings #1/#2/#3/#5-partial implemented)
+
+Two implementation agents (disjoint file sets) plus lead review landed the targeted subset:
+
+- **#2** `gen-public-agent-utility.mjs`: `project()` replaced by read-only `evaluate()` returning
+  typed `{rel, status}` (`missing`/`no-markers`/`in-sync`/`drift`/`updated`) + two-phase writes —
+  any target lacking markers blocks the whole write batch; all targets reported, clean
+  `FAIL`/`DRIFT` lines, `process.exitCode=1`, no thrown exceptions on expected paths. Rendered
+  content between markers byte-unchanged (committed targets stayed in-sync).
+- **#1** `check-public-agent-utility.mjs`: JS now owns only pointer semantics (pointer shape,
+  null-state transitions, pointer→manifest confinement/hash/id/lifecycle binding); every
+  bundle-internal check was deleted with a per-deletion mapping to the covering
+  `utility_publication.replay_publication` line or `test_utility_publication.py` test (mapping in
+  the agent report; header comment names the split). Missing-Python now fails with a named
+  binary + remedy via exported `missingPythonMessage()`; `CHECK_PUBLIC_AGENT_UTILITY_ROOT` env
+  override (test-only) added.
+- Tests: gen test converted to the repo `ok()` collector idiom + multi-target-drift and
+  write-atomicity cases (95 assertions); new `check-public-agent-utility.test.mjs` (22 assertions)
+  wired into the required Public claims CI job before the check step.
+- **#5** `WITH_TOOL_CONDITIONS` now defined once in `agent_utility_observations.py` and imported by
+  `utility_comparison`/`utility_recompose`/`agent_utility_inspect` (a 5th occurrence the review
+  missed, found during implementation); dead copy in `agent_utility_run.py` deleted. Canonical-JSON
+  digest recipe consolidated into `utility_claim_policy.canonical_bytes/canonical_digest`;
+  `semantic_digest` delegates. `corpus_inject` imports `corpus_build.read_jsonl` (implementations
+  verified behavior-identical before merging).
+- **#3** three schema↔constant sync tests added (observation keys + source keys, hoisted
+  `SUPPORTED_REQUIREMENTS`, hoisted `POINTER_REF_KEYS`), each loading its schema from disk and
+  asserting exact bidirectional equality; all three pairs matched (no drift existed yet).
+
+Verification on the combined tree: full jseval suite **1753 passed / 2 failed** (the two
+pre-existing `test_correction_probe` fixture-missing failures; +3 passes are the new sync tests);
+rejected-fixture semantic digest **unchanged** (`2cea990c…`); gen `--check`, both `.test.mjs`
+suites, `check-public-agent-utility.mjs`, `check-workflow-triggers`, `gen-public-benchmark
+--check`, `git diff --check` all green. Residuals intentionally left: `corpus_inject.
+_canonical_digest` is a third digest-recipe site (cross-importing claim-policy into corpus
+machinery would couple unrelated domains — fold into a neutral shared helper if one ever exists);
+`jseval --help` piped under cp1252 hits the known pre-existing σ/UnicodeEncodeError quirk
+(use `PYTHONUTF8=1`; verified present on committed help text before this pass).

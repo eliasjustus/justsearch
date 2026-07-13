@@ -76,6 +76,9 @@ jobs:
       - name: Test agent-utility projection lifecycle and drift
         run: node scripts/docs/gen-public-agent-utility.test.mjs
 
+      - name: Test agent-utility publication pointer gate
+        run: node scripts/ci/check-public-agent-utility.test.mjs
+
       - name: Verify agent-utility publication and projections
         run: node scripts/ci/check-public-agent-utility.mjs
 

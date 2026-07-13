@@ -1,4 +1,14 @@
-/** Guard the immutable agent-utility publication pointer and outward projections. */
+/**
+ * Guard the immutable agent-utility publication pointer and outward projections.
+ *
+ * Pointer selection semantics (which manifest is CURRENTLY selected, and the null-state
+ * transitions around that) are pointer-only concepts Python's `replay_publication` never sees —
+ * it replays a single already-selected bundle. Everything replay DOES provably perform (full
+ * manifest shape, per-file hash chain, and the record's accepted claim verdict) is delegated to
+ * the real offline replay (`python -m jseval utility-replay`) below rather than re-implemented
+ * here, so the two can never silently drift apart. See the deletion mapping against
+ * `scripts/jseval/jseval/utility_publication.py::replay_publication` in the authoring changeset.
+ */
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -6,7 +16,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Test-only override (scripts/ci/check-public-agent-utility.test.mjs) so failure paths can be
+// exercised against a fixture root without touching the real repo; CI never sets this, so bare
+// invocation keeps resolving against REPO_ROOT unchanged.
+const ROOT = process.env.CHECK_PUBLIC_AGENT_UTILITY_ROOT
+  ? path.resolve(process.env.CHECK_PUBLIC_AGENT_UTILITY_ROOT)
+  : REPO_ROOT;
 const PUBLIC_ROOT = path.join(ROOT, "scripts", "jseval", "public-agent-utility");
 const POINTER_PATH = path.join(PUBLIC_ROOT, "current.v1.json");
 
@@ -43,79 +59,80 @@ function confined(base, relative, label, allowedBase = ROOT) {
   return resolved;
 }
 
-const pointer = readJson(POINTER_PATH, "publication pointer");
-exactKeys(pointer, ["schema", "schema_version", "current", "previous", "reason", "selected_at"], "pointer");
-if (pointer.schema !== "agent-utility-publication-pointer.v1" || pointer.schema_version !== 1) {
-  fail("unsupported publication pointer schema");
+/**
+ * Pure formatter for the "offline replay could not be verified" failure — unit-testable in
+ * isolation (scripts/ci/check-public-agent-utility.test.mjs) without spawning a real process.
+ * `replay` is a `spawnSync` result: either `{ error }` (the interpreter itself could not start,
+ * e.g. ENOENT) or `{ status, stdout, stderr }` (the interpreter ran and reported failure).
+ */
+export function missingPythonMessage(python, replay) {
+  if (replay.error) {
+    const code = replay.error.code || "unknown error";
+    return (
+      `offline replay could not start: '${python}' not found (${code}). ` +
+      "Install Python 3.13+ and run: python -m pip install -e scripts/jseval " +
+      "(or set PYTHON to the interpreter path)."
+    );
+  }
+  const detail = replay.stderr || replay.stdout || "(no output captured)";
+  return `offline replay failed (status ${replay.status}):\n${detail}`;
 }
-if (typeof pointer.reason !== "string" || pointer.reason.length === 0) fail("pointer reason must be non-empty");
 
-if (pointer.current !== null) {
-  exactKeys(pointer.current, ["publication_id", "path", "manifest_sha256"], "pointer.current");
-  const manifestPath = confined(PUBLIC_ROOT, pointer.current.path, "manifest path");
-  if (!fs.existsSync(manifestPath)) fail("selected manifest does not exist");
-  if (sha256(manifestPath) !== pointer.current.manifest_sha256) fail("selected manifest hash mismatch");
-
-  const manifest = readJson(manifestPath, "publication manifest");
-  exactKeys(
-    manifest,
-    ["schema", "schema_version", "publication_id", "created_at", "lifecycle_state", "record", "observations", "policy", "sanitizer_version", "replay_command", "supersedes"],
-    "manifest"
-  );
-  if (
-    manifest.schema !== "agent-utility-publication.v1" ||
-    manifest.schema_version !== 1 ||
-    manifest.publication_id !== pointer.current.publication_id ||
-    manifest.lifecycle_state !== "accepted"
-  ) fail("pointer does not select the matching accepted publication");
-  exactKeys(manifest.record, ["path", "sha256", "semantic_digest"], "manifest.record");
-  exactKeys(manifest.observations, ["path", "sha256"], "manifest.observations");
-  exactKeys(manifest.policy, ["path", "id", "sha256", "status"], "manifest.policy");
-  if (typeof manifest.policy.id !== "string" || manifest.policy.status !== "active") {
-    fail("selected publication must pin an active identified policy");
+/** Validates the pointer's own shape/selection semantics; returns the parsed pointer on success. */
+export function validatePointer({ pointerPath = POINTER_PATH, publicRoot = PUBLIC_ROOT, root = ROOT } = {}) {
+  const pointer = readJson(pointerPath, "publication pointer");
+  exactKeys(pointer, ["schema", "schema_version", "current", "previous", "reason", "selected_at"], "pointer");
+  if (pointer.schema !== "agent-utility-publication-pointer.v1" || pointer.schema_version !== 1) {
+    fail("unsupported publication pointer schema");
   }
+  if (typeof pointer.reason !== "string" || pointer.reason.length === 0) fail("pointer reason must be non-empty");
 
-  const recordPath = confined(
-    path.dirname(manifestPath), manifest.record.path, "record path",
-    path.join(path.dirname(PUBLIC_ROOT), "agent-utility-records")
-  );
-  const observationsPath = confined(
-    path.dirname(manifestPath), manifest.observations.path, "observations path",
-    path.dirname(manifestPath)
-  );
-  const policyPath = confined(
-    path.dirname(manifestPath), manifest.policy.path, "policy path",
-    path.dirname(manifestPath)
-  );
-  if (sha256(recordPath) !== manifest.record.sha256) fail("canonical record byte hash mismatch");
-  if (sha256(observationsPath) !== manifest.observations.sha256) fail("observation evidence byte hash mismatch");
-  if (sha256(policyPath) !== manifest.policy.sha256) fail("policy byte hash mismatch");
-  const record = readJson(recordPath, "canonical record");
-  if (record.semantic_digest !== manifest.record.semantic_digest || record.claim_verdict?.accepted !== true) {
-    fail("selected canonical record is not accepted or has the wrong semantic digest");
-  }
+  if (pointer.current !== null) {
+    exactKeys(pointer.current, ["publication_id", "path", "manifest_sha256"], "pointer.current");
+    const manifestPath = confined(publicRoot, pointer.current.path, "manifest path", root);
+    if (!fs.existsSync(manifestPath)) fail("selected manifest does not exist");
+    if (sha256(manifestPath) !== pointer.current.manifest_sha256) fail("selected manifest hash mismatch");
 
-  const python = process.env.PYTHON || "python";
-  const replay = spawnSync(
-    python,
-    ["-m", "jseval", "utility-replay", "--publication", manifestPath],
-    {
-    cwd: ROOT,
-    encoding: "utf8",
+    // Only the pointer-selection identity is read here (which publication, and is it accepted) —
+    // everything about the manifest's own internal shape and hash chain is Python's job below.
+    const manifest = readJson(manifestPath, "publication manifest");
+    if (
+      manifest.publication_id !== pointer.current.publication_id ||
+      manifest.lifecycle_state !== "accepted"
+    ) {
+      fail("pointer does not select the matching accepted publication");
     }
-  );
-  if (replay.status !== 0) fail(`offline replay failed:\n${replay.stderr || replay.stdout}`);
-  console.log(`check-public-agent-utility: replayed ${pointer.current.publication_id}`);
-} else if (pointer.previous === null && pointer.selected_at !== null) {
-  fail("the initial no-result pointer must have selected_at=null");
-} else if (pointer.previous !== null && pointer.selected_at === null) {
-  fail("a withdrawn publication pointer must retain its transition timestamp");
+
+    const python = process.env.PYTHON || "python";
+    const replay = spawnSync(
+      python,
+      ["-m", "jseval", "utility-replay", "--publication", manifestPath],
+      { cwd: root, encoding: "utf8" },
+    );
+    if (replay.error || replay.status !== 0) fail(missingPythonMessage(python, replay));
+    console.log(`check-public-agent-utility: replayed ${pointer.current.publication_id}`);
+  } else if (pointer.previous === null && pointer.selected_at !== null) {
+    fail("the initial no-result pointer must have selected_at=null");
+  } else if (pointer.previous !== null && pointer.selected_at === null) {
+    fail("a withdrawn publication pointer must retain its transition timestamp");
+  }
+  return pointer;
 }
 
-const projection = spawnSync("node", [path.join(ROOT, "scripts", "docs", "gen-public-agent-utility.mjs"), "--check"], {
-  cwd: ROOT,
-  stdio: "inherit",
-});
-if (projection.status !== 0) fail("public projections are stale or invalid");
+function main() {
+  const pointer = validatePointer();
 
-console.log(`check-public-agent-utility: OK (${pointer.current ? "accepted result replayed" : "no accepted result"})`);
+  const projection = spawnSync(
+    "node",
+    [path.join(ROOT, "scripts", "docs", "gen-public-agent-utility.mjs"), "--check"],
+    { cwd: ROOT, stdio: "inherit" },
+  );
+  if (projection.status !== 0) fail("public projections are stale or invalid");
+
+  console.log(`check-public-agent-utility: OK (${pointer.current ? "accepted result replayed" : "no accepted result"})`);
+}
+
+// Run as CLI only (not when imported by the test). Basename check is robust cross-platform.
+if (process.argv[1] && process.argv[1].replace(/\\/g, "/").endsWith("check-public-agent-utility.mjs")) {
+  main();
+}

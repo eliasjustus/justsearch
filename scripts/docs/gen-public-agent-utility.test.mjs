@@ -118,35 +118,50 @@ function selectAccepted(root, outcome = "null") {
 }
 
 let passed = 0;
-function test(label, body) {
-  const root = fixture();
+const failures = [];
+
+/** Failure-collector idiom (sibling: check-outward-number-citations.test.mjs / check-readiness-reason-codes.test.mjs):
+ * a failed assertion is recorded, not thrown, so one broken check never hides the rest of the suite. */
+const ok = (label, cond) => {
   try {
-    body(root);
+    assert.ok(cond, label);
     passed += 1;
   } catch (error) {
-    error.message = `${label}: ${error.message}`;
-    throw error;
+    failures.push(error.message);
+  }
+};
+
+/** Runs one scenario in its own fixture root; an unexpected exception inside `body` is recorded as a
+ * failure (not rethrown), so a crashing scenario does not abort the remaining scenarios in the file. */
+function scenario(label, body) {
+  const root = fixture();
+  try {
+    body(root, (sub, cond) => ok(`${label}: ${sub}`, cond));
+  } catch (error) {
+    failures.push(`${label}: unexpected error - ${error.message}`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
-test("initial null and drift", (root) => {
-  assert.equal(run(root).status, 0);
+scenario("initial null and drift", (root, ok) => {
+  const first = run(root);
+  ok("generate exits 0", first.status === 0);
   for (const relative of [
     "README.md", "RESEARCH.md", "docs/reference/benchmarks/agent-utility.md",
   ]) {
     const projected = fs.readFileSync(path.join(root, relative), "utf8");
-    assert.match(projected, /No agent-utility result is currently accepted/);
-    assert.doesNotMatch(projected.slice(projected.indexOf(START), projected.indexOf(END)), /\| Corpus|\d+\.\d+%/);
+    ok(`${relative} states no accepted result`, /No agent-utility result is currently accepted/.test(projected));
+    const body = projected.slice(projected.indexOf(START), projected.indexOf(END));
+    ok(`${relative} carries no benchmark table or percentages`, !/\| Corpus|\d+\.\d+%/.test(body));
   }
-  assert.equal(run(root, "--check").status, 0);
+  ok("--check exits 0 once in sync", run(root, "--check").status === 0);
   const readme = path.join(root, "README.md");
   fs.writeFileSync(
     readme,
     fs.readFileSync(readme, "utf8").replace("No agent-utility result", "A stale agent-utility result"),
   );
-  assert.notEqual(run(root, "--check").status, 0);
+  ok("--check exits non-zero on drift", run(root, "--check").status !== 0);
 });
 
 const OUTCOME_PHRASES = {
@@ -157,89 +172,138 @@ const OUTCOME_PHRASES = {
 };
 
 for (const [outcome, phrase] of Object.entries(OUTCOME_PHRASES)) {
-  test(`accepted ${outcome} and superseded`, (root) => {
+  scenario(`accepted ${outcome} and superseded`, (root, ok) => {
     selectAccepted(root, outcome);
-    assert.equal(run(root).status, 0);
+    ok("generate exits 0", run(root).status === 0);
     const targets = [
       "README.md", "RESEARCH.md", "docs/reference/benchmarks/agent-utility.md",
     ].map((relative) => fs.readFileSync(path.join(root, relative), "utf8"));
-    for (const projected of targets) {
-      assert.match(projected, /Accepted publication `accepted-one`/);
-      assert.match(projected, phrase);
+    targets.forEach((projected, index) => {
+      ok(`target ${index} names the accepted publication`, /Accepted publication `accepted-one`/.test(projected));
+      ok(`target ${index} carries the ${outcome} phrase`, phrase.test(projected));
       if (outcome !== "benefit") {
-        assert.doesNotMatch(projected, /produced a policy-qualified utility benefit/);
+        ok(`target ${index} does not carry the benefit phrase`, !/produced a policy-qualified utility benefit/.test(projected));
       }
-    }
+    });
     const readme = targets[0];
-    assert.match(readme, /docs\/reference\/benchmarks\/agent-utility\.md/);
-    assert.doesNotMatch(readme.slice(readme.indexOf(START), readme.indexOf(END)), /\| Corpus|50\.0%|Paired n/);
+    ok("README links to the reference doc", /docs\/reference\/benchmarks\/agent-utility\.md/.test(readme));
+    const readmeBody = readme.slice(readme.indexOf(START), readme.indexOf(END));
+    ok("README stays free of per-stratum tables", !/\| Corpus|50\.0%|Paired n/.test(readmeBody));
   });
 }
 
-test("research exposes compact per-stratum metrics and uncertainty", (root) => {
+scenario("research exposes compact per-stratum metrics and uncertainty", (root, ok) => {
   selectAccepted(root, "benefit");
-  assert.equal(run(root).status, 0);
+  ok("generate exits 0", run(root).status === 0);
   const research = fs.readFileSync(path.join(root, "RESEARCH.md"), "utf8");
-  assert.match(research, /Provider cache-creation token delta/);
-  assert.match(research, /\+20\.0 \(CI \+10\.0 to \+30\.0\)/);
-  assert.match(research, /\+5\.0 pp \(CI \+1\.0 pp to \+9\.0 pp\)/);
-  assert.match(research, /80\.8% \| 99 \|/);
+  ok("has the token-delta column header", /Provider cache-creation token delta/.test(research));
+  ok("token delta carries its interval", /\+20\.0 \(CI \+10\.0 to \+30\.0\)/.test(research));
+  ok("accuracy delta carries its interval", /\+5\.0 pp \(CI \+1\.0 pp to \+9\.0 pp\)/.test(research));
+  ok("adoption and paired n render", /80\.8% \| 99 \|/.test(research));
 });
 
-test("reference exposes arms, loss, certification, and immutable references", (root) => {
+scenario("reference exposes arms, loss, certification, and immutable references", (root, ok) => {
   selectAccepted(root, "harm");
-  assert.equal(run(root).status, 0);
+  ok("generate exits 0", run(root).status === 0);
   const reference = fs.readFileSync(
     path.join(root, "docs/reference/benchmarks/agent-utility.md"), "utf8",
   );
-  assert.match(reference, /Stratum outcome: \*\*harm\*\*/);
-  assert.match(reference, /Accuracy \| 50\.0% \| 55\.0% \| \+5\.0 pp/);
-  assert.match(reference, /mean 100\.0; median 90\.0; p95 160\.0; n=100/);
-  assert.match(reference, /mean \$0\.010000; median \$0\.009000; p95 \$0\.018000; n=100/);
-  assert.match(reference, /expected\/observed cells: 200\/198/);
-  assert.match(reference, /\| B \| 100 \| 99 \| 96 \| 3 \| 1 \| 3\.0% \|/);
-  assert.match(reference, /Certification SHA-256 \| `e{64}`/);
-  assert.match(reference, /Scientific gate evidence/);
-  assert.match(reference, /Publication manifest:/);
-  assert.match(reference, /Sanitized observation evidence:/);
-  assert.match(reference, /utility-replay --publication accepted-one/);
+  ok("stratum outcome heading", /Stratum outcome: \*\*harm\*\*/.test(reference));
+  ok("accuracy row", /Accuracy \| 50\.0% \| 55\.0% \| \+5\.0 pp/.test(reference));
+  ok("token distribution row", /mean 100\.0; median 90\.0; p95 160\.0; n=100/.test(reference));
+  ok("cost distribution row", /mean \$0\.010000; median \$0\.009000; p95 \$0\.018000; n=100/.test(reference));
+  ok("expected/observed cells", /expected\/observed cells: 200\/198/.test(reference));
+  ok("loss table row B", /\| B \| 100 \| 99 \| 96 \| 3 \| 1 \| 3\.0% \|/.test(reference));
+  ok("certification sha", /Certification SHA-256 \| `e{64}`/.test(reference));
+  ok("scientific gate evidence label", /Scientific gate evidence/.test(reference));
+  ok("publication manifest reference", /Publication manifest:/.test(reference));
+  ok("sanitized observation evidence reference", /Sanitized observation evidence:/.test(reference));
+  ok("replay command", /utility-replay --publication accepted-one/.test(reference));
 });
 
-test("withdrawn", (root) => {
+scenario("withdrawn", (root, ok) => {
   const pointer = path.join(root, "scripts/jseval/public-agent-utility/current.v1.json");
   writeJson(pointer, {
     schema: "agent-utility-publication-pointer.v1", schema_version: 1,
     current: null, previous: { publication_id: "accepted-one" },
     reason: "Withdrawn after audit.", selected_at: "2026-07-13T00:00:00Z",
   });
-  assert.equal(run(root).status, 0);
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /previously selected result was withdrawn/);
+  ok("generate exits 0", run(root).status === 0);
+  ok(
+    "README states the previous result was withdrawn",
+    /previously selected result was withdrawn/.test(fs.readFileSync(path.join(root, "README.md"), "utf8")),
+  );
 });
 
-test("missing markers", (root) => {
+scenario("missing markers", (root, ok) => {
   fs.writeFileSync(path.join(root, "RESEARCH.md"), "no markers\n");
-  assert.notEqual(run(root).status, 0);
+  const result = run(root);
+  ok("generate exits non-zero when a target lacks markers", result.status !== 0);
+  ok("no stderr/stack trace on the missing-markers path", result.stderr === "");
 });
 
-test("drift is detected in every target", (root) => {
-  assert.equal(run(root).status, 0);
+scenario("drift is detected in every target", (root, ok) => {
+  ok("initial generate exits 0", run(root).status === 0);
   for (const relative of [
     "README.md", "RESEARCH.md", "docs/reference/benchmarks/agent-utility.md",
   ]) {
     const file = path.join(root, relative);
     fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("No agent-utility result", "Stale result"));
-    assert.notEqual(run(root, "--check").status, 0, relative);
-    assert.equal(run(root).status, 0, relative);
+    ok(`${relative}: --check catches drift`, run(root, "--check").status !== 0);
+    ok(`${relative}: regenerate exits 0`, run(root).status === 0);
   }
 });
 
-test("accepted projection rejects tampered observation evidence", (root) => {
+scenario("accepted projection rejects tampered observation evidence", (root, ok) => {
   selectAccepted(root, "benefit");
   const evidence = path.join(
     root, "scripts/jseval/public-agent-utility/publications/accepted-one/observations.v1.jsonl",
   );
   fs.appendFileSync(evidence, "{}\n");
-  assert.notEqual(run(root).status, 0);
+  ok("generate exits non-zero on tampered observation evidence", run(root).status !== 0);
 });
 
+scenario("--check reports drift for every stale target, not just the first", (root, ok) => {
+  ok("initial generate exits 0", run(root).status === 0);
+  const staleRelatives = ["README.md", "RESEARCH.md"];
+  for (const relative of staleRelatives) {
+    const file = path.join(root, relative);
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("No agent-utility result", "Stale result"));
+  }
+  const result = run(root, "--check");
+  ok("--check exits non-zero", result.status !== 0);
+  for (const relative of staleRelatives) {
+    ok(`--check output names ${relative} as drifted`, (result.stdout || "").includes(`DRIFT ${relative}`));
+  }
+  ok(
+    "the untouched target is not reported as drift",
+    !(result.stdout || "").includes("DRIFT docs/reference/benchmarks/agent-utility.md"),
+  );
+  ok("no stderr/stack trace on the --check drift path", result.stderr === "");
+});
+
+scenario("write mode with a marker-less target writes nothing (atomic across targets)", (root, ok) => {
+  const targets = ["README.md", "RESEARCH.md", "docs/reference/benchmarks/agent-utility.md"];
+  // RESEARCH.md loses its markers; README.md/agent-utility.md are still at their pristine fixture
+  // placeholder ("stale" between markers) — a successful run WOULD rewrite them to real content.
+  fs.writeFileSync(path.join(root, "RESEARCH.md"), "no markers here\n");
+  const before = Object.fromEntries(
+    targets.map((relative) => [relative, fs.readFileSync(path.join(root, relative), "utf8")]),
+  );
+  ok("README.md is still at its pristine (would-drift) placeholder", before["README.md"].includes("stale"));
+
+  const result = run(root);
+  ok("write mode exits non-zero when one target lacks markers", result.status !== 0);
+  for (const relative of targets) {
+    const after = fs.readFileSync(path.join(root, relative), "utf8");
+    ok(`${relative} is byte-unchanged after the blocked write`, after === before[relative]);
+  }
+  ok("no stderr/stack trace on the blocked write path", result.stderr === "");
+});
+
+if (failures.length) {
+  console.error(`gen-public-agent-utility.test: FAIL (${failures.length})`);
+  for (const failure of failures) console.error("  - " + failure);
+  process.exit(1);
+}
 console.log(`gen-public-agent-utility.test: OK (${passed} assertions)`);

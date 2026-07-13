@@ -11,12 +11,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+from jseval.corpus_build import read_jsonl
+
 METHOD = "real-text-injection-v1"
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
-
-
-def _read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _canonical_digest(value) -> str:
@@ -171,8 +169,8 @@ def _assembly_worker(request_path: Path, output_path: Path) -> None:
         query.setdefault("query_variant", "verbose")
         query.setdefault("query_family_id", f"q{index:04d}")
     docs, report = assemble(
-        _read_jsonl(Path(request["real_path"])),
-        _read_jsonl(Path(request["fabricated_path"])),
+        read_jsonl(Path(request["real_path"])),
+        read_jsonl(Path(request["fabricated_path"])),
         queries,
         seed=int(request["seed"]),
         n_distractors=int(request["n_distractors"]),
@@ -203,8 +201,8 @@ def build_source(
     if not real_path.is_file():
         real_path = real_root / "docs.jsonl"
     gold_root = Path(gold_source_dir)
-    real_docs = _read_jsonl(real_path)
-    fabricated_docs = _read_jsonl(gold_root / "docs.jsonl")
+    real_docs = read_jsonl(real_path)
+    fabricated_docs = read_jsonl(gold_root / "docs.jsonl")
     queries = json.loads((gold_root / "queries.json").read_text(encoding="utf-8"))
     for index, query in enumerate(queries, 1):
         query.setdefault("query_variant", "verbose")

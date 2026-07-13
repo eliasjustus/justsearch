@@ -37,6 +37,7 @@ import statistics as _stats
 
 from jseval import compare_runs
 from jseval.agent_manifest import agent_cohort_key
+from jseval.agent_utility_observations import WITH_TOOL_CONDITIONS
 from jseval.release import canonical_dataset_slug
 
 SCHEMA = "utility-comparison.v1"
@@ -45,7 +46,6 @@ SCHEMA_VERSION = 2
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
-_WITH_TOOL = {"B", "C"}
 _BASELINE = "A"
 
 
@@ -235,7 +235,7 @@ def compose_utility(
     search_keys = {
         s["manifest"].get("search_config_cohort_key")
         for s in run_summaries
-        if s.get("condition") in _WITH_TOOL
+        if s.get("condition") in WITH_TOOL_CONDITIONS
     }
     search_keys.discard(None)
     if len(search_keys) > 1:
@@ -471,7 +471,7 @@ def _tool_surfacing_mode(run_summaries: list[dict]) -> str | None:
     """
     flags = []
     for s in run_summaries:
-        if s.get("condition") not in _WITH_TOOL:
+        if s.get("condition") not in WITH_TOOL_CONDITIONS:
             continue
         for entry in (s.get("per_query") or {}).values():
             v = entry.get("mcp_tools_deferred")
@@ -986,7 +986,7 @@ def compose_utility_cross_corpus(
     search_keys = {
         s["manifest"].get("search_config_cohort_key")
         for s in run_summaries
-        if s.get("condition") in _WITH_TOOL
+        if s.get("condition") in WITH_TOOL_CONDITIONS
     }
     search_keys.discard(None)
     if len(search_keys) > 1:

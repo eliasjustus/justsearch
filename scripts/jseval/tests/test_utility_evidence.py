@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from jseval.agent_utility_observations import successful_summaries
 from jseval.commands.utility import cmd_utility_recompose
 from jseval.agent_manifest import mcp_tool_surface_hash
-from jseval.utility_evidence import read_evidence, sanitize_observation
+from jseval.utility_evidence import _OBSERVATION_KEYS, _SOURCE_KEYS, read_evidence, sanitize_observation
 from jseval.utility_recompose import finalize_observation_groups, finalize_evidence
 
 _SURFACE = [{
@@ -231,6 +231,13 @@ def test_recompose_cli_accepts_sanitized_evidence_without_logs(tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert (tmp_path / "utility-comparison.v1.json").is_file()
+
+
+def test_observation_keys_match_schema_properties_exactly():
+    schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert _OBSERVATION_KEYS == set(schema["properties"])
+    assert _SOURCE_KEYS == set(schema["properties"]["source"]["properties"])
 
 
 def test_source_complete_evidence_digest_is_checkout_independent(tmp_path, monkeypatch):

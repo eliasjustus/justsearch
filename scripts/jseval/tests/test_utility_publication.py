@@ -10,6 +10,7 @@ import pytest
 from jseval import utility_publication as publication
 from jseval.utility_claim_policy import load_policy
 from jseval.utility_evidence import sanitize_observation
+from jseval.utility_publication import POINTER_REF_KEYS
 from jseval.utility_recompose import finalize_evidence, finalize_observation_groups, write_record
 from tests.test_utility_evidence import _observation
 from tests.test_corpus_inject import _certification_snapshot_fixture
@@ -222,3 +223,11 @@ def test_initial_null_pointer_cannot_be_misrendered_as_withdrawn(tmp_path):
     root, _, _ = _setup_rejected(tmp_path)
     with pytest.raises(ValueError, match="initial-null"):
         publication.select_publication(root=root, clear=True, reason="not a transition")
+
+
+def test_pointer_ref_keys_match_schema_ref_definition_exactly():
+    schema_path = Path(__file__).parents[1] / "agent-utility-publication-pointer.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    ref_schema = schema["definitions"]["ref"]
+    assert POINTER_REF_KEYS == set(ref_schema["properties"])
+    assert POINTER_REF_KEYS == set(ref_schema["required"])

@@ -314,17 +314,26 @@ function generated(selection, target) {
   return [START, "", selection.record ? accepted(selection, target) : noResult(selection, target), "", END].join("\n");
 }
 
-function project(file, body, check, root) {
+/**
+ * Locate the marker region and compute the projected status for one target — read-only, no writes.
+ * Statuses: "missing" (file does not exist), "no-markers" (markers absent), "in-sync" (byte-identical),
+ * "drift" (differs — not yet written).
+ */
+function evaluate(file, body, root) {
+  const rel = path.relative(root, file).replaceAll("\\", "/");
+  if (!fs.existsSync(file)) return { rel, file, status: "missing" };
   const text = fs.readFileSync(file, "utf8");
   const start = text.indexOf(START);
   const end = text.indexOf(END);
-  if (start < 0 || end < start) throw new Error(`${path.relative(root, file)} lacks agent-utility markers`);
+  if (start < 0 || end < start) return { rel, file, status: "no-markers" };
   const next = text.slice(0, start) + body + text.slice(end + END.length);
-  const rel = path.relative(root, file).replaceAll("\\", "/");
-  if (next === text) return console.log(`gen-public-agent-utility: ${rel} - in-sync`);
-  if (check) throw new Error(`${rel} is stale; run generator without --check`);
-  fs.writeFileSync(file, next);
-  console.log(`gen-public-agent-utility: ${rel} - updated`);
+  if (next === text) return { rel, file, status: "in-sync" };
+  return { rel, file, status: "drift", next };
+}
+
+function apply(result) {
+  fs.writeFileSync(result.file, result.next);
+  return { ...result, status: "updated" };
 }
 
 function main() {
@@ -336,8 +345,37 @@ function main() {
     ["RESEARCH.md", "research"],
     [path.join("docs", "reference", "benchmarks", "agent-utility.md"), "reference"],
   ];
-  for (const [relative, target] of targets) {
-    project(path.join(root, relative), generated(selection, target), check, root);
+
+  let results = targets.map(([relative, target]) =>
+    evaluate(path.join(root, relative), generated(selection, target), root),
+  );
+
+  // A target lacking the marker region blocks every write this run, so a later failing target can
+  // never leave an earlier target already rewritten (two-phase: evaluate all, then write all).
+  const blocked = results.some((r) => r.status === "missing" || r.status === "no-markers");
+  if (!check && !blocked) {
+    results = results.map((r) => (r.status === "drift" ? apply(r) : r));
+  }
+
+  let failed = false;
+  for (const r of results) {
+    if (r.status === "missing" || r.status === "no-markers") {
+      console.log(`gen-public-agent-utility: FAIL ${r.rel} — ${r.status} (target lacks the marker region)`);
+      failed = true;
+    } else if (r.status === "drift") {
+      const remedy = check ? "run without --check to regenerate" : "blocked by another target lacking its marker region";
+      console.log(`gen-public-agent-utility: DRIFT ${r.rel} — projection is stale; ${remedy}`);
+      failed = true;
+    } else if (r.status === "in-sync") {
+      console.log(`gen-public-agent-utility: ${r.rel} - in-sync`);
+    } else if (r.status === "updated") {
+      console.log(`gen-public-agent-utility: ${r.rel} - updated`);
+    }
+  }
+
+  if (failed) {
+    process.exitCode = 1;
+    return;
   }
   console.log(`gen-public-agent-utility: OK${check ? " (in sync)" : ""}`);
 }

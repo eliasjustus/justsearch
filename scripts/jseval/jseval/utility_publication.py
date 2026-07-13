@@ -13,6 +13,8 @@ from jseval.utility_recompose import finalize_evidence, semantic_digest
 PUBLICATION_SCHEMA = "agent-utility-publication.v1"
 POINTER_SCHEMA = "agent-utility-publication-pointer.v1"
 
+POINTER_REF_KEYS = frozenset({"publication_id", "path", "manifest_sha256"})
+
 
 def _require_exact_keys(value: dict, expected: set[str], label: str) -> None:
     unknown = set(value) - expected
@@ -55,7 +57,7 @@ def load_pointer(root: str | Path) -> dict:
         if pointer.get(field) is not None:
             _require_exact_keys(
                 pointer[field],
-                {"publication_id", "path", "manifest_sha256"},
+                POINTER_REF_KEYS,
                 f"publication pointer {field}",
             )
     if pointer.get("schema") != POINTER_SCHEMA or "current" not in pointer:

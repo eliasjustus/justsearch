@@ -287,6 +287,3 @@ def scan_leaked_answers(results: list[dict], *, condition: str, seed: int) -> di
                 "completion_excerpt": text[:400],
             }
     return leaked
-
-
-_WITH_TOOL = {"B", "C"}

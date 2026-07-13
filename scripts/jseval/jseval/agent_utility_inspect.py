@@ -67,6 +67,7 @@ from jseval.agent_retrieval_eval import (
     find_leak_suspect_tool_calls,
     stage_corpus_dir,
 )
+from jseval.agent_utility_observations import WITH_TOOL_CONDITIONS
 from jseval.utility_calibrate import (
     assert_mcp_config_http_typed,
     assert_watched_roots_scoped,
@@ -75,7 +76,7 @@ from jseval.utility_calibrate import (
 
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
-_WITH_TOOL = {"B", "C"}
+_WITH_TOOL = WITH_TOOL_CONDITIONS
 
 # Generous default per-cell turn cap (tempdoc 675 lever 3): clips the pathological
 # many-turn tail, set well ABOVE the useful range so it does not bias the measured

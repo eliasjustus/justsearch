@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-import hashlib
 import json
 from pathlib import Path
 from typing import Iterable
 
 from jseval.agent_utility_observations import (
+    WITH_TOOL_CONDITIONS,
     all_attempt_tool_call_assertions,
     read_inspect_observations,
     successful_summaries,
 )
+from jseval.utility_claim_policy import canonical_bytes, canonical_digest
 from jseval.utility_comparison import (
     CITED_BASELINES,
     _stats_from_pairs,
@@ -32,15 +33,6 @@ from jseval.utility_governance import (
 _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 
 
-def _canonical_bytes(value: object) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-
 def semantic_projection(record: dict) -> dict:
     """Return the record with only the explicit volatile transport set removed."""
     projected = copy.deepcopy(record)
@@ -50,7 +42,7 @@ def semantic_projection(record: dict) -> dict:
 
 
 def semantic_digest(record: dict) -> str:
-    return hashlib.sha256(_canonical_bytes(semantic_projection(record))).hexdigest()
+    return canonical_digest(semantic_projection(record))
 
 
 def _load_overlay(log_dir: Path, explicit: str | Path | None) -> dict | None:
@@ -81,7 +73,7 @@ def _intention_to_treat_estimand(
         key = (
             corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
             observation.get("resolved_model"),
-            _canonical_bytes(cohort.get("corpus_certification")),
+            canonical_bytes(cohort.get("corpus_certification")),
         )
         condition = observation.get("condition")
         if condition not in {"A", "B"}:
@@ -146,13 +138,13 @@ def _intention_to_treat_estimand(
             for arm in arms.values() for observation in arm.values()
         ]
         query_identities = {
-            _canonical_bytes(item.get("query_identity")) for item in source_cohorts
+            canonical_bytes(item.get("query_identity")) for item in source_cohorts
         }
         campaign_identities = {
-            _canonical_bytes(item.get("campaign_identity")) for item in source_cohorts
+            canonical_bytes(item.get("campaign_identity")) for item in source_cohorts
         }
         certifications = {
-            _canonical_bytes(item.get("corpus_certification")) for item in source_cohorts
+            canonical_bytes(item.get("corpus_certification")) for item in source_cohorts
         }
         if (
             len(query_identities) != 1
@@ -165,7 +157,7 @@ def _intention_to_treat_estimand(
         query_identity = json.loads(next(iter(query_identities)).decode("utf-8"))
         campaign_identity = json.loads(next(iter(campaign_identities)).decode("utf-8"))
         certification = json.loads(next(iter(certifications)).decode("utf-8"))
-        if _canonical_bytes(certification) != certification_bytes:
+        if canonical_bytes(certification) != certification_bytes:
             raise ValueError("ITT stratum certification grouping drifted")
         expected_by_arm = {"A": set(), "B": set()}
         for expected_cell in (campaign_identity or {}).get("expected_cells") or []:
@@ -442,7 +434,7 @@ def finalize_observation_groups(
         observation.get("observed_mcp_tool_surface_hash")
         for group in groups
         for observation in group
-        if observation.get("condition") in {"B", "C"}
+        if observation.get("condition") in WITH_TOOL_CONDITIONS
         and observation.get("observed_mcp_tool_surface_hash")
     }
     if len(observed_surface_hashes) > 1:
@@ -455,7 +447,7 @@ def finalize_observation_groups(
         if ((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface_hash")
     }
     captured_surfaces = {
-        _canonical_bytes(((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface"))
+        canonical_bytes(((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface"))
         for group in groups
         for observation in group
         if ((observation.get("source") or {}).get("cohort") or {}).get("mcp_tool_surface")

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-_WITH_TOOL = {"B", "C"}
+WITH_TOOL_CONDITIONS = frozenset({"B", "C"})
 
 
 def _error_text(value: Any) -> str | None:
@@ -197,7 +197,7 @@ def successful_summaries(
         source = group["source"]
         cohort = source.get("cohort") or {}
         condition = group["condition"]
-        with_tool = condition in _WITH_TOOL
+        with_tool = condition in WITH_TOOL_CONDITIONS
         resolved_models = group["resolved_models"]
         if len(resolved_models) > 1:
             raise ValueError(
@@ -277,7 +277,7 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
         if offered is not None and offered > 0 and observed_hash:
             aggregate["cells_with_mcp_surface_verified"] += 1
         if observation.get("mcp_surface_unverified") or (
-            condition in _WITH_TOOL and not observation.get("excluded") and not observed_hash
+            condition in WITH_TOOL_CONDITIONS and not observation.get("excluded") and not observed_hash
         ):
             aggregate["cells_mcp_surface_unverified"] += 1
         if observed_hash:
