@@ -32,9 +32,11 @@ JustSearch exposes its retrieval over MCP at `POST /mcp` — **in-process Stream
 Five tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch_browse`, `justsearch_ingest`,
 `justsearch_status`. Your documents never leave the machine — only the agent's answer does.
 
-A reproducible agent-utility benchmark — how much JustSearch's retrieval tool improves an agent's task
-performance versus generic file tools — *is in development; reproducible figures will be published with the
-project's benchmark methodology* (no bare percentage ships until it clears that bar).
+<!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
+
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.
+
+<!-- agent-utility:generated:end -->
 
 **As a desktop app** *(for non-developers)*
 Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch/releases/latest**

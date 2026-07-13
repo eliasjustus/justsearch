@@ -323,7 +323,7 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
     from jseval.utility_governance import compute_loss_accounting
     pilot_arms = compute_loss_accounting(pilot_dir)
     per_cell_cost = 0.12  # fallback
-    summ = aur.eval_logs_to_summaries(pilot_dir, search_config_cohort_key=cck)
+    summ = aur.eval_logs_to_summaries(pilot_dir)
     costs = [v["cost_usd"] for s in summ for v in s["per_query"].values() if v.get("cost_usd")]
     if costs:
         per_cell_cost = sum(costs) / len(costs)

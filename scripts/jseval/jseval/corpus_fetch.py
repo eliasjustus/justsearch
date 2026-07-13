@@ -170,6 +170,8 @@ def fetch_miracl_sample(out_dir: Path | str, *, lang: str, seed: int, n_docs: in
         "contamination_class": "public-benchmark",
         "generation_provenance": {
             "method": "ir_datasets-sample", "source": f"miracl/{lang}/{split}",
+            "source_revision": "miracl-v1.0",
+            "ir_datasets_version": getattr(ir_datasets, "__version__", None),
             "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
         },
     })
@@ -185,6 +187,7 @@ _CLERC_QRELS_FILE = "qrels-doc.test.direct.tsv"
 _CLERC_QUERIES_FILE = "test.single-removed.direct.tsv"
 _CLERC_COLLECTION_FILE = "collection.doc.tsv.gz"
 _CLERC_RAW_FILES = [_CLERC_QRELS_FILE, _CLERC_QUERIES_FILE, _CLERC_COLLECTION_FILE]
+_CLERC_REVISION = "ef042f8ab436f78704f17faa0a866d1b2b862f6f"
 
 
 def _populate_clerc_raw(dest: Path, *, base: str) -> None:
@@ -233,24 +236,31 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs
     the query text; direct citation as the qrel) — the most standard of CLERC's four retrieval-task
     variants. See this module's docstring for the licensing note this design already accounts for.
     """
-    base = "https://huggingface.co/datasets/jhu-clsp/CLERC/resolve/main"
+    base = f"https://huggingface.co/datasets/jhu-clsp/CLERC/resolve/{_CLERC_REVISION}"
     with dataset_cache.cached_dir(
         "clerc-raw",
         {"base": base, "task_variant": "single-removed/direct"},
         filenames=_CLERC_RAW_FILES,
         populate=lambda dest: _populate_clerc_raw(dest, base=base),
     ) as raw_dir:
+        from .corpus_identity import corpus_signature
+
         qrels_lines = (raw_dir / _CLERC_QRELS_FILE).read_text(encoding="utf-8").splitlines()
         queries_lines = (raw_dir / _CLERC_QUERIES_FILE).read_text(encoding="utf-8").splitlines()
         collection_path = raw_dir / _CLERC_COLLECTION_FILE
         return _sample_clerc_from_raw(
             out_dir, qrels_lines=qrels_lines, queries_lines=queries_lines,
-            collection_path=collection_path, seed=seed, n_queries=n_queries, n_docs=n_docs)
+            collection_path=collection_path, seed=seed, n_queries=n_queries, n_docs=n_docs,
+            raw_source_signature=corpus_signature(
+                raw_dir, files=[raw_dir / name for name in _CLERC_RAW_FILES]
+            ),
+        )
 
 
 def _sample_clerc_from_raw(
     out_dir: Path | str, *, qrels_lines: list[str], queries_lines: list[str], collection_path: Path,
     seed: int, n_queries: int, n_docs: int | None,
+    raw_source_signature: str | None = None,
 ) -> dict:
     """Deterministic sampling over already-fetched raw CLERC artifacts -- split out from
     `fetch_clerc_sample` so the (cache-eligible) raw fetch and the (seed-dependent) sampling are two
@@ -338,6 +348,8 @@ def _sample_clerc_from_raw(
         # committed recipe.json reproducing it, e.g. 666-corpora/legal-clerc-200) byte-compatible.
         provenance["n_docs_requested"] = n_docs
         provenance["n_distractors"] = len(reservoir)
+        provenance["source_revision"] = _CLERC_REVISION
+        provenance["raw_source_signature"] = raw_source_signature
 
     return _write_source(out_dir, docs=doc_list, queries=query_list, meta={
         "version": "1.0", "type_axis": "legal",

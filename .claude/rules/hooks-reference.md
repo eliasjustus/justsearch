@@ -35,7 +35,8 @@ message names the allowed alternative; use it.
 - Edit/Write-triggered: ui-shot-hint, consult-doc-hint, docs-regen-hint, lockfile-hint,
   ssot-hint, test-edit-hint, stress-test-hint, governance-hint, seam-hint, search-engine-hint.
 - Bash-triggered: pipe-mask-hint (build exit masked by trailing pipe),
-  governance-precommit-hint (`git commit`), docs-granularity-hint (`git push`).
+  governance-precommit-hint (`git commit`), docs-granularity-hint (`git push`),
+  dataset-cache-hint (corpus/dataset fetch — use the cache-backed `jseval corpus-fetch-*`, 709).
 - Read-triggered: tempdoc-age-hint. Stop-triggered: observation-shard-hint.
 
 ## Transparent (no action needed)

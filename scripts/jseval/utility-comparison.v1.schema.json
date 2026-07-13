@@ -4,11 +4,73 @@
   "title": "Agent-utility comparison record (tempdoc 624)",
   "description": "Condition-paired sibling of the 623 benchmark release. Projects over agent-eval runs cohort-identical on every axis except `condition` (with-tool vs. without-tool), one cell per (corpus, agent_model), aggregating over seed. A separate canonical record, NOT a metric family inside the single-cohort 623 release.",
   "type": "object",
-  "required": ["schema", "composed_at", "cohort", "measured", "coverage"],
+  "required": ["schema", "schema_version", "composed_at", "cohort", "measured", "coverage", "comparability", "tool_call_assertions", "estimands", "statistical_alpha", "claim_verdict", "semantic_digest"],
   "additionalProperties": true,
+  "definitions": {
+    "armLoss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n_expected", "n_attempted", "n_completed", "n_excluded", "n_pending", "exclusion_rate"],
+      "properties": {
+        "n_expected": {"type": "integer", "minimum": 0},
+        "n_attempted": {"type": "integer", "minimum": 0},
+        "n_completed": {"type": "integer", "minimum": 0},
+        "n_excluded": {"type": "integer", "minimum": 0},
+        "n_pending": {"type": "integer", "minimum": 0},
+        "exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "ittStratum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stratum_id", "corpus_member", "corpus", "corpus_size", "query_variant",
+        "corpus_signature", "model", "resolved_provider_model", "query_identity",
+        "campaign_identity", "corpus_certification", "seed_ids", "seed_count",
+        "query_count", "n_expected_cells", "n_observed_cells", "n_pending_cells",
+        "n_expected_pairs", "n_paired_observations", "n_per_protocol_pairs",
+        "paired_retention", "excluded_jaccard", "per_arm_loss", "usage_complete",
+        "accuracy", "provider_cache_creation_input_tokens", "cost_usd", "adoption"
+      ],
+      "properties": {
+        "stratum_id": {"type": ["string", "null"]},
+        "corpus_member": {"type": ["string", "null"]},
+        "corpus": {"type": ["string", "null"]},
+        "corpus_size": {"type": ["integer", "null"], "minimum": 1},
+        "query_variant": {"type": ["string", "null"]},
+        "corpus_signature": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "resolved_provider_model": {"type": ["string", "null"]},
+        "query_identity": {"type": ["object", "null"]},
+        "campaign_identity": {"type": ["object", "null"]},
+        "corpus_certification": {"type": ["object", "null"]},
+        "seed_ids": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0}},
+        "seed_count": {"type": "integer", "minimum": 0},
+        "query_count": {"type": "integer", "minimum": 0},
+        "n_expected_cells": {"type": "integer", "minimum": 0},
+        "n_observed_cells": {"type": "integer", "minimum": 0},
+        "n_pending_cells": {"type": "integer", "minimum": 0},
+        "n_expected_pairs": {"type": "integer", "minimum": 0},
+        "n_paired_observations": {"type": "integer", "minimum": 0},
+        "n_per_protocol_pairs": {"type": "integer", "minimum": 0},
+        "paired_retention": {"type": "number", "minimum": 0, "maximum": 1},
+        "excluded_jaccard": {"type": "number", "minimum": 0, "maximum": 1},
+        "per_arm_loss": {
+          "type": "object", "additionalProperties": false,
+          "required": ["A", "B"],
+          "properties": {"A": {"$ref": "#/definitions/armLoss"}, "B": {"$ref": "#/definitions/armLoss"}}
+        },
+        "usage_complete": {"type": "boolean"},
+        "accuracy": {"type": ["object", "null"]},
+        "provider_cache_creation_input_tokens": {"type": ["object", "null"]},
+        "cost_usd": {"type": ["object", "null"]},
+        "adoption": {"type": "object"}
+      }
+    }
+  },
   "properties": {
     "schema": { "const": "utility-comparison.v1" },
-    "schema_version": { "type": "integer" },
+    "schema_version": { "const": 2 },
     "composed_at": { "type": "string", "description": "ISO timestamp (passed in; scripts can't call Date.now)." },
     "cohort": {
       "type": "object",
@@ -16,7 +78,8 @@
       "required": ["agent_cohort_key", "git_sha"],
       "properties": {
         "agent_cohort_key": { "type": "string", "description": "SHA over {git_sha, cli_version, mcp_tool_surface_hash, judge, prompt_template_hash, decoding, eval_limits}." },
-        "git_sha": { "type": "string" },
+        "git_sha": { "type": ["string", "null"] },
+        "git_dirty": { "type": ["boolean", "null"] },
         "cli_version": { "type": ["string", "null"], "description": "Claude Code CLI version (HAL/Evaluation-Cards provenance: harness version)." },
         "mcp_tool_surface_hash": { "type": ["string", "null"], "description": "Hash of the tools/list payload the agent was offered (R8)." },
         "judge": { "type": "object", "description": "Hybrid scorer identity: {kind: substring-em | llm-judge, model?, version?, prompt_hash?}." },
@@ -24,7 +87,8 @@
         "decoding": { "type": ["object", "null"], "description": "{temperature, max_tokens} (Evaluation-Cards agentic-minimal)." },
         "eval_limits": { "type": ["object", "null"], "description": "Per-query token/step/cost budget." },
         "search_config_cohort_key": { "type": ["string", "null"], "description": "623 config_cohort_key of the with-tool search backend (null for the without-tool arm)." },
-        "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." }
+        "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." },
+        "environment": { "type": ["object", "null"] }
       }
     },
     "conditions": {
@@ -38,7 +102,7 @@
         "type": "object",
         "additionalProperties": {
           "type": "object",
-          "required": ["accuracy", "tokens_unique", "cost_usd"],
+          "required": ["accuracy", "provider_cache_creation_input_tokens", "tokens_unique", "cost_usd", "identity", "primary_arm"],
           "properties": {
             "accuracy": {
               "type": "object",
@@ -56,9 +120,19 @@
                 "seed_envelope_with_tool": { "type": "object" }
               }
             },
+            "provider_cache_creation_input_tokens": {
+              "type": "object",
+              "description": "Provider-reported cache_creation_input_tokens; not a universal unique-content count.",
+              "required": ["baseline", "with_tool", "delta_mean", "delta_ci95"]
+            },
+            "identity": {
+              "type": "object",
+              "required": ["corpus_signature", "requested_model_alias", "resolved_provider_model"]
+            },
+            "primary_arm": {"enum": ["addition_b", "substitution_c"]},
             "tokens_unique": {
               "type": "object",
-              "description": "cache_creation (unique-content) tokens — the contamination-robust headline (D-1). Per-arm distribution (median+p95), not a single mean.",
+              "description": "Deprecated v1 alias for provider_cache_creation_input_tokens.",
               "properties": {
                 "baseline": { "type": "object" },
                 "with_tool": { "type": "object" },
@@ -98,6 +172,41 @@
         "contamination_class": { "type": "string", "enum": ["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"], "description": "Corpus contamination class (C-5) as a first-class label, not a footnote." }
       }
     },
+    "comparability": {"type": "object"},
+    "tool_call_assertions": {"type": "object"},
+    "statistical_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "estimands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "per_protocol", "intention_to_treat"],
+      "properties": {
+        "primary": {"const": "intention_to_treat"},
+        "per_protocol": {
+          "type": "object", "required": ["role"],
+          "properties": {"role": {"const": "secondary"}}
+        },
+        "intention_to_treat": {
+          "type": "object", "additionalProperties": false, "required": ["strata"],
+          "properties": {"strata": {"type": "array", "items": {"$ref": "#/definitions/ittStratum"}}}
+        }
+      }
+    },
+    "claim_verdict": {
+      "type": "object",
+      "required": ["status", "accepted", "outcome", "stratum_outcomes", "policy_id", "policy_hash", "gates", "reasons"],
+      "properties": {
+        "outcome": {"enum": ["benefit", "harm", "null", "adoption-only", "inconclusive"]},
+        "stratum_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["stratum_id", "corpus", "model", "outcome", "gates"],
+            "properties": {"gates": {"type": "object"}}
+          }
+        }
+      }
+    },
+    "semantic_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "revision": {
       "type": "object",
       "description": "Present ONLY when this record is a corrected re-derivation of a prior record composed from the same identity-bearing inputs (tempdoc 624 Design 1) -- e.g. a queries.json-leak exclusion, a condition-C re-check, or a judge-rescoring pass. Absent on an original composition. `agent_cohort_key`/`pairing_key` are deliberately invariant across the original and every corrected version, so they cannot themselves distinguish 'this composed record' from 'that other composition of the identical cohort' -- `supersedes` therefore references a file path, not an in-record identity.",

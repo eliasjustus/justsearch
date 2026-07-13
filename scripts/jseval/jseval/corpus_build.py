@@ -28,7 +28,7 @@ from jseval import corpus_generate, materialize
 from jseval.corpus_identity import corpus_signature
 
 
-def _read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path) -> list[dict]:
     out: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -49,7 +49,7 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
     dataset_dir = Path(dataset_dir)
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    docs = _read_jsonl(source_dir / "docs.jsonl")
+    docs = read_jsonl(source_dir / "docs.jsonl")
     queries = json.loads((source_dir / "queries.json").read_text(encoding="utf-8"))
     src_meta = json.loads((source_dir / "meta.json").read_text(encoding="utf-8"))
 
@@ -78,7 +78,11 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
         tf.write("query-id\tcorpus-id\tscore\n")
         for i, q in enumerate(queries, 1):
             qid = f"q{i:04d}"
-            qf.write(json.dumps({"_id": qid, "text": q["query"]}, ensure_ascii=False) + "\n")
+            query_row = {"_id": qid, "text": q["query"]}
+            for field in ("query_variant", "query_family_id"):
+                if field in q:
+                    query_row[field] = q[field]
+            qf.write(json.dumps(query_row, ensure_ascii=False) + "\n")
             evidence = q.get("evidence_ids", [])
             unknown = [e for e in evidence if e not in doc_ids]
             if unknown:
@@ -89,9 +93,13 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
     # --- agent view: queries.json (query+answer+question_type) ---
     (dataset_dir / "queries.json").write_text(
         json.dumps(
-            [{"query": q["query"], "answer": q["answer"],
-              "question_type": q.get("question_type", "two_hop"),
-              "evidence_ids": q.get("evidence_ids", [])} for q in queries],
+            [{
+                "query": q["query"], "answer": q["answer"],
+                "question_type": q.get("question_type", "two_hop"),
+                "evidence_ids": q.get("evidence_ids", []),
+                **({"query_variant": q["query_variant"]} if "query_variant" in q else {}),
+                **({"query_family_id": q["query_family_id"]} if "query_family_id" in q else {}),
+            } for q in queries],
             ensure_ascii=False, indent=1),
         encoding="utf-8")
 

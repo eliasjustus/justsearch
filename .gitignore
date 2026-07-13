@@ -111,6 +111,7 @@ test_output*.txt
 
 # Dev-stack runtime data (databases, logs, locks, port files)
 .dev-data/
+.dev-data-*/
 
 # Orphaned/temp directories at root
 /.tmp-*

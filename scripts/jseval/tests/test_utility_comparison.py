@@ -7,6 +7,9 @@ Proves the cohort-identity, pairing, McNemar, and composer machinery.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from jseval import agent_manifest, compare_runs, utility_comparison
@@ -83,6 +86,12 @@ def test_pairing_key_pairs_A_and_C_excludes_condition_and_search_config():
     assert agent_manifest.pairing_key(a) != agent_manifest.pairing_key(_mfst(seed=1))
 
 
+def test_pairing_key_uses_resolved_provider_model_not_alias():
+    base = _mfst(agent_model="haiku", agent_model_version="claude-haiku-4-5-20251001")
+    changed = _mfst(agent_model="haiku", agent_model_version="claude-haiku-4-5-20260701")
+    assert agent_manifest.pairing_key(base) != agent_manifest.pairing_key(changed)
+
+
 def test_tool_surface_hash_order_independent():
     h1 = agent_manifest.mcp_tool_surface_hash(
         [{"name": "b", "description": "", "inputSchema": {}},
@@ -92,6 +101,32 @@ def test_tool_surface_hash_order_independent():
          {"name": "b", "description": "", "inputSchema": {}}])
     assert h1 == h2
     assert h1 != agent_manifest.mcp_tool_surface_hash(None)  # arm A sentinel differs
+
+
+def test_tool_surface_hash_covers_output_schema_and_annotations():
+    base = [{"name": "search", "inputSchema": {"type": "object"},
+             "outputSchema": {"type": "string"},
+             "annotations": {"readOnlyHint": True}}]
+    changed_output = [{**base[0], "outputSchema": {"type": "integer"}}]
+    changed_annotations = [{**base[0], "annotations": {"readOnlyHint": False}}]
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_output
+    )
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_annotations
+    )
+
+
+def test_configured_alpha_changes_bootstrap_interval():
+    run_a = {"per_query_metrics": {str(i): {"m": 0.0} for i in range(8)}}
+    values = [0.0, 0.0, 0.1, 0.2, 0.4, 0.8, 1.2, 2.0]
+    run_b = {"per_query_metrics": {str(i): {"m": value} for i, value in enumerate(values)}}
+    qrels = {str(i): {} for i in range(8)}
+    wide = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.01)
+    narrow = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.20)
+    assert wide["m"]["ci"][0] <= narrow["m"]["ci"][0]
+    assert wide["m"]["ci"][1] >= narrow["m"]["ci"][1]
+    assert wide["m"]["confidence_level"] == 0.99
 
 
 # --- McNemar (R3) -----------------------------------------------------------
@@ -665,45 +700,8 @@ def test_stratified_breakdown_reveals_offsetting_substrata_signal():
         _summary("A", a1, seed=1, corpus=sig_new),
         _summary("C", c1, seed=1, corpus=sig_new, search_key="s"),
     ]
-    rec = utility_comparison.compose_utility(summaries, composed_at="t")
-    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
-
-    # Pooled: the two strata offset exactly -> looks like NO effect at all.
-    assert cell["accuracy"]["delta"] == 0.0
-    assert cell["accuracy"]["mcnemar_p"] == 1.0
-    assert cell["n_paired_observations"] == 8
-
-    strata = cell["stratified"]["by_stratum"]
-    old_label = "mixed/multihop-rag:sig-old"
-    new_label = "mixed/multihop-rag:sig-new"
-    assert set(strata) == {old_label, new_label}
-
-    old, new = strata[old_label], strata[new_label]
-
-    # Each stratum independently reveals the real, OPPOSITE-sign signal the
-    # pooled delta hides — same shape (accuracy/tokens_unique/cost_usd/turns/
-    # n_paired_observations) as the pooled block.
-    assert old["accuracy"]["delta"] == 0.5
-    assert new["accuracy"]["delta"] == -0.5
-    assert old["n_paired_observations"] == 4
-    assert new["n_paired_observations"] == 4
-
-    # §M.8 item 7: each stratum's significance test is its OWN, computed on its
-    # own n — NOT inherited/borrowed from the pooled result (pooled p=1.0 above;
-    # both strata resolve to a different, independently-derived p-value).
-    assert old["accuracy"]["mcnemar_p"] == 0.5
-    assert new["accuracy"]["mcnemar_p"] == 0.5
-    assert old["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
-
-    # Cost/token blocks are independently computed per stratum too (sig-old is
-    # cheaper+fewer-tokens with the tool; sig-new has no cost/token difference
-    # at all — the pooled cost/token deltas would average these together):
-    assert old["cost_usd"]["delta_mean"] < 0
-    assert new["cost_usd"]["delta_mean"] == 0.0
-    assert old["tokens_unique"]["delta_mean"] < 0
-    assert new["tokens_unique"]["delta_mean"] == 0.0
-
-
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility(summaries, composed_at="t")
 def test_no_stratify_field_when_cell_is_single_corpus():
     """Regression guard: when every summary in a cell shares ONE corpus
     identity (the common case — no corpus refresh mid-cell), no ``stratified``
@@ -768,7 +766,7 @@ def test_inspect_path_roundtrip(tmp_path):
               mock_task(condition="C", wrong_q0=False, cost=0.06, tok=2000)],
              log_dir=log_dir, epochs=2, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(
         summaries, composed_at="t", contamination_class="private-synthetic")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
@@ -841,7 +839,7 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
     eval_set([mock_task(condition="A"), mock_task(condition="C")],
              log_dir=log_dir, epochs=1, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["leak_suspect_cells"] == []  # signal sat in a key neither scan reads
@@ -939,13 +937,128 @@ def test_governance_end_to_end(tmp_path):
     verdict, metrics = paired_comparability(arms)
     assert verdict.comparable is False                  # C ~30% + asymmetric exclusion
 
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     gov = {"comparable": verdict.comparable, "reasons": verdict.reasons, "metrics": metrics,
            "per_arm_loss": {c: {"n_excluded": l.n_excluded} for c, l in arms.items()}}
     rec = utility_comparison.compose_utility(
         summaries, composed_at="t", governance=gov, confidence_tier="A")
     assert rec["comparability"]["comparable"] is False
     assert rec["confidence_tier"] == "C"                # DERIVED, overrides the passed "A"
+
+
+def test_composer_rejects_hidden_corpus_or_resolved_model_mix():
+    per_query = {"q0": {"correct": True, "cost_usd": 0.1,
+                         "unique_tokens": 100, "num_turns": 1}}
+    a = _summary("A", per_query, corpus={"dataset": "mixed/multihop-rag", "signature": "s1"},
+                 agent_model_version="provider-v1")
+    c = _summary("C", per_query, search_key="sc",
+                 corpus={"dataset": "mixed/multihop-rag", "signature": "s2"},
+                 agent_model_version="provider-v1")
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility([a, c], composed_at="t")
+
+    c_same_corpus_new_model = _summary(
+        "C", per_query, search_key="sc",
+        corpus={"dataset": "mixed/multihop-rag", "signature": "s1"},
+        agent_model_version="provider-v2",
+    )
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility([a, c_same_corpus_new_model], composed_at="t")
+
+
+def test_composer_rejects_duplicate_seed_summaries():
+    per_query = {"q0": {"correct": True, "cost_usd": 0.1,
+                         "unique_tokens": 100, "num_turns": 1}}
+    a = _summary("A", per_query)
+    c = _summary("C", per_query, search_key="sc")
+    with pytest.raises(utility_comparison.UtilityComposeError, match="duplicate summaries"):
+        utility_comparison.compose_utility([a, dict(a), c], composed_at="t")
+
+
+def test_governance_reads_sample_conditions_from_one_consolidated_log(tmp_path):
+    """Regression: executor-v2 stores every arm in one task/log.
+
+    Loss accounting must use each sample's condition, normalize ``A|qid`` IDs,
+    and retain failed attempts that the valid-cell composer projection omits.
+    """
+    pytest.importorskip("inspect_ai")
+    from inspect_ai import Task, eval_set, task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+
+    from jseval import agent_utility_run as aur
+    from jseval.agent_utility_inspect import substring_scorer
+    from jseval.utility_governance import compute_loss_accounting
+
+    @solver
+    def consolidated_solver():
+        async def solve(state, generate):
+            metadata = state.metadata or {}
+            if metadata.get("force_error"):
+                state.metadata["error"] = "forced timeout"
+                return state
+            state.output.completion = metadata["answer"]
+            state.metadata.update({"cost_usd": 0.1, "unique_tokens": 2000, "num_turns": 3})
+            return state
+        return solve
+
+    @task
+    def consolidated_task():
+        samples = []
+        for condition in ("A", "C"):
+            for index in range(4):
+                samples.append(Sample(
+                    id=f"{condition}|q{index}",
+                    input=f"Q{index}",
+                    target=f"ANS{index}",
+                    metadata={
+                        "condition": condition,
+                        "answer": f"ANS{index}",
+                        "force_error": condition == "C" and index < 2,
+                    },
+                ))
+        return Task(
+            dataset=samples,
+            solver=consolidated_solver(),
+            scorer=substring_scorer(),
+            metadata={
+                "model": "haiku",
+                "corpus": {"dataset": "mixed/multihop-rag", "signature": "s"},
+                "cohort": {
+                    "model": "haiku",
+                    "cli_version": "v",
+                    "mcp_tool_surface_hash": "h",
+                    "judge_kind": "substring-em",
+                    "prompt_template_hash": "p",
+                },
+            },
+        )
+
+    log_dir = (tmp_path / "consolidated").as_posix()
+    eval_set(
+        [consolidated_task()],
+        log_dir=log_dir,
+        epochs=2,
+        model="mockllm/model",
+        log_format="json",
+    )
+
+    arms = compute_loss_accounting(log_dir)
+    assert set(arms) == {"A", "C"}
+    assert arms["A"].n_completed == 8
+    assert arms["A"].excluded_query_ids == set()
+    assert arms["C"].n_completed == 4
+    assert arms["C"].n_excluded == 4
+    assert arms["C"].excluded_query_ids == {"q0", "q1"}
+    assert arms["C"].ok_by_seed == {0: {"q2", "q3"}, 1: {"q2", "q3"}}
+
+    summaries = aur.eval_logs_to_summaries(log_dir)
+    by_condition_seed = {
+        (summary["condition"], summary["manifest"]["seed"]): set(summary["per_query"])
+        for summary in summaries
+    }
+    assert by_condition_seed[("A", 0)] == {"q0", "q1", "q2", "q3"}
+    assert by_condition_seed[("C", 0)] == {"q2", "q3"}
 
 
 # --- Condition B separation + LLM-judge (tempdoc 624 C-4 / C-6) ---------------
@@ -969,6 +1082,8 @@ def _graded_logs(tmp_path, conds_through):
             idx, tgt = md.get("idx", 0), md.get("tgt", "")
             state.output.completion = tgt if idx <= correct_through else "wrong"
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
+            if md.get("condition") == "B":
+                state.metadata["observed_mcp_tool_surface_hash"] = "h"
             return state
         return solve
 
@@ -988,12 +1103,29 @@ def _graded_logs(tmp_path, conds_through):
     return log
 
 
+def test_pure_recomposition_digest_ignores_only_composed_at(tmp_path):
+    from jseval.utility_recompose import finalize_logs, semantic_digest
+
+    log = _graded_logs(tmp_path, {"A": 1, "B": 2})
+    first = finalize_logs([log], composed_at="2026-01-01T00:00:00Z")
+    replay = finalize_logs([log], composed_at="2026-02-01T00:00:00Z")
+
+    assert first["schema_version"] == 2
+    assert first["semantic_digest"] == replay["semantic_digest"]
+    assert semantic_digest(first) == first["semantic_digest"]
+    assert first["comparability"]["per_arm_loss"]["A"]["n_attempted"] == 4
+
+    changed = dict(replay)
+    changed["confidence_tier"] = "A"
+    assert semantic_digest(changed) != first["semantic_digest"]
+
+
 def test_composer_separates_addition_b_and_substitution_c(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
     # A correct q0-1 (0.5); B correct q0-2 (0.75); C correct all (1.0).
     log = _graded_logs(tmp_path, {"A": 1, "B": 2, "C": 3})
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "addition_b"                   # REALISTIC arm headlines, never C (C-4)
@@ -1007,7 +1139,7 @@ def test_substitution_only_cell_is_flagged_not_headlined(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
     log = _graded_logs(tmp_path, {"A": 1, "C": 3})               # no B -> substitution-only
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     cell = utility_comparison.compose_utility(summaries, composed_at="t")["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "substitution_c"               # only C available
     assert "headline_caveat" in cell                             # ...but flagged as NOT a deployment headline
@@ -1144,6 +1276,15 @@ def _xcorpus_fixture():
 def test_cross_corpus_pooled_offsets_but_strata_reveal_signal():
     rec = utility_comparison.compose_utility_cross_corpus(
         _xcorpus_fixture(), composed_at="t", contamination_class="private-synthetic")
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (Path(__file__).parents[1] / "utility-comparison-cross-corpus.v1.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    identity_schema = schema["properties"]["measured"]["additionalProperties"][
+        "properties"
+    ]["identity"]
+    jsonschema.validate(rec["measured"]["haiku"]["identity"], identity_schema)
 
     assert rec["schema"] == "utility-comparison-cross-corpus.v1"
     assert rec["corpora"] == [
@@ -1199,6 +1340,12 @@ def test_cross_corpus_no_seed_or_qid_collision():
     # index-0-only bug) and not fewer due to qid overwrite.
     assert cell["n_paired_observations"] == 12
     assert rec["seed_count"] == 1                      # one REAL seed (0), reported honestly
+    assert "git_dirty" in rec["cohort"]
+    assert "environment" in rec["cohort"]
+    assert set(cell["identity"]["corpus_signatures"]) == {
+        "golden/battlefield-en-v1", "golden/battlefield-de-v1", "golden/synth-scan-v1",
+    }
+    assert cell["identity"]["resolved_provider_model"] == "4.5"
 
 
 def test_cross_corpus_requires_two_or_more_corpora():

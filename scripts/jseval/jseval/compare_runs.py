@@ -19,6 +19,8 @@ def compare(
     run_b: dict,
     qrels: dict[str, dict[str, int]],
     metrics: list[str] | None = None,
+    *,
+    alpha: float = 0.05,
 ) -> dict[str, dict]:
     """Compare two runs with paired t-test, Cohen's d_z, and bootstrap CI.
 
@@ -57,7 +59,10 @@ def compare(
         d_z = float(np.mean(deltas)) / std_delta if std_delta > 0 else 0.0
 
         # Bootstrap 95% CI
-        ci_low, ci_high = _bootstrap_ci(deltas)
+        ci_low, ci_high = _bootstrap_ci(deltas, alpha=alpha)
+        ci95_low, ci95_high = (
+            (ci_low, ci_high) if alpha == 0.05 else _bootstrap_ci(deltas, alpha=0.05)
+        )
 
         results[metric] = {
             "mean_a": float(np.mean(a_values)),
@@ -66,7 +71,9 @@ def compare(
             "p_value": float(p_value),
             "t_stat": float(t_stat),
             "cohens_d_z": round(d_z, 4),
-            "ci_95": (round(ci_low, 6), round(ci_high, 6)),
+            "ci_95": (round(ci95_low, 6), round(ci95_high, 6)),
+            "ci": (round(ci_low, 6), round(ci_high, 6)),
+            "confidence_level": round(1.0 - alpha, 6),
         }
 
     return results
@@ -278,7 +285,7 @@ def _bootstrap_ci(
     n_resamples: int = 10_000,
     alpha: float = 0.05,
 ) -> tuple[float, float]:
-    """Bootstrap 95% confidence interval for the mean of deltas."""
+    """Bootstrap confidence interval for the mean of deltas."""
     if len(deltas) < 2:
         mean = float(np.mean(deltas)) if len(deltas) > 0 else 0.0
         return mean, mean

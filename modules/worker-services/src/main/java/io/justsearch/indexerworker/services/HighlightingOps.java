@@ -374,6 +374,7 @@ public final class HighlightingOps {
                 .setField(labelField)
                 .setStartChar(start)
                 .setEndChar(end)
+                .setTerm(content.substring(start, Math.min(end, content.length())))
                 .build());
         if (out.size() >= 32) break; // global cap
       }

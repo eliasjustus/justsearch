@@ -494,7 +494,7 @@ export class RetrospectivePanel extends JfElement {
                           ${p.iterations} iteration${p.iterations === 1 ? '' : 's'}
                         </div>
                         <div class="meta">
-                          <jf-status-badge status=${p.state}>${p.state}</jf-status-badge>
+                          <jf-status-badge status=${p.state}>${classify(p.state).label}</jf-status-badge>
                         </div>
                       </div>
                     `;

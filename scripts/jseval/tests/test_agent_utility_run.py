@@ -19,8 +19,61 @@ import pytest
 from jseval import agent_manifest
 from jseval import agent_utility_run as aur
 
+
+def test_observation_reader_retains_inspect_native_error(tmp_path, monkeypatch):
+    """A crash before solver metadata is stashed still counts as an attempt."""
+    pytest.importorskip("inspect_ai")
+    from types import SimpleNamespace
+
+    from jseval.agent_utility_observations import read_inspect_observations
+    import inspect_ai.log
+
+    log_file = tmp_path / "native-error.json"
+    log_file.touch()
+    fake_log = SimpleNamespace(
+        eval=SimpleNamespace(
+            metadata={
+                "model": "haiku",
+                "corpus": {"dataset": "fixture", "signature": "sig"},
+                "cohort": {},
+            },
+            packages=None,
+        ),
+        samples=[SimpleNamespace(
+            id="C|q7",
+            epoch=1,
+            metadata={"condition": "C"},
+            error=SimpleNamespace(message="native failure"),
+            scores={},
+        )],
+    )
+    monkeypatch.setattr(inspect_ai.log, "read_eval_log", lambda _: fake_log)
+
+    observations = read_inspect_observations(tmp_path)
+    assert len(observations) == 1
+    assert observations[0]["qid"] == "q7"
+    assert observations[0]["condition"] == "C"
+    assert observations[0]["excluded"] is True
+    assert observations[0]["attempted"] is True
+
+
+def test_observation_reader_rejects_corrupt_candidate_log(tmp_path, monkeypatch):
+    """A corrupt candidate cannot silently reduce the attempted-cell matrix."""
+    pytest.importorskip("inspect_ai")
+    from jseval.agent_utility_observations import read_inspect_observations
+    import inspect_ai.log
+
+    (tmp_path / "corrupt.eval").write_bytes(b"not an eval log")
+    monkeypatch.setattr(
+        inspect_ai.log, "read_eval_log",
+        lambda _: (_ for _ in ()).throw(ValueError("corrupt")),
+    )
+    with pytest.raises(ValueError, match="failed to read candidate EvalLog"):
+        read_inspect_observations(tmp_path)
+
 _COHORT = {"model": "haiku", "cli_version": "v", "mcp_tool_surface_hash": "h",
-           "judge_kind": "substring-em", "prompt_template_hash": "p"}
+           "judge_kind": "substring-em", "prompt_template_hash": "p",
+           "search_config_cohort_key": "sc"}
 
 
 # --- scan_leaked_cells (real Inspect EvalLog fixture) ------------------------
@@ -193,7 +246,7 @@ class TestEvalLogsToSummariesToolCallProjection:
     def test_projects_tool_calls_disallowed_and_leak_suspect(self, tmp_path):
         pytest.importorskip("inspect_ai")
         log_dir = self._logs(tmp_path)
-        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        summaries = aur.eval_logs_to_summaries(log_dir)
         by_cond = {s["condition"]: s["per_query"] for s in summaries}
 
         q0 = by_cond["A"]["q0"]
@@ -217,7 +270,7 @@ class TestEvalLogsToSummariesToolCallProjection:
         from jseval import utility_comparison as uc
 
         log_dir = self._logs(tmp_path)
-        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        summaries = aur.eval_logs_to_summaries(log_dir)
         rec = uc.compose_utility(summaries, composed_at="t")
 
         for cond in ("A", "C"):
@@ -276,7 +329,7 @@ class TestEvalLogsToSummariesMcpSurfaceProjection:
     def test_projects_mcp_surface_fields(self, tmp_path):
         pytest.importorskip("inspect_ai")
         log_dir = self._logs(tmp_path)
-        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        summaries = aur.eval_logs_to_summaries(log_dir)
         per_query = summaries[0]["per_query"]
 
         q0 = per_query["q0"]
@@ -307,7 +360,7 @@ class TestScanLeakedCellsAppliedThroughApplyLeakFlags:
         `queries.json` mention sitting in the completion text."""
         pytest.importorskip("inspect_ai")
         log_dir = _leak_scan_logs(tmp_path, conditions=("A", "C"))
-        summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+        summaries = aur.eval_logs_to_summaries(log_dir)
         for s in summaries:
             for entry in s["per_query"].values():
                 # No tool_calls capture on this mock solver -> "no tool data",
@@ -434,3 +487,23 @@ class TestScanLeakedAnswers:
         n = aur.apply_leak_flags([summary], leaked)
         assert n == 1
         assert summary["per_query"]["q0"]["leak_suspect"] is True
+
+
+# --- _per_query_from_result: errored cells excluded from the paired comparison ---
+
+
+def test_per_query_from_result_excludes_errored_cells():
+    """A cell that errored (timeout/LLM failure) still carries a query plus default
+    correct=False/cost_usd=0; it must NOT be reshaped into a genuine zero-cost,
+    zero-tool, incorrect observation in the paired utility comparison (mirrors the
+    Inspect path's valid-only parity)."""
+    run_result = {
+        "results": [
+            {"query": "q-ok", "correct": True, "cost_usd": 0.5, "tool_calls": []},
+            {"query": "q-err", "error": "timeout", "correct": False,
+             "cost_usd": 0.0, "tool_calls": []},
+        ]
+    }
+    pq = aur._per_query_from_result(run_result)
+    assert "q-ok" in pq
+    assert "q-err" not in pq, "an errored cell must be excluded from per-query stats"

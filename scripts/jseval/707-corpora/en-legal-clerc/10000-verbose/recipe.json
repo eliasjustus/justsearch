@@ -1,0 +1,179 @@
+{
+  "method": "real-text-injection-v1",
+  "seed": 707,
+  "style": "interleave",
+  "n_gold_docs": 40,
+  "n_distractors": 9960,
+  "host_min_words": 60,
+  "host_mapping": [
+    {
+      "gold_id": "breldac18",
+      "host_id": "7847290"
+    },
+    {
+      "gold_id": "brelker20",
+      "host_id": "1251404"
+    },
+    {
+      "gold_id": "cavby8",
+      "host_id": "1185936"
+    },
+    {
+      "gold_id": "drudell17",
+      "host_id": "10810218"
+    },
+    {
+      "gold_id": "druker7",
+      "host_id": "4156476"
+    },
+    {
+      "gold_id": "faldac13",
+      "host_id": "11574573"
+    },
+    {
+      "gold_id": "faldac19",
+      "host_id": "3580178"
+    },
+    {
+      "gold_id": "faldac23",
+      "host_id": "3678755"
+    },
+    {
+      "gold_id": "faldac33",
+      "host_id": "2261926"
+    },
+    {
+      "gold_id": "falpost40",
+      "host_id": "683884"
+    },
+    {
+      "gold_id": "falven30",
+      "host_id": "6073586"
+    },
+    {
+      "gold_id": "harnash21",
+      "host_id": "1102232"
+    },
+    {
+      "gold_id": "harnby12",
+      "host_id": "10528683"
+    },
+    {
+      "gold_id": "harnby37",
+      "host_id": "9199960"
+    },
+    {
+      "gold_id": "harnmond36",
+      "host_id": "6721518"
+    },
+    {
+      "gold_id": "harnven39",
+      "host_id": "4086495"
+    },
+    {
+      "gold_id": "kancrag5",
+      "host_id": "1832352"
+    },
+    {
+      "gold_id": "limdac31",
+      "host_id": "3774161"
+    },
+    {
+      "gold_id": "limgrove27",
+      "host_id": "360943"
+    },
+    {
+      "gold_id": "limker1",
+      "host_id": "12005294"
+    },
+    {
+      "gold_id": "limlun3",
+      "host_id": "3917956"
+    },
+    {
+      "gold_id": "orrfen11",
+      "host_id": "4236579"
+    },
+    {
+      "gold_id": "quenmire34",
+      "host_id": "10524978"
+    },
+    {
+      "gold_id": "quenpost38",
+      "host_id": "59451"
+    },
+    {
+      "gold_id": "quenthorn25",
+      "host_id": "261878"
+    },
+    {
+      "gold_id": "rellash26",
+      "host_id": "7657545"
+    },
+    {
+      "gold_id": "relldell22",
+      "host_id": "3926748"
+    },
+    {
+      "gold_id": "rellmond29",
+      "host_id": "9037433"
+    },
+    {
+      "gold_id": "skoholt35",
+      "host_id": "10535613"
+    },
+    {
+      "gold_id": "tasholt2",
+      "host_id": "3913674"
+    },
+    {
+      "gold_id": "tasmire14",
+      "host_id": "3571935"
+    },
+    {
+      "gold_id": "vexdell4",
+      "host_id": "36389"
+    },
+    {
+      "gold_id": "vordac6",
+      "host_id": "9472730"
+    },
+    {
+      "gold_id": "vorwick16",
+      "host_id": "5699373"
+    },
+    {
+      "gold_id": "wendcrag32",
+      "host_id": "6643439"
+    },
+    {
+      "gold_id": "wenddac28",
+      "host_id": "4057974"
+    },
+    {
+      "gold_id": "wendmond24",
+      "host_id": "3722571"
+    },
+    {
+      "gold_id": "wendwick15",
+      "host_id": "10502115"
+    },
+    {
+      "gold_id": "zelpost9",
+      "host_id": "405262"
+    },
+    {
+      "gold_id": "zelvale10",
+      "host_id": "6172403"
+    }
+  ],
+  "assembled_digest": "4e5179e7cafb99e27d9957fe267ea48c63f36d1d0fd06d0a956dc3da24d80685",
+  "real_source_id": "jhu-clsp/CLERC:test-single-removed-direct:seed707:hosts14k",
+  "real_source_sha256": "989977109653ce2b94b3c4baa7aed15d5d1d8b80c36469404aa36d9354999ba4",
+  "license": "CC0-1.0",
+  "assembly_determinism": {
+    "passed": true,
+    "method": "cross-process-regeneration-diff",
+    "digest": "4e5179e7cafb99e27d9957fe267ea48c63f36d1d0fd06d0a956dc3da24d80685"
+  }
+}
