@@ -115,7 +115,12 @@ def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commi
         scientific_evidence=evidence_matrix)
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # newline="\n": certification records get git-committed under eol=lf — a CRLF
+    # write breaks any byte-hash of the file after checkout (same class as the
+    # commitment-manifest CRLF bake-in this line's siblings fixed, 2026-07-14).
+    target.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     if ctx.obj.get("json"):
         click.echo(json.dumps(report, indent=2))
     else:
@@ -156,7 +161,7 @@ def cmd_corpus_scientific_evidence_build(
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n",
     )
     if ctx.obj.get("json"):
         click.echo(json.dumps(artifact, indent=2))
@@ -252,7 +257,9 @@ def _write_recipe(name: str, recipe: dict) -> Path:
     recipe_dir = REPO_ROOT / "scripts" / "jseval" / "666-corpora" / name
     recipe_dir.mkdir(parents=True, exist_ok=True)
     recipe_path = recipe_dir / "recipe.json"
-    recipe_path.write_text(json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    recipe_path.write_text(
+        json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     return recipe_path
 
 

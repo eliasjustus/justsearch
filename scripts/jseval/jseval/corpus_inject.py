@@ -266,7 +266,12 @@ def write_commitment(
     gold_root = Path(gold_source_dir)
     recipe = dict(provenance)
     recipe.pop("fabrication_provenance", None)
-    (root / "recipe.json").write_text(json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # newline="\n": these files are git-committed under eol=lf normalization — a
+    # platform-default CRLF write makes the recorded sha256 unmatchable from any
+    # fresh checkout forever (the 2026-07-13 manifests baked this in on all 8 cells).
+    (root / "recipe.json").write_text(
+        json.dumps(recipe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     for name in ("docs.jsonl", "queries.json", "meta.json"):
         (root / f"fabricated-{name}").write_bytes((gold_root / name).read_bytes())
     committed = [
@@ -281,7 +286,7 @@ def write_commitment(
         },
     }
     (root / "commitment.v1.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
     )
     return root
 

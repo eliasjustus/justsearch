@@ -594,3 +594,30 @@ def test_short_natural_query_strata_are_deterministic_and_bounded(tmp_path):
         assert all(query["query_variant"] == "short-natural" for query in queries)
         assert all(5 <= len(query["query"].split()) <= 12 for query in queries)
         assert len({query["query_family_id"] for query in queries}) == len(queries)
+
+
+def test_commitment_files_are_checkout_stable(tmp_path):
+    """CRLF bake-in regression (2026-07-14): write_commitment must emit bytes that
+    survive git's eol=lf normalization unchanged, so the manifest's recorded sha256
+    stays matchable from any fresh checkout. The 2026-07-13 materialization wrote
+    platform-default CRLF on Windows, baking unmatchable hashes into all 8 committed
+    member cells (repaired same session). Guard: no CR bytes, and every manifest
+    hash must verify against the file's own on-disk bytes immediately after write."""
+    import hashlib
+
+    from jseval import corpus_inject
+
+    gold = tmp_path / "gold"
+    gold.mkdir()
+    (gold / "docs.jsonl").write_bytes(b'{"id": "g1", "title": "T", "text": "body"}\n')
+    (gold / "queries.json").write_bytes(b'[{"query": "q", "answer": "a"}]\n')
+    (gold / "meta.json").write_bytes(b'{"generation_provenance": {"seed": 1}}\n')
+
+    root = corpus_inject.write_commitment(
+        tmp_path / "commit", gold, {"seed": 1, "assembled_digest": "x"})
+    manifest = json.loads((root / "commitment.v1.json").read_text(encoding="utf-8"))
+    for name, recorded in manifest["files"].items():
+        raw = (root / name).read_bytes()
+        assert b"\r" not in raw, f"{name} contains CR bytes — git eol=lf will rewrite it"
+        assert hashlib.sha256(raw).hexdigest() == recorded, f"{name} hash not self-consistent"
+    assert b"\r" not in (root / "commitment.v1.json").read_bytes()

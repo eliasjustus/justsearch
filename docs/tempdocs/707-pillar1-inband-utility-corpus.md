@@ -450,3 +450,42 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
 5. **Spend authorizations, in order:** closed-book certification (~$1-3, claude CLI), the capped ~$3
    adoption smoke, the powered run cap (~$60-90). Smoke must show headroom + adoption replicate
    before the powered run (unchanged 624 gates).
+
+### Executed pre-work (2026-07-14, same session — all committed on this branch)
+
+1. **Full rematerialization from committed recipes verified cross-session** — the first independent
+   regeneration of the #173 artifacts. CLERC 14k host pool re-fetched (see 3) and MIRACL-DE 30k pool
+   re-fetched (ir_datasets cache hit); pool sha256s match the recipes' `real_source_sha256` pins
+   exactly; all 8 member cells regenerate **byte-exactly** (`assembled_digest` matches every
+   committed recipe; all 8 datasets materialized in this worktree; both members re-certify
+   `structurally-certified` from this checkout, corpus signatures identical to the recorded ones).
+2. **Commitment-manifest CRLF bake-in found and repaired (all 8 cells were broken on origin/main).**
+   `write_commitment`/strata writers used platform-default newlines → CRLF on Windows → the
+   manifests recorded sha256s over CRLF bytes that git's `eol=lf` normalization then rewrote at
+   commit — so `commitment.v1.json` could NEVER verify against a fresh checkout (self-consistency
+   check failed for recipe.json on all 8 cells + fabricated-queries/meta on the 4 short-natural
+   cells). Since 719's source capture rejects byte-drifted certification, this would have hard-failed
+   the campaign at capture time. Fix: `newline="\n"` on every writer of git-committed artifacts
+   (`corpus_inject.py` recipe/commitment, `corpus_query_strata.py` gold outputs,
+   `commands/corpus.py` certification/evidence/666-recipe writers); all 8 commitments + both
+   structural certifications regenerated in place (only hash fields + EOL changed — content and
+   digests are proven identical by 1); regression test
+   `test_commitment_files_are_checkout_stable`.
+3. **CLERC raw source recovered without re-download.** The #173 revision-pinning changed the
+   `clerc-raw` dataset-cache key, orphaning the completed 7.7 GB `resolve/main` entry; a re-fetch now
+   hits HF's anonymous-download 403 (AccessDenied at the CDN hop; no HF token configured on this
+   machine). Recovered by migrating the entry to the pinned key via hardlinks (HF API confirms
+   `main`'s sha == the pinned revision; the entry's content signature `a23d916b…` matches the pool
+   recipe's `raw_source_signature`, and the regenerated pool hash matches `real_source_sha256` —
+   fail-closed layers all verify). Logged to the observations shard; residual: no cache-key
+   migration story on revision bumps, orphaned 6.3 GB `.tmp-*` staging dir still leaks, and a fresh
+   machine cannot re-fetch CLERC anonymously until HF quota/token is addressed (**owner note: a free
+   HF token on this box removes the 403 class**).
+4. **Startup-timeout lever + closed-book CLI layout fix** (see Pre-work (a)/(b)) landed with tests.
+5. **Known residual for the gate runs (not yet diagnosed):** the 120 s startup-boundary failure from
+   719's two attempts — next live run sets `JSEVAL_HEALTH_TIMEOUT_SEC=360` and captures the real
+   cold-start cost. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
+   written with platform-default newlines, so all recorded corpus signatures are Windows-CRLF-locked
+   (a Linux materialization would produce different signatures). Acceptable while the campaign runs
+   on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
+   signature re-baseline of all 8 cells (cheap: regenerate + re-certify, ~10 min, no GPU).
