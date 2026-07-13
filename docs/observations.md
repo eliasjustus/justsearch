@@ -198,10 +198,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Canonical drift: `docs/explanation/16-gpu-booster-pack.md` presents the GPU Booster Pack as the current GPU-runtime delivery mechanism, but tempdoc 632 recorded the founder correction that the booster pack is LEGACY and the live mechanism is the AI-brain install (AiInstallService downloading the model-registry cuda-runtime package). Doc needs a reframe (pre-existing drift, surfaced by 632's NVIDIA accept-and-document work) — `docs/explanation/16-gpu-booster-pack.md` (2026-06-24)
 
 ### obs:search-quality-register — Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / '
-`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 3` `first: 2026-06-24` `last: 2026-07-11`
+`kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 4` `first: 2026-06-24` `last: 2026-07-12`
 - [ ] Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / 'default-on not recommended' (`docs/reference/search-quality-register.md:585-605`), but shipped code has BOTH leg-arbitration + recall-complete default TRUE (`ResolvedConfigBuilder.java:1497,1513`) per tempdoc 636 final decision; F-024 + a recall-complete D-row also need reconciling. (2026-06-24, tempdoc 636 take-over) (2026-06-24)
 - [ ] search-quality-register.md has TWO entries numbered F-030 (tempdoc 678 encoder-domain-mismatch, ~line 595, and tempdoc 706 OCR comparability, ~line 579) — pre-existing numbering collision found during 691 Phase-L takeover; register owner should renumber one — `docs/reference/search-quality-register.md` (2026-07-10)
 - [ ] Residual hybrid-vs-lexical gap on legal-clerc post-F-032 (hybrid 0.5592/0.5609 vs lexical 0.6891 at b88e76e) is fusion territory — out of 708 scope, needs its own owner — `docs/reference/search-quality-register.md` (2026-07-11)
+- [ ] search-quality-register.md has a DUPLICATE finding ID F-030 — used for BOTH the 706 scanned-PDF-OCR-engine finding AND the 678 encoder-domain-mismatch finding. Register hygiene: distinct findings need distinct IDs (renumber one, e.g. the 706 OCR one). Found during 705 re-investigation; register is 678/708's domain — `docs/reference/search-quality-register.md` (2026-07-12)
 
 ### obs:resourceapimodule — ResourceApiModule.shutdown() never calls intentStreamController::shutdown — its heartbeat scheduler
 `kind: environment?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/ResourceApiModule.java` `seen: 1` `first: 2026-06-30` `last: 2026-06-30`
@@ -366,8 +367,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] **Latent governance gap (tempdoc 612 R1):** a TRUST/SECURITY-relevant settings change leaves NO audit-grade row in the action-ledger. `POST /api/settings/v2` (`SettingsController.handleUpdateSettingsV2`) is ledger-silent — it does not append to `OperationHistoryStore`/`ActionLedgerChangeRegistry`. The only ledger trace is the FE `save-settings` effect, whose payload is an opaque catch-all `Record<string,unknown>`. Today this is harmless (the payload carries only UI prefs; the autonomy dial is FE-local localStorage `justsearch.autonomy.level.v1`, trust grants/consent emit `grant` rows, `core.reset-settings` is an audited Operation). But if a security-relevant key is ever added to `UiSettings`, it would persist silently with no audit row — and tempdoc 612's Activity-feed curation (treating `save-settings` as routine) would then hide it. Mitigation: route any security-relevant setting through an explicit Operation (mirroring `core.reset-settings`), not the bulk `save-settings` POST. — `modules/ui/src/main/java/io/justsearch/ui/api/SettingsController.java` (2026-06-20)
 
 ### obs:agent-hooks-v1-drift — governance/agent-hooks.v1.json changes have no regen-reminder hook (unlike lockfile-hint for build.g
-`kind: defect?` `anchor: governance/agent-hooks.v1.json` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
+`kind: defect?` `anchor: governance/agent-hooks.v1.json` `seen: 2` `first: 2026-07-01` `last: 2026-07-12`
 - [ ] governance/agent-hooks.v1.json changes have no regen-reminder hook (unlike lockfile-hint for build.gradle.kts or docs-regen-hint for canonical docs) — after a manifest edit merges, every other existing worktree/checkout keeps serving its stale .claude/settings.local.json (gitignored, per-checkout) until someone manually runs `node scripts/codegen/gen-agent-hooks-wiring.mjs`; discovered while wiring observation-shard-hint in tempdoc 665 — `governance/agent-hooks.v1.json` (2026-07-01)
+- [ ] Committed maintainer seed `.claude/settings.local.json.example` is stale vs the hook manifest: regen adds pipe-mask-hint, known-state-hint, observation-shard-hint (3 hooks missing) — no CI gate guards it against `governance/agent-hooks.v1.json` drift. Regenerate: `node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example` — `.claude/settings.local.json.example` (2026-07-12)
 
 ### obs:release-v1 — mixed/enron-qa has no committed fetch/materialization mechanism (datasets/ is gitignored, no corpus-
 `kind: defect?` `anchor: scripts/jseval/release.v1.json` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
@@ -703,9 +705,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] jseval readiness off-by-one hangs large MIRACL fetches: `corpus-fetch-miracl --n-docs 40000` materialized 40000 docs but readiness floor expected 40001 (one passage rejected as empty), so the run blocks on `indexed_doc_count_below_floor(40000/40001)` until timeout — floor should tolerate rejected/empty docs (found tempdoc 701 E4) (2026-07-08)
 
 ### obs:corpus-fetch — jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line wit
-`kind: defect?` `anchor: corpus_fetch.py` `seen: 2` `first: 2026-07-09` `last: 2026-07-10`
+`kind: defect?` `anchor: corpus_fetch.py` `seen: 4` `first: 2026-07-09` `last: 2026-07-12`
 - [ ] jseval corpus-fetch-clerc streams the full CLERC `collection.doc.tsv.gz` (GB-scale) line-by-line with `timeout=None` and NO progress output (`corpus_fetch.py:204-216`), so a ~200-doc sample can silently run 15-40+ min with a 0-byte log — looks like a hang but isn't. Add progress logging / a size hint / a bounded timeout (found tempdoc 701 R2) (2026-07-09)
 - [ ] Repeated multi-GB downloads per worktree: datasets (CLERC re-fetched per worktree since datasets/ is gitignored+per-tree and teardown deletes it) and ML scratch (per-worktree HF_HOME/venv) — models/ solved this via shared main-checkout resolution; corpus fetchers + HF_HOME need the same shared-cache pattern (recipe+signature-keyed, still gitignored/transient for licensing) — `scripts/jseval/jseval/corpus_fetch.py` (2026-07-10)
+- [ ] jseval corpus-fetch-clerc can stall indefinitely on a slow HF/AWS connection with zero log output and no timeout (25+ min, 0-byte log, CPU idle, one ESTABLISHED conn) — needs a socket timeout/retry + progress lines — `scripts/jseval/jseval/corpus_fetch.py` (2026-07-11)
+- [ ] 709 MIRACL/BEIR cache-routing ineffective: `apply_ir_datasets_home()` sets IR_DATASETS_HOME AFTER `import ir_datasets`, but ir_datasets bakes each dataset's cache path at import (registration), so downloads still land in ~/.ir_datasets not the shared root (verified: docs_handler path = C:\Users\Elias\.ir_datasets\miracl\...). Env must be set before import — `scripts/jseval/jseval/corpus_fetch.py:114` (2026-07-12)
 
 ### obs:runtime-config-ownership-matrix — runtime-config-ownership-matrix stale: verify-runtime-config-matrix fails on 6 env/sysprop pairs mis
 `kind: environment?` `anchor: docs/reference/configuration/runtime-config-ownership-matrix.md` `seen: 2` `first: 2026-07-08` `last: 2026-07-10`
@@ -764,6 +768,62 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: environment?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
 - [ ] SupervisionDecision has 3 pre-existing surviving ConditionalsBoundaryMutator mutants (backoffMs L99/L104, decide L80) — worker-supervision seam already reports 88% strength in report-pit-strength.mjs, unrelated to tempdoc 677 work — `modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` (2026-07-11)
 
+### obs:ui-a11y-baseline-v1 — chat/grounding-badge surface missing from governance/ui-a11y-baseline.v1.json — ui-a11y-gate structu
+`kind: defect?` `anchor: ui-a11y-baseline.v1.json` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] chat/grounding-badge surface missing from governance/ui-a11y-baseline.v1.json — ui-a11y-gate structurally can't exercise the grounding badge (no chat entry). Extend baseline surface list to cover chat. Surfaced by 720 per-sentence UX audit. (2026-07-12)
+
+### obs:llamaserveropscrashtelemetrytest — FLAKY test: LlamaServerOpsCrashTelemetryTest.java:111 ConcurrentModificationException failed main CI
+`kind: environment?` `anchor: LlamaServerOpsCrashTelemetryTest` `seen: 2` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] FLAKY test: LlamaServerOpsCrashTelemetryTest.java:111 ConcurrentModificationException failed main CI run 29210412900 (merge 491412d6) but passed on PR #171 with identical content (app-inference module, unrelated to the FE-only per-sentence change). Concurrency race in the crash-telemetry test; candidate for a defensive copy / synchronized collection at line 111 or a stress-test. (2026-07-12)
+- [ ] LlamaServerOpsCrashTelemetryTest ('reaching MAX_CRASHES fires goOfflineFromMaxCrashes') FAILED on main-push CI run 29152742519 (2026-07-11, docs-only observations-fold diff, zero app-inference overlap; same lane green on PR #142 minutes earlier) — crash-telemetry timing-flake candidate; if it recurs, needs the flaky-IPC state-polling treatment — `modules/app-inference LlamaServerOpsCrashTelemetryTest` (recovered from dead-session worktree 691-takeover) (2026-07-12)
+
+### obs:combinedenrichmentbackfillops — Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vect
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 4` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vector-loss / commit-cadence rationale — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:627-630` (found during 717 research; behavior fine, comment only) (2026-07-11)
+- [ ] Combined pass parent lane stamps parent-status markers (EMBEDDING_STATUS/NER_STATUS COMPLETED) onto chunk docs picked up via the splade-status query — chunk docs end up carrying parent lifecycle fields they never own — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:330` (2026-07-11)
+- [ ] A chunk doc pending both chunk_embedding and splade sits in BOTH combined-pass caches (parentIdCache via splade-status query, chunkIdCache via chunk-embedding query) and can be popped twice into one batch — double-added to embedDocIds, double-embedded — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:199-260` (2026-07-11)
+- [ ] INTERMITTENT fresh-build chunk-death anomaly (chartered as tempdoc 717): a fresh --clean ingest SOMETIMES produces an index with the entire chunk_merge leg absent (vector nDCG 0.34 not 0.62), silently. Observed degenerate: 713 control run, 712 A/B-1 OFF arm. Observed healthy: 713 §M-5 probe, 712 A/B-2 both arms (first try). Not deterministic; refuted as "always dead," confirmed as occasional — `modules/worker-services/.../CombinedEnrichmentBackfillOps.java:372` (2026-07-11)
+
+### obs:indexcountops — IndexCountOps.computeCorpusProfile() iterates weight.scorer(leaf) directly (raw DocIdSetIterator loo
+`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/IndexCountOps.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] IndexCountOps.computeCorpusProfile() iterates weight.scorer(leaf) directly (raw DocIdSetIterator loop) without checking leaf.reader().getLiveDocs() — bypasses IndexSearcher.searchLeaf's live-docs filtering (confirmed via javap: searchLeaf calls LeafReader.getLiveDocs() before scoring, but computeCorpusProfile's manual scorer iteration never does), so parentCount/token-bucket stats may include deleted-but-unmerged docs — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/IndexCountOps.java:344-365` (2026-07-11)
+
+### obs:indexingdocumentops — parent_token_count feedback/telemetry has no exact-vs-estimated provenance flag — after tempdoc 717 
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/IndexingDocumentOps.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] parent_token_count feedback/telemetry has no exact-vs-estimated provenance flag — after tempdoc 717 fix A it may hold a char-based estimate (SPLADE-cold-start fallback) indistinguishable from an exact SPLADE count for offline distribution analysis — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/IndexingDocumentOps.java:391-419` (717 review Finding 5; low blast radius, feedback pipeline only) (2026-07-11)
+
+### obs:unanchored-general-8 — Reranker is load-bearing / first-stage fusion squanders a strong dense leg: on battlefield-en-scale-
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] Reranker is load-bearing / first-stage fusion squanders a strong dense leg: on battlefield-en-scale-v1 (2026-07-12, current main) client 'full' fusion (BM25+dense+SPLADE RRF, no CE) scored nDCG@10=0.279 — FAR below vector-alone 0.722 and server-hybrid-with-CE 0.697. The cross-encoder does all the recovery (0.279->0.697); first-stage fusion weighting buries the strong dense hit. Fragility worth an owner — relevant to 636 (fusion-order)/712/713. Artifacts: scripts/jseval/tmp/eval-results/*battlefield-en-scale-v1* (2026-07-12)
+
+### obs:unanchored-general-9 — Retrieval on battlefield-en-scale-v1 (2736 docs) is now healthy: agent-hybrid nDCG@10=0.697 on curre
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] Retrieval on battlefield-en-scale-v1 (2736 docs) is now healthy: agent-hybrid nDCG@10=0.697 on current main, up from 0.163 in the 2026-07-08 PR#117 run — the 717 chunk-death fix + 713 dense-authority consolidation fixed the dense leg (vector 0.09->0.722); chunk_completeness verdict=ok (30099 chunks). REFUTES the prior '624 scale corpus is unfixably out-of-band' conclusion; unblocks a meaningful 624 agent-utility ACCURACY measurement (the with-tool arm now retrieves well). (2026-07-12)
+
+### obs:unanchored-general-12 — 624 agent-utility A/B pilot on fixed retrieval (2026-07-12, battlefield-en-scale-v1, haiku, n=12 pai
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] 624 agent-utility A/B pilot on fixed retrieval (2026-07-12, battlefield-en-scale-v1, haiku, n=12 paired): B(with JustSearch) uses -25.7% mean / -28.9% median context tokens vs A(grep), 95% CI [-13%,-41%] excludes 0 (robust); B acc 100% vs A 87.5% but McNemar p=1.0 (both near ceiling -> no headroom, the recurring problem 707's pillar-1 corpus targets); adoption 7.1% (grep suffices on this easy subset -> rational non-adoption). Token-efficiency robust; accuracy underpowered until grep genuinely struggles. Artifacts: scripts/jseval/624-pilot-2026-07-12/ (2026-07-12)
+
+### obs:encoder-drift — encoder_drift._write_baseline has zero call sites (baseline capture moved to calibrate-drift-baselin
+`kind: follow-up?` `anchor: scripts/jseval/jseval/projections/encoder_drift.py` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] encoder_drift._write_baseline has zero call sites (baseline capture moved to calibrate-drift-baseline per C-1.8.1) — dead code candidate — `scripts/jseval/jseval/projections/encoder_drift.py:229` (2026-07-11)
+
+### obs:chunkdocumentwriter — tempdoc 718: expose ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS (modules/worker-services/src/main/java
+`kind: defect?` `anchor: ChunkDocumentWriter.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+- [ ] tempdoc 718: expose ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS (modules/worker-services/src/main/java/io/justsearch/indexerworker/rag/ChunkDocumentWriter.java:28) via /api/status or a config surface so jseval's offline chunk-completeness oracle (scripts/jseval/jseval/chunk_completeness.py CHUNK_THRESHOLD_CHARS) reads it instead of mirroring it -- a dual-source-of-truth that will silently drift if the Java constant ever changes. (2026-07-11)
+
+### obs:pdfocrenginetest — PdfOcrEngineTest.interruptDestroysAllRegisteredChildren flaked on main-push CI AGAIN (run 2915593054
+`kind: environment?` `anchor: PdfOcrEngineTest` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] PdfOcrEngineTest.interruptDestroysAllRegisteredChildren flaked on main-push CI AGAIN (run 29155930543, 2026-07-11, PR #145 push, zero OCR overlap; second main-push occurrence after run 29129172631 on 2026-07-10) — recurrence condition fired; needs 706-style state-polling hardening, 706-owner lane — `modules/worker-services PdfOcrEngineTest` (recovered from dead-session worktree 691-takeover) (2026-07-12)
+
+### obs:dataset-cache — 709 resume gap: an interrupted CLERC raw fetch leaves an orphaned `.tmp-*` staging dir under the cac
+`kind: defect?` `anchor: scripts/jseval/jseval/dataset_cache.py` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+- [ ] 709 resume gap: an interrupted CLERC raw fetch leaves an orphaned `.tmp-*` staging dir under the cache root (observed: ~6.3GB collection.doc.tsv.gz at scripts/jseval/tmp/dataset-fetch-cache/clerc-raw/.<key>.tmp-*); `store()` neither resumes nor GCs it, so the next fetch re-downloads the full 6.7GB — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-12)
+
+### obs:test-correction-probe — Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main beca
+`kind: environment?` `anchor: test_correction_probe.py` `seen: 1` `first: 2026-07-13` `last: 2026-07-13`
+- [ ] Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main because jseval/data/correction-eval-queries.v1.json was never committed (absent since v0.1.0) — full pytest suite is 2-red on a clean main checkout. Noted during 719 takeover; not caused by 719 branch. (2026-07-13)
+
 ## Parked
 
 ### obs:actionledgerprojection — ActionLedgerProjection.deterministicId `:`-join is injection-safe only because all-but-last discrimi
@@ -789,8 +849,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] V1.5 alpha: `customElements.define(tag, Class)` cannot be un-defined per HTML spec. Plugin uninstall removes catalog entries + surface-port handlers, but the class registration persists in `customElements`. Hot-reload re-installs use the same registration; re-define throws. Mitigated by `if (!customElements.get(tag))` guard. V1.5.1 polish: see 470 §B.A.4 / §B.D for sandboxing roadmap (Compartment-Loader integration). — `modules/ui-web/src/shell-v0/plugin-api/PluginRegistry.ts` (2026-05-07)
 
 ### obs:searchexecutor — Decompose SearchExecutor (990→1031 LOC, grandfathered) — extract chunk-merge subsystem (mergeChunkRe
-`kind: follow-up` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/services/execute/SearchExecutor.java` `seen: 1` `first: 2026-05-26` `last: 2026-05-26` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
+`kind: follow-up` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/services/execute/SearchExecutor.java` `seen: 2` `first: 2026-05-26` `last: 2026-07-11` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
 - [ ] Decompose SearchExecutor (990→1031 LOC, grandfathered) — extract chunk-merge subsystem (mergeChunkResults / executeChunkBranchFusion / collapse helpers, ~250 LOC) into a ChunkMergeExecutor collaborator — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/execute/SearchExecutor.java` (2026-05-26)
+- [ ] 717 hypothesis CORRECTED (via 718 live smoke): the intermittent chunk-death is QUERY-TIME not build-time — degenerate build had 4293 chunk docs / 4293 embeddings completed / 100% coverage yet chunk_merge fired for 0 queries + vector nDCG 0.34. Investigate SearchExecutor/SearchPlanner chunk-merge activation, not the enrichment write path — `modules/worker-services/.../execute/SearchExecutor.java:527` (2026-07-11)
 
 ### obs:search — 553 Phase 4b (552 FE barrel→knowledge_pb migration) deferred: knowledge_pb SearchTrace is a branded
 `kind: follow-up?` `anchor: modules/ui-web/src/api/domains/search.ts` `seen: 1` `first: 2026-05-27` `last: 2026-05-27` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
